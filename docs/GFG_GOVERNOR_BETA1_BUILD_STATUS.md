@@ -5,7 +5,7 @@
 - Product platform: GFG Extreme v4.0.0-gfg.4
 - Governor: v0.0.1 Beta.1
 - Local implementation commit: `6d7baa2`
-- ZIP SHA-256: `9563020570ded17e547eef489eac410e6bbe267c15ce81d117a773e255100411`
+- ZIP SHA-256: `4b6e124c693c53d3dc0d9e132c1efbe8b1bd22c4dd3c16b61e7aeaae544d7e33`
 - Patch SHA-256: `4ac17fdec4d3070e6c16594a1348c5f059cd049888e1ec90acb2b36c61362d48`
 
 ## Validation
