@@ -26,7 +26,7 @@ The log zip (Record log) now also contains this journal, starting 30 minutes **b
 3. Close the game, press **RUN**, start the game.
 
 ### Verify your download
-SHA-256 of the zip: `d87ca41643da08468cea596e777e96ad1332aa6b6fd3ac6a180b8178c8195adb` (see `SHA256SUMS.txt`).
+SHA-256 of the zip: `021e423d1dcb46fe283ea2adb3258b122eb27f724b81d6b423d9f13f43b36113` (see `SHA256SUMS.txt`).
 
 ### Known limitations
 - **TDP control needs root access.** Decky runs this plugin as the desktop user, and the Steam Deck power caps can only be written by root. Until the plugin gets root access, it manages frame generation only and shows **No TDP access**.
