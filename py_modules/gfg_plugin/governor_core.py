@@ -705,6 +705,7 @@ class BudgetController:
     # within seconds (fast_check), so a lower-power probe that does not hold
     # costs a short dip, not a 15 s window.  That makes frequent probes cheap.
     REPROBE_S = 45.0
+    REPROBE_NO_DRAW_S = 300.0    # without a draw sensor a failed probe costs a whole window
     REPROBE_MAX_S = 300.0
     FAST_STARVED_CHECKS = 2      # consecutive ~1 s checks before a fast raise
     FAST_GAP_S = 3.0             # at most one fast raise per this many seconds
@@ -814,22 +815,31 @@ class BudgetController:
             self.recover = None
             self.recover_interval = self.RECOVER_S
 
+    def _binding(self, draw_w: Optional[float]) -> bool:
+        return (
+            self.tdp is not None and isinstance(draw_w, (int, float))
+            and float(draw_w) >= self.tdp - self.DRAW_BINDING_MARGIN_W
+        )
+
     def _remember_held(self, now: float) -> None:
-        if self.tdp_control and self.tdp is not None:
+        # Only a level the game actually used: a cap far above the draw says
+        # nothing about what the game needs.
+        if self.tdp_control and self.tdp is not None and self._binding(self.draw_w):
             self.held = [(t, w) for t, w in self.held if now - t < self.WORK_MEMORY_S]
             self.held.append((now, float(self.tdp)))
 
     def _work_tdp(self, now: float) -> Optional[float]:
-        """Highest level the game held recently: where it goes back after a menu or a pause."""
+        """The last level the game held at a binding cap: where it goes back after a menu or a pause."""
         recent = [w for t, w in self.held if now - t < self.WORK_MEMORY_S]
-        return max(recent) if recent else None
+        return recent[-1] if recent else None
 
     def fast_check(self, now: float, real_median: Optional[float], draw_w: Optional[float]) -> str:
         """Called every loop iteration with the last few seconds of real FPS.
 
-        Only ever raises: lowering stays with the 15 s windows.  A game short
-        of its real cap whose draw sits at the cap is starved, not loading, so a
-        collapse below half the cap counts here when the draw says so.
+        Only ever raises, and only when the measured draw sits at the cap:
+        then watts are what the game lacks.  A shortfall with the cap not
+        binding (CPU, engine) is the windows' job, which deepen the multiplier
+        first.  Up to the ideal budget only; above it the slow path decides.
         """
         if not (self.tdp_control and self.tdp is not None and not self.cap_ignored):
             self.starved_checks = 0
@@ -838,9 +848,7 @@ class BudgetController:
             return "hold"
         base = float(self.point.base_target_fps)
         short = float(real_median) < base * HOLD_REAL_RATIO
-        binding = isinstance(draw_w, (int, float)) and float(draw_w) >= self.tdp - self.DRAW_BINDING_MARGIN_W
-        stall = float(real_median) < base * STALL_REAL_RATIO
-        if not short or (stall and not binding) or self.probe == "up":
+        if not short or not self._binding(draw_w) or self.probe == "up":
             # A fewer-generated-frames probe asks for more real frames on purpose;
             # its own window decides whether the point stays, not extra watts.
             self.starved_checks = 0
@@ -868,13 +876,14 @@ class BudgetController:
                 self._lock(now, "probe-failed:starved")
             self.fast_at, self.starved_checks = now, 0
             return "move"
-        ceiling = self.normal_max_w
+        ceiling = self.ideal_max_w
         if self.tdp >= ceiling - 1e-6:
-            return "hold"   # past the normal budget only the slow, evidence-heavy path decides
+            return "hold"   # past the ideal budget the slow path spends multipliers first
         target = max(self._work_tdp(now) or 0.0, self.tdp + self.FAST_STEP_W)
         target = min(target, ceiling)
         self.probe = None
         self._move("fast-raise:starved", tdp=target)
+        self.last_good = (self.idx, self.tdp)   # a later failed probe never reverts below this
         self.phase = "locked"
         self.locked_since = now
         self.short_since = self.stall_since = self.stall_step_at = None
@@ -882,7 +891,11 @@ class BudgetController:
         return "move"
 
     def _probe_delay(self) -> float:
-        return self.recover_interval if self.recover is not None else self.reprobe_interval
+        if self.recover is not None:
+            return self.recover_interval
+        if self.draw_w is None:
+            return max(self.reprobe_interval, self.REPROBE_NO_DRAW_S)
+        return self.reprobe_interval
 
     def _can_lower(self) -> bool:
         # With an ignored cap a "lower" level is fiction: it would hold at any

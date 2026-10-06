@@ -684,6 +684,7 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual(self.svc.get_status()["state"], "LOCKED")
         # Heavier scene after LOCKED: watts come at once, not after two windows.
         held = self.svc.power.writes[-1]
+        self.svc.power.values["draw_w"] = held          # the heavier scene uses the whole cap
         st = self.windows(1, 27, 81)
         self.assertGreater(self.svc.power.writes[-1], held - 1.0)  # a probe reverted or watts were added
         for _ in range(3):
@@ -746,8 +747,10 @@ class BudgetRuntimeTests(RuntimeBase):
     def test_leaving_a_menu_gets_the_working_watts_back_within_seconds(self):
         self.feed(20, 45, 90)
         self.step()
+        self.svc.power.values["draw_w"] = 9.5       # the game uses its cap
         self.windows(3, 30, 90)                     # 10 W holds, then 9 W holds ...
-        work = max(self.svc.power.writes)
+        work = self.svc._budget._work_tdp(self.t["now"])
+        self.assertIsNotNone(work)
         b = self.svc._budget                         # ... and a long pause menu walked it down to 6 W
         b.tdp, b.probe, b.phase = 6.0, None, "locked"
         self.step(0.1)
