@@ -55,8 +55,12 @@ class OperatingPointPlanner:
     HEADROOM_RATIO = 1.05
 
     @classmethod
-    def candidates(cls, *, external_display: bool) -> tuple[OperatingPoint, ...]:
-        if external_display:
+    def candidates(
+        cls, *, external_display: bool = False, target_output_fps: Optional[int] = None,
+    ) -> tuple[OperatingPoint, ...]:
+        """Ladder for a 60 FPS target (Dock / Deck LCD) or a 90 FPS target (Deck OLED)."""
+        sixty = (int(target_output_fps) == 60) if target_output_fps else bool(external_display)
+        if sixty:
             return (
                 OperatingPoint("native60", 60, 60, 1, 100),
                 OperatingPoint("30x2", 60, 30, 2, 100),
@@ -79,9 +83,10 @@ class OperatingPointPlanner:
     def recommend(
         self,
         *,
-        external_display: bool,
+        external_display: bool = False,
         observed_p5_fps: Optional[float],
         observed_multiplier: Optional[float],
+        target_output_fps: Optional[int] = None,
     ) -> PlannerDecision:
         if not isinstance(observed_p5_fps, (int, float)) or not math.isfinite(float(observed_p5_fps)):
             return PlannerDecision(None, False, "insufficient-capacity-evidence", None, None)
@@ -91,7 +96,7 @@ class OperatingPointPlanner:
             if isinstance(observed_multiplier, (int, float)) and math.isfinite(float(observed_multiplier))
             else None
         )
-        candidates = self.candidates(external_display=external_display)
+        candidates = self.candidates(external_display=external_display, target_output_fps=target_output_fps)
 
         # Native capacity is only positively proven while the observed cadence
         # is effectively native.  An active 2x/3x scheduler can intentionally
@@ -160,14 +165,17 @@ class TrialLadder:
     OUTPUT_MEDIAN_RATIO = 0.94
     MAX_MISSES = 1
 
-    def __init__(self, *, external_display: bool) -> None:
+    def __init__(self, *, external_display: bool = False, target_output_fps: Optional[int] = None) -> None:
         self.external_display = bool(external_display)
+        self.target_output_fps = int(target_output_fps) if target_output_fps else (60 if external_display else 90)
         self.rejected: Dict[str, str] = {}
         self.skipped: Dict[str, str] = {}
         self.attempts = 0
 
     def candidates(self) -> tuple[OperatingPoint, ...]:
-        return OperatingPointPlanner.candidates(external_display=self.external_display)
+        return OperatingPointPlanner.candidates(
+            external_display=self.external_display, target_output_fps=self.target_output_fps,
+        )
 
     def next_point(self, applicable: Any) -> Optional[OperatingPoint]:
         """First unrejected point for which ``applicable(point)`` returns None.
@@ -225,6 +233,7 @@ class TrialLadder:
     def status(self) -> Dict[str, Any]:
         return {
             "external_display": self.external_display,
+            "target_output_fps": self.target_output_fps,
             "attempts": self.attempts,
             "max_attempts": self.MAX_ATTEMPTS,
             "rejected": dict(self.rejected),

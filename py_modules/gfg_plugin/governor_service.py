@@ -37,6 +37,7 @@ from .governor_overlay import (
     base_deltas,
     point_deltas,
 )
+from .governor_device import detect_model, target_for
 from .governor_power import SteamDeckPowerActuator
 from .governor_telemetry import TelemetryObserver
 
@@ -132,6 +133,7 @@ class GovernorService:
         self._active_profile = ""
         self._evaluation_after_seq = 0
         self._last_event_key = ""
+        self._device: Optional[Dict[str, str]] = None
         self._reset_run_state()
 
     # ------------------------------------------------------------------ state
@@ -712,9 +714,13 @@ class GovernorService:
         summary = self.observer.summary(self.WINDOW_SECONDS)
         display = await self._display_info()
         external = bool(display.get("external", False))
-        target = 60 if external else 90
+        if self._device is None:
+            self._device = await asyncio.to_thread(detect_model)
+        policy = target_for(self._device["model"], external=external, valid_rates=display.get("valid_rates"))
+        target = int(policy["target"])
         self._status.update({
             "target_output_fps": target,
+            "device": {**self._device, "mode": policy["mode"], "target_reason": policy["reason"]},
             "display": {
                 "external": external,
                 "internal": bool(display.get("internal", not external)),
@@ -762,7 +768,7 @@ class GovernorService:
                 self.WINDOW_SECONDS * 2, after_event_seq=req.window_floor_event_seq,
             )
             if self._ladder is None:  # defensive; requests are only created by the ladder
-                self._ladder = TrialLadder(external_display=external)
+                self._ladder = TrialLadder(external_display=external, target_output_fps=target)
             outcome = self._ladder.evaluate(
                 req.point, fresh, min_samples=self.MIN_SAMPLES, min_span_s=self.TRIAL_MIN_SPAN_SECONDS,
             )
@@ -814,6 +820,7 @@ class GovernorService:
         if self._point is None:
             decision = self.planner.recommend(
                 external_display=external,
+                target_output_fps=target,
                 observed_p5_fps=(summary.get("real") or {}).get("p5"),
                 observed_multiplier=(summary.get("multiplier") or {}).get("median"),
             )
@@ -834,12 +841,14 @@ class GovernorService:
                 self._evaluation_after_seq = self.observer.sample_seq
                 self._event("operating-point-adopted", decision.reason, profile=profile, point=candidate)
             else:
-                await self._plan_trial(profile, config, external)
+                await self._plan_trial(profile, config, external, target)
                 return
 
         await self._power_step(profile, summary)
 
-    async def _plan_trial(self, profile: str, config: Dict[str, Any], external: bool) -> None:
+    async def _plan_trial(
+        self, profile: str, config: Dict[str, Any], external: bool, target: int,
+    ) -> None:
         if self.overlay is None:
             if self._status.get("recommended_point") is None:
                 self._status.update({"state": "PLAN", "reason": "target-not-proven-viable"})
@@ -857,7 +866,7 @@ class GovernorService:
             self._status.update({"state": "PLAN", "reason": capability["reason"]})
             return
         if self._ladder is None:
-            self._ladder = TrialLadder(external_display=external)
+            self._ladder = TrialLadder(external_display=external, target_output_fps=target)
 
         saved = await asyncio.to_thread(self._saved_profile_config, profile) or config
 

@@ -410,5 +410,24 @@ class OverlayHousekeepingTests(RuntimeBase):
         self.assertEqual(self.header()["owner"], os.getpid())
 
 
+class DeviceTargetRuntimeTests(RuntimeBase):
+    def test_lcd_handheld_targets_60_and_first_trial_is_native60(self):
+        self.svc._device = {"model": "lcd", "product": "Jupiter"}
+        self.feed(20, 40, 40)
+        self.t["now"] += 0.5
+        st = self.step()
+        self.assertEqual(st["target_output_fps"], 60)
+        self.assertEqual(st["device"]["mode"], "lcd")
+        self.assertEqual(st["request"]["point"], "native60")
+        prof = self.overlay_profile()
+        self.assertEqual((prof["base_fps_cap"], prof["target_fps"]), (60, 60))
+
+    def test_oled_handheld_targets_90_and_dock_targets_60(self):
+        self.svc._device = {"model": "oled", "product": "Galileo"}
+        self.feed(20, 40, 40)
+        self.assertEqual(self.step()["target_output_fps"], 90)
+        self.assertEqual(self.svc.get_status()["device"]["mode"], "oled")
+
+
 if __name__ == "__main__":
     unittest.main()
