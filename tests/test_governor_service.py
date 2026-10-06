@@ -46,7 +46,13 @@ class FakePower:
 
 
 def diag(base, output):
-    return f"I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps={base} current_output_fps={output}"
+    """Real renderer ``fixed-plan`` line (no base-FPS field; real = output / (generated_per_real + 1))."""
+    ratio = max(1, round(output / base)) - 1
+    return (
+        "I MAKO Renderer: present diagnostics: operation=fixed-plan "
+        f"generated_per_real={ratio} observed_output_fps={output} generated_presented=100 "
+        "generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"
+    )
 
 
 class GovernorServiceTests(unittest.TestCase):

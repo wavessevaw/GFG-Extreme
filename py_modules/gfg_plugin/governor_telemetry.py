@@ -245,6 +245,18 @@ class TelemetryObserver:
             "observed_output_fps",
             "previous_output_fps",
         ))
+        # Renderer v4 ``fixed-plan`` carries ``observed_output_fps`` and
+        # ``generated_per_real`` but no base-FPS field (verified against the
+        # bundled binary's diagnostics format strings).  Derive the real
+        # cadence from them instead of discarding the only FPS evidence that a
+        # fixed multiplier ever emits.
+        fixed_ratio = _first_number(fields, ("generated_per_real",))
+        if (
+            interval_real is None and base is None
+            and measured_output is not None and measured_output > 0
+            and fixed_ratio is not None and fixed_ratio >= 0
+        ):
+            base = measured_output / (fixed_ratio + 1.0)
         real = interval_real if interval_real is not None else base
         if measured_output is not None and measured_output > 0:
             output = measured_output

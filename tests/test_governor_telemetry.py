@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT / "py_modules"))
 from gfg_plugin.governor_telemetry import TelemetryObserver
 
 
-def diag(operation="present-breakdown", **fields):
+def diag(operation="adaptive-ramp", **fields):
     body = " ".join([f"operation={operation}"] + [f"{k}={v}" for k, v in fields.items()])
     return f"I MAKO Renderer: present diagnostics: {body}"
 
@@ -30,6 +30,37 @@ class GovernorTelemetryTests(unittest.TestCase):
         self.assertAlmostEqual(sample.real_fps, 45.0, places=1)
         self.assertAlmostEqual(sample.output_fps, 90.0, places=1)
         self.assertAlmostEqual(sample.effective_multiplier, 2.0, places=1)
+
+    def test_fixed_plan_derives_real_fps_from_output_and_ratio(self):
+        # Renderer v4 fixed-plan has no base-FPS field. Regression: Beta.2
+        # discarded these lines, so fixed 2x/3x never produced any evidence.
+        observer = TelemetryObserver(Path("/nonexistent"))
+        sample = observer.consume_line(
+            diag("fixed-plan", generated_per_real=2, observed_output_fps=89.7,
+                 generated_presented=120, generated_skipped=0,
+                 configured_adaptive_target_fps=90, display_budget_hz=90),
+            now=1.0,
+        )
+        self.assertIsNotNone(sample)
+        self.assertAlmostEqual(sample.real_fps, 29.9, places=2)
+        self.assertAlmostEqual(sample.output_fps, 89.7, places=2)
+        self.assertAlmostEqual(sample.effective_multiplier, 3.0, places=2)
+        self.assertEqual(sample.output_source, "measured")
+
+    def test_present_breakdown_is_timing_only_and_yields_no_fps(self):
+        observer = TelemetryObserver(Path("/nonexistent"))
+        sample = observer.consume_line(
+            diag("present-breakdown", total_ms=11.1, render_fence_ms=3.0, schedule_ms=0.2),
+            now=1.0,
+        )
+        self.assertIsNone(sample)
+        self.assertEqual(observer.event_seq, 1)
+        self.assertEqual(observer.sample_seq, 0)
+
+    def test_fixed_plan_without_positive_output_is_not_evidence(self):
+        observer = TelemetryObserver(Path("/nonexistent"))
+        self.assertIsNone(observer.consume_line(
+            diag("fixed-plan", generated_per_real=2, observed_output_fps=0), now=1.0))
 
     def test_pressure_events_are_counted(self):
         observer = TelemetryObserver(Path("/nonexistent"))

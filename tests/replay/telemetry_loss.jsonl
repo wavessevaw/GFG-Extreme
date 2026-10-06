@@ -1,3 +1,3 @@
-{"t": 0.0, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=48.000 current_output_fps=96.000"}
-{"t": 0.6, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=48.000 current_output_fps=96.000"}
-{"t": 1.2, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=47.900 current_output_fps=95.800"}
+{"t": 0.0, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=96.000 generated_presented=57 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
+{"t": 0.6, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=96.000 generated_presented=57 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
+{"t": 1.2, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=95.800 generated_presented=57 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}

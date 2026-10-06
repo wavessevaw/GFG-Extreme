@@ -1,23 +1,23 @@
-{"t": 0.0, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=47.000 current_output_fps=94.000"}
-{"t": 0.6, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=46.500 current_output_fps=93.000"}
-{"t": 1.2, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=45.000 current_output_fps=90.000"}
-{"t": 1.7999999999999998, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=44.000 current_output_fps=88.000"}
-{"t": 2.4, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=43.000 current_output_fps=86.000"}
-{"t": 3.0, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=42.000 current_output_fps=84.000"}
+{"t": 0.0, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=94.000 generated_presented=56 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
+{"t": 0.6, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=93.000 generated_presented=55 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
+{"t": 1.2, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=90.000 generated_presented=54 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
+{"t": 1.7999999999999998, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=88.000 generated_presented=52 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
+{"t": 2.4, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=86.000 generated_presented=51 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
+{"t": 3.0, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=84.000 generated_presented=50 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
 {"t": 3.4, "line": "I MAKO Renderer: present diagnostics: operation=generated-delivery-miss"}
-{"t": 3.6, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=41.000 current_output_fps=82.000"}
-{"t": 4.2, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=42.000 current_output_fps=84.000"}
-{"t": 4.8, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=43.000 current_output_fps=86.000"}
+{"t": 3.6, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=82.000 generated_presented=49 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
+{"t": 4.2, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=84.000 generated_presented=50 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
+{"t": 4.8, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=86.000 generated_presented=51 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
 {"t": 5.199999999999999, "line": "I MAKO Renderer: present diagnostics: operation=render-fence-budget-missed"}
-{"t": 5.3999999999999995, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=42.000 current_output_fps=84.000"}
-{"t": 5.999999999999999, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=41.000 current_output_fps=82.000"}
-{"t": 6.599999999999999, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=42.000 current_output_fps=84.000"}
+{"t": 5.3999999999999995, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=84.000 generated_presented=50 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
+{"t": 5.999999999999999, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=82.000 generated_presented=49 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
+{"t": 6.599999999999999, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=84.000 generated_presented=50 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
 {"t": 6.999999999999998, "line": "I MAKO Renderer: present diagnostics: operation=generated-delivery-miss"}
-{"t": 7.199999999999998, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=42.000 current_output_fps=84.000"}
-{"t": 7.799999999999998, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=41.000 current_output_fps=82.000"}
-{"t": 8.399999999999999, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=42.000 current_output_fps=84.000"}
-{"t": 8.999999999999998, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=43.000 current_output_fps=86.000"}
-{"t": 9.599999999999998, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=42.000 current_output_fps=84.000"}
-{"t": 10.199999999999998, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=41.000 current_output_fps=82.000"}
-{"t": 10.799999999999997, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=42.000 current_output_fps=84.000"}
-{"t": 11.399999999999997, "line": "I MAKO Renderer: present diagnostics: operation=present-breakdown current_base_fps=42.000 current_output_fps=84.000"}
+{"t": 7.199999999999998, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=84.000 generated_presented=50 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
+{"t": 7.799999999999998, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=82.000 generated_presented=49 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
+{"t": 8.399999999999999, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=84.000 generated_presented=50 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
+{"t": 8.999999999999998, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=86.000 generated_presented=51 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
+{"t": 9.599999999999998, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=84.000 generated_presented=50 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
+{"t": 10.199999999999998, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=82.000 generated_presented=49 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
+{"t": 10.799999999999997, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=84.000 generated_presented=50 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
+{"t": 11.399999999999997, "line": "I MAKO Renderer: present diagnostics: operation=fixed-plan generated_per_real=1 observed_output_fps=84.000 generated_presented=50 generated_skipped=0 configured_adaptive_target_fps=90 target_applies=0 display_budget_hz=90"}
