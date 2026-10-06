@@ -1,67 +1,128 @@
-# GFG Extreme
+<div align="center">
 
+<img src="docs/img/logo.png" alt="GFG Extreme" width="220">
 
-## GFG Governor v0.0.1 Beta.1
+# GFG Extreme Decky
 
-This build adds the first GFG Governor runtime: a centralized incremental telemetry observer, deterministic 90 FPS OLED / 60 FPS Dock planner, offline replay framework, and an ownership-aware Steam Deck TDP optimizer. Governor is disabled per profile by default. Beta.1 never rewrites saved multiplier or render scale automatically; it optimizes TDP only after live telemetry proves the currently running point. The Decky home surface is also reorganized around Governor, with the previous detailed controls behind **Advanced Controls**.
+**Press Run. Get smooth, efficient frames on Steam Deck.**
 
-> **Compatibility note:** GFG Extreme keeps upstream `mako-*` filenames, Vulkan layer identifiers, configuration paths, and RPC names where changing them would break renderer compatibility. Those are implementation identifiers, not the product name. Upstream MAKO attribution remains in licensing and provenance files.
+Frame generation, smart scaling and TDP savings, orchestrated for you by the **GFG Governor**.
 
+![status](https://img.shields.io/badge/status-beta-fb0d00?style=flat-square)
+![platform](https://img.shields.io/badge/Steam%20Deck-OLED%20%C2%B7%20LCD%20%C2%B7%20Dock-111?style=flat-square)
+![decky](https://img.shields.io/badge/Decky%20Loader-plugin-111?style=flat-square)
+![license](https://img.shields.io/badge/license-GPL--3.0-111?style=flat-square)
 
-<!-- prettier-ignore -->
-> [!NOTE]
-> **GFG Extreme succeeds <a href="https://github.com/eugeniosegala/decky-lsfg-vk-experimental" target="_blank" rel="noopener noreferrer">Decky LSFG-VK Experimental</a> under a separate product and package identity.** The <a href="https://github.com/eugeniosegala/MAKO" target="_blank" rel="noopener noreferrer">MAKO repository</a> continues its development lineage, but GFG Extreme imports state only from public MAKO 2.0.0 or newer; install it separately from the differently named predecessor.
+</div>
 
-GFG Extreme is a Decky Loader interface built on the MAKO renderer lineage. It provides per-game controls, installation, updates, Flatpak preparation, and game launch integration for GFG Engine on Steam Deck, Steam Machine, SteamOS, and Linux more broadly.
+---
 
-The bundled engine is derived from the MAKO community project bringing LSFG frame generation, spatial scaling, and bundled shader effects to Linux. GFG Extreme does not contain or distribute Lossless Scaling, `Lossless.dll`, or extracted proprietary model payloads. LSFG and LS1 read selected resources at runtime from a lawful, user-supplied <a href="https://store.steampowered.com/app/993090/Lossless_Scaling/" target="_blank" rel="noopener noreferrer">Lossless Scaling</a> installation; the open GFG Scaler and bundled shaders do not require it. GFG Extreme does not alter the user's DLL file, and translated resources remain process-local. Users are responsible for complying with the terms applicable to their copy. See <a href="../THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener noreferrer">Third-party notices</a>.
+## Why it's great
 
-## Download
+Most frame-generation tools hand you a wall of switches and leave you to guess. **GFG Extreme Decky does the opposite: one beautiful screen and one Run button.**
 
-For frame generation or LS1 scaling, first install the **default public version** of <a href="https://store.steampowered.com/app/993090/Lossless_Scaling/" target="_blank" rel="noopener noreferrer">Lossless Scaling</a> through Steam. The upstream-compatible engine can use beta branches, but they are not validated; the default public branch is recommended. The open GFG Scaler works without `Lossless.dll`.
+| | |
+|---|---|
+| **One button** | Press **RUN**. The Governor reads your device, picks the target, starts the engine and manages it while you play. |
+| **Knows your screen** | **Steam Deck OLED → 90 FPS**, **Steam Deck LCD → 60 FPS**, **Dock / external display → 60 FPS**. No manual tuning. |
+| **Mostly does nothing** | It tries the highest-quality setting first (×1, then ×2, ×3 only), checks the result on real renderer data, and **stops** once the target is held. No constant tinkering. |
+| **Saves battery** | Once the target is stable it lowers TDP step by step while the frame rate holds, and shows you the estimated time left. |
+| **Never touches your profile** | Your saved profile is **never modified**. The Governor works through a temporary overlay and always restores the original state. |
+| **Safe by design** | No overclocking, no raising your power ceiling, never ×4/×5 automatically, and it backs off when another tool owns TDP or the pipeline. |
+| **Honest effort rating** | **GFG Effort** (Easy · Medium · Hard · Nightmare) tells you how hard the engine is working, and is withheld until it's stable, so it doesn't flicker. |
+| **Compact in-game overlay** | A single slim bar: FPS, frame time, multiplier, real → output FPS, render scale, TDP, battery time, effort. |
+| **Everything is still there** | Profiles, per-game rules, Flatpak support, Pipeline Inspector, Configuration Journal and every engine option remain one tap away under *Advanced*. |
 
-This archive is the GFG Extreme plugin package. The upstream MAKO repository remains the renderer lineage and licensing reference; GFG Extreme release packaging should use its own release location.
+## A look inside
 
-The bundled engine payload keeps the upstream MAKO v4.0.0 file identity for binary compatibility. Do not rename the renderer archive or Vulkan layer identifiers inside the package.
+<div align="center">
+<table>
+<tr>
+<td align="center"><img src="docs/img/home-idle-oled.png" width="250"><br><sub><b>Ready</b> · target picked for your screen</sub></td>
+<td align="center"><img src="docs/img/home-locked-oled.png" width="250"><br><sub><b>Locked in</b> · real → ×2 → output, TDP, effort</sub></td>
+<td align="center"><img src="docs/img/home-locked-lcd.png" width="250"><br><sub><b>LCD</b> · 60 FPS target, saving power</sub></td>
+</tr>
+</table>
+</div>
 
-Published GFG Engine packages target x86_64 Linux hosts, with 64-bit and 32-bit x86 game-process layers. GFG Extreme safely refuses incompatible native AArch64/Armada installation; see <a href="docs/ARMADA.md" target="_blank" rel="noopener noreferrer">Armada and native AArch64 support</a> for that boundary.
+> Screenshots are UI previews rendered with sample data in a mock Decky environment, not captures from a running Deck.
 
-## What it manages
+### In-game overlay
 
-- Installs and updates the per-user GFG Engine Vulkan layer and common `gfg` launcher (the old `mako-run` command stays as an alias).
-- Saves per-game and per-process profiles, then selects them automatically by Steam application ID or process name.
-- Orchestrates Frame Generation per profile through **GFG Engine**, **OptiScaler**, **Game Native**, or **Off** while keeping Spatial Scaling and Shaders independent. Switching ownership preserves the saved GFG Engine settings instead of rewriting them. **Live Status** reports the active mode, scaler, resolutions, limits, fallbacks, and pending changes for the running game.
-- Adds a **Pipeline Inspector** that compares Saved, Effective, and Actual launch state using an atomic launch manifest plus live `/proc/<pid>/maps` verification, including PID-reuse protection and observed double-FG warnings.
-- Keeps a bounded **Configuration Journal** with actor/reason/diff history and schema-safe restore of the previous change.
-- Provides a per-profile Gamescope WSI compatibility option, host-installed MangoHud, and MAKO's private pinned 64-bit/32-bit vkBasalt build, including live per-game sharpening, anti-aliasing, and lightweight shader presets. Scaling uses the combined Renderer by default; the independent WSI option selects the managed compatibility path inside a supported Gamescope session.
-- Prepares matching Vulkan runtime extensions and application access for supported Flatpak workflows.
-- Shares one active native Renderer version with the standalone archive installer. Installing either version selects it for both launch workflows; a later GFG Extreme installation adopts a valid standalone Renderer and offers its bundled update when the versions differ.
-- Removes files supplied by either managed native Renderer installer when you select **Uninstall GFG Engine**, while preserving GFG Extreme and its profiles. Uninstalling GFG Extreme also removes the managed native Renderer; shared Flatpak runtime extensions remain installed.
+One compact line, top right, just the numbers that matter:
 
-Close games using GFG Extreme before installing or updating GFG Engine. Installation preserves valid profiles. If the saved configuration cannot be read or validated, installation resets it and its profiles to defaults. Read-only configurations stop installation. If installation fails, GFG Extreme attempts to restore the previous installation and configuration and reports any recovery problems.
+<div align="center">
+<img src="docs/img/hud-ingame-standard.png" width="620">
+</div>
+
+`90 FPS · 11.1 ms │ ×2 · 45>90 · sc100 · 9W · 2h05 · med`
+(output FPS, frame time │ multiplier, real>output FPS, render scale, TDP, time left, effort)
+
+Choose **Minimal**, **Standard** or **Detailed**, and put it where you like. No CPU load clutter.
+
+## How the Governor thinks
+
+1. **Detect** the device (OLED, LCD, Dock) and choose the target.
+2. **Measure** the real frame rate from engine telemetry. Nothing is changed yet.
+3. **Try** operating points from best quality downward, each one **confirmed on real data** before it's kept and **rolled back** if it isn't.
+4. **Lock** the first point that holds the target, then **trim TDP** while it stays healthy.
+5. **Guard** against quality dips; release everything cleanly on Stop, game exit or profile change.
+
+It is bounded (a fixed number of attempts, no ping-pong) and every decision is written to a journal you can inspect.
+
+## Targets
+
+| Mode | Target |
+|---|---|
+| Steam Deck OLED | **90 FPS** |
+| Steam Deck LCD | **60 FPS** (the panel tops out at 60 Hz) |
+| Dock / external display | **60 FPS** |
 
 ## Install and use
 
-Follow the [installation guide](../README.md#install-and-use) to install Decky Loader and the GFG Extreme ZIP. Then open GFG Extreme and select **Install GFG Engine**; installing the ZIP alone does not install its bundled Renderer. For a native Steam or Proton game, add this under **Steam Properties > Launch Options**:
+Requires [Decky Loader](https://decky.xyz/) on SteamOS, and the **default public version** of [Lossless Scaling](https://store.steampowered.com/app/993090/Lossless_Scaling/) from Steam for frame generation or LS1 scaling.
+
+1. Install the GFG Extreme Decky ZIP through Decky Loader.
+2. Open GFG Extreme and select **Install engine** (the ZIP alone does not install it).
+3. Set the Steam launch option of your game to:
 
 ```text
 /home/deck/.local/bin/gfg %command%
 ```
 
-Start the game normally. GFG Extreme automatically selects a matching saved profile, or uses the Default profile when no match exists.
+4. Start the game and press **RUN**. The first time, relaunch the game once so the engine can attach.
 
-For Heroic, Lutris, EmuDeck, and other Flatpak applications, follow the [launcher setup guide](docs/LAUNCHERS.md).
+The old `mako-run` command keeps working as an alias. For Heroic, Lutris, EmuDeck and other Flatpak apps, open **Advanced → System** and enable GFG for the app (it prepares the runtime extension and access for you).
 
-When updating, follow the [update guide](../README.md#updating-gfg-extreme) to replace GFG Extreme, its bundled Renderer, and any prepared Flatpak extensions.
+## Everything else
 
-## Panel display
+- Per-game and per-process **profiles**, selected automatically by Steam app ID or process name.
+- Frame generation through **GFG Engine**, **OptiScaler**, **Game Native** or **Off**, with Spatial Scaling and Shaders independent. External backends are **observe-only**, the Governor never fights them.
+- **Pipeline Inspector**: compares *Saved*, *Effective*, *Governor runtime* and *Actual* launch state, verified against the live process.
+- **Configuration Journal** with schema-safe restore.
+- Gamescope WSI compatibility, MangoHud, bundled vkBasalt shaders (sharpening, anti-aliasing, lighting).
+- Flatpak runtime extensions and per-app access.
 
-Press **R1** or select **Hide info** to hide explanations and optional information while keeping settings and actions available. The Lossless Scaling and GFG Engine installation status card stays visible, as does **Live Status** while a game runs, along with any Lossless Scaling model warning and its update action. The version number and release codename also stay visible. Press **R1** again or select **Show info** to restore the information. GFG Extreme remembers your display preference without changing game profiles or which settings sections you have collapsed.
+## Status
 
-See the [configuration guide](docs/CONFIGURATION.md) for settings and profiles, [troubleshooting](docs/TROUBLESHOOTING.md) for common problems, and [Collect GFG Extreme Diagnostics](docs/COLLECT_DIAGNOSTICS.md) to create a report when you need help.
+**Beta (Governor v0.0.2).** The decision engine, overlay handling and safety rules are covered by an automated test suite (including tests that run the real generated launch wrapper in bash). Hardware validation on real Steam Decks is scheduled for the v0.0.10 integration release, so expect rough edges. Known limitations are listed in the release notes.
+
+## Heritage and credits
+
+GFG Extreme Decky is a **continuation of the MAKO and LSFG work**: it succeeds [Decky LSFG-VK Experimental](https://github.com/eugeniosegala/decky-lsfg-vk-experimental) under a separate product and package identity, and the bundled engine derives from the MAKO community project bringing LSFG frame generation, spatial scaling and shader effects to Linux. Huge thanks to the authors of MAKO and lsfg-vk.
+
+GFG Extreme does not contain or distribute Lossless Scaling. Upstream `mako-*` filenames, Vulkan layer identifiers, configuration paths and RPC names are kept where changing them would break renderer compatibility.
+
+## Documentation
+
+[Governor architecture](docs/GFG_GOVERNOR_ARCHITECTURE.md) · [Telemetry capabilities](docs/GFG_TELEMETRY_CAPABILITIES.md) · [Known limitations](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md) · [UI redesign notes](docs/GFG_UI_REDESIGN.md)
 
 ## Development
 
-To build GFG Extreme from source or create a local test ZIP, follow the [packaging guide](docs/PACKAGING.md). Contributors should also follow the [testing guide](../TESTING.md).
+```bash
+npm run test        # backend tests + frontend build + frontend smoke test
+npm run build       # frontend/ → dist/index.js
+npm run screenshots # re-render the UI previews
+```
 
-The [frontend code map](docs/FRONTEND-ARCHITECTURE.md) identifies the owners of profile state, configuration writes, settings views, and the shader effect selector. The [backend code map](docs/BACKEND-ARCHITECTURE.md) identifies the RPC, profile, wrapper, installation, Flatpak, and runtime-status boundaries.
+The interface source lives in [`frontend/`](frontend/) (no runtime npm dependencies, it uses the globals Decky provides). Licensed under GPL-3.0-or-later; see [LICENSE](LICENSE.md) and [third-party notices](THIRD_PARTY_NOTICES.md).

@@ -15,6 +15,6 @@
       "vkbasalt",
       "steam-machine"
     ],
-    "description": "GFG Extreme: frame-generation orchestration with Pipeline Inspector, config history, scaling, shaders, and SteamOS launch integration."
+    "description": "GFG Extreme Decky: press Run and the GFG Governor picks the target for your Deck (OLED 90 / LCD 60 / Dock 60), manages frame generation and TDP, and shows a compact in-game overlay."
   }
 }
