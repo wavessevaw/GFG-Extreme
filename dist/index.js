@@ -77,13 +77,13 @@ var css = `
 .gfg .title{font-size:17px;font-weight:700}
 .gfg .sec{font-size:10.5px;letter-spacing:.16em;color:var(--tx3);font-weight:700;margin:16px 4px 8px}
 .gfg .seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--s2);border:1px solid var(--line);border-radius:14px;padding:3px;gap:3px}
-.gfg .seg button{border:0;background:transparent;color:var(--tx2);font:inherit;font-size:12.5px;font-weight:700;padding:10px 4px;border-radius:11px;cursor:pointer}
-.gfg .seg button.on{background:var(--red);color:#fff}
+.gfg .seg .segb{display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--tx2);font:inherit;font-size:12.5px;font-weight:700;padding:10px 4px;border-radius:11px;cursor:pointer}
+.gfg .seg .segb.on{background:var(--red);color:#fff}
 .gfg .tog{width:46px;height:28px;border-radius:999px;background:var(--s3);position:relative;flex:none;transition:.15s}
 .gfg .tog::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#d8d8de;transition:.15s}
 .gfg .tog.on{background:var(--red)}.gfg .tog.on::after{left:21px;background:#fff}
 .gfg .step{display:flex;align-items:center;gap:6px}
-.gfg .step button{width:36px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--s2);color:var(--tx);font-size:18px;font-weight:700;cursor:pointer}
+.gfg .step .stepb{display:flex;align-items:center;justify-content:center;width:36px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--s2);color:var(--tx);font-size:18px;font-weight:700;cursor:pointer}
 .gfg .step .v{min-width:48px;text-align:center;font-weight:700;font-variant-numeric:tabular-nums}
 .gfg .note{display:flex;gap:10px;background:var(--redbg);border:1px solid rgba(251,13,0,.35);border-radius:14px;padding:11px 12px;font-size:12px;line-height:1.4;color:#ffd4d1;margin-top:12px}
 .gfg .note.quiet{background:var(--s2);border-color:var(--line);color:var(--tx2)}
@@ -162,10 +162,14 @@ var ICONS = {
   play: "M6 4l14 8-14 8z",
   stop: "M6 6h12v12H6z"
 };
-var Focusable = ({ onClick, className, children }) => {
+var Focusable = ({ onClick, className, children, style }) => {
   const F = window.DFL && window.DFL.Focusable;
-  const props = { className: className || "", onClick, "flow-children": "horizontal" };
-  return F ? h(F, props, children) : h("div", { ...props, tabIndex: 0 }, children);
+  const fire = onClick ? (e) => onClick(e || {}) : void 0;
+  const props = { className: className || "", onClick, style, "flow-children": "horizontal" };
+  if (F) return h(F, { ...props, onActivate: fire, onOKButton: fire }, children);
+  return h("div", { ...props, tabIndex: 0, onKeyDown: onClick ? (e) => {
+    if (e.key === "Enter" || e.key === " ") onClick(e);
+  } : void 0 }, children);
 };
 var Row = ({ icon, title, sub, value, onClick }) => h(
   Focusable,
@@ -181,7 +185,7 @@ var Toggle = ({ on, onChange, title, sub }) => h(
   h("div", { className: "t" }, h("b", null, title), sub ? h("span", { style: { whiteSpace: "normal" } }, sub) : null),
   h("div", { className: "tog" + (on ? " on" : "") })
 );
-var Seg = ({ value, options, onChange }) => h("div", { className: "seg" }, options.map(([v, l]) => h("button", { key: v, className: v === value ? "on" : "", onClick: () => onChange(v) }, l)));
+var Seg = ({ value, options, onChange }) => h("div", { className: "seg" }, options.map(([v, l]) => h(Focusable, { key: v, className: "segb" + (v === value ? " on" : ""), onClick: () => onChange(v) }, l)));
 var Page = ({ title, onBack, children }) => h("div", null, h("div", { className: "bar-top" }, h(Focusable, { className: "back", onClick: onBack }, "\u2039"), h("div", { className: "title" }, title)), children);
 var Note = ({ quiet, children }) => h("div", { className: "note" + (quiet ? " quiet" : "") }, children);
 function useGovernor(profile) {
@@ -544,11 +548,11 @@ function AllSettingsPage({ back, cfg, patch }) {
     if (t === "integer" || t === "float") {
       const st = t === "integer" ? 1 : 0.1;
       const set = (d) => (e) => {
-        e.stopPropagation();
+        e.stopPropagation && e.stopPropagation();
         const nv = Math.round((Number(v) + d) * 1e3) / 1e3;
         patch({ [n]: t === "integer" ? Math.round(nv) : nv });
       };
-      return h("div", { className: "step" }, h("button", { onClick: set(-st) }, "\u2212"), h("div", { className: "v" }, String(v)), h("button", { onClick: set(st) }, "+"));
+      return h("div", { className: "step" }, h(Focusable, { className: "stepb", onClick: set(-st) }, "\u2212"), h("div", { className: "v" }, String(v)), h(Focusable, { className: "stepb", onClick: set(st) }, "+"));
     }
     const TF = window.DFL && window.DFL.TextField;
     return TF ? h(TF, { value: String(v == null ? "" : v), onChange: (e) => patch({ [n]: e.target.value }) }) : h("div", { className: "val" }, String(v == null ? "" : v) || "\u2013");

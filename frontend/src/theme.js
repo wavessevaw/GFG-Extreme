@@ -44,13 +44,13 @@ export const css = `
 .gfg .title{font-size:17px;font-weight:700}
 .gfg .sec{font-size:10.5px;letter-spacing:.16em;color:var(--tx3);font-weight:700;margin:16px 4px 8px}
 .gfg .seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--s2);border:1px solid var(--line);border-radius:14px;padding:3px;gap:3px}
-.gfg .seg button{border:0;background:transparent;color:var(--tx2);font:inherit;font-size:12.5px;font-weight:700;padding:10px 4px;border-radius:11px;cursor:pointer}
-.gfg .seg button.on{background:var(--red);color:#fff}
+.gfg .seg .segb{display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--tx2);font:inherit;font-size:12.5px;font-weight:700;padding:10px 4px;border-radius:11px;cursor:pointer}
+.gfg .seg .segb.on{background:var(--red);color:#fff}
 .gfg .tog{width:46px;height:28px;border-radius:999px;background:var(--s3);position:relative;flex:none;transition:.15s}
 .gfg .tog::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#d8d8de;transition:.15s}
 .gfg .tog.on{background:var(--red)}.gfg .tog.on::after{left:21px;background:#fff}
 .gfg .step{display:flex;align-items:center;gap:6px}
-.gfg .step button{width:36px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--s2);color:var(--tx);font-size:18px;font-weight:700;cursor:pointer}
+.gfg .step .stepb{display:flex;align-items:center;justify-content:center;width:36px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--s2);color:var(--tx);font-size:18px;font-weight:700;cursor:pointer}
 .gfg .step .v{min-width:48px;text-align:center;font-weight:700;font-variant-numeric:tabular-nums}
 .gfg .note{display:flex;gap:10px;background:var(--redbg);border:1px solid rgba(251,13,0,.35);border-radius:14px;padding:11px 12px;font-size:12px;line-height:1.4;color:#ffd4d1;margin-top:12px}
 .gfg .note.quiet{background:var(--s2);border-color:var(--line);color:var(--tx2)}

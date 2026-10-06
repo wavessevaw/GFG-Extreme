@@ -62,10 +62,13 @@ const ICONS = {
   user: "M12 12a4 4 0 100-8 4 4 0 000 8zM4 21a8 8 0 0116 0", hud: "M3 5h18v10H3zM8 19h8", cog: "M12 15a3 3 0 100-6 3 3 0 000 6zM19 12h2M3 12h2M12 3v2M12 19v2",
   play: "M6 4l14 8-14 8z", stop: "M6 6h12v12H6z",
 };
-const Focusable = ({ onClick, className, children }) => {
+// Gamepad / Steam Deck buttons only reach `onActivate` (A button) and `onOKButton`; `onClick` is touch/mouse only.
+const Focusable = ({ onClick, className, children, style }) => {
   const F = window.DFL && window.DFL.Focusable;
-  const props = { className: (className || ""), onClick, "flow-children": "horizontal" };
-  return F ? h(F, props, children) : h("div", { ...props, tabIndex: 0 }, children);
+  const fire = onClick ? (e) => onClick(e || {}) : undefined;
+  const props = { className: (className || ""), onClick, style, "flow-children": "horizontal" };
+  if (F) return h(F, { ...props, onActivate: fire, onOKButton: fire }, children);
+  return h("div", { ...props, tabIndex: 0, onKeyDown: onClick ? (e) => { if (e.key === "Enter" || e.key === " ") onClick(e); } : undefined }, children);
 };
 const Row = ({ icon, title, sub, value, onClick }) =>
   h(Focusable, { className: "row", onClick },
@@ -77,7 +80,7 @@ const Toggle = ({ on, onChange, title, sub }) =>
     h("div", { className: "t" }, h("b", null, title), sub ? h("span", { style: { whiteSpace: "normal" } }, sub) : null),
     h("div", { className: "tog" + (on ? " on" : "") }));
 const Seg = ({ value, options, onChange }) =>
-  h("div", { className: "seg" }, options.map(([v, l]) => h("button", { key: v, className: v === value ? "on" : "", onClick: () => onChange(v) }, l)));
+  h("div", { className: "seg" }, options.map(([v, l]) => h(Focusable, { key: v, className: "segb" + (v === value ? " on" : ""), onClick: () => onChange(v) }, l)));
 const Page = ({ title, onBack, children }) =>
   h("div", null, h("div", { className: "bar-top" }, h(Focusable, { className: "back", onClick: onBack }, "‹"), h("div", { className: "title" }, title)), children);
 const Note = ({ quiet, children }) => h("div", { className: "note" + (quiet ? " quiet" : "") }, children);
@@ -276,8 +279,8 @@ function AllSettingsPage({ back, cfg, patch }) {
     if (t === "boolean") return h("div", { className: "tog" + (v ? " on" : "") });
     if (t === "integer" || t === "float") {
       const st = t === "integer" ? 1 : 0.1;
-      const set = (d) => (e) => { e.stopPropagation(); const nv = Math.round((Number(v) + d) * 1000) / 1000; patch({ [n]: t === "integer" ? Math.round(nv) : nv }); };
-      return h("div", { className: "step" }, h("button", { onClick: set(-st) }, "−"), h("div", { className: "v" }, String(v)), h("button", { onClick: set(st) }, "+"));
+      const set = (d) => (e) => { e.stopPropagation && e.stopPropagation(); const nv = Math.round((Number(v) + d) * 1000) / 1000; patch({ [n]: t === "integer" ? Math.round(nv) : nv }); };
+      return h("div", { className: "step" }, h(Focusable, { className: "stepb", onClick: set(-st) }, "−"), h("div", { className: "v" }, String(v)), h(Focusable, { className: "stepb", onClick: set(st) }, "+"));
     }
     const TF = window.DFL && window.DFL.TextField;
     return TF ? h(TF, { value: String(v == null ? "" : v), onChange: (e) => patch({ [n]: e.target.value }) }) : h("div", { className: "val" }, String(v == null ? "" : v) || "–");
