@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (v0.0.9).
+"""Live orchestration service for GFG Governor (v0.0.10).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -37,6 +37,7 @@ from .governor_core import (
 )
 from .governor_battery import BatteryEstimator, read_battery
 from .steamos_tdp import SteamOSManagerTdp
+from .host_sensors import HostSensors, diagnose
 from .governor_hud import HudWriter, normalize as hud_normalize, output_fps as hud_output_fps
 from .governor_overlay import (
     OverlayRecord,
@@ -51,7 +52,7 @@ from .governor_telemetry import TelemetryObserver
 
 APPLIED_OPERATIONS = frozenset({"runtime-state-applied", "runtime-transition-applied"})
 FAILED_OPERATIONS = frozenset({"runtime-transition-failed"})
-VERSION = "0.0.9"
+VERSION = "0.0.10"
 
 
 @dataclass
@@ -142,6 +143,7 @@ class GovernorService:
         self.activity: Any = None  # ActivityLog, set by the plugin
         self._journal_state: tuple = ()
         self._journal_game: Optional[tuple] = None
+        self.sensors = HostSensors()
         self.power = SteamDeckPowerActuator(manager=SteamOSManagerTdp(home=os.environ.get("HOME")))
         self.power.journal = self._journal_power
         self.search = PowerSearch()
@@ -281,6 +283,22 @@ class GovernorService:
             self._forced_mode_change = True
         self._poke()
         return {"success": True, "error": None, "profile": profile, "mode": mode}
+
+    def _update_sensors(self) -> None:
+        """Host sensors + a one-line diagnosis. Never allowed to break the control loop."""
+        try:
+            sensors = self.sensors.sample()
+            tel = (self._status.get("telemetry") or {})
+            summary = tel.get("summary") or {}
+            budget = self._status.get("budget") or {}
+            fb = self._status.get("power_feedback") or {}
+            self._status["sensors"] = sensors
+            self._status["diagnosis"] = diagnose(
+                sensors, cap_w=fb.get("cap_w") or budget.get("tdp_w"), draw_w=fb.get("draw_w"),
+                frametime=summary.get("frametime"),
+            )
+        except Exception as error:
+            self.log.debug("Governor sensors unavailable: %s", error)
 
     def _update_battery(self) -> None:
         try:
@@ -1053,6 +1071,7 @@ class GovernorService:
         self._journal_transitions()
         self._update_effort()
         self._update_battery()
+        await asyncio.to_thread(self._update_sensors)
         profile = self._status.get("profile") or ""
         if profile:
             await asyncio.to_thread(self._sync_hud, profile)
@@ -1281,7 +1300,12 @@ class GovernorService:
 
         saved = await asyncio.to_thread(self._saved_profile_config, profile) or config
 
+        cpu_bound = (self._status.get("diagnosis") or {}).get("bottleneck") == "cpu"
+
         def applicable(point: OperatingPoint) -> Optional[str]:
+            if cpu_bound and point.render_scale_pct < 100:
+                # Render scale frees GPU time; a CPU-bound game gets a worse picture and no more real frames.
+                return "cpu-bound-render-scale-does-not-help"
             try:
                 point_deltas(point.to_dict(), saved, scale_capable=bool(capability["scale_capable"]),
                              scale_ready=self._scale_ready(profile))

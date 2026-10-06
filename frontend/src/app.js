@@ -5,38 +5,42 @@ const R = window.SP_REACT;
 const { useState, useEffect, useRef, useCallback } = R;
 const h = (t, p, ...c) => R.createElement(t, p, ...c);
 
+// Every backend call goes through here: a failure is remembered and shown, never silently swallowed.
+const rpcErrors = { last: null, listeners: new Set() };
+const reportRpcError = (name, e) => { rpcErrors.last = { name, message: String((e && e.message) || e) }; rpcErrors.listeners.forEach((f) => f()); };
+const safeCallable = (name) => { const f = callable(name); return async (...a) => { try { const r = await f(...a); if (rpcErrors.last && rpcErrors.last.name === name) { rpcErrors.last = null; rpcErrors.listeners.forEach((g) => g()); } return r; } catch (e) { if (name !== "log_ui_event") reportRpcError(name, e); throw e; } }; };
 const rpc = {
-  governor: callable("get_governor_status"),
-  setGovernor: callable("set_governor_enabled"),
-  setHud: callable("set_governor_hud"),
-  setScaleReady: callable("set_governor_scale_ready"),
-  setMode: callable("set_governor_mode"),
-  profiles: callable("get_profiles"),
-  setProfile: callable("set_current_profile"),
-  profileConfig: callable("get_profile_config"),
-  patch: callable("update_profile_config_fields"),
-  inspector: callable("get_pipeline_inspector"),
-  runtime: callable("get_runtime_status"),
-  launch: callable("get_launch_option"),
-  schema: callable("get_config_schema"),
-  createProfile: callable("create_profile"),
-  deleteProfile: callable("delete_profile"),
-  renameProfile: callable("rename_profile"),
-  journal: callable("get_config_journal"),
-  restoreJournal: callable("restore_config_journal_entry"),
-  checkInstalled: callable("check_mako_installed"),
-  install: callable("install_mako"),
-  uninstall: callable("uninstall_mako"),
-  fpStatus: callable("check_flatpak_extension_status"),
-  fpInstall: callable("install_flatpak_extension"),
-  fpUninstall: callable("uninstall_flatpak_extension"),
-  fpApps: callable("get_flatpak_apps"),
-  fpSet: callable("set_flatpak_app_override"),
-  fpRemove: callable("remove_flatpak_app_override"),
-  logStart: callable("start_log_recording"),
-  logStop: callable("stop_log_recording"),
-  logStatus: callable("get_log_recording_status"),
-  logUi: callable("log_ui_event"),
+  governor: safeCallable("get_governor_status"),
+  setGovernor: safeCallable("set_governor_enabled"),
+  setHud: safeCallable("set_governor_hud"),
+  setScaleReady: safeCallable("set_governor_scale_ready"),
+  setMode: safeCallable("set_governor_mode"),
+  profiles: safeCallable("get_profiles"),
+  setProfile: safeCallable("set_current_profile"),
+  profileConfig: safeCallable("get_profile_config"),
+  patch: safeCallable("update_profile_config_fields"),
+  inspector: safeCallable("get_pipeline_inspector"),
+  runtime: safeCallable("get_runtime_status"),
+  launch: safeCallable("get_launch_option"),
+  schema: safeCallable("get_config_schema"),
+  createProfile: safeCallable("create_profile"),
+  deleteProfile: safeCallable("delete_profile"),
+  renameProfile: safeCallable("rename_profile"),
+  journal: safeCallable("get_config_journal"),
+  restoreJournal: safeCallable("restore_config_journal_entry"),
+  checkInstalled: safeCallable("check_mako_installed"),
+  install: safeCallable("install_mako"),
+  uninstall: safeCallable("uninstall_mako"),
+  fpStatus: safeCallable("check_flatpak_extension_status"),
+  fpInstall: safeCallable("install_flatpak_extension"),
+  fpUninstall: safeCallable("uninstall_flatpak_extension"),
+  fpApps: safeCallable("get_flatpak_apps"),
+  fpSet: safeCallable("set_flatpak_app_override"),
+  fpRemove: safeCallable("remove_flatpak_app_override"),
+  logStart: safeCallable("start_log_recording"),
+  logStop: safeCallable("stop_log_recording"),
+  logStatus: safeCallable("get_log_recording_status"),
+  logUi: safeCallable("log_ui_event"),
 };
 
 // ---------- helpers
@@ -210,6 +214,13 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
   const tdp = pw.observed_tdp_w != null ? pw.observed_tdp_w : pw.current_w;
   const eff = s.effort && s.effort.level;
   const mins = s.battery && s.battery.minutes_left;
+  const cap0 = (s.capability && s.capability.reason) || "";
+  const needsLaunch = s.enabled && (cap0 === "relaunch-required-for-governor-overlay" || s.reason === "relaunch-required-for-governor-overlay" || s.reason === "game-not-running" || s.reason === "diagnostics-active-no-events");
+  const troubled = s.state === "PAUSED" || (s.enabled && s.reason === "target-not-proven-viable");
+  const dg = s.diagnosis || {}, sn = s.sensors || {};
+  const health = s.enabled ? [dg.bottleneck && dg.bottleneck !== "unknown" && dg.bottleneck !== "none" ? { gpu: "GPU-bound", cpu: "CPU-bound", power: "Power-limited" }[dg.bottleneck] : null,
+    sn.temp_c != null ? Math.round(sn.temp_c) + " °C" + (dg.thermal === "hot" ? " · hot" : dg.thermal === "heating" ? " · heating up" : "") : null,
+    dg.smoothness === "stuttering" ? "stutter detected" : dg.smoothness === "smooth" ? "smooth" : null].filter(Boolean).join(" · ") : "";
   const left = mins != null ? (mins >= 60 ? Math.floor(mins / 60) + "h" + String(mins % 60).padStart(2, "0") : mins + "m") : "";
   return h("div", null,
     h("div", { className: "top" }, h("div", { className: "brand" }, h("img", { src: LOGO, width: 30, height: 30, style: { marginRight: 8, verticalAlign: "middle" } }), "GFG", h("b", null, "·"), "EXTREME"),
@@ -228,27 +239,22 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
     h(Focusable, { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? undefined : toggle },
       h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 18 }), busy ? "WORKING…" : missing ? "INSTALL ENGINE" : s.enabled ? "STOP" : "RUN"),
     h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : missing ? "The GFG engine is not installed yet. One tap installs it." : "Target " + target + " FPS · " + (dev.reason || "picked automatically for this screen")),
+    h("div", { className: "sec" }, "MODE"),
+    h(Seg, { value: s.mode || "budget", options: [["budget", "Battery"], ["quality", "Quality"]], onChange: async (v) => { try { await rpc.setMode(profile, v); } catch (e) {} refresh(); } }),
+    h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
+    health ? h("div", { className: "hint" }, health) : null,
+    needsLaunch ? h("div", null, h("div", { className: "sec" }, "START THE GAME WITH THIS LAUNCH OPTION"), h(LaunchCopy, { launch })) : null,
+    troubled ? h("div", { className: "list" }, h(Row, { icon: "play", title: "Something wrong? Record a log", sub: "Settings → Diagnostics", onClick: () => go("advanced") })) : null,
     h("div", { className: "list" },
-      h(Row, { icon: "bolt", title: "Governor", sub: "What it decided and why", onClick: () => go("governor") }),
-      h(Row, { icon: "layers", title: "Frame Generation", sub: "Backend and quality", onClick: () => go("fg") }),
-      h(Row, { icon: "scale", title: "Scaling", sub: "Render scale for extra headroom", onClick: () => go("scaling") }),
-      h(Row, { icon: "hud", title: "In-game overlay", sub: "FPS, ×N, TDP while playing", onClick: () => go("hud") }),
-      h(Row, { icon: "user", title: "Profile", value: profile || "Default", onClick: () => go("profiles") }),
-      h(Row, { icon: "cog", title: "Advanced", sub: "Inspector, journal, install", onClick: () => go("advanced") })),
-    h("div", { className: "sec" }, "STEP 1 · LAUNCH OPTION"),
-    h(LaunchCopy, { launch }),
-    h("div", { className: "sec" }, "SOMETHING WRONG? SEND ME A LOG"),
-    h(LogRecorder, { profile }));
+      h(Row, { icon: "bolt", title: "Details", sub: "What GFG does and why", onClick: () => go("governor") }),
+      h(Row, { icon: "cog", title: "Settings", sub: "Overlay, profile, diagnostics", onClick: () => go("settings") })));
 }
 
 // ---------- Sub screens
 function GovernorPage({ s, back, profile, refresh }) {
   const dev = s.device || {}, req = s.request, pt = s.active_point, lad = s.ladder || {}, b = s.budget;
   const mode = s.mode || "budget";
-  return h(Page, { title: "Governor", onBack: back },
-    h("div", { className: "sec" }, "MODE"),
-    h(Seg, { value: mode, options: [["budget", "Battery"], ["quality", "Quality"]], onChange: async (v) => { await rpc.setMode(profile, v); refresh(); } }),
-    h(Note, { quiet: true }, MODE_TEXT[mode]),
+  return h(Page, { title: "Details", onBack: back },
     b ? h("div", { className: "sec" }, "BATTERY") : null,
     b ? h("div", { className: "card" }, h("div", { className: "kv" },
       h("span", null, "TDP target"), h("b", null, b.tdp_w != null ? num(b.tdp_w, 0) + " W" : "no TDP access"),
@@ -264,6 +270,14 @@ function GovernorPage({ s, back, profile, refresh }) {
       h("span", null, "Testing"), h("b", null, req ? POINT_LABEL(req.point) : "–"),
       ...(b ? [] : [h("span", null, "Attempts"), h("b", null, lad.attempts != null ? lad.attempts + " / " + (lad.max_attempts || 12) : "–")]))),
     dev.reason ? h(Note, { quiet: true }, dev.reason) : null,
+    h("div", { className: "sec" }, "HEALTH"),
+    h("div", { className: "card" }, h("div", { className: "kv" },
+      h("span", null, "Limits the game"), h("b", null, { gpu: "GPU", cpu: "CPU", power: "TDP cap", none: "Nothing", unknown: "–" }[(s.diagnosis || {}).bottleneck || "unknown"]),
+      h("span", null, "Temperature"), h("b", null, (s.sensors || {}).temp_c != null ? Math.round(s.sensors.temp_c) + " °C" + (s.sensors.temp_slope_c_per_min != null ? " (" + (s.sensors.temp_slope_c_per_min > 0 ? "+" : "") + num(s.sensors.temp_slope_c_per_min, 1) + "/min)" : "") : "–"),
+      h("span", null, "GPU / CPU load"), h("b", null, ((s.sensors || {}).gpu_busy_pct != null ? num(s.sensors.gpu_busy_pct, 0) + "%" : "–") + " / " + ((s.sensors || {}).cpu_top_core_pct != null ? num(s.sensors.cpu_top_core_pct, 0) + "% top core" : "–")),
+      h("span", null, "Frametime p95 / p99"), h("b", null, (((s.telemetry || {}).summary || {}).frametime || {}).p95_ms != null ? num(s.telemetry.summary.frametime.p95_ms, 1) + " / " + num(s.telemetry.summary.frametime.p99_ms, 1) + " ms" : "–"),
+      h("span", null, "Battery draw"), h("b", null, (s.sensors || {}).battery_discharge_w != null ? num(s.sensors.battery_discharge_w, 1) + " W" : "–"),
+      h("span", null, "Fan"), h("b", null, (s.sensors || {}).fan_rpm != null ? num(s.sensors.fan_rpm, 0) + " rpm" : "–"))),
     h("div", { className: "sec" }, "RULES"),
     h("div", { className: "card" }, h("div", { className: "kv" },
       h("span", null, "Multipliers"), h("b", null, mode === "budget" ? "×1 to ×3.75, deeper only as a last resort" : "×1 to ×3, steps of 0.25"),
@@ -353,16 +367,34 @@ function JournalPage({ back, profile, reloadCfg }) {
     msg ? h(Note, null, msg) : null);
 }
 
-function AdvancedPage({ back, s, insp, launch, go }) {
+function SettingsPage({ back, go, profile }) {
+  return h(Page, { title: "Settings", onBack: back },
+    h("div", { className: "list", style: { marginTop: 0 } },
+      h(Row, { icon: "hud", title: "In-game overlay", sub: "FPS, ×N, TDP while playing", onClick: () => go("hud") }),
+      h(Row, { icon: "user", title: "Profile", value: profile || "Default", onClick: () => go("profiles") }),
+      h(Row, { icon: "play", title: "Launch command", sub: "Copy it into the game's Steam launch options", onClick: () => go("launch") }),
+      h(Row, { icon: "layers", title: "Frame generation backend", sub: "GFG Engine, OptiScaler, in-game", onClick: () => go("fg") }),
+      h(Row, { icon: "scale", title: "Scaling", sub: "Render scale for extra headroom", onClick: () => go("scaling") })),
+    h("div", { className: "sec" }, "SUPPORT"),
+    h("div", { className: "list" },
+      h(Row, { icon: "cog", title: "Diagnostics", sub: "Record a log, inspector, journal", onClick: () => go("advanced") }),
+      h(Row, { icon: "cog", title: "System", sub: "Engine install, Flatpak access", onClick: () => go("system") }),
+      h(Row, { icon: "cog", title: "All settings", sub: "Every profile option", onClick: () => go("all") })));
+}
+
+function LaunchPage({ back, launch }) {
+  return h(Page, { title: "Launch command", onBack: back }, h(LaunchCopy, { launch }),
+    h(Note, { quiet: true }, "Steam → the game → Properties → Launch Options. Games started this way are the ones GFG can manage."));
+}
+
+function AdvancedPage({ back, s, insp, launch, go, profile }) {
   const sv = insp && insp.saved, ef = insp && insp.effective, ac = insp && insp.actual;
   const col = (t, o, hot) => h("div", { className: "col" + (hot ? " hot" : "") }, h("h4", null, t),
     ...Object.entries(o || {}).slice(0, 5).map(([k, v]) => h("div", { key: k }, h("span", null, k), String(v))));
-  return h(Page, { title: "Advanced", onBack: back },
-    h("div", { className: "sec" }, "LAUNCH OPTION"),
-    h(LaunchCopy, { launch }),
-    h("div", { className: "list" }, h(Row, { icon: "cog", title: "All settings", sub: "Every profile option", onClick: () => go("all") }),
-      h(Row, { icon: "cog", title: "Journal", sub: "Undo recent changes", onClick: () => go("journal") }),
-      h(Row, { icon: "cog", title: "System", sub: "Engine install, Flatpak access", onClick: () => go("system") })),
+  return h(Page, { title: "Diagnostics", onBack: () => go("settings") },
+    h("div", { className: "sec" }, "RECORD A LOG"),
+    h(LogRecorder, { profile }),
+    h("div", { className: "list" }, h(Row, { icon: "cog", title: "Journal", sub: "Undo recent changes", onClick: () => go("journal") })),
     h("div", { className: "sec" }, "INSPECTOR"),
     h("div", { className: "cols" }, col("SAVED", sv), col("EFFECTIVE", ef), col("GOVERNOR", s && s.active_point ? { point: POINT_LABEL(s.active_point) } : {}, true), col("ACTUAL", ac)));
 }
@@ -459,23 +491,28 @@ function Content() {
   useEffect(() => { if (screen === "advanced") rpc.inspector(profile).then(setInsp).catch(() => {}); }, [screen]);
 
   const patch = async (c) => { setCfg({ ...(cfg || {}), ...c }); try { await rpc.patch(profile, c); } catch (e) {} loadCfg(profile); };
-  const pick = async (p) => { await rpc.setProfile(p); await loadProfiles(); setScreen("home"); };
+  const pick = async (p) => { await rpc.setProfile(p); await loadProfiles(); setScreen("settings"); };
   const back = () => setScreen("home");
   const go = setScreen;
 
+  const [, force] = useState(0);
+  useEffect(() => { const f = () => force((n) => n + 1); rpcErrors.listeners.add(f); return () => rpcErrors.listeners.delete(f); }, []);
+  const errBanner = rpcErrors.last ? h("div", { className: "note" }, "Backend call failed: " + rpcErrors.last.name + " — " + rpcErrors.last.message + ". Settings → Diagnostics → Record a log.") : null;
   let body;
   if (!s) body = h("div", { className: "hint" }, "Loading…");
   else if (screen === "governor") body = h(GovernorPage, { s, back, profile, refresh });
-  else if (screen === "fg") body = h(FgPage, { back, cfg, patch });
-  else if (screen === "scaling") body = h(ScalingPage, { s, back, profile, refresh });
-  else if (screen === "hud") body = h(HudPage, { back, s, profile, refresh });
-  else if (screen === "profiles") body = h(ProfilesPage, { back, profiles, current: profile, pick, reload: loadProfiles });
+  else if (screen === "fg") body = h(FgPage, { back: () => setScreen("settings"), cfg, patch });
+  else if (screen === "scaling") body = h(ScalingPage, { s, back: () => setScreen("settings"), profile, refresh });
+  else if (screen === "hud") body = h(HudPage, { back: () => setScreen("settings"), s, profile, refresh });
+  else if (screen === "profiles") body = h(ProfilesPage, { back: () => setScreen("settings"), profiles, current: profile, pick, reload: loadProfiles });
+  else if (screen === "settings") body = h(SettingsPage, { back, go, profile });
+  else if (screen === "launch") body = h(LaunchPage, { back: () => setScreen("settings"), launch });
   else if (screen === "journal") body = h(JournalPage, { back: () => setScreen("advanced"), profile, reloadCfg: () => loadCfg(profile) });
-  else if (screen === "all") body = h(AllSettingsPage, { back: () => setScreen("advanced"), cfg, patch });
-  else if (screen === "system") body = h(SystemPage, { back: () => setScreen("advanced"), inst, reloadInst });
-  else if (screen === "advanced") body = h(AdvancedPage, { back, s, insp, launch, go });
+  else if (screen === "all") body = h(AllSettingsPage, { back: () => setScreen("settings"), cfg, patch });
+  else if (screen === "system") body = h(SystemPage, { back: () => setScreen("settings"), inst, reloadInst });
+  else if (screen === "advanced") body = h(AdvancedPage, { back, s, insp, launch, go, profile });
   else body = h(Home, { s, profile, go, refresh, inst, reloadInst, launch });
-  return h("div", { className: "gfg" }, h("style", null, css), body);
+  return h("div", { className: "gfg" }, h("style", null, css), errBanner, body);
 }
 
 const MdBolt = () => h("img", { src: LOGO, width: 20, height: 20 });

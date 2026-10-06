@@ -53,6 +53,20 @@ jobs:
           python3 scripts/check_generated_config.py
           python3 -m unittest discover -s tests -p 'test_*.py'
 
+      - uses: actions/setup-node@v4
+        if: steps.version.outputs.exists == 'false'
+        with:
+          node-version: "22"
+
+      - name: Frontend build is current and passes the smoke test
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          npm ci
+          npm run build
+          git diff --exit-code dist/index.js || { echo "::error::dist/index.js is stale"; exit 1; }
+          npx playwright install --with-deps chromium
+          node frontend/harness/smoke.mjs
+
       - name: Fetch Flatpak payloads from the previous release
         if: steps.version.outputs.exists == 'false'
         run: |

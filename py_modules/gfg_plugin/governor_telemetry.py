@@ -80,6 +80,22 @@ def _percentile(values: list[float], percentile: float) -> Optional[float]:
     return ordered[low] * (1.0 - weight) + ordered[high] * weight
 
 
+def frametime_stats(real_fps_values: Iterable[float]) -> Dict[str, Optional[float]]:
+    """Frametime view of the real (base) cadence: two points with the same average FPS can feel very different."""
+    fts = [1000.0 / float(v) for v in real_fps_values if _number(v) is not None and float(v) > 0]
+    if not fts:
+        return {"median_ms": None, "p95_ms": None, "p99_ms": None, "jitter_ms": None, "stutter_ratio": None}
+    median = statistics.median(fts)
+    mad = statistics.median(abs(v - median) for v in fts)
+    return {
+        "median_ms": round(median, 2),
+        "p95_ms": round(float(_percentile(fts, 95.0)), 2),
+        "p99_ms": round(float(_percentile(fts, 99.0)), 2),
+        "jitter_ms": round(mad, 2),
+        "stutter_ratio": round(sum(v > 1.5 * median for v in fts) / len(fts), 3),
+    }
+
+
 def robust_stats(values: Iterable[float]) -> Dict[str, Optional[float]]:
     vals = [float(value) for value in values if _number(value) is not None]
     if not vals:
@@ -436,6 +452,7 @@ class TelemetryObserver:
             "real": real_stats,
             "output": output_stats,
             "multiplier": multiplier_stats,
+            "frametime": frametime_stats(sample.real_fps for sample in samples),
             "misses": sum(operation in MISS_OPERATIONS for operation in operations),
             "hard_pressure": sum(operation in HARD_PRESSURE_OPERATIONS for operation in operations),
             "bypasses": sum(operation in BYPASS_OPERATIONS for operation in operations),

@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-const require = createRequire("/opt/npm-tools/node_modules/");
+const require = createRequire(import.meta.url);
 const { chromium } = require("playwright");
 const rows = {
   minimal: "<b>90</b> FPS  <b>11.1</b> ms  <i>x2  45&gt;90</i>",

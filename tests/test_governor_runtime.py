@@ -234,6 +234,25 @@ class PredictiveStartTests(RuntimeBase):
         self.assertIn("native90", st["ladder"]["predicted_infeasible"])
 
 
+class BottleneckAwareLadderTests(RuntimeBase):
+    def test_cpu_bound_game_skips_render_scale_points(self):
+        self.svc.sensors.sample = lambda force=False: {"gpu_busy_pct": 40.0, "cpu_top_core_pct": 98.0}
+        self.prime_not_matching()
+        self.step()  # sensors/diagnosis are refreshed at the end of every iteration
+        self.assertEqual(self.svc._status["diagnosis"]["bottleneck"], "cpu")
+        ladder = self.svc._ladder
+        self.assertIsNotNone(ladder)
+        for point in ladder.candidates():  # force the search to reach the scaled rungs
+            if point.render_scale_pct == 100:
+                ladder.reject(point.key, "test")
+        self.svc._request = None
+        self.step()
+        skipped = (self.svc.get_status("game").get("ladder") or {}).get("skipped", {})
+        scaled = {k: v for k, v in skipped.items() if "-s9" in k or "-s8" in k}
+        self.assertTrue(scaled, skipped)
+        self.assertTrue(all(v == "cpu-bound-render-scale-does-not-help" for v in scaled.values()), skipped)
+
+
 class TrialFlowTests(RuntimeBase):
     def test_ladder_rejects_unhealthy_point_rolls_back_then_confirms_next(self):
         self.prime_not_matching()

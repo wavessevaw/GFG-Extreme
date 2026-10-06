@@ -3,8 +3,8 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 async function loadEsbuild() {
-  for (const spec of ["esbuild", "/opt/npm-tools/node_modules/esbuild/lib/main.js"]) {
-    try { return await import(spec.startsWith("/") ? pathToFileURL(spec).href : spec); } catch (e) {}
+  for (const spec of ["esbuild"]) {
+    try { return await import(spec); } catch (e) {}
   }
   throw new Error("esbuild not found (npm i -D esbuild)");
 }
