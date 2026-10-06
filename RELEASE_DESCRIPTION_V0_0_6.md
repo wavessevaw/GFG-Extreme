@@ -6,9 +6,9 @@
 
 ### New: Battery mode (default)
 - **TDP budget.** 9–11 W is the target. 12–15 W is for heavy games. Above 15 W only as a last resort, while real FPS stays below about 22 for a minute, and never above what your Deck allows: a stock OLED stops at 15 W, some Decks allow 20 W. The limits are read from the hardware, not assumed.
-- **Multipliers ×1 to ×3.75** in 0.25 steps (real FPS never below 24). **×4** only as a last resort.
+- **Multipliers ×1 to ×3.75** in 0.25 steps (real FPS never below 24). One deeper point exists as a last resort, chosen so the real cadence stays at 20 or more and the output still lands on the panel rate (×3.91 at 90 Hz, ×3 at 60 Hz).
 - **How it searches.** It starts at 30 real FPS (30x3 at 90 Hz, 30x2 at 60 Hz) and 10 W, then lowers TDP 1 W at a time. A failed level returns to the last good one. After that it tries fewer generated frames at the same watts.
-- **When a scene gets heavier** the order is: more generated frames (down to 30 real), then up to 11 W, then ×3.25–×3.75, then up to 15 W, then ×4, and the highest watts the device allows last.
+- **When a scene gets heavier** the order is: more generated frames (down to 30 real), then up to 11 W, then ×3.25–×3.75, then up to 15 W, then the last-resort point, and the highest watts the device allows last. Whatever the guard spends is given back automatically about a minute after the scene calms down, so a loading screen cannot leave the budget raised for the rest of the session.
 - **When a scene gets lighter** it tries −1 W again after 5 minutes of clean play, backing off after a miss. Quality given up to a heavy scene is won back.
 - **Quality mode** (the previous behaviour) stays available: Governor → Mode.
 
@@ -16,6 +16,8 @@
 - **Guard after LOCKED.** Previously nothing reacted to a heavier scene after the Governor locked. Now two bad windows (one if FPS drops hard) trigger the guard.
 - **No locking after a single window.** A TDP level or point needs two clean 15 s windows in a row.
 - **One definition of "holds"** everywhere: real p5 ≥ 95 % of the cap, output ≥ 94 % of the target, no hard pressure, at most one miss per window. Frame pacing (p95 frame interval from the renderer) now counts, so a stutter hidden by averages fails the window.
+- **Transient dips no longer ratchet the budget upwards.** A window where the real cadence collapses to half its cap (a loading screen or a level transition) needs a second window before the guard reacts, and the guard's spending is remembered and returned. Without this, one dip every few minutes walked a game from 6 W to 15 W over half an hour.
+- **The last-resort watts are gated on a real shortfall**, not on an absolute FPS number. The old rule ("real FPS below 22") was satisfied by the deep point's own cap, so it was effectively always true there.
 - **TDP changed outside GFG** no longer pauses forever: in Battery mode GFG takes it back after 30 s, at most 3 times.
 - Overlay multiplier now comes from the FPS medians, matching the FPS shown (#20).
 

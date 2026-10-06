@@ -58,11 +58,11 @@ const PAUSED_TEXT = {
 const TIER_TEXT = {
   ideal: "Ideal: 11 W or less. GFG keeps watching and reacts if a scene gets heavier.",
   heavy: "Heavy game: needs 12–15 W. GFG keeps watching.",
-  emergency: "Last resort: ×4 or above 15 W, because real FPS stays very low.",
+  emergency: "Last resort: the deepest ratio or above 15 W, because the game keeps missing its frame budget.",
 };
 const PHASE_TEXT = { settle: "Starting at 10 W", search_down: "Lowering TDP", upgrade: "Fewer generated frames", probe: "Re-checking", locked: "Holding", guard: "Protecting" };
 const MODE_TEXT = {
-  budget: "Battery: lowest TDP first, 9–11 W ideal. Real FPS stays at 24 or more; ×4 and the highest watts your Deck allows only as a last resort.",
+  budget: "Battery: lowest TDP first, 9–11 W ideal. Real FPS stays at 24 or more; a deeper ratio (down to 20 real) and the highest watts your Deck allows only as a last resort.",
   quality: "Quality: fewest generated frames first, then lowers TDP. Uses more battery.",
 };
 // The ceilings come from the device: a stock OLED stops at 15 W, some Decks allow 20 W.
@@ -264,7 +264,7 @@ function GovernorPage({ s, back, profile, refresh }) {
     dev.reason ? h(Note, { quiet: true }, dev.reason) : null,
     h("div", { className: "sec" }, "RULES"),
     h("div", { className: "card" }, h("div", { className: "kv" },
-      h("span", null, "Multipliers"), h("b", null, mode === "budget" ? "×1 to ×3.75, ×4 last resort" : "×1 to ×3, steps of 0.25"),
+      h("span", null, "Multipliers"), h("b", null, mode === "budget" ? "×1 to ×3.75, deeper only as a last resort" : "×1 to ×3, steps of 0.25"),
       h("span", null, "Saved profile"), h("b", null, "never modified"),
       h("span", null, "TDP"), h("b", null, mode === "budget" ? budgetRule(b) : "never above your own"))),
     (s.limitations || []).length ? h("div", { className: "sec" }, "LIMITS") : null,

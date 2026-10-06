@@ -30,7 +30,8 @@ class Game:
         real = min(cap, base)
         if cap >= base:
             return WindowVerdict(True, False, "holds"), real
-        return WindowVerdict(False, cap < 0.85 * base, "real-below-cap"), real
+        return WindowVerdict(False, cap < 0.85 * base, "real-below-cap",
+                             short=True, stall=cap < 0.5 * base), real
 
 
 def run(ctl, game, now, windows):
@@ -46,14 +47,18 @@ def run(ctl, game, now, windows):
 class BudgetPointsTests(unittest.TestCase):
     def test_ladder_90_cheapest_first_x4_only_as_emergency(self):
         keys = [p.key for p in budget_points(90)]
-        self.assertEqual(keys, ["22x4", "24x3.75", "26x3.5", "28x3.25", "30x3", "33x2.75", "36x2.5",
+        self.assertEqual(keys, ["23x3.913", "24x3.75", "26x3.5", "28x3.25", "30x3", "33x2.75", "36x2.5",
                                 "40x2.25", "45x2", "51x1.75", "60x1.5", "72x1.25", "native90"])
+        # The last resort still lands on the panel rate: 23 x 3.913 = 90, not 22 x 4 = 88.
+        last = budget_points(90)[0]
+        self.assertAlmostEqual(last.base_target_fps * last.multiplier, 90, places=1)
         self.assertTrue(budget_points(90)[0].degraded)
         self.assertFalse(any(p.degraded for p in budget_points(90)[1:]))
 
     def test_ladder_60_respects_real_floor(self):
         keys = [p.key for p in budget_points(60)]
-        self.assertEqual(keys, ["15x4", "24x2.5", "27x2.25", "30x2", "34x1.75", "40x1.5", "48x1.25", "native60"])
+        # x4 at 60 Hz would mean 15 real FPS; the last resort stops at 20 real.
+        self.assertEqual(keys, ["20x3", "24x2.5", "27x2.25", "30x2", "34x1.75", "40x1.5", "48x1.25", "native60"])
 
     def test_starts_at_30_real_and_10_watts(self):
         ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25)
@@ -130,23 +135,33 @@ class BudgetGuardTests(unittest.TestCase):
         ctl.observe(now + 15, WindowVerdict(False, False, "delivery-misses"), 30)
         self.assertEqual((ctl.point.key, ctl.tdp, ctl.phase), ("30x3", 7.0, "locked"))
 
-    def test_x4_comes_after_15_watts_and_above_15_only_when_real_stays_low(self):
+    def test_deep_points_are_spent_before_any_watts_above_15(self):
         ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25)
-        game = Game(1.5)  # very heavy: 15 W -> 22.5 real
+        game = Game(1.6)  # heavy: 15 W -> 24 real
         now, trace = run(ctl, game, 0.0, 60)
-        tdps_before_x4 = [t[1] for t in trace if t[0] != "22x4"]
-        self.assertLessEqual(max(tdps_before_x4), 15.0)
-        self.assertEqual(ctl.point.key, "22x4")
-        self.assertLessEqual(ctl.tdp, 15.0)  # x4 at 15 W holds 22 real: no emergency watts
+        self.assertEqual(ctl.point.key, "24x3.75")            # deep point, not more watts
+        self.assertLessEqual(max(t[1] for t in trace), 15.0)  # never above the normal budget
+        self.assertIsNone(ctl.short_since)
 
-    def test_emergency_watts_when_real_below_22_for_a_minute(self):
+    def test_emergency_watts_only_when_the_deepest_point_keeps_missing_its_cap(self):
         ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25)
-        game = Game(1.2)  # 15 W -> 18 real
+        game = Game(1.2)  # 15 W -> 18 real: even 23 real cannot be held
         now, trace = run(ctl, game, 0.0, 80)
         self.assertGreater(ctl.tdp, 15.0)
         self.assertLessEqual(ctl.tdp, 20.0)
         first_above = next(i for i, t in enumerate(trace) if t[1] > 15.0)
-        self.assertEqual(trace[first_above - 1][0], "22x4")
+        self.assertEqual(trace[first_above - 1][0], "23x3.913")
+
+    def test_a_deep_point_holding_its_own_cap_never_buys_emergency_watts(self):
+        """The real cadence sits at 23 because the point caps it, not for lack of power."""
+        ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25)
+        ctl.idx, ctl.tdp, ctl.phase = 0, 15.0, "locked"
+        now = 0.0
+        for _ in range(40):  # ten minutes at 23 real: healthy, just deep
+            now += WINDOW
+            ctl.observe(now, WindowVerdict(True, False, "holds"), 23)
+        self.assertIsNone(ctl.short_since)
+        self.assertLessEqual(ctl.tdp, 15.0)
 
     def test_never_above_20_watts(self):
         ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=30)
@@ -160,7 +175,7 @@ class BudgetGuardTests(unittest.TestCase):
         self.assertEqual((stock.normal_max_w, stock.emergency_max_w), (15.0, 15.0))
         run(stock, Game(0.5), 0.0, 200)
         self.assertEqual(stock.tdp, 15.0)          # never above the hardware maximum
-        self.assertEqual(stock.point.key, "22x4")  # x4 is the only escalation left
+        self.assertEqual(stock.point.key, "23x3.913")  # x4 is the only escalation left
         self.assertTrue(stock.exhausted)
         wide = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
         self.assertEqual((wide.normal_max_w, wide.emergency_max_w), (15.0, 20.0))
@@ -226,6 +241,79 @@ class BudgetGuardTests(unittest.TestCase):
         self.assertIn("33x2.75", ctl.rejected)
 
 
+class RatchetTests(unittest.TestCase):
+    """Regressions for the two review findings: the budget must not creep upwards."""
+
+    def locked_at_the_edge(self, fpw=4.5):
+        ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
+        game = Game(fpw)
+        now, _ = run(ctl, game, 0.0, 40)
+        self.assertEqual(ctl.phase, "locked")
+        return ctl, game, now
+
+    def dip(self, ctl, now, *, stall, windows=1):
+        """A window the game does not hold: a loading screen (stall) or a heavier scene."""
+        base = ctl.point.base_target_fps
+        real = base * (0.4 if stall else 0.88)
+        for _ in range(windows):
+            now += WINDOW
+            ctl.observe(now, WindowVerdict(False, True, "real-below-cap", short=True, stall=stall), real)
+        return now
+
+    def hold(self, ctl, game, now, minutes):
+        now, _ = run(ctl, game, now, int(minutes * 60 / WINDOW))
+        return now
+
+    def test_loading_screens_every_few_minutes_never_raise_the_budget(self):
+        ctl, game, now = self.locked_at_the_edge()
+        start = (ctl.point.key, ctl.tdp)
+        for _ in range(12):            # an hour of play, a loading screen every 5 min
+            now = self.dip(ctl, now, stall=True)
+            now = self.hold(ctl, game, now, 5)
+        self.assertEqual((ctl.point.key, ctl.tdp), start)
+
+    def test_a_single_stall_window_does_not_escalate_but_two_do(self):
+        ctl, game, now = self.locked_at_the_edge()
+        tdp = ctl.tdp
+        now = self.dip(ctl, now, stall=True)
+        self.assertEqual((ctl.tdp, ctl.phase), (tdp, "locked"))
+        self.dip(ctl, now, stall=True)
+        self.assertEqual(ctl.phase, "guard")
+
+    def test_what_the_guard_spends_is_given_back_within_minutes(self):
+        ctl, game, now = self.locked_at_the_edge()
+        before = (ctl.point.key, ctl.tdp)
+        now = self.dip(ctl, now, stall=False, windows=2)
+        self.assertNotEqual((ctl.point.key, ctl.tdp), before)
+        self.assertIsNotNone(ctl.recover)
+        now = self.hold(ctl, game, now, 5)   # inside the 5 min normal reprobe interval
+        self.assertEqual((ctl.point.key, ctl.tdp), before)
+        self.assertIsNone(ctl.recover)
+
+    def test_repeated_real_dips_oscillate_around_the_edge_instead_of_climbing(self):
+        ctl, game, now = self.locked_at_the_edge()
+        edge = ctl.tdp
+        peak = edge
+        for _ in range(15):
+            now = self.dip(ctl, now, stall=False, windows=2)
+            peak = max(peak, ctl.tdp)
+            now = self.hold(ctl, game, now, 4)
+        self.assertLessEqual(peak, edge + 4.0)
+        self.assertEqual((ctl.point.key, ctl.tdp), ("30x3", edge))
+
+    def test_emergency_watts_are_not_bought_by_a_capped_cadence(self):
+        """The old rule (real < 22 FPS) was always true on a deep point."""
+        ctl = BudgetController(target_output_fps=60, now=0.0, min_tdp_w=3, max_tdp_w=20)
+        ctl.idx, ctl.tdp, ctl.phase = 0, 15.0, "locked"      # 20x3 at 60 Hz: real caps at 20
+        now = 0.0
+        for _ in range(8):
+            now += WINDOW
+            ctl.observe(now, WindowVerdict(True, False, "holds"), 20)
+        self.assertIsNone(ctl.short_since)
+        self.dip(ctl, now, stall=False, windows=2)           # one genuine dip, not 60 s of them
+        self.assertLessEqual(ctl.tdp, 15.0)
+
+
 class VerdictTests(unittest.TestCase):
     P = OperatingPoint("30x3", 90, 30, 3, 100)
 
@@ -253,7 +341,7 @@ class TierEffortTests(unittest.TestCase):
         self.assertEqual(budget_tier(10, p), "ideal")
         self.assertEqual(budget_tier(14, p), "heavy")
         self.assertEqual(budget_tier(17, p), "emergency")
-        self.assertEqual(budget_tier(10, OperatingPoint("22x4", 90, 22, 4, 100, degraded=True)), "emergency")
+        self.assertEqual(budget_tier(10, OperatingPoint("23x3.913", 90, 22, 4, 100, degraded=True)), "emergency")
 
     def test_effort_follows_watts_in_budget_mode(self):
         point = {"multiplier": 3, "render_scale_pct": 100}

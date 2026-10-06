@@ -1133,6 +1133,7 @@ class GovernorService:
         self._status.update({"state": self._budget_state(), "reason": "operating-point-confirmed",
                              "recommended_point": self._point, "recommendation_proven": True,
                              "active_point_matches": True})
+        await self._apply_budget_tdp(profile)  # the point is live: now its watts
 
     def _budget_state(self) -> str:
         budget = self._budget
@@ -1205,11 +1206,9 @@ class GovernorService:
             budget.tdp_control = False
             self._event("tdp-control-yielded", "external-tdp-change", profile=profile)
 
-        # 1. Watts first: the TDP target applies at once.
-        if not await self._apply_budget_tdp(profile):
-            return
-
-        # 2. Then the operating point (confirmed by the renderer, like every point).
+        # 1. The operating point first.  Lowering TDP before the renderer has
+        # taken the point would starve the game in its *old* mode for a few
+        # seconds, which the player sees as a stutter at startup.
         point = budget.point
         if self._point is None or self._point.get("key") != point.key:
             if budget.exhausted and budget.request_failures >= budget.MAX_REQUEST_FAILURES:
@@ -1224,6 +1223,10 @@ class GovernorService:
             except PointNotApplicable as error:
                 budget.request_failed(now, error.reason)
                 self._status.update({"state": "PLAN", "reason": error.reason})
+            return
+
+        # 2. The point is live: apply this level's watts.
+        if not await self._apply_budget_tdp(profile):
             return
 
         # 3. Judge one fresh, non-overlapping window.

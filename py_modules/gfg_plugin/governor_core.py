@@ -557,6 +557,7 @@ class PowerSearch:
 BUDGET_MULTIPLIERS = (1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75)
 EMERGENCY_MULTIPLIER = 4
 REAL_FLOOR_FPS = 24  # below this interpolation smears; deeper points are not offered
+EMERGENCY_REAL_FLOOR_FPS = 20  # even the last resort keeps a real cadence that can be watched
 START_REAL_FPS = 30  # first point: ~30 real (30x3 at 90 Hz, 30x2 at 60 Hz)
 
 
@@ -576,8 +577,13 @@ def budget_points(target_output_fps: int) -> tuple[OperatingPoint, ...]:
         seen.add(base)
         mult = int(m) if m == int(m) else m
         normal.append(OperatingPoint(_point_key(target, base, m), target, base, mult, 100))
-    base4 = int(round(target / EMERGENCY_MULTIPLIER))
-    emergency = OperatingPoint(f"{base4}x4", target, base4, EMERGENCY_MULTIPLIER, 100, degraded=True)
+    # Last resort: as deep as x4 allows, but the real cadence stays >= 20 and the
+    # ratio is taken from the target, so the output still lands on the display
+    # rate (90/23 = 3.91, not 22x4 = 88 on a 90 Hz panel).
+    base4 = max(math.ceil(target / EMERGENCY_MULTIPLIER), EMERGENCY_REAL_FLOOR_FPS)
+    mult4 = round(target / base4, 3)
+    mult4 = int(mult4) if mult4 == int(mult4) else mult4
+    emergency = OperatingPoint(_point_key(target, base4, mult4), target, base4, mult4, 100, degraded=True)
     return (emergency,) + tuple(normal)
 
 
@@ -586,6 +592,8 @@ class WindowVerdict:
     healthy: bool
     severe: bool
     reason: str
+    short: bool = False   # the real stream did not reach this point's own cap
+    stall: bool = False   # real collapsed (loading screen / transition), not a power level
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -595,6 +603,7 @@ class WindowVerdict:
 HOLD_REAL_RATIO = 0.95       # real p5 vs the real-frame cap
 HOLD_OUTPUT_RATIO = 0.94     # output median vs the display target
 SEVERE_REAL_RATIO = 0.85
+STALL_REAL_RATIO = 0.5       # below half the cap looks like a loading screen, not a power level
 MAX_WINDOW_MISSES = 1
 PACING_P95_RATIO = 1.35      # p95 real frame interval vs the cap's frame time
 
@@ -607,19 +616,25 @@ def window_verdict(summary: Dict[str, Any], point: OperatingPoint) -> WindowVerd
     hard = int(summary.get("hard_pressure") or 0)
     misses = int(summary.get("misses") or 0)
     base = float(point.base_target_fps)
+    short = float(real_p5) < base * HOLD_REAL_RATIO
     severe = float(real_p5) < base * SEVERE_REAL_RATIO or hard >= 3
+    real_median = (summary.get("real") or {}).get("median")
+    reference = float(real_median) if isinstance(real_median, (int, float)) and math.isfinite(
+        float(real_median)) else float(real_p5)
+    stall = reference < base * STALL_REAL_RATIO
+    flags = {"short": short, "stall": stall}
     if hard > 0:
-        return WindowVerdict(False, severe, "hard-pressure")
+        return WindowVerdict(False, severe, "hard-pressure", **flags)
     if misses > MAX_WINDOW_MISSES:
-        return WindowVerdict(False, severe, "delivery-misses")
-    if float(real_p5) < base * HOLD_REAL_RATIO:
-        return WindowVerdict(False, severe, "real-below-cap")
+        return WindowVerdict(False, severe, "delivery-misses", **flags)
+    if short:
+        return WindowVerdict(False, severe, "real-below-cap", **flags)
     if float(output_median) < point.target_output_fps * HOLD_OUTPUT_RATIO:
-        return WindowVerdict(False, severe, "output-below-target")
+        return WindowVerdict(False, severe, "output-below-target", **flags)
     p95 = summary.get("real_interval_p95_ms")
     if isinstance(p95, (int, float)) and math.isfinite(float(p95)) and base > 0:
         if float(p95) > PACING_P95_RATIO * 1000.0 / base:
-            return WindowVerdict(False, False, "uneven-pacing")
+            return WindowVerdict(False, False, "uneven-pacing", **flags)
     return WindowVerdict(True, False, "holds")
 
 
@@ -639,8 +654,13 @@ class BudgetController:
       again (alternating), backing off on failure.
     * ``guard``       escalation, cheapest first: deeper multiplier down to ~30
       real, +1 W up to 11 W, x3.25 .. x3.75 (real 28 .. 24), +1 W up to 15 W,
-      x4, then (only while real stays below ``EMERGENCY_REAL_FPS`` for
-      ``EMERGENCY_SUSTAIN_S``) up to 20 W.
+      the last-resort point, then (only while the real stream keeps falling
+      short of its own cap for ``EMERGENCY_SUSTAIN_S``) up to 20 W.
+
+    Everything the guard spends is a debt: the state the point held before the
+    guard is remembered and walked back to on a short ``RECOVER_S`` timer, so a
+    loading screen every few minutes cannot ratchet the budget upwards for the
+    rest of the session.
 
     A TDP or point change is accepted only after ``HEALTHY_WINDOWS``
     consecutive clean windows.
@@ -651,13 +671,14 @@ class BudgetController:
     IDEAL_MAX_W = 11.0
     NORMAL_CEILING_W = 15.0
     EMERGENCY_CEILING_W = 20.0
-    EMERGENCY_REAL_FPS = 22.0
     EMERGENCY_SUSTAIN_S = 60.0
     HEALTHY_WINDOWS = 2
     GUARD_WINDOWS = 2
     REPROBE_S = 300.0
     REPROBE_MAX_S = 1200.0
     EMERGENCY_REPROBE_S = 90.0
+    RECOVER_S = 60.0       # giving back what the guard spent is not a new experiment
+    RECOVER_MAX_S = 300.0
     REJECT_TTL_S = 600.0
     MAX_REQUEST_FAILURES = 4
 
@@ -687,7 +708,9 @@ class BudgetController:
         self.prev: Optional[tuple[int, Optional[float]]] = None
         self.good = 0
         self.bad = 0
-        self.low_since: Optional[float] = None
+        self.short_since: Optional[float] = None
+        self.recover: Optional[tuple[int, Optional[float]]] = None
+        self.recover_interval = self.RECOVER_S
         self.rejected: Dict[str, float] = {}
         self.locked_since = now
         self.reprobe_interval = self.REPROBE_S
@@ -723,6 +746,7 @@ class BudgetController:
         self.probe = None
         self.locked_since = now
         self.exhausted = False
+        self._clear_recovered()
         self.reprobe_interval = (
             self.EMERGENCY_REPROBE_S if self.tdp_control and self.tdp is not None and self.tdp > self.normal_max_w
             else max(self.reprobe_interval, self.REPROBE_S)
@@ -730,17 +754,37 @@ class BudgetController:
         self.last_reason = reason
         return "hold"
 
+    def _at_least(self, state: tuple[int, Optional[float]]) -> bool:
+        """Back at (or better than) ``state``: same quality and no more watts."""
+        idx, tdp = state
+        if self.idx < idx:
+            return False
+        return not (self.tdp_control and tdp is not None and self.tdp is not None and self.tdp > tdp + 1e-6)
+
+    def _clear_recovered(self) -> None:
+        if self.recover is not None and self._at_least(self.recover):
+            self.recover = None
+            self.recover_interval = self.RECOVER_S
+
+    def _probe_delay(self) -> float:
+        return self.recover_interval if self.recover is not None else self.reprobe_interval
+
     def _can_lower(self) -> bool:
         return self.tdp_control and self.tdp is not None and self.tdp - 1.0 >= self.min_w - 1e-6
 
     # ------------------------------------------------------------ evidence
     def observe(self, now: float, verdict: WindowVerdict, real_median: Optional[float] = None) -> str:
-        """Feed one fresh window.  Returns ``move`` when the targets changed."""
-        real = float(real_median) if isinstance(real_median, (int, float)) and math.isfinite(float(real_median)) else None
-        if real is not None and real < self.EMERGENCY_REAL_FPS:
-            self.low_since = self.low_since if self.low_since is not None else now
-        else:
-            self.low_since = None
+        """Feed one fresh window.  Returns ``move`` when the targets changed.
+
+        ``real_median`` is kept for the caller's logs; the decision uses the
+        verdict, which measures the real stream against *this point's* cap.  An
+        absolute FPS threshold cannot work here: a deep point caps the real
+        cadence itself, so it would always look like a power shortage.
+        """
+        if verdict.healthy or not verdict.short:
+            self.short_since = None
+        elif self.short_since is None:
+            self.short_since = now
         if verdict.healthy:
             return self._healthy(now)
         return self._unhealthy(now, verdict)
@@ -750,7 +794,7 @@ class BudgetController:
         self.good += 1
         self.request_failures = 0
         if self.phase == "locked":
-            if now - self.locked_since < self.reprobe_interval:
+            if now - self.locked_since < self._probe_delay():
                 return "hold"
             return self._reprobe(now)
         if self.good < self.HEALTHY_WINDOWS:
@@ -759,6 +803,7 @@ class BudgetController:
         self.exhausted = False
         if self.quality_debt is not None and self.idx >= self.quality_debt:
             self.quality_debt = None
+        self._clear_recovered()
         was = self.probe
         self.probe = None
         if self.phase == "probe":
@@ -783,7 +828,11 @@ class BudgetController:
 
     def _owed_quality(self) -> bool:
         """Quality was given up to defend watts or a heavy scene and may be won back."""
-        return self.idx < self.comfort_idx or (self.quality_debt is not None and self.idx < self.quality_debt)
+        return (
+            self.idx < self.comfort_idx
+            or (self.quality_debt is not None and self.idx < self.quality_debt)
+            or (self.recover is not None and self.idx < self.recover[0])
+        )
 
     def _reprobe(self, now: float) -> str:
         # Watts first: try -1 W with the current point.  Upward probes only win
@@ -814,16 +863,25 @@ class BudgetController:
                 self.good = self.HEALTHY_WINDOWS - 1  # the restored level already held
             else:
                 if from_phase == "probe":
-                    self.reprobe_interval = min(self.reprobe_interval * 2.0, self.REPROBE_MAX_S)
+                    if self.recover is not None:
+                        self.recover_interval = min(self.recover_interval * 2.0, self.RECOVER_MAX_S)
+                    else:
+                        self.reprobe_interval = min(self.reprobe_interval * 2.0, self.REPROBE_MAX_S)
                 self._lock(now, f"probe-failed:{verdict.reason}")
             return "move"
         self.bad += 1
-        if self.phase == "locked" and not verdict.severe and self.bad < self.GUARD_WINDOWS:
+        # A collapse to half the cap is a loading screen or a transition far more
+        # often than a power level, so it never escalates on a single window.
+        immediate = verdict.severe and not verdict.stall
+        if self.phase == "locked" and not immediate and self.bad < self.GUARD_WINDOWS:
             return "hold"
         return self._escalate(now, verdict)
 
     def _escalate(self, now: float, verdict: WindowVerdict) -> str:
         self.bad = 0
+        if self.phase != "guard" and self.recover is None:
+            # Everything spent from here is a debt to give back when the scene allows.
+            self.recover = self.last_good or (self.idx, self.tdp)
         self.phase = "guard"
         self.probe = None
         step = 2.0 if verdict.severe else 1.0
@@ -841,7 +899,10 @@ class BudgetController:
             return self._move(f"guard-more-power:{verdict.reason}", tdp=min(self.normal_max_w, self.tdp + step))
         if self.idx == 1 and self._usable(0, now):
             return self._move(f"guard-emergency-x4:{verdict.reason}", idx=0)
-        sustained = self.low_since is not None and now - self.low_since >= self.EMERGENCY_SUSTAIN_S
+        # Above the normal budget only while the real stream keeps missing the
+        # cap of the deepest point there is: that, not an FPS number, is what
+        # "the game cannot hold 20-22 real FPS" means.
+        sustained = self.short_since is not None and now - self.short_since >= self.EMERGENCY_SUSTAIN_S
         if (
             sustained and self.tdp_control and self.tdp is not None
             and self.tdp < self.emergency_max_w - 1e-6
@@ -858,6 +919,7 @@ class BudgetController:
         self.request_failures += 1
         self.probe = None
         self.good = self.bad = 0
+        self._clear_recovered()
         if self.prev is not None and self.prev[0] != self.idx:
             self.idx = self.prev[0]
         else:
@@ -883,7 +945,10 @@ class BudgetController:
                 if self.last_good else None
             ),
             "rejected": sorted(self.rejected),
-            "reprobe_interval_s": self.reprobe_interval,
+            "reprobe_interval_s": self._probe_delay(),
+            "recovering_to": (
+                {"point": self.points[self.recover[0]].key, "tdp_w": self.recover[1]} if self.recover else None
+            ),
             "exhausted": self.exhausted,
             "reason": self.last_reason,
             "limits_w": {"min": self.min_w, "normal": self.normal_max_w, "emergency": self.emergency_max_w},
