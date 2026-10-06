@@ -50,11 +50,32 @@ class WrapperOverlayTests(unittest.TestCase):
         data = json.loads(manifest.read_text()) if manifest.exists() else {}
         return values.get("MAKO_CONFIG"), data
 
-    def test_script_declares_overlay_and_format_76(self):
+    def test_script_declares_overlay_and_format_77(self):
         text = self.script.read_text()
-        self.assertIn("# mako-wrapper-format: 76", text)
+        self.assertIn("# mako-wrapper-format: 77", text)
         self.assertIn("mako_governor_overlay=", text)
         self.assertIn("mako_governor_overlay_active=", text)
+
+    def run_env(self):
+        env = {"PATH": os.environ["PATH"], "HOME": HOME, "MAKO_PROFILE": "game"}
+        done = subprocess.run(["bash", str(self.script), "/usr/bin/env"], env=env,
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return dict(line.split("=", 1) for line in done.stdout.splitlines() if "=" in line)
+
+    def test_hud_active_conf_enables_managed_mangohud(self):
+        self.assertNotIn("MANGOHUD_CONFIGFILE", self.run_env())
+        manifest = self.svc.mangohud_layer_dir / "MangoHud.x86_64.json"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text("{}")
+        active = self.svc.config_dir / "hud" / "active.conf"
+        active.parent.mkdir(parents=True, exist_ok=True)
+        active.write_text("fps\n")
+        env = self.run_env()
+        self.assertEqual(env.get("MANGOHUD"), "1")
+        self.assertEqual(env.get("MANGOHUD_CONFIGFILE"), str(active))
+        active.unlink()
+        self.assertNotIn("MANGOHUD_CONFIGFILE", self.run_env())
 
     def test_no_overlay_uses_saved_config(self):
         config, manifest = self.run_wrapper()

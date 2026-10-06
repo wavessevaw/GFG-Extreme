@@ -30,6 +30,7 @@ from typing import Any, Dict, Optional
 from shared_config import FG_BACKEND_GFG
 from .constants import PRESENT_DIAGNOSTICS_LOG_FILENAME
 from .governor_core import OperatingPoint, OperatingPointPlanner, PowerSearch, TrialLadder
+from .governor_hud import HudWriter, normalize as hud_normalize
 from .governor_overlay import (
     OverlayRecord,
     OverlayStore,
@@ -122,6 +123,7 @@ class GovernorService:
         self.overlay: Optional[OverlayStore] = (
             OverlayStore(self.configuration.config_dir, builder) if callable(builder) else None
         )
+        self.hud = HudWriter(self.configuration.config_dir)
         self._io_lock = threading.RLock()
         self._forced_release: set[str] = set()
         self._restore_pending: Dict[str, str] = {}
@@ -211,6 +213,39 @@ class GovernorService:
 
     def _profile_enabled(self, profile: str) -> bool:
         return bool(self._profile_settings(profile).get("enabled", False))
+
+    def hud_settings(self, profile: str) -> Dict[str, Any]:
+        raw = self._profile_settings(profile).get("hud") or {}
+        preset, position = hud_normalize(raw.get("preset"), raw.get("position"))
+        return {"enabled": bool(raw.get("enabled", False)), "preset": preset, "position": position}
+
+    def set_hud(self, profile: str, enabled: Any = None, preset: Any = None, position: Any = None) -> Dict[str, Any]:
+        profile = str(profile or "").strip()
+        if not profile:
+            return {"success": False, "error": "Profile is required"}
+        current = self.hud_settings(profile)
+        if enabled is not None:
+            current["enabled"] = bool(enabled)
+        current["preset"], current["position"] = hud_normalize(
+            preset if preset is not None else current["preset"],
+            position if position is not None else current["position"],
+        )
+        self._settings.setdefault("profiles", {}).setdefault(profile, {})["hud"] = current
+        self._save_settings()
+        self._sync_hud(profile)
+        return {"success": True, "error": None, "hud": current, "relaunch_required": True}
+
+    def _sync_hud(self, profile: str) -> None:
+        """Publish/remove the active HUD config and keep the status line fresh."""
+        try:
+            settings = self.hud_settings(profile)
+            if settings["enabled"]:
+                self.hud.activate(settings["preset"], settings["position"])
+                self.hud.write_status(self._status, settings["preset"])
+            else:
+                self.hud.deactivate()
+        except OSError as error:
+            self.log.debug("Governor HUD sync failed: %s", error)
 
     def _scale_ready(self, profile: str) -> bool:
         return bool(self._profile_settings(profile).get("scale_ready", False))
@@ -414,6 +449,7 @@ class GovernorService:
             value["requested_profile"] = profile
             value["enabled"] = self._profile_enabled(profile)
         value["scale_ready"] = self._scale_ready(profile or value.get("profile", ""))
+        value["hud"] = self.hud_settings(profile or value.get("profile", ""))
         value["power"] = self.power.status()
         value["power_search"] = self.search.status.to_dict()
         value["request"] = self._request.to_dict() if self._request else None
@@ -680,6 +716,7 @@ class GovernorService:
             self._status.update({"state": "PAUSED", "reason": "profile-unavailable", "profile": profile or ""})
             return
         await self._retry_restores()
+        await asyncio.to_thread(self._sync_hud, profile)
         for forced in list(self._forced_release):
             self._forced_release.discard(forced)
             if forced == self._active_profile:

@@ -739,6 +739,14 @@ class Plugin:
             self.governor_service.set_scale_ready, profile_name, scale_ready
         )
 
+    async def set_governor_hud(
+            self, profile_name: str, enabled: Any = None, preset: Any = None, position: Any = None
+    ) -> Dict[str, Any]:
+        """Configure the in-game HUD (MangoHud layer + Governor status line)."""
+        return await asyncio.to_thread(
+            self.governor_service.set_hud, profile_name, enabled, preset, position
+        )
+
     async def get_pipeline_inspector(self, profile_name: str = "") -> Dict[str, Any]:
         """Return Saved -> Effective -> Actual pipeline truth."""
         return await asyncio.to_thread(

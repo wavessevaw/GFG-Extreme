@@ -7,6 +7,7 @@ const h = (t, p, ...c) => R.createElement(t, p, ...c);
 const rpc = {
   governor: callable("get_governor_status"),
   setGovernor: callable("set_governor_enabled"),
+  setHud: callable("set_governor_hud"),
   setScaleReady: callable("set_governor_scale_ready"),
   profiles: callable("get_profiles"),
   setProfile: callable("set_current_profile"),
@@ -162,15 +163,16 @@ function ScalingPage({ s, back, profile, refresh }) {
     h(Note, { quiet: true }, "Governor only uses 90% or 80% render scale, and only after FG alone is not enough."));
 }
 
-function HudPage({ back, cfg, patch }) {
-  const on = !!(cfg && cfg.gfg_hud_enabled), preset = (cfg && cfg.gfg_hud_preset) || "standard", pos = (cfg && cfg.gfg_hud_position) || "top-left";
+function HudPage({ back, s, profile, refresh }) {
+  const hud = s.hud || { enabled: false, preset: "standard", position: "top-left" };
+  const set = async (c) => { await rpc.setHud(profile, c.enabled, c.preset, c.position); refresh(); };
   return h(Page, { title: "In-game overlay", onBack: back },
-    h("div", { className: "list", style: { marginTop: 0 } }, h(Toggle, { on, title: "Show overlay in game", sub: "Real FPS → ×N → Output, TDP and Governor state.", onChange: (v) => patch({ gfg_hud_enabled: v }) })),
+    h("div", { className: "list", style: { marginTop: 0 } }, h(Toggle, { on: hud.enabled, title: "Show overlay in game", sub: "FPS, frametime, TDP and GFG state: real → ×N → output.", onChange: (v) => set({ enabled: v }) })),
     h("div", { className: "sec" }, "DETAIL"),
-    h(Seg, { value: preset, options: [["minimal", "Minimal"], ["standard", "Standard"], ["detailed", "Detailed"]], onChange: (v) => patch({ gfg_hud_preset: v }) }),
+    h(Seg, { value: hud.preset, options: [["minimal", "Minimal"], ["standard", "Standard"], ["detailed", "Detailed"]], onChange: (v) => set({ preset: v }) }),
     h("div", { className: "sec" }, "POSITION"),
-    h(Seg, { value: pos, options: [["top-left", "Top left"], ["top-right", "Top right"], ["bottom-left", "Bottom"]], onChange: (v) => patch({ gfg_hud_position: v }) }),
-    h(Note, { quiet: true }, "Takes effect on next game launch."));
+    h(Seg, { value: hud.position, options: [["top-left", "Top left"], ["top-right", "Top right"], ["bottom-left", "Bottom"]], onChange: (v) => set({ position: v }) }),
+    h(Note, { quiet: true }, "Takes effect on next game launch. Not used when another overlay layer (MangoHud/vkBasalt) is chosen for the profile."));
 }
 
 function ProfilesPage({ back, profiles, current, pick }) {
@@ -217,7 +219,7 @@ function Content() {
   else if (screen === "governor") body = h(GovernorPage, { s, back });
   else if (screen === "fg") body = h(FgPage, { back, cfg, patch });
   else if (screen === "scaling") body = h(ScalingPage, { s, back, profile, refresh });
-  else if (screen === "hud") body = h(HudPage, { back, cfg, patch });
+  else if (screen === "hud") body = h(HudPage, { back, s, profile, refresh });
   else if (screen === "profiles") body = h(ProfilesPage, { back, profiles, current: profile, pick });
   else if (screen === "advanced") body = h(AdvancedPage, { back, s, insp, launch });
   else body = h(Home, { s, profile, go, refresh });

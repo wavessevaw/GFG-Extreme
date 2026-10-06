@@ -76,7 +76,7 @@ from .profile_storage import (
 )
 
 
-WRAPPER_FORMAT_VERSION = 76
+WRAPPER_FORMAT_VERSION = 77
 WRAPPER_FORMAT_MARKER = f"# mako-wrapper-format: {WRAPPER_FORMAT_VERSION}"
 HOST_COMPATIBILITY_MARKER = "# mako-host-compatibility: aarch64-passthrough-v1"
 DIAGNOSTICS_DEFAULT_MARKER = (
@@ -223,6 +223,21 @@ def governor_overlay_lines(profile_name: str, runtime_state_dir: Path) -> list[s
     """
     path = governor_overlay_path(Path(runtime_state_dir).parent, profile_name)
     return [f"mako_governor_overlay={shlex.quote(str(path))}"]
+
+
+def governor_hud_lines(config_file_path: Path) -> list[str]:
+    """Enable the GFG in-game HUD through the managed MangoHud layer.
+
+    Only when the user chose no other external layer and the Governor service
+    has published an active HUD config (``<config_dir>/hud/active.conf``).
+    """
+    active = shlex.quote(str(Path(config_file_path).parent / "hud" / "active.conf"))
+    return [
+        f'if [ -z "$mako_external_vulkan_layer" ] && [ -r {active} ]; then',
+        f"    mako_external_vulkan_layer={EXTERNAL_VULKAN_LAYER_MANGOHUD}",
+        f"    export MANGOHUD_CONFIGFILE={active}",
+        "fi",
+    ]
 
 
 def governor_overlay_selection_lines() -> list[str]:
@@ -804,6 +819,7 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         '[ "$mako_gamescope_wsi_session" != 1 ]; then',
         '    mako_gamescope_wsi_skip_log="GFG Extreme: Gamescope WSI skipped: no active Gamescope session; continuing with the managed WSI and spatial chain disabled."',
         "fi",
+        *governor_hud_lines(context.config_file_path),
         'case "$mako_external_vulkan_layer" in',
         f"        {EXTERNAL_VULKAN_LAYER_MANGOHUD})",
         '            if [ "$mako_flatpak_runtime" != 1 ] && '

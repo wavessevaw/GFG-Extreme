@@ -115,6 +115,26 @@ class RuntimeBase(unittest.TestCase):
     def tearDown(self):
         self.assertEqual(sha(self.cfg.config_file_path), self.saved_hash, "Saved config was modified")
 
+    def test_hud_set_publishes_and_removes_active_config(self):
+        from gfg_plugin.governor_hud import active_config_path, status_path
+        active = active_config_path(self.cfg.config_dir)
+        self.assertFalse(active.exists())
+        result = self.svc.set_hud("game", True, "detailed", "top-right")
+        self.assertTrue(result["success"])
+        self.assertTrue(active.is_file())
+        text = active.read_text()
+        self.assertIn("position=top-right", text)
+        self.assertIn("exec=cat " + str(status_path(self.cfg.config_dir)), text)
+        self.assertEqual(self.svc.get_status("game")["hud"], {"enabled": True, "preset": "detailed", "position": "top-right"})
+        self.step()
+        self.assertTrue(status_path(self.cfg.config_dir).read_text().startswith("GFG"))
+        self.svc.set_hud("game", False)
+        self.assertFalse(active.exists())
+        # bogus values are normalised, never written raw
+        self.svc.set_hud("game", True, "evil;rm", "nowhere")
+        self.assertEqual(self.svc.hud_settings("game")["preset"], "standard")
+        self.assertEqual(self.svc.hud_settings("game")["position"], "top-left")
+
     # -- helpers
     def step(self, seconds=1.0):
         self.t["now"] += seconds

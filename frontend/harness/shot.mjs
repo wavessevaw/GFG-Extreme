@@ -7,7 +7,7 @@ const out = await build({ entryPoints: ["src/app.js"], bundle: true, format: "ii
 const rb = await build({ entryPoints: ["harness/reactbundle.js"], bundle: true, format: "iife", write: false, nodePaths: ["/opt/npm-tools/node_modules"], define: {"process.env.NODE_ENV":"\"development\""} });
 const reactJs = rb.outputFiles[0].text; const domJs = "";
 const dev = (mode, target) => ({ mode, target, reason: { oled: "Steam Deck OLED panel runs 90 Hz", lcd: "Steam Deck LCD panel tops out at 60 Hz", dock: "External display: 60 FPS" }[mode] });
-const base = { success: true, enabled: false, state: "DISABLED", telemetry: {}, power: {}, limitations: ["a game must be (re)launched after Governor is enabled to use the overlay and diagnostics"], ladder: { attempts: 2, max_attempts: 6 } };
+const base = { hud: { enabled: true, preset: "standard", position: "top-left" }, success: true, enabled: false, state: "DISABLED", telemetry: {}, power: {}, limitations: ["a game must be (re)launched after Governor is enabled to use the overlay and diagnostics"], ladder: { attempts: 2, max_attempts: 6 } };
 const tel = (real, out, m) => ({ real: { median: real }, output: { median: out }, latest: { effective_multiplier: m } });
 const STATES = {
   "home-idle-oled": { ...base, device: dev("oled", 90), target_output_fps: 90 },
@@ -19,7 +19,7 @@ const STATES = {
 const mockSrc = (state, extra) => `
 window.SP_REACT = React; window.DFL = { staticClasses: { Title: "t" }, Focusable: null };
 window.__state = ${JSON.stringify(state)};
-window.__cfg = ${JSON.stringify(extra.cfg || { fg_backend: "gfg", multiplier: 2, gfg_hud_enabled: true, gfg_hud_preset: "standard" })};
+window.__cfg = ${JSON.stringify(extra.cfg || { fg_backend: "gfg", multiplier: 2, })};
 var callable = (n) => async (...a) => ({ get_governor_status: () => window.__state, get_profiles: () => ({ profiles: ["Default", "Elden Ring", "Cyberpunk 2077"], current_profile: "Elden Ring" }),
   get_profile_config: () => ({ config: window.__cfg }), get_pipeline_inspector: () => ({ saved: { fg_backend: "gfg", multiplier: 2, scaling: "off" }, effective: { fg_backend: "gfg", multiplier: 2, scaling: "off" }, actual: { renderer: "loaded", multiplier: 2 } }),
   get_launch_option: () => ({ launch_option: "/home/deck/.local/bin/gfg %command%" }) }[n] || (() => ({ success: true })))();
