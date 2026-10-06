@@ -51,8 +51,21 @@ def _fmt_multiplier(value: float) -> str:
 _EFFORT_SHORT = {"easy": "easy", "medium": "med", "hard": "hard", "nightmare": "nightmare"}
 
 
+def output_fps(status: Dict[str, Any]) -> Optional[float]:
+    """Displayed FPS including generated frames, when the renderer reports it."""
+    if not status.get("enabled"):
+        return None
+    tel = status.get("telemetry") or {}
+    tel = tel.get("summary") or tel  # service stores {"snapshot", "summary"}
+    return (tel.get("output") or {}).get("median")
+
+
 def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
-    """Compact: ``x2 45>90 sc100 9W 2h05 med`` (two spaces between fields)."""
+    """Compact: ``90 FPS x2 (45) sc100 9W 2h05 med`` (two spaces between fields).
+
+    The lead number is the output FPS with generated frames; the real (rendered)
+    FPS follows the multiplier in brackets.
+    """
     if not status.get("enabled"):
         return "GFG off"
     tel = status.get("telemetry") or {}
@@ -60,9 +73,10 @@ def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
     real = (tel.get("real") or {}).get("median")
     out = (tel.get("output") or {}).get("median")
     mult = (tel.get("latest") or {}).get("effective_multiplier")
-    parts = [f"x{_fmt_multiplier(mult)}" if mult else "GFG"]
+    parts = [f"{round(out)} FPS"] if out is not None else []
+    parts.append(f"x{_fmt_multiplier(mult)}" if mult else "GFG")
     if real is not None and out is not None:
-        parts.append(f"{round(real)}>{round(out)}")
+        parts.append(f"({round(real)})")
     if preset == "minimal":
         return "  ".join(parts)
     point = status.get("active_point") or {}
@@ -83,20 +97,30 @@ def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
     return "  ".join(parts)
 
 
-def mangohud_config(preset: str, position: str, status_file: Path) -> str:
-    """Compact horizontal bar.  No CPU load; GPU only in Detailed."""
+def mangohud_config(preset: str, position: str, status_file: Path, generated_fps: bool = False) -> str:
+    """Compact horizontal bar.  No CPU load; GPU only in Detailed.
+
+    ``generated_fps``: the status line already leads with the output FPS
+    (generated frames included), so MangoHud's own counter is left out to avoid
+    a second, different number.  Without renderer telemetry MangoHud's counter
+    is the only FPS available and stays.  ``horizontal_stretch=0`` keeps the bar
+    as wide as its content; stretched, it spans the screen and its text starts
+    at the left edge whatever the position.
+    """
     preset, position = normalize(preset, position)
     lines = [
-        f"position={position}", "legacy_layout=0", "horizontal", "background_alpha=0.4",
-        "font_size=18", "round_corners=6", "text_color=FFFFFF",
-        "fps", "frametime", "fps_color_change=0", "no_display=0",
+        f"position={position}", "legacy_layout=0", "horizontal", "horizontal_stretch=0",
+        "background_alpha=0.4", "font_size=18", "round_corners=6", "text_color=FFFFFF",
+        "fps_color_change=0", "no_display=0",
+        f"exec=cat {status_file}",
     ]
+    if not generated_fps:
+        lines += ["fps", "frametime"]
     if preset != "minimal":
         # Native MangoHud sensors: still useful if the `exec` status line is not refreshed on a given build.
         lines += ["gpu_power", "battery", "battery_time"]
     if preset == "detailed":
         lines += ["gpu_stats"]
-    lines.append(f"exec=cat {status_file}")
     return "\n".join(lines) + "\n"
 
 
@@ -127,9 +151,9 @@ class HudWriter:
     def __init__(self, config_dir: Path) -> None:
         self.config_dir = Path(config_dir)
 
-    def activate(self, preset: str, position: str) -> Path:
+    def activate(self, preset: str, position: str, generated_fps: bool = False) -> Path:
         path = active_config_path(self.config_dir)
-        _atomic(path, mangohud_config(preset, position, status_path(self.config_dir)))
+        _atomic(path, mangohud_config(preset, position, status_path(self.config_dir), generated_fps))
         return path
 
     def deactivate(self) -> None:

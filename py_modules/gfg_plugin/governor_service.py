@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (v0.0.4).
+"""Live orchestration service for GFG Governor (v0.0.5).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -34,7 +34,7 @@ from .governor_core import (
     EffortEstimator, OperatingPoint, OperatingPointPlanner, PowerSearch, TrialLadder, raw_effort,
 )
 from .governor_battery import BatteryEstimator, read_battery
-from .governor_hud import HudWriter, normalize as hud_normalize
+from .governor_hud import HudWriter, normalize as hud_normalize, output_fps as hud_output_fps
 from .governor_overlay import (
     OverlayRecord,
     OverlayStore,
@@ -48,7 +48,7 @@ from .governor_telemetry import TelemetryObserver
 
 APPLIED_OPERATIONS = frozenset({"runtime-state-applied", "runtime-transition-applied"})
 FAILED_OPERATIONS = frozenset({"runtime-transition-failed"})
-VERSION = "0.0.4"
+VERSION = "0.0.5"
 
 
 @dataclass
@@ -298,9 +298,12 @@ class GovernorService:
         try:
             settings = self.hud_settings(profile)
             if settings["enabled"]:
-                self.hud.activate(settings["preset"], settings["position"])
+                status = self.get_status(profile)
+                # MangoHud re-reads a changed config, so the FPS source follows the telemetry.
+                self.hud.activate(settings["preset"], settings["position"],
+                                  generated_fps=hud_output_fps(status) is not None)
                 # get_status, not _status: power/effort/active point are only merged in there.
-                self.hud.write_status(self.get_status(profile), settings["preset"])
+                self.hud.write_status(status, settings["preset"])
             else:
                 self.hud.deactivate()
         except OSError as error:
