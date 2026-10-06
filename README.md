@@ -1,5 +1,7 @@
 <div align="center">
 
+**English** · [Русский](README.ru.md)
+
 <img src="docs/img/logo.png" alt="GFG Extreme" width="220">
 
 # GFG Extreme Decky
