@@ -70,7 +70,7 @@ def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
     power = status.get("power") or {}
     tdp = power.get("observed_tdp_w")
     if tdp is None:
-        tdp = power.get("current_w")
+        tdp = power.get("current_tdp_w")
     parts.append(f"{round(tdp)}W" if tdp is not None else "TDPn/a")
     left = format_minutes((status.get("battery") or {}).get("minutes_left"))
     if left:

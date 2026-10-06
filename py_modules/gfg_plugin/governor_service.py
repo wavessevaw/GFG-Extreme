@@ -299,7 +299,8 @@ class GovernorService:
             settings = self.hud_settings(profile)
             if settings["enabled"]:
                 self.hud.activate(settings["preset"], settings["position"])
-                self.hud.write_status(self._status, settings["preset"])
+                # get_status, not _status: power/effort/active point are only merged in there.
+                self.hud.write_status(self.get_status(profile), settings["preset"])
             else:
                 self.hud.deactivate()
         except OSError as error:
