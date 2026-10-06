@@ -60,7 +60,7 @@ const TIER_TEXT = {
   heavy: "Heavy game: needs 12–15 W. GFG keeps watching.",
   emergency: "Last resort: the deepest ratio or above 15 W, because the game keeps missing its frame budget.",
 };
-const PHASE_TEXT = { settle: "Starting at 10 W", search_down: "Lowering TDP", upgrade: "Fewer generated frames", probe: "Re-checking", locked: "Holding", guard: "Protecting" };
+const PHASE_TEXT = { settle: "Starting at 10 W", search_down: "Lowering TDP", upgrade: "Fewer generated frames", probe: "Re-checking", locked: "Watching", guard: "Protecting" };
 const MODE_TEXT = {
   budget: "Battery: lowest TDP first, 9–11 W ideal. Real FPS stays at 24 or more; a deeper ratio (down to 20 real) and the highest watts your Deck allows only as a last resort.",
   quality: "Quality: fewest generated frames first, then lowers TDP. Uses more battery.",
@@ -87,7 +87,7 @@ function describe(s) {
   const fb = s.power_feedback || {};
   if (b && b.cap_ignored) return { head: "TDP limit overridden", body: "The APU draws " + num(fb.draw_w, 1) + " W while GFG's limit is " + num(fb.cap_w, 0) + " W: another tool (ryzenadj, PowerTools…) sets the real limit. GFG keeps a deep ratio instead of spending power.", tone: "warn" };
   if (b && s.state === "OPTIMIZE_POWER") return { head: "Saving battery", body: b.probe === "up" ? "Trying fewer generated frames at " + num(b.tdp_w, 0) + " W." : "Looking for the lowest TDP that holds the target (now " + num(b.tdp_w, 0) + " W).", tone: "ok" };
-  if (b && s.state === "LOCKED") return { head: "Locked in · " + num(b.tdp_w, 0) + " W", body: TIER_TEXT[b.tier] || "Stable. GFG keeps watching and reacts if a scene gets heavier.", tone: b.tier === "emergency" ? "warn" : "ok" };
+  if (b && s.state === "LOCKED") return { head: "Adapting · " + num(b.tdp_w, 0) + " W", body: TIER_TEXT[b.tier] || "Checks FPS every second: adds watts at once when the game falls short, tries lower watts every 45 s.", tone: b.tier === "emergency" ? "warn" : "ok" };
   if (b && s.state === "GUARD") return { head: "Protecting", body: "A scene got heavier: more generated frames first, then more watts.", tone: "warn" };
   if (s.state === "OPTIMIZE_POWER") return { head: "Saving power", body: "Lowering TDP while holding the target.", tone: "ok" };
   if (s.state === "LOCKED") return { head: "Locked in", body: "Stable at target. GFG stays out of the way.", tone: "ok" };
@@ -268,7 +268,9 @@ function GovernorPage({ s, back, profile, refresh }) {
     h("div", { className: "card" }, h("div", { className: "kv" },
       h("span", null, "Multipliers"), h("b", null, mode === "budget" ? "×1 to ×3.75, deeper only as a last resort" : "×1 to ×3, steps of 0.25"),
       h("span", null, "Saved profile"), h("b", null, "never modified"),
-      h("span", null, "TDP"), h("b", null, mode === "budget" ? budgetRule(b) : "never above your own"))),
+      h("span", null, "TDP"), h("b", null, mode === "budget" ? budgetRule(b) : "never above your own"),
+      mode === "budget" ? h("span", null, "Reacts") : null,
+      mode === "budget" ? h("b", null, "up within ~2 s, down in 1 W steps") : null)),
     (s.limitations || []).length ? h("div", { className: "sec" }, "LIMITS") : null,
     ...(s.limitations || []).map((t, i) => h(Note, { key: i, quiet: true }, t)));
 }

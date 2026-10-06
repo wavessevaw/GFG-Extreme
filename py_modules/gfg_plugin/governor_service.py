@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (v0.0.8).
+"""Live orchestration service for GFG Governor (v0.0.9).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -51,7 +51,7 @@ from .governor_telemetry import TelemetryObserver
 
 APPLIED_OPERATIONS = frozenset({"runtime-state-applied", "runtime-transition-applied"})
 FAILED_OPERATIONS = frozenset({"runtime-transition-failed"})
-VERSION = "0.0.8"
+VERSION = "0.0.9"
 
 
 @dataclass
@@ -113,8 +113,11 @@ class GovernorService:
     # Budget mode (default): lowest TDP first, then fewer generated frames.
     DEFAULT_MODE = "budget"
     MODES = ("budget", "quality")
-    BUDGET_WINDOW_SECONDS = 15.0
-    BUDGET_MIN_SPAN_SECONDS = 12.0
+    BUDGET_WINDOW_SECONDS = 8.0
+    BUDGET_MIN_SPAN_SECONDS = 6.0
+    BUDGET_MIN_SAMPLES = 5
+    FAST_CHECK_SECONDS = 3.0     # starvation is checked every iteration on this much FPS
+    FAST_MIN_SAMPLES = 3
     EXTERNAL_RECLAIM_SECONDS = 30.0
     MAX_EXTERNAL_RECLAIMS = 3
     # Measured APU draw above the cap by this much, two windows in a row, means
@@ -192,6 +195,8 @@ class GovernorService:
         self._reclaims = 0
         self._over_cap_windows = 0
         self._draw_samples: List[float] = []
+        self._tdp_set_seq = 0
+        self._fast_point_key: Optional[str] = None
         self._rollback_deltas: Optional[Dict[str, Any]] = None
         self._rollback_at = 0.0
         self._generation_seen: Optional[int] = None
@@ -1414,9 +1419,27 @@ class GovernorService:
         if isinstance(draw, (int, float)) and math.isfinite(float(draw)):
             self._draw_samples.append(float(draw))
 
+        # Every iteration: a game short of its cap with the draw at the cap gets
+        # watts within seconds.  Lowering stays with the windows below.
+        if self._fast_point_key != point.key:  # samples from another point say nothing
+            self._fast_point_key, self._tdp_set_seq = point.key, self.observer.sample_seq
+        recent = self.observer.summary(self.FAST_CHECK_SECONDS, after_seq=self._tdp_set_seq)
+        if recent.get("samples", 0) >= self.FAST_MIN_SAMPLES:
+            draw_now = statistics.median(self._draw_samples[-3:]) if self._draw_samples else None
+            before = budget.tdp
+            if budget.fast_check(now, (recent.get("real") or {}).get("median"), draw_now) == "move":
+                self._event("budget-step", budget.last_reason, profile=profile,
+                            real=(recent.get("real") or {}).get("median"), draw_w=draw_now,
+                            before={"tdp_w": before}, after={"point": budget.point.key, "tdp_w": budget.tdp,
+                                                            "phase": budget.phase})
+                self._draw_samples = []
+                self._status.update({"state": self._budget_state(), "reason": budget.last_reason})
+                await self._apply_budget_tdp(profile)
+                return
+
         # 3. Judge one fresh, non-overlapping window.
         fresh = self.observer.summary(self.BUDGET_WINDOW_SECONDS, after_seq=self._evaluation_after_seq)
-        if fresh.get("samples", 0) < self.MIN_SAMPLES or fresh.get("sample_span_s", 0.0) < self.BUDGET_MIN_SPAN_SECONDS:
+        if fresh.get("samples", 0) < self.BUDGET_MIN_SAMPLES or fresh.get("sample_span_s", 0.0) < self.BUDGET_MIN_SPAN_SECONDS:
             self._status.update({"state": self._budget_state(), "reason": budget.last_reason})
             return
         verdict = window_verdict(fresh, point)
@@ -1471,6 +1494,7 @@ class GovernorService:
             return False
         self._applied_tdp = budget.tdp
         self._evaluation_after_seq = self.observer.sample_seq
+        self._tdp_set_seq = self.observer.sample_seq
         self._event("tdp-set", budget.last_reason, watts=budget.tdp, profile=profile)
         return True
 

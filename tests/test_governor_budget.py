@@ -24,6 +24,14 @@ class Game:
     def capacity(self, tdp):
         return self.fps_per_watt * tdp * self.scene
 
+    def draw(self, ctl):
+        """APU draw: the whole cap when starved, only what the base needs otherwise."""
+        if ctl.tdp is None:
+            return None
+        cap = self.capacity(ctl.tdp)
+        base = ctl.point.base_target_fps
+        return ctl.tdp if cap <= base else round(ctl.tdp * base / cap, 2)
+
     def window(self, ctl):
         cap = self.capacity(ctl.tdp)
         base = ctl.point.base_target_fps
@@ -39,6 +47,7 @@ def run(ctl, game, now, windows):
     for _ in range(windows):
         now += WINDOW
         verdict, real = game.window(ctl)
+        ctl.draw_w = game.draw(ctl)
         ctl.observe(now, verdict, real)
         trace.append((ctl.point.key, ctl.tdp, ctl.phase))
     return now, trace
@@ -202,7 +211,7 @@ class BudgetGuardTests(unittest.TestCase):
         now, _ = run(ctl, game, now, 12)
         self.assertEqual(ctl.point.key, "36x2.5")
         game.scene = 1.0
-        now, _ = run(ctl, game, now, int(ctl.REPROBE_S / WINDOW) * 3)
+        now, _ = run(ctl, game, now, int(900 / WINDOW))
         self.assertEqual((ctl.point.key, ctl.tdp), ("45x2", 6.0))
 
     def test_spare_headroom_goes_to_watts_not_quality(self):
@@ -213,7 +222,7 @@ class BudgetGuardTests(unittest.TestCase):
 
     def test_failed_reprobe_backs_off(self):
         ctl, game, now = self.locked()
-        interval = ctl.reprobe_interval
+        ctl.reprobe_interval = interval = ctl.REPROBE_S
         now, _ = run(ctl, game, now, int(interval / WINDOW) + 4)
         self.assertGreater(ctl.reprobe_interval, interval)
         self.assertEqual((ctl.point.key, ctl.tdp), ("30x3", 7.0))
@@ -298,8 +307,9 @@ class RatchetTests(unittest.TestCase):
         now = self.dip(ctl, now, stall=False, windows=2)
         self.assertNotEqual((ctl.point.key, ctl.tdp), before)
         self.assertIsNotNone(ctl.recover)
-        now = self.hold(ctl, game, now, 5)   # inside the 5 min normal reprobe interval
-        self.assertEqual((ctl.point.key, ctl.tdp), before)
+        now = self.hold(ctl, game, now, 5)
+        self.assertEqual(ctl.point.key, before[0])
+        self.assertLessEqual(ctl.tdp, before[1])     # given back (a probe may be trying lower)
         self.assertIsNone(ctl.recover)
 
     def test_repeated_real_dips_oscillate_around_the_edge_instead_of_climbing(self):
@@ -326,6 +336,81 @@ class RatchetTests(unittest.TestCase):
         self.assertLessEqual(ctl.tdp, 15.0)
 
 
+class FastRaiseTests(unittest.TestCase):
+    def locked_at_10(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
+        now, _ = run(ctl, Game(3.2), 0.0, 40)            # needs ~10 W for 30 real
+        return ctl, now
+
+    def test_after_a_menu_the_working_level_comes_back_in_two_seconds(self):
+        ctl, now = self.locked_at_10()
+        work = ctl.tdp
+        ctl.tdp = 6.0                                     # a pause menu walked it down
+        self.assertEqual(ctl.fast_check(now + 1, 12.0, 6.0), "hold")   # one check is not enough
+        self.assertEqual(ctl.fast_check(now + 2, 12.0, 6.0), "move")
+        self.assertEqual(ctl.tdp, work)
+        self.assertEqual(ctl.last_good, (ctl.idx, work))   # a failed probe never reverts below it
+
+    def test_without_history_it_climbs_two_watts_per_three_seconds(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
+        ctl.tdp, t = 6.0, 0.0
+        for _ in range(12):
+            t += 1.0
+            ctl.fast_check(t, 20.0, ctl.tdp)
+        self.assertEqual(ctl.tdp, 11.0)                   # 6 -> 8 -> 10 -> 11, never past the ideal budget
+        self.assertEqual(ctl.point.key, "30x3")           # 12-15 W only after deeper multipliers (slow path)
+
+    def test_loading_screen_with_low_draw_and_a_game_at_its_cap_never_raise(self):
+        ctl, now = self.locked_at_10()
+        tdp = ctl.tdp
+        for i in range(10):
+            ctl.fast_check(now + i, 12.0, 4.0)            # collapse, draw far under the cap
+            ctl.fast_check(now + 20 + i, 30.0, tdp)       # holds its cap
+        self.assertEqual(ctl.tdp, tdp)
+
+    def test_a_failing_lower_power_probe_reverts_within_seconds(self):
+        ctl, now = self.locked_at_10()
+        tdp = ctl.tdp
+        ctl.observe(now + 400, WindowVerdict(True, False, "holds"), 30)   # reprobe: -1 W
+        self.assertEqual((ctl.probe, ctl.tdp), ("down", tdp - 1))
+        ctl.fast_check(now + 401, 27.0, tdp - 1)
+        ctl.fast_check(now + 402, 27.0, tdp - 1)
+        self.assertEqual((ctl.probe, ctl.tdp), (None, tdp))
+
+    def test_deck_log_2026_10_06_resume_at_6_watts(self):
+        """Real numbers: a menu walked TDP to 6 W; back in game 12-15 real, draw 5.1-6.2 W."""
+        ctl, now = self.locked_at_10()
+        ctl.tdp, ctl.idx = 6.0, [p.key for p in ctl.points].index("33x2.75")
+        for i, (real, draw) in enumerate([(14.29, 5.19), (14.77, 5.14), (14.81, 6.04)]):
+            ctl.fast_check(now + i, real, draw)
+        self.assertGreater(ctl.tdp, 6.0)          # v0.0.7 sat at 6 W for over 2 minutes here
+
+    def test_shortfall_with_the_cap_not_binding_never_buys_watts(self):
+        """Critic's case: 36x2.5 at 9 W, real 30 whatever the watts (CPU), draw 7 W."""
+        ctl, now = self.locked_at_10()
+        ctl.idx, ctl.tdp = [p.key for p in ctl.points].index("36x2.5"), 9.0
+        for i in range(20):
+            ctl.fast_check(now + i, 30.0, 7.0)
+        self.assertEqual(ctl.tdp, 9.0)
+
+    def test_work_level_is_the_last_level_used_not_the_peak(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
+        ctl.held = [(0.0, 11.0), (100.0, 8.0)]
+        self.assertEqual(ctl._work_tdp(200.0), 8.0)
+
+    def test_without_a_draw_sensor_probes_stay_rare(self):
+        ctl, now = self.locked_at_10()
+        ctl.draw_w = None
+        self.assertEqual(ctl._probe_delay(), ctl.REPROBE_NO_DRAW_S)
+
+    def test_ignored_cap_disables_the_fast_path(self):
+        ctl, now = self.locked_at_10()
+        ctl.cap_ignored, tdp = True, ctl.tdp
+        for i in range(5):
+            ctl.fast_check(now + i, 20.0, 18.0)
+        self.assertEqual(ctl.tdp, tdp)
+
+
 class CapIgnoredTests(unittest.TestCase):
     def test_ignored_cap_holds_quality_at_the_comfort_point(self):
         """If the measured draw shows the cap does not bind, lower watts are fiction: do not buy real frames."""
@@ -341,6 +426,7 @@ class CapIgnoredTests(unittest.TestCase):
         ctl.cap_ignored, ctl.draw_w = True, 15.2
         run(ctl, Game(20.0), 0.0, 60)
         self.assertEqual(ctl.tdp, tdp)                      # no fictional walk down to 6 W
+        ctl.draw_w = 15.2
         self.assertEqual(ctl.status()["tier"], "emergency")  # 15.2 W real draw, not "ideal"
 
 
