@@ -91,6 +91,7 @@ def compact_status(status: Dict[str, Any]) -> Dict[str, Any]:
         "capability": status.get("capability"),
         "tdp": power.get("observed_tdp_w"), "tdp_owned": power.get("owned"), "tdp_available": power.get("available"),
         "tdp_fast": power.get("observed_fast_w"), "apu_w": power.get("draw_w"),
+        "tdp_method": power.get("method"),
         "effort": (status.get("effort") or {}).get("level"),
         "hud": status.get("hud"),
         "battery_min": (status.get("battery") or {}).get("minutes_left"),
@@ -406,7 +407,7 @@ class SessionRecorder:
             "decky_plugins": sorted(p.name for p in (self.user_home / "homebrew" / "plugins").glob("*"))
             if (self.user_home / "homebrew" / "plugins").is_dir() else [],
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.6",
+            "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.7",
         }
 
     def _write_bundle(self) -> Path:

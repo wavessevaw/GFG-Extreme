@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (v0.0.6).
+"""Live orchestration service for GFG Governor (v0.0.7).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -36,6 +36,7 @@ from .governor_core import (
     raw_effort, window_verdict,
 )
 from .governor_battery import BatteryEstimator, read_battery
+from .steamos_tdp import SteamOSManagerTdp
 from .governor_hud import HudWriter, normalize as hud_normalize, output_fps as hud_output_fps
 from .governor_overlay import (
     OverlayRecord,
@@ -50,7 +51,7 @@ from .governor_telemetry import TelemetryObserver
 
 APPLIED_OPERATIONS = frozenset({"runtime-state-applied", "runtime-transition-applied"})
 FAILED_OPERATIONS = frozenset({"runtime-transition-failed"})
-VERSION = "0.0.6"
+VERSION = "0.0.7"
 
 
 @dataclass
@@ -137,7 +138,7 @@ class GovernorService:
         self.activity: Any = None  # ActivityLog, set by the plugin
         self._journal_state: tuple = ()
         self._journal_game: Optional[tuple] = None
-        self.power = SteamDeckPowerActuator()
+        self.power = SteamDeckPowerActuator(manager=SteamOSManagerTdp(home=os.environ.get("HOME")))
         self.power.journal = self._journal_power
         self.search = PowerSearch()
         self.settings_path = self.configuration.config_dir / "gfg-governor.json"

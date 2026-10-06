@@ -8,6 +8,7 @@ Governor ownership.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional
@@ -49,6 +50,7 @@ class PowerControlState:
     fast_max_uw: Optional[int] = None
     slow_max_uw: Optional[int] = None
     ceiling_override_uw: Optional[int] = None
+    method: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         value = asdict(self)
@@ -78,7 +80,14 @@ class SteamDeckPowerActuator:
         hwmon_root: Path = Path("/sys/class/hwmon"),
         access: Any = os.access,
         helper: Any = privileged_writer,
+        manager: Any = None,
+        verify_seconds: float = 1.5,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        # steamos-manager (Steam's own TDP path) when present; direct hwmon writes otherwise.
+        self.manager = manager
+        self._verify_seconds = verify_seconds
+        self._sleep = sleep
         self.drm_root = Path(drm_root)
         self.hwmon_root = Path(hwmon_root)
         self._access = access
@@ -88,6 +97,7 @@ class SteamDeckPowerActuator:
         self._fast_path: Optional[Path] = None
         self._slow_path: Optional[Path] = None
         self._draw_path: Optional[Path] = None
+        self._keep_initial = False
 
     @staticmethod
     def _candidate_hwmons(drm_root: Path, hwmon_root: Path) -> Iterable[Path]:
@@ -172,9 +182,23 @@ class SteamDeckPowerActuator:
             # claiming control that cannot work.
             helper = self._helper()
             if helper is not None:
-                writable = bool(allowed_cap_path(str(fast)) and allowed_cap_path(str(slow)))
+                direct = bool(allowed_cap_path(str(fast)) and allowed_cap_path(str(slow)))
             else:
-                writable = bool(self._access(fast, os.W_OK) and self._access(slow, os.W_OK))
+                direct = bool(self._access(fast, os.W_OK) and self._access(slow, os.W_OK))
+            via_manager = False
+            if self.manager is not None:
+                try:
+                    via_manager = bool(self.manager.probe())
+                except Exception:
+                    via_manager = False
+            writable = via_manager or direct
+            mgr_range = getattr(self.manager, "range", None) if via_manager else None
+            if mgr_range and not direct:
+                # Only Steam's path is available: its range is the real limit.
+                low_uw, high_uw = int(mgr_range[0]) * 1_000_000, int(mgr_range[1]) * 1_000_000
+                slow_min = max(slow_min or 0, low_uw) or None
+                slow_max = min(slow_max, high_uw) if slow_max else high_uw
+            method = "steamos-manager" if via_manager else ("sysfs" if direct else None)
             self._fast_path = fast
             self._slow_path = slow
             self._draw_path = self._draw_sensor(hwmon, slow)
@@ -189,6 +213,7 @@ class SteamDeckPowerActuator:
                 slow_min_uw=slow_min,
                 fast_max_uw=fast_max,
                 slow_max_uw=slow_max,
+                method=method,
             )
             return self.status()
         self._fast_path = None
@@ -224,8 +249,10 @@ class SteamDeckPowerActuator:
         if not fast or not slow:
             self.state.error = "Could not read current PPT caps"
             return self.status()
-        self.state.initial_fast_uw = fast
-        self.state.initial_slow_uw = slow
+        if not (self._keep_initial and self.state.initial_fast_uw and self.state.initial_slow_uw):
+            self.state.initial_fast_uw = fast
+            self.state.initial_slow_uw = slow
+        self._keep_initial = False
         self.state.expected_fast_uw = fast
         self.state.expected_slow_uw = slow
         self.state.owned = True
@@ -241,6 +268,7 @@ class SteamDeckPowerActuator:
         if fast != self.state.expected_fast_uw or slow != self.state.expected_slow_uw:
             self.state.external_change = True
             self.state.owned = False
+            self._keep_initial = False
             self.state.error = "PPT caps changed outside GFG Governor; automatic power control paused"
             self._note("tdp-external-change", expected_slow_uw=self.state.expected_slow_uw, found_slow_uw=slow,
                        expected_fast_uw=self.state.expected_fast_uw, found_fast_uw=fast)
@@ -262,6 +290,68 @@ class SteamDeckPowerActuator:
         else:
             path.write_text(f"{int(value)}\n", encoding="utf-8")
 
+    def _direct_possible(self) -> bool:
+        if self._fast_path is None or self._slow_path is None:
+            return False
+        if self._helper() is not None:
+            return bool(allowed_cap_path(str(self._slow_path)) and allowed_cap_path(str(self._fast_path)))
+        return bool(self._access(self._slow_path, os.W_OK) and self._access(self._fast_path, os.W_OK))
+
+    def _apply(self, slow: int, fast: int, *, exact: bool = False) -> Optional[tuple[str, str]]:
+        """Put the caps at slow/fast; returns (kind, message) on failure, None on success.
+
+        Kinds: ``unverified`` (a write was accepted but the cap reads something
+        else) and ``write-failed``.  Updates the expected caps on success.
+        ``exact`` (restore) prefers the direct write, which keeps fast != slow.
+        """
+        assert self._fast_path is not None and self._slow_path is not None
+        manager = self.manager if self.state.method == "steamos-manager" else None
+        direct = self._direct_possible()
+        if manager is not None and exact and direct:
+            # Put Steam's own TdpLimit back too, so a later re-apply by Steam
+            # (sleep, game change) does not bring our last value back.
+            low, high = getattr(manager, "range", None) or (1, 60)
+            try:
+                manager.set(max(low, min(high, int(round(slow / 1_000_000.0)))))
+            except Exception:
+                pass
+        if manager is not None and not (exact and direct):
+            watts = max(1, int(round(slow / 1_000_000.0)))
+            low, high = getattr(manager, "range", None) or (watts, watts)
+            if (watts > high or watts < low) and direct:
+                manager = None  # outside what Steam allows (e.g. 16-20 W on a 20 W Deck): hwmon directly
+            else:
+                watts = max(low, min(high, watts))
+        if manager is not None and not (exact and direct):
+            ok, message = manager.set(watts)
+            if ok:
+                deadline = time.monotonic() + self._verify_seconds
+                while True:
+                    read_slow = _read_int(self._slow_path)
+                    if read_slow is not None and abs(read_slow - watts * 1_000_000) <= 500_000:
+                        self.state.expected_slow_uw = read_slow
+                        self.state.expected_fast_uw = _read_int(self._fast_path)
+                        return None
+                    if time.monotonic() >= deadline:
+                        break
+                    self._sleep(0.1)
+                return "unverified", f"steamos-manager accepted {watts} W but the cap reads {read_slow}"
+            self._note("tdp-manager-failed", error=message, requested_w=watts)
+            if not direct:
+                return "write-failed", f"steamos-manager: {message}"
+        try:
+            self._write_value(self._slow_path, slow)
+            self._write_value(self._fast_path, fast)
+        except OSError as error:
+            return "write-failed", str(error)
+        read_slow = _read_int(self._slow_path)
+        read_fast = _read_int(self._fast_path)
+        if read_slow != slow or read_fast != fast:
+            return "unverified", "PPT write did not verify"
+        self.state.expected_slow_uw = slow
+        self.state.expected_fast_uw = fast
+        return None
+
     def set_ceiling_w(self, watts: Optional[float]) -> None:
         """Explicit session ceiling (budget mode); None returns to the claimed caps."""
         if watts is None:
@@ -277,7 +367,7 @@ class SteamDeckPowerActuator:
         state = result.get("state") or {}
         self._note("tdp-write", requested_w=watts, success=result.get("success"), error=result.get("error"),
                    observed_w=state.get("observed_tdp_w"), observed_fast_w=state.get("observed_fast_w"),
-                   draw_w=state.get("draw_w"), cap_path=self.state.slow_cap_path)
+                   draw_w=state.get("draw_w"), cap_path=self.state.slow_cap_path, method=self.state.method)
         return result
 
     def _set_tdp_w(self, watts: float) -> Dict[str, Any]:
@@ -301,20 +391,16 @@ class SteamDeckPowerActuator:
         else:
             slow = min(slow, self.state.ceiling_override_uw)
             fast = min(fast, int(round(self.state.ceiling_override_uw * ratio)))
-        try:
-            self._write_value(self._slow_path, slow)
-            self._write_value(self._fast_path, fast)
-        except OSError as error:
-            self.state.error = str(error)
-            return {"success": False, "error": str(error), "state": self.status()}
-        read_slow = _read_int(self._slow_path)
-        read_fast = _read_int(self._fast_path)
-        if read_slow != slow or read_fast != fast:
-            self.state.error = "PPT write did not verify"
-            self.state.owned = False
-            return {"success": False, "error": self.state.error, "state": self.status()}
-        self.state.expected_slow_uw = slow
-        self.state.expected_fast_uw = fast
+        failure = self._apply(slow, fast)
+        if failure is not None:
+            kind, error = failure
+            self.state.error = error
+            if kind == "unverified":
+                self.state.owned = False
+                # Our own write failed, nobody else touched the caps: a re-claim in
+                # this session must keep the user's original values for restore.
+                self._keep_initial = True
+            return {"success": False, "error": error, "state": self.status()}
         self.state.error = None
         return {"success": True, "error": None, "state": self.status()}
 
@@ -332,12 +418,11 @@ class SteamDeckPowerActuator:
             return {"success": True, "restored": False, "reason": "external-change", "state": self.status()}
         assert self._fast_path is not None and self._slow_path is not None
         assert self.state.initial_fast_uw is not None and self.state.initial_slow_uw is not None
-        try:
-            self._write_value(self._slow_path, self.state.initial_slow_uw)
-            self._write_value(self._fast_path, self.state.initial_fast_uw)
-        except OSError as error:
-            self.state.error = str(error)
-            return {"success": False, "restored": False, "error": str(error), "state": self.status()}
+        failure = self._apply(self.state.initial_slow_uw, self.state.initial_fast_uw, exact=True)
+        if failure is not None:
+            self.state.error = failure[1]
+            return {"success": False, "restored": False, "error": failure[1], "state": self.status()}
+        self._keep_initial = False
         self.state.expected_fast_uw = self.state.initial_fast_uw
         self.state.expected_slow_uw = self.state.initial_slow_uw
         self.state.owned = False
