@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (v0.0.2).
+"""Live orchestration service for GFG Governor (v0.0.3).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -48,7 +48,7 @@ from .governor_telemetry import TelemetryObserver
 
 APPLIED_OPERATIONS = frozenset({"runtime-state-applied", "runtime-transition-applied"})
 FAILED_OPERATIONS = frozenset({"runtime-transition-failed"})
-VERSION = "0.0.2"
+VERSION = "0.0.3"
 
 
 @dataclass
@@ -119,7 +119,11 @@ class GovernorService:
         disk = self.configuration.config_dir / PRESENT_DIAGNOSTICS_LOG_FILENAME
         self.observer = TelemetryObserver(disk, Path(PRESENT_DIAGNOSTICS_FALLBACK_LOG))
         self.planner = OperatingPointPlanner()
+        self.activity: Any = None  # ActivityLog, set by the plugin
+        self._journal_state: tuple = ()
+        self._journal_game: Optional[tuple] = None
         self.power = SteamDeckPowerActuator()
+        self.power.journal = self._journal_power
         self.search = PowerSearch()
         self.settings_path = self.configuration.config_dir / "gfg-governor.json"
         self.events_path = self.configuration.runtime_state_dir / "governor-events.jsonl"
@@ -785,8 +789,37 @@ class GovernorService:
         except (OSError, ValueError) as error:
             self._status.setdefault("overlay", {})["sync_error"] = str(error)
 
+    def _journal(self, kind: str, **fields: Any) -> None:
+        if self.activity is not None:
+            self.activity.record("governor", kind, **fields)
+
+    def _journal_power(self, kind: str, **fields: Any) -> None:
+        self._journal(kind, profile=self._status.get("profile"), **fields)
+
+    def _journal_transitions(self) -> None:
+        status = self._status
+        key = (status.get("enabled"), status.get("state"), status.get("reason"))
+        if key != self._journal_state:
+            self._journal_state = key
+            self._journal("state", enabled=key[0], state=key[1], reason=key[2], profile=status.get("profile"),
+                          point=(self._point or {}).get("key"), capability=status.get("capability"))
+        launch = self._launch if status.get("enabled") else None
+        if launch is None:
+            return
+        game = tuple(launch.get("launch_key") or ()) if launch.get("running") else None
+        if game != self._journal_game:
+            if game is not None:
+                self._journal("game-detected", profile=status.get("profile"), launch_key=list(game),
+                              governor_launch=bool(launch.get("governor_launch")),
+                              renderer_loaded=launch.get("renderer_loaded"))
+            elif self._journal_game is not None:
+                self._journal("game-exited", profile=status.get("profile"), launch_key=list(self._journal_game),
+                              reason=launch.get("reason"))
+            self._journal_game = game
+
     async def _iteration(self) -> None:
         await self._iteration_core()
+        self._journal_transitions()
         self._update_effort()
         self._update_battery()
         profile = self._status.get("profile") or ""

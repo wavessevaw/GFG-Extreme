@@ -77,7 +77,7 @@ from .profile_storage import (
 )
 
 
-WRAPPER_FORMAT_VERSION = 78
+WRAPPER_FORMAT_VERSION = 79
 WRAPPER_FORMAT_MARKER = f"# mako-wrapper-format: {WRAPPER_FORMAT_VERSION}"
 HOST_COMPATIBILITY_MARKER = "# mako-host-compatibility: aarch64-passthrough-v1"
 DIAGNOSTICS_DEFAULT_MARKER = (
@@ -364,8 +364,22 @@ def launch_manifest_write_lines() -> list[str]:
         '    fi',
         '    gfg_launch_tmp="${gfg_manifest_path}.tmp.$$"',
         printf_line,
+        # One line per launch in the user-action journal: what the game got.
+        '    gfg_activity_log="$(dirname -- "$(dirname -- "$gfg_manifest_path")")/activity.jsonl"',
+        '    gfg_launch_overlay=inactive',
+        '    [ -n "${mako_governor_overlay_active:-}" ] && gfg_launch_overlay=active',
+        "    printf " + shlex.quote(
+            '{"ts":%s,"source":"wrapper","kind":"game-launch","pid":%s,"app_id":"%s","profile":"%s",'
+            '"command":"%s","diagnostics":"%s","diagnostics_log":"%s","governor_overlay":"%s",'
+            '"vk_instance_layers":"%s"}\\n'
+        ) + ' "$gfg_launch_timestamp" "$$" "$gfg_launch_app_id" "$gfg_launch_profile" '
+        '"$gfg_launch_command" "${mako_diagnostics_state:-off}" '
+        '"$(gfg_json_escape "${mako_diagnostics_log:-}")" "$gfg_launch_overlay" '
+        '"$(gfg_json_escape "${VK_INSTANCE_LAYERS:-}")" >> "$gfg_activity_log" 2>/dev/null || :',
+        '    unset gfg_activity_log gfg_launch_overlay',
         '    unset -f gfg_json_escape',
         'fi',
+        'unset mako_diagnostics_state mako_diagnostics_log',
     ]
 
 
@@ -1045,7 +1059,9 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         "unset mako_flatpak_launch",
         "# Heroic can discard a game's stderr. Capture opt-in engine diagnostics here instead.",
         f"mako_diagnostics_default={shlex.quote(str(diagnostics_log_path))}",
+        "mako_diagnostics_state=off",
         f'if [ "${{{PRESENT_DIAGNOSTICS_ENV}:-0}}" != "0" ]; then',
+        "    mako_diagnostics_state=unavailable",
         f'    mako_diagnostics_log="${{{PRESENT_DIAGNOSTICS_LOG_ENV}:-$mako_diagnostics_default}}"',
         "    mako_diagnostics_rotation_ready=1",
         f"    for mako_diagnostics_entry in {diagnostics_history_paths}; do",
@@ -1074,12 +1090,14 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
             '(set -C; : > "$mako_diagnostics_log") 2>/dev/null; then'
         ),
         '        exec 2>> "$mako_diagnostics_log"',
+        "        mako_diagnostics_state=log",
         "    else",
         "        # Last resort: the Governor also reads this RAM log (newest wins).",
         f"        mako_diagnostics_log={shlex.quote(PRESENT_DIAGNOSTICS_FALLBACK_LOG)}",
         '        if { [ ! -e "$mako_diagnostics_log" ] && [ ! -L "$mako_diagnostics_log" ] && (set -C; : > "$mako_diagnostics_log") 2>/dev/null; } || '
         '{ [ ! -L "$mako_diagnostics_log" ] && [ -f "$mako_diagnostics_log" ] && [ -O "$mako_diagnostics_log" ] && : > "$mako_diagnostics_log"; }; then',
         '            exec 2>> "$mako_diagnostics_log"',
+        "            mako_diagnostics_state=fallback",
         "        fi",
         "    fi",
         "fi",

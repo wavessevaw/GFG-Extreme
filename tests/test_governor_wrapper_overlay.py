@@ -50,11 +50,28 @@ class WrapperOverlayTests(unittest.TestCase):
         data = json.loads(manifest.read_text()) if manifest.exists() else {}
         return values.get("MAKO_CONFIG"), data
 
-    def test_script_declares_overlay_and_format_78(self):
+    def test_script_declares_overlay_and_format_79(self):
         text = self.script.read_text()
-        self.assertIn("# mako-wrapper-format: 78", text)
+        self.assertIn("# mako-wrapper-format: 79", text)
         self.assertIn("mako_governor_overlay=", text)
         self.assertIn("mako_governor_overlay_active=", text)
+
+    def test_launch_is_journaled_with_diagnostics_and_overlay_state(self):
+        marker = self.svc.runtime_state_dir / "governor-diagnostics.enabled"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("")
+        self.run_wrapper()
+        lines = (self.svc.runtime_state_dir / "activity.jsonl").read_text().splitlines()
+        record = json.loads(lines[-1])
+        self.assertEqual(record["kind"], "game-launch")
+        self.assertEqual(record["profile"], "game")
+        self.assertEqual(record["diagnostics"], "log")
+        self.assertTrue(record["diagnostics_log"].endswith("present-diagnostics.log"))
+        self.assertEqual(record["governor_overlay"], "inactive")
+        marker.unlink()
+        self.run_wrapper()
+        record = json.loads((self.svc.runtime_state_dir / "activity.jsonl").read_text().splitlines()[-1])
+        self.assertEqual(record["diagnostics"], "off")
 
     def run_env(self):
         env = {"PATH": os.environ["PATH"], "HOME": HOME, "MAKO_PROFILE": "game"}

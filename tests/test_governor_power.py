@@ -81,3 +81,17 @@ class GovernorPowerActuatorTests(unittest.TestCase):
             self.assertEqual(status["observed_tdp_w"], 15.0)
             self.assertFalse(actuator.claim()["owned"])
             self.assertEqual(int((h / "power2_cap").read_text()), 15000000)
+
+
+class PowerJournalTests(unittest.TestCase):
+    def test_every_write_is_journaled_with_result(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            GovernorPowerActuatorTests.make_hwmon(None, root)
+            notes = []
+            actuator = SteamDeckPowerActuator(drm_root=root / "drm", hwmon_root=root / "hwmon")
+            actuator.journal = lambda kind, **f: notes.append((kind, f))
+            actuator.discover(); actuator.claim(); actuator.set_tdp_w(10); actuator.restore_if_owned()
+            self.assertEqual([k for k, _ in notes], ["tdp-claim", "tdp-write", "tdp-restore"])
+            self.assertTrue(notes[1][1]["success"])
+            self.assertEqual(notes[1][1]["observed_w"], 10.0)

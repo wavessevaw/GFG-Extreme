@@ -132,7 +132,8 @@ var rpc = {
   fpRemove: callable("remove_flatpak_app_override"),
   logStart: callable("start_log_recording"),
   logStop: callable("stop_log_recording"),
-  logStatus: callable("get_log_recording_status")
+  logStatus: callable("get_log_recording_status"),
+  logUi: callable("log_ui_event")
 };
 var num = (v, d = 1) => v == null || isNaN(v) ? "\u2013" : Number(v).toFixed(d).replace(/\.0$/, "");
 var MODE_NAME = { oled: "Steam Deck OLED", lcd: "Steam Deck LCD", dock: "Dock", external: "Dock", unknown: "Display" };
@@ -213,6 +214,8 @@ function LaunchCopy({ launch }) {
   const [state, setState] = useState("");
   const copy = async () => {
     const ok = await copyText(cmd);
+    rpc.logUi("copy-launch-command", { ok, cmd }).catch(() => {
+    });
     setState(ok ? "Copied" : "Select and type it manually");
     setTimeout(() => setState(""), 2500);
   };

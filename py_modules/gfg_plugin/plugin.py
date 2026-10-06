@@ -23,6 +23,7 @@ from .pipeline_inspector import PipelineInspectorService
 from .gamescope_display import GamescopeDisplayService
 from .governor_service import GovernorService
 from .session_recorder import SessionRecorder
+from .activity_log import ActivityLog, journal_ui_calls
 from .config_schema import ConfigurationManager, DEFAULT_PROFILE_NAME
 from shared_config import FG_BACKEND_GFG
 from .config_schema_generated import ConfigurationPatch
@@ -67,10 +68,12 @@ class Plugin:
         self.pipeline_inspector_service = PipelineInspectorService(self.configuration_service)
         self.flatpak_service = FlatpakService()
         self.gamescope_display_service = GamescopeDisplayService()
+        self.activity = ActivityLog(self.configuration_service.runtime_state_dir / "activity.jsonl")
         self.governor_service = GovernorService(
             self.configuration_service, self.gamescope_display_service, decky.logger,
             self.pipeline_inspector_service,
         )
+        self.governor_service.activity = self.activity
         self.session_recorder = self._build_session_recorder()
         self._display_sync_task = None
         self._dock_monitor_task = None
@@ -744,7 +747,12 @@ class Plugin:
             },
             plugin_log=Path(plugin_log) if plugin_log else None, logger=decky.logger,
             hud_enabled=lambda profile: bool(self.governor_service.hud_settings(profile)["enabled"]),
+            activity=self.activity,
         )
+
+    async def log_ui_event(self, kind: str = "", detail: Any = None) -> Dict[str, Any]:
+        """Frontend-only actions (copying the launch command, opening a section)."""
+        return {"success": True}
 
     async def start_log_recording(self, profile_name: str = "") -> Dict[str, Any]:
         """Begin recording a diagnostic log (timeline + renderer diagnostics)."""
@@ -1403,7 +1411,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Governor v0.0.2 started")
+        decky.logger.info("GFG Governor v0.0.3 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""
@@ -1498,3 +1506,6 @@ class Plugin:
         decky.logger.info("Leaving shared Flatpak runtime extensions installed")
 
         decky.logger.info("GFG Extreme uninstall cleanup completed")
+
+
+journal_ui_calls(Plugin, lambda plugin: getattr(plugin, "activity", None))

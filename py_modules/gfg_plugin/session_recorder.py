@@ -136,6 +136,9 @@ def probe_game_processes(proc_root: Path = Path("/proc"), limit: int = 8) -> Lis
     return found
 
 
+ACTIVITY_LOOKBACK_S = 1800.0
+
+
 class SessionRecorder:
     def __init__(
         self,
@@ -155,7 +158,9 @@ class SessionRecorder:
         hud_enabled: Optional[Callable[[str], bool]] = None,
         process_probe: Callable[[], List[Dict[str, Any]]] = probe_game_processes,
         host_mangohud_manifest: Path = HOST_MANGOHUD_MANIFEST,
+        activity: Any = None,
     ) -> None:
+        self.activity = activity
         self.user_home = Path(user_home)
         self.config_dir = Path(config_dir)
         self.runtime_state_dir = Path(runtime_state_dir)
@@ -354,7 +359,7 @@ class SessionRecorder:
             "os_release": read("/etc/os-release"),
             "gamescope_processes": run(["pgrep", "-a", "gamescope"])[:2000],
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.2",
+            "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.3",
         }
 
     def _write_bundle(self) -> Path:
@@ -372,6 +377,8 @@ class SessionRecorder:
                 "system.json      device, kernel, gamescope\n"
                 "diagnostics-*.log renderer diagnostics appended during the recording\n"
                 "governor-events.jsonl  Governor decisions during the recording\n"
+                "activity.jsonl   your actions (UI clicks, game launches/exits), Governor states, TDP writes;\n"
+                "                 starts 30 min before the recording\n"
                 "launch-wrapper.sh the generated launcher\n"
                 "overlay/         in-game overlay config and status line\n"
                 "game-processes.json  layer env of the running game and whether MangoHud was loaded\n"
@@ -398,6 +405,10 @@ class SessionRecorder:
             except OSError:
                 pass
             bundle.writestr("governor-events.jsonl", "\n".join(events) + ("\n" if events else ""))
+            if self.activity is not None:
+                # Include what happened before Record was pressed (game launch, Run).
+                actions = self.activity.since(self.started_at - ACTIVITY_LOOKBACK_S)
+                bundle.writestr("activity.jsonl", "\n".join(actions) + ("\n" if actions else ""))
             for src, name in (
                 (self.wrapper_path, "launch-wrapper.sh"),
                 (self.config_dir / "hud" / "active.conf", "overlay/active.conf"),

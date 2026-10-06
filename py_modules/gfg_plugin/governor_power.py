@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Optional
 
 
 _FAST_LABELS = {"fastppt", "ppt1", "fast ppt"}
@@ -77,6 +77,7 @@ class SteamDeckPowerActuator:
         self.drm_root = Path(drm_root)
         self.hwmon_root = Path(hwmon_root)
         self._access = access
+        self.journal: Optional[Callable[..., None]] = None
         self.state = PowerControlState()
         self._fast_path: Optional[Path] = None
         self._slow_path: Optional[Path] = None
@@ -172,7 +173,21 @@ class SteamDeckPowerActuator:
         )
         return self.status()
 
+    def _note(self, kind: str, **fields: Any) -> None:
+        if self.journal is not None:
+            try:
+                self.journal(kind, **fields)
+            except Exception:
+                pass
+
     def claim(self) -> Dict[str, Any]:
+        result = self._claim()
+        self._note("tdp-claim", owned=result.get("owned"), available=result.get("available"),
+                   writable=result.get("writable"), current_w=result.get("current_tdp_w"),
+                   error=result.get("error"))
+        return result
+
+    def _claim(self) -> Dict[str, Any]:
         if not self.state.available:
             self.discover()
         if not self.state.available or self._fast_path is None or self._slow_path is None:
@@ -200,6 +215,8 @@ class SteamDeckPowerActuator:
             self.state.external_change = True
             self.state.owned = False
             self.state.error = "PPT caps changed outside GFG Governor; automatic power control paused"
+            self._note("tdp-external-change", expected_slow_uw=self.state.expected_slow_uw, found_slow_uw=slow,
+                       expected_fast_uw=self.state.expected_fast_uw, found_fast_uw=fast)
             return False
         return True
 
@@ -216,6 +233,12 @@ class SteamDeckPowerActuator:
         path.write_text(f"{int(value)}\n", encoding="utf-8")
 
     def set_tdp_w(self, watts: float) -> Dict[str, Any]:
+        result = self._set_tdp_w(watts)
+        self._note("tdp-write", requested_w=watts, success=result.get("success"), error=result.get("error"),
+                   observed_w=(result.get("state") or {}).get("observed_tdp_w"))
+        return result
+
+    def _set_tdp_w(self, watts: float) -> Dict[str, Any]:
         if not self.state.owned:
             return {"success": False, "error": self.state.error or "Power control is not owned", "state": self.status()}
         if not self._verify_ownership():
@@ -249,6 +272,13 @@ class SteamDeckPowerActuator:
         return {"success": True, "error": None, "state": self.status()}
 
     def restore_if_owned(self) -> Dict[str, Any]:
+        result = self._restore_if_owned()
+        if result.get("restored") or not result.get("success", True):
+            self._note("tdp-restore", restored=result.get("restored"), reason=result.get("reason"),
+                       error=result.get("error"), observed_w=(result.get("state") or {}).get("observed_tdp_w"))
+        return result
+
+    def _restore_if_owned(self) -> Dict[str, Any]:
         if not self.state.owned:
             return {"success": True, "restored": False, "reason": "not-owned", "state": self.status()}
         if not self._verify_ownership():

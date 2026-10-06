@@ -35,6 +35,7 @@ const rpc = {
   logStart: callable("start_log_recording"),
   logStop: callable("stop_log_recording"),
   logStatus: callable("get_log_recording_status"),
+  logUi: callable("log_ui_event"),
 };
 
 // ---------- helpers
@@ -98,7 +99,7 @@ const LAUNCH_DEFAULT = "/home/deck/.local/bin/gfg %command%";
 function LaunchCopy({ launch }) {
   const cmd = launch || LAUNCH_DEFAULT;
   const [state, setState] = useState("");
-  const copy = async () => { const ok = await copyText(cmd); setState(ok ? "Copied" : "Select and type it manually"); setTimeout(() => setState(""), 2500); };
+  const copy = async () => { const ok = await copyText(cmd); rpc.logUi("copy-launch-command", { ok, cmd }).catch(() => {}); setState(ok ? "Copied" : "Select and type it manually"); setTimeout(() => setState(""), 2500); };
   return h("div", null,
     h("div", { className: "card" }, h("div", { style: { fontFamily: "monospace", fontSize: 12, wordBreak: "break-all", userSelect: "all" } }, cmd)),
     h("div", { className: "list" }, h(Row, { icon: "play", title: state || "Copy launch command", sub: "Paste into the game's Steam Properties → Launch Options", value: state ? "" : "Copy", onClick: copy })));
