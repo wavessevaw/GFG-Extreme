@@ -155,6 +155,7 @@ var rpc = {
   logStart: safeCallable("start_log_recording"),
   logStop: safeCallable("stop_log_recording"),
   logStatus: safeCallable("get_log_recording_status"),
+  setupCheck: safeCallable("run_setup_check"),
   logUi: safeCallable("log_ui_event")
 };
 var num = (v, d = 1) => v == null || isNaN(v) ? "\u2013" : Number(v).toFixed(d).replace(/\.0$/, "");
@@ -731,6 +732,38 @@ function SettingsPage({ back, go, profile }) {
     )
   );
 }
+function SetupCheckPage({ back, profile }) {
+  const [r, setR] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const run = useCallback(async () => {
+    setBusy(true);
+    try {
+      setR(await rpc.setupCheck(profile || ""));
+    } catch (e) {
+      setR({ success: false, checks: [], failed: 0, total: 0 });
+    }
+    setBusy(false);
+  }, [profile]);
+  useEffect(() => {
+    run();
+  }, [run]);
+  const bad = r ? (r.checks || []).filter((c) => !c.ok) : [];
+  const good = r ? (r.checks || []).filter((c) => c.ok) : [];
+  return h(
+    Page,
+    { title: "Check setup", onBack: back },
+    !r ? h("div", { className: "hint" }, "Checking\u2026") : r.success === false ? h(Note, null, "The check could not run. Record a log instead.") : h(
+      "div",
+      null,
+      h(Note, { quiet: bad.length === 0 }, bad.length === 0 ? "Everything GFG needs is in place (" + r.total + " checks)." : bad.length + " of " + r.total + " checks failed."),
+      bad.length ? h("div", { className: "sec" }, "NEEDS ATTENTION") : null,
+      ...bad.map((c, i) => h("div", { key: "b" + i, className: "card" }, h("b", null, "\u2717 " + c.check), c.advice ? h("div", { className: "hint", style: { textAlign: "left" } }, c.advice) : null, c.detail ? h("div", { className: "hint", style: { textAlign: "left", fontFamily: "monospace", wordBreak: "break-all" } }, c.detail) : null)),
+      good.length ? h("div", { className: "sec" }, "OK") : null,
+      good.length ? h("div", { className: "card" }, ...good.map((c, i) => h("div", { key: "g" + i, className: "hint", style: { textAlign: "left" } }, "\u2713 " + c.check))) : null
+    ),
+    h("div", { className: "list" }, h(Row, { icon: "play", title: busy ? "Checking\u2026" : "Check again", onClick: busy ? void 0 : run }))
+  );
+}
 function LaunchPage({ back, launch }) {
   return h(
     Page,
@@ -750,6 +783,7 @@ function AdvancedPage({ back, s, insp, launch, go, profile }) {
   return h(
     Page,
     { title: "Diagnostics", onBack: () => go("settings") },
+    h("div", { className: "list" }, h(Row, { icon: "cog", title: "Check setup", sub: "Is the engine, launcher, overlay and TDP access in place?", onClick: () => go("setup") })),
     h("div", { className: "sec" }, "RECORD A LOG"),
     h(LogRecorder, { profile }),
     h("div", { className: "list" }, h(Row, { icon: "cog", title: "Journal", sub: "Undo recent changes", onClick: () => go("journal") })),
@@ -949,6 +983,7 @@ function Content() {
   else if (screen === "hud") body = h(HudPage, { back: () => setScreen("settings"), s, profile, refresh });
   else if (screen === "profiles") body = h(ProfilesPage, { back: () => setScreen("settings"), profiles, current: profile, pick, reload: loadProfiles });
   else if (screen === "settings") body = h(SettingsPage, { back, go, profile });
+  else if (screen === "setup") body = h(SetupCheckPage, { back: () => setScreen("advanced"), profile });
   else if (screen === "launch") body = h(LaunchPage, { back: () => setScreen("settings"), launch });
   else if (screen === "journal") body = h(JournalPage, { back: () => setScreen("advanced"), profile, reloadCfg: () => loadCfg(profile) });
   else if (screen === "all") body = h(AllSettingsPage, { back: () => setScreen("settings"), cfg, patch });
