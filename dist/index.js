@@ -310,6 +310,7 @@ function LogRecorder({ profile }) {
       onClick: busy ? void 0 : toggle
     })),
     st.last_file && !st.recording ? h(Note, { quiet: true }, "Saved: " + st.last_file) : null,
+    !st.recording && (st.findings || []).length ? h("div", { className: "card" }, h("div", { className: "sec" }, "WHAT THE LOG SHOWS"), ...(st.findings || []).map((f, i) => h("div", { key: i, className: "hint", style: { textAlign: "left" } }, "\u2022 " + f))) : null,
     err ? h(Note, null, "Log error: " + err) : null
   );
 }

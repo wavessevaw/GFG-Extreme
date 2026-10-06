@@ -1,0 +1,172 @@
+"""Turn a recorded log zip into a short plain-language verdict.
+
+Used twice: the recorder appends ``summary.txt`` to every bundle (so the person reading the log sees
+the verdict first), and ``tools/gfg_log_report.py`` prints the same report for any bundle.  The
+analysis is deliberately conservative: a finding states what the log shows, not a guess about why.
+"""
+from __future__ import annotations
+
+import json
+import statistics
+import zipfile
+from collections import Counter
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional
+
+from .governor_telemetry import TelemetryObserver
+
+
+def _percentile(values: List[float], pct: float) -> Optional[float]:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, int(round(pct / 100.0 * (len(ordered) - 1)))))
+    return ordered[index]
+
+
+def _jsonl(text: str) -> List[Dict[str, Any]]:
+    rows = []
+    for line in text.splitlines():
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            rows.append(value)
+    return rows
+
+
+def _read(bundle: zipfile.ZipFile, name: str) -> str:
+    try:
+        return bundle.read(name).decode("utf-8", errors="replace")
+    except KeyError:
+        return ""
+
+
+def analyze_diagnostics(text: str) -> Dict[str, Any]:
+    """Run the recorded renderer lines through the real parser, exactly as the Governor would see them."""
+    clock = {"t": 0.0}
+    observer = TelemetryObserver(Path("/nonexistent/gfg-diagnostics.log"), time_fn=lambda: clock["t"])  # parse only
+    operations: Counter = Counter()
+    samples = lines = 0
+    real: List[float] = []
+    output: List[float] = []
+    for raw in text.splitlines():
+        if not raw.strip():
+            continue
+        lines += 1
+        fields = TelemetryObserver.parse_fields(raw)
+        if fields is None:
+            continue
+        operations[str(fields.get("operation") or "?")] += 1
+        clock["t"] += 0.25
+        sample = observer.consume_line(raw, now=clock["t"])
+        if sample is not None:
+            samples += 1
+            real.append(sample.real_fps)
+            output.append(sample.output_fps)
+    return {
+        "lines": lines, "parsed_events": sum(operations.values()), "fps_samples": samples,
+        "operations": dict(operations.most_common(12)),
+        "real_median": statistics.median(real) if real else None,
+        "output_median": statistics.median(output) if output else None,
+    }
+
+
+def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
+    names = bundle.namelist()
+    timeline = _jsonl(_read(bundle, "timeline.jsonl"))
+    samples = [r for r in timeline if "marker" not in r]
+    self_test = []
+    try:
+        self_test = json.loads(_read(bundle, "self_test.json") or "[]")
+    except ValueError:
+        pass
+    events = _jsonl(_read(bundle, "governor-events.jsonl"))
+    diag_text = "".join(_read(bundle, n) for n in names if n.startswith("diagnostics-"))
+    diag = analyze_diagnostics(diag_text)
+
+    report: Dict[str, Any] = {"files": len(names), "samples": len(samples), "diagnostics": diag}
+    if samples:
+        t0, t1 = samples[0].get("t"), samples[-1].get("t")
+        report["duration_s"] = round(t1 - t0, 1) if isinstance(t0, (int, float)) and isinstance(t1, (int, float)) else None
+        report["states"] = dict(Counter(str(r.get("state")) for r in samples).most_common())
+        report["reasons"] = dict(Counter(str(r.get("reason")) for r in samples).most_common(8))
+        report["points"] = dict(Counter(str(r.get("point")) for r in samples if r.get("point")).most_common(8))
+        out = [r["output"] for r in samples if isinstance(r.get("output"), (int, float))]
+        real = [r["real"] for r in samples if isinstance(r.get("real"), (int, float))]
+        tdp = [r["tdp"] for r in samples if isinstance(r.get("tdp"), (int, float))]
+        temps = [(r.get("sensors") or {}).get("temp_c") for r in samples]
+        temps = [t for t in temps if isinstance(t, (int, float))]
+        report["output"] = {"median": statistics.median(out) if out else None, "p5": _percentile(out, 5)}
+        report["real"] = {"median": statistics.median(real) if real else None, "p5": _percentile(real, 5)}
+        report["tdp"] = {"min": min(tdp) if tdp else None, "max": max(tdp) if tdp else None}
+        report["temp_max_c"] = max(temps) if temps else None
+        report["target"] = next((r["target"] for r in samples if r.get("target")), None)
+        report["telemetry_available_share"] = round(
+            sum(bool((r.get("snapshot") or {}).get("available")) for r in samples) / len(samples), 2)
+        report["bottlenecks"] = dict(Counter((r.get("diagnosis") or {}).get("bottleneck") for r in samples if r.get("diagnosis")))
+    report["events"] = dict(Counter(str(e.get("event")) for e in events).most_common(12))
+    report["rejected_points"] = sorted({str(e.get("point")) for e in events if e.get("event") == "operating-point-rejected"})
+    report["failed_checks"] = [c for c in self_test if not c.get("ok")]
+    report["findings"] = findings(report, names)
+    return report
+
+
+def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
+    out: List[str] = []
+    diag = report["diagnostics"]
+    for check in report["failed_checks"]:
+        out.append(f"Self-test failed: {check.get('check')} ({check.get('detail') or 'no detail'})")
+    if report["samples"] == 0:
+        out.append("The timeline is empty: the recorder never sampled the Governor (plugin stopped?).")
+        return out
+    if diag["lines"] == 0:
+        out.append("No renderer diagnostics were written during the recording: the game was not started "
+                   "with the GFG launch command, the engine did not attach, or diagnostics are off.")
+    elif diag["fps_samples"] == 0:
+        out.append(f"The renderer wrote {diag['lines']} diagnostic lines but none carried an FPS reading "
+                   f"(operations: {', '.join(diag['operations']) or 'none'}): the Governor cannot see the frame rate.")
+    share = report.get("telemetry_available_share")
+    if share is not None and share < 0.5 and diag["fps_samples"]:
+        out.append(f"Telemetry was usable only {int(share * 100)}% of the time (stale or missing FPS events).")
+    states = report.get("states", {})
+    if states.get("PAUSED", 0) > 0.3 * report["samples"]:
+        top = next(iter(report["reasons"]), "?")
+        out.append(f"The Governor was PAUSED for {states['PAUSED']} of {report['samples']} samples; most common reason: {top}.")
+    if report.get("rejected_points"):
+        out.append("Operating points the renderer did not confirm or that failed their trial: "
+                   + ", ".join(report["rejected_points"]) + ".")
+    target, out_med = report.get("target"), (report.get("output") or {}).get("median")
+    if target and out_med is not None and out_med < 0.9 * target:
+        out.append(f"Median output FPS {out_med:.0f} is below the {target} FPS target.")
+    elif target and out_med is not None:
+        out.append(f"Median output FPS {out_med:.0f} against a {target} FPS target.")
+    if report.get("temp_max_c") is not None and report["temp_max_c"] >= 85:
+        out.append(f"The APU reached {report['temp_max_c']:.0f} °C.")
+    if not any(n.startswith("overlay/") for n in names):
+        out.append("No overlay files were captured: the in-game overlay was never published (Settings → In-game overlay).")
+    if not out:
+        out.append("Nothing unusual found.")
+    return out
+
+
+def render(report: Dict[str, Any]) -> str:
+    lines = ["GFG Extreme log summary", "=" * 24, ""]
+    lines += [f"- {f}" for f in report["findings"]]
+    lines += ["", f"samples: {report['samples']}  duration: {report.get('duration_s')} s  target: {report.get('target')}"]
+    if report["samples"]:
+        lines.append(f"states: {report.get('states')}")
+        lines.append(f"top reasons: {report.get('reasons')}")
+        lines.append(f"points used: {report.get('points')}")
+        lines.append(f"real FPS: {report.get('real')}  output FPS: {report.get('output')}")
+        lines.append(f"TDP: {report.get('tdp')}  max temp: {report.get('temp_max_c')} °C  bottlenecks: {report.get('bottlenecks')}")
+    d = report["diagnostics"]
+    lines.append(f"renderer diagnostics: {d['lines']} lines, {d['parsed_events']} events, {d['fps_samples']} FPS samples; operations: {d['operations']}")
+    lines.append(f"governor events: {report.get('events')}")
+    return "\n".join(lines) + "\n"
+
+
+def summarize_zip(path: str) -> str:
+    with zipfile.ZipFile(path) as bundle:
+        return render(analyze(bundle))

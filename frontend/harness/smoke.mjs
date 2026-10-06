@@ -16,6 +16,7 @@ const cases = [
   ["home-budget-oled", ["Details"], ["Searched from scratch"]],
   ["home-balanced", [], ["Balanced", "never goes below 30 real FPS"]],
   ["home-balanced", ["Details"], ["×1 to ×3, never below 30 real FPS", "12–13 W start"]],
+  ["log-saved", ["Settings", "Diagnostics"], ["Saved: /home/deck/Desktop/GFG-Extreme-log-1.zip", "WHAT THE LOG SHOWS", "No renderer diagnostics were written"]],
   ["home-cap-ignored", [], ["TDP limit overridden", "17.4 W", "another tool"]],
   ["home-quality-oled", ["Details"], ["×1 to ×3, steps of 0.25", "never above your own"]],
   ["home-quality-oled", [], ["fewest generated frames first"]],

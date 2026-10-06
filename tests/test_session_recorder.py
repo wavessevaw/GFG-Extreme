@@ -39,6 +39,8 @@ class RecorderTests(unittest.TestCase):
             self.assertEqual(out.parent, desktop_dir(home))
             with zipfile.ZipFile(out) as z:
                 names = z.namelist()
+                self.assertIn("summary.txt", names)
+                self.assertIn(b"GFG Extreme log summary", z.read("summary.txt"))
                 self.assertIn("timeline.jsonl", names)
                 self.assertIn("self_test.json", names)
                 self.assertEqual(z.read("diagnostics-present-diagnostics.log"), b"new renderer line\n")
