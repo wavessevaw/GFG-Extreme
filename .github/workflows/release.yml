@@ -56,8 +56,10 @@ jobs:
       - name: Fetch Flatpak payloads from the previous release
         if: steps.version.outputs.exists == 'false'
         run: |
-          previous="$(gh release list --limit 20 --json tagName,isDraft --jq '[.[] | select(.isDraft | not)][0].tagName')"
-          test -n "$previous" || { echo "::error::no previous release to take Flatpak payloads from"; exit 1; }
+          # Newest published Governor release; other releases in the repo may carry no zip.
+          previous="$(gh release list --limit 50 --json tagName,isDraft,createdAt --jq '[.[] | select((.isDraft | not) and (.tagName | endswith("-governor")))] | sort_by(.createdAt) | last | .tagName // empty')"
+          test -n "$previous" || { echo "::error::no previous Governor release to take Flatpak payloads from"; exit 1; }
+          echo "Flatpak payloads from $previous"
           mkdir -p prev payloads
           gh release download "$previous" --pattern '*.zip' --dir prev
           unzip -q -j prev/*.zip 'GFG-Extreme/bin/*.flatpak' -d payloads
