@@ -84,6 +84,8 @@ function describe(s) {
   if (s.state === "PROBE" || s.state === "PLAN") return { head: "Measuring", body: "Learning how the game runs. Nothing is changed yet.", tone: "busy" };
   if (s.state === "APPLY") return { head: "Testing " + POINT_LABEL(s.request && s.request.point), body: "Checking the result before keeping it.", tone: "busy" };
   const b = s.budget;
+  const fb = s.power_feedback || {};
+  if (b && b.cap_ignored) return { head: "TDP limit overridden", body: "The APU draws " + num(fb.draw_w, 1) + " W while GFG's limit is " + num(fb.cap_w, 0) + " W: another tool (ryzenadj, PowerTools…) sets the real limit. GFG keeps a deep ratio instead of spending power.", tone: "warn" };
   if (b && s.state === "OPTIMIZE_POWER") return { head: "Saving battery", body: b.probe === "up" ? "Trying fewer generated frames at " + num(b.tdp_w, 0) + " W." : "Looking for the lowest TDP that holds the target (now " + num(b.tdp_w, 0) + " W).", tone: "ok" };
   if (b && s.state === "LOCKED") return { head: "Locked in · " + num(b.tdp_w, 0) + " W", body: TIER_TEXT[b.tier] || "Stable. GFG keeps watching and reacts if a scene gets heavier.", tone: b.tier === "emergency" ? "warn" : "ok" };
   if (b && s.state === "GUARD") return { head: "Protecting", body: "A scene got heavier: more generated frames first, then more watts.", tone: "warn" };

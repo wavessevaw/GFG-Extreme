@@ -21,6 +21,11 @@
 - **TDP changed outside GFG** no longer pauses forever: in Battery mode GFG takes it back after 30 s, at most 3 times.
 - Overlay multiplier now comes from the FPS medians, matching the FPS shown (#20).
 
+### TDP that actually lands
+- **The TDP limit no longer sticks at 20 W** and the overlay shows the limit GFG really set (#22).
+- **Measured draw.** GFG now reads the APU's real power draw. If it stays well above GFG's limit for two windows, another tool (ryzenadj, PowerTools and similar) is setting the real limit; GFG says so on the home screen and keeps a deep ratio instead of spending "saved" watts on more real frames.
+- **Logs** now include all power sensors and running TDP tools.
+
 ### Install
 1. Download `GFG-Extreme-Governor-v0_0_6.zip` and install it through Decky Loader (install from zip). Accept the root access request.
 2. Close the game, press **RUN**, start the game.

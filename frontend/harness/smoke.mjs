@@ -11,6 +11,7 @@ const cases = [
   ["home-locked-oled", ["Governor"], ["Governor", "MODE", "Battery", "Quality", "×1 to ×3.75, deeper only as a last resort", "never modified"]],
   ["home-budget-oled", [], ["Locked in · 9 W", "Ideal: 11 W or less", "EASY"]],
   ["home-budget-oled", ["Governor"], ["BATTERY", "TDP target", "9 W", "Ideal (≤ 11 W)", "9–11 W ideal, 15 W max, 20 W last resort"]],
+  ["home-cap-ignored", [], ["TDP limit overridden", "17.4 W", "another tool"]],
   ["home-quality-oled", ["Governor"], ["×1 to ×3, steps of 0.25", "never above your own", "fewest generated frames first"]],
   ["home-locked-oled", ["Frame Generation"], ["BACKEND", "GFG", "OptiScaler"]],
   ["home-locked-oled", ["Scaling"], ["Scale-ready launch"]],

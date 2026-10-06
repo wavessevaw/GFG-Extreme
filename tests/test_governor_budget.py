@@ -314,6 +314,16 @@ class RatchetTests(unittest.TestCase):
         self.assertLessEqual(ctl.tdp, 15.0)
 
 
+class CapIgnoredTests(unittest.TestCase):
+    def test_ignored_cap_holds_quality_at_the_comfort_point(self):
+        """If the measured draw shows the cap does not bind, lower watts are fiction: do not buy real frames."""
+        ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
+        ctl.cap_ignored = True
+        run(ctl, Game(20.0), 0.0, 60)   # every level "holds": the cap is not doing anything
+        self.assertEqual(ctl.point.key, "30x3")
+        self.assertEqual(ctl.phase, "locked")
+
+
 class VerdictTests(unittest.TestCase):
     P = OperatingPoint("30x3", 90, 30, 3, 100)
 

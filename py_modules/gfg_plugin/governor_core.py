@@ -738,6 +738,10 @@ class BudgetController:
         self.exhausted = False
         self.request_failures = 0
         self.quality_debt: Optional[int] = None
+        # Set when the measured draw shows our cap does not bind (another tool
+        # raised the limit through the SMU).  A lower cap is then fiction, so
+        # spare "headroom" must not be spent on more real frames.
+        self.cap_ignored = False
         self.last_reason = "budget-start"
 
     # ------------------------------------------------------------- targets
@@ -841,6 +845,8 @@ class BudgetController:
         return self._lock(now, "budget-point-holds")
 
     def _upgrade(self, now: float) -> str:
+        if self.cap_ignored and self.idx >= self.comfort_idx:
+            return self._lock(now, "cap-ignored-quality-held")
         if self._usable(self.idx + 1, now):
             self.probe = "up"
             return self._move("testing-fewer-generated-frames", idx=self.idx + 1)
@@ -970,6 +976,7 @@ class BudgetController:
                 {"point": self.points[self.recover[0]].key, "tdp_w": self.recover[1]} if self.recover else None
             ),
             "exhausted": self.exhausted,
+            "cap_ignored": self.cap_ignored,
             "reason": self.last_reason,
             "limits_w": {"min": self.min_w, "normal": self.normal_max_w, "emergency": self.emergency_max_w},
         }

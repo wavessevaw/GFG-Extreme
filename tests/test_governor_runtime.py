@@ -723,6 +723,21 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertTrue(self.svc.power.state.owned)
         self.assertEqual(self.svc.power.writes[writes:], [9.0])
 
+    def test_draw_far_above_the_cap_is_reported_as_an_ignored_cap(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.svc.power.values["draw_w"] = 17.5          # SMU limit raised elsewhere
+        st = self.windows(1, 30, 90)
+        self.assertFalse(st["budget"]["cap_ignored"])   # one window is not enough
+        st = self.windows(1, 30, 90)
+        self.assertTrue(st["budget"]["cap_ignored"])
+        self.assertEqual(st["power_feedback"]["draw_w"], 17.5)
+        self.svc.power.values["draw_w"] = 9.0
+        st = self.windows(1, 30, 90)
+        self.assertFalse(st["budget"]["cap_ignored"])
+
     def test_mode_switch_to_quality_releases_budget_point(self):
         self.feed(20, 45, 90)
         self.step()

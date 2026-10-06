@@ -115,6 +115,9 @@ class GovernorService:
     BUDGET_MIN_SPAN_SECONDS = 12.0
     EXTERNAL_RECLAIM_SECONDS = 30.0
     MAX_EXTERNAL_RECLAIMS = 3
+    # Measured APU draw above the cap by this much, two windows in a row, means
+    # the cap is not binding (limit raised elsewhere, e.g. ryzenadj).
+    CAP_IGNORED_MARGIN_W = 1.5
 
     def __init__(
         self,
@@ -179,6 +182,7 @@ class GovernorService:
         self._applied_tdp: Optional[float] = None
         self._external_at: Optional[float] = None
         self._reclaims = 0
+        self._over_cap_windows = 0
         self._rollback_deltas: Optional[Dict[str, Any]] = None
         self._rollback_at = 0.0
         self._generation_seen: Optional[int] = None
@@ -630,6 +634,7 @@ class GovernorService:
         self._ladder = None
         self._budget = None
         self._applied_tdp = None
+        self._over_cap_windows = 0
         self._rollback_deltas = None
         self._synced_deltas = None
         self._evaluation_after_seq = self.observer.sample_seq
@@ -1239,6 +1244,7 @@ class GovernorService:
             return
         verdict = window_verdict(fresh, point)
         self._evaluation_after_seq = self.observer.sample_seq
+        feedback = self._power_feedback(profile, budget)
         before = (budget.point.key, budget.tdp, budget.phase)
         action = budget.observe(now, verdict, (fresh.get("real") or {}).get("median"))
         after = (budget.point.key, budget.tdp, budget.phase)
@@ -1250,8 +1256,28 @@ class GovernorService:
             self._event("operating-point-locked", budget.last_reason, profile=profile, point=self._point,
                         tdp_w=budget.tdp)
         self._status.update({"state": self._budget_state(), "reason": budget.last_reason,
-                             "last_verdict": verdict.to_dict()})
+                             "last_verdict": verdict.to_dict(), "power_feedback": feedback})
         await self._apply_budget_tdp(profile)
+
+    def _power_feedback(self, profile: str, budget: BudgetController) -> Dict[str, Any]:
+        """Compare the measured APU draw with the cap we wrote."""
+        draw = self.power.status().get("draw_w")
+        cap = self._applied_tdp
+        result: Dict[str, Any] = {"draw_w": draw, "cap_w": cap, "cap_ignored": budget.cap_ignored}
+        if not isinstance(draw, (int, float)) or cap is None or not budget.tdp_control:
+            return result
+        if float(draw) > float(cap) + self.CAP_IGNORED_MARGIN_W:
+            self._over_cap_windows += 1
+        else:
+            self._over_cap_windows = 0
+            if budget.cap_ignored:
+                budget.cap_ignored = False
+                self._event("tdp-cap-binding-again", "draw-within-cap", profile=profile, draw_w=draw, cap_w=cap)
+        if self._over_cap_windows >= 2 and not budget.cap_ignored:
+            budget.cap_ignored = True
+            self._event("tdp-cap-ignored", "draw-above-cap", profile=profile, draw_w=draw, cap_w=cap)
+        result["cap_ignored"] = budget.cap_ignored
+        return result
 
     async def _apply_budget_tdp(self, profile: str) -> bool:
         budget = self._budget
