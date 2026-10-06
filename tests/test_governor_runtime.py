@@ -234,6 +234,23 @@ class PredictiveStartTests(RuntimeBase):
         self.assertIn("native90", st["ladder"]["predicted_infeasible"])
 
 
+class ModeTests(RuntimeBase):
+    def test_balanced_mode_is_accepted_and_builds_a_balanced_controller(self):
+        self.assertTrue(self.svc.set_mode("game", "balanced")["success"])
+        self.assertEqual(self.svc.get_status("game")["mode"], "balanced")
+        self.assertFalse(self.svc.set_mode("game", "turbo")["success"])
+        self.prime_not_matching()
+        self.step()
+        self.step()
+        budget = self.svc.get_status("game").get("budget")
+        self.assertIsNotNone(budget)
+        self.assertEqual(budget["flavor"], "balanced")
+
+    def prime_not_matching(self):
+        self.feed(20, 60, 60)
+        self.t["now"] += 0.5
+
+
 class BottleneckAwareLadderTests(RuntimeBase):
     def test_cpu_bound_game_skips_render_scale_points(self):
         self.svc.sensors.sample = lambda force=False: {"gpu_busy_pct": 40.0, "cpu_top_core_pct": 98.0}

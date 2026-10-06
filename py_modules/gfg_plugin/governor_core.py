@@ -585,14 +585,20 @@ def _point_key(target: int, base: int, multiplier: float) -> str:
     return f"native{target}" if multiplier == 1 else f"{base}x{multiplier:g}"
 
 
-def budget_points(target_output_fps: int) -> tuple[OperatingPoint, ...]:
-    """Cheapest first: x4 emergency, then real 24 .. native."""
+BALANCED_REAL_FLOOR_FPS = 30   # Balanced never goes below 30 real (x3 at 90 Hz)
+BALANCED_START_REAL_FPS = 45   # and starts at x2 at 90 Hz
+BALANCED_START_TDP_W = 12.0
+BALANCED_IDEAL_MAX_W = 13.0
+
+
+def budget_points(target_output_fps: int, real_floor: int = REAL_FLOOR_FPS) -> tuple[OperatingPoint, ...]:
+    """Cheapest first: x4 emergency, then real ``real_floor`` (24, or 30 in Balanced) .. native."""
     target = int(target_output_fps)
     normal = []
     seen: set[int] = set()
     for m in reversed(BUDGET_MULTIPLIERS):
         base = int(round(target / m))
-        if base < REAL_FLOOR_FPS or base in seen:
+        if base < real_floor or base in seen:
             continue
         seen.add(base)
         mult = int(m) if m == int(m) else m
@@ -724,10 +730,12 @@ class BudgetController:
     def __init__(
         self, *, target_output_fps: int, now: float,
         min_tdp_w: Optional[float] = None, max_tdp_w: Optional[float] = None,
-        tdp_control: bool = True,
+        tdp_control: bool = True, flavor: str = "battery",
     ) -> None:
+        self.flavor = "balanced" if flavor == "balanced" else "battery"
+        balanced = self.flavor == "balanced"
         self.target_output_fps = int(target_output_fps)
-        self.points = budget_points(self.target_output_fps)
+        self.points = budget_points(self.target_output_fps, BALANCED_REAL_FLOOR_FPS if balanced else REAL_FLOOR_FPS)
         self.tdp_control = bool(tdp_control)
         hw_min = float(min_tdp_w) if min_tdp_w else 0.0
         hw_max = float(max_tdp_w) if max_tdp_w else self.EMERGENCY_CEILING_W
@@ -736,11 +744,16 @@ class BudgetController:
         self.emergency_max_w = min(self.EMERGENCY_CEILING_W, hw_max)
         self.idx = min(
             range(1, len(self.points)),
-            key=lambda i: abs(self.points[i].base_target_fps - START_REAL_FPS),
+            key=lambda i: abs(self.points[i].base_target_fps - (BALANCED_START_REAL_FPS if balanced else START_REAL_FPS)),
         )
         self.comfort_idx = self.idx  # deeper than ~30 real only to defend the budget
-        self.ideal_max_w = min(self.IDEAL_MAX_W, self.normal_max_w)
-        self.tdp = min(max(self.START_TDP_W, self.min_w), self.normal_max_w) if self.tdp_control else None
+        self.ideal_max_w = min(BALANCED_IDEAL_MAX_W if balanced else self.IDEAL_MAX_W, self.normal_max_w)
+        start_w = BALANCED_START_TDP_W if balanced else self.START_TDP_W
+        self.tdp = min(max(start_w, self.min_w), self.normal_max_w) if self.tdp_control else None
+        if balanced:
+            # No last-resort ratio and no watts beyond the Deck's normal range: Balanced trades
+            # some battery for a real-frame floor of 30 and a ceiling it never crosses.
+            self.emergency_max_w = self.normal_max_w
         self.phase = "settle"
         self.probe: Optional[str] = None
         self.last_good: Optional[tuple[int, Optional[float]]] = None
@@ -1071,7 +1084,7 @@ class BudgetController:
             return self._move(f"guard-deeper-multiplier:{verdict.reason}", idx=self.idx - 1)
         if self.tdp_control and self.tdp is not None and self.tdp < self.normal_max_w - 1e-6:
             return self._move(f"guard-more-power:{verdict.reason}", tdp=min(self.normal_max_w, self.tdp + step))
-        if self.idx == 1 and self._usable(0, now):
+        if self.idx == 1 and self._usable(0, now) and self.flavor != "balanced":
             return self._move(f"guard-emergency-x4:{verdict.reason}", idx=0)
         # Above the normal budget only while the real stream keeps missing the
         # cap of the deepest point there is: that, not an FPS number, is what
@@ -1130,6 +1143,7 @@ class BudgetController:
             "exhausted": self.exhausted,
             "cap_ignored": self.cap_ignored,
             "warm_started": self.warm_started,
+            "flavor": self.flavor,
             "reason": self.last_reason,
             "limits_w": {"min": self.min_w, "normal": self.normal_max_w, "emergency": self.emergency_max_w},
         }

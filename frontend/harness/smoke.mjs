@@ -14,6 +14,8 @@ const cases = [
   ["home-warm-start", [], ["Adapting · 8 W", "Started from what worked last time."]],
   ["home-warm-start", ["Details"], ["Remembered from last session"]],
   ["home-budget-oled", ["Details"], ["Searched from scratch"]],
+  ["home-balanced", [], ["Balanced", "never goes below 30 real FPS"]],
+  ["home-balanced", ["Details"], ["×1 to ×3, never below 30 real FPS", "12–13 W start"]],
   ["home-cap-ignored", [], ["TDP limit overridden", "17.4 W", "another tool"]],
   ["home-quality-oled", ["Details"], ["×1 to ×3, steps of 0.25", "never above your own"]],
   ["home-quality-oled", [], ["fewest generated frames first"]],

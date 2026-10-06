@@ -66,6 +66,7 @@ const TIER_TEXT = {
 };
 const PHASE_TEXT = { settle: "Starting at 10 W", search_down: "Lowering TDP", upgrade: "Fewer generated frames", probe: "Re-checking", locked: "Watching", guard: "Protecting" };
 const MODE_TEXT = {
+  balanced: "Balanced: starts at about 45 real FPS and 12 W, never goes below 30 real FPS and never above your Deck's normal power range. A bit more battery for a steadier picture.",
   budget: "Battery: lowest TDP first, 9–11 W ideal. Real FPS stays at 24 or more; a deeper ratio (down to 20 real) and the highest watts your Deck allows only as a last resort.",
   quality: "Quality: fewest generated frames first, then lowers TDP. Uses more battery.",
 };
@@ -240,7 +241,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
       h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 18 }), busy ? "WORKING…" : missing ? "INSTALL ENGINE" : s.enabled ? "STOP" : "RUN"),
     h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : missing ? "The GFG engine is not installed yet. One tap installs it." : "Target " + target + " FPS · " + (dev.reason || "picked automatically for this screen")),
     h("div", { className: "sec" }, "MODE"),
-    h(Seg, { value: s.mode || "budget", options: [["budget", "Battery"], ["quality", "Quality"]], onChange: async (v) => { try { await rpc.setMode(profile, v); } catch (e) {} refresh(); } }),
+    h(Seg, { value: s.mode || "budget", options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"]], onChange: async (v) => { try { await rpc.setMode(profile, v); } catch (e) {} refresh(); } }),
     h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
     health ? h("div", { className: "hint" }, health) : null,
     needsLaunch ? h("div", null, h("div", { className: "sec" }, "START THE GAME WITH THIS LAUNCH OPTION"), h(LaunchCopy, { launch })) : null,
@@ -281,11 +282,11 @@ function GovernorPage({ s, back, profile, refresh }) {
       h("span", null, "Fan"), h("b", null, (s.sensors || {}).fan_rpm != null ? num(s.sensors.fan_rpm, 0) + " rpm" : "–"))),
     h("div", { className: "sec" }, "RULES"),
     h("div", { className: "card" }, h("div", { className: "kv" },
-      h("span", null, "Multipliers"), h("b", null, mode === "budget" ? "×1 to ×3.75, deeper only as a last resort" : "×1 to ×3, steps of 0.25"),
+      h("span", null, "Multipliers"), h("b", null, mode === "balanced" ? "×1 to ×3, never below 30 real FPS" : mode === "budget" ? "×1 to ×3.75, deeper only as a last resort" : "×1 to ×3, steps of 0.25"),
       h("span", null, "Saved profile"), h("b", null, "never modified"),
-      h("span", null, "TDP"), h("b", null, mode === "budget" ? budgetRule(b) : "never above your own"),
-      mode === "budget" ? h("span", null, "Reacts") : null,
-      mode === "budget" ? h("b", null, "up within ~2 s, down in 1 W steps") : null)),
+      h("span", null, "TDP"), h("b", null, mode === "balanced" ? "12–13 W start, never above the normal range" : mode === "budget" ? budgetRule(b) : "never above your own"),
+      mode !== "quality" ? h("span", null, "Reacts") : null,
+      mode !== "quality" ? h("b", null, "up within ~2 s, down in 1 W steps") : null)),
     (s.limitations || []).length ? h("div", { className: "sec" }, "LIMITS") : null,
     ...(s.limitations || []).map((t, i) => h(Note, { key: i, quiet: true }, t)));
 }
