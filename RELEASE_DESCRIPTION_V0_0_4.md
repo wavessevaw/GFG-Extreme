@@ -16,7 +16,7 @@ Everything from v0.0.3 is included: the action journal, diagnostics that are nev
 2. Close the game, press **RUN**, start the game.
 
 ### Verify your download
-SHA-256 of the zip: `<sha256>` (see `SHA256SUMS.txt`).
+SHA-256 of the zip: `cf1ee6c1694a06eddef75b948fc8b794ee3b56924e256843158c1b9eda77e0dd` (see `SHA256SUMS.txt`).
 
 ### Known limitations
 See `docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md`. 236 automated tests, all passing, including one that starts the helper as root and checks that only the helper keeps root. Not yet run on Steam Deck hardware. Renderer and Flatpak extensions are byte-identical to v0.0.2.
