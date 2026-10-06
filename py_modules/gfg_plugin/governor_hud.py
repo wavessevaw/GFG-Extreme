@@ -134,6 +134,10 @@ def mangohud_config(preset: str, position: str, status_file: Path, generated_fps
     return "\n".join(lines) + "\n"
 
 
+# Loaded with every managed launch while the HUD is off: MangoHud draws nothing.
+HIDDEN_CONFIG = "no_display=1\n"
+
+
 def _atomic(path: Path, text: str) -> bool:
     """Write only on change.  Returns True if the file was rewritten."""
     try:
@@ -167,6 +171,16 @@ class HudWriter:
         return path
 
     def deactivate(self) -> None:
+        """Hide the HUD but keep its config: the launch wrapper loads MangoHud
+        whenever the config exists, and MangoHud re-reads it, so turning the
+        HUD on later works in a running game."""
+        _atomic(active_config_path(self.config_dir), HIDDEN_CONFIG)
+
+    def config_exists(self) -> bool:
+        return active_config_path(self.config_dir).is_file()
+
+    def remove(self) -> None:
+        """No config at all: new launches do not load MangoHud."""
         try:
             active_config_path(self.config_dir).unlink()
         except FileNotFoundError:

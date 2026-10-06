@@ -136,6 +136,7 @@ class GovernorService:
         self.log = logger
         self.inspector = pipeline_inspector
         disk = self.configuration.config_dir / PRESENT_DIAGNOSTICS_LOG_FILENAME
+        self.diagnostics_log_path = disk
         self.observer = TelemetryObserver(disk, Path(PRESENT_DIAGNOSTICS_FALLBACK_LOG))
         self.planner = OperatingPointPlanner()
         self.activity: Any = None  # ActivityLog, set by the plugin
@@ -163,6 +164,11 @@ class GovernorService:
         self._wake: Optional[asyncio.Event] = None
         self._wake_loop: Optional[asyncio.AbstractEventLoop] = None
         self._task: Optional[asyncio.Task] = None
+        self._standby_fp: Any = None
+        self._in_saved_notify = False
+        listeners = getattr(self.configuration, "saved_listeners", None)
+        if isinstance(listeners, list):
+            listeners.append(self.notify_saved_changed)
         self._last_display: Dict[str, Any] = {}
         self._last_display_poll = 0.0
         self._active_profile = ""
@@ -341,7 +347,8 @@ class GovernorService:
         self._save_settings()
         self._sync_hud(profile)
         self._poke()
-        return {"success": True, "error": None, "hud": current, "relaunch_required": True}
+        # MangoHud is loaded at launch with a hidden config and re-reads it: live.
+        return {"success": True, "error": None, "hud": current, "relaunch_required": False}
 
     def _sync_hud(self, profile: str) -> None:
         """Publish/remove the active HUD config and keep the status line fresh."""
@@ -354,10 +361,37 @@ class GovernorService:
                                   generated_fps=hud_output_fps(status) is not None)
                 # get_status, not _status: power/effort/active point are only merged in there.
                 self.hud.write_status(status, settings["preset"])
-            else:
+            elif self._hud_preload_wanted():
                 self.hud.deactivate()
+            else:
+                self.hud.remove()
         except OSError as error:
             self.log.debug("Governor HUD sync failed: %s", error)
+
+    def _hud_preload_wanted(self) -> bool:
+        """Keep a hidden MangoHud in new launches only for Governor/HUD users.
+
+        Everyone else gets no extra Vulkan layer; for them the HUD needs one
+        relaunch after it is first turned on.
+        """
+        profiles = self._settings.get("profiles", {})
+        return isinstance(profiles, dict) and any(
+            isinstance(v, dict) and (bool(v.get("enabled", False)) or bool((v.get("hud") or {}).get("enabled", False)))
+            for v in profiles.values()
+        )
+
+    def _sync_hud_presence(self) -> None:
+        """Start/toggle path: hidden HUD config for Governor/HUD users, none otherwise.
+
+        Never hides a HUD that is shown: ``_sync_hud`` owns the visible state.
+        """
+        try:
+            if not self._hud_preload_wanted():
+                self.hud.remove()
+            elif not self.hud.config_exists():
+                self.hud.deactivate()
+        except OSError as error:
+            self.log.debug("Governor HUD presence sync failed: %s", error)
 
     def _scale_ready(self, profile: str) -> bool:
         return bool(self._profile_settings(profile).get("scale_ready", False))
@@ -386,17 +420,22 @@ class GovernorService:
         )
 
     def _sync_diagnostics_marker(self) -> None:
+        """Keep renderer diagnostics on for every managed launch.
+
+        Diagnostics are read from the environment once, when the game starts.
+        With the marker present for every launch, the Governor can be turned on
+        in an already running game and still get FPS telemetry.
+        """
         self.diagnostics_marker_path.parent.mkdir(parents=True, exist_ok=True)
-        if self._any_profile_enabled():
-            temp = self.diagnostics_marker_path.with_suffix(".tmp")
-            temp.write_text("enabled\n", encoding="utf-8")
-            os.chmod(temp, 0o600)
-            temp.replace(self.diagnostics_marker_path)
-            return
         try:
-            self.diagnostics_marker_path.unlink()
-        except FileNotFoundError:
+            if self.diagnostics_marker_path.read_text(encoding="utf-8") == "enabled\n":
+                return
+        except OSError:
             pass
+        temp = self.diagnostics_marker_path.with_suffix(".tmp")
+        temp.write_text("enabled\n", encoding="utf-8")
+        os.chmod(temp, 0o600)
+        temp.replace(self.diagnostics_marker_path)
 
     # ---------------------------------------------------------- overlay (I/O)
     def _saved_profile_config(self, profile: str) -> Optional[Dict[str, Any]]:
@@ -425,9 +464,20 @@ class GovernorService:
         with self._io_lock:
             return self.overlay.write(profile, deltas, point_key=point_key, released=released)
 
-    def _restore_overlay_sync(self, profile: str) -> Optional[str]:
-        """Restore ``profile``'s overlay to the Saved projection and release the lease.
+    def _ensure_overlay_sync(
+        self, profile: str, deltas: Dict[str, Any], point_key: str
+    ) -> Optional[OverlayRecord]:
+        if self.overlay is None:
+            raise OSError("overlay-unsupported")
+        with self._io_lock:
+            return self.overlay.ensure(profile, deltas, point_key=point_key)
 
+    def _restore_overlay_sync(self, profile: str, released: bool = False) -> Optional[str]:
+        """Restore ``profile``'s overlay to the Saved projection (standby).
+
+        The lease is kept while the plugin runs, so the next launch still reads
+        the overlay and the Governor can be turned on mid-game.  ``released``
+        (plugin unload) writes owner=0 instead: new launches then use Saved.
         Returns an error string, or None when restored and verified.  Nothing
         is removed: a running game keeps a valid (Saved) file to watch.
         """
@@ -435,10 +485,99 @@ class GovernorService:
             return None
         try:
             saved = self._saved_profile_config(profile)
-            self._write_overlay_sync(profile, self._base_for(profile, saved), "released", released=True)
+            if saved is None and not released:
+                return "saved-profile-unavailable"
+            if released:
+                self._write_overlay_sync(profile, self._base_for(profile, saved), "released", released=True)
+            else:
+                with self._io_lock:
+                    self.overlay.ensure(profile, self._base_for(profile, saved), point_key="base")
         except (OSError, ValueError) as error:
             return str(error)
         return None
+
+    def _saved_profile_names(self) -> list[str]:
+        direct = getattr(self.configuration, "saved_profile_names", None)
+        if callable(direct):
+            try:
+                return [str(name) for name in direct() if str(name or "").strip()]
+            except Exception as error:  # pragma: no cover - defensive
+                self.log.debug("Governor could not list profiles: %s", error)
+                return []
+        getter = getattr(self.configuration, "get_profiles", None)
+        names: list[str] = []
+        if callable(getter):
+            try:
+                response = getter()
+            except Exception as error:  # pragma: no cover - defensive
+                self.log.debug("Governor could not list profiles: %s", error)
+                response = None
+            listed = response.get("profiles") if isinstance(response, dict) else None
+            if isinstance(listed, list):
+                names = [str(name) for name in listed if str(name or "").strip()]
+        return names
+
+    def _standby_overlays_sync(self, force: bool = False) -> None:
+        # One pass at a time: the Saved-write listener and the loop both call this.
+        with self._io_lock:
+            self._standby_overlays_sync_locked(force)
+
+    def _standby_overlays_sync_locked(self, force: bool) -> None:
+        """Keep a leased Saved-projection overlay for every profile.
+
+        Every managed launch then reads the overlay, so enabling the Governor in
+        a running game needs no relaunch.  Runs when Saved changed (cheap stat)
+        and never touches the profile whose Governor point is in flight: that
+        overlay belongs to ``_sync_overlay``.
+        """
+        if self.overlay is None:
+            return
+        fingerprint = getattr(self.configuration, "saved_config_fingerprint", lambda: None)()
+        if not force and fingerprint is not None and fingerprint == self._standby_fp:
+            return
+        names = self._saved_profile_names()
+        if not names:
+            return
+        busy = (
+            self._active_profile
+            if (self._point_deltas or self._request is not None or self._rollback_deltas is not None)
+            else None
+        )
+        for profile in names:
+            if profile == busy or profile in self._restore_pending:
+                continue
+            try:
+                saved = self._saved_profile_config(profile)
+                if saved is None:
+                    continue  # retried when Saved changes again, not every second
+                with self._io_lock:
+                    self.overlay.ensure(profile, self._base_for(profile, saved), point_key="base")
+            except (OSError, ValueError) as error:
+                self.log.debug("Governor standby overlay for %s failed: %s", profile, error)
+        try:
+            with self._io_lock:
+                self.overlay.release_unknown(names)
+        except OSError as error:
+            self.log.debug("Governor could not release stale overlays: %s", error)
+        self._standby_fp = fingerprint
+
+    def notify_saved_changed(self) -> None:
+        """Saved config was written by the plugin: refresh standby overlays now.
+
+        Synchronous, before the Saved write returns, so a game launched right
+        after an edit already reads the new launch-time fields.  The profile
+        under an in-flight Governor point is left to the loop (``_sync_overlay``).
+        """
+        if self._in_saved_notify:
+            return
+        self._in_saved_notify = True
+        try:
+            self._standby_overlays_sync(force=True)
+        except Exception as error:  # never fail the Saved write
+            self.log.debug("Governor standby refresh after Saved write failed: %s", error)
+        finally:
+            self._in_saved_notify = False
+        self._poke()
 
     def set_enabled(self, profile: str, enabled: bool) -> Dict[str, Any]:
         profile = str(profile or "").strip()
@@ -452,9 +591,12 @@ class GovernorService:
             self._sync_diagnostics_marker()
         except OSError as error:
             self.log.warning("Governor could not update diagnostics marker: %s", error)
+        self._sync_hud_presence()
         overlay_error: Optional[str] = None
         if enabled:
             overlay_error = self._ensure_base_overlay_sync(profile)
+            if overlay_error is None:
+                self._status.pop("capability", None)
         else:
             # Invariant: restore overlay to Saved (verified) BEFORE ownership is
             # released.  The live loop then clears point/power state.
@@ -479,7 +621,7 @@ class GovernorService:
         value = self._settings.setdefault("profiles", {}).setdefault(profile, {})
         value["scale_ready"] = bool(scale_ready)
         self._save_settings()
-        error = self._ensure_base_overlay_sync(profile) if self._profile_enabled(profile) else None
+        error = self._ensure_base_overlay_sync(profile)
         return {
             "success": True, "error": None, "scale_ready": bool(scale_ready), "profile": profile,
             "relaunch_required": True, **({"overlay_error": error} if error else {}),
@@ -492,7 +634,8 @@ class GovernorService:
             saved = self._saved_profile_config(profile)
             if saved is None:
                 return "saved-profile-unavailable"
-            self._write_overlay_sync(profile, self._base_for(profile, saved), "base")
+            with self._io_lock:
+                self.overlay.ensure(profile, self._base_for(profile, saved), point_key="base")
         except (OSError, ValueError) as error:
             self.log.warning("Governor could not write base overlay for %s: %s", profile, error)
             return str(error)
@@ -527,6 +670,10 @@ class GovernorService:
         except OSError as error:
             self.log.warning("Governor could not prepare diagnostics marker: %s", error)
         await asyncio.to_thread(self._reconcile_overlays)
+        try:
+            await asyncio.to_thread(self._sync_hud_presence)
+        except OSError as error:
+            self.log.debug("Governor could not prepare the hidden HUD config: %s", error)
         await asyncio.to_thread(self.power.discover)
         self._wake = asyncio.Event()
         self._wake_loop = asyncio.get_running_loop()
@@ -536,13 +683,12 @@ class GovernorService:
         """After a plugin restart: refresh leases of enabled profiles, restore the rest."""
         if self.overlay is None:
             return
-        for profile in list(self._settings.get("profiles", {})):
-            if self._profile_enabled(profile):
-                error = self._ensure_base_overlay_sync(profile)
-            else:
-                error = self._restore_overlay_sync(profile)
+        names = list(dict.fromkeys([*self._saved_profile_names(), *self._settings.get("profiles", {})]))
+        for profile in names:
+            error = self._ensure_base_overlay_sync(profile)
             if error:
                 self._restore_pending[profile] = "startup-reconcile"
+        self._standby_overlays_sync(force=True)
 
     async def stop(self) -> None:
         self._stop.set()
@@ -561,9 +707,10 @@ class GovernorService:
             except Exception as error:
                 self.log.debug("Governor loop ended with error: %s", error)
         self._task = None
-        # Restore overlays to Saved (verified) before power ownership is released.
-        for profile in list(self._settings.get("profiles", {})):
-            error = await asyncio.to_thread(self._restore_overlay_sync, profile)
+        # Restore overlays to Saved (verified, lease dropped) before power ownership is released.
+        names = list(dict.fromkeys([*self._saved_profile_names(), *self._settings.get("profiles", {})]))
+        for profile in names:
+            error = await asyncio.to_thread(self._restore_overlay_sync, profile, True)
             if error:
                 self.log.error("Governor could not restore overlay for %s on unload: %s", profile, error)
                 self._event("overlay-restore-failed", "plugin-stop", profile=profile, error=error)
@@ -686,7 +833,7 @@ class GovernorService:
 
     async def _retry_restores(self) -> None:
         for profile, reason in list(self._restore_pending.items()):
-            if self._profile_enabled(profile) and reason == "startup-reconcile":
+            if reason == "startup-reconcile":
                 error = await asyncio.to_thread(self._ensure_base_overlay_sync, profile)
             else:
                 error = await asyncio.to_thread(self._restore_overlay_sync, profile)
@@ -849,7 +996,9 @@ class GovernorService:
         desired = {**base, **self._point_deltas}
         key = self._point["key"] if self._point else "base"
         try:
-            self._record = await asyncio.to_thread(self._write_overlay_sync, profile, desired, key)
+            record = await asyncio.to_thread(self._ensure_overlay_sync, profile, desired, key)
+            if record is not None:
+                self._record = record
             self._saved_fp = fingerprint
         except (OSError, ValueError) as error:
             self._status.setdefault("overlay", {})["sync_error"] = str(error)
@@ -882,7 +1031,24 @@ class GovernorService:
                               reason=launch.get("reason"))
             self._journal_game = game
 
+    # Diagnostics are on in every managed game: keep one session's log bounded.
+    DIAGNOSTICS_LOG_MAX_BYTES = 64 * 1024 * 1024
+
+    def _cap_diagnostics_log(self) -> None:
+        """Truncate an oversized diagnostics log in place.
+
+        The wrapper opens it with ``>>`` (O_APPEND), so the game keeps writing
+        at the new end, and the telemetry tailer already survives truncation.
+        """
+        try:
+            if self.diagnostics_log_path.stat().st_size > self.DIAGNOSTICS_LOG_MAX_BYTES:
+                os.truncate(self.diagnostics_log_path, 0)
+                self._event("diagnostics-log-truncated", "size-cap", limit=self.DIAGNOSTICS_LOG_MAX_BYTES)
+        except OSError:
+            pass
+
     async def _iteration(self) -> None:
+        await asyncio.to_thread(self._cap_diagnostics_log)
         await self._iteration_core()
         self._journal_transitions()
         self._update_effort()
@@ -892,6 +1058,7 @@ class GovernorService:
             await asyncio.to_thread(self._sync_hud, profile)
 
     async def _iteration_core(self) -> None:
+        await asyncio.to_thread(self._standby_overlays_sync)
         profile, response = await asyncio.to_thread(self.configuration.get_current_profile_snapshot)
         config = response.get("config") if isinstance(response, dict) else None
         if not profile or not isinstance(config, dict):
@@ -1415,6 +1582,10 @@ class GovernorService:
 
     async def _loop(self) -> None:
         while not self._stop.is_set():
+            # Clear before the iteration: a poke that lands while it runs
+            # (a Saved write, a toggle) wakes the next one right away.
+            if self._wake is not None:
+                self._wake.clear()
             try:
                 await self._iteration()
             except asyncio.CancelledError:
@@ -1424,8 +1595,6 @@ class GovernorService:
                 self._status.update({"state": "PAUSED", "reason": "iteration-error", "error": str(error)})
             timeout = self.IDLE_LOOP_SECONDS if self._is_idle() else self.LOOP_SECONDS
             wake = self._wake
-            if wake is not None:
-                wake.clear()
             waiters = [asyncio.ensure_future(self._stop.wait())]
             if wake is not None:
                 waiters.append(asyncio.ensure_future(wake.wait()))

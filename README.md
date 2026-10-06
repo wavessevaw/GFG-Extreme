@@ -92,7 +92,7 @@ Requires [Decky Loader](https://decky.xyz/) on SteamOS, and the **default public
 /home/deck/.local/bin/gfg %command%
 ```
 
-4. Start the game and press **RUN**. The first time, relaunch the game once so the engine can attach.
+4. Start the game and press **RUN**. GFG attaches to the running game; only a game started before this version (or without the launch command) needs one relaunch.
 
 The old `mako-run` command keeps working as an alias. For Heroic, Lutris, EmuDeck and other Flatpak apps, open **Advanced → System** and enable GFG for the app (it prepares the runtime extension and access for you).
 

@@ -12,6 +12,8 @@
 - **Loading screens are told apart by power draw.** A collapse of real FPS with the draw far below the cap (loading screen, menu) never buys watts quickly. With the draw at the cap, the game is starved and gets them at once.
 - The home screen shows **Adapting · N W** instead of **Locked in**.
 
+Everything from v0.0.8 is included (the Governor turns on in a running game).
+
 ### Install
 1. Download `GFG-Extreme-Governor-v0_0_9.zip` and install it through Decky Loader (install from zip). Accept the root access request.
 2. Close the game, press **RUN**, start the game.

@@ -48,7 +48,7 @@ const POINT_LABEL = (p) => (p ? (p.multiplier > 1 ? fmtMult(p.multiplier) : "Nat
 const PAUSED_TEXT = {
   "overlay-restore-failed": "Could not restore settings — retrying.",
   "game-not-running": "Start the game with the GFG launch command.",
-  "diagnostics-active-no-events": "No FPS from the engine yet. If the game was started before GFG was turned on, relaunch it.",
+  "diagnostics-active-no-events": "No FPS from the engine yet. If the game was started before this GFG version was installed, relaunch it once.",
   "diagnostics-events-no-fps-samples": "The engine reports no FPS yet. Is frame generation on?",
   "telemetry-stale": "FPS from the engine stopped arriving.",
   "external-tdp-change": "TDP was changed outside GFG. In Battery mode GFG takes it back after 30 s (at most 3 times).",
@@ -77,7 +77,7 @@ const budgetRule = (b) => {
 function describe(s) {
   const cap = (s.capability && s.capability.reason) || "";
   if (!s.enabled) return { head: "Ready", body: "Press Run — GFG will pick the target for this screen and manage the engine.", tone: "idle" };
-  if (cap === "relaunch-required-for-governor-overlay" || s.reason === "relaunch-required-for-governor-overlay") return { head: "Restart the game", body: "GFG is on. Relaunch the game once so the engine can attach.", tone: "warn" };
+  if (cap === "relaunch-required-for-governor-overlay" || s.reason === "relaunch-required-for-governor-overlay") return { head: "Restart the game once", body: "This game was started without the GFG launch command, or before this GFG version. Relaunch it once; after that GFG can be turned on while the game runs.", tone: "warn" };
   if (s.state === "PAUSED") return { head: "Paused", body: PAUSED_TEXT[s.reason] || "Waiting (" + (s.reason || "unknown") + "). Your saved profile is untouched.", tone: "warn" };
   if (s.state === "OBSERVE_ONLY" && s.reason === "tdp-control-not-writable") return { head: "No TDP access", body: "GFG manages frame generation, but cannot change TDP: the plugin has no write access to the power caps.", tone: "warn" };
   if (s.state === "OBSERVE_ONLY") return { head: "Observing", body: "Another backend owns the pipeline. GFG only watches.", tone: "idle" };
@@ -307,7 +307,7 @@ function HudPage({ back, s, profile, refresh }) {
     h("div", { className: "sec" }, "POSITION"),
     h(Seg, { value: hud.position, options: [["top-right", "Top right"], ["top-left", "Top left"], ["bottom-left", "Bottom left"], ["bottom-right", "Bottom right"]], onChange: (v) => set({ position: v }) }),
     hud.layer_available === false ? h(Note, null, "MangoHud layer not found on this system, so the overlay cannot appear. Record a log and send it.") : null,
-    h(Note, { quiet: true }, "Takes effect on next game launch, only for games started with the GFG launch command. Works together with shader effects (vkBasalt); not used when the profile already loads its own MangoHud."));
+    h(Note, { quiet: true }, "Turns on and off while the game runs, for games started with the GFG launch command (a game started before this version needs one relaunch). Works together with shader effects (vkBasalt); not used when the profile already loads its own MangoHud."));
 }
 
 function ProfilesPage({ back, profiles, current, pick, reload }) {
