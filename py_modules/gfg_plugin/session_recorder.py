@@ -175,6 +175,28 @@ def probe_game_processes(proc_root: Path = Path("/proc"), limit: int = 8) -> Lis
 ACTIVITY_LOOKBACK_S = 1800.0
 
 
+# What to do about a failed setup check (matched by substring of the check name).
+SETUP_ADVICE = (
+    ("launch wrapper installed", "Open Settings → System and install the engine."),
+    ("file present", "An engine file is missing. Reinstall the engine in Settings → System."),
+    ("wrapper contains", "The launcher is out of date. Reinstall the engine in Settings → System."),
+    ("host MangoHud Vulkan layer", "MangoHud's Vulkan layer is not installed on this system, so the in-game overlay cannot appear."),
+    ("in-game overlay switched on", "Turn the overlay on in Settings → In-game overlay."),
+    ("overlay config published", "Turn the overlay on in Settings → In-game overlay."),
+    ("overlay status line", "Turn the overlay on and press RUN; the status line is written while the Governor runs."),
+    ("renderer diagnostics log", "Start the game with the GFG launch command (Settings → Launch command), then press RUN."),
+    ("diagnostics marker", "Press RUN once, then restart the game."),
+    ("rotation writable", "The diagnostics log belongs to another user or is a symlink; remove it from ~/.config/mako-render."),
+    ("TDP control", "GFG cannot write TDP. Accept the root access request when the plugin loads, or reinstall the plugin."),
+    ("saved profile readable", "The profile file is missing; open Settings → Profile and create or select one."),
+    ("desktop folder writable", "Logs cannot be saved to the Desktop folder."),
+)
+
+
+def advice_for(check: str) -> str:
+    return next((text for key, text in SETUP_ADVICE if key in check), "")
+
+
 class SessionRecorder:
     def __init__(
         self,
@@ -322,6 +344,17 @@ class SessionRecorder:
         except OSError:
             pass
 
+    def check_setup(self, profile: str = "") -> Dict[str, Any]:
+        """The same preconditions the log records, with advice for each failure, for the Diagnostics screen."""
+        if profile and not self.recording:
+            self._profile = profile
+        checks = self.self_test()
+        for check in checks:
+            if not check["ok"]:
+                check["advice"] = advice_for(check["check"])
+        failed = [c for c in checks if not c["ok"]]
+        return {"success": True, "checks": checks, "failed": len(failed), "total": len(checks)}
+
     def self_test(self) -> List[Dict[str, Any]]:
         """Every precondition of the Governor and the overlay, each with ok/detail."""
         checks: List[Dict[str, Any]] = []
@@ -412,7 +445,7 @@ class SessionRecorder:
             "decky_plugins": sorted(p.name for p in (self.user_home / "homebrew" / "plugins").glob("*"))
             if (self.user_home / "homebrew" / "plugins").is_dir() else [],
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.14",
+            "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.15",
         }
 
     def _write_bundle(self) -> Path:

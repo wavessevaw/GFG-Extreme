@@ -765,6 +765,10 @@ class Plugin:
     async def get_log_recording_status(self) -> Dict[str, Any]:
         return self.session_recorder.status()
 
+    async def run_setup_check(self, profile_name: str = "") -> Dict[str, Any]:
+        """Check every precondition of the Governor and the overlay (no recording needed)."""
+        return await asyncio.to_thread(self.session_recorder.check_setup, profile_name)
+
     async def get_governor_status(self, profile_name: str = "") -> Dict[str, Any]:
         """Return the live GFG Governor state without mutating the profile."""
         status = self.governor_service.get_status(profile_name)
@@ -1415,7 +1419,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Governor v0.0.14 started")
+        decky.logger.info("GFG Governor v0.0.15 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""

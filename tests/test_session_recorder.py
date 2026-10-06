@@ -136,6 +136,20 @@ class RecorderTests(unittest.TestCase):
             self.assertEqual(sensors["start"][0]["power1_cap"], "18000000")
             self.assertEqual(sensors["end"][0]["power1_cap"], "20000000")
 
+    def test_check_setup_gives_advice_for_every_failed_check(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            rec, _ = self.make(home)
+            (home / "cfg" / "hud" / "active.conf").unlink()
+            result = rec.check_setup("game")
+            self.assertTrue(result["success"])
+            self.assertEqual(result["total"], len(result["checks"]))
+            failed = {c["check"]: c for c in result["checks"] if not c["ok"]}
+            self.assertIn("overlay config published (active.conf)", failed)
+            for check in failed.values():
+                self.assertTrue(check["advice"], check["check"])
+            self.assertEqual(result["failed"], len(failed))
+
     def test_stop_without_start_fails_cleanly(self):
         with tempfile.TemporaryDirectory() as temp:
             rec, _ = self.make(Path(temp))

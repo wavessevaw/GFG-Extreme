@@ -77,7 +77,7 @@ Every decision is written to a journal you can inspect.
 
 ## Something not working? Record a log
 
-Settings → Diagnostics → **Record log**, play for a minute or two, **Stop and save log to Desktop**. A zip appears on the Steam Deck desktop, and the screen lists what the log shows (for example "no renderer diagnostics were written", "paused most of the time"). The zip contains `summary.txt`, a 1 Hz timeline, the renderer diagnostics, the Governor's decisions, a self-test of every precondition and the generated launcher. On a PC, `python3 tools/gfg_log_report.py <zip>` prints the same verdict.
+Settings → Diagnostics → **Check setup** tells in seconds whether the engine, launcher, overlay and TDP access are in place, and what to do about each missing piece. If the problem is during play: Settings → Diagnostics → **Record log**, play for a minute or two, **Stop and save log to Desktop**. A zip appears on the Steam Deck desktop, and the screen lists what the log shows (for example "no renderer diagnostics were written", "paused most of the time"). The zip contains `summary.txt`, a 1 Hz timeline, the renderer diagnostics, the Governor's decisions, a self-test of every precondition and the generated launcher. On a PC, `python3 tools/gfg_log_report.py <zip>` prints the same verdict.
 
 ## Targets
 
@@ -114,7 +114,7 @@ The old `mako-run` command keeps working as an alias. For Heroic, Lutris, EmuDec
 
 ## Status
 
-**Beta (Governor v0.0.14).** The decision engine, overlay handling and safety rules are covered by an automated test suite (including tests that run the real generated launch wrapper in bash). No release has been validated on a real Steam Deck yet, so expect rough edges: please record a log and send it. Known limitations are listed in the release notes.
+**Beta (Governor v0.0.15).** The decision engine, overlay handling and safety rules are covered by an automated test suite (including tests that run the real generated launch wrapper in bash). No release has been validated on a real Steam Deck yet, so expect rough edges: please record a log and send it. Known limitations are listed in the release notes.
 
 ## Heritage and credits
 
