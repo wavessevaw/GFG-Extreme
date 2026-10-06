@@ -36,6 +36,7 @@ from .governor_core import (
     raw_effort, window_verdict,
 )
 from .governor_battery import BatteryEstimator, read_battery
+from .steamos_tdp import SteamOSManagerTdp
 from .governor_hud import HudWriter, normalize as hud_normalize, output_fps as hud_output_fps
 from .governor_overlay import (
     OverlayRecord,
@@ -137,7 +138,7 @@ class GovernorService:
         self.activity: Any = None  # ActivityLog, set by the plugin
         self._journal_state: tuple = ()
         self._journal_game: Optional[tuple] = None
-        self.power = SteamDeckPowerActuator()
+        self.power = SteamDeckPowerActuator(manager=SteamOSManagerTdp(home=os.environ.get("HOME")))
         self.power.journal = self._journal_power
         self.search = PowerSearch()
         self.settings_path = self.configuration.config_dir / "gfg-governor.json"

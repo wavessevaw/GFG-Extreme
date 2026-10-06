@@ -91,6 +91,7 @@ def compact_status(status: Dict[str, Any]) -> Dict[str, Any]:
         "capability": status.get("capability"),
         "tdp": power.get("observed_tdp_w"), "tdp_owned": power.get("owned"), "tdp_available": power.get("available"),
         "tdp_fast": power.get("observed_fast_w"), "apu_w": power.get("draw_w"),
+        "tdp_method": power.get("method"),
         "effort": (status.get("effort") or {}).get("level"),
         "hud": status.get("hud"),
         "battery_min": (status.get("battery") or {}).get("minutes_left"),
