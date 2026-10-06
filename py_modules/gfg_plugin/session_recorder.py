@@ -400,6 +400,11 @@ class SessionRecorder:
             "dmi_board_name": read("/sys/devices/virtual/dmi/id/board_name"),
             "os_release": read("/etc/os-release"),
             "gamescope_processes": run(["pgrep", "-a", "gamescope"])[:2000],
+            # Other TDP controllers (ryzenadj-based Decky plugins, PowerTools, ...) set the SMU
+            # limits directly and win over the hwmon caps without changing what those files read.
+            "tdp_tools_processes": run(["pgrep", "-a", "-f", "ryzenadj|powertools|PowerControl|SimpleDeckyTDP"])[:2000],
+            "decky_plugins": sorted(p.name for p in (self.user_home / "homebrew" / "plugins").glob("*"))
+            if (self.user_home / "homebrew" / "plugins").is_dir() else [],
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
             "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.5",
         }
