@@ -135,6 +135,38 @@ class RuntimeBase(unittest.TestCase):
         self.assertEqual(self.svc.hud_settings("game")["preset"], "standard")
         self.assertEqual(self.svc.hud_settings("game")["position"], "top-right")
 
+    def test_idle_when_nothing_enabled_and_busy_when_enabled(self):
+        self.assertFalse(self.svc._is_idle())          # enabled in setUp
+        self.svc.set_enabled("game", False)
+        self.step()
+        self.assertTrue(self.svc._is_idle())
+        self.svc.set_hud("game", True)
+        self.assertFalse(self.svc._is_idle())          # HUD status needs the loop
+        self.svc.set_hud("game", False)
+        self.assertTrue(self.svc._is_idle())
+
+    def test_loop_wakes_immediately_when_poked_while_idle(self):
+        async def scenario():
+            self.svc.set_enabled("game", False)
+            self.svc.IDLE_LOOP_SECONDS = 30.0
+            calls = []
+            original = self.svc._iteration
+            async def counting():
+                calls.append(1)
+                await original()
+            self.svc._iteration = counting
+            await self.svc.start()
+            await asyncio.sleep(0.3)
+            idle_calls = len(calls)
+            await asyncio.sleep(0.3)
+            self.assertEqual(len(calls), idle_calls, "idle loop must not spin")
+            await asyncio.to_thread(self.svc.set_enabled, "game", True)  # worker-thread poke
+            await asyncio.sleep(0.5)
+            woke = len(calls) > idle_calls
+            await self.svc.stop()
+            return woke
+        self.assertTrue(asyncio.run(scenario()))
+
     # -- helpers
     def step(self, seconds=1.0):
         self.t["now"] += seconds

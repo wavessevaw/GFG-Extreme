@@ -18,6 +18,11 @@ const rpc = {
   runtime: callable("get_runtime_status"),
   launch: callable("get_launch_option"),
   schema: callable("get_config_schema"),
+  createProfile: callable("create_profile"),
+  deleteProfile: callable("delete_profile"),
+  renameProfile: callable("rename_profile"),
+  journal: callable("get_config_journal"),
+  restoreJournal: callable("restore_config_journal_entry"),
   checkInstalled: callable("check_mako_installed"),
   install: callable("install_mako"),
   uninstall: callable("uninstall_mako"),
@@ -197,9 +202,47 @@ function HudPage({ back, s, profile, refresh }) {
     h(Note, { quiet: true }, "Takes effect on next game launch. Not used when another overlay layer (MangoHud/vkBasalt) is chosen for the profile."));
 }
 
-function ProfilesPage({ back, profiles, current, pick }) {
+function ProfilesPage({ back, profiles, current, pick, reload }) {
+  const [sel, setSel] = useState(null);
+  const [msg, setMsg] = useState("");
+  const [name, setName] = useState("");
+  const TF = window.DFL && window.DFL.TextField;
+  const act = async (fn) => { setMsg(""); try { const r = await fn(); if (r && r.success === false) setMsg(r.error || "Failed"); } catch (e) { setMsg(String(e)); } await reload(); };
+  if (sel) {
+    const isDefault = sel === "Default";
+    return h(Page, { title: sel, onBack: () => { setSel(null); setName(""); } },
+      h("div", { className: "list", style: { marginTop: 0 } },
+        h(Row, { title: sel === current ? "Active profile" : "Make active", onClick: () => act(async () => { await pick(sel); }) }),
+        h(Row, { title: "Duplicate", sub: "Copy into a new profile", onClick: () => act(() => rpc.createProfile(sel + " copy", sel)) })),
+      !isDefault ? h("div", null,
+        h("div", { className: "sec" }, "RENAME"),
+        TF ? h(TF, { value: name, placeholder: "New name", onChange: (e) => setName(e.target.value) }) : null,
+        h("div", { className: "list" },
+          h(Row, { title: "Rename", onClick: () => name.trim() && act(async () => { const r = await rpc.renameProfile(sel, name.trim()); if (r && r.success) { setSel(null); setName(""); } return r; }) }),
+          h(Row, { title: "Delete profile", sub: "Cannot be undone", onClick: () => act(async () => { const r = await rpc.deleteProfile(sel); if (r && r.success) setSel(null); return r; }) }))) : null,
+      msg ? h(Note, null, msg) : null);
+  }
   return h(Page, { title: "Profile", onBack: back },
-    h("div", { className: "list", style: { marginTop: 0 } }, (profiles || []).map((p) => h(Row, { key: p, title: p, value: p === current ? "Active" : "", onClick: () => pick(p) }))));
+    h("div", { className: "list", style: { marginTop: 0 } }, (profiles || []).map((p) => h(Row, { key: p, title: p, value: p === current ? "Active" : "", onClick: () => setSel(p) }))),
+    h("div", { className: "sec" }, "NEW PROFILE"),
+    TF ? h(TF, { value: name, placeholder: "Profile name", onChange: (e) => setName(e.target.value) }) : null,
+    h("div", { className: "list" }, h(Row, { title: "Create from current", onClick: () => name.trim() && act(async () => { const r = await rpc.createProfile(name.trim(), current); if (r && r.success) setName(""); return r; }) })),
+    msg ? h(Note, null, msg) : null);
+}
+
+function JournalPage({ back, profile, reloadCfg }) {
+  const [entries, setEntries] = useState(null);
+  const [msg, setMsg] = useState("");
+  const load = useCallback(async () => { try { const r = await rpc.journal(profile || "", 15); setEntries(r && r.success ? r.entries || [] : []); } catch (e) { setEntries([]); } }, [profile]);
+  useEffect(() => { load(); }, [load]);
+  const restore = async (id) => { setMsg(""); try { const r = await rpc.restoreJournal(id); if (!r || r.success === false) setMsg((r && r.error) || "Restore failed"); else await reloadCfg(); } catch (e) { setMsg(String(e)); } load(); };
+  const when = (t) => { try { return new Date((t > 1e12 ? t : t * 1000)).toLocaleString(); } catch (e) { return ""; } };
+  return h(Page, { title: "Journal", onBack: back },
+    entries == null ? h("div", { className: "hint" }, "Loading…") :
+    entries.length === 0 ? h(Note, { quiet: true }, "No changes recorded yet.") :
+    h("div", { className: "list", style: { marginTop: 0 } }, entries.map((e) =>
+      h(Row, { key: e.id, title: Object.keys(e.changes || {}).slice(0, 3).join(", ") || "change", sub: (e.source ? e.source + " · " : "") + when(e.timestamp || e.time || e.ts), value: "Restore", onClick: () => restore(e.id) }))),
+    msg ? h(Note, null, msg) : null);
 }
 
 function AdvancedPage({ back, s, insp, launch, go }) {
@@ -210,6 +253,7 @@ function AdvancedPage({ back, s, insp, launch, go }) {
     h("div", { className: "sec" }, "LAUNCH OPTION"),
     h("div", { className: "card" }, h("div", { style: { fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" } }, launch || "/home/deck/.local/bin/gfg %command%")),
     h("div", { className: "list" }, h(Row, { icon: "cog", title: "All settings", sub: "Every profile option", onClick: () => go("all") }),
+      h(Row, { icon: "cog", title: "Journal", sub: "Undo recent changes", onClick: () => go("journal") }),
       h(Row, { icon: "cog", title: "System", sub: "Engine install, Flatpak access", onClick: () => go("system") })),
     h("div", { className: "sec" }, "INSPECTOR"),
     h("div", { className: "cols" }, col("SAVED", sv), col("EFFECTIVE", ef), col("GOVERNOR", s && s.active_point ? { point: POINT_LABEL(s.active_point) } : {}, true), col("ACTUAL", ac)));
@@ -317,7 +361,8 @@ function Content() {
   else if (screen === "fg") body = h(FgPage, { back, cfg, patch });
   else if (screen === "scaling") body = h(ScalingPage, { s, back, profile, refresh });
   else if (screen === "hud") body = h(HudPage, { back, s, profile, refresh });
-  else if (screen === "profiles") body = h(ProfilesPage, { back, profiles, current: profile, pick });
+  else if (screen === "profiles") body = h(ProfilesPage, { back, profiles, current: profile, pick, reload: loadProfiles });
+  else if (screen === "journal") body = h(JournalPage, { back: () => setScreen("advanced"), profile, reloadCfg: () => loadCfg(profile) });
   else if (screen === "all") body = h(AllSettingsPage, { back: () => setScreen("advanced"), cfg, patch });
   else if (screen === "system") body = h(SystemPage, { back: () => setScreen("advanced"), inst, reloadInst });
   else if (screen === "advanced") body = h(AdvancedPage, { back, s, insp, launch, go });

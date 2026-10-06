@@ -88,6 +88,7 @@ def _power_state_name(state: str) -> str:
 
 class GovernorService:
     LOOP_SECONDS = 1.0
+    IDLE_LOOP_SECONDS = 5.0  # nothing enabled: do (almost) nothing
     DISPLAY_REFRESH_SECONDS = 10.0
     LAUNCH_REFRESH_SECONDS = 5.0
     WINDOW_SECONDS = 12.0
@@ -134,6 +135,8 @@ class GovernorService:
         self._restore_pending: Dict[str, str] = {}
         self._status: Dict[str, Any] = self._base_status()
         self._stop = asyncio.Event()
+        self._wake: Optional[asyncio.Event] = None
+        self._wake_loop: Optional[asyncio.AbstractEventLoop] = None
         self._task: Optional[asyncio.Task] = None
         self._last_display: Dict[str, Any] = {}
         self._last_display_poll = 0.0
@@ -257,6 +260,7 @@ class GovernorService:
         self._settings.setdefault("profiles", {}).setdefault(profile, {})["hud"] = current
         self._save_settings()
         self._sync_hud(profile)
+        self._poke()
         return {"success": True, "error": None, "hud": current, "relaunch_required": True}
 
     def _sync_hud(self, profile: str) -> None:
@@ -273,6 +277,23 @@ class GovernorService:
 
     def _scale_ready(self, profile: str) -> bool:
         return bool(self._profile_settings(profile).get("scale_ready", False))
+
+    def _poke(self) -> None:
+        """Wake an idle loop right away (callable from worker threads)."""
+        loop, wake = self._wake_loop, self._wake
+        if loop is not None and wake is not None:
+            try:
+                loop.call_soon_threadsafe(wake.set)
+            except RuntimeError:
+                pass
+
+    def _is_idle(self) -> bool:
+        profiles = self._settings.get("profiles", {})
+        hud_on = isinstance(profiles, dict) and any(
+            isinstance(v, dict) and bool((v.get("hud") or {}).get("enabled", False)) for v in profiles.values()
+        )
+        return not (self._any_profile_enabled() or hud_on or self._restore_pending or self._forced_release
+                    or self._point or self._request)
 
     def _any_profile_enabled(self) -> bool:
         profiles = self._settings.get("profiles", {})
@@ -361,6 +382,7 @@ class GovernorService:
                 self._status["enabled"] = False
                 self._status["state"] = "DISABLING"
                 self._status["reason"] = "user-disabled"
+        self._poke()
         result: Dict[str, Any] = {"success": True, "error": None, "enabled": bool(enabled), "profile": profile}
         if overlay_error:
             result["overlay_error"] = overlay_error
@@ -422,6 +444,8 @@ class GovernorService:
             self.log.warning("Governor could not prepare diagnostics marker: %s", error)
         await asyncio.to_thread(self._reconcile_overlays)
         await asyncio.to_thread(self.power.discover)
+        self._wake = asyncio.Event()
+        self._wake_loop = asyncio.get_running_loop()
         self._task = asyncio.create_task(self._loop())
 
     def _reconcile_overlays(self) -> None:
@@ -1030,7 +1054,15 @@ class GovernorService:
             except Exception as error:
                 self.log.warning("Governor iteration failed: %s", error)
                 self._status.update({"state": "PAUSED", "reason": "iteration-error", "error": str(error)})
+            timeout = self.IDLE_LOOP_SECONDS if self._is_idle() else self.LOOP_SECONDS
+            wake = self._wake
+            if wake is not None:
+                wake.clear()
+            waiters = [asyncio.ensure_future(self._stop.wait())]
+            if wake is not None:
+                waiters.append(asyncio.ensure_future(wake.wait()))
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=self.LOOP_SECONDS)
-            except asyncio.TimeoutError:
-                pass
+                await asyncio.wait(waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for waiter in waiters:
+                    waiter.cancel()
