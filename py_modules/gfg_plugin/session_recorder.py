@@ -16,6 +16,8 @@ import zipfile
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from .privileged_power import writer as privileged_writer
+
 MAX_TIMELINE_BYTES = 24 * 1024 * 1024
 MAX_DIAG_BYTES = 12 * 1024 * 1024
 MAX_FILE_BYTES = 1024 * 1024
@@ -336,7 +338,10 @@ class SessionRecorder:
                             writable = True
             except OSError:
                 pass
-            add(label, writable)
+            helper = privileged_writer()
+            add(label, writable or helper is not None,
+                f"root helper pid {helper.pid}" if helper is not None else
+                ("direct" if writable else "plugin runs without root"))
         return checks
 
     def _system_info(self) -> Dict[str, Any]:
@@ -359,7 +364,7 @@ class SessionRecorder:
             "os_release": read("/etc/os-release"),
             "gamescope_processes": run(["pgrep", "-a", "gamescope"])[:2000],
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.3",
+            "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.4",
         }
 
     def _write_bundle(self) -> Path:
