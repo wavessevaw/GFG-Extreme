@@ -137,7 +137,8 @@ class RuntimeBase(unittest.TestCase):
         self.step()
         self.assertIn("sc100", status_path(self.cfg.config_dir).read_text())
         self.svc.set_hud("game", False)
-        self.assertFalse(active.exists())
+        # Hidden, not removed: MangoHud stays loaded at launch and re-reads it.
+        self.assertIn("no_display=1", active.read_text())
         # bogus values are normalised, never written raw
         self.svc.set_hud("game", True, "evil;rm", "nowhere")
         self.assertEqual(self.svc.hud_settings("game")["preset"], "standard")
@@ -497,7 +498,7 @@ class ReleaseTests(RuntimeBase):
         self.svc.set_enabled("game", False)
         st = self.step()
         self.assertEqual(st["state"], "DISABLED")
-        self.assertEqual(seen["header"]["owner"], 0)  # lease released
+        self.assertEqual(seen["header"]["owner"], os.getpid())  # standby: lease kept for live re-enable
         saved = self.cfg.get_profile_config("game")["config"]
         self.assertEqual(seen["profile"]["multiplier"], saved["multiplier"])
         self.assertEqual(seen["profile"]["base_fps_cap"], saved["base_fps_cap"])
@@ -519,7 +520,7 @@ class ReleaseTests(RuntimeBase):
         st = self.step()
         self.assertEqual(st["state"], "DISABLED")
         self.assertFalse(self.svc.power.state.owned)
-        self.assertEqual(self.header()["owner"], 0)
+        self.assertEqual(self.header()["owner"], os.getpid())
         self.assertNotIn("restore_pending", self.svc.get_status())
 
     def test_profile_switch_releases_old_profile_overlay_and_power(self):
@@ -531,7 +532,7 @@ class ReleaseTests(RuntimeBase):
         st = self.step()
         self.assertEqual(st["profile"], "other")
         self.assertFalse(self.svc.power.state.owned)
-        self.assertEqual(self.header()["owner"], 0)
+        self.assertEqual(self.header()["owner"], os.getpid())
         saved = self.cfg.get_profile_config("game")["config"]
         self.assertEqual(self.overlay_profile()["multiplier"], saved["multiplier"])
         self.assertIsNone(self.svc.get_status()["active_point"])
@@ -605,7 +606,7 @@ class OverlayHousekeepingTests(RuntimeBase):
 
     def test_startup_reconcile_refreshes_lease_for_enabled_and_restores_disabled(self):
         self.svc.set_enabled("game", False)
-        self.assertEqual(self.header()["owner"], 0)
+        self.assertEqual(self.header()["owner"], os.getpid())
         other = GovernorService(self.cfg, self.display, logging.getLogger("gov-rt2"), self.inspector)
         other.power = FakePower()
         other.DEFAULT_MODE = "quality"
@@ -618,6 +619,76 @@ class OverlayHousekeepingTests(RuntimeBase):
     def test_enable_writes_base_overlay_immediately_for_next_launch(self):
         self.assertTrue(self.svc.overlay.exists("game"))
         self.assertEqual(self.header()["owner"], os.getpid())
+
+
+class LiveAttachTests(RuntimeBase):
+    """v0.0.8: the Governor attaches to a game that is already running."""
+
+    def setUp(self):
+        super().setUp()
+        self.svc.set_enabled("game", False)
+
+    # Inherited check assumes the Governor is on; covered by the other classes.
+    test_hud_set_publishes_and_removes_active_config = None
+
+    def test_every_profile_has_a_leased_standby_overlay(self):
+        self.svc._reconcile_overlays()
+        for name in self.cfg.get_profiles()["profiles"]:
+            header = self.svc.overlay.read_header(name)
+            self.assertIsNotNone(header, name)
+            self.assertEqual(header["owner"], os.getpid())
+
+    def test_standby_overlay_is_exactly_saved(self):
+        import tomllib
+        saved = tomllib.loads(self.cfg.config_file_path.read_text())
+        body = self.svc.overlay.path_for("game").read_text().split("\n", 2)[2]
+        self.assertEqual(tomllib.loads(body), saved)
+
+    def test_saved_edit_while_disabled_reaches_standby_overlay(self):
+        self.cfg.update_profile_config_fields("game", {"flow_scale": 0.6})
+        self.saved_hash = sha(self.cfg.config_file_path)  # user-driven Saved change
+        self.step()
+        self.assertAlmostEqual(self.overlay_profile()["flow_scale"], 0.6)
+
+    def test_new_profile_gets_standby_overlay(self):
+        self.assertTrue(self.cfg.create_profile("fresh", "mako")["success"])
+        self.saved_hash = sha(self.cfg.config_file_path)
+        self.step()
+        self.assertEqual(self.svc.overlay.read_header("fresh")["owner"], os.getpid())
+
+    def test_deleted_profile_overlay_loses_its_lease(self):
+        self.assertTrue(self.cfg.create_profile("gone", "mako")["success"])
+        self.step()
+        self.assertEqual(self.svc.overlay.read_header("gone")["owner"], os.getpid())
+        self.assertTrue(self.cfg.delete_profile("gone")["success"])
+        self.saved_hash = sha(self.cfg.config_file_path)
+        self.step()
+        self.assertEqual(self.svc.overlay.read_header("gone")["owner"], 0)
+
+    def test_unchanged_standby_is_not_rewritten(self):
+        rev = self.header()["rev"]
+        self.svc._standby_overlays_sync(force=True)
+        self.svc.set_enabled("game", True)
+        self.assertEqual(self.header()["rev"], rev, "a rewrite is a config reload in the running game")
+
+    def test_enable_mid_game_applies_point_without_relaunch(self):
+        # Game was launched while the Governor was off: its launch already read the standby overlay.
+        self.step()
+        self.svc.set_enabled("game", True)
+        self.feed(20, 48, 96)
+        st = self.step()
+        self.assertNotEqual(st.get("reason"), "relaunch-required-for-governor-overlay")
+        self.assertTrue(self.svc.power.state.owned)
+
+    def test_plugin_stop_drops_every_lease(self):
+        self.assertTrue(self.cfg.create_profile("other2", "mako")["success"])
+        self.saved_hash = sha(self.cfg.config_file_path)
+        self.step()
+        asyncio.run(self.svc.stop())
+        for name in self.cfg.get_profiles()["profiles"]:
+            header = self.svc.overlay.read_header(name)
+            if header is not None:
+                self.assertEqual(header["owner"], 0, name)
 
 
 class BudgetRuntimeTests(RuntimeBase):

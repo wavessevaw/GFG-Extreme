@@ -23,6 +23,11 @@ Every overlay starts with a header the wrapper copies into the launch manifest::
 
 ``owner`` is a lease: the wrapper only selects the overlay while ``/proc/<owner>``
 exists, so a crashed plugin cannot leave new launches bound to a stale point.
+
+While the plugin runs it keeps a *standby* overlay (Saved projection, no
+Governor point) leased for every profile, so every managed launch reads the
+overlay.  Turning the Governor on during a running game then only changes live
+fields in a file the renderer already watches: no game restart.
 """
 from __future__ import annotations
 
@@ -305,6 +310,79 @@ class OverlayStore:
             scaling_provisioned=bool(scaling),
             owner=owner,
         )
+
+    def ensure(
+        self,
+        profile: str,
+        deltas: Dict[str, Any],
+        *,
+        point_key: str = "base",
+    ) -> Optional[OverlayRecord]:
+        """Write a leased overlay only if its body, point or owner would change.
+
+        A standby refresh must not touch an unchanged file: every rewrite is a
+        config reload in a running game.  Returns None when nothing was written.
+        """
+        body = self.build_text(profile, dict(deltas))
+        try:
+            current = self.path_for(profile).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            current = None
+        if current is not None:
+            lines = current.split("\n", 2)
+            header = self.read_header(profile)
+            if (
+                len(lines) == 3
+                and lines[1] == f"{POINT_HEADER}{point_key}"
+                and lines[2] == body
+                and header is not None
+                and header.get("owner") == self.owner_pid
+            ):
+                return None
+        return self.write(profile, deltas, point_key=point_key)
+
+    def release_unknown(self, known_profiles: "list[str]") -> int:
+        """Drop the lease (owner=0) of overlays whose profile no longer exists.
+
+        The body is kept, so a game still running on it keeps a valid config;
+        new launches fall back to Saved.  Returns the number of files changed.
+        """
+        known = {overlay_path(self.config_dir, name).name for name in known_profiles}
+        changed = 0
+        directory = self.config_dir / OVERLAY_DIRNAME
+        try:
+            paths = sorted(directory.glob("overlay-*.toml"))
+        except OSError:
+            return 0
+        for path in paths:
+            if path.name in known:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                continue
+            first, sep, rest = text.partition("\n")
+            if not first.startswith(LAUNCH_HEADER):
+                continue
+            parsed = parse_launch_line(first[len(LAUNCH_HEADER):])
+            if parsed is None or parsed["owner"] == 0:
+                continue
+            released = (
+                f"{LAUNCH_HEADER}scaling={parsed['scaling']} rev={parsed['rev'] + 1} owner=0"
+            )
+            fd, temp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(released + sep + rest)
+                os.chmod(temp_name, 0o644)
+                self._replace(temp_name, str(path))
+                changed += 1
+            except OSError:
+                try:
+                    os.unlink(temp_name)
+                except OSError:
+                    pass
+        return changed
 
     def remove(self, profile: str) -> None:
         try:

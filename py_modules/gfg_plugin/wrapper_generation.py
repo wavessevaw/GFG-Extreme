@@ -77,7 +77,7 @@ from .profile_storage import (
 )
 
 
-WRAPPER_FORMAT_VERSION = 79
+WRAPPER_FORMAT_VERSION = 80
 WRAPPER_FORMAT_MARKER = f"# mako-wrapper-format: {WRAPPER_FORMAT_VERSION}"
 HOST_COMPATIBILITY_MARKER = "# mako-host-compatibility: aarch64-passthrough-v1"
 DIAGNOSTICS_DEFAULT_MARKER = (
@@ -755,9 +755,9 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         ))
     return [
         f'export {PRESENT_ACQUIRE_TIMEOUT_ENV}="${{{PRESENT_ACQUIRE_TIMEOUT_ENV}:-{PRESENT_ACQUIRE_TIMEOUT_MS}}}"',
-        # Governor owns the opt-in marker. Diagnostics stay off for ordinary
-        # profiles, but a Governor-enabled session gets a real telemetry source
-        # on the next managed launch instead of silently pausing forever.
+        # Governor owns the marker and keeps it while installed: diagnostics are
+        # read once at game start, so every managed launch carries them and the
+        # Governor can be turned on in a game that is already running.
         f'mako_governor_diagnostics_marker={shlex.quote(str(context.runtime_state_dir / "governor-diagnostics.enabled"))}',
         f'if [ -f "$mako_governor_diagnostics_marker" ]; then export {PRESENT_DIAGNOSTICS_ENV}="${{{PRESENT_DIAGNOSTICS_ENV}:-1}}"; else export {PRESENT_DIAGNOSTICS_ENV}="${{{PRESENT_DIAGNOSTICS_ENV}:-0}}"; fi',
         'unset mako_governor_diagnostics_marker',

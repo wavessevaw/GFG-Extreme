@@ -75,7 +75,12 @@ class HudTests(unittest.TestCase):
             cfg = w.activate("standard", "top-left")
             self.assertTrue(cfg.is_file())
             w.deactivate(); w.deactivate()
-            self.assertFalse(cfg.exists())
+            # Hidden, not removed: MangoHud stays loaded and re-reads it.
+            self.assertEqual(cfg.read_text(), hud.HIDDEN_CONFIG)
+            w.activate("standard", "top-left")
+            self.assertIn("no_display=0", cfg.read_text())
+            w.ensure_present()
+            self.assertIn("no_display=0", cfg.read_text())
             self.assertEqual(hud.status_path(Path(d)).read_text(), "GFG off\n")
 
 

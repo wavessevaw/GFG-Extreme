@@ -140,15 +140,16 @@ class GovernorServiceTests(unittest.TestCase):
             self.assertEqual(status["target_output_fps"], 60)
             self.assertEqual(status["recommended_point"]["key"], "30x2")
 
-    def test_enabling_governor_creates_diagnostics_marker(self):
+    def test_diagnostics_marker_stays_on_for_live_attach(self):
         with tempfile.TemporaryDirectory() as temp:
             svc = self.make_service(Path(temp))
             marker = svc.diagnostics_marker_path
             self.assertFalse(marker.exists())
+            svc._sync_diagnostics_marker()  # what start() does
+            self.assertTrue(marker.exists(), "games started before RUN must still carry telemetry")
             svc.set_enabled("Game", True)
-            self.assertTrue(marker.exists())
             svc.set_enabled("Game", False)
-            self.assertFalse(marker.exists())
+            self.assertTrue(marker.exists())
 
     def test_unwritable_tdp_is_reported_not_silent(self):
         with tempfile.TemporaryDirectory() as temp:
