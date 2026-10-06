@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (v0.0.17).
+"""Live orchestration service for GFG Governor (v0.0.18).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -53,7 +53,7 @@ from .governor_telemetry import TelemetryObserver
 
 APPLIED_OPERATIONS = frozenset({"runtime-state-applied", "runtime-transition-applied"})
 FAILED_OPERATIONS = frozenset({"runtime-transition-failed"})
-VERSION = "0.0.17"
+VERSION = "0.0.18"
 
 
 @dataclass
@@ -374,7 +374,8 @@ class GovernorService:
         """Publish/remove the active HUD config and keep the status line fresh."""
         try:
             settings = self.hud_settings(profile)
-            self.hud.flush()  # a rate-limited change from a burst of UI toggles
+            # Decide the desired state first, then apply exactly that once (rate-limited inside
+            # HudWriter); an older pending config is replaced, never flushed first.
             if settings["enabled"]:
                 status = self.get_status(profile)
                 # MangoHud re-reads a changed config, so the FPS source follows the telemetry.
@@ -1526,6 +1527,7 @@ class GovernorService:
         """Store the point/TDP once it has held, so the next session can start there."""
         if (
             budget.phase != "locked" or budget.recover is not None or budget.cap_ignored or budget.exhausted
+            or getattr(budget, "verifying", None)
             or point.degraded or now - budget.locked_since < self.HOLD_BEFORE_REMEMBER_S
             or (budget.tdp_control and budget.tdp != self._applied_tdp)
         ):

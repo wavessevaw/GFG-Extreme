@@ -782,6 +782,7 @@ class BudgetController:
         self.held: list[tuple[float, float]] = []   # (time, tdp) of levels that held
         self.last_reason = "budget-start"
         self.warm_started = False
+        self.verifying: Optional[str] = None  # point inferred from delivered FPS, not yet verified
 
     def warm_start(self, point_key: str, tdp_w: Optional[float], now: float) -> bool:
         """Start from a remembered point/TDP that held in an earlier session instead of searching.
@@ -979,6 +980,7 @@ class BudgetController:
         if self.good < self.HEALTHY_WINDOWS:
             return "hold"
         self.last_good = (self.idx, self.tdp)
+        self.verifying = None
         self._remember_held(now)
         self.exhausted = False
         if self.quality_debt is not None and self.idx >= self.quality_debt:
@@ -1132,7 +1134,11 @@ class BudgetController:
             self.good = self.bad = 0
             self.prev = (self.idx, self.tdp)
             self.idx = delivered
+            # An observation, not a verification: the service requests this point from the
+            # renderer (confirmed on fresh samples), and only HEALTHY_WINDOWS fresh windows
+            # (real p5, output, misses, hard pressure, pacing) make it a held point.
             self.phase = "guard" if self.phase in ("locked", "probe", "guard") else self.phase
+            self.verifying = self.points[delivered].key
             self.last_reason = f"request-failed-use-delivered:{reason}"
             return
         self.request_failures += 1
@@ -1186,6 +1192,7 @@ class BudgetController:
             "cap_ignored": self.cap_ignored,
             "warm_started": self.warm_started,
             "flavor": self.flavor,
+            "verifying": self.verifying,
             "reason": self.last_reason,
             "limits_w": {"min": self.min_w, "normal": self.normal_max_w, "emergency": self.emergency_max_w},
         }
