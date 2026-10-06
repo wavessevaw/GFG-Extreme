@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from functools import wraps
 from threading import RLock
-from typing import Dict, Any, Optional
+from typing import Callable, Dict, Any, Optional
 
 from shared_config import FG_BACKEND_GFG
 from .build_flavor import LOCAL_DEVELOPMENT_BUILD
@@ -78,6 +78,8 @@ class ConfigurationService(BaseService):
             logger: Optional[Any] = None,
             development_build: Optional[bool] = None):
         super().__init__(logger=logger)
+        # Called after every Saved config write (the Governor refreshes its overlays).
+        self.saved_listeners: list[Callable[[], None]] = []
         self.development_build = (
             LOCAL_DEVELOPMENT_BUILD
             if development_build is None
@@ -580,6 +582,10 @@ class ConfigurationService(BaseService):
                 config=None,
             )
 
+    def saved_profile_names(self) -> list[str]:
+        """Profile names in Saved, read-only (no metadata migration)."""
+        return list(self._get_profile_data()["profiles"].keys())
+
     def saved_config_fingerprint(self) -> Optional[tuple[int, int]]:
         """Cheap change detector for the Saved config file (mtime_ns, size)."""
         try:
@@ -964,6 +970,11 @@ class ConfigurationService(BaseService):
             0o644,
             self.log,
         )
+        for listener in list(getattr(self, "saved_listeners", ())):
+            try:
+                listener()
+            except Exception as error:  # a listener must never fail a Saved write
+                self.log.debug("Saved-config listener failed: %s", error)
 
     def get_profiles(self) -> ProfilesResponse:
         """Get list of all profiles and current profile
