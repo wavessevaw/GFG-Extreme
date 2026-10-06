@@ -32,6 +32,9 @@ const rpc = {
   fpApps: callable("get_flatpak_apps"),
   fpSet: callable("set_flatpak_app_override"),
   fpRemove: callable("remove_flatpak_app_override"),
+  logStart: callable("start_log_recording"),
+  logStop: callable("stop_log_recording"),
+  logStatus: callable("get_log_recording_status"),
 };
 
 // ---------- helpers
@@ -88,6 +91,31 @@ function LaunchCopy({ launch }) {
   return h("div", null,
     h("div", { className: "card" }, h("div", { style: { fontFamily: "monospace", fontSize: 12, wordBreak: "break-all", userSelect: "all" } }, cmd)),
     h("div", { className: "list" }, h(Row, { icon: "play", title: state || "Copy launch command", sub: "Paste into the game's Steam Properties → Launch Options", value: state ? "" : "Copy", onClick: copy })));
+}
+function LogRecorder({ profile }) {
+  const [st, setSt] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const load = useCallback(async () => { try { setSt((await rpc.logStatus()) || {}); } catch (e) {} }, []);
+  useEffect(() => { load(); const t = setInterval(load, 2000); return () => clearInterval(t); }, []);
+  const toggle = async () => {
+    setBusy(true); setErr("");
+    try {
+      const r = st.recording ? await rpc.logStop() : await rpc.logStart(profile || "");
+      if (r && r.success === false) setErr(r.error || "failed");
+      setSt(r || {});
+    } catch (e) { setErr(String(e)); }
+    setBusy(false);
+  };
+  const mm = (n) => Math.floor(n / 60) + ":" + String(Math.floor(n % 60)).padStart(2, "0");
+  return h("div", null,
+    h("div", { className: "list" }, h(Row, {
+      icon: st.recording ? "stop" : "play",
+      title: st.recording ? "Stop and save log to Desktop" : "Record log",
+      sub: st.recording ? "Recording " + mm(st.elapsed_s || 0) + " · play the game, then stop" : "Start, play for a minute or two, stop. A zip lands on the Steam Deck desktop.",
+      value: busy ? "…" : "", onClick: busy ? undefined : toggle })),
+    st.last_file && !st.recording ? h(Note, { quiet: true }, "Saved: " + st.last_file) : null,
+    err ? h(Note, null, "Log error: " + err) : null);
 }
 const Row = ({ icon, title, sub, value, onClick }) =>
   h(Focusable, { className: "row", onClick },
@@ -171,7 +199,9 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
       h(Row, { icon: "user", title: "Profile", value: profile || "Default", onClick: () => go("profiles") }),
       h(Row, { icon: "cog", title: "Advanced", sub: "Inspector, journal, install", onClick: () => go("advanced") })),
     h("div", { className: "sec" }, "STEP 1 · LAUNCH OPTION"),
-    h(LaunchCopy, { launch }));
+    h(LaunchCopy, { launch }),
+    h("div", { className: "sec" }, "SOMETHING WRONG? SEND ME A LOG"),
+    h(LogRecorder, { profile }));
 }
 
 // ---------- Sub screens
