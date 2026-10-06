@@ -13,7 +13,7 @@
 
 [**Скачать последний релиз**](https://github.com/wavessevaw/GFG-Extreme/releases) · [Быстрый старт](#быстрый-старт) · [Что-то не работает?](#что-то-не-работает)
 
-![status](https://img.shields.io/badge/status-pre--release-fb0d00?style=flat-square)
+![release](https://img.shields.io/github/v/release/wavessevaw/GFG-Extreme?style=flat-square&color=fb0d00&label=release)
 ![platform](https://img.shields.io/badge/Steam%20Deck-OLED%20%C2%B7%20LCD%20%C2%B7%20Dock-111?style=flat-square)
 ![decky](https://img.shields.io/badge/Decky%20Loader-plugin-111?style=flat-square)
 ![license](https://img.shields.io/badge/license-GPL--3.0-111?style=flat-square)
@@ -52,7 +52,7 @@
 
 Нужны [Decky Loader](https://decky.xyz/) и [Lossless Scaling](https://store.steampowered.com/app/993090/Lossless_Scaling/) из Steam (обычная публичная версия).
 
-1. Скачайте `GFG-Extreme-Governor-*.zip` со страницы [Releases](https://github.com/wavessevaw/GFG-Extreme/releases) и установите в Decky (*Install from zip*). Разрешите доступ root — он нужен только для установки TDP.
+1. Скачайте `GFG-Extreme-v1_0_0.zip` (или новее) со страницы [Releases](https://github.com/wavessevaw/GFG-Extreme/releases) и установите в Decky (*Install from zip*). Разрешите доступ root — он нужен только для установки TDP.
 2. Откройте GFG Extreme и нажмите **Install engine**.
 3. В Steam откройте у игры **Свойства → Параметры запуска** и вставьте:
    ```text
@@ -76,7 +76,7 @@ Heroic, Lutris, EmuDeck и другие Flatpak-приложения: **Settings
 
 ## Статус
 
-**Пре-релиз.** Каждый релиз покрыт автоматическими тестами (Python-бэкенд, сгенерированный лаунчер в bash и интерфейс в headless-браузере), но **ни один ещё не проверен на настоящей Steam Deck**. Двигают проект именно логи с реальных устройств — пришлите свой. Известные ограничения: [docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md).
+**1.0.0 — первый официальный релиз.** Проверен на Steam Deck OLED в настоящей игре (The Witcher 3): Battery держит 90 FPS на 30 настоящих кадрах при 10–11 Вт, Balanced — при 13 Вт. Кроме того, каждый релиз покрыт автоматическими тестами (Python-бэкенд, сгенерированный лаунчер в bash, интерфейс в headless-браузере), а все исправления начиная с 0.0.17 сделаны по логам с настоящей Deck. LCD, игра в доке и другие игры проверены меньше — логи очень пригодятся. Известные ограничения: [docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md).
 
 <details>
 <summary><b>Что ещё умеет</b></summary>
@@ -100,7 +100,7 @@ npm run screenshots   # перерисовать docs/img из настояще�
 python3 tools/gfg_log_report.py <log.zip>   # прочитать записанный лог на ПК
 ```
 
-Документация: [архитектура Governor](docs/GFG_GOVERNOR_ARCHITECTURE.md) · [телеметрия](docs/GFG_TELEMETRY_CAPABILITIES.md) · [интерфейс](docs/GFG_UI_REDESIGN.md). Каждое слияние в `main` с новой версией автоматически публикует пре-релиз.
+Документация: [архитектура Governor](docs/GFG_GOVERNOR_ARCHITECTURE.md) · [телеметрия](docs/GFG_TELEMETRY_CAPABILITIES.md) · [интерфейс](docs/GFG_UI_REDESIGN.md). Каждое слияние в `main` с новой версией автоматически публикует релиз (0.x — как пре-релизы, начиная с 1.0.0 — как официальные).
 
 </details>
 

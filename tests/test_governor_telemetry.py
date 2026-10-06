@@ -104,10 +104,25 @@ class GeneratedCapacityTests(unittest.TestCase):
 
     def test_capacity_from_applied_and_pending_lines(self):
         observer = TelemetryObserver(Path("/nonexistent"))
-        self.assertIsNone(observer.max_multiplier)
+        self.assertIsNone(observer.current_max_multiplier)
         observer.consume_line(self.PENDING, now=1.0)
-        self.assertEqual((observer.generated_capacity, observer.max_multiplier), (2, 3.0))
+        self.assertEqual((observer.generated_capacity, observer.current_max_multiplier), (2, 3.0))
         observer.consume_line(self.APPLIED.replace("generated_frame_capacity=2", "generated_frame_capacity=3"), now=2.0)
-        self.assertEqual(observer.max_multiplier, 4.0)
+        self.assertEqual(observer.current_max_multiplier, 4.0)
         self.assertEqual(observer.snapshot(now=2.0)["generated_capacity"], 3)
+
+    def test_capacity_is_current_and_can_go_down_to_zero(self):
+        """PR #37 review: 0 is a valid report (native only) and must replace a higher value."""
+        observer = TelemetryObserver(Path("/nonexistent"))
+        observer.consume_line(self.APPLIED, now=1.0)
+        self.assertEqual(observer.current_max_multiplier, 3.0)
+        observer.consume_line(self.APPLIED.replace("generated_frame_capacity=2", "generated_frame_capacity=0"), now=2.0)
+        self.assertEqual(observer.current_max_multiplier, 1.0)
+
+    def test_no_frame_generation_resources_means_native_only(self):
+        observer = TelemetryObserver(Path("/nonexistent"))
+        observer.consume_line(self.APPLIED, now=1.0)
+        observer.consume_line(self.APPLIED.replace("frame_generation_resources_available=1",
+                                                   "frame_generation_resources_available=0"), now=2.0)
+        self.assertEqual((observer.generated_capacity, observer.current_max_multiplier), (0, 1.0))
 

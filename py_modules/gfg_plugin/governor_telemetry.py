@@ -166,8 +166,9 @@ class TelemetryObserver:
         self._last_application: Dict[str, Any] = {}
         self._last_poll_error: Optional[str] = None
         self._session_generation = 0
-        # Generated frames per real frame the renderer has resources for (2 = up to x3).
-        # Raising it needs a swapchain recreation, so a deeper ratio silently falls back.
+        # Generated frames per real frame the renderer has resources for *right now* (2 = up to x3).
+        # It is a property of the current swapchain/resources, not of the device: the renderer
+        # raises it on a natural swapchain recreation, so a later report can lift the ceiling.
         self._generated_capacity: Optional[int] = None
 
     def _note_capacity(self, value: Any) -> None:
@@ -175,7 +176,7 @@ class TelemetryObserver:
             capacity = int(float(value))
         except (TypeError, ValueError):
             return
-        if capacity >= 1:
+        if capacity >= 0:  # 0 is valid (native only); every report replaces the previous one
             self._generated_capacity = capacity
 
     @property
@@ -183,9 +184,9 @@ class TelemetryObserver:
         return self._generated_capacity
 
     @property
-    def max_multiplier(self) -> Optional[float]:
-        """Deepest ratio the renderer can deliver right now (capacity + 1), or None if unknown."""
-        return float(self._generated_capacity + 1) if self._generated_capacity else None
+    def current_max_multiplier(self) -> Optional[float]:
+        """Deepest ratio the renderer's *current* resources allow (capacity + 1; 0 -> x1), or None if unknown."""
+        return None if self._generated_capacity is None else float(self._generated_capacity + 1)
 
     @property
     def sample_seq(self) -> int:
@@ -253,7 +254,9 @@ class TelemetryObserver:
         self._event_seq += 1
         operation = str(fields.get("operation") or "")
         self._last_fields = dict(fields)
-        if operation == "runtime-state-applied" and "generated_frame_capacity" in fields:
+        if operation == "runtime-state-applied" and fields.get("frame_generation_resources_available") == "0":
+            self._note_capacity(0)  # no frame-generation resources at all: native only
+        elif operation == "runtime-state-applied" and "generated_frame_capacity" in fields:
             self._note_capacity(fields.get("generated_frame_capacity"))
         elif operation == "runtime-transition-pending" and "available_generated_capacity" in fields:
             self._note_capacity(fields.get("available_generated_capacity"))
