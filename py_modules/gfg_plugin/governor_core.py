@@ -710,7 +710,10 @@ class BudgetController:
     FAST_GAP_S = 3.0             # at most one fast raise per this many seconds
     FAST_STEP_W = 2.0
     WORK_MEMORY_S = 900.0        # how long a level the game needed is remembered
-    DRAW_BINDING_MARGIN_W = 0.8  # draw this close to the cap: the cap is what limits
+    # Draw this close to the cap: the cap is what limits.  The Deck's draw
+    # sensor swings about 1 W around a binding cap (log of 2026-10-06: 5.1-6.2 W
+    # at a 6 W cap while the game crawled at 13 real).
+    DRAW_BINDING_MARGIN_W = 1.2
     EMERGENCY_REPROBE_S = 90.0
     RECOVER_S = 60.0       # giving back what the guard spent is not a new experiment
     RECOVER_MAX_S = 300.0

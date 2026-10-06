@@ -370,6 +370,14 @@ class FastRaiseTests(unittest.TestCase):
         ctl.fast_check(now + 402, 27.0, tdp - 1)
         self.assertEqual((ctl.probe, ctl.tdp), (None, tdp))
 
+    def test_deck_log_2026_10_06_resume_at_6_watts(self):
+        """Real numbers: a menu walked TDP to 6 W; back in game 12-15 real, draw 5.1-6.2 W."""
+        ctl, now = self.locked_at_10()
+        ctl.tdp, ctl.idx = 6.0, [p.key for p in ctl.points].index("33x2.75")
+        for i, (real, draw) in enumerate([(14.29, 5.19), (14.77, 5.14), (14.81, 6.04)]):
+            ctl.fast_check(now + i, real, draw)
+        self.assertGreaterEqual(ctl.tdp, 10.0)   # v0.0.7 sat at 6 W for over 2 minutes here
+
     def test_ignored_cap_disables_the_fast_path(self):
         ctl, now = self.locked_at_10()
         ctl.cap_ignored, tdp = True, ctl.tdp
