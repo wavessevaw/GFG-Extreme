@@ -468,5 +468,26 @@ class TierEffortTests(unittest.TestCase):
         self.assertEqual(raw_effort(point, 30, exhausted=True, tdp_w=20), "nightmare")
 
 
+class BalancedModeTests(unittest.TestCase):
+    def test_points_never_go_below_30_real_and_start_at_45_real_12_watts(self):
+        c = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25, flavor="balanced")
+        self.assertEqual(min(p.base_target_fps for p in c.points[1:]), 30)
+        self.assertEqual((c.point.base_target_fps, c.tdp), (45, 12.0))
+        self.assertEqual(c.status()["flavor"], "balanced")
+
+    def test_never_uses_the_last_resort_point_or_emergency_watts(self):
+        c = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25, flavor="balanced")
+        game = Game(0.6)  # hopeless game: nothing holds
+        now, trace = run(c, game, 0.0, 400)
+        self.assertFalse(any(point == c.points[0].key for point, _, _ in trace))
+        self.assertLessEqual(max(t for _, t, _ in trace), 15.0)
+        self.assertEqual(min(p for p in (c.point.base_target_fps,)), 30)
+        self.assertTrue(c.exhausted)
+
+    def test_battery_flavour_is_unchanged(self):
+        c = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25)
+        self.assertEqual((c.point.base_target_fps, c.tdp, c.flavor), (30, 10.0, "battery"))
+
+
 if __name__ == "__main__":
     unittest.main()

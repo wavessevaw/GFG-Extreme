@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (v0.0.11).
+"""Live orchestration service for GFG Governor (v0.0.12).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -53,7 +53,7 @@ from .governor_telemetry import TelemetryObserver
 
 APPLIED_OPERATIONS = frozenset({"runtime-state-applied", "runtime-transition-applied"})
 FAILED_OPERATIONS = frozenset({"runtime-transition-failed"})
-VERSION = "0.0.11"
+VERSION = "0.0.12"
 
 
 @dataclass
@@ -114,7 +114,7 @@ class GovernorService:
     CEILING_REJECT_TTL_S = 600.0
     # Budget mode (default): lowest TDP first, then fewer generated frames.
     DEFAULT_MODE = "budget"
-    MODES = ("budget", "quality")
+    MODES = ("budget", "balanced", "quality")
     BUDGET_WINDOW_SECONDS = 8.0
     BUDGET_MIN_SPAN_SECONDS = 6.0
     BUDGET_MIN_SAMPLES = 5
@@ -1245,7 +1245,7 @@ class GovernorService:
             self._status.update({"state": "PROBE", "reason": "collecting-fresh-evidence"})
             return
 
-        if self._mode(profile) == "budget":
+        if self._mode(profile) in ("budget", "balanced"):
             await self._budget_step(profile, external, target)
             return
 
@@ -1404,6 +1404,7 @@ class GovernorService:
                 target_output_fps=target, now=now,
                 min_tdp_w=(limits or {}).get("min"), max_tdp_w=(limits or {}).get("max"),
                 tdp_control=limits is not None,
+                flavor="balanced" if self._mode(profile) == "balanced" else "battery",
             )
             self._budget = budget
             remembered = self.game_models.get(context_key(profile, target, self._mode(profile)))
