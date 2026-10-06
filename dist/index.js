@@ -108,6 +108,7 @@ var rpc = {
   setGovernor: callable("set_governor_enabled"),
   setHud: callable("set_governor_hud"),
   setScaleReady: callable("set_governor_scale_ready"),
+  setMode: callable("set_governor_mode"),
   profiles: callable("get_profiles"),
   setProfile: callable("set_current_profile"),
   profileConfig: callable("get_profile_config"),
@@ -148,8 +149,18 @@ var PAUSED_TEXT = {
   "diagnostics-active-no-events": "No FPS from the engine yet. If the game was started before GFG was turned on, relaunch it.",
   "diagnostics-events-no-fps-samples": "The engine reports no FPS yet. Is frame generation on?",
   "telemetry-stale": "FPS from the engine stopped arriving.",
-  "external-tdp-change": "TDP was changed outside GFG \u2014 not fighting it.",
+  "external-tdp-change": "TDP was changed outside GFG. In Battery mode GFG takes it back after 30 s (at most 3 times).",
   "tdp-write-failed": "Could not write TDP."
+};
+var TIER_TEXT = {
+  ideal: "Ideal: 11 W or less. GFG keeps watching and reacts if a scene gets heavier.",
+  heavy: "Heavy game: needs 12\u201315 W. GFG keeps watching.",
+  emergency: "Last resort: \xD74 or above 15 W, because real FPS stays very low."
+};
+var PHASE_TEXT = { settle: "Starting at 10 W", search_down: "Lowering TDP", upgrade: "Fewer generated frames", probe: "Re-checking", locked: "Holding", guard: "Protecting" };
+var MODE_TEXT = {
+  budget: "Battery: lowest TDP first (9\u201311 W ideal, 15 W max). Real FPS stays at 24 or more; \xD74 and up to 20 W only as a last resort.",
+  quality: "Quality: fewest generated frames first, then lowers TDP. Uses more battery."
 };
 function describe(s) {
   const cap = s.capability && s.capability.reason || "";
@@ -160,6 +171,10 @@ function describe(s) {
   if (s.state === "OBSERVE_ONLY") return { head: "Observing", body: "Another backend owns the pipeline. GFG only watches.", tone: "idle" };
   if (s.state === "PROBE" || s.state === "PLAN") return { head: "Measuring", body: "Learning how the game runs. Nothing is changed yet.", tone: "busy" };
   if (s.state === "APPLY") return { head: "Testing " + POINT_LABEL(s.request && s.request.point), body: "Checking the result before keeping it.", tone: "busy" };
+  const b = s.budget;
+  if (b && s.state === "OPTIMIZE_POWER") return { head: "Saving battery", body: b.probe === "up" ? "Trying fewer generated frames at " + num(b.tdp_w, 0) + " W." : "Looking for the lowest TDP that holds the target (now " + num(b.tdp_w, 0) + " W).", tone: "ok" };
+  if (b && s.state === "LOCKED") return { head: "Locked in \xB7 " + num(b.tdp_w, 0) + " W", body: TIER_TEXT[b.tier] || "Stable. GFG keeps watching and reacts if a scene gets heavier.", tone: b.tier === "emergency" ? "warn" : "ok" };
+  if (b && s.state === "GUARD") return { head: "Protecting", body: "A scene got heavier: more generated frames first, then more watts.", tone: "warn" };
   if (s.state === "OPTIMIZE_POWER") return { head: "Saving power", body: "Lowering TDP while holding the target.", tone: "ok" };
   if (s.state === "LOCKED") return { head: "Locked in", body: "Stable at target. GFG stays out of the way.", tone: "ok" };
   if (s.state === "GUARD") return { head: "Protecting", body: "Quality dipped \u2014 restoring a safe setting.", tone: "warn" };
@@ -411,11 +426,31 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
     h(LogRecorder, { profile })
   );
 }
-function GovernorPage({ s, back }) {
-  const dev = s.device || {}, req = s.request, pt = s.active_point, lad = s.ladder || {};
+function GovernorPage({ s, back, profile, refresh }) {
+  const dev = s.device || {}, req = s.request, pt = s.active_point, lad = s.ladder || {}, b = s.budget;
+  const mode = s.mode || "budget";
   return h(
     Page,
     { title: "Governor", onBack: back },
+    h("div", { className: "sec" }, "MODE"),
+    h(Seg, { value: mode, options: [["budget", "Battery"], ["quality", "Quality"]], onChange: async (v) => {
+      await rpc.setMode(profile, v);
+      refresh();
+    } }),
+    h(Note, { quiet: true }, MODE_TEXT[mode]),
+    b ? h("div", { className: "sec" }, "BATTERY") : null,
+    b ? h("div", { className: "card" }, h(
+      "div",
+      { className: "kv" },
+      h("span", null, "TDP target"),
+      h("b", null, b.tdp_w != null ? num(b.tdp_w, 0) + " W" : "no TDP access"),
+      h("span", null, "Budget"),
+      h("b", null, { ideal: "Ideal (\u2264 11 W)", heavy: "Heavy (12\u201315 W)", emergency: "Last resort", unknown: "\u2013" }[b.tier] || "\u2013"),
+      h("span", null, "Point"),
+      h("b", null, POINT_LABEL(pt)),
+      h("span", null, "Step"),
+      h("b", null, PHASE_TEXT[b.phase] || b.phase)
+    )) : null,
     h("div", { className: "sec" }, "DECISION"),
     h("div", { className: "card" }, h(
       "div",
@@ -430,8 +465,7 @@ function GovernorPage({ s, back }) {
       h("b", null, POINT_LABEL(pt) + (s.active_point_mode ? " (" + s.active_point_mode + ")" : "")),
       h("span", null, "Testing"),
       h("b", null, req ? POINT_LABEL(req.point) : "\u2013"),
-      h("span", null, "Attempts"),
-      h("b", null, lad.attempts != null ? lad.attempts + " / " + (lad.max_attempts || 12) : "\u2013")
+      ...b ? [] : [h("span", null, "Attempts"), h("b", null, lad.attempts != null ? lad.attempts + " / " + (lad.max_attempts || 12) : "\u2013")]
     )),
     dev.reason ? h(Note, { quiet: true }, dev.reason) : null,
     h("div", { className: "sec" }, "RULES"),
@@ -439,11 +473,11 @@ function GovernorPage({ s, back }) {
       "div",
       { className: "kv" },
       h("span", null, "Multipliers"),
-      h("b", null, "\xD71 to \xD73, steps of 0.25"),
+      h("b", null, mode === "budget" ? "\xD71 to \xD73.75, \xD74 last resort" : "\xD71 to \xD73, steps of 0.25"),
       h("span", null, "Saved profile"),
       h("b", null, "never modified"),
       h("span", null, "TDP"),
-      h("b", null, "never above your own")
+      h("b", null, mode === "budget" ? "9\u201311 W ideal, 15 W max, 20 W last resort" : "never above your own")
     )),
     (s.limitations || []).length ? h("div", { className: "sec" }, "LIMITS") : null,
     ...(s.limitations || []).map((t, i) => h(Note, { key: i, quiet: true }, t))
@@ -463,7 +497,7 @@ function FgPage({ back, cfg, patch }) {
       null,
       h("div", { className: "sec" }, "SAVED MULTIPLIER"),
       h(Seg, { value: String(mult), options: [["2", "\xD72"], ["3", "\xD73"]], onChange: (v) => patch({ multiplier: Number(v) }) }),
-      h(Note, { quiet: true }, "Used when the Governor is off. With the Governor on, it picks \xD71 to \xD73 itself and never changes this value.")
+      h(Note, { quiet: true }, "Used when the Governor is off. With the Governor on, it picks \xD71 to \xD73.75 itself (\xD74 only as a last resort) and never changes this value.")
     ) : h(Note, { quiet: true }, "External backend: GFG observes only and does not change it.")
   );
 }
@@ -814,7 +848,7 @@ function Content() {
   const go = setScreen;
   let body;
   if (!s) body = h("div", { className: "hint" }, "Loading\u2026");
-  else if (screen === "governor") body = h(GovernorPage, { s, back });
+  else if (screen === "governor") body = h(GovernorPage, { s, back, profile, refresh });
   else if (screen === "fg") body = h(FgPage, { back, cfg, patch });
   else if (screen === "scaling") body = h(ScalingPage, { s, back, profile, refresh });
   else if (screen === "hud") body = h(HudPage, { back, s, profile, refresh });

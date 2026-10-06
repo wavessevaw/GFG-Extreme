@@ -68,6 +68,25 @@ class GovernorPowerActuatorTests(unittest.TestCase):
             self.assertEqual(int((h / "power2_cap").read_text()), 15000000)
             self.assertEqual(int((h / "power1_cap").read_text()), 18000000)
 
+    def test_budget_ceiling_allows_up_to_hardware_maximum_then_resets(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            h = self.make_hwmon(root)
+            actuator = SteamDeckPowerActuator(drm_root=root / "drm", hwmon_root=root / "hwmon")
+            actuator.discover(); actuator.claim()
+            actuator.set_ceiling_w(25)              # clamped to the 20 W hardware maximum
+            self.assertEqual(actuator.status()["ceiling_tdp_w"], 20.0)
+            self.assertEqual(actuator.status()["maximum_tdp_w"], 20.0)
+            actuator.set_tdp_w(18)
+            self.assertEqual(int((h / "power2_cap").read_text()), 18000000)
+            self.assertEqual(int((h / "power1_cap").read_text()), 20000000)  # fast keeps ratio, clamped
+            actuator.set_ceiling_w(None)
+            actuator.set_tdp_w(18)
+            self.assertEqual(int((h / "power2_cap").read_text()), 15000000)
+            actuator.restore_if_owned()
+            self.assertEqual(int((h / "power2_cap").read_text()), 15000000)
+            self.assertEqual(int((h / "power1_cap").read_text()), 18000000)
+
     def test_read_only_caps_are_reported_unavailable(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

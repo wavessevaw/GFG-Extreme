@@ -59,6 +59,7 @@ class GovernorServiceTests(unittest.TestCase):
     def make_service(self, root, external=False, backend="gfg"):
         svc = GovernorService(FakeConfig(root, backend), FakeDisplay(external), logging.getLogger("gov-test"))
         svc.power = FakePower()
+        svc.DEFAULT_MODE = "quality"
         svc._status["power"] = svc.power.status()
         return svc
 

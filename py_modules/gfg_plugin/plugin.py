@@ -794,6 +794,10 @@ class Plugin:
             self.governor_service.set_scale_ready, profile_name, scale_ready
         )
 
+    async def set_governor_mode(self, profile_name: str, mode: str) -> Dict[str, Any]:
+        """Battery (lowest TDP first) or Quality (fewest generated frames first)."""
+        return await asyncio.to_thread(self.governor_service.set_mode, profile_name, mode)
+
     async def set_governor_hud(
             self, profile_name: str, enabled: Any = None, preset: Any = None, position: Any = None
     ) -> Dict[str, Any]:
@@ -1411,7 +1415,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Governor v0.0.5 started")
+        decky.logger.info("GFG Governor v0.0.6 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""

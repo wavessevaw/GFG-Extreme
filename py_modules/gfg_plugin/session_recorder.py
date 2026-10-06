@@ -364,7 +364,7 @@ class SessionRecorder:
             "os_release": read("/etc/os-release"),
             "gamescope_processes": run(["pgrep", "-a", "gamescope"])[:2000],
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.5",
+            "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.6",
         }
 
     def _write_bundle(self) -> Path:

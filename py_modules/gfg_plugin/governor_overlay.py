@@ -57,8 +57,8 @@ LIVE_FIELDS = frozenset({
     "scaling_factor",
     "scaling_method",
 })
-# x4/x5 are never chosen automatically.
-MAX_AUTO_MULTIPLIER = 3.0
+# Budget mode uses x1 .. x3.75 normally and x4 as a last resort; x5 is never chosen.
+MAX_AUTO_MULTIPLIER = 4.0
 # Launch-time only (process-static): may appear only in the base overlay.
 LAUNCH_FIELDS = frozenset({"scaling_enabled"})
 
@@ -122,7 +122,7 @@ def point_deltas(
     if not (1.0 <= multiplier <= MAX_AUTO_MULTIPLIER):
         raise PointNotApplicable("multiplier-not-allowed-automatically")
     if multiplier != int(multiplier):
-        # Fractional ratio (x1.25 .. x2.75): the renderer only does non-integer ratios in adaptive
+        # Fractional ratio (x1.25 .. x3.75): the renderer only does non-integer ratios in adaptive
         # mode.  Pin the real-frame cap and the target so the ratio is exactly
         # target / base, and stop the auto-cap / stable-cadence heuristics from
         # re-aligning it to an integer rung.
