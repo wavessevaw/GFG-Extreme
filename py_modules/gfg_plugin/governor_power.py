@@ -85,6 +85,7 @@ class SteamDeckPowerActuator:
         self.state = PowerControlState()
         self._fast_path: Optional[Path] = None
         self._slow_path: Optional[Path] = None
+        self._draw_path: Optional[Path] = None
 
     @staticmethod
     def _candidate_hwmons(drm_root: Path, hwmon_root: Path) -> Iterable[Path]:
@@ -137,6 +138,20 @@ class SteamDeckPowerActuator:
         maximum = _read_int(cap_path.parent / f"{stem}_cap_max")
         return minimum, maximum
 
+    @staticmethod
+    def _draw_sensor(hwmon: Path, slow_cap: Path) -> Optional[Path]:
+        """Measured APU power: the cap only says what was allowed, this says what was used."""
+        stem = slow_cap.name[:-4]
+        preferred = [hwmon / f"{stem}_average", hwmon / f"{stem}_input"]
+        try:
+            preferred += sorted(hwmon.glob("power*_average")) + sorted(hwmon.glob("power*_input"))
+        except OSError:
+            pass
+        for path in preferred:
+            if _read_int(path) is not None:
+                return path
+        return None
+
     def discover(self) -> Dict[str, Any]:
         for hwmon in self._candidate_hwmons(self.drm_root, self.hwmon_root):
             channels = self._power_channels(hwmon)
@@ -160,6 +175,7 @@ class SteamDeckPowerActuator:
                 writable = bool(self._access(fast, os.W_OK) and self._access(slow, os.W_OK))
             self._fast_path = fast
             self._slow_path = slow
+            self._draw_path = self._draw_sensor(hwmon, slow)
             self.state = PowerControlState(
                 available=writable,
                 writable=writable,
@@ -175,6 +191,7 @@ class SteamDeckPowerActuator:
             return self.status()
         self._fast_path = None
         self._slow_path = None
+        self._draw_path = None
         self.state = PowerControlState(
             available=False,
             error="Steam Deck fastPPT/slowPPT controls were not found",
@@ -245,8 +262,10 @@ class SteamDeckPowerActuator:
 
     def set_tdp_w(self, watts: float) -> Dict[str, Any]:
         result = self._set_tdp_w(watts)
+        state = result.get("state") or {}
         self._note("tdp-write", requested_w=watts, success=result.get("success"), error=result.get("error"),
-                   observed_w=(result.get("state") or {}).get("observed_tdp_w"))
+                   observed_w=state.get("observed_tdp_w"), observed_fast_w=state.get("observed_fast_w"),
+                   draw_w=state.get("draw_w"), cap_path=self.state.slow_cap_path)
         return result
 
     def _set_tdp_w(self, watts: float) -> Dict[str, Any]:
@@ -322,4 +341,7 @@ class SteamDeckPowerActuator:
             value["observed_fast_uw"] = current_fast
             value["observed_slow_uw"] = current_slow
             value["observed_tdp_w"] = round(current_slow / 1_000_000.0, 3) if current_slow else None
+            value["observed_fast_w"] = round(current_fast / 1_000_000.0, 3) if current_fast else None
+        draw = _read_int(self._draw_path) if self._draw_path is not None else None
+        value["draw_w"] = round(draw / 1_000_000.0, 2) if draw is not None else None
         return value

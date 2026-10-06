@@ -90,10 +90,40 @@ def compact_status(status: Dict[str, Any]) -> Dict[str, Any]:
         "ladder": {k: ladder.get(k) for k in ("attempts", "rejected", "skipped", "predicted_infeasible", "native_capacity")},
         "capability": status.get("capability"),
         "tdp": power.get("observed_tdp_w"), "tdp_owned": power.get("owned"), "tdp_available": power.get("available"),
+        "tdp_fast": power.get("observed_fast_w"), "apu_w": power.get("draw_w"),
         "effort": (status.get("effort") or {}).get("level"),
         "hud": status.get("hud"),
         "battery_min": (status.get("battery") or {}).get("minutes_left"),
     }
+
+
+def probe_power_sensors(hwmon_root: Path = Path("/sys/class/hwmon")) -> List[Dict[str, Any]]:
+    """Every hwmon with power* attributes: which caps exist, who else may set them, measured draw."""
+    found: List[Dict[str, Any]] = []
+    try:
+        hwmons = sorted(Path(hwmon_root).iterdir())
+    except OSError:
+        return found
+    for hwmon in hwmons:
+        try:
+            files = sorted(hwmon.glob("power*"))
+        except OSError:
+            continue
+        if not files:
+            continue
+        entry: Dict[str, Any] = {"hwmon": hwmon.name}
+        try:
+            entry["path"] = str(hwmon.resolve())
+            entry["name"] = (hwmon / "name").read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError):
+            entry.setdefault("name", None)
+        for path in files:
+            try:
+                entry[path.name] = path.read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeError) as error:
+                entry[path.name] = f"<{type(error).__name__}>"
+        found.append(entry)
+    return found
 
 
 def probe_game_processes(proc_root: Path = Path("/proc"), limit: int = 8) -> List[Dict[str, Any]]:
@@ -161,8 +191,11 @@ class SessionRecorder:
         process_probe: Callable[[], List[Dict[str, Any]]] = probe_game_processes,
         host_mangohud_manifest: Path = HOST_MANGOHUD_MANIFEST,
         activity: Any = None,
+        power_probe: Callable[[], List[Dict[str, Any]]] = probe_power_sensors,
     ) -> None:
         self.activity = activity
+        self.power_probe = power_probe
+        self._power_start: List[Dict[str, Any]] = []
         self.user_home = Path(user_home)
         self.config_dir = Path(config_dir)
         self.runtime_state_dir = Path(runtime_state_dir)
@@ -221,6 +254,10 @@ class SessionRecorder:
                 self._offsets[path] = 0
         self._profile = profile
         self._game_processes = []
+        try:
+            self._power_start = self.power_probe()
+        except Exception:
+            self._power_start = []
         self._lines = 0
         self.started_at = self.clock()
         self.recording = True
@@ -363,8 +400,13 @@ class SessionRecorder:
             "dmi_board_name": read("/sys/devices/virtual/dmi/id/board_name"),
             "os_release": read("/etc/os-release"),
             "gamescope_processes": run(["pgrep", "-a", "gamescope"])[:2000],
+            # Other TDP controllers (ryzenadj-based Decky plugins, PowerTools, ...) set the SMU
+            # limits directly and win over the hwmon caps without changing what those files read.
+            "tdp_tools_processes": run(["pgrep", "-a", "-f", "ryzenadj|powertools|PowerControl|SimpleDeckyTDP"])[:2000],
+            "decky_plugins": sorted(p.name for p in (self.user_home / "homebrew" / "plugins").glob("*"))
+            if (self.user_home / "homebrew" / "plugins").is_dir() else [],
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.5",
+            "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.6",
         }
 
     def _write_bundle(self) -> Path:
@@ -387,6 +429,7 @@ class SessionRecorder:
                 "launch-wrapper.sh the generated launcher\n"
                 "overlay/         in-game overlay config and status line\n"
                 "game-processes.json  layer env of the running game and whether MangoHud was loaded\n"
+                "power-sensors.json   every hwmon power cap/draw at start and end of the recording\n"
                 "profile.json     saved profile\n"
                 "plugin.log       tail of the Decky plugin log\n"))
             if self._timeline is not None and self._timeline.is_file():
@@ -394,6 +437,12 @@ class SessionRecorder:
             bundle.writestr("self_test.json", json.dumps(self.self_test(), indent=2))
             bundle.writestr("system.json", json.dumps(self._system_info(), indent=2))
             processes = self._game_processes or self.process_probe()
+            try:
+                power_end = self.power_probe()
+            except Exception as error:
+                power_end = [{"error": str(error)}]
+            bundle.writestr("power-sensors.json", json.dumps(
+                {"start": self._power_start, "end": power_end}, indent=2))
             bundle.writestr("game-processes.json", json.dumps(processes, indent=2))
             for path, start in self._offsets.items():
                 data = _read_range(path, start, MAX_DIAG_BYTES)

@@ -15,6 +15,10 @@ class HudTests(unittest.TestCase):
         self.assertEqual(hud.status_line(s, "detailed"), "90 FPS  x2  (45)  sc90  9W  2h05  med  locked")
         self.assertEqual(hud.status_line({"enabled": False}), "GFG off")
 
+    def test_measured_draw_is_shown_next_to_the_limit(self):
+        line = hud.status_line({"enabled": True, "power": {"observed_tdp_w": 18.0, "draw_w": 14.6}})
+        self.assertIn("TDP 18W  APU 15W", line)
+
     def test_fractional_multiplier_is_shown_to_the_nearest_quarter(self):
         base = {"enabled": True, "state": "LOCKED", "telemetry": {"real": {"median": 60.0}, "output": {"median": 90.0}, "latest": {"effective_multiplier": 1.47}}}
         self.assertTrue(hud.status_line(base, "minimal").startswith("90 FPS  x1.5  (60)"))

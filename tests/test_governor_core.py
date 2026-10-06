@@ -83,9 +83,21 @@ class GovernorPowerSearchTests(unittest.TestCase):
     def test_unhealthy_at_ceiling_does_not_increase_power(self):
         search = PowerSearch()
         search.begin(current_tdp_w=15, min_tdp_w=3, ceiling_tdp_w=15)
+        first = search.evaluate(p5_fps=40, base_target_fps=45, hard_pressure=1)
+        self.assertEqual(first["action"], "wait")
+        self.assertEqual(search.status.reason, "rechecking-at-ceiling")
         outcome = search.evaluate(p5_fps=40, base_target_fps=45, hard_pressure=1)
         self.assertEqual(outcome["action"], "hold")
         self.assertEqual(search.status.state, "guard")
+        self.assertEqual(search.status.current_tdp_w, 15)
+
+    def test_one_bad_window_at_ceiling_does_not_end_the_search(self):
+        search = PowerSearch()
+        search.begin(current_tdp_w=20, min_tdp_w=3, ceiling_tdp_w=20)
+        self.assertEqual(search.evaluate(p5_fps=43, base_target_fps=45, misses=1)["action"], "wait")
+        outcome = search.evaluate(p5_fps=45, base_target_fps=45, health_ratio=0.97)
+        self.assertEqual(outcome["action"], "set")
+        self.assertLess(outcome["target_tdp_w"], 20)
 
 
 class PredictiveLadderTests(unittest.TestCase):
