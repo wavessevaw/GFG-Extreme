@@ -113,6 +113,7 @@ class RuntimeBase(unittest.TestCase):
         self.inspector = FakeInspector()
         self.svc = GovernorService(self.cfg, self.display, logging.getLogger("gov-rt"), self.inspector)
         self.svc.power = FakePower()
+        self.svc.DEFAULT_MODE = "quality"  # the v0.0.2 ladder; budget mode has its own tests
         self.svc.PREDICTIVE_SKIP = False  # these tests walk the full ladder; see PredictiveStartTests
         self.t = {"now": 100.0}
         self.svc.observer.time_fn = lambda: self.t["now"]
@@ -607,6 +608,7 @@ class OverlayHousekeepingTests(RuntimeBase):
         self.assertEqual(self.header()["owner"], 0)
         other = GovernorService(self.cfg, self.display, logging.getLogger("gov-rt2"), self.inspector)
         other.power = FakePower()
+        other.DEFAULT_MODE = "quality"
         other.set_enabled("game", True)
         stale = OverlayStore(self.cfg.config_dir, self.cfg.build_governor_overlay_text, owner_pid=999999)
         stale.write("game", {}, point_key="45x2")
@@ -616,6 +618,135 @@ class OverlayHousekeepingTests(RuntimeBase):
     def test_enable_writes_base_overlay_immediately_for_next_launch(self):
         self.assertTrue(self.svc.overlay.exists("game"))
         self.assertEqual(self.header()["owner"], os.getpid())
+
+
+class BudgetRuntimeTests(RuntimeBase):
+    """Default v0.0.6 engine: lowest watts first, renderer-confirmed points."""
+
+    def setUp(self):
+        super().setUp()
+        self.svc.DEFAULT_MODE = "budget"
+        power = self.svc.power
+        power.values.update({"minimum_tdp_w": 3.0, "maximum_tdp_w": 20.0})
+        power.ceiling = None
+        power.set_ceiling_w = lambda w: setattr(power, "ceiling", w)
+
+    def windows(self, n, real, output):
+        st = None
+        for _ in range(n):
+            self.feed(26, real, output)  # ~15.6 s of samples
+            st = self.step(0.1)
+        return st
+
+    def test_starts_at_10_watts_and_30x3_then_lowers_power(self):
+        self.feed(20, 45, 90)
+        st = self.step()
+        self.assertEqual(st["mode"], "budget")
+        self.assertEqual(self.svc.power.ceiling, 20.0)
+        self.assertEqual(self.svc.power.writes, [], "no TDP change before the point is live")
+        self.assertEqual(st["request"]["point"], "30x3")
+        prof = self.overlay_profile()
+        self.assertEqual((prof["multiplier"], prof["base_fps_cap"], prof["adaptive"]), (3, 30, False))
+        self.feed(16, 30, 90)
+        st = self.step()
+        self.assertEqual(st["active_point"]["key"], "30x3")
+        self.assertIsNone(st["request"])
+        self.assertEqual(self.svc.power.writes, [10.0], "watts follow the confirmed point")
+        st = self.windows(2, 30, 90)
+        self.assertEqual(self.svc.power.writes[-1], 9.0)
+        self.assertEqual(st["budget"]["phase"], "search_down")
+        self.assertEqual(st["state"], "OPTIMIZE_POWER")
+
+    def test_failed_lower_power_restores_and_guard_reacts_after_lock(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.windows(2, 30, 90)                 # 10 W holds -> 9 W
+        self.windows(1, 25, 75)                 # 9 W fails (severe) -> back to 10 W
+        self.assertEqual(self.svc.power.writes[-1], 10.0)
+        st = self.svc.get_status()
+        self.assertEqual(st["budget"]["phase"], "upgrade")
+        self.assertEqual(st["request"], None)
+        self.windows(1, 30, 90)                 # restored 10 W holds once more
+        st = self.step(0.1)                     # upgrade probe requests 33x2.75 (fractional)
+        self.assertEqual(st["request"]["point"], "33x2.75")
+        self.feed_adaptive(16, 33, 90)
+        self.step()
+        st = self.windows(1, 30, 82)            # 33 real does not hold -> back to 30x3, locked
+        self.assertEqual(st["budget"]["point"], "30x3")
+        self.assertEqual(st["budget"]["phase"], "locked")
+        self.step(0.1)                          # re-apply 30x3
+        self.feed(16, 30, 90)
+        st = self.step()
+        self.assertEqual(st["active_point"]["key"], "30x3")
+        self.windows(1, 30, 90)
+        self.assertEqual(self.svc.get_status()["state"], "LOCKED")
+        # Heavier scene after LOCKED: the guard acts (the v0.0.5 engine did nothing here).
+        st = self.windows(2, 27, 81)
+        self.assertEqual(st["state"], "GUARD")
+        self.assertEqual(self.svc.power.writes[-1], 11.0)
+
+    def test_external_tdp_change_pauses_then_reclaims(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.svc.power.verify_ownership = lambda: {**self.svc.power.status(), "external_change": True}
+        def lose():
+            self.svc.power.state.owned = False
+            return {**self.svc.power.status(), "external_change": True}
+        self.svc.power.verify_ownership = lose
+        st = self.windows(1, 30, 90)
+        self.assertEqual(st["reason"], "external-tdp-change")
+        writes = len(self.svc.power.writes)
+        self.svc.power.verify_ownership = lambda: self.svc.power.status()
+        self.step(self.svc.EXTERNAL_RECLAIM_SECONDS + 1)
+        self.feed(20, 30, 90)
+        self.step(0.1)
+        self.assertTrue(self.svc.power.state.owned)
+        self.assertGreater(len(self.svc.power.writes), writes)
+
+    def test_telemetry_pause_restores_caps_and_target_is_rewritten_after(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.windows(2, 30, 90)                 # 9 W
+        self.assertEqual(self.svc.power.writes[-1], 9.0)
+        st = self.step(5.0)                     # loading screen: no FPS -> caps restored
+        self.assertEqual(st["state"], "PAUSED")
+        self.assertFalse(self.svc.power.state.owned)
+        writes = len(self.svc.power.writes)
+        self.feed(20, 30, 90)
+        self.step(0.1)
+        self.assertTrue(self.svc.power.state.owned)
+        self.assertEqual(self.svc.power.writes[writes:], [9.0])
+
+    def test_draw_far_above_the_cap_is_reported_as_an_ignored_cap(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.svc.power.values["draw_w"] = 17.5          # SMU limit raised elsewhere
+        st = self.windows(1, 30, 90)
+        self.assertFalse(st["budget"]["cap_ignored"])   # one window is not enough
+        st = self.windows(1, 30, 90)
+        self.assertTrue(st["budget"]["cap_ignored"])
+        self.assertEqual(st["power_feedback"]["draw_w"], 17.5)
+        self.svc.power.values["draw_w"] = 9.0
+        st = self.windows(1, 30, 90)
+        self.assertFalse(st["budget"]["cap_ignored"])
+
+    def test_mode_switch_to_quality_releases_budget_point(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.assertTrue(self.svc.set_mode("game", "quality")["success"])
+        self.assertFalse(self.svc.set_mode("game", "turbo")["success"])
+        st = self.step()
+        self.assertEqual(st["reason"], "governor-mode-changed")
+        self.assertIsNone(st["budget"])
+        self.assertFalse(self.svc.power.state.owned)
 
 
 class DeviceTargetRuntimeTests(RuntimeBase):

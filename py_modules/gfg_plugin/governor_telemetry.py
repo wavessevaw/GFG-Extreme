@@ -424,9 +424,13 @@ class TelemetryObserver:
         operations = [event.operation for event in events]
         latest = samples[-1] if samples else (self._samples[-1] if self._samples else None)
         span = (samples[-1].monotonic - samples[0].monotonic) if len(samples) >= 2 else 0.0
+        # Frame pacing inside each renderer interval (means hide single long frames).
+        p95s = [sample.source_interval_p95_ms for sample in samples
+                if sample.source_interval_p95_ms is not None and sample.source_interval_p95_ms > 0]
         return {
             "samples": len(samples),
             "sample_span_s": round(max(0.0, span), 3),
+            "real_interval_p95_ms": round(float(statistics.median(p95s)), 3) if p95s else None,
             "first_sample_seq": samples[0].seq if samples else None,
             "last_sample_seq": samples[-1].seq if samples else self._sample_seq,
             "real": real_stats,

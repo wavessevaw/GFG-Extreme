@@ -10,6 +10,7 @@ const rpc = {
   setGovernor: callable("set_governor_enabled"),
   setHud: callable("set_governor_hud"),
   setScaleReady: callable("set_governor_scale_ready"),
+  setMode: callable("set_governor_mode"),
   profiles: callable("get_profiles"),
   setProfile: callable("set_current_profile"),
   profileConfig: callable("get_profile_config"),
@@ -50,8 +51,26 @@ const PAUSED_TEXT = {
   "diagnostics-active-no-events": "No FPS from the engine yet. If the game was started before GFG was turned on, relaunch it.",
   "diagnostics-events-no-fps-samples": "The engine reports no FPS yet. Is frame generation on?",
   "telemetry-stale": "FPS from the engine stopped arriving.",
-  "external-tdp-change": "TDP was changed outside GFG — not fighting it.",
+  "external-tdp-change": "TDP was changed outside GFG. In Battery mode GFG takes it back after 30 s (at most 3 times).",
   "tdp-write-failed": "Could not write TDP.",
+};
+
+const TIER_TEXT = {
+  ideal: "Ideal: 11 W or less. GFG keeps watching and reacts if a scene gets heavier.",
+  heavy: "Heavy game: needs 12–15 W. GFG keeps watching.",
+  emergency: "Last resort: the deepest ratio or above 15 W, because the game keeps missing its frame budget.",
+};
+const PHASE_TEXT = { settle: "Starting at 10 W", search_down: "Lowering TDP", upgrade: "Fewer generated frames", probe: "Re-checking", locked: "Holding", guard: "Protecting" };
+const MODE_TEXT = {
+  budget: "Battery: lowest TDP first, 9–11 W ideal. Real FPS stays at 24 or more; a deeper ratio (down to 20 real) and the highest watts your Deck allows only as a last resort.",
+  quality: "Quality: fewest generated frames first, then lowers TDP. Uses more battery.",
+};
+// The ceilings come from the device: a stock OLED stops at 15 W, some Decks allow 20 W.
+const budgetRule = (b) => {
+  const lim = (b && b.limits_w) || {};
+  if (lim.normal == null) return "9–11 W ideal, then what your Deck allows";
+  const last = lim.emergency > lim.normal ? ", " + num(lim.emergency, 0) + " W last resort" : " (this Deck's maximum)";
+  return "9–11 W ideal, " + num(lim.normal, 0) + " W max" + last;
 };
 
 // Plain-language state for the hero card. Returns {head, body, tone}
@@ -64,6 +83,12 @@ function describe(s) {
   if (s.state === "OBSERVE_ONLY") return { head: "Observing", body: "Another backend owns the pipeline. GFG only watches.", tone: "idle" };
   if (s.state === "PROBE" || s.state === "PLAN") return { head: "Measuring", body: "Learning how the game runs. Nothing is changed yet.", tone: "busy" };
   if (s.state === "APPLY") return { head: "Testing " + POINT_LABEL(s.request && s.request.point), body: "Checking the result before keeping it.", tone: "busy" };
+  const b = s.budget;
+  const fb = s.power_feedback || {};
+  if (b && b.cap_ignored) return { head: "TDP limit overridden", body: "The APU draws " + num(fb.draw_w, 1) + " W while GFG's limit is " + num(fb.cap_w, 0) + " W: another tool (ryzenadj, PowerTools…) sets the real limit. GFG keeps a deep ratio instead of spending power.", tone: "warn" };
+  if (b && s.state === "OPTIMIZE_POWER") return { head: "Saving battery", body: b.probe === "up" ? "Trying fewer generated frames at " + num(b.tdp_w, 0) + " W." : "Looking for the lowest TDP that holds the target (now " + num(b.tdp_w, 0) + " W).", tone: "ok" };
+  if (b && s.state === "LOCKED") return { head: "Locked in · " + num(b.tdp_w, 0) + " W", body: TIER_TEXT[b.tier] || "Stable. GFG keeps watching and reacts if a scene gets heavier.", tone: b.tier === "emergency" ? "warn" : "ok" };
+  if (b && s.state === "GUARD") return { head: "Protecting", body: "A scene got heavier: more generated frames first, then more watts.", tone: "warn" };
   if (s.state === "OPTIMIZE_POWER") return { head: "Saving power", body: "Lowering TDP while holding the target.", tone: "ok" };
   if (s.state === "LOCKED") return { head: "Locked in", body: "Stable at target. GFG stays out of the way.", tone: "ok" };
   if (s.state === "GUARD") return { head: "Protecting", body: "Quality dipped — restoring a safe setting.", tone: "warn" };
@@ -217,9 +242,19 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
 }
 
 // ---------- Sub screens
-function GovernorPage({ s, back }) {
-  const dev = s.device || {}, req = s.request, pt = s.active_point, lad = s.ladder || {};
+function GovernorPage({ s, back, profile, refresh }) {
+  const dev = s.device || {}, req = s.request, pt = s.active_point, lad = s.ladder || {}, b = s.budget;
+  const mode = s.mode || "budget";
   return h(Page, { title: "Governor", onBack: back },
+    h("div", { className: "sec" }, "MODE"),
+    h(Seg, { value: mode, options: [["budget", "Battery"], ["quality", "Quality"]], onChange: async (v) => { await rpc.setMode(profile, v); refresh(); } }),
+    h(Note, { quiet: true }, MODE_TEXT[mode]),
+    b ? h("div", { className: "sec" }, "BATTERY") : null,
+    b ? h("div", { className: "card" }, h("div", { className: "kv" },
+      h("span", null, "TDP target"), h("b", null, b.tdp_w != null ? num(b.tdp_w, 0) + " W" : "no TDP access"),
+      h("span", null, "Budget"), h("b", null, { ideal: "Ideal (≤ 11 W)", heavy: "Heavy (12–15 W)", emergency: "Last resort", unknown: "–" }[b.tier] || "–"),
+      h("span", null, "Point"), h("b", null, POINT_LABEL(pt)),
+      h("span", null, "Step"), h("b", null, PHASE_TEXT[b.phase] || b.phase))) : null,
     h("div", { className: "sec" }, "DECISION"),
     h("div", { className: "card" }, h("div", { className: "kv" },
       h("span", null, "State"), h("b", null, describe(s).head),
@@ -227,13 +262,13 @@ function GovernorPage({ s, back }) {
       h("span", null, "Target"), h("b", null, (s.target_output_fps || dev.target || "–") + " FPS"),
       h("span", null, "Active point"), h("b", null, POINT_LABEL(pt) + (s.active_point_mode ? " (" + s.active_point_mode + ")" : "")),
       h("span", null, "Testing"), h("b", null, req ? POINT_LABEL(req.point) : "–"),
-      h("span", null, "Attempts"), h("b", null, lad.attempts != null ? lad.attempts + " / " + (lad.max_attempts || 12) : "–"))),
+      ...(b ? [] : [h("span", null, "Attempts"), h("b", null, lad.attempts != null ? lad.attempts + " / " + (lad.max_attempts || 12) : "–")]))),
     dev.reason ? h(Note, { quiet: true }, dev.reason) : null,
     h("div", { className: "sec" }, "RULES"),
     h("div", { className: "card" }, h("div", { className: "kv" },
-      h("span", null, "Multipliers"), h("b", null, "×1 to ×3, steps of 0.25"),
+      h("span", null, "Multipliers"), h("b", null, mode === "budget" ? "×1 to ×3.75, deeper only as a last resort" : "×1 to ×3, steps of 0.25"),
       h("span", null, "Saved profile"), h("b", null, "never modified"),
-      h("span", null, "TDP"), h("b", null, "never above your own"))),
+      h("span", null, "TDP"), h("b", null, mode === "budget" ? budgetRule(b) : "never above your own"))),
     (s.limitations || []).length ? h("div", { className: "sec" }, "LIMITS") : null,
     ...(s.limitations || []).map((t, i) => h(Note, { key: i, quiet: true }, t)));
 }
@@ -248,7 +283,7 @@ function FgPage({ back, cfg, patch }) {
     be === "gfg" ? h("div", null,
       h("div", { className: "sec" }, "SAVED MULTIPLIER"),
       h(Seg, { value: String(mult), options: [["2", "×2"], ["3", "×3"]], onChange: (v) => patch({ multiplier: Number(v) }) }),
-      h(Note, { quiet: true }, "Used when the Governor is off. With the Governor on, it picks ×1 to ×3 itself and never changes this value.")) :
+      h(Note, { quiet: true }, "Used when the Governor is off. With the Governor on, it picks ×1 to ×3.75 itself (×4 only as a last resort) and never changes this value.")) :
       h(Note, { quiet: true }, "External backend: GFG observes only and does not change it."));
 }
 
@@ -428,7 +463,7 @@ function Content() {
 
   let body;
   if (!s) body = h("div", { className: "hint" }, "Loading…");
-  else if (screen === "governor") body = h(GovernorPage, { s, back });
+  else if (screen === "governor") body = h(GovernorPage, { s, back, profile, refresh });
   else if (screen === "fg") body = h(FgPage, { back, cfg, patch });
   else if (screen === "scaling") body = h(ScalingPage, { s, back, profile, refresh });
   else if (screen === "hud") body = h(HudPage, { back, s, profile, refresh });

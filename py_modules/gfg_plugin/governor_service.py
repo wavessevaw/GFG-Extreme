@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (v0.0.5).
+"""Live orchestration service for GFG Governor (v0.0.6).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -22,16 +22,18 @@ import json
 import math
 import os
 import threading
+import statistics
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from shared_config import FG_BACKEND_GFG
 from .constants import PRESENT_DIAGNOSTICS_FALLBACK_LOG, PRESENT_DIAGNOSTICS_LOG_FILENAME
 from .governor_core import (
     multiplier_tolerance,
-    EffortEstimator, OperatingPoint, OperatingPointPlanner, PowerSearch, TrialLadder, raw_effort,
+    BudgetController, EffortEstimator, OperatingPoint, OperatingPointPlanner, PowerSearch, TrialLadder,
+    raw_effort, window_verdict,
 )
 from .governor_battery import BatteryEstimator, read_battery
 from .governor_hud import HudWriter, normalize as hud_normalize, output_fps as hud_output_fps
@@ -48,7 +50,7 @@ from .governor_telemetry import TelemetryObserver
 
 APPLIED_OPERATIONS = frozenset({"runtime-state-applied", "runtime-transition-applied"})
 FAILED_OPERATIONS = frozenset({"runtime-transition-failed"})
-VERSION = "0.0.5"
+VERSION = "0.0.6"
 
 
 @dataclass
@@ -103,10 +105,20 @@ class GovernorService:
     CAP_BOUND_HEALTH_RATIO = 0.97
     UNCAPPED_HEALTH_RATIO = 1.05
     ROLLBACK_RETRY_SECONDS = 5.0
-    PREDICTIVE_SKIP = True
+    PREDICTIVE_SKIP = True  # skip points the observed native cadence already rules out
     # A point failing at the user's TDP may have met a cutscene or loading screen:
     # drop it for a while, not for the rest of the session.
-    CEILING_REJECT_TTL_S = 600.0  # skip points the observed native cadence already rules out
+    CEILING_REJECT_TTL_S = 600.0
+    # Budget mode (default): lowest TDP first, then fewer generated frames.
+    DEFAULT_MODE = "budget"
+    MODES = ("budget", "quality")
+    BUDGET_WINDOW_SECONDS = 15.0
+    BUDGET_MIN_SPAN_SECONDS = 12.0
+    EXTERNAL_RECLAIM_SECONDS = 30.0
+    MAX_EXTERNAL_RECLAIMS = 3
+    # Measured APU draw above the cap by this much, two windows in a row, means
+    # the cap is not binding (limit raised elsewhere, e.g. ryzenadj).
+    CAP_IGNORED_MARGIN_W = 1.5
 
     def __init__(
         self,
@@ -167,6 +179,12 @@ class GovernorService:
         self._request: Optional[Request] = None
         self._request_counter = getattr(self, "_request_counter", 0)
         self._ladder: Optional[TrialLadder] = None
+        self._budget: Optional[BudgetController] = None
+        self._applied_tdp: Optional[float] = None
+        self._external_at: Optional[float] = None
+        self._reclaims = 0
+        self._over_cap_windows = 0
+        self._draw_samples: List[float] = []
         self._rollback_deltas: Optional[Dict[str, Any]] = None
         self._rollback_at = 0.0
         self._generation_seen: Optional[int] = None
@@ -234,6 +252,24 @@ class GovernorService:
     def _profile_enabled(self, profile: str) -> bool:
         return bool(self._profile_settings(profile).get("enabled", False))
 
+    def _mode(self, profile: str) -> str:
+        mode = self._profile_settings(profile).get("mode")
+        return mode if mode in self.MODES else self.DEFAULT_MODE
+
+    def set_mode(self, profile: str, mode: str) -> Dict[str, Any]:
+        profile = str(profile or "").strip()
+        mode = str(mode or "").strip().lower()
+        if not profile:
+            return {"success": False, "error": "Profile is required"}
+        if mode not in self.MODES:
+            return {"success": False, "error": f"Unknown mode: {mode}"}
+        self._settings.setdefault("profiles", {}).setdefault(profile, {})["mode"] = mode
+        self._save_settings()
+        if profile == self._active_profile:
+            self._forced_mode_change = True
+        self._poke()
+        return {"success": True, "error": None, "profile": profile, "mode": mode}
+
     def _update_battery(self) -> None:
         try:
             self._status["battery"] = self._battery.update(self.battery_reader())
@@ -269,6 +305,11 @@ class GovernorService:
                 raw = stable or "nightmare"
             else:
                 raw = None
+        elif self._budget is not None:
+            real = (telemetry.get("real") or {}).get("median")
+            budget = self._budget
+            raw = raw_effort(self._point, real, budget.exhausted,
+                             tdp_w=budget.effective_w if budget.tdp_control else None)
         else:
             real = (telemetry.get("real") or {}).get("median")
             raw = raw_effort(self._point, real, self._exhausted and not stable)
@@ -542,6 +583,8 @@ class GovernorService:
         value["active_point"] = self._point
         value["active_point_mode"] = self._point_mode
         value["ladder"] = self._ladder.status() if self._ladder else None
+        value["mode"] = self._mode(profile or value.get("profile", ""))
+        value["budget"] = self._budget.status() if self._budget else None
         if self._restore_pending:
             value["restore_pending"] = dict(self._restore_pending)
         return value
@@ -576,6 +619,9 @@ class GovernorService:
         )
 
     async def _restore_power(self, reason: str) -> None:
+        setter = getattr(self.power, "set_ceiling_w", None)
+        if callable(setter):
+            setter(None)  # budget ceiling never leaks into Quality mode
         restored = await asyncio.to_thread(self.power.restore_if_owned)
         if restored.get("restored"):
             self._event("power-restored", reason)
@@ -588,6 +634,10 @@ class GovernorService:
         self._point_deltas = {}
         self._request = None
         self._ladder = None
+        self._budget = None
+        self._applied_tdp = None
+        self._over_cap_windows = 0
+        self._draw_samples = []
         self._rollback_deltas = None
         self._synced_deltas = None
         self._evaluation_after_seq = self.observer.sample_seq
@@ -743,6 +793,8 @@ class GovernorService:
             return
         if self._ladder is not None:
             self._ladder.reject(req.point.key, reason)
+        if self._budget is not None:
+            self._budget.request_failed(self._clock(), reason)
         self._event("operating-point-rejected", reason, profile=profile, point=req.point.key,
                     revision=req.revision, request_id=req.request_id)
         await self._rollback(profile, req.previous_deltas, reason)
@@ -901,7 +953,13 @@ class GovernorService:
         self._generation_seen = generation
         if launch_key is not None:
             self._launch_key = launch_key
-        if changed and (self._point or self._request or self._ladder):
+        if getattr(self, "_forced_mode_change", False):
+            self._forced_mode_change = False
+            if self._point or self._request or self._ladder or self._budget:
+                await self._release_point(profile, "governor-mode-changed")
+                self._status.update({"state": "PLAN", "reason": "governor-mode-changed"})
+                return
+        if changed and (self._point or self._request or self._ladder or self._budget):
             reason = "display-mode-changed" if (
                 self._point_external is not None and external != self._point_external
             ) else "new-game-session"
@@ -924,6 +982,10 @@ class GovernorService:
                 req.stage = "trial"
                 self._event("operating-point-confirmed", req.confirmation_mode, profile=profile,
                             point=req.point.key, revision=req.revision, request_id=req.request_id)
+            if self._budget is not None:
+                # Budget mode judges the point on its own windows after confirmation.
+                await self._accept_request(profile, req, "renderer-confirmed")
+                return
             fresh = self.observer.summary(
                 self.WINDOW_SECONDS * 2, after_event_seq=req.window_floor_event_seq,
             )
@@ -987,6 +1049,10 @@ class GovernorService:
             return
         if summary.get("samples", 0) < self.MIN_SAMPLES or summary.get("sample_span_s", 0.0) < self.MIN_SAMPLE_SPAN_SECONDS:
             self._status.update({"state": "PROBE", "reason": "collecting-fresh-evidence"})
+            return
+
+        if self._mode(profile) == "budget":
+            await self._budget_step(profile, external, target)
             return
 
         if self._point is None:
@@ -1064,6 +1130,181 @@ class GovernorService:
             return
         if not await self._begin_request(profile, saved, point, external, capability):
             return
+
+    # ------------------------------------------------------------ budget mode
+    async def _accept_request(self, profile: str, req: Request, reason: str) -> None:
+        self._point = req.point.to_dict()
+        self._point_mode = "applied"
+        self._point_external = req.external
+        self._point_deltas = {k: v for k, v in req.deltas.items()}
+        self._request = None
+        self._evaluation_after_seq = self.observer.sample_seq
+        self._event("operating-point-applied", reason, profile=profile, point=self._point,
+                    revision=req.revision, confirmation=req.confirmation_mode)
+        self._status.update({"state": self._budget_state(), "reason": "operating-point-confirmed",
+                             "recommended_point": self._point, "recommendation_proven": True,
+                             "active_point_matches": True})
+        await self._apply_budget_tdp(profile)  # the point is live: now its watts
+
+    def _budget_state(self) -> str:
+        budget = self._budget
+        if budget is None:
+            return "PLAN"
+        if budget.phase == "locked":
+            return "LOCKED"
+        if budget.phase == "guard":
+            return "GUARD"
+        return "OPTIMIZE_POWER"
+
+    async def _budget_power(self, profile: str) -> Optional[Dict[str, Any]]:
+        """Own the PPT caps for budget mode.  Returns limits, or None when observe-only on TDP."""
+        power = self.power
+        if not power.state.available:
+            return None
+        if not power.state.owned:
+            if self._external_at is not None:
+                if self._reclaims >= self.MAX_EXTERNAL_RECLAIMS:
+                    return None
+                if self._clock() - self._external_at < self.EXTERNAL_RECLAIM_SECONDS:
+                    return None
+                self._reclaims += 1
+                self._external_at = None
+                self._applied_tdp = None
+                self._event("tdp-reclaim", "external-change-settled", profile=profile, attempt=self._reclaims)
+            claimed = await asyncio.to_thread(power.claim)
+            if not claimed.get("owned"):
+                return None
+            self._applied_tdp = None  # caps were restored meanwhile: write the target again
+            setter = getattr(power, "set_ceiling_w", None)
+            if callable(setter):
+                setter(BudgetController.EMERGENCY_CEILING_W)
+            self._event("power-claimed", "budget-mode", profile=profile)
+        else:
+            status = await asyncio.to_thread(power.verify_ownership)
+            if status.get("external_change"):
+                self._external_at = self._clock()
+                self._event("tdp-external-change", "budget-mode", profile=profile)
+                return None
+        values = power.status()
+        return {"min": values.get("minimum_tdp_w"), "max": values.get("maximum_tdp_w")}
+
+    async def _budget_step(self, profile: str, external: bool, target: int) -> None:
+        launch = await self._launch_info(profile)
+        capability = self._capability(profile, launch)
+        self._status["capability"] = capability
+        if not capability["overlay_active"]:
+            if self.power.state.owned and self._budget is None:
+                await asyncio.to_thread(self.power.restore_if_owned)
+            self._status.update({"state": "PLAN", "reason": capability["reason"]})
+            return
+        now = self._clock()
+        limits = await self._budget_power(profile)
+        budget = self._budget
+        if budget is None:
+            budget = BudgetController(
+                target_output_fps=target, now=now,
+                min_tdp_w=(limits or {}).get("min"), max_tdp_w=(limits or {}).get("max"),
+                tdp_control=limits is not None,
+            )
+            self._budget = budget
+            self._event("budget-start", "battery-first", profile=profile, point=budget.point.key,
+                        tdp_w=budget.tdp, tdp_control=budget.tdp_control)
+        elif limits is None and budget.tdp_control and self._external_at is not None:
+            if self._reclaims < self.MAX_EXTERNAL_RECLAIMS:
+                self._status.update({"state": "PAUSED", "reason": "external-tdp-change"})
+                return
+            # Something keeps rewriting the caps: stop fighting it, keep choosing points.
+            budget.tdp_control = False
+            self._event("tdp-control-yielded", "external-tdp-change", profile=profile)
+
+        # 1. The operating point first.  Lowering TDP before the renderer has
+        # taken the point would starve the game in its *old* mode for a few
+        # seconds, which the player sees as a stutter at startup.
+        point = budget.point
+        if self._point is None or self._point.get("key") != point.key:
+            if budget.exhausted and budget.request_failures >= budget.MAX_REQUEST_FAILURES:
+                self._status.update({"state": "PLAN", "reason": "renderer-did-not-confirm-points"})
+                return
+            saved = await asyncio.to_thread(self._saved_profile_config, profile)
+            if saved is None:
+                self._status.update({"state": "PAUSED", "reason": "saved-profile-unavailable"})
+                return
+            try:
+                await self._begin_request(profile, saved, point, external, capability)
+            except PointNotApplicable as error:
+                budget.request_failed(now, error.reason)
+                self._status.update({"state": "PLAN", "reason": error.reason})
+            return
+
+        # 2. The point is live: apply this level's watts.
+        if not await self._apply_budget_tdp(profile):
+            return
+
+        # The draw sensor is an instantaneous / ~1 s value: sample it every
+        # iteration and judge the window by its median, not its last reading.
+        draw = self.power.status().get("draw_w")
+        if isinstance(draw, (int, float)) and math.isfinite(float(draw)):
+            self._draw_samples.append(float(draw))
+
+        # 3. Judge one fresh, non-overlapping window.
+        fresh = self.observer.summary(self.BUDGET_WINDOW_SECONDS, after_seq=self._evaluation_after_seq)
+        if fresh.get("samples", 0) < self.MIN_SAMPLES or fresh.get("sample_span_s", 0.0) < self.BUDGET_MIN_SPAN_SECONDS:
+            self._status.update({"state": self._budget_state(), "reason": budget.last_reason})
+            return
+        verdict = window_verdict(fresh, point)
+        self._evaluation_after_seq = self.observer.sample_seq
+        feedback = self._power_feedback(profile, budget)
+        before = (budget.point.key, budget.tdp, budget.phase)
+        action = budget.observe(now, verdict, (fresh.get("real") or {}).get("median"))
+        after = (budget.point.key, budget.tdp, budget.phase)
+        if action == "move" or before != after:
+            self._event("budget-step", budget.last_reason, profile=profile, verdict=verdict.to_dict(),
+                        before={"point": before[0], "tdp_w": before[1], "phase": before[2]},
+                        after={"point": after[0], "tdp_w": after[1], "phase": after[2]})
+        if budget.phase == "locked" and before[2] != "locked":
+            self._event("operating-point-locked", budget.last_reason, profile=profile, point=self._point,
+                        tdp_w=budget.tdp)
+        self._status.update({"state": self._budget_state(), "reason": budget.last_reason,
+                             "last_verdict": verdict.to_dict(), "power_feedback": feedback})
+        await self._apply_budget_tdp(profile)
+
+    def _power_feedback(self, profile: str, budget: BudgetController) -> Dict[str, Any]:
+        """Compare the measured APU draw with the cap we wrote."""
+        samples, self._draw_samples = self._draw_samples, []
+        draw = round(statistics.median(samples), 2) if samples else None
+        budget.draw_w = draw
+        cap = self._applied_tdp
+        result: Dict[str, Any] = {"draw_w": draw, "cap_w": cap, "cap_ignored": budget.cap_ignored}
+        if not isinstance(draw, (int, float)) or cap is None or not budget.tdp_control:
+            return result
+        if float(draw) > float(cap) + self.CAP_IGNORED_MARGIN_W:
+            self._over_cap_windows += 1
+        else:
+            self._over_cap_windows = 0
+            if budget.cap_ignored:
+                budget.cap_ignored = False
+                self._event("tdp-cap-binding-again", "draw-within-cap", profile=profile, draw_w=draw, cap_w=cap)
+        if self._over_cap_windows >= 2 and not budget.cap_ignored:
+            budget.cap_ignored = True
+            self._event("tdp-cap-ignored", "draw-above-cap", profile=profile, draw_w=draw, cap_w=cap)
+        result["cap_ignored"] = budget.cap_ignored
+        return result
+
+    async def _apply_budget_tdp(self, profile: str) -> bool:
+        budget = self._budget
+        if (
+            budget is None or not budget.tdp_control or budget.tdp is None
+            or not self.power.state.owned or budget.tdp == self._applied_tdp
+        ):
+            return True
+        result = await asyncio.to_thread(self.power.set_tdp_w, budget.tdp)
+        if not result.get("success"):
+            self._status.update({"state": "PAUSED", "reason": "tdp-write-failed"})
+            return False
+        self._applied_tdp = budget.tdp
+        self._evaluation_after_seq = self.observer.sample_seq
+        self._event("tdp-set", budget.last_reason, watts=budget.tdp, profile=profile)
+        return True
 
     async def _release_point_keep_ladder(self, profile: str) -> bool:
         ladder = self._ladder

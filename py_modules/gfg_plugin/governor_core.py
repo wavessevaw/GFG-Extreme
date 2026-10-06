@@ -313,16 +313,28 @@ def multiplier_tolerance(multiplier: float) -> float:
 EFFORT_LEVELS = ("easy", "medium", "hard", "nightmare")
 
 
-def raw_effort(point: Optional[Dict[str, Any]], real_median: Optional[float], exhausted: bool = False) -> Optional[str]:
+def raw_effort(
+    point: Optional[Dict[str, Any]], real_median: Optional[float], exhausted: bool = False,
+    tdp_w: Optional[float] = None,
+) -> Optional[str]:
     """Instantaneous effort level, before any smoothing.
 
-    easy: native or up to x1.5; medium: above x1.5 and below x3; hard: x3 or reduced render scale;
-    nightmare: target not reachable, very low real FPS, or x3 *and* reduced scale.
+    Budget mode (``tdp_w`` given) rates the watts the game needs: easy up to 11 W,
+    medium 12-15 W, hard above 15 W or x4; nightmare when even that does not hold.
+    Otherwise (quality mode): easy native or up to x1.5; medium above x1.5 and
+    below x3; hard x3 or reduced render scale; nightmare target not reachable,
+    very low real FPS, or x3 *and* reduced scale.
     """
     if exhausted:
         return "nightmare"
     if point is None:
         return None
+    if tdp_w is not None:
+        if real_median is not None and real_median < EffortEstimator.NIGHTMARE_REAL_FPS:
+            return "nightmare"
+        if float(point.get("multiplier", 1) or 1) >= 4 or tdp_w > 15.0 + 1e-6:
+            return "hard"
+        return "easy" if tdp_w <= 11.0 + 1e-6 else "medium"
     mult = float(point.get("multiplier", 1) or 1)
     scale = int(point.get("render_scale_pct", 100) or 100)
     if real_median is not None and real_median < EffortEstimator.NIGHTMARE_REAL_FPS:
@@ -548,3 +560,473 @@ class PowerSearch:
         self.status.state = "guard"
         self.status.reason = "guard-restoring-headroom"
         return {"action": "set", "target_tdp_w": target, "state": self.status.to_dict()}
+
+
+# ------------------------------------------------------------------ budget mode
+#
+# Battery-first policy (v0.0.6).  Every watt saved is battery life, so the
+# Governor looks for the *lowest TDP* at which the real stream holds, and only
+# then spends the remaining headroom on fewer generated frames.
+#
+#   9-11 W   ideal
+#   12-15 W  heavy / poorly optimised game
+#   16-20 W  last resort, only while real FPS stays below ~22 for a while
+#
+# Multipliers 1.0 .. 3.75 in 0.25 steps are normal tools; x4 is a last resort.
+
+BUDGET_MULTIPLIERS = (1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75)
+EMERGENCY_MULTIPLIER = 4
+REAL_FLOOR_FPS = 24  # below this interpolation smears; deeper points are not offered
+EMERGENCY_REAL_FLOOR_FPS = 20  # even the last resort keeps a real cadence that can be watched
+START_REAL_FPS = 30  # first point: ~30 real (30x3 at 90 Hz, 30x2 at 60 Hz)
+
+
+def _point_key(target: int, base: int, multiplier: float) -> str:
+    return f"native{target}" if multiplier == 1 else f"{base}x{multiplier:g}"
+
+
+def budget_points(target_output_fps: int) -> tuple[OperatingPoint, ...]:
+    """Cheapest first: x4 emergency, then real 24 .. native."""
+    target = int(target_output_fps)
+    normal = []
+    seen: set[int] = set()
+    for m in reversed(BUDGET_MULTIPLIERS):
+        base = int(round(target / m))
+        if base < REAL_FLOOR_FPS or base in seen:
+            continue
+        seen.add(base)
+        mult = int(m) if m == int(m) else m
+        normal.append(OperatingPoint(_point_key(target, base, m), target, base, mult, 100))
+    # Last resort: as deep as x4 allows, but the real cadence stays >= 20 and the
+    # ratio is taken from the target, so the output still lands on the display
+    # rate (90/23 = 3.91, not 22x4 = 88 on a 90 Hz panel).
+    base4 = max(math.ceil(target / EMERGENCY_MULTIPLIER), EMERGENCY_REAL_FLOOR_FPS)
+    mult4 = round(target / base4, 3)
+    mult4 = int(mult4) if mult4 == int(mult4) else mult4
+    emergency = OperatingPoint(_point_key(target, base4, mult4), target, base4, mult4, 100, degraded=True)
+    return (emergency,) + tuple(normal)
+
+
+@dataclass(frozen=True)
+class WindowVerdict:
+    healthy: bool
+    severe: bool
+    reason: str
+    short: bool = False   # the real stream did not reach this point's own cap
+    stall: bool = False   # real collapsed (loading screen / transition), not a power level
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+# One definition of "the point holds", used for every decision in budget mode.
+HOLD_REAL_RATIO = 0.95       # real p5 vs the real-frame cap
+HOLD_OUTPUT_RATIO = 0.94     # output median vs the display target
+SEVERE_REAL_RATIO = 0.85
+STALL_REAL_RATIO = 0.5       # below half the cap looks like a loading screen, not a power level
+MAX_WINDOW_MISSES = 1
+PACING_P95_RATIO = 1.35      # p95 real frame interval vs the cap's frame time
+
+
+def window_verdict(summary: Dict[str, Any], point: OperatingPoint) -> WindowVerdict:
+    real_p5 = (summary.get("real") or {}).get("p5")
+    output_median = (summary.get("output") or {}).get("median")
+    if not all(isinstance(v, (int, float)) and math.isfinite(float(v)) for v in (real_p5, output_median)):
+        return WindowVerdict(False, True, "evidence-incomplete")
+    hard = int(summary.get("hard_pressure") or 0)
+    misses = int(summary.get("misses") or 0)
+    base = float(point.base_target_fps)
+    short = float(real_p5) < base * HOLD_REAL_RATIO
+    severe = float(real_p5) < base * SEVERE_REAL_RATIO or hard >= 3
+    real_median = (summary.get("real") or {}).get("median")
+    reference = float(real_median) if isinstance(real_median, (int, float)) and math.isfinite(
+        float(real_median)) else float(real_p5)
+    stall = reference < base * STALL_REAL_RATIO
+    flags = {"short": short, "stall": stall}
+    if hard > 0:
+        return WindowVerdict(False, severe, "hard-pressure", **flags)
+    if misses > MAX_WINDOW_MISSES:
+        return WindowVerdict(False, severe, "delivery-misses", **flags)
+    if short:
+        return WindowVerdict(False, severe, "real-below-cap", **flags)
+    if float(output_median) < point.target_output_fps * HOLD_OUTPUT_RATIO:
+        return WindowVerdict(False, severe, "output-below-target", **flags)
+    p95 = summary.get("real_interval_p95_ms")
+    if isinstance(p95, (int, float)) and math.isfinite(float(p95)) and base > 0:
+        if float(p95) > PACING_P95_RATIO * 1000.0 / base:
+            return WindowVerdict(False, False, "uneven-pacing", **flags)
+    return WindowVerdict(True, False, "holds")
+
+
+class BudgetController:
+    """Watts first, quality second.  Pure state machine; the service applies its targets.
+
+    The service feeds one *non-overlapping* evidence window at a time through
+    ``observe``.  Phases:
+
+    * ``settle``      first point (~30 real) at ``START_TDP_W``.
+    * ``search_down`` -1 W per success while the point holds.  A failure
+      restores the last good level (edge + 1 W, never the failing level).
+    * ``upgrade``     at the found TDP try one step fewer generated frames at a
+      time; stop at the first failure.
+    * ``locked``      keep watching.  Two bad windows (one if severe) start the
+      guard.  After ``REPROBE_S`` of clean play try -1 W or one quality step
+      again (alternating), backing off on failure.
+    * ``guard``       escalation, cheapest first: deeper multiplier down to ~30
+      real, +1 W up to 11 W, x3.25 .. x3.75 (real 28 .. 24), +1 W up to 15 W,
+      the last-resort point, then (only while the real stream keeps falling
+      short of its own cap for ``EMERGENCY_SUSTAIN_S``) up to 20 W.
+
+    Everything the guard spends is a debt: the state the point held before the
+    guard is remembered and walked back to on a short ``RECOVER_S`` timer, so a
+    loading screen every few minutes cannot ratchet the budget upwards for the
+    rest of the session.
+
+    A TDP or point change is accepted only after ``HEALTHY_WINDOWS``
+    consecutive clean windows.
+    """
+
+    START_TDP_W = 10.0
+    MIN_TDP_W = 6.0
+    IDEAL_MAX_W = 11.0
+    NORMAL_CEILING_W = 15.0
+    EMERGENCY_CEILING_W = 20.0
+    EMERGENCY_SUSTAIN_S = 60.0
+    # A collapse below half the cap is a loading screen far more often than a
+    # power level.  It buys one budget step per STALL_ESCALATE_S, and emergency
+    # watts only once it has lasted STALL_EMERGENCY_S without a single window
+    # above half the cap (no loading screen is that long; a game that is
+    # really that slow is the case emergency watts exist for).
+    STALL_ESCALATE_S = 120.0
+    STALL_EMERGENCY_S = 300.0
+    HEALTHY_WINDOWS = 2
+    GUARD_WINDOWS = 2
+    REPROBE_S = 300.0
+    REPROBE_MAX_S = 1200.0
+    EMERGENCY_REPROBE_S = 90.0
+    RECOVER_S = 60.0       # giving back what the guard spent is not a new experiment
+    RECOVER_MAX_S = 300.0
+    REJECT_TTL_S = 600.0
+    MAX_REQUEST_FAILURES = 4
+
+    def __init__(
+        self, *, target_output_fps: int, now: float,
+        min_tdp_w: Optional[float] = None, max_tdp_w: Optional[float] = None,
+        tdp_control: bool = True,
+    ) -> None:
+        self.target_output_fps = int(target_output_fps)
+        self.points = budget_points(self.target_output_fps)
+        self.tdp_control = bool(tdp_control)
+        hw_min = float(min_tdp_w) if min_tdp_w else 0.0
+        hw_max = float(max_tdp_w) if max_tdp_w else self.EMERGENCY_CEILING_W
+        self.min_w = max(self.MIN_TDP_W, hw_min)
+        self.normal_max_w = min(self.NORMAL_CEILING_W, hw_max)
+        self.emergency_max_w = min(self.EMERGENCY_CEILING_W, hw_max)
+        self.idx = min(
+            range(1, len(self.points)),
+            key=lambda i: abs(self.points[i].base_target_fps - START_REAL_FPS),
+        )
+        self.comfort_idx = self.idx  # deeper than ~30 real only to defend the budget
+        self.ideal_max_w = min(self.IDEAL_MAX_W, self.normal_max_w)
+        self.tdp = min(max(self.START_TDP_W, self.min_w), self.normal_max_w) if self.tdp_control else None
+        self.phase = "settle"
+        self.probe: Optional[str] = None
+        self.last_good: Optional[tuple[int, Optional[float]]] = None
+        self.prev: Optional[tuple[int, Optional[float]]] = None
+        self.good = 0
+        self.bad = 0
+        self.short_since: Optional[float] = None
+        self.stall_since: Optional[float] = None
+        self.stall_step_at: Optional[float] = None
+        self.recover: Optional[tuple[int, Optional[float]]] = None
+        self.recover_interval = self.RECOVER_S
+        self.rejected: Dict[str, float] = {}
+        self.locked_since = now
+        self.reprobe_interval = self.REPROBE_S
+        self.next_probe = "down"
+        self.exhausted = False
+        self.request_failures = 0
+        self.quality_debt: Optional[int] = None
+        # Set when the measured draw shows our cap does not bind (another tool
+        # raised the limit through the SMU).  A lower cap is then fiction, so
+        # spare "headroom" must not be spent on more real frames.
+        self.cap_ignored = False
+        self.draw_w: Optional[float] = None   # window median of the measured APU draw
+        self.last_reason = "budget-start"
+
+    # ------------------------------------------------------------- targets
+    @property
+    def point(self) -> OperatingPoint:
+        return self.points[self.idx]
+
+    def _usable(self, i: int, now: float) -> bool:
+        if not 0 <= i < len(self.points):
+            return False
+        at = self.rejected.get(self.points[i].key)
+        return at is None or now - at >= self.REJECT_TTL_S
+
+    def _move(self, reason: str, *, idx: Optional[int] = None, tdp: Optional[float] = None) -> str:
+        self.prev = (self.idx, self.tdp)
+        if idx is not None:
+            self.idx = idx
+        if tdp is not None and self.tdp_control:
+            self.tdp = round(float(tdp), 1)
+        self.good = self.bad = 0
+        self.last_reason = reason
+        return "move"
+
+    def _lock(self, now: float, reason: str) -> str:
+        self.phase = "locked"
+        self.probe = None
+        self.locked_since = now
+        self.exhausted = False
+        self._clear_recovered()
+        self.reprobe_interval = (
+            self.EMERGENCY_REPROBE_S if self.tdp_control and self.tdp is not None and self.tdp > self.normal_max_w
+            else max(self.reprobe_interval, self.REPROBE_S)
+        )
+        self.last_reason = reason
+        return "hold"
+
+    def _at_least(self, state: tuple[int, Optional[float]]) -> bool:
+        """Back at (or better than) ``state``: same quality and no more watts."""
+        idx, tdp = state
+        if self.idx < idx:
+            return False
+        return not (self.tdp_control and tdp is not None and self.tdp is not None and self.tdp > tdp + 1e-6)
+
+    def _clear_recovered(self) -> None:
+        if self.recover is not None and self._at_least(self.recover):
+            self.recover = None
+            self.recover_interval = self.RECOVER_S
+
+    def _probe_delay(self) -> float:
+        return self.recover_interval if self.recover is not None else self.reprobe_interval
+
+    def _can_lower(self) -> bool:
+        # With an ignored cap a "lower" level is fiction: it would hold at any
+        # value and walk the label down to the minimum while the APU draws the same.
+        return (
+            self.tdp_control and not self.cap_ignored
+            and self.tdp is not None and self.tdp - 1.0 >= self.min_w - 1e-6
+        )
+
+    @property
+    def effective_w(self) -> Optional[float]:
+        """Watts the APU actually gets: the cap, or the measured draw when the cap does not bind."""
+        if self.cap_ignored and self.draw_w is not None:
+            return max(self.tdp or 0.0, self.draw_w)
+        return self.tdp
+
+    # ------------------------------------------------------------ evidence
+    def observe(self, now: float, verdict: WindowVerdict, real_median: Optional[float] = None) -> str:
+        """Feed one fresh window.  Returns ``move`` when the targets changed.
+
+        ``real_median`` is kept for the caller's logs; the decision uses the
+        verdict, which measures the real stream against *this point's* cap.  An
+        absolute FPS threshold cannot work here: a deep point caps the real
+        cadence itself, so it would always look like a power shortage.
+        """
+        if verdict.stall:
+            # Not evidence about power: neither start nor continue the shortfall clock.
+            self.short_since = None
+            if self.stall_since is None:
+                self.stall_since = self.stall_step_at = now
+        else:
+            self.stall_since = self.stall_step_at = None
+            if verdict.healthy or not verdict.short:
+                self.short_since = None
+            elif self.short_since is None:
+                self.short_since = now
+        if verdict.healthy:
+            return self._healthy(now)
+        return self._unhealthy(now, verdict)
+
+    def _healthy(self, now: float) -> str:
+        self.bad = 0
+        self.good += 1
+        self.request_failures = 0
+        if self.phase == "locked":
+            if now - self.locked_since < self._probe_delay():
+                return "hold"
+            return self._reprobe(now)
+        if self.good < self.HEALTHY_WINDOWS:
+            return "hold"
+        self.last_good = (self.idx, self.tdp)
+        self.exhausted = False
+        if self.quality_debt is not None and self.idx >= self.quality_debt:
+            self.quality_debt = None
+        self._clear_recovered()
+        was = self.probe
+        self.probe = None
+        if self.phase == "probe":
+            # The scene got lighter: keep going the same way until it fails.
+            self.reprobe_interval = self.REPROBE_S
+            self.phase = "search_down" if was == "down" else "upgrade"
+        if self.phase in ("settle", "search_down"):
+            if self._can_lower():
+                self.phase = "search_down"
+                self.probe = "down"
+                return self._move("testing-lower-power", tdp=self.tdp - 1.0)
+            self.phase = "upgrade"
+        if self.phase == "upgrade":
+            return self._upgrade(now)
+        return self._lock(now, "budget-point-holds")
+
+    def _upgrade(self, now: float) -> str:
+        if self.cap_ignored and self.idx >= self.comfort_idx:
+            return self._lock(now, "cap-ignored-quality-held")
+        if self._usable(self.idx + 1, now):
+            self.probe = "up"
+            return self._move("testing-fewer-generated-frames", idx=self.idx + 1)
+        return self._lock(now, "minimum-power-found")
+
+    def _owed_quality(self) -> bool:
+        """Quality was given up to defend watts or a heavy scene and may be won back."""
+        return (
+            self.idx < self.comfort_idx
+            or (self.quality_debt is not None and self.idx < self.quality_debt)
+            or (self.recover is not None and self.idx < self.recover[0])
+        )
+
+    def _reprobe(self, now: float) -> str:
+        # Watts first: try -1 W with the current point.  Upward probes only win
+        # back quality that the guard gave up; spare headroom goes to watts.
+        kinds = ["down", "up"] if self.next_probe == "down" else ["up", "down"]
+        for kind in kinds:
+            if kind == "down" and self._can_lower():
+                self.phase, self.probe = "probe", "down"
+                self.next_probe = "up" if self._owed_quality() else "down"
+                return self._move("reprobe-lower-power", tdp=self.tdp - 1.0)
+            if kind == "up" and self._owed_quality() and self._usable(self.idx + 1, now):
+                self.phase, self.probe, self.next_probe = "probe", "up", "down"
+                return self._move("reprobe-fewer-generated-frames", idx=self.idx + 1)
+        return self._lock(now, "budget-point-holds")
+
+    def _unhealthy(self, now: float, verdict: WindowVerdict) -> str:
+        self.good = 0
+        if self.probe is not None and self.last_good is not None:
+            failed = self.points[self.idx]
+            if self.probe == "up":
+                self.rejected[failed.key] = now
+            idx, tdp = self.last_good
+            from_phase = self.phase
+            self.probe = None
+            self._move(f"probe-failed:{verdict.reason}", idx=idx, tdp=tdp)
+            if from_phase == "search_down":
+                self.phase = "upgrade"
+                self.good = self.HEALTHY_WINDOWS - 1  # the restored level already held
+            else:
+                if from_phase == "probe":
+                    if self.recover is not None:
+                        self.recover_interval = min(self.recover_interval * 2.0, self.RECOVER_MAX_S)
+                    else:
+                        self.reprobe_interval = min(self.reprobe_interval * 2.0, self.REPROBE_MAX_S)
+                self._lock(now, f"probe-failed:{verdict.reason}")
+            return "move"
+        if verdict.stall:
+            # Loading screen / transition: hold, in any phase, until it has lasted
+            # long enough to be the game itself.
+            if self.stall_step_at is None or now - self.stall_step_at < self.STALL_ESCALATE_S:
+                self.last_reason = f"hold-through-stall:{verdict.reason}"
+                return "hold"
+            self.stall_step_at = now  # one budget step per STALL_ESCALATE_S at most
+            return self._escalate(now, verdict)
+        self.bad += 1
+        if self.phase == "locked" and not verdict.severe and self.bad < self.GUARD_WINDOWS:
+            return "hold"
+        return self._escalate(now, verdict)
+
+    def _escalate(self, now: float, verdict: WindowVerdict) -> str:
+        self.bad = 0
+        if self.phase != "guard" and self.recover is None:
+            # Everything spent from here is a debt to give back when the scene allows.
+            self.recover = self.last_good or (self.idx, self.tdp)
+        self.phase = "guard"
+        self.probe = None
+        step = 2.0 if verdict.severe else 1.0
+        # Down to ~30 real a deeper multiplier is always cheaper than watts.
+        if self.idx > self.comfort_idx and self._usable(self.idx - 1, now):
+            self.quality_debt = max(self.quality_debt or 0, self.idx)
+            return self._move(f"guard-deeper-multiplier:{verdict.reason}", idx=self.idx - 1)
+        # Inside the ideal 9-11 W a watt is cheaper than real FPS below 30.
+        if self.tdp_control and self.tdp is not None and self.tdp < self.ideal_max_w - 1e-6:
+            return self._move(f"guard-more-power:{verdict.reason}", tdp=min(self.ideal_max_w, self.tdp + step))
+        # Defending the 15 W budget: x3.25 .. x3.75 (real 28 .. 24) before more watts.
+        if self.idx > 1 and self._usable(self.idx - 1, now):
+            return self._move(f"guard-deeper-multiplier:{verdict.reason}", idx=self.idx - 1)
+        if self.tdp_control and self.tdp is not None and self.tdp < self.normal_max_w - 1e-6:
+            return self._move(f"guard-more-power:{verdict.reason}", tdp=min(self.normal_max_w, self.tdp + step))
+        if self.idx == 1 and self._usable(0, now):
+            return self._move(f"guard-emergency-x4:{verdict.reason}", idx=0)
+        # Above the normal budget only while the real stream keeps missing the
+        # cap of the deepest point there is: that, not an FPS number, is what
+        # "the game cannot hold 20-22 real FPS" means.
+        if verdict.stall:
+            sustained = self.stall_since is not None and now - self.stall_since >= self.STALL_EMERGENCY_S
+        else:
+            sustained = self.short_since is not None and now - self.short_since >= self.EMERGENCY_SUSTAIN_S
+        if (
+            sustained and self.tdp_control and self.tdp is not None
+            and self.tdp < self.emergency_max_w - 1e-6
+        ):
+            return self._move(f"guard-emergency-power:{verdict.reason}", tdp=min(self.emergency_max_w, self.tdp + 1.0))
+        self.exhausted = True
+        self.last_reason = f"budget-exhausted:{verdict.reason}"
+        return "hold"
+
+    def request_failed(self, now: float, reason: str) -> None:
+        """The renderer never confirmed the requested point: mark it and fall back."""
+        failed = self.points[self.idx]
+        self.rejected[failed.key] = now
+        self.request_failures += 1
+        self.probe = None
+        self.good = self.bad = 0
+        self._clear_recovered()
+        if self.prev is not None and self.prev[0] != self.idx:
+            self.idx = self.prev[0]
+        else:
+            # Nothing applied yet: try the next usable point, cheapest-first from here.
+            options = [i for i in range(len(self.points)) if i >= 1 and self._usable(i, now)]
+            if options:
+                self.idx = min(options, key=lambda i: abs(i - self.idx))
+        if self.request_failures >= self.MAX_REQUEST_FAILURES:
+            self.exhausted = True
+        self.phase = "guard" if self.phase in ("locked", "probe", "guard") else self.phase
+        self.last_reason = f"request-failed:{reason}"
+
+    def status(self) -> Dict[str, Any]:
+        return {
+            "phase": self.phase,
+            "point": self.point.key,
+            "tdp_w": self.tdp,
+            "tdp_control": self.tdp_control,
+            "tier": budget_tier(self.effective_w, self.point),
+            "probe": self.probe,
+            "last_good": (
+                {"point": self.points[self.last_good[0]].key, "tdp_w": self.last_good[1]}
+                if self.last_good else None
+            ),
+            "rejected": sorted(self.rejected),
+            "reprobe_interval_s": self._probe_delay(),
+            "recovering_to": (
+                {"point": self.points[self.recover[0]].key, "tdp_w": self.recover[1]} if self.recover else None
+            ),
+            "exhausted": self.exhausted,
+            "cap_ignored": self.cap_ignored,
+            "reason": self.last_reason,
+            "limits_w": {"min": self.min_w, "normal": self.normal_max_w, "emergency": self.emergency_max_w},
+        }
+
+
+def budget_tier(tdp_w: Optional[float], point: Optional[OperatingPoint] = None) -> str:
+    """ideal (<=11 W), heavy (12-15 W), emergency (>15 W or x4)."""
+    if point is not None and point.degraded:
+        return "emergency"
+    if tdp_w is None:
+        return "unknown"
+    if tdp_w <= 11.0 + 1e-6:
+        return "ideal"
+    if tdp_w <= 15.0 + 1e-6:
+        return "heavy"
+    return "emergency"

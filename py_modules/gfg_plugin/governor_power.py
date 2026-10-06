@@ -48,6 +48,7 @@ class PowerControlState:
     slow_min_uw: Optional[int] = None
     fast_max_uw: Optional[int] = None
     slow_max_uw: Optional[int] = None
+    ceiling_override_uw: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         value = asdict(self)
@@ -55,9 +56,10 @@ class PowerControlState:
             round(self.expected_slow_uw / 1_000_000.0, 3)
             if self.expected_slow_uw is not None else None
         )
-        value["ceiling_tdp_w"] = (
-            round(self.initial_slow_uw / 1_000_000.0, 3)
-            if self.initial_slow_uw is not None else None
+        ceiling = self.ceiling_override_uw if self.ceiling_override_uw is not None else self.initial_slow_uw
+        value["ceiling_tdp_w"] = round(ceiling / 1_000_000.0, 3) if ceiling is not None else None
+        value["maximum_tdp_w"] = (
+            round(self.slow_max_uw / 1_000_000.0, 3) if self.slow_max_uw is not None else None
         )
         value["minimum_tdp_w"] = (
             round(self.slow_min_uw / 1_000_000.0, 3)
@@ -260,6 +262,16 @@ class SteamDeckPowerActuator:
         else:
             path.write_text(f"{int(value)}\n", encoding="utf-8")
 
+    def set_ceiling_w(self, watts: Optional[float]) -> None:
+        """Explicit session ceiling (budget mode); None returns to the claimed caps."""
+        if watts is None:
+            self.state.ceiling_override_uw = None
+            return
+        value = int(round(float(watts) * 1_000_000.0))
+        if self.state.slow_max_uw is not None:
+            value = min(value, self.state.slow_max_uw)
+        self.state.ceiling_override_uw = value
+
     def set_tdp_w(self, watts: float) -> Dict[str, Any]:
         result = self._set_tdp_w(watts)
         state = result.get("state") or {}
@@ -280,10 +292,15 @@ class SteamDeckPowerActuator:
         requested_fast = int(round(requested_slow * ratio))
         slow = self._clamp(requested_slow, self.state.slow_min_uw, self.state.slow_max_uw)
         fast = self._clamp(requested_fast, self.state.fast_min_uw, self.state.fast_max_uw)
-        # The session ceiling is whatever the user/QAM had selected when
-        # Governor claimed the controls. Governor never raises beyond it.
-        slow = min(slow, self.state.initial_slow_uw)
-        fast = min(fast, self.state.initial_fast_uw)
+        # Default session ceiling: whatever the user/QAM had selected when
+        # Governor claimed the controls.  Budget mode sets an explicit ceiling
+        # (at most the hardware maximum) because it may need to go above it.
+        if self.state.ceiling_override_uw is None:
+            slow = min(slow, self.state.initial_slow_uw)
+            fast = min(fast, self.state.initial_fast_uw)
+        else:
+            slow = min(slow, self.state.ceiling_override_uw)
+            fast = min(fast, int(round(self.state.ceiling_override_uw * ratio)))
         try:
             self._write_value(self._slow_path, slow)
             self._write_value(self._fast_path, fast)

@@ -128,16 +128,24 @@ class OverlayTests(unittest.TestCase):
             self.assertEqual(d["adaptive_max_multiplier"], max(2, int(-(-m // 1))))
             self.store.write("game", d, point_key=point["key"])  # projection accepts it unchanged
 
-    def test_multipliers_outside_one_to_three_are_not_expressible(self):
-        for m in (0.5, 3.25, 3.5, 4.5):
+    def test_multipliers_outside_one_to_four_are_not_expressible(self):
+        for m in (0.5, 0.75, 4.5, 5):
             point = {"key": "x", "target_output_fps": 90, "base_target_fps": 36, "multiplier": m, "render_scale_pct": 100}
             with self.assertRaises(PointNotApplicable):
                 point_deltas(point, self.saved, scale_capable=False, scale_ready=False)
 
-    def test_x4_x5_are_never_expressible(self):
-        bad = dict(P30, multiplier=4)
+    def test_x5_is_never_expressible_x4_is_the_last_resort(self):
+        bad = dict(P30, multiplier=5)
         with self.assertRaises(PointNotApplicable):
             point_deltas(bad, self.saved, scale_capable=False, scale_ready=False)
+        x4 = point_deltas(dict(P30, multiplier=4, base_target_fps=23), self.saved,
+                          scale_capable=False, scale_ready=False)
+        self.assertEqual((x4["multiplier"], x4["adaptive"], x4["base_fps_cap"]), (4, False, 23))
+
+    def test_fractions_above_x3_use_adaptive_with_ceiling_four(self):
+        p = dict(P30, multiplier=3.5, base_target_fps=26)
+        d = point_deltas(p, self.saved, scale_capable=False, scale_ready=False)
+        self.assertEqual((d["adaptive"], d["adaptive_max_multiplier"], d["base_fps_cap"]), (True, 4, 26))
 
     def test_scaled_point_requires_launch_provisioned_engine(self):
         with self.assertRaises(PointNotApplicable) as ctx:
