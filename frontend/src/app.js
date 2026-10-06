@@ -70,6 +70,25 @@ const Focusable = ({ onClick, className, children, style }) => {
   if (F) return h(F, { ...props, onActivate: fire, onOKButton: fire }, children);
   return h("div", { ...props, tabIndex: 0, onKeyDown: onClick ? (e) => { if (e.key === "Enter" || e.key === " ") onClick(e); } : undefined }, children);
 };
+// Clipboard inside the Steam/CEF page: the async API needs focus + secure context, so fall back to execCommand.
+async function copyText(text) {
+  try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(text); return true; } } catch (e) {}
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.setAttribute("readonly", ""); ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    const ok = document.execCommand("copy"); document.body.removeChild(ta); return !!ok;
+  } catch (e) { return false; }
+}
+const LAUNCH_DEFAULT = "/home/deck/.local/bin/gfg %command%";
+function LaunchCopy({ launch }) {
+  const cmd = launch || LAUNCH_DEFAULT;
+  const [state, setState] = useState("");
+  const copy = async () => { const ok = await copyText(cmd); setState(ok ? "Copied" : "Select and type it manually"); setTimeout(() => setState(""), 2500); };
+  return h("div", null,
+    h("div", { className: "card" }, h("div", { style: { fontFamily: "monospace", fontSize: 12, wordBreak: "break-all", userSelect: "all" } }, cmd)),
+    h("div", { className: "list" }, h(Row, { icon: "play", title: state || "Copy launch command", sub: "Paste into the game's Steam Properties → Launch Options", value: state ? "" : "Copy", onClick: copy })));
+}
 const Row = ({ icon, title, sub, value, onClick }) =>
   h(Focusable, { className: "row", onClick },
     icon ? h("div", { className: "ic" }, h(Icon, { d: ICONS[icon] })) : null,
@@ -104,7 +123,7 @@ function Ring({ value, max, label, sub }) {
     h("div", { className: "num" }, h("div", { className: "big" }, label), h("div", { className: "sub" }, sub)));
 }
 
-function Home({ s, profile, go, refresh, inst, reloadInst }) {
+function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
   const [busy, setBusy] = useState(false);
   const missing = inst && inst.installed === false;
   const d = describe(s);
@@ -150,7 +169,9 @@ function Home({ s, profile, go, refresh, inst, reloadInst }) {
       h(Row, { icon: "scale", title: "Scaling", sub: "Render scale for extra headroom", onClick: () => go("scaling") }),
       h(Row, { icon: "hud", title: "In-game overlay", sub: "FPS, ×N, TDP while playing", onClick: () => go("hud") }),
       h(Row, { icon: "user", title: "Profile", value: profile || "Default", onClick: () => go("profiles") }),
-      h(Row, { icon: "cog", title: "Advanced", sub: "Inspector, journal, install", onClick: () => go("advanced") })));
+      h(Row, { icon: "cog", title: "Advanced", sub: "Inspector, journal, install", onClick: () => go("advanced") })),
+    h("div", { className: "sec" }, "STEP 1 · LAUNCH OPTION"),
+    h(LaunchCopy, { launch }));
 }
 
 // ---------- Sub screens
@@ -180,11 +201,12 @@ function FgPage({ back, cfg, patch }) {
   const mult = (cfg && cfg.multiplier) || 2;
   return h(Page, { title: "Frame Generation", onBack: back },
     h("div", { className: "sec" }, "BACKEND"),
-    h(Seg, { value: be, options: [["gfg", "GFG"], ["optiscaler", "OptiScaler"], ["native", "Native"], ["off", "Off"]], onChange: (v) => patch({ fg_backend: v }) }),
+    h(Seg, { value: be, options: [["gfg", "GFG Engine"], ["optiscaler", "OptiScaler"], ["native", "In-game"], ["off", "Off"]], onChange: (v) => patch({ fg_backend: v }) }),
+    h(Note, { quiet: true }, { gfg: "GFG Engine makes the extra frames. This is the only mode the Governor controls.", optiscaler: "The game's OptiScaler makes the frames. GFG only watches.", native: "The game's own frame generation (DLSS/FSR) is used. GFG only watches.", off: "No frame generation from GFG." }[be]),
     be === "gfg" ? h("div", null,
       h("div", { className: "sec" }, "SAVED MULTIPLIER"),
       h(Seg, { value: String(mult), options: [["2", "×2"], ["3", "×3"]], onChange: (v) => patch({ multiplier: Number(v) }) }),
-      h(Note, { quiet: true }, "Governor may pick ×1, ×2 or ×3 on its own. This is only your saved preference.")) :
+      h(Note, { quiet: true }, "Used when the Governor is off. With the Governor on, it picks ×1 to ×3 itself and never changes this value.")) :
       h(Note, { quiet: true }, "External backend: GFG observes only and does not change it."));
 }
 
@@ -204,7 +226,7 @@ function HudPage({ back, s, profile, refresh }) {
     h("div", { className: "sec" }, "DETAIL"),
     h(Seg, { value: hud.preset, options: [["minimal", "Minimal"], ["standard", "Standard"], ["detailed", "Detailed"]], onChange: (v) => set({ preset: v }) }),
     h("div", { className: "sec" }, "POSITION"),
-    h(Seg, { value: hud.position, options: [["top-right", "Top right"], ["top-left", "Top left"], ["bottom-left", "Bottom"]], onChange: (v) => set({ position: v }) }),
+    h(Seg, { value: hud.position, options: [["top-right", "Top right"], ["top-left", "Top left"], ["bottom-left", "Bottom left"]], onChange: (v) => set({ position: v }) }),
     h(Note, { quiet: true }, "Takes effect on next game launch. Not used when another overlay layer (MangoHud/vkBasalt) is chosen for the profile."));
 }
 
@@ -257,7 +279,7 @@ function AdvancedPage({ back, s, insp, launch, go }) {
     ...Object.entries(o || {}).slice(0, 5).map(([k, v]) => h("div", { key: k }, h("span", null, k), String(v))));
   return h(Page, { title: "Advanced", onBack: back },
     h("div", { className: "sec" }, "LAUNCH OPTION"),
-    h("div", { className: "card" }, h("div", { style: { fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" } }, launch || "/home/deck/.local/bin/gfg %command%")),
+    h(LaunchCopy, { launch }),
     h("div", { className: "list" }, h(Row, { icon: "cog", title: "All settings", sub: "Every profile option", onClick: () => go("all") }),
       h(Row, { icon: "cog", title: "Journal", sub: "Undo recent changes", onClick: () => go("journal") }),
       h(Row, { icon: "cog", title: "System", sub: "Engine install, Flatpak access", onClick: () => go("system") })),
@@ -372,7 +394,7 @@ function Content() {
   else if (screen === "all") body = h(AllSettingsPage, { back: () => setScreen("advanced"), cfg, patch });
   else if (screen === "system") body = h(SystemPage, { back: () => setScreen("advanced"), inst, reloadInst });
   else if (screen === "advanced") body = h(AdvancedPage, { back, s, insp, launch, go });
-  else body = h(Home, { s, profile, go, refresh, inst, reloadInst });
+  else body = h(Home, { s, profile, go, refresh, inst, reloadInst, launch });
   return h("div", { className: "gfg" }, h("style", null, css), body);
 }
 

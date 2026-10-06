@@ -103,6 +103,7 @@ class GovernorService:
     CAP_BOUND_HEALTH_RATIO = 0.97
     UNCAPPED_HEALTH_RATIO = 1.05
     ROLLBACK_RETRY_SECONDS = 5.0
+    PREDICTIVE_SKIP = True  # skip points the observed native cadence already rules out
 
     def __init__(
         self,
@@ -997,6 +998,12 @@ class GovernorService:
                 return error.reason
             return None
 
+        # Model-based start: native cadence (if ever observed) bounds the real FPS of any point.
+        summary = self.observer.summary(self.WINDOW_SECONDS)
+        if self.PREDICTIVE_SKIP:
+            self._ladder.observe_native_capacity(
+                (summary.get("real") or {}).get("median"), (summary.get("multiplier") or {}).get("median"),
+            )
         point = self._ladder.next_point(applicable)
         if point is None:
             released = await self._release_point_keep_ladder(profile)
