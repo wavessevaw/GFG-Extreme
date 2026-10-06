@@ -27,13 +27,15 @@ Most frame-generation tools hand you a wall of switches and leave you to guess. 
 |---|---|
 | **One button** | Press **RUN**. The Governor reads your device, picks the target, starts the engine and manages it while you play. |
 | **Knows your screen** | **Steam Deck OLED → 90 FPS**, **Steam Deck LCD → 60 FPS**, **Dock / external display → 60 FPS**. No manual tuning. |
-| **Mostly does nothing** | It tries the highest-quality setting first (native first, then fractional ×1.25 to ×2.75 in quarter steps, x2 with a reduced render scale before the heaviest generation, and ×3 at most; never ×4/×5), checks the result on real renderer data, and **stops** once the target is held. No constant tinkering. |
-| **Saves battery** | Once the target is stable it lowers TDP step by step while the frame rate holds, and shows you the estimated time left. |
+| **Three modes** | **Battery** (lowest TDP first, 9 to 11 W ideal, real FPS stays at 24 or more), **Balanced** (starts at 45 real FPS and 12 W, never below 30 real FPS, never above your Deck's normal power range) and **Quality** (fewest generated frames first, then lowers TDP). Pick one on the home screen. |
+| **Adapts all session** | Frame rate is checked every second: a starved game gets its watts back within about 2 s, and lower watts are tried every 45 s while the game holds. Multipliers run from native to ×3 in quarter steps (Battery may go deeper only as a last resort), confirmed on real renderer data and rolled back if they do not hold. |
+| **Remembers your games** | Once a point has held, its operating point and TDP are stored per profile, display target and mode, and the next session starts there instead of searching. |
+| **Sees the machine** | Temperature and its trend, GPU and busiest-CPU-core load, fan, battery draw and frametime (p95/p99, stutter) are read from the system. A one-line verdict (GPU-bound, CPU-bound, TDP-limited, hot, stuttering) is shown on Home. A CPU-bound game never gets render-scale points. |
 | **Never touches your profile** | Your saved profile is **never modified**. The Governor works through a temporary overlay and always restores the original state. |
 | **Safe by design** | No overclocking, no raising your power ceiling, never ×4/×5 automatically, and it backs off when another tool owns TDP or the pipeline. |
 | **Honest effort rating** | **GFG Effort** (Easy · Medium · Hard · Nightmare) tells you how hard the engine is working, and is withheld until it's stable, so it doesn't flicker. |
 | **Compact in-game overlay** | A single slim bar: FPS, frame time, multiplier, real → output FPS, render scale, TDP, battery time, effort. |
-| **Everything is still there** | Profiles, per-game rules, Flatpak support, Pipeline Inspector, Configuration Journal and every engine option remain one tap away under *Advanced*. |
+| **Everything is still there** | Profiles, per-game rules, Flatpak support, Pipeline Inspector, Configuration Journal and every engine option remain reachable under *Settings*. |
 
 ## A look inside
 
@@ -65,12 +67,17 @@ Choose **Minimal**, **Standard** or **Detailed**, and put it where you like. No 
 ## How the Governor thinks
 
 1. **Detect** the device (OLED, LCD, Dock) and choose the target.
-2. **Measure** the real frame rate from engine telemetry. Nothing is changed yet.
-3. **Try** operating points from best quality downward, each one **confirmed on real data** before it's kept and **rolled back** if it isn't.
-4. **Lock** the first point that holds the target, then **trim TDP** while it stays healthy.
-5. **Guard** against quality dips; release everything cleanly on Stop, game exit or profile change.
+2. **Remember**: if this game was played before in this mode, start from the point and TDP that held.
+3. **Measure** the real frame rate from engine telemetry every second.
+4. **Choose and confirm**: every operating point is **confirmed on real data** before it is kept and **rolled back** if it is not.
+5. **Adapt**: add watts or a deeper ratio at once when the game falls short; try one watt less every 45 s while it holds.
+6. **Release** everything cleanly on Stop, game exit or profile change. The Saved profile is never modified.
 
-It is bounded (a fixed number of attempts, no ping-pong) and every decision is written to a journal you can inspect.
+Every decision is written to a journal you can inspect.
+
+## Something not working? Record a log
+
+Settings → Diagnostics → **Record log**, play for a minute or two, **Stop and save log to Desktop**. A zip appears on the Steam Deck desktop, and the screen lists what the log shows (for example "no renderer diagnostics were written", "paused most of the time"). The zip contains `summary.txt`, a 1 Hz timeline, the renderer diagnostics, the Governor's decisions, a self-test of every precondition and the generated launcher. On a PC, `python3 tools/gfg_log_report.py <zip>` prints the same verdict.
 
 ## Targets
 
@@ -94,7 +101,7 @@ Requires [Decky Loader](https://decky.xyz/) on SteamOS, and the **default public
 
 4. Start the game and press **RUN**. GFG attaches to the running game; only a game started before this version (or without the launch command) needs one relaunch.
 
-The old `mako-run` command keeps working as an alias. For Heroic, Lutris, EmuDeck and other Flatpak apps, open **Advanced → System** and enable GFG for the app (it prepares the runtime extension and access for you).
+The old `mako-run` command keeps working as an alias. For Heroic, Lutris, EmuDeck and other Flatpak apps, open **Settings → System** and enable GFG for the app (it prepares the runtime extension and access for you).
 
 ## Everything else
 
@@ -107,7 +114,7 @@ The old `mako-run` command keeps working as an alias. For Heroic, Lutris, EmuDec
 
 ## Status
 
-**Beta (Governor v0.0.13).** The decision engine, overlay handling and safety rules are covered by an automated test suite (including tests that run the real generated launch wrapper in bash). Hardware validation on real Steam Decks is scheduled for the v0.0.10 integration release, so expect rough edges. Known limitations are listed in the release notes.
+**Beta (Governor v0.0.14).** The decision engine, overlay handling and safety rules are covered by an automated test suite (including tests that run the real generated launch wrapper in bash). No release has been validated on a real Steam Deck yet, so expect rough edges: please record a log and send it. Known limitations are listed in the release notes.
 
 ## Heritage and credits
 

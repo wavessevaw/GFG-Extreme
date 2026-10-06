@@ -179,7 +179,14 @@ const Note = ({ quiet, children }) => h("div", { className: "note" + (quiet ? " 
 function useGovernor(profile) {
   const [s, setS] = useState(null);
   const alive = useRef(true);
-  const refresh = useCallback(async () => { try { const r = await rpc.governor(profile || ""); if (alive.current) setS(r); } catch (e) {} }, [profile]);
+  const busy = useRef(false);
+  // One status call at a time: a slow backend must not pile up requests every 1.5 s.
+  const refresh = useCallback(async () => {
+    if (busy.current) return;
+    busy.current = true;
+    try { const r = await Promise.race([rpc.governor(profile || ""), new Promise((_, rej) => setTimeout(() => rej(new Error("status call timed out")), 10000))]); if (alive.current) setS(r); } catch (e) {}
+    busy.current = false;
+  }, [profile]);
   useEffect(() => { alive.current = true; refresh(); const t = setInterval(refresh, 1500); return () => { alive.current = false; clearInterval(t); }; }, [refresh]);
   return [s, refresh];
 }
