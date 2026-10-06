@@ -5,7 +5,7 @@ import os
 import re
 from typing import Dict, Iterable, Optional
 
-from .constants import SCRIPT_NAME, STEAM_APP_ID_ENV_KEYS
+from .constants import LEGACY_SCRIPT_NAME, SCRIPT_NAME, STEAM_APP_ID_ENV_KEYS
 from .launcher_exclusions_generated import EXCLUDED_WINDOWS_LAUNCHERS
 
 _HELPER_PROCESS_NAMES = {
@@ -17,6 +17,7 @@ _HELPER_PROCESS_NAMES = {
     "gameoverlayui",
     "gamescope",
     Path(SCRIPT_NAME).name,
+    Path(LEGACY_SCRIPT_NAME).name,
     "ntoskrnl.exe",
     "plugplay.exe",
     "pressure-vessel-wrap",

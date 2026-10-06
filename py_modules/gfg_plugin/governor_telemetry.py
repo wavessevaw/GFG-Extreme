@@ -118,6 +118,7 @@ class TelemetryEvent:
     event_seq: int
     monotonic: float
     operation: str
+    fields: Optional[Dict[str, str]] = None
 
 
 class TelemetryObserver:
@@ -157,6 +158,20 @@ class TelemetryObserver:
     @property
     def event_seq(self) -> int:
         return self._event_seq
+
+    @property
+    def session_generation(self) -> int:
+        return self._session_generation
+
+    def application_events_after(self, event_seq: int) -> list[TelemetryEvent]:
+        """Application/transition events strictly newer than ``event_seq``."""
+        return [
+            event for event in self._events
+            if event.event_seq > int(event_seq) and event.fields is not None
+        ]
+
+    def samples_after_event(self, event_seq: int) -> list[FpsSample]:
+        return [sample for sample in self._samples if sample.event_seq > int(event_seq)]
 
     def _select_path(self) -> Path:
         candidates = [self.disk_log_path]
@@ -201,7 +216,10 @@ class TelemetryObserver:
         self._event_seq += 1
         operation = str(fields.get("operation") or "")
         self._last_fields = dict(fields)
-        self._events.append(TelemetryEvent(self._event_seq, now_mono, operation))
+        self._events.append(TelemetryEvent(
+            self._event_seq, now_mono, operation,
+            dict(fields) if operation in APPLICATION_OPERATIONS else None,
+        ))
         if operation in APPLICATION_OPERATIONS:
             self._last_application = {
                 "event_seq": self._event_seq,
@@ -373,15 +391,27 @@ class TelemetryObserver:
         window_seconds: float = 12.0,
         *,
         after_seq: int = 0,
+        after_event_seq: int = 0,
         now: Optional[float] = None,
     ) -> Dict[str, Any]:
+        """Robust window statistics.
+
+        ``after_seq`` filters on the *sample* stream, ``after_event_seq`` on the
+        *event* stream.  They are different counters and must never be compared
+        with each other; a sample carries the ``event_seq`` of the line it was
+        parsed from, which is the only valid bridge between the two.
+        """
         now_mono = self.time_fn() if now is None else float(now)
         cutoff = now_mono - max(0.1, float(window_seconds))
         samples = self.samples_since(cutoff, after_seq=after_seq)
+        if after_event_seq:
+            samples = [sample for sample in samples if sample.event_seq > int(after_event_seq)]
         real_stats = robust_stats(sample.real_fps for sample in samples)
         output_stats = robust_stats(sample.output_fps for sample in samples)
         multiplier_stats = robust_stats(sample.effective_multiplier for sample in samples)
         events = self._events_since(cutoff)
+        if after_event_seq:
+            events = [event for event in events if event.event_seq > int(after_event_seq)]
         if after_seq:
             # A new TDP candidate must be evaluated only with events emitted
             # alongside fresh samples from that candidate. Old pressure from

@@ -133,6 +133,105 @@ class OperatingPointPlanner:
         return PlannerDecision(None, False, "target-non-viable-from-observed-capacity", p5, None)
 
 
+@dataclass(frozen=True)
+class TrialVerdict:
+    verdict: str  # "accept" | "reject" | "wait"
+    reason: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+class TrialLadder:
+    """Bounded, highest-quality-first exploration of operating points.
+
+    Rationale: once Governor caps the real cadence at an operating point's base
+    target, the renderer can no longer reveal headroom, so capacity cannot be
+    *inferred* for the next rung - it must be *tried* and judged on fresh
+    evidence.  The ladder never tries a rejected point twice in a session and
+    never exceeds ``MAX_ATTEMPTS`` applications, so it cannot oscillate.
+    """
+
+    MAX_ATTEMPTS = 6
+    # Cap-bound health: the real cadence sits on the cap, so require it to hold
+    # within 5 % of the cap, with output close to the display target and no
+    # delivery pressure.  (Uncapped headroom evidence is impossible here.)
+    REAL_P5_RATIO = 0.95
+    OUTPUT_MEDIAN_RATIO = 0.94
+    MAX_MISSES = 1
+
+    def __init__(self, *, external_display: bool) -> None:
+        self.external_display = bool(external_display)
+        self.rejected: Dict[str, str] = {}
+        self.skipped: Dict[str, str] = {}
+        self.attempts = 0
+
+    def candidates(self) -> tuple[OperatingPoint, ...]:
+        return OperatingPointPlanner.candidates(external_display=self.external_display)
+
+    def next_point(self, applicable: Any) -> Optional[OperatingPoint]:
+        """First unrejected point for which ``applicable(point)`` returns None.
+
+        ``applicable`` returns a reason string when a point cannot currently be
+        expressed (for example a scaled point on a process launched without the
+        Scaling Engine); such points are skipped and reported, not rejected.
+        """
+        if self.attempts >= self.MAX_ATTEMPTS:
+            return None
+        self.skipped = {}
+        for point in self.candidates():
+            if point.key in self.rejected:
+                continue
+            reason = applicable(point)
+            if reason:
+                self.skipped[point.key] = str(reason)
+                continue
+            return point
+        return None
+
+    def mark_attempt(self) -> None:
+        self.attempts += 1
+
+    def reject(self, point_key: str, reason: str) -> None:
+        self.rejected[point_key] = reason
+
+    def evaluate(
+        self,
+        point: OperatingPoint,
+        summary: Dict[str, Any],
+        *,
+        min_samples: int,
+        min_span_s: float,
+    ) -> TrialVerdict:
+        if (
+            int(summary.get("samples") or 0) < int(min_samples)
+            or float(summary.get("sample_span_s") or 0.0) < float(min_span_s)
+        ):
+            return TrialVerdict("wait", "collecting-trial-evidence")
+        real_p5 = (summary.get("real") or {}).get("p5")
+        output_median = (summary.get("output") or {}).get("median")
+        if not all(isinstance(v, (int, float)) and math.isfinite(float(v)) for v in (real_p5, output_median)):
+            return TrialVerdict("reject", "trial-evidence-incomplete")
+        if int(summary.get("hard_pressure") or 0) > 0:
+            return TrialVerdict("reject", "hard-pressure-during-trial")
+        if int(summary.get("misses") or 0) > self.MAX_MISSES:
+            return TrialVerdict("reject", "delivery-misses-during-trial")
+        if float(real_p5) < point.base_target_fps * self.REAL_P5_RATIO:
+            return TrialVerdict("reject", "real-cadence-below-cap")
+        if float(output_median) < point.target_output_fps * self.OUTPUT_MEDIAN_RATIO:
+            return TrialVerdict("reject", "output-below-target")
+        return TrialVerdict("accept", "trial-healthy")
+
+    def status(self) -> Dict[str, Any]:
+        return {
+            "external_display": self.external_display,
+            "attempts": self.attempts,
+            "max_attempts": self.MAX_ATTEMPTS,
+            "rejected": dict(self.rejected),
+            "skipped": dict(self.skipped),
+        }
+
+
 class CostModel:
     """Transparent relative cost model used for rare point comparisons."""
 
@@ -212,7 +311,15 @@ class PowerSearch:
         base_target_fps: float,
         hard_pressure: int = 0,
         misses: int = 0,
+        health_ratio: float = 1.05,
     ) -> Dict[str, Any]:
+        """Evaluate one fresh evidence window at the current power level.
+
+        ``health_ratio`` is the p5/target ratio that counts as healthy.  The
+        default 1.05 needs uncapped headroom evidence.  When Governor itself
+        caps the real cadence at the target (runtime overlay), headroom above
+        the cap is unobservable, so callers pass a cap-bound ratio (< 1.0).
+        """
         s = self.status
         if s.state != "optimizing" or s.current_tdp_w is None:
             return {"action": "none", "state": s.to_dict()}
@@ -221,7 +328,7 @@ class PowerSearch:
             return {"action": "wait", "state": s.to_dict()}
         target = max(1.0, float(base_target_fps))
         p5 = float(p5_fps)
-        healthy = p5 >= target * 1.05 and int(hard_pressure) == 0 and int(misses) == 0
+        healthy = p5 >= target * float(health_ratio) and int(hard_pressure) == 0 and int(misses) == 0
 
         if not healthy:
             if s.last_good_tdp_w is None:

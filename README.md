@@ -28,7 +28,7 @@ Published GFG Engine packages target x86_64 Linux hosts, with 64-bit and 32-bit 
 
 ## What it manages
 
-- Installs and updates the per-user GFG Engine Vulkan layer and common `mako-run` wrapper.
+- Installs and updates the per-user GFG Engine Vulkan layer and common `gfg` launcher (the old `mako-run` command stays as an alias).
 - Saves per-game and per-process profiles, then selects them automatically by Steam application ID or process name.
 - Orchestrates Frame Generation per profile through **GFG Engine**, **OptiScaler**, **Game Native**, or **Off** while keeping Spatial Scaling and Shaders independent. Switching ownership preserves the saved GFG Engine settings instead of rewriting them. **Live Status** reports the active mode, scaler, resolutions, limits, fallbacks, and pending changes for the running game.
 - Adds a **Pipeline Inspector** that compares Saved, Effective, and Actual launch state using an atomic launch manifest plus live `/proc/<pid>/maps` verification, including PID-reuse protection and observed double-FG warnings.
@@ -45,7 +45,7 @@ Close games using GFG Extreme before installing or updating GFG Engine. Installa
 Follow the [installation guide](../README.md#install-and-use) to install Decky Loader and the GFG Extreme ZIP. Then open GFG Extreme and select **Install GFG Engine**; installing the ZIP alone does not install its bundled Renderer. For a native Steam or Proton game, add this under **Steam Properties > Launch Options**:
 
 ```text
-/home/deck/.local/bin/mako-run %command%
+/home/deck/.local/bin/gfg %command%
 ```
 
 Start the game normally. GFG Extreme automatically selects a matching saved profile, or uses the Default profile when no match exists.

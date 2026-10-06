@@ -16,7 +16,10 @@ from enum import Enum
 DEFAULT_PROFILE_NAME = "mako"
 # Stable install-relative launcher path. Backends resolve it against Decky's
 # actual user home; the frontend uses it only for its pre-RPC fallback text.
-MAKO_WRAPPER_RELATIVE_PATH = ".local/bin/mako-run"
+MAKO_WRAPPER_RELATIVE_PATH = ".local/bin/gfg"
+# Pre-rename launcher name. Kept as a thin alias so existing Steam launch
+# options (`mako-run %command%`) keep working after the update.
+LEGACY_WRAPPER_RELATIVE_PATH = ".local/bin/mako-run"
 # Persisted profile categories shared by metadata writers and frontend RPC UX.
 PROFILE_KIND_DEFAULT = "default"
 PROFILE_KIND_GAME = "game"

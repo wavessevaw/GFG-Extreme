@@ -1186,6 +1186,7 @@ class InstallationService(BaseService):
             0o755,
             self.log,
         )
+        self.sync_legacy_launcher()
         self.log.info(f"Created GFG launch script at {self.mako_script_path}")
 
     def _install_diagnostics_helper(self, plugin_dir: Path) -> None:

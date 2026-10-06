@@ -95,7 +95,7 @@ function GiSharkFin (props) {
 // src/config/generatedConfigSchema.ts
 // Stable cross-language profile contract
 const DEFAULT_PROFILE_NAME = "mako";
-const MAKO_WRAPPER_RELATIVE_PATH = ".local/bin/mako-run";
+const MAKO_WRAPPER_RELATIVE_PATH = ".local/bin/gfg";
 const PER_GAME_WRAPPER_FLATPAK_APP_IDS = [
     "com.heroicgameslauncher.hgl",
     "net.lutris.Lutris",

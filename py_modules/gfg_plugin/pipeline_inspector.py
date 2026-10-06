@@ -198,6 +198,33 @@ class PipelineInspectorService:
             "processes": processes,
         }
 
+    def live_launch(self, profile_name: str) -> Dict[str, Any]:
+        """Identify the running launch of ``profile_name`` for Governor.
+
+        Uses the same PID-reuse protection as the Inspector (launch PID plus
+        /proc starttime) and reports whether the wrapper bound the process to a
+        Governor overlay, and what the Scaling Engine provisioning was at launch.
+        """
+        from .governor_overlay import parse_launch_line
+
+        manifest = self._read_manifest(profile_name)
+        if manifest is None:
+            return {"running": False, "reason": "no-launch-manifest"}
+        pids, launch_valid = self._candidate_pids(manifest)
+        if not pids or not launch_valid:
+            return {"running": False, "reason": "launch-process-not-running"}
+        maps = self._inspect_maps(pids)
+        effective = manifest.get("effective") if isinstance(manifest.get("effective"), dict) else {}
+        return {
+            "running": True,
+            "reason": "running",
+            "pids": pids,
+            "launch_key": [manifest.get("pid"), manifest.get("starttime"), manifest.get("timestamp")],
+            "renderer_loaded": bool(maps.get("renderer_loaded")),
+            "governor_launch": parse_launch_line(manifest.get("governor_launch", "")),
+            "saved_scaling_at_launch": bool(effective.get("scaling_enabled", False)),
+        }
+
     def get_status(self, profile_name: str = "") -> Dict[str, Any]:
         response = (
             self.configuration.get_profile_config(profile_name)

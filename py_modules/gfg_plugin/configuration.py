@@ -696,6 +696,7 @@ class ConfigurationService(BaseService):
                 0o755,
                 self.log,
             )
+            self.sync_legacy_launcher()
 
             if script_changed:
                 self.log.info(f"Updated GFG launch script at {self.mako_script_path}")
@@ -740,6 +741,7 @@ class ConfigurationService(BaseService):
             0o755,
             self.log,
         )
+        self.sync_legacy_launcher()
         return True
 
     def _generate_script_content(self, config: ConfigurationData) -> str:
@@ -1651,6 +1653,7 @@ class ConfigurationService(BaseService):
                 0o755,
                 self.log,
             )
+            self.sync_legacy_launcher()
 
             if script_changed:
                 self.log.info(f"Updated GFG launch script at {self.mako_script_path} for profile '{profile_data['current_profile']}'")

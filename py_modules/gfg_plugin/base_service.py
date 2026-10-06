@@ -24,6 +24,7 @@ from .constants import (
     SPATIAL_SCALING_JSON_FILENAME,
     SPATIAL_SCALING_JSON32_FILENAME,
     SCRIPT_NAME,
+    LEGACY_SCRIPT_NAME,
     DIAGNOSTICS_SCRIPT_NAME,
     CONFIG_DIR,
     CONFIG_FILENAME,
@@ -123,6 +124,31 @@ class BaseService:
     @mako_launch_script_path.setter
     def mako_launch_script_path(self, path: Path) -> None:
         self.mako_script_path = path
+
+    def sync_legacy_launcher(self) -> None:
+        """Keep the pre-rename ``mako-run`` command working as a thin alias.
+
+        Only an existing, previously generated launcher is replaced (stale
+        generated wrapper or our own alias).  Nothing is created for fresh
+        installs and user-owned files are never touched.
+        """
+        from .managed_files import write_managed_text_atomically
+
+        legacy = self.user_home / LEGACY_SCRIPT_NAME
+        try:
+            if legacy.is_symlink() or not legacy.is_file():
+                return
+            head = legacy.read_text(encoding="utf-8", errors="replace")[:4096]
+            if "# mako-wrapper-format" not in head and "# gfg-legacy-launcher" not in head:
+                return
+            alias = (
+                "#!/bin/bash\n"
+                "# gfg-legacy-launcher: alias of the renamed launcher; safe to delete\n"
+                f'exec "{self.mako_script_path}" "$@"\n'
+            )
+            write_managed_text_atomically(legacy, alias, 0o755, self.log)
+        except OSError as error:
+            self.log.warning("Could not refresh legacy launcher alias: %s", error)
 
     def _ensure_directories(self) -> None:
         """Create necessary directories if they don't exist"""
