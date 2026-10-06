@@ -1,0 +1,13 @@
+GFG Extreme v4.0.0 local patch
+
+Changes:
+- Fixed backend Fixed Multiplier validation to match Renderer: 2x..5x.
+- Moved installation/DLL/Flatpak blocking work off Decky async event loop.
+- Added bounded Flatpak subprocess timeouts.
+- Serialized Runtime Status polling so requests cannot overlap.
+- Target FPS slider now requests matching Gamescope refresh after a 550 ms debounce.
+  It uses Gamescope's Wayland control protocol with ONLY_CHANGE_REFRESH_RATE,
+  so it does not add a second FPS limiter on top of GFG Engine. The write is applied
+  only when Gamescope advertises the exact refresh and its own target-cycle
+  policy will select that exact rate. Example: Target 60 -> 60 Hz.
+- Removed production source map from the release package.

@@ -1,0 +1,53 @@
+GFG Extreme 4.0.0-gfg.4 test report
+
+Baseline: reconstructed gfg.3.2 (available gfg.3.1 + the three supplied gfg.3.2 fixes).
+The exact user gfg.3.2 ZIP was not mounted in this environment.
+
+[1] Python unit/regression tests
+PASS: 70/70
+
+[2] Python syntax
+PASS: python3 -m compileall -q .
+
+[3] Decky compiled UI syntax
+PASS: node --check dist/index.js
+
+[4] Generated wrapper syntax
+PASS: covered by wrapper/manifest regression tests using bash -n
+
+[5] Frontend/backend RPC parity
+Frontend RPC methods: 35
+Missing backend methods: []
+
+[6] Binary payload identity
+bin/MAKO-Renderer-v4.0.0-linux.tar.xz: 72ae1202f2a649f65cb75a7d1082f7aeacb7e87c8a2d6f29888343d5271c2b7c | unchanged=True
+bin/org.freedesktop.Platform.VulkanLayer.makorender-23.08.flatpak: d74a2e53ff8f80a7f662a9ef1052557cba5fbf1a63a2fef700de75aa83c11cf5 | unchanged=True
+bin/org.freedesktop.Platform.VulkanLayer.makorender-24.08.flatpak: ae2c78242e6edd0f8c148243c4559aef78f3748f0bd50702c5257c9138f64cee | unchanged=True
+bin/org.freedesktop.Platform.VulkanLayer.makorender-25.08.flatpak: 05f30339935979e94be0d346908e7d0d4b47927a4613ef67758152250705adc0 | unchanged=True
+py_modules/gfg_plugin/gamescope_display.py: 1238a3bc30c6f96ee61b9e6ae3572d88372c733d9d74bccb70e8481bb4370be6 | unchanged=True
+
+[7] Inspector / Journal regression coverage
+PASS: launch manifest JSON + PID/starttime identity
+PASS: stale PID reuse rejection
+PASS: /proc/<pid>/maps renderer/proxy observation
+PASS: observed double-FG warning requires actual mapped OptiScaler proxy
+PASS: external-backend Saved vs Effective mismatch reasons
+PASS: config journal actor/reason/before-after diff
+PASS: schema-safe restore is journaled
+PASS: backend restore prepares safe Dock/backend transition before write
+
+[8] gfg.3.2 baseline regressions
+PASS: grouped WINEDLLOVERRIDES conflict detection
+PASS: explicit proxy is ready without OptiScaler.ini when proxy exists
+PASS: external-owner profile selection restores orphaned Dock snapshot
+
+[9] Live integration
+NOT RUN: real Decky/Game Mode/Gamescope/Steam/Proton/OptiScaler hardware integration is unavailable in this environment.
+
+
+--- unittest output ---
+......................................................................
+----------------------------------------------------------------------
+Ran 70 tests in 0.758s
+
+OK

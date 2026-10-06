@@ -1,0 +1,44 @@
+GFG Extreme 4.0.0-gfg.3 regression report
+Generated: 2026-10-01
+
+[1] Python compileall
+PASS: python -m compileall -q .
+
+[2] Backend/unit tests (includes 14 new OptiScaler discovery tests)
+----------------------------------------------------------------------
+Ran 56 tests in 0.788s
+
+OK
+PASS: 56 tests
+
+[3] Compiled Decky UI syntax
+PASS: node --check dist/index.js
+
+[4] Shell syntax
+PASS: gfg-diagnostics bash -n
+
+[5] RPC parity
+Frontend RPC callables: 32
+Backend public methods: 32
+Missing frontend RPC implementations: []
+
+[6] Binary payload identity (bundled in this build = original gfg.2 bytes)
+72ae1202f2a649f65cb75a7d1082f7aeacb7e87c8a2d6f29888343d5271c2b7c  bin/MAKO-Renderer-v4.0.0-linux.tar.xz
+d74a2e53ff8f80a7f662a9ef1052557cba5fbf1a63a2fef700de75aa83c11cf5  bin/org.freedesktop.Platform.VulkanLayer.makorender-23.08.flatpak
+ae2c78242e6edd0f8c148243c4559aef78f3748f0bd50702c5257c9138f64cee  bin/org.freedesktop.Platform.VulkanLayer.makorender-24.08.flatpak
+05f30339935979e94be0d346908e7d0d4b47927a4613ef67758152250705adc0  bin/org.freedesktop.Platform.VulkanLayer.makorender-25.08.flatpak
+PASS: payloads are copied byte-for-byte from the gfg.2 archive
+
+[7] gamescope_display.py unchanged vs gfg.2
+1238a3bc30c6f96ee61b9e6ae3572d88372c733d9d74bccb70e8481bb4370be6  py_modules/gfg_plugin/gamescope_display.py
+PASS
+
+[8] Changed files vs gfg.2
+py_modules/gfg_plugin/wrapper_generation.py (OptiScaler discovery)
+py_modules/gfg_plugin/configuration.py (status_dir passed in real generation path)
+py_modules/gfg_plugin/plugin.py (status API: optiscaler_dir, optiscaler_detection)
+bin/gfg-diagnostics (launch status, found-in)
+package.json, dist/index.js (version string only), GFG_EXTREME.md, GFG_GFG3_NOTES.md
+tests/test_optiscaler_discovery.py (new)
+
+Not verified: live Steam/Proton session, a real OptiScaler build, on-device Decky install.

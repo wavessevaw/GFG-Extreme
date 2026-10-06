@@ -1,0 +1,123 @@
+GFG Extreme hardening history
+Date: 2026-10-01
+
+Scope of the inherited hardening.1/hardening.2 work
+---------------------------------------------------
+The hardening patches changed Decky-side Python code and packaging cleanup while
+leaving the renderer archive, Vulkan .so payloads, Flatpak bundles, compiled UI,
+and shader assets unchanged. GFG Extreme 4.0.0-gfg.1 subsequently redesigns the
+compiled Decky UI and product packaging; the binary renderer/Flatpak payloads
+remain byte-for-byte unchanged.
+
+Implemented fixes
+-----------------
+1. Safe unload ordering
+   - Target-FPS display sync is stopped/awaited before Dock restoration.
+   - Automatic Dock now stops cooperatively and waits for in-flight to_thread work
+     before restoring the saved handheld profile.
+   - Display operations are serialized to prevent concurrent Dock/slider modesets.
+
+2. Bounded Gamescope Wayland roundtrips
+   - Replaced unbounded wl_display_roundtrip() calls with a wl_display.sync callback
+     driven through poll() and a 2.0 s deadline.
+   - This avoids leaving a permanently blocked worker thread if Gamescope stalls.
+
+3. Wayland proxy/fd lifecycle
+   - gamescope_control proxy is explicitly destroyed before the registry/display.
+   - Removed the duplicate os.close(fd) after wl_display_connect_to_fd() failure;
+     libwayland owns and closes that fd on both success and failure.
+
+4. Target-FPS/profile synchronization guard
+   - Editing a non-current profile no longer schedules a physical display modeset.
+   - Manual Target-FPS display sync is deferred while Automatic Dock owns the display.
+
+5. Stable RPC error contract
+   - update_mako_config() and update_profile_config() now convert validation failures
+     into {success:false, error:..., config:null} responses instead of leaking
+     ValueError/TypeError/KeyError through the RPC boundary.
+
+6. Event-loop I/O cleanup
+   - Configuration/profile reads and writes, runtime status, profile operations,
+     file reads, startup migrations, and uninstall cleanup are moved through
+     asyncio.to_thread where they can block.
+   - Launch-script reads now explicitly use UTF-8.
+
+7. Automatic Dock loop optimization
+   - Poll interval increased from 1.5 s to 5.0 s.
+   - Added a lightweight one-read current-profile snapshot path, avoiding
+     get_profiles() metadata migration and the previous second TOML read.
+   - Disabled Dock with no saved Dock state exits before querying Gamescope.
+
+8. Xwayland refresh probing
+   - Stops blindly probing :0..:15.
+   - Enumerates /tmp/.X11-unix/X* and caches the last valid server-zero display.
+   - Keeps only one :0 fallback for abstract-socket setups.
+
+9. Small race/cleanup fixes
+   - Gamescope socket mtime sorting tolerates a socket disappearing mid-scan.
+   - __pycache__ files are omitted from the patched ZIP.
+
+Important packaging finding not auto-fixed
+------------------------------------------
+The bundled upstream-compatible renderer file `MAKO-Renderer-v4.0.0-linux.tar.xz` in the GFG Extreme base has:
+  SHA-256 72ae1202f2a649f65cb75a7d1082f7aeacb7e87c8a2d6f29888343d5271c2b7c
+  size    2,399,600 bytes
+
+GitHub release render-v4.0.0 currently publishes an asset with:
+  SHA-256 1258d8f73359974a4880236b1ecc5275c702960edc6e6ce0a57b27f52109ebdf
+  size    2,334,936 bytes
+
+Therefore package.json remote_binary.url points to different bytes than the
+renderer inherited from the legacy extreme.5 package. The local installer is not broken by
+this because it installs the bundled file and checks the bundled checksum. For
+store/remote-bundling publication, the custom renderer must be hosted at a URL
+whose digest matches the bundled archive, or the release metadata must be changed
+to the intended publication model. This patch deliberately does not invent a URL.
+
+Not implemented in this patch
+-----------------------------
+- Runtime-only Dock overlay instead of persisted profile rewrites.
+- DRM event-driven hotplug monitoring and 2-3 sample hysteresis.
+- UI Dock lock/indicator/toasts and configurable per-display Dock targets.
+- Diagnostics export button.
+- Audit/rebuild of renderer .so or Flatpak payloads.
+- Restoration of missing TypeScript sources, scripts/, or tests/ from the release ZIP.
+
+Validation performed
+--------------------
+- Python compileall: PASS.
+- Synthetic Wayland no-response test: bounded timeout PASS.
+- RPC validation-error response test: PASS.
+- Local renderer SHA-256 vs package.json checksum: PASS.
+- No Decky/Gamescope runtime integration test was possible in this environment.
+
+Hardening.2 follow-up (2026-10-01)
+----------------------------------
+10. Configuration RMW serialization
+   - Added a shared @ _serialized-style RLock wrapper (spelled @_serialized in code)
+     around 11 profile/configuration mutators that can now execute concurrently via
+     asyncio.to_thread.
+   - This closes stale-read/lost-update races between UI profile sync, manual profile
+     operations, startup migrations, and Automatic Dock writes.
+   - Existing update_profile_config* locks remain in place; RLock makes nested calls safe.
+
+11. Bounded forced unload without unsafe late restore
+   - Dock monitor gets a 15 s emergency shutdown ceiling.
+   - If the coroutine must be cancelled, the durable Dock snapshot is deliberately kept
+     and restore is skipped in that unload path. Python cannot cancel a worker already
+     running inside asyncio.to_thread, so restoring immediately could race a late write.
+   - A clean shutdown still restores the handheld profile normally.
+
+12. Xwayland cache fast path and socket-name hardening
+   - A revalidated cached server-zero display returns immediately, reducing repeat xprop
+     probing to one process in the common Decky-without-DISPLAY case.
+   - X socket numeric suffixes must now be ASCII digits before int() conversion.
+
+Additional validation for hardening.2
+-------------------------------------
+- Python compileall: PASS.
+- Concurrent canonical TOML RMW test: 80 parallel profile creations, 0 failures,
+  0 missing profiles: PASS.
+- Cached Xwayland refresh test: 1 xprop call, 60 Hz returned: PASS.
+- Bundled renderer SHA-256 remains
+  72ae1202f2a649f65cb75a7d1082f7aeacb7e87c8a2d6f29888343d5271c2b7c: PASS.

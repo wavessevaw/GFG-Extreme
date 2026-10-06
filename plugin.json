@@ -1,0 +1,20 @@
+{
+  "name": "GFG Extreme",
+  "author": "Eugenio Segala",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": [
+      "installer",
+      "vulkan",
+      "gfg-extreme",
+      "framegen",
+      "lossless-scaling",
+      "scaling",
+      "shaders",
+      "vkbasalt",
+      "steam-machine"
+    ],
+    "description": "GFG Extreme: frame-generation orchestration with Pipeline Inspector, config history, scaling, shaders, and SteamOS launch integration."
+  }
+}

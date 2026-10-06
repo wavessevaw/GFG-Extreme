@@ -1,0 +1,40 @@
+GFG Extreme 4.0.0-gfg.3.1 regression report
+Date: 2026-10-01
+
+Scope
+- Fix case-insensitive OptiScaler WINEDLLOVERRIDES conflict detection.
+- Distinguish name-only proxy discovery from verified OptiScaler discovery.
+- Correct the Decky Auto Detect description.
+
+Results
+1. Python compileall: PASS
+2. Decky compiled JS node --check: PASS
+3. Unit/regression tests: PASS (58/58)
+4. Generated wrapper bash syntax: PASS via wrapper tests
+5. Uppercase same-proxy override regression: PASS (DXGI=b is preserved and reported external-override)
+6. Name-only discovery regression: PASS (status=unverified, detection=name)
+7. Plugin status round-trip for unverified discovery: PASS
+8. Renderer payload unchanged from gfg.3: PASS
+9. Flatpak payloads unchanged from gfg.3: PASS
+10. gamescope_display.py unchanged from gfg.3: PASS
+11. Old misleading UI description removed: PASS
+12. Public UI branding remains GFG Extreme: PASS
+
+Binary hashes
+Renderer MAKO-Renderer-v4.0.0-linux.tar.xz:
+72ae1202f2a649f65cb75a7d1082f7aeacb7e87c8a2d6f29888343d5271c2b7c
+
+Flatpak 23.08:
+d74a2e53ff8f80a7f662a9ef1052557cba5fbf1a63a2fef700de75aa83c11cf5
+Flatpak 24.08:
+ae2c78242e6edd0f8c148243c4559aef78f3748f0bd50702c5257c9138f64cee
+Flatpak 25.08:
+05f30339935979e94be0d346908e7d0d4b47927a4613ef67758152250705adc0
+
+gamescope_display.py:
+1238a3bc30c6f96ee61b9e6ae3572d88372c733d9d74bccb70e8481bb4370be6
+
+Not verified
+- Live Decky/Game Mode install
+- Real Steam/Proton OptiScaler launch
+- Real Gamescope dock/undock integration

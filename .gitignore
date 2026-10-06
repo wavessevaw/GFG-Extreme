@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+node_modules/
+.coverage
+.pytest_cache/
+.vitest/
+*.tmp
+
+# Large Flatpak payloads are release assets, not git blobs (hashes in bin/SHA256SUMS.txt)
+bin/*.flatpak
