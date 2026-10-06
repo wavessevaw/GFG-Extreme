@@ -79,8 +79,9 @@ class HudTests(unittest.TestCase):
             self.assertEqual(cfg.read_text(), hud.HIDDEN_CONFIG)
             w.activate("standard", "top-left")
             self.assertIn("no_display=0", cfg.read_text())
-            w.ensure_present()
-            self.assertIn("no_display=0", cfg.read_text())
+            self.assertTrue(w.config_exists())
+            w.remove()
+            self.assertFalse(cfg.exists())
             self.assertEqual(hud.status_path(Path(d)).read_text(), "GFG off\n")
 
 

@@ -151,6 +151,17 @@ class GovernorServiceTests(unittest.TestCase):
             svc.set_enabled("Game", False)
             self.assertTrue(marker.exists())
 
+    def test_oversized_diagnostics_log_is_truncated_in_place(self):
+        with tempfile.TemporaryDirectory() as temp:
+            svc = self.make_service(Path(temp))
+            svc.DIAGNOSTICS_LOG_MAX_BYTES = 10
+            svc.diagnostics_log_path.write_text("x" * 20)
+            svc._cap_diagnostics_log()
+            self.assertEqual(svc.diagnostics_log_path.stat().st_size, 0)
+            svc.diagnostics_log_path.write_text("x" * 5)
+            svc._cap_diagnostics_log()
+            self.assertEqual(svc.diagnostics_log_path.stat().st_size, 5)
+
     def test_unwritable_tdp_is_reported_not_silent(self):
         with tempfile.TemporaryDirectory() as temp:
             svc = self.make_service(Path(temp))

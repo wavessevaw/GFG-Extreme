@@ -126,7 +126,8 @@ class RuntimeBase(unittest.TestCase):
     def test_hud_set_publishes_and_removes_active_config(self):
         from gfg_plugin.governor_hud import active_config_path, status_path
         active = active_config_path(self.cfg.config_dir)
-        self.assertFalse(active.exists())
+        # Governor on: a hidden HUD config is published for the next launches.
+        self.assertIn("no_display=1", active.read_text())
         result = self.svc.set_hud("game", True, "detailed", "top-right")
         self.assertTrue(result["success"])
         self.assertTrue(active.is_file())
@@ -679,6 +680,24 @@ class LiveAttachTests(RuntimeBase):
         st = self.step()
         self.assertNotEqual(st.get("reason"), "relaunch-required-for-governor-overlay")
         self.assertTrue(self.svc.power.state.owned)
+
+    def test_hidden_hud_only_for_governor_or_hud_users(self):
+        from gfg_plugin.governor_hud import active_config_path
+        active = active_config_path(self.cfg.config_dir)
+        self.assertFalse(active.exists(), "no Governor, no HUD: MangoHud must not load in games")
+        self.svc.set_enabled("game", True)
+        self.assertIn("no_display=1", active.read_text())
+        self.svc.set_enabled("game", False)
+        self.assertFalse(active.exists())
+        self.svc.set_hud("game", True)
+        self.svc.set_hud("game", False)
+        self.assertFalse(active.exists())
+
+    def test_game_launched_right_after_saved_edit_reads_new_overlay(self):
+        # No loop iteration in between: the Saved write itself refreshed the standby overlay.
+        self.cfg.update_profile_config_fields("game", {"flow_scale": 0.6})
+        self.saved_hash = sha(self.cfg.config_file_path)
+        self.assertAlmostEqual(self.overlay_profile()["flow_scale"], 0.6)
 
     def test_plugin_stop_drops_every_lease(self):
         self.assertTrue(self.cfg.create_profile("other2", "mako")["success"])

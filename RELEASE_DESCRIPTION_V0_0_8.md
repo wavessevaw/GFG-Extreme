@@ -6,7 +6,7 @@
 
 ### Changed
 - **RUN works mid-game.** Every game started with the GFG launch command now carries what the Governor needs from the first frame: the renderer's FPS telemetry and a Governor config file the renderer watches. While the Governor is off, that file is an exact copy of your saved settings, so nothing changes in the game. Pressing RUN only changes live settings (multiplier, FPS caps) inside it; TDP goes through `steamos-manager` as before.
-- **In-game overlay turns on and off live.** MangoHud is loaded with a hidden config and re-reads it, so the overlay switch works while the game runs.
+- **In-game overlay turns on and off live** once you use the Governor or the overlay: new launches then load MangoHud with a hidden config, which it re-reads. Players who use neither get no extra layer; for them the first overlay switch-on needs one relaunch.
 - Settings you change in the plugin while the Governor is off still reach the running game right away (the Governor copies them into its file).
 - When the plugin stops or reloads, new launches go back to the saved settings directly; a running game keeps a valid config.
 
@@ -24,4 +24,4 @@ Everything from v0.0.7 is included (TDP through `steamos-manager`, Battery mode,
 SHA-256 of the zip: `<sha256>` (see `SHA256SUMS.txt`).
 
 ### Known limitations
-See `docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md`. Renderer diagnostics are now on for every managed game (a small log in `~/.config/mako-render`, last 5 sessions kept).
+See `docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md`. Renderer diagnostics are now on for every managed game (log in `~/.config/mako-render`, last 5 sessions kept, one session is capped at 64 MB).

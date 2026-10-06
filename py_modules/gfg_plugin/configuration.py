@@ -582,6 +582,10 @@ class ConfigurationService(BaseService):
                 config=None,
             )
 
+    def saved_profile_names(self) -> list[str]:
+        """Profile names in Saved, read-only (no metadata migration)."""
+        return list(self._get_profile_data()["profiles"].keys())
+
     def saved_config_fingerprint(self) -> Optional[tuple[int, int]]:
         """Cheap change detector for the Saved config file (mtime_ns, size)."""
         try:

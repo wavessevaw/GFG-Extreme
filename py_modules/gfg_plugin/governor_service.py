@@ -133,6 +133,7 @@ class GovernorService:
         self.log = logger
         self.inspector = pipeline_inspector
         disk = self.configuration.config_dir / PRESENT_DIAGNOSTICS_LOG_FILENAME
+        self.diagnostics_log_path = disk
         self.observer = TelemetryObserver(disk, Path(PRESENT_DIAGNOSTICS_FALLBACK_LOG))
         self.planner = OperatingPointPlanner()
         self.activity: Any = None  # ActivityLog, set by the plugin
@@ -161,6 +162,7 @@ class GovernorService:
         self._wake_loop: Optional[asyncio.AbstractEventLoop] = None
         self._task: Optional[asyncio.Task] = None
         self._standby_fp: Any = None
+        self._in_saved_notify = False
         listeners = getattr(self.configuration, "saved_listeners", None)
         if isinstance(listeners, list):
             listeners.append(self.notify_saved_changed)
@@ -354,10 +356,37 @@ class GovernorService:
                                   generated_fps=hud_output_fps(status) is not None)
                 # get_status, not _status: power/effort/active point are only merged in there.
                 self.hud.write_status(status, settings["preset"])
-            else:
+            elif self._hud_preload_wanted():
                 self.hud.deactivate()
+            else:
+                self.hud.remove()
         except OSError as error:
             self.log.debug("Governor HUD sync failed: %s", error)
+
+    def _hud_preload_wanted(self) -> bool:
+        """Keep a hidden MangoHud in new launches only for Governor/HUD users.
+
+        Everyone else gets no extra Vulkan layer; for them the HUD needs one
+        relaunch after it is first turned on.
+        """
+        profiles = self._settings.get("profiles", {})
+        return isinstance(profiles, dict) and any(
+            isinstance(v, dict) and (bool(v.get("enabled", False)) or bool((v.get("hud") or {}).get("enabled", False)))
+            for v in profiles.values()
+        )
+
+    def _sync_hud_presence(self) -> None:
+        """Start/toggle path: hidden HUD config for Governor/HUD users, none otherwise.
+
+        Never hides a HUD that is shown: ``_sync_hud`` owns the visible state.
+        """
+        try:
+            if not self._hud_preload_wanted():
+                self.hud.remove()
+            elif not self.hud.config_exists():
+                self.hud.deactivate()
+        except OSError as error:
+            self.log.debug("Governor HUD presence sync failed: %s", error)
 
     def _scale_ready(self, profile: str) -> bool:
         return bool(self._profile_settings(profile).get("scale_ready", False))
@@ -463,6 +492,13 @@ class GovernorService:
         return None
 
     def _saved_profile_names(self) -> list[str]:
+        direct = getattr(self.configuration, "saved_profile_names", None)
+        if callable(direct):
+            try:
+                return [str(name) for name in direct() if str(name or "").strip()]
+            except Exception as error:  # pragma: no cover - defensive
+                self.log.debug("Governor could not list profiles: %s", error)
+                return []
         getter = getattr(self.configuration, "get_profiles", None)
         names: list[str] = []
         if callable(getter):
@@ -497,30 +533,40 @@ class GovernorService:
             if (self._point_deltas or self._request is not None or self._rollback_deltas is not None)
             else None
         )
-        failed = False
         for profile in names:
             if profile == busy or profile in self._restore_pending:
                 continue
             try:
                 saved = self._saved_profile_config(profile)
                 if saved is None:
-                    failed = True
-                    continue
+                    continue  # retried when Saved changes again, not every second
                 with self._io_lock:
                     self.overlay.ensure(profile, self._base_for(profile, saved), point_key="base")
             except (OSError, ValueError) as error:
-                failed = True
                 self.log.debug("Governor standby overlay for %s failed: %s", profile, error)
         try:
             with self._io_lock:
                 self.overlay.release_unknown(names)
         except OSError as error:
             self.log.debug("Governor could not release stale overlays: %s", error)
-        if not failed:
-            self._standby_fp = fingerprint
+        self._standby_fp = fingerprint
 
     def notify_saved_changed(self) -> None:
-        """Saved config was written by the plugin: refresh overlays right away."""
+        """Saved config was written by the plugin: refresh standby overlays now.
+
+        Synchronous, before the Saved write returns, so a game launched right
+        after an edit already reads the new launch-time fields.  The profile
+        under an in-flight Governor point is left to the loop (``_sync_overlay``).
+        """
+        if self._in_saved_notify:
+            return
+        self._in_saved_notify = True
+        try:
+            self._standby_overlays_sync(force=True)
+        except Exception as error:  # never fail the Saved write
+            self.log.debug("Governor standby refresh after Saved write failed: %s", error)
+        finally:
+            self._in_saved_notify = False
         self._poke()
 
     def set_enabled(self, profile: str, enabled: bool) -> Dict[str, Any]:
@@ -535,6 +581,7 @@ class GovernorService:
             self._sync_diagnostics_marker()
         except OSError as error:
             self.log.warning("Governor could not update diagnostics marker: %s", error)
+        self._sync_hud_presence()
         overlay_error: Optional[str] = None
         if enabled:
             overlay_error = self._ensure_base_overlay_sync(profile)
@@ -614,7 +661,7 @@ class GovernorService:
             self.log.warning("Governor could not prepare diagnostics marker: %s", error)
         await asyncio.to_thread(self._reconcile_overlays)
         try:
-            await asyncio.to_thread(self.hud.ensure_present)
+            await asyncio.to_thread(self._sync_hud_presence)
         except OSError as error:
             self.log.debug("Governor could not prepare the hidden HUD config: %s", error)
         await asyncio.to_thread(self.power.discover)
@@ -974,7 +1021,24 @@ class GovernorService:
                               reason=launch.get("reason"))
             self._journal_game = game
 
+    # Diagnostics are on in every managed game: keep one session's log bounded.
+    DIAGNOSTICS_LOG_MAX_BYTES = 64 * 1024 * 1024
+
+    def _cap_diagnostics_log(self) -> None:
+        """Truncate an oversized diagnostics log in place.
+
+        The wrapper opens it with ``>>`` (O_APPEND), so the game keeps writing
+        at the new end, and the telemetry tailer already survives truncation.
+        """
+        try:
+            if self.diagnostics_log_path.stat().st_size > self.DIAGNOSTICS_LOG_MAX_BYTES:
+                os.truncate(self.diagnostics_log_path, 0)
+                self._event("diagnostics-log-truncated", "size-cap", limit=self.DIAGNOSTICS_LOG_MAX_BYTES)
+        except OSError:
+            pass
+
     async def _iteration(self) -> None:
+        await asyncio.to_thread(self._cap_diagnostics_log)
         await self._iteration_core()
         self._journal_transitions()
         self._update_effort()

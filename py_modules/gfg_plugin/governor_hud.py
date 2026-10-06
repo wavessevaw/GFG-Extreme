@@ -176,10 +176,15 @@ class HudWriter:
         HUD on later works in a running game."""
         _atomic(active_config_path(self.config_dir), HIDDEN_CONFIG)
 
-    def ensure_present(self) -> None:
-        """Create the hidden config if there is none yet (never hides a live HUD)."""
-        if not active_config_path(self.config_dir).exists():
-            _atomic(active_config_path(self.config_dir), HIDDEN_CONFIG)
+    def config_exists(self) -> bool:
+        return active_config_path(self.config_dir).is_file()
+
+    def remove(self) -> None:
+        """No config at all: new launches do not load MangoHud."""
+        try:
+            active_config_path(self.config_dir).unlink()
+        except FileNotFoundError:
+            pass
 
     def write_status(self, status: Dict[str, Any], preset: str = "standard") -> bool:
         return _atomic(status_path(self.config_dir), status_line(status, preset) + "\n")
