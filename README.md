@@ -107,7 +107,7 @@ The old `mako-run` command keeps working as an alias. For Heroic, Lutris, EmuDec
 
 ## Status
 
-**Beta (Governor v0.0.3).** The decision engine, overlay handling and safety rules are covered by an automated test suite (including tests that run the real generated launch wrapper in bash). Hardware validation on real Steam Decks is scheduled for the v0.0.10 integration release, so expect rough edges. Known limitations are listed in the release notes.
+**Beta (Governor v0.0.2).** The decision engine, overlay handling and safety rules are covered by an automated test suite (including tests that run the real generated launch wrapper in bash). Hardware validation on real Steam Decks is scheduled for the v0.0.10 integration release, so expect rough edges. Known limitations are listed in the release notes.
 
 ## Heritage and credits
 
