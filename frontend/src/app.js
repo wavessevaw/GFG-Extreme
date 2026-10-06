@@ -268,7 +268,8 @@ function HudPage({ back, s, profile, refresh }) {
     h(Seg, { value: hud.preset, options: [["minimal", "Minimal"], ["standard", "Standard"], ["detailed", "Detailed"]], onChange: (v) => set({ preset: v }) }),
     h("div", { className: "sec" }, "POSITION"),
     h(Seg, { value: hud.position, options: [["top-right", "Top right"], ["top-left", "Top left"], ["bottom-left", "Bottom left"]], onChange: (v) => set({ position: v }) }),
-    h(Note, { quiet: true }, "Takes effect on next game launch. Not used when another overlay layer (MangoHud/vkBasalt) is chosen for the profile."));
+    hud.layer_available === false ? h(Note, null, "MangoHud layer not found on this system, so the overlay cannot appear. Record a log and send it.") : null,
+    h(Note, { quiet: true }, "Takes effect on next game launch, only for games started with the GFG launch command. Works together with shader effects (vkBasalt); not used when the profile already loads its own MangoHud."));
 }
 
 function ProfilesPage({ back, profiles, current, pick, reload }) {
