@@ -1,5 +1,6 @@
 // GFG Extreme UI. No npm deps: Decky provides SP_REACT and DFL as globals; `callable` comes from the shim.
 import { css } from "./theme.js";
+import { LOGO } from "./logo.js";
 const R = window.SP_REACT;
 const { useState, useEffect, useRef, useCallback } = R;
 const h = (t, p, ...c) => R.createElement(t, p, ...c);
@@ -101,7 +102,7 @@ function Home({ s, profile, go, refresh }) {
   const mins = s.battery && s.battery.minutes_left;
   const left = mins != null ? (mins >= 60 ? Math.floor(mins / 60) + "h" + String(mins % 60).padStart(2, "0") : mins + "m") : "";
   return h("div", null,
-    h("div", { className: "top" }, h("div", { className: "brand" }, "GFG", h("b", null, "·"), "EXTREME"),
+    h("div", { className: "top" }, h("div", { className: "brand" }, h("img", { src: LOGO, width: 30, height: 30, style: { marginRight: 8, verticalAlign: "middle" } }), "GFG", h("b", null, "·"), "EXTREME"),
       h("div", { className: "chip" + (s.enabled ? " on" : "") }, h("i"), MODE_NAME[dev.mode] || "Display")),
     h("div", { className: "card hero" },
       h(Ring, { value: showLive ? out : 0, max: target, label: showLive ? num(out, 0) : String(target), sub: showLive ? "FPS OUTPUT" : "TARGET FPS" }),
@@ -232,7 +233,7 @@ function Content() {
   return h("div", { className: "gfg" }, h("style", null, css), body);
 }
 
-const MdBolt = () => h(Icon, { d: ICONS.bolt, size: 20 });
+const MdBolt = () => h("img", { src: LOGO, width: 20, height: 20 });
 export default definePlugin(() => ({
   name: "GFG Extreme",
   titleView: h("div", { className: window.DFL.staticClasses.Title }, "GFG · EXTREME"),
