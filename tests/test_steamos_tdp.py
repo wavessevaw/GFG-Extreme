@@ -96,6 +96,73 @@ class ManagerActuatorTests(unittest.TestCase):
             self.assertEqual(int((h / "power2_cap").read_text()), 15_000_000)
 
 
+class ManagerRangeTests(unittest.TestCase):
+    make = ManagerActuatorTests.make
+    actuator = ManagerActuatorTests.actuator
+
+    def manager_15(self, h):
+        manager = FakeManager(h, high=15)
+        manager.range = (3, 15)
+
+        def set_clamped(watts, _orig=manager.set):
+            return _orig(max(3, min(15, watts)))
+        manager.set = set_clamped
+        return manager
+
+    def test_above_steam_range_without_root_is_capped_not_a_failure_loop(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); h = self.make(root)
+            write(h / "power2_cap_max", 20_000_000)
+            act = self.actuator(root, self.manager_15(h))
+            status = act.discover()
+            self.assertEqual(status["maximum_tdp_w"], 15.0)  # Steam's range is the real limit here
+            act.claim()
+            act.set_ceiling_w(20)
+            result = act.set_tdp_w(18)
+            self.assertTrue(result["success"], result)
+            self.assertTrue(act.state.owned)
+            self.assertEqual(result["state"]["observed_tdp_w"], 15.0)
+
+    def test_above_steam_range_with_direct_access_writes_hwmon(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); h = self.make(root)
+            write(h / "power1_cap", 12_000_000); write(h / "power2_cap", 12_000_000)
+            manager = self.manager_15(h)
+            act = self.actuator(root, manager, writable=True)
+            act.discover(); act.claim(); act.set_ceiling_w(20)
+            self.assertTrue(act.set_tdp_w(18)["success"])
+            self.assertEqual(int((h / "power2_cap").read_text()), 18_000_000)
+            self.assertEqual(manager.calls, [])
+
+    def test_reclaim_after_own_failed_write_keeps_users_original_for_restore(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); h = self.make(root)
+            manager = FakeManager(h)
+            act = self.actuator(root, manager)
+            act.discover(); act.claim()
+            self.assertTrue(act.set_tdp_w(12)["success"])
+            manager.apply = False  # daemon stops applying: our write does not land
+            write(h / "power1_cap", 13_000_000); write(h / "power2_cap", 13_000_000)
+            act.state.expected_slow_uw = act.state.expected_fast_uw = 13_000_000
+            self.assertFalse(act.set_tdp_w(11)["success"])
+            self.assertFalse(act.state.owned)
+            act.claim()
+            self.assertEqual(act.state.initial_slow_uw, 20_000_000)
+
+    def test_restore_prefers_exact_direct_write(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); h = self.make(root)
+            write(h / "power1_cap", 20_000_000); write(h / "power2_cap", 15_000_000)
+            manager = FakeManager(h)
+            act = self.actuator(root, manager, writable=True)
+            act.discover(); act.claim()
+            self.assertTrue(act.set_tdp_w(10)["success"])
+            self.assertTrue(act.restore_if_owned()["restored"])
+            self.assertEqual((int((h / "power1_cap").read_text()), int((h / "power2_cap").read_text())),
+                             (20_000_000, 15_000_000))
+            self.assertEqual(manager.calls, [10])
+
+
 class SteamosctlCommandTests(unittest.TestCase):
     def fake_tools(self, directory: Path):
         log = directory / "calls.log"
