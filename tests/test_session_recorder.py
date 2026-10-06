@@ -46,6 +46,26 @@ class RecorderTests(unittest.TestCase):
                 self.assertTrue(checks["overlay config published (active.conf)"])
             self.assertFalse(rec.status()["recording"])
 
+    def test_bundle_has_launch_manifest_and_diagnostics_checks(self):
+        async def scenario(rec):
+            await rec.start("game")
+            await asyncio.sleep(0.1)
+            return await rec.stop()
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            rec, diag = self.make(home)
+            launches = home / "cfg" / "rt" / "launches"; launches.mkdir(parents=True)
+            (launches / "abc.json").write_text('{"schema":1}\n')
+            diag.with_name(diag.name + ".1").symlink_to(diag)
+            result = asyncio.run(scenario(rec))
+            with zipfile.ZipFile(result["file"]) as z:
+                self.assertIn("launch-manifests/abc.json", z.namelist())
+                checks = {c["check"]: c for c in json.loads(z.read("self_test.json"))}
+            self.assertFalse(checks["Governor diagnostics marker present"]["ok"])
+            rotation = checks["diagnostics log rotation writable by wrapper"]
+            self.assertFalse(rotation["ok"])
+            self.assertIn("present-diagnostics.log.1", rotation["detail"])
+
     def test_stop_without_start_fails_cleanly(self):
         with tempfile.TemporaryDirectory() as temp:
             rec, _ = self.make(Path(temp))

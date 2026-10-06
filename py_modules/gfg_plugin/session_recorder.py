@@ -228,6 +228,22 @@ class SessionRecorder:
         for path in self.diagnostics_paths:
             add(f"renderer diagnostics log: {path.name}", path.is_file(),
                 f"{path.stat().st_size} bytes" if path.is_file() else "missing")
+        marker = self.runtime_state_dir / "governor-diagnostics.enabled"
+        add("Governor diagnostics marker present", marker.is_file(), str(marker))
+        # The wrapper silently skips diagnostics when the log or a rotation is
+        # a symlink or owned by someone else (see wrapper_generation).
+        if self.diagnostics_paths:
+            log = self.diagnostics_paths[0]
+            foreign = []
+            for entry in [log] + [log.with_name(f"{log.name}.{i}") for i in range(1, 5)]:
+                try:
+                    st = entry.lstat()
+                except OSError:
+                    continue
+                if entry.is_symlink() or not entry.is_file() or st.st_uid != os.getuid():
+                    foreign.append(f"{entry.name} uid={st.st_uid}")
+            add("diagnostics log rotation writable by wrapper", not foreign,
+                ", ".join(foreign) or f"uid={os.getuid()}")
         add("saved profile readable", self.saved_config_path.is_file(), str(self.saved_config_path))
         add("desktop folder writable", os.access(desktop_dir(self.user_home).parent, os.W_OK),
             str(desktop_dir(self.user_home)))
@@ -322,7 +338,9 @@ class SessionRecorder:
                 if data:
                     bundle.writestr("plugin.log", data)
             try:
-                for manifest in sorted(self.runtime_state_dir.glob("*launch*.json"))[:10]:
+                manifests = sorted(self.runtime_state_dir.glob("*launch*.json"))
+                manifests += sorted((self.runtime_state_dir / "launches").glob("*.json"))
+                for manifest in manifests[:10]:
                     data = _read_tail(manifest, 64 * 1024)
                     if data:
                         bundle.writestr(f"launch-manifests/{manifest.name}", data)
