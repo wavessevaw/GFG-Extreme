@@ -507,6 +507,35 @@ class DeckLog20261007Tests(unittest.TestCase):
         self.assertEqual(c.point.multiplier, 3)
         self.assertIn("request-failed-use-delivered", c.last_reason)
 
+    def test_delivered_point_is_only_a_candidate_until_fresh_windows_hold(self):
+        """PR #35 review: two medians are an observation; fresh windows verify the point."""
+        c = self.balanced()
+        c.idx = self.key(c, 40)
+        c.phase = "guard"
+        c.tdp = 13.0
+        c.last_good = None
+        c.request_failed(100.0, "confirmation-timeout", {"real": 30.0, "output": 90.0})
+        self.assertEqual(c.status()["verifying"], c.point.key)
+        self.assertIsNone(c.last_good)                         # not a held point yet
+        good = WindowVerdict(True, False, "holds")
+        c.observe(110.0, good, 30.0)
+        self.assertIsNone(c.last_good)                         # one window is not enough
+        self.assertEqual(c.status()["verifying"], c.point.key)
+        c.observe(118.0, good, 30.0)
+        self.assertEqual(c.last_good[0], c.idx)                # HEALTHY_WINDOWS fresh windows
+        self.assertIsNone(c.status()["verifying"])
+
+    def test_delivered_point_that_fails_its_windows_is_guarded_normally(self):
+        c = self.balanced()
+        c.idx = self.key(c, 40)
+        c.phase = "guard"
+        c.tdp = 13.0
+        c.request_failed(100.0, "confirmation-timeout", {"real": 30.0, "output": 90.0})
+        point, tdp = c.point.key, c.tdp
+        severe = WindowVerdict(False, True, "real-below-cap", short=True)
+        self.assertEqual(c.observe(110.0, severe, 22.0), "move")
+        self.assertNotEqual((c.point.key, c.tdp), (point, tdp))   # escalated, not kept
+
     def test_short_output_is_still_a_failure(self):
         c = self.balanced()
         c.idx = self.key(c, 40)

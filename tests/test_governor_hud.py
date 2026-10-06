@@ -102,9 +102,40 @@ class HudTests(unittest.TestCase):
             self.assertLessEqual(rewrites, 1, "at most one live rewrite per 5 s inside the burst (was 6)")
             self.assertIsNotNone(w.pending)
             now["t"] += w.MIN_REWRITE_S
-            self.assertTrue(w.flush())
+            w.activate("standard", "bottom-right")      # the loop re-applies the current state
             self.assertIn("position=bottom-right", cfg.read_text())   # only the final state
             self.assertIsNone(w.pending)
+
+    def test_pending_visible_config_is_never_published_after_the_hud_is_turned_off(self):
+        """PR #35 review: a stale pending config must not reach MangoHud after disable/remove."""
+        with tempfile.TemporaryDirectory() as d:
+            now = {"t": 1000.0}
+            w = hud.HudWriter(Path(d), clock=lambda: now["t"])
+            cfg = w.activate("standard", "top-left")
+            now["t"] += 1.0
+            w.activate("detailed", "bottom-right")       # rate-limited: pending
+            self.assertIsNotNone(w.pending)
+            now["t"] += 1.0
+            w.remove()                                   # HUD off before the interval ends
+            self.assertIsNone(w.pending)
+            now["t"] += w.MIN_REWRITE_S * 3
+            self.assertFalse(cfg.exists())
+            w.deactivate()                               # later desired state: hidden
+            self.assertEqual(cfg.read_text(), hud.HIDDEN_CONFIG)
+            self.assertNotIn("bottom-right", cfg.read_text())
+
+    def test_newer_desired_state_replaces_an_older_pending_one(self):
+        with tempfile.TemporaryDirectory() as d:
+            now = {"t": 1000.0}
+            w = hud.HudWriter(Path(d), clock=lambda: now["t"])
+            cfg = w.activate("standard", "top-left")
+            now["t"] += 1.0
+            w.activate("detailed", "bottom-right")
+            now["t"] += 1.0
+            w.deactivate()                               # hidden is now what is wanted
+            now["t"] += w.MIN_REWRITE_S
+            w.deactivate()
+            self.assertEqual(cfg.read_text(), hud.HIDDEN_CONFIG)
 
     def test_unchanged_config_is_never_rewritten(self):
         with tempfile.TemporaryDirectory() as d:

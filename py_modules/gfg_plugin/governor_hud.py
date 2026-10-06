@@ -166,7 +166,9 @@ class HudWriter:
 
     Deck log 2026-10-07: a game crashed seconds after six overlay changes in eight seconds.
     Rewrites of the live config are therefore rate-limited: the newest wanted content is kept
-    and written once ``MIN_REWRITE_S`` has passed (the Governor loop calls in every second).
+    and written once ``MIN_REWRITE_S`` has passed.  Callers always pass the *current* desired
+    state (the Governor loop does so every second), so a newer state replaces an older pending
+    one and a stale pending config is never flushed on its own.
     """
 
     MIN_REWRITE_S = 5.0
@@ -199,10 +201,6 @@ class HudWriter:
         self._write_config(mangohud_config(preset, position, status_path(self.config_dir), generated_fps))
         return active_config_path(self.config_dir)
 
-    def flush(self) -> bool:
-        """Write a rate-limited pending config once allowed."""
-        return self._write_config(self.pending) if self.pending is not None else False
-
     def deactivate(self) -> None:
         """Hide the HUD but keep its config: the launch wrapper loads MangoHud
         whenever the config exists, and MangoHud re-reads it, so turning the
@@ -214,6 +212,7 @@ class HudWriter:
 
     def remove(self) -> None:
         """No config at all: new launches do not load MangoHud."""
+        self.pending = None  # a rate-limited older state must never be published afterwards
         try:
             active_config_path(self.config_dir).unlink()
         except FileNotFoundError:
