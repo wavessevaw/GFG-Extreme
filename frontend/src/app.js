@@ -112,6 +112,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst }) {
   const mult = latest.effective_multiplier;
   const pw = s.power || {};
   const toggle = async () => {
+    if (!missing && !profile) return;
     setBusy(true);
     try { if (missing) { await rpc.install(); await reloadInst(); } else { await rpc.setGovernor(profile, !s.enabled); } } catch (e) {}
     await refresh(); setBusy(false);
