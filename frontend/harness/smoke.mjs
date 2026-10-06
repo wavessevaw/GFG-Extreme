@@ -33,6 +33,7 @@ const cases = [
   ["home-idle-oled", [], ["MODE", "Battery", "Quality", "Details", "Settings"]],
   ["home-relaunch-dock", [], ["START THE GAME WITH THIS LAUNCH OPTION", "Copy launch command"]],
   ["home-paused-relaunch", [], ["Something wrong? Record a log"]],
+  ["home-idle-oled", ["Settings"], ["GFG Extreme 1.0.0"]],
   ["home-idle-oled", ["Settings", "Launch command"], ["Copy launch command", "Launch Options"]],
   ["home-idle-oled", ["Settings", "Diagnostics"], ["RECORD A LOG", "Record log"]],
 ];

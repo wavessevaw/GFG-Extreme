@@ -13,7 +13,7 @@ and sets the TDP as low as the game allows — then keeps adjusting while you pl
 
 [**Download the latest release**](https://github.com/wavessevaw/GFG-Extreme/releases) · [Quick start](#quick-start) · [Something not working?](#something-not-working)
 
-![status](https://img.shields.io/badge/status-pre--release-fb0d00?style=flat-square)
+![release](https://img.shields.io/github/v/release/wavessevaw/GFG-Extreme?style=flat-square&color=fb0d00&label=release)
 ![platform](https://img.shields.io/badge/Steam%20Deck-OLED%20%C2%B7%20LCD%20%C2%B7%20Dock-111?style=flat-square)
 ![decky](https://img.shields.io/badge/Decky%20Loader-plugin-111?style=flat-square)
 ![license](https://img.shields.io/badge/license-GPL--3.0-111?style=flat-square)
@@ -52,7 +52,7 @@ and sets the TDP as low as the game allows — then keeps adjusting while you pl
 
 You need [Decky Loader](https://decky.xyz/) and [Lossless Scaling](https://store.steampowered.com/app/993090/Lossless_Scaling/) from Steam (the default public version).
 
-1. Download `GFG-Extreme-Governor-*.zip` from [Releases](https://github.com/wavessevaw/GFG-Extreme/releases) and install it in Decky (*Install from zip*). Accept the root access request — it is used only to set TDP.
+1. Download `GFG-Extreme-v1_0_0.zip` (or newer) from [Releases](https://github.com/wavessevaw/GFG-Extreme/releases) and install it in Decky (*Install from zip*). Accept the root access request — it is used only to set TDP.
 2. Open GFG Extreme and tap **Install engine**.
 3. In Steam, open the game's **Properties → Launch Options** and paste:
    ```text
@@ -76,7 +76,7 @@ Heroic, Lutris, EmuDeck and other Flatpak apps: **Settings → System**, enable 
 
 ## Status
 
-**Pre-release.** Every release is covered by an automated test suite (Python backend, the generated launcher run in bash, and the interface rendered in a headless browser), but **none has been validated on a real Steam Deck yet**. Logs from real devices are what moves this project forward — please send yours. Known limitations: [docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md).
+**1.0.0 — first official release.** Tested on a Steam Deck OLED in real play (The Witcher 3): Battery holds 90 FPS at 30 real frames and 10–11 W, Balanced at 13 W. Every release is also covered by an automated test suite (Python backend, the generated launcher run in bash, the interface rendered in a headless browser), and every fix since 0.0.17 comes from logs recorded on a real Deck. LCD, docked play and other games have had less real-world testing — logs are very welcome. Known limitations: [docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md).
 
 <details>
 <summary><b>Everything else it can do</b></summary>
@@ -100,7 +100,7 @@ npm run screenshots   # re-render docs/img from the real interface
 python3 tools/gfg_log_report.py <log.zip>   # read a recorded log on a PC
 ```
 
-Docs: [Governor architecture](docs/GFG_GOVERNOR_ARCHITECTURE.md) · [Telemetry](docs/GFG_TELEMETRY_CAPABILITIES.md) · [Interface](docs/GFG_UI_REDESIGN.md). Every merge to `main` with a new version publishes a pre-release automatically.
+Docs: [Governor architecture](docs/GFG_GOVERNOR_ARCHITECTURE.md) · [Telemetry](docs/GFG_TELEMETRY_CAPABILITIES.md) · [Interface](docs/GFG_UI_REDESIGN.md). Every merge to `main` with a new version publishes a release automatically (0.x as pre-releases, 1.0.0 and later as official releases).
 
 </details>
 

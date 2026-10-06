@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (v0.0.19).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.0.0).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -53,7 +53,7 @@ from .governor_telemetry import TelemetryObserver
 
 APPLIED_OPERATIONS = frozenset({"runtime-state-applied", "runtime-transition-applied"})
 FAILED_OPERATIONS = frozenset({"runtime-transition-failed"})
-VERSION = "0.0.19"
+VERSION = "1.0.0"
 
 
 @dataclass
@@ -1311,7 +1311,7 @@ class GovernorService:
 
         cpu_bound = (self._status.get("diagnosis") or {}).get("bottleneck") == "cpu"
 
-        max_multiplier = self.observer.max_multiplier
+        max_multiplier = self.observer.current_max_multiplier
 
         def applicable(point: OperatingPoint) -> Optional[str]:
             if max_multiplier is not None and float(point.multiplier) > max_multiplier + 1e-6:
@@ -1433,8 +1433,10 @@ class GovernorService:
             budget.tdp_control = False
             self._event("tdp-control-yielded", "external-tdp-change", profile=profile)
 
-        budget.max_multiplier = self.observer.max_multiplier
-        if budget.max_multiplier is not None and float(budget.point.multiplier) > budget.max_multiplier + 1e-6:
+        # Current resources, re-read every step: a swapchain recreation can raise it again.
+        budget.current_max_multiplier = self.observer.current_max_multiplier
+        if (budget.current_max_multiplier is not None
+                and float(budget.point.multiplier) > budget.current_max_multiplier + 1e-6):
             # The current target is beyond what the renderer can generate: fall back at once.
             budget.request_failed(now, "renderer-generated-capacity")
         # 1. The operating point first.  Lowering TDP before the renderer has

@@ -726,7 +726,7 @@ function JournalPage({ back, profile, reloadCfg }) {
     msg ? h(Note, null, msg) : null
   );
 }
-function SettingsPage({ back, go, profile }) {
+function SettingsPage({ back, go, profile, s }) {
   return h(
     Page,
     { title: "Settings", onBack: back },
@@ -746,7 +746,8 @@ function SettingsPage({ back, go, profile }) {
       h(Row, { icon: "cog", title: "Diagnostics", sub: "Record a log, inspector, journal", onClick: () => go("advanced") }),
       h(Row, { icon: "cog", title: "System", sub: "Engine install, Flatpak access", onClick: () => go("system") }),
       h(Row, { icon: "cog", title: "All settings", sub: "Every profile option", onClick: () => go("all") })
-    )
+    ),
+    h("div", { className: "hint" }, "GFG Extreme " + (s && s.version || ""))
   );
 }
 function SetupCheckPage({ back, profile }) {
@@ -999,7 +1000,7 @@ function Content() {
   else if (screen === "scaling") body = h(ScalingPage, { s, back: () => setScreen("settings"), profile, refresh });
   else if (screen === "hud") body = h(HudPage, { back: () => setScreen("settings"), s, profile, refresh });
   else if (screen === "profiles") body = h(ProfilesPage, { back: () => setScreen("settings"), profiles, current: profile, pick, reload: loadProfiles });
-  else if (screen === "settings") body = h(SettingsPage, { back, go, profile });
+  else if (screen === "settings") body = h(SettingsPage, { back, go, profile, s });
   else if (screen === "setup") body = h(SetupCheckPage, { back: () => setScreen("advanced"), profile });
   else if (screen === "launch") body = h(LaunchPage, { back: () => setScreen("settings"), launch });
   else if (screen === "journal") body = h(JournalPage, { back: () => setScreen("advanced"), profile, reloadCfg: () => loadCfg(profile) });

@@ -782,7 +782,9 @@ class BudgetController:
         self.held: list[tuple[float, float]] = []   # (time, tdp) of levels that held
         self.last_reason = "budget-start"
         self.warm_started = False
-        self.max_multiplier: Optional[float] = None  # from the renderer's generated-frame capacity
+        # Ceiling of the renderer's current generated-frame resources; updated every step, so it
+        # rises again after a swapchain recreation.
+        self.current_max_multiplier: Optional[float] = None
         self.verifying: Optional[str] = None  # point inferred from delivered FPS, not yet verified
 
     def warm_start(self, point_key: str, tdp_w: Optional[float], now: float) -> bool:
@@ -813,7 +815,7 @@ class BudgetController:
             return False
         # Deck log 2026-10-07: with capacity for 2 generated frames the renderer turned 28x3.25,
         # 26x3.5 and 24x3.75 into a fixed x3 (84/78/72 FPS) and each request timed out.
-        if self.max_multiplier is not None and float(self.points[i].multiplier) > self.max_multiplier + 1e-6:
+        if self.current_max_multiplier is not None and float(self.points[i].multiplier) > self.current_max_multiplier + 1e-6:
             return False
         at = self.rejected.get(self.points[i].key)
         return at is None or now - at >= self.REJECT_TTL_S
@@ -822,6 +824,8 @@ class BudgetController:
         self.prev = (self.idx, self.tdp)
         if idx is not None:
             self.idx = idx
+        if self.verifying is not None and self.points[self.idx].key != self.verifying:
+            self.verifying = None  # left the inferred point before it was verified (a TDP-only move keeps it)
         if tdp is not None and self.tdp_control:
             self.tdp = round(float(tdp), 1)
         self.good = self.bad = 0
@@ -1159,6 +1163,8 @@ class BudgetController:
                 self.idx = min(options, key=lambda i: abs(i - self.idx))
         if self.request_failures >= self.MAX_REQUEST_FAILURES:
             self.exhausted = True
+        if self.verifying is not None and self.points[self.idx].key != self.verifying:
+            self.verifying = None
         self.phase = "guard" if self.phase in ("locked", "probe", "guard") else self.phase
         self.last_reason = f"request-failed:{reason}"
 
@@ -1198,7 +1204,7 @@ class BudgetController:
             "warm_started": self.warm_started,
             "flavor": self.flavor,
             "verifying": self.verifying,
-            "max_multiplier": self.max_multiplier,
+            "current_max_multiplier": self.current_max_multiplier,
             "reason": self.last_reason,
             "limits_w": {"min": self.min_w, "normal": self.normal_max_w, "emergency": self.emergency_max_w},
         }

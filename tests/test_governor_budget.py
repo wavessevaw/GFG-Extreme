@@ -494,7 +494,7 @@ class GeneratedCapacityLimitTests(unittest.TestCase):
 
     def test_points_beyond_capacity_are_never_used_and_the_guard_buys_watts_instead(self):
         c = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
-        c.max_multiplier = 3.0
+        c.current_max_multiplier = 3.0
         c.idx = next(i for i, p in enumerate(c.points) if p.key == "30x3")
         c.tdp = 11.0
         c.phase = "locked"
@@ -504,9 +504,20 @@ class GeneratedCapacityLimitTests(unittest.TestCase):
         self.assertGreater(c.tdp, 11.0)
         self.assertFalse(any(c._usable(i, 10.0) for i, p in enumerate(c.points) if p.multiplier > 3))
 
+    def test_a_raised_capacity_after_swapchain_recreation_brings_deeper_ratios_back(self):
+        """PR #37 review: capacity is the current swapchain's, not a permanent device limit."""
+        c = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
+        deep = [i for i, p in enumerate(c.points) if 3 < p.multiplier < 4]
+        c.current_max_multiplier = 3.0
+        self.assertFalse(any(c._usable(i, 0.0) for i in deep))
+        c.current_max_multiplier = 4.0          # later report: generated_frame_capacity=3
+        self.assertTrue(all(c._usable(i, 0.0) for i in deep))
+        c.current_max_multiplier = 1.0          # capacity 0: native only
+        self.assertEqual([p.multiplier for i, p in enumerate(c.points) if c._usable(i, 0.0)], [1])
+
     def test_unknown_capacity_keeps_the_old_behaviour(self):
         c = BudgetController(target_output_fps=90, now=0.0)
-        self.assertIsNone(c.max_multiplier)
+        self.assertIsNone(c.current_max_multiplier)
         self.assertTrue(any(c._usable(i, 0.0) for i, p in enumerate(c.points) if 3 < p.multiplier < 4))
 
 
@@ -556,6 +567,35 @@ class DeckLog20261007Tests(unittest.TestCase):
         severe = WindowVerdict(False, True, "real-below-cap", short=True)
         self.assertEqual(c.observe(110.0, severe, 22.0), "move")
         self.assertNotEqual((c.point.key, c.tdp), (point, tdp))   # escalated, not kept
+
+    def test_verifying_is_cleared_when_the_guard_leaves_the_inferred_point(self):
+        """PR #36/#37 review: failed verification -> move to another point -> verifying is None."""
+        c = self.balanced()
+        c.idx = self.key(c, 40)
+        c.phase = "guard"
+        c.tdp = 13.0
+        c.request_failed(100.0, "confirmation-timeout", {"real": 33.0, "output": 90.0})
+        inferred = c.point.key
+        self.assertEqual(c.verifying, inferred)
+        severe = WindowVerdict(False, True, "real-below-cap", short=True)
+        for t in range(110, 400, 10):
+            c.observe(float(t), severe, 20.0)
+            if c.point.key != inferred:
+                break
+        self.assertNotEqual(c.point.key, inferred)
+        self.assertIsNone(c.verifying)
+        self.assertIsNone(c.status()["verifying"])
+
+    def test_a_tdp_only_move_keeps_verification_of_the_same_point(self):
+        c = self.balanced()
+        c.idx = self.key(c, 40)
+        c.phase = "guard"
+        c.tdp = 11.0
+        c.request_failed(100.0, "confirmation-timeout", {"real": 30.0, "output": 90.0})
+        c.current_max_multiplier = 3.0                       # nothing deeper than x3
+        inferred = c.point.key
+        c._move("guard-more-power:test", tdp=12.0)
+        self.assertEqual((c.point.key, c.verifying), (inferred, inferred))
 
     def test_short_output_is_still_a_failure(self):
         c = self.balanced()

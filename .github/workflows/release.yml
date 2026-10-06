@@ -1,7 +1,7 @@
 name: Release
 
-# Every push to main whose governor version (package.json) has no tag yet
-# becomes a GitHub pre-release: tests, zip for Decky, SHA-256, description
+# Every push to main whose version (package.json) has no tag yet becomes a
+# GitHub release (0.x: pre-release v0.0.N-governor; 1.0.0+: official vX.Y.Z): tests, zip for Decky, SHA-256, description
 # from RELEASE_DESCRIPTION_V<version>.md.
 on:
   push:
@@ -29,7 +29,13 @@ jobs:
         id: version
         run: |
           version="$(python3 -c 'import json; print(json.load(open("package.json"))["version"].split("governor.")[-1])')"
-          tag="v${version}-governor"
+          # 0.x are Governor pre-releases (v0.0.N-governor); 1.0.0 and later are official releases (vX.Y.Z).
+          if [[ "$version" =~ ^0\. || "$version" == *-* ]]; then
+            tag="v${version}-governor"; stable=false
+          else
+            tag="v${version}"; stable=true
+          fi
+          echo "stable=$stable" >> "$GITHUB_OUTPUT"
           notes="RELEASE_DESCRIPTION_V${version//./_}.md"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -71,7 +77,7 @@ jobs:
         if: steps.version.outputs.exists == 'false'
         run: |
           # Newest published Governor release; other releases in the repo may carry no zip.
-          previous="$(gh release list --limit 50 --json tagName,isDraft,createdAt --jq '[.[] | select((.isDraft | not) and (.tagName | endswith("-governor")))] | sort_by(.createdAt) | last | .tagName // empty')"
+          previous="$(gh release list --limit 50 --json tagName,isDraft,createdAt --jq '[.[] | select((.isDraft | not) and (.tagName | test("-governor$|^v[0-9]+\\.[0-9]+\\.[0-9]+$")))] | sort_by(.createdAt) | last | .tagName // empty')"
           test -n "$previous" || { echo "::error::no previous Governor release to take Flatpak payloads from"; exit 1; }
           echo "Flatpak payloads from $previous"
           mkdir -p prev payloads
@@ -93,6 +99,10 @@ jobs:
           text = re.sub(r"`(<sha256>|[0-9a-f]{64})`", f"`{sys.argv[2]}`", text)
           print(text)
           PY
+          if [ "${{ steps.version.outputs.stable }}" = true ]; then
+            flags=(--latest --title "GFG Extreme ${{ steps.version.outputs.version }}")
+          else
+            flags=(--prerelease --title "${{ steps.version.outputs.tag }}")
+          fi
           gh release create "${{ steps.version.outputs.tag }}" out/*.zip out/SHA256SUMS.txt \
-            --target "$GITHUB_SHA" --prerelease \
-            --title "${{ steps.version.outputs.tag }}" --notes-file notes.md
+            --target "$GITHUB_SHA" "${flags[@]}" --notes-file notes.md
