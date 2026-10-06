@@ -1,6 +1,7 @@
 """Governor v0.0.2 runtime: overlay application, confirmation, rollback, release."""
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import shutil
@@ -783,6 +784,47 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual(self.svc.power.writes[-1], 9.0)
         self.assertEqual(st["budget"]["phase"], "search_down")
         self.assertEqual(st["state"], "OPTIMIZE_POWER")
+
+    def applied_line(self, base, mult, adaptive=1):
+        return (H + f"operation=runtime-state-applied role=frame-generation state_revision=99 transition=live "
+                f"frame_generation_enabled=1 adaptive={adaptive} target_fps=90 multiplier={mult} base_fps_cap={base} "
+                "frame_generation_resources_available=1 generated_frame_capacity=2")
+
+    def test_delivered_deeper_ratio_is_resolved_in_seconds_not_25(self):
+        """Deck log 2026-10-07 #2: 36x2.5 / 33x2.75 requests each waited the full 25 s."""
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.windows(2, 30, 90)                 # 10 W holds -> 9 W
+        self.windows(1, 25, 75)                 # 9 W fails -> back to 10 W, upgrade phase
+        self.windows(1, 30, 90)
+        st = self.step(0.1)
+        self.assertEqual(st["request"]["point"], "33x2.75")
+        started = self.t["now"]
+        self.svc.observer.consume_line(self.applied_line(33, 3), now=self.t["now"])
+        self.feed(16, 30, 90)                   # renderer delivers 90 FPS at 30 real (x3)
+        st = self.step()
+        self.assertIsNone(st["request"])
+        self.assertLess(self.t["now"] - started, 15.0)
+        events = [json.loads(l) for l in Path(self.svc.events_path).read_text().splitlines()]
+        rejected = [e for e in events if e.get("event") == "operating-point-rejected"]
+        self.assertEqual(rejected[-1]["reason"], "delivered-deeper-ratio")
+        self.assertEqual(st["budget"]["point"], "30x3")
+
+    def test_no_early_decision_without_a_renderer_application(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.windows(2, 30, 90)
+        self.windows(1, 25, 75)
+        self.windows(1, 30, 90)
+        st = self.step(0.1)
+        self.assertEqual(st["request"]["point"], "33x2.75")
+        self.feed(16, 30, 90)                   # no runtime-state-applied: the request may not be live yet
+        st = self.step()
+        self.assertIsNotNone(st["request"])
 
     def test_failed_lower_power_restores_and_guard_reacts_after_lock(self):
         self.feed(20, 45, 90)
