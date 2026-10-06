@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.0.0).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.0.1).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -53,7 +53,7 @@ from .governor_telemetry import TelemetryObserver
 
 APPLIED_OPERATIONS = frozenset({"runtime-state-applied", "runtime-transition-applied"})
 FAILED_OPERATIONS = frozenset({"runtime-transition-failed"})
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 
 @dataclass
@@ -957,9 +957,36 @@ class GovernorService:
             req.confirmation_mode = "event+cadence" if applied else "cadence-only"
             req.confirmed_at = now
             return "confirmed", req.confirmation_mode
+        if self._delivered_deeper(req, applied, samples, want, tol):
+            return "failed", "delivered-deeper-ratio"
         if now - req.created > self.CONFIRM_TIMEOUT_SECONDS:
             return "failed", "confirmation-timeout"
         return "wait", "awaiting-fresh-evidence"
+
+    EARLY_DELIVERED_SPAN_SECONDS = 8.0
+
+    def _delivered_deeper(self, req: Request, applied: list, samples: list, want: float, tol: float) -> bool:
+        """Battery/Balanced only: the renderer took the request but holds the target with fewer
+        real frames (the GPU cannot feed the requested cap).  Seen on a Deck for 40x2.25,
+        36x2.5 and 33x2.75: each waited the full 25 s timeout.  Decide after 8 s of fresh,
+        consistent samples instead; the budget then follows the delivered point (verifying).
+        """
+        if self._budget is None or not applied:
+            return False
+        if len(samples) < self.MIN_SAMPLES:
+            return False
+        end = samples[-1].monotonic
+        tail = [sample for sample in samples if end - sample.monotonic <= self.EARLY_DELIVERED_SPAN_SECONDS]
+        if len(tail) < self.MIN_SAMPLES or len(tail) == len(samples) and (end - samples[0].monotonic) < self.EARLY_DELIVERED_SPAN_SECONDS:
+            return False  # not yet 8 s of evidence after the renderer applied the request
+        target = float(req.point.target_output_fps)
+        base = float(req.point.base_target_fps)
+        return all(
+            sample.effective_multiplier > want + tol
+            and sample.output_fps >= 0.94 * target
+            and sample.real_fps <= 0.95 * base
+            for sample in tail
+        )
 
     async def _fail_request(self, profile: str, reason: str) -> None:
         req = self._request
@@ -970,7 +997,7 @@ class GovernorService:
             self._ladder.reject(req.point.key, reason)
         if self._budget is not None:
             observed = None
-            if reason == "confirmation-timeout":
+            if reason in ("confirmation-timeout", "delivered-deeper-ratio"):
                 recent = self.observer.summary(self.WINDOW_SECONDS, after_event_seq=req.event_mark)
                 observed = {"real": (recent.get("real") or {}).get("median"),
                             "output": (recent.get("output") or {}).get("median")}
