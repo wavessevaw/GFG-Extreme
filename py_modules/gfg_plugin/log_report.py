@@ -109,8 +109,20 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
     report["events"] = dict(Counter(str(e.get("event")) for e in events).most_common(12))
     report["rejected_points"] = sorted({str(e.get("point")) for e in events if e.get("event") == "operating-point-rejected"})
     report["failed_checks"] = [c for c in self_test if not c.get("ok")]
+    report["overlay_burst_before_exit"] = overlay_burst_before_exit(_jsonl(_read(bundle, "activity.jsonl")))
     report["findings"] = findings(report, names)
     return report
+
+
+def overlay_burst_before_exit(activity: List[Dict[str, Any]], window_s: float = 30.0) -> Optional[int]:
+    """Overlay changes in the ``window_s`` before the game exited (None if it did not exit)."""
+    exits = [a.get("ts") for a in activity if a.get("kind") == "game-exited" and isinstance(a.get("ts"), (int, float))]
+    if not exits:
+        return None
+    end = exits[-1]
+    changes = [a for a in activity if a.get("kind") == "set_governor_hud" and isinstance(a.get("ts"), (int, float))
+               and end - window_s <= a["ts"] <= end]
+    return len(changes)
 
 
 def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
@@ -144,6 +156,10 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
         out.append(f"Median output FPS {out_med:.0f} against a {target} FPS target.")
     if report.get("temp_max_c") is not None and report["temp_max_c"] >= 85:
         out.append(f"The APU reached {report['temp_max_c']:.0f} °C.")
+    burst = report.get("overlay_burst_before_exit")
+    if burst and burst >= 3:
+        out.append(f"The game exited within 30 s after {burst} in-game overlay changes "
+                   "(MangoHud re-reads its config on every change).")
     if not any(n.startswith("overlay/") for n in names):
         out.append("No overlay files were captured: the in-game overlay was never published (Settings → In-game overlay).")
     if not out:

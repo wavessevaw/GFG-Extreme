@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (v0.0.16).
+"""Live orchestration service for GFG Governor (v0.0.17).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -53,7 +53,7 @@ from .governor_telemetry import TelemetryObserver
 
 APPLIED_OPERATIONS = frozenset({"runtime-state-applied", "runtime-transition-applied"})
 FAILED_OPERATIONS = frozenset({"runtime-transition-failed"})
-VERSION = "0.0.16"
+VERSION = "0.0.17"
 
 
 @dataclass
@@ -374,6 +374,7 @@ class GovernorService:
         """Publish/remove the active HUD config and keep the status line fresh."""
         try:
             settings = self.hud_settings(profile)
+            self.hud.flush()  # a rate-limited change from a burst of UI toggles
             if settings["enabled"]:
                 status = self.get_status(profile)
                 # MangoHud re-reads a changed config, so the FPS source follows the telemetry.
@@ -967,7 +968,12 @@ class GovernorService:
         if self._ladder is not None:
             self._ladder.reject(req.point.key, reason)
         if self._budget is not None:
-            self._budget.request_failed(self._clock(), reason)
+            observed = None
+            if reason == "confirmation-timeout":
+                recent = self.observer.summary(self.WINDOW_SECONDS, after_event_seq=req.event_mark)
+                observed = {"real": (recent.get("real") or {}).get("median"),
+                            "output": (recent.get("output") or {}).get("median")}
+            self._budget.request_failed(self._clock(), reason, observed)
         self._event("operating-point-rejected", reason, profile=profile, point=req.point.key,
                     revision=req.revision, request_id=req.request_id)
         await self._rollback(profile, req.previous_deltas, reason)

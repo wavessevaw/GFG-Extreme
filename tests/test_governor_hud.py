@@ -70,6 +70,7 @@ class HudTests(unittest.TestCase):
     def test_writer_is_idempotent(self):
         with tempfile.TemporaryDirectory() as d:
             w = hud.HudWriter(Path(d))
+            w.MIN_REWRITE_S = 0.0  # rate limit tested separately
             self.assertTrue(w.write_status({"enabled": False}))
             self.assertFalse(w.write_status({"enabled": False}))
             cfg = w.activate("standard", "top-left")
@@ -83,6 +84,35 @@ class HudTests(unittest.TestCase):
             w.remove()
             self.assertFalse(cfg.exists())
             self.assertEqual(hud.status_path(Path(d)).read_text(), "GFG off\n")
+
+    def test_burst_of_overlay_changes_reaches_mangohud_as_one_rewrite(self):
+        """Deck log 2026-10-07: six changes in eight seconds, then the game crashed."""
+        with tempfile.TemporaryDirectory() as d:
+            now = {"t": 1000.0}
+            w = hud.HudWriter(Path(d), clock=lambda: now["t"])
+            cfg = w.activate("standard", "top-left")
+            first = cfg.read_text()
+            writes = []
+            for preset, pos in (("detailed", "top-left"), ("standard", "top-left"), ("minimal", "top-left"),
+                                ("standard", "top-left"), ("standard", "top-right"), ("standard", "bottom-right")):
+                now["t"] += 1.3
+                w.activate(preset, pos)
+                writes.append(cfg.read_text())
+            rewrites = sum(1 for a, b in zip([first] + writes, writes) if a != b)
+            self.assertLessEqual(rewrites, 1, "at most one live rewrite per 5 s inside the burst (was 6)")
+            self.assertIsNotNone(w.pending)
+            now["t"] += w.MIN_REWRITE_S
+            self.assertTrue(w.flush())
+            self.assertIn("position=bottom-right", cfg.read_text())   # only the final state
+            self.assertIsNone(w.pending)
+
+    def test_unchanged_config_is_never_rewritten(self):
+        with tempfile.TemporaryDirectory() as d:
+            now = {"t": 0.0}
+            w = hud.HudWriter(Path(d), clock=lambda: now["t"])
+            w.activate("standard", "top-left")
+            now["t"] += 100
+            self.assertFalse(w._write_config(hud.active_config_path(Path(d)).read_text()))
 
 
 if __name__ == "__main__":

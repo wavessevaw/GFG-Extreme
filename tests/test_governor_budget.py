@@ -489,5 +489,43 @@ class BalancedModeTests(unittest.TestCase):
         self.assertEqual((c.point.base_target_fps, c.tdp, c.flavor), (30, 10.0, "battery"))
 
 
+class DeckLog20261007Tests(unittest.TestCase):
+    """Witcher 3 on a Steam Deck OLED, Balanced mode (log GFG-Extreme-log-20261007-083050)."""
+
+    def balanced(self):
+        return BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20, flavor="balanced")
+
+    def key(self, c, base):
+        return next(i for i, p in enumerate(c.points) if p.base_target_fps == base and i > 0)
+
+    def test_renderer_delivering_x3_instead_of_x2_25_moves_to_30x3(self):
+        c = self.balanced()
+        c.idx = self.key(c, 40)            # requested 40x2.25 while the GPU could feed only ~30 real
+        c.phase = "guard"
+        c.request_failed(100.0, "confirmation-timeout", {"real": 30.04, "output": 90.11})
+        self.assertEqual(c.point.base_target_fps, 30)
+        self.assertEqual(c.point.multiplier, 3)
+        self.assertIn("request-failed-use-delivered", c.last_reason)
+
+    def test_short_output_is_still_a_failure(self):
+        c = self.balanced()
+        c.idx = self.key(c, 40)
+        before = c.idx
+        c.request_failed(100.0, "confirmation-timeout", {"real": 30.0, "output": 60.0})
+        self.assertNotIn("use-delivered", c.last_reason)
+        self.assertIn(c.points[before].key, c.rejected)
+
+    def test_guard_skips_a_rejected_neighbour_instead_of_buying_watts(self):
+        c = self.balanced()
+        c.idx = self.key(c, 45)
+        c.tdp = 13.0
+        c.phase = "locked"
+        c.rejected[c.points[self.key(c, 40)].key] = 50.0   # 40x2.25 rejected a moment ago
+        bad = WindowVerdict(False, True, "real-below-cap", short=True)
+        c.observe(60.0, bad, 27.0)
+        self.assertLess(c.point.base_target_fps, 40, (c.point.key, c.tdp, c.last_reason))
+        self.assertEqual(c.tdp, 13.0)
+
+
 if __name__ == "__main__":
     unittest.main()
