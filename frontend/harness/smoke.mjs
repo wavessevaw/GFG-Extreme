@@ -6,7 +6,7 @@ const cases = [
   ["home-locked-oled", [], ["STOP", "Locked in", "45", "x2".replace("x", "×"), "MEDIUM", "TDP NOW", "2h05 left"]],
   ["home-locked-lcd", [], ["Steam Deck LCD", "Saving power", "ASSESSING"]],
   ["home-relaunch-dock", [], ["Restart the game", "Dock"]],
-  ["home-locked-oled", ["Governor"], ["Governor", "×1 ×1.5 ×2 ×3 only", "never modified"]],
+  ["home-locked-oled", ["Governor"], ["Governor", "×1 to ×3, steps of 0.25", "never modified"]],
   ["home-locked-oled", ["Frame Generation"], ["BACKEND", "GFG", "OptiScaler"]],
   ["home-locked-oled", ["Scaling"], ["Scale-ready launch"]],
   ["home-locked-oled", ["In-game overlay"], ["Show overlay in game", "Minimal", "Detailed", "Top right"]],

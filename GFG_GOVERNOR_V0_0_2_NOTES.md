@@ -1,6 +1,6 @@
 # GFG Governor v0.0.2 - Functional and architectural release
 
-Branch: `main`. Baseline: Governor v0.0.1 Beta.2 (97 tests). This release: 205 tests, none removed.
+Branch: `main`. Baseline: Governor v0.0.1 Beta.2 (97 tests). This release: 207 tests, none removed.
 Renderer, Flatpak extensions, helper binaries: byte-identical to Beta.2 (see `bin/SHA256SUMS.txt`).
 
 ## What changed

@@ -3,11 +3,11 @@
 Date: 2026-10-06. Environment: Linux container, Python 3.13, Node 22, Chromium (Playwright). **No Steam Deck hardware.**
 
 ## Backend (python3 -m unittest discover -s tests)
-Result: **205/205 PASS** (Beta.2 baseline: 97). No test removed.
+Result: **207/207 PASS** (Beta.2 baseline: 97). No test removed.
 
 | Module | Tests |
 |---|---|
-| test_governor_runtime | 43 |
+| test_governor_runtime | 44 |
 | test_fg_backend | 42 |
 | test_governor_overlay | 16 |
 | test_optiscaler_discovery | 16 |
@@ -20,9 +20,9 @@ Result: **205/205 PASS** (Beta.2 baseline: 97). No test removed.
 | test_pipeline_inspector | 6 |
 | test_governor_battery | 5 |
 | test_launcher_rename | 5 |
+| test_generated_config_check | 4 |
 | test_governor_device | 4 |
 | test_config_journal | 3 |
-| test_generated_config_check | 3 |
 | test_gfg32_regressions | 3 |
 | test_governor_power | 3 |
 | test_governor_replay | 3 |
