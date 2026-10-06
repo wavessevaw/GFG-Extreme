@@ -111,7 +111,12 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
         report["telemetry_available_share"] = round(
             sum(bool((r.get("snapshot") or {}).get("available")) for r in samples) / len(samples), 2)
         report["bottlenecks"] = dict(Counter((r.get("diagnosis") or {}).get("bottleneck") for r in samples if r.get("diagnosis")))
+        report["apply_share"] = round(sum(r.get("state") == "APPLY" for r in samples) / len(samples), 2)
     report["events"] = dict(Counter(str(e.get("event")) for e in events).most_common(12))
+    report["rejections_by_reason"] = dict(Counter(str(e.get("reason")) for e in events
+                                                  if e.get("event") == "operating-point-rejected"))
+    report["mode_switches"] = sum(1 for e in events if e.get("event") == "operating-point-released"
+                                  and e.get("reason") == "governor-mode-changed")
     report["rejected_points"] = sorted({str(e.get("point")) for e in events if e.get("event") == "operating-point-rejected"})
     report["failed_checks"] = [c for c in self_test if not c.get("ok")]
     report["overlay_burst_before_exit"] = overlay_burst_before_exit(_jsonl(_read(bundle, "activity.jsonl")))
@@ -156,6 +161,12 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
     if states.get("PAUSED", 0) > 0.3 * report["samples"]:
         top = next(iter(report["reasons"]), "?")
         out.append(f"The Governor was PAUSED for {states['PAUSED']} of {report['samples']} samples; most common reason: {top}.")
+    apply_share = report.get("apply_share")
+    if apply_share is not None and apply_share > 0.15:
+        out.append(f"The Governor spent {int(apply_share * 100)}% of the session waiting for the renderer to confirm "
+                   f"a setting (rejections by reason: {report.get('rejections_by_reason')}).")
+    if report.get("mode_switches"):
+        out.append(f"The mode was switched {report['mode_switches']} times during the recording; each switch starts a new search.")
     if report.get("rejected_points"):
         out.append("Operating points the renderer did not confirm or that failed their trial: "
                    + ", ".join(report["rejected_points"]) + ".")

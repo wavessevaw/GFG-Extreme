@@ -40,6 +40,29 @@ class StoreTests(unittest.TestCase):
             self.assertIsNone(GameModelStore(path).get("a|90|budget"))
 
 
+class GameIdentityAndFailureTests(unittest.TestCase):
+    def test_key_is_per_game_when_the_steam_app_id_is_known(self):
+        self.assertEqual(context_key("mako", 90, "budget", "292030"), "app:292030|90|budget")
+        self.assertEqual(context_key("mako", 90, "budget", ""), "mako|90|budget")
+        self.assertEqual(context_key("mako", 90, "budget", "0"), "mako|90|budget")
+
+    def test_failures_bridge_a_session_but_expire_and_never_warm_start(self):
+        with tempfile.TemporaryDirectory() as t:
+            now = {"t": 1000.0}
+            store = GameModelStore(Path(t) / "m.json", clock=lambda: now["t"])
+            key = context_key("mako", 90, "budget", "292030")
+            self.assertTrue(store.record_failure(key, "33x2.75", 10.0))
+            store.record_failure(key, "33x2.75", 9.0)            # keeps the highest TDP it failed at
+            self.assertEqual(store.failures(key), {"33x2.75": 10.0})
+            self.assertIsNone(store.get(key), "a failure alone is nothing to start from")
+            now["t"] += 61
+            store.record(key, "30x3", 10.0)
+            self.assertEqual(store.get(key)["point"], "30x3")
+            self.assertEqual(store.failures(key), {"33x2.75": 10.0})  # kept by record()
+            now["t"] += GameModelStore.FAILURE_TTL_S + 1
+            self.assertEqual(store.failures(key), {})
+
+
 class WarmStartTests(unittest.TestCase):
     def test_warm_start_locks_on_the_remembered_point_and_clamps_tdp(self):
         c = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=4.0, max_tdp_w=15.0)

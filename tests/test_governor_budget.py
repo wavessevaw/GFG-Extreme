@@ -489,6 +489,60 @@ class BalancedModeTests(unittest.TestCase):
         self.assertEqual((c.point.base_target_fps, c.tdp, c.flavor), (30, 10.0, "battery"))
 
 
+class SixtyHertzTests(unittest.TestCase):
+    """Steam Deck LCD and docked play (60 FPS target)."""
+
+    def test_battery_and_balanced_start_on_integer_ratios(self):
+        b = BudgetController(target_output_fps=60, now=0.0, min_tdp_w=3, max_tdp_w=15)
+        self.assertEqual((b.point.key, b.tdp), ("30x2", 10.0))
+        m = BudgetController(target_output_fps=60, now=0.0, min_tdp_w=3, max_tdp_w=15, flavor="balanced")
+        self.assertEqual((m.point.key, m.tdp), ("30x2", 12.0))
+        self.assertTrue(float(m.point.multiplier).is_integer())
+
+    def test_ninety_hertz_starts_are_unchanged(self):
+        self.assertEqual(BudgetController(target_output_fps=90, now=0.0).point.key, "30x3")
+        self.assertEqual(BudgetController(target_output_fps=90, now=0.0, flavor="balanced").point.key, "45x2")
+
+    def test_balanced_60_never_goes_below_30_real_or_to_the_last_resort(self):
+        c = BudgetController(target_output_fps=60, now=0.0, min_tdp_w=3, max_tdp_w=15, flavor="balanced")
+        now, trace = run(c, Game(0.8), 0.0, 300)
+        self.assertGreaterEqual(min(c.points[i].base_target_fps for i in range(1, len(c.points))), 30)
+        self.assertFalse(any(key == c.points[0].key for key, _, _ in trace))
+        self.assertLessEqual(max(t for _, t, _ in trace), 15.0)
+
+    def test_capacity_two_still_allows_the_60_hz_last_resort(self):
+        c = BudgetController(target_output_fps=60, now=0.0, min_tdp_w=3, max_tdp_w=20)
+        c.current_max_multiplier = 3.0
+        self.assertTrue(c._usable(0, 0.0))          # 20x3 needs only two generated frames
+
+    def test_a_60_hz_game_that_holds_lowers_power(self):
+        c = BudgetController(target_output_fps=60, now=0.0, min_tdp_w=3, max_tdp_w=15)
+        now, trace = run(c, Game(4.5), 0.0, 20)
+        self.assertLess(c.tdp, 10.0, trace)
+
+
+class FailureMemoryTests(unittest.TestCase):
+    """Deck log 2026-10-07 #2: 33x2.75 at 10 W tried in three controllers (mode switches)."""
+
+    def test_failed_upgrade_is_reported_and_a_new_controller_skips_it_at_the_same_tdp(self):
+        c = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
+        c.idx = next(i for i, p in enumerate(c.points) if p.key == "33x2.75")
+        c.tdp, c.probe, c.phase = 10.0, "up", "upgrade"
+        c.last_good = (c.idx - 1, 10.0)
+        c.request_failed(5.0, "confirmation-timeout", None)
+        self.assertEqual(c.new_failures, [("33x2.75", 10.0)])
+
+        fresh = BudgetController(target_output_fps=90, now=100.0, min_tdp_w=3, max_tdp_w=20)
+        fresh.load_failures({"33x2.75": 10.0}, 100.0)
+        up = next(i for i, p in enumerate(fresh.points) if p.key == "33x2.75")
+        fresh.tdp = 10.0
+        self.assertFalse(fresh._upgrade_allowed(up, 100.0))
+        fresh.tdp = 11.0
+        self.assertTrue(fresh._upgrade_allowed(up, 100.0), "more watts: worth trying again")
+        fresh.tdp = 10.0
+        self.assertTrue(fresh._upgrade_allowed(up, 100.0 + fresh.REJECT_TTL_S), "a lighter scene later")
+
+
 class GeneratedCapacityLimitTests(unittest.TestCase):
     """Deck log 2026-10-07 #2: 28x3.25 / 26x3.5 / 24x3.75 became a fixed x3 at 84/78/72 FPS."""
 

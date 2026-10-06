@@ -223,6 +223,7 @@ class PipelineInspectorService:
             "renderer_loaded": bool(maps.get("renderer_loaded")),
             "governor_launch": parse_launch_line(manifest.get("governor_launch", "")),
             "saved_scaling_at_launch": bool(effective.get("scaling_enabled", False)),
+            "app_id": str(manifest.get("app_id") or "").strip(),
         }
 
     def get_status(self, profile_name: str = "") -> Dict[str, Any]:

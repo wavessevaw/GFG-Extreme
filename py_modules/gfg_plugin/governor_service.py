@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.0.1).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.0.2).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -53,7 +53,7 @@ from .governor_telemetry import TelemetryObserver
 
 APPLIED_OPERATIONS = frozenset({"runtime-state-applied", "runtime-transition-applied"})
 FAILED_OPERATIONS = frozenset({"runtime-transition-failed"})
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 
 
 @dataclass
@@ -1445,7 +1445,9 @@ class GovernorService:
                 flavor="balanced" if self._mode(profile) == "balanced" else "battery",
             )
             self._budget = budget
-            remembered = self.game_models.get(context_key(profile, target, self._mode(profile)))
+            key = self._game_key(profile, target)
+            budget.load_failures(self.game_models.failures(key), now)
+            remembered = self.game_models.get(key)
             if remembered and budget.warm_start(remembered["point"], remembered.get("tdp_w"), now):
                 self._event("budget-warm-start", "remembered-from-last-session", profile=profile,
                             point=budget.point.key, tdp_w=budget.tdp, confirmations=remembered.get("confirmations"))
@@ -1489,6 +1491,7 @@ class GovernorService:
         if not await self._apply_budget_tdp(profile):
             return
         self._remember_if_held(profile, target, budget, point, now)
+        self._store_failures(profile, target, budget)
 
         # The draw sensor is an instantaneous / ~1 s value: sample it every
         # iteration and judge the window by its median, not its last reading.
@@ -1560,6 +1563,19 @@ class GovernorService:
 
     HOLD_BEFORE_REMEMBER_S = 90.0
 
+    def _game_key(self, profile: str, target: int) -> str:
+        launch = self._launch if isinstance(self._launch, dict) else {}
+        app_id = launch.get("app_id", "") if launch.get("running") else ""
+        return context_key(profile, target, self._mode(profile), app_id)
+
+    def _store_failures(self, profile: str, target: int, budget: Any) -> None:
+        while budget.new_failures:
+            point_key, tdp = budget.new_failures.pop(0)
+            try:
+                self.game_models.record_failure(self._game_key(profile, target), point_key, tdp)
+            except Exception as error:  # best-effort, like remembering held points
+                self.log.debug("Game model failure not stored: %s", error)
+
     def _remember_if_held(self, profile: str, target: int, budget: Any, point: Any, now: float) -> None:
         """Store the point/TDP once it has held, so the next session can start there."""
         if (
@@ -1570,7 +1586,7 @@ class GovernorService:
         ):
             return
         try:
-            self.game_models.record(context_key(profile, target, self._mode(profile)), point.key,
+            self.game_models.record(self._game_key(profile, target), point.key,
                                     budget.tdp if budget.tdp_control else None)
         except Exception as error:  # remembering is best-effort and must never disturb the loop
             self.log.debug("Game model not stored: %s", error)
