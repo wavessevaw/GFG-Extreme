@@ -48,6 +48,7 @@ from .constants import (
     PRESENT_ACQUIRE_TIMEOUT_ENV,
     PRESENT_ACQUIRE_TIMEOUT_MS,
     PRESENT_DIAGNOSTICS_ENV,
+    PRESENT_DIAGNOSTICS_FALLBACK_LOG,
     PRESENT_DIAGNOSTICS_LOG_ENV,
     PRESENT_DIAGNOSTICS_LOG_FILENAME,
     PRESENT_DIAGNOSTICS_RETAINED_SESSION_COUNT,
@@ -76,7 +77,7 @@ from .profile_storage import (
 )
 
 
-WRAPPER_FORMAT_VERSION = 77
+WRAPPER_FORMAT_VERSION = 78
 WRAPPER_FORMAT_MARKER = f"# mako-wrapper-format: {WRAPPER_FORMAT_VERSION}"
 HOST_COMPATIBILITY_MARKER = "# mako-host-compatibility: aarch64-passthrough-v1"
 DIAGNOSTICS_DEFAULT_MARKER = (
@@ -1023,6 +1024,18 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         "            break",
         "        fi",
         "    done",
+        "    # A stale log or rotation owned by another user (or a symlink) used to disable",
+        "    # diagnostics silently. The default log lives in our own config dir: drop them.",
+        '    if [ "$mako_diagnostics_rotation_ready" = 0 ] && [ "$mako_diagnostics_log" = "$mako_diagnostics_default" ]; then',
+        "        mako_diagnostics_rotation_ready=1",
+        f"        for mako_diagnostics_entry in {diagnostics_history_paths}; do",
+        '            if [ -L "$mako_diagnostics_entry" ] || { [ -f "$mako_diagnostics_entry" ] && [ ! -O "$mako_diagnostics_entry" ]; }; then',
+        '                rm -f -- "$mako_diagnostics_entry" 2>/dev/null || mako_diagnostics_rotation_ready=0',
+        '            elif [ -e "$mako_diagnostics_entry" ] && [ ! -f "$mako_diagnostics_entry" ]; then',
+        "                mako_diagnostics_rotation_ready=0",
+        "            fi",
+        "        done",
+        "    fi",
         '    if [ "$mako_diagnostics_rotation_ready" = 1 ] && [ -f "$mako_diagnostics_log" ]; then',
         *diagnostics_rotation_lines,
         "    fi",
@@ -1031,6 +1044,13 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
             '(set -C; : > "$mako_diagnostics_log") 2>/dev/null; then'
         ),
         '        exec 2>> "$mako_diagnostics_log"',
+        "    else",
+        "        # Last resort: the Governor also reads this RAM log (newest wins).",
+        f"        mako_diagnostics_log={shlex.quote(PRESENT_DIAGNOSTICS_FALLBACK_LOG)}",
+        '        if { [ ! -e "$mako_diagnostics_log" ] && [ ! -L "$mako_diagnostics_log" ] && (set -C; : > "$mako_diagnostics_log") 2>/dev/null; } || '
+        '{ [ ! -L "$mako_diagnostics_log" ] && [ -f "$mako_diagnostics_log" ] && [ -O "$mako_diagnostics_log" ] && : > "$mako_diagnostics_log"; }; then',
+        '            exec 2>> "$mako_diagnostics_log"',
+        "        fi",
         "    fi",
         "fi",
         "unset mako_diagnostics_entry",

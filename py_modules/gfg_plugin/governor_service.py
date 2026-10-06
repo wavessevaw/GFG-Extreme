@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from shared_config import FG_BACKEND_GFG
-from .constants import PRESENT_DIAGNOSTICS_LOG_FILENAME
+from .constants import PRESENT_DIAGNOSTICS_FALLBACK_LOG, PRESENT_DIAGNOSTICS_LOG_FILENAME
 from .governor_core import (
     multiplier_tolerance,
     EffortEstimator, OperatingPoint, OperatingPointPlanner, PowerSearch, TrialLadder, raw_effort,
@@ -117,7 +117,7 @@ class GovernorService:
         self.log = logger
         self.inspector = pipeline_inspector
         disk = self.configuration.config_dir / PRESENT_DIAGNOSTICS_LOG_FILENAME
-        self.observer = TelemetryObserver(disk, Path("/dev/shm/gfg-present-diagnostics.log"))
+        self.observer = TelemetryObserver(disk, Path(PRESENT_DIAGNOSTICS_FALLBACK_LOG))
         self.planner = OperatingPointPlanner()
         self.power = SteamDeckPowerActuator()
         self.search = PowerSearch()
