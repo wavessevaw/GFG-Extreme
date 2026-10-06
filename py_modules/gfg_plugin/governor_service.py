@@ -513,6 +513,11 @@ class GovernorService:
         return names
 
     def _standby_overlays_sync(self, force: bool = False) -> None:
+        # One pass at a time: the Saved-write listener and the loop both call this.
+        with self._io_lock:
+            self._standby_overlays_sync_locked(force)
+
+    def _standby_overlays_sync_locked(self, force: bool) -> None:
         """Keep a leased Saved-projection overlay for every profile.
 
         Every managed launch then reads the overlay, so enabling the Governor in
