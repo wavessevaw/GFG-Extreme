@@ -1064,6 +1064,17 @@ class BudgetController:
             return "hold"
         return self._escalate(now, verdict)
 
+    def _deeper(self, now: float, floor: int = 1) -> Optional[int]:
+        """Nearest usable deeper point (>= ``floor``), skipping rejected ones.
+
+        Deck log 2026-10-07: one rejected neighbour (40x2.25) used to block every deeper point,
+        so Balanced sat at 15 W and 80 FPS while 30x3 held 90 FPS at 10 W.
+        """
+        for i in range(self.idx - 1, floor - 1, -1):
+            if self._usable(i, now):
+                return i
+        return None
+
     def _escalate(self, now: float, verdict: WindowVerdict) -> str:
         self.bad = 0
         if self.phase != "guard" and self.recover is None:
@@ -1073,15 +1084,17 @@ class BudgetController:
         self.probe = None
         step = 2.0 if verdict.severe else 1.0
         # Down to ~30 real a deeper multiplier is always cheaper than watts.
-        if self.idx > self.comfort_idx and self._usable(self.idx - 1, now):
+        deeper = self._deeper(now, max(1, self.comfort_idx)) if self.idx > self.comfort_idx else None
+        if deeper is not None:
             self.quality_debt = max(self.quality_debt or 0, self.idx)
-            return self._move(f"guard-deeper-multiplier:{verdict.reason}", idx=self.idx - 1)
+            return self._move(f"guard-deeper-multiplier:{verdict.reason}", idx=deeper)
         # Inside the ideal 9-11 W a watt is cheaper than real FPS below 30.
         if self.tdp_control and self.tdp is not None and self.tdp < self.ideal_max_w - 1e-6:
             return self._move(f"guard-more-power:{verdict.reason}", tdp=min(self.ideal_max_w, self.tdp + step))
         # Defending the 15 W budget: x3.25 .. x3.75 (real 28 .. 24) before more watts.
-        if self.idx > 1 and self._usable(self.idx - 1, now):
-            return self._move(f"guard-deeper-multiplier:{verdict.reason}", idx=self.idx - 1)
+        deeper = self._deeper(now) if self.idx > 1 else None
+        if deeper is not None:
+            return self._move(f"guard-deeper-multiplier:{verdict.reason}", idx=deeper)
         if self.tdp_control and self.tdp is not None and self.tdp < self.normal_max_w - 1e-6:
             return self._move(f"guard-more-power:{verdict.reason}", tdp=min(self.normal_max_w, self.tdp + step))
         if self.idx == 1 and self._usable(0, now) and self.flavor != "balanced":
@@ -1102,10 +1115,26 @@ class BudgetController:
         self.last_reason = f"budget-exhausted:{verdict.reason}"
         return "hold"
 
-    def request_failed(self, now: float, reason: str) -> None:
-        """The renderer never confirmed the requested point: mark it and fall back."""
+    def request_failed(self, now: float, reason: str, observed: Optional[Dict[str, float]] = None) -> None:
+        """The renderer never confirmed the requested point: mark it and fall back.
+
+        ``observed`` (real/output medians since the request) covers the case seen on a Deck:
+        asked for 40x2.25, the GPU could not feed 40 real, and the adaptive renderer delivered
+        the full target at about 30 real (x3).  That is a deeper point holding, not a broken
+        renderer: go straight to the point matching what was delivered.
+        """
         failed = self.points[self.idx]
         self.rejected[failed.key] = now
+        delivered = self._delivered_point(observed, failed, now)
+        if delivered is not None:
+            self.request_failures = 0
+            self.probe = None
+            self.good = self.bad = 0
+            self.prev = (self.idx, self.tdp)
+            self.idx = delivered
+            self.phase = "guard" if self.phase in ("locked", "probe", "guard") else self.phase
+            self.last_reason = f"request-failed-use-delivered:{reason}"
+            return
         self.request_failures += 1
         self.probe = None
         self.good = self.bad = 0
@@ -1121,6 +1150,19 @@ class BudgetController:
             self.exhausted = True
         self.phase = "guard" if self.phase in ("locked", "probe", "guard") else self.phase
         self.last_reason = f"request-failed:{reason}"
+
+    def _delivered_point(self, observed: Optional[Dict[str, float]], failed: OperatingPoint,
+                         now: float) -> Optional[int]:
+        if not observed:
+            return None
+        real, out = observed.get("real"), observed.get("output")
+        if not (isinstance(real, (int, float)) and isinstance(out, (int, float)) and real > 0):
+            return None
+        if out < 0.94 * self.target_output_fps or real >= 0.95 * failed.base_target_fps:
+            return None  # target not delivered, or the cap was reached: a real renderer failure
+        options = [i for i in range(1, len(self.points))
+                   if self._usable(i, now) and self.points[i].base_target_fps <= real * 1.03]
+        return max(options) if options else None
 
     def status(self) -> Dict[str, Any]:
         return {

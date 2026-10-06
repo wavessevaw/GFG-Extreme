@@ -56,6 +56,12 @@ class ReportTests(unittest.TestCase):
                               "diagnostics-x.log": (H + "operation=present-breakdown total_ms=5\n") * 5}))
         self.assertTrue(any("none carried an FPS reading" in f for f in rep["findings"]))
 
+    def test_overlay_burst_before_game_exit_is_reported(self):
+        act = [{"ts": 100.0 + i, "kind": "set_governor_hud"} for i in range(6)] + [{"ts": 120.0, "kind": "game-exited"}]
+        rep = analyze(bundle({"timeline.jsonl": timeline(self.rows()), "activity.jsonl": timeline(act)}))
+        self.assertEqual(rep["overlay_burst_before_exit"], 6)
+        self.assertTrue(any("6 in-game overlay changes" in f for f in rep["findings"]))
+
 
 if __name__ == "__main__":
     unittest.main()

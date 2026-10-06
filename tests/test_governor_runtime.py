@@ -114,7 +114,8 @@ class RuntimeBase(unittest.TestCase):
         self.svc = GovernorService(self.cfg, self.display, logging.getLogger("gov-rt"), self.inspector)
         self.svc.power = FakePower()
         self.svc.DEFAULT_MODE = "quality"  # the v0.0.2 ladder; budget mode has its own tests
-        self.svc.PREDICTIVE_SKIP = False  # these tests walk the full ladder; see PredictiveStartTests
+        self.svc.PREDICTIVE_SKIP = False
+        self.svc.hud.MIN_REWRITE_S = 0.0  # MangoHud rewrite rate limit has its own tests  # these tests walk the full ladder; see PredictiveStartTests
         self.t = {"now": 100.0}
         self.svc.observer.time_fn = lambda: self.t["now"]
         self.svc._last_display_poll = -1e9

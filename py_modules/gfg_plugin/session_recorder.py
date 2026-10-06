@@ -379,9 +379,15 @@ class SessionRecorder:
             str(self.host_mangohud_manifest))
         add("overlay config published (active.conf)", (hud / "active.conf").is_file(), str(hud / "active.conf"))
         add("overlay status line file present", (hud / "status.txt").is_file(), str(hud / "status.txt"))
-        for path in self.diagnostics_paths:
-            add(f"renderer diagnostics log: {path.name}", path.is_file(),
-                f"{path.stat().st_size} bytes" if path.is_file() else "missing")
+        for index, path in enumerate(self.diagnostics_paths):
+            present = path.is_file()
+            if index == 0:
+                add(f"renderer diagnostics log: {path.name}", present,
+                    f"{path.stat().st_size} bytes" if present else "missing")
+            else:
+                # Legacy RAM fallback: the renderer writes it only on old setups.  Missing is normal.
+                add(f"optional diagnostics fallback: {path.name}", True,
+                    f"{path.stat().st_size} bytes" if present else "not used (normal)")
         marker = self.runtime_state_dir / "governor-diagnostics.enabled"
         add("Governor diagnostics marker present", marker.is_file(), str(marker))
         # The wrapper silently skips diagnostics when the log or a rotation is
@@ -445,7 +451,7 @@ class SessionRecorder:
             "decky_plugins": sorted(p.name for p in (self.user_home / "homebrew" / "plugins").glob("*"))
             if (self.user_home / "homebrew" / "plugins").is_dir() else [],
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.16",
+            "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.17",
         }
 
     def _write_bundle(self) -> Path:

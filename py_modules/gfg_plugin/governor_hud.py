@@ -162,19 +162,52 @@ def _atomic(path: Path, text: str) -> bool:
 
 
 class HudWriter:
-    def __init__(self, config_dir: Path) -> None:
+    """Owns the MangoHud config.  A running MangoHud re-reads it on every change.
+
+    Deck log 2026-10-07: a game crashed seconds after six overlay changes in eight seconds.
+    Rewrites of the live config are therefore rate-limited: the newest wanted content is kept
+    and written once ``MIN_REWRITE_S`` has passed (the Governor loop calls in every second).
+    """
+
+    MIN_REWRITE_S = 5.0
+
+    def __init__(self, config_dir: Path, clock=None) -> None:
+        import time as _time
         self.config_dir = Path(config_dir)
+        self.clock = clock or _time.monotonic
+        self._last_write = -1e9
+        self.pending: Optional[str] = None
+
+    def _write_config(self, text: str) -> bool:
+        path = active_config_path(self.config_dir)
+        try:
+            if path.read_text(encoding="utf-8") == text:
+                self.pending = None
+                return False
+        except OSError:
+            pass
+        now = self.clock()
+        if path.exists() and now - self._last_write < self.MIN_REWRITE_S:
+            self.pending = text  # applied by a later call
+            return False
+        _atomic(path, text)
+        self._last_write = now
+        self.pending = None
+        return True
 
     def activate(self, preset: str, position: str, generated_fps: bool = False) -> Path:
-        path = active_config_path(self.config_dir)
-        _atomic(path, mangohud_config(preset, position, status_path(self.config_dir), generated_fps))
-        return path
+        self._write_config(mangohud_config(preset, position, status_path(self.config_dir), generated_fps))
+        return active_config_path(self.config_dir)
+
+    def flush(self) -> bool:
+        """Write a rate-limited pending config once allowed."""
+        return self._write_config(self.pending) if self.pending is not None else False
 
     def deactivate(self) -> None:
         """Hide the HUD but keep its config: the launch wrapper loads MangoHud
         whenever the config exists, and MangoHud re-reads it, so turning the
         HUD on later works in a running game."""
-        _atomic(active_config_path(self.config_dir), HIDDEN_CONFIG)
+        self._write_config(HIDDEN_CONFIG)
 
     def config_exists(self) -> bool:
         return active_config_path(self.config_dir).is_file()

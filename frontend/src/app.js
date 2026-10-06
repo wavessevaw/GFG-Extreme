@@ -342,7 +342,7 @@ function HudPage({ back, s, profile, refresh }) {
     h("div", { className: "sec" }, "POSITION"),
     h(Seg, { value: hud.position, options: [["top-right", "Top right"], ["top-left", "Top left"], ["bottom-left", "Bottom left"], ["bottom-right", "Bottom right"]], onChange: (v) => set({ position: v }) }),
     hud.layer_available === false ? h(Note, null, "MangoHud layer not found on this system, so the overlay cannot appear. Record a log and send it.") : null,
-    h(Note, { quiet: true }, "Turns on and off while the game runs, for games started with the GFG launch command (a game started before this version needs one relaunch). Works together with shader effects (vkBasalt); not used when the profile already loads its own MangoHud."));
+    h(Note, { quiet: true }, "Turns on and off while the game runs. Several quick changes are applied together, at most every 5 s. Works for games started with the GFG launch command (a game started before this version needs one relaunch). Works together with shader effects (vkBasalt); not used when the profile already loads its own MangoHud."));
 }
 
 function ProfilesPage({ back, profiles, current, pick, reload }) {
