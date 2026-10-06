@@ -307,6 +307,14 @@ class SteamDeckPowerActuator:
         assert self._fast_path is not None and self._slow_path is not None
         manager = self.manager if self.state.method == "steamos-manager" else None
         direct = self._direct_possible()
+        if manager is not None and exact and direct:
+            # Put Steam's own TdpLimit back too, so a later re-apply by Steam
+            # (sleep, game change) does not bring our last value back.
+            low, high = getattr(manager, "range", None) or (1, 60)
+            try:
+                manager.set(max(low, min(high, int(round(slow / 1_000_000.0)))))
+            except Exception:
+                pass
         if manager is not None and not (exact and direct):
             watts = max(1, int(round(slow / 1_000_000.0)))
             low, high = getattr(manager, "range", None) or (watts, watts)

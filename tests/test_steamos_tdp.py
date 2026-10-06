@@ -160,7 +160,7 @@ class ManagerRangeTests(unittest.TestCase):
             self.assertTrue(act.restore_if_owned()["restored"])
             self.assertEqual((int((h / "power1_cap").read_text()), int((h / "power2_cap").read_text())),
                              (20_000_000, 15_000_000))
-            self.assertEqual(manager.calls, [10])
+            self.assertEqual(manager.calls, [10, 15])  # Steam's TdpLimit is put back too
 
 
 class SteamosctlCommandTests(unittest.TestCase):
