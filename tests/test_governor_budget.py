@@ -202,7 +202,7 @@ class BudgetGuardTests(unittest.TestCase):
         now, _ = run(ctl, game, now, 12)
         self.assertEqual(ctl.point.key, "36x2.5")
         game.scene = 1.0
-        now, _ = run(ctl, game, now, int(ctl.REPROBE_S / WINDOW) * 3)
+        now, _ = run(ctl, game, now, int(900 / WINDOW))
         self.assertEqual((ctl.point.key, ctl.tdp), ("45x2", 6.0))
 
     def test_spare_headroom_goes_to_watts_not_quality(self):
@@ -213,7 +213,7 @@ class BudgetGuardTests(unittest.TestCase):
 
     def test_failed_reprobe_backs_off(self):
         ctl, game, now = self.locked()
-        interval = ctl.reprobe_interval
+        ctl.reprobe_interval = interval = ctl.REPROBE_S
         now, _ = run(ctl, game, now, int(interval / WINDOW) + 4)
         self.assertGreater(ctl.reprobe_interval, interval)
         self.assertEqual((ctl.point.key, ctl.tdp), ("30x3", 7.0))
@@ -298,8 +298,9 @@ class RatchetTests(unittest.TestCase):
         now = self.dip(ctl, now, stall=False, windows=2)
         self.assertNotEqual((ctl.point.key, ctl.tdp), before)
         self.assertIsNotNone(ctl.recover)
-        now = self.hold(ctl, game, now, 5)   # inside the 5 min normal reprobe interval
-        self.assertEqual((ctl.point.key, ctl.tdp), before)
+        now = self.hold(ctl, game, now, 5)
+        self.assertEqual(ctl.point.key, before[0])
+        self.assertLessEqual(ctl.tdp, before[1])     # given back (a probe may be trying lower)
         self.assertIsNone(ctl.recover)
 
     def test_repeated_real_dips_oscillate_around_the_edge_instead_of_climbing(self):
@@ -324,6 +325,57 @@ class RatchetTests(unittest.TestCase):
         self.assertIsNone(ctl.short_since)
         self.dip(ctl, now, stall=False, windows=2)           # one genuine dip, not 60 s of them
         self.assertLessEqual(ctl.tdp, 15.0)
+
+
+class FastRaiseTests(unittest.TestCase):
+    def locked_at_10(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
+        now, _ = run(ctl, Game(3.2), 0.0, 40)            # needs ~10 W for 30 real
+        return ctl, now
+
+    def test_after_a_menu_the_working_level_comes_back_in_two_seconds(self):
+        ctl, now = self.locked_at_10()
+        work = ctl.tdp
+        ctl.tdp = 6.0                                     # a pause menu walked it down
+        self.assertEqual(ctl.fast_check(now + 1, 12.0, 6.0), "hold")   # one check is not enough
+        self.assertEqual(ctl.fast_check(now + 2, 12.0, 6.0), "move")
+        self.assertEqual(ctl.tdp, work)
+
+    def test_without_history_it_climbs_two_watts_per_three_seconds(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
+        ctl.tdp, t = 6.0, 0.0
+        for _ in range(12):
+            t += 1.0
+            ctl.fast_check(t, 20.0, ctl.tdp)
+        self.assertEqual(ctl.tdp, 14.0)                   # 6 -> 8 -> 10 -> 12 -> 14 in 12 s
+        for _ in range(30):
+            t += 1.0
+            ctl.fast_check(t, 20.0, ctl.tdp)
+        self.assertEqual(ctl.tdp, ctl.normal_max_w)       # never past 15 W on the fast path
+
+    def test_loading_screen_with_low_draw_and_a_game_at_its_cap_never_raise(self):
+        ctl, now = self.locked_at_10()
+        tdp = ctl.tdp
+        for i in range(10):
+            ctl.fast_check(now + i, 12.0, 4.0)            # collapse, draw far under the cap
+            ctl.fast_check(now + 20 + i, 30.0, tdp)       # holds its cap
+        self.assertEqual(ctl.tdp, tdp)
+
+    def test_a_failing_lower_power_probe_reverts_within_seconds(self):
+        ctl, now = self.locked_at_10()
+        tdp = ctl.tdp
+        ctl.observe(now + 400, WindowVerdict(True, False, "holds"), 30)   # reprobe: -1 W
+        self.assertEqual((ctl.probe, ctl.tdp), ("down", tdp - 1))
+        ctl.fast_check(now + 401, 27.0, tdp - 1)
+        ctl.fast_check(now + 402, 27.0, tdp - 1)
+        self.assertEqual((ctl.probe, ctl.tdp), (None, tdp))
+
+    def test_ignored_cap_disables_the_fast_path(self):
+        ctl, now = self.locked_at_10()
+        ctl.cap_ignored, tdp = True, ctl.tdp
+        for i in range(5):
+            ctl.fast_check(now + i, 20.0, 18.0)
+        self.assertEqual(ctl.tdp, tdp)
 
 
 class CapIgnoredTests(unittest.TestCase):

@@ -682,10 +682,15 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual(st["active_point"]["key"], "30x3")
         self.windows(1, 30, 90)
         self.assertEqual(self.svc.get_status()["state"], "LOCKED")
-        # Heavier scene after LOCKED: the guard acts (the v0.0.5 engine did nothing here).
-        st = self.windows(2, 27, 81)
-        self.assertEqual(st["state"], "GUARD")
-        self.assertEqual(self.svc.power.writes[-1], 11.0)
+        # Heavier scene after LOCKED: watts come at once, not after two windows.
+        held = self.svc.power.writes[-1]
+        st = self.windows(1, 27, 81)
+        self.assertGreater(self.svc.power.writes[-1], held - 1.0)  # a probe reverted or watts were added
+        for _ in range(3):
+            self.feed(2, 27, 81)
+            st = self.step(0.1)
+        self.assertEqual(st["reason"], "fast-raise:starved")
+        self.assertGreater(self.svc.power.writes[-1], held)
 
     def test_external_tdp_change_pauses_then_reclaims(self):
         self.feed(20, 45, 90)
@@ -737,6 +742,33 @@ class BudgetRuntimeTests(RuntimeBase):
         self.svc.power.values["draw_w"] = 9.0
         st = self.windows(1, 30, 90)
         self.assertFalse(st["budget"]["cap_ignored"])
+
+    def test_leaving_a_menu_gets_the_working_watts_back_within_seconds(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.windows(3, 30, 90)                     # 10 W holds, then 9 W holds ...
+        work = max(self.svc.power.writes)
+        b = self.svc._budget                         # ... and a long pause menu walked it down to 6 W
+        b.tdp, b.probe, b.phase = 6.0, None, "locked"
+        self.step(0.1)
+        self.assertEqual(self.svc.power.writes[-1], 6.0)
+        self.svc.power.values["draw_w"] = 6.0       # the game is back and the cap binds
+        for _ in range(3):
+            self.feed(2, 12, 36)                    # 12 real: looks like a loading screen
+            st = self.step(0.1)
+        self.assertEqual(st["reason"], "fast-raise:starved")
+        self.assertEqual(self.svc.power.writes[-1], work)
+
+    def test_loading_screen_without_binding_draw_does_not_raise(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.windows(2, 30, 90)
+        tdp = self.svc.power.writes[-1]
+        self.svc.power.values["draw_w"] = 3.0       # CPU idle-ish, far under the cap
+        for _ in range(4):
+            self.feed(2, 12, 36)
+            self.step(0.1)
+        self.assertEqual(self.svc.power.writes[-1], tdp)
 
     def test_mode_switch_to_quality_releases_budget_point(self):
         self.feed(20, 45, 90)

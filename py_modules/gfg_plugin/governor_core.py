@@ -701,8 +701,16 @@ class BudgetController:
     STALL_EMERGENCY_S = 300.0
     HEALTHY_WINDOWS = 2
     GUARD_WINDOWS = 2
-    REPROBE_S = 300.0
-    REPROBE_MAX_S = 1200.0
+    # Up fast, down carefully, all session long: a starved game gets watts
+    # within seconds (fast_check), so a lower-power probe that does not hold
+    # costs a short dip, not a 15 s window.  That makes frequent probes cheap.
+    REPROBE_S = 45.0
+    REPROBE_MAX_S = 300.0
+    FAST_STARVED_CHECKS = 2      # consecutive ~1 s checks before a fast raise
+    FAST_GAP_S = 3.0             # at most one fast raise per this many seconds
+    FAST_STEP_W = 2.0
+    WORK_MEMORY_S = 900.0        # how long a level the game needed is remembered
+    DRAW_BINDING_MARGIN_W = 0.8  # draw this close to the cap: the cap is what limits
     EMERGENCY_REPROBE_S = 90.0
     RECOVER_S = 60.0       # giving back what the guard spent is not a new experiment
     RECOVER_MAX_S = 300.0
@@ -752,6 +760,9 @@ class BudgetController:
         # spare "headroom" must not be spent on more real frames.
         self.cap_ignored = False
         self.draw_w: Optional[float] = None   # window median of the measured APU draw
+        self.starved_checks = 0
+        self.fast_at: Optional[float] = None
+        self.held: list[tuple[float, float]] = []   # (time, tdp) of levels that held
         self.last_reason = "budget-start"
 
     # ------------------------------------------------------------- targets
@@ -799,6 +810,73 @@ class BudgetController:
         if self.recover is not None and self._at_least(self.recover):
             self.recover = None
             self.recover_interval = self.RECOVER_S
+
+    def _remember_held(self, now: float) -> None:
+        if self.tdp_control and self.tdp is not None:
+            self.held = [(t, w) for t, w in self.held if now - t < self.WORK_MEMORY_S]
+            self.held.append((now, float(self.tdp)))
+
+    def _work_tdp(self, now: float) -> Optional[float]:
+        """Highest level the game held recently: where it goes back after a menu or a pause."""
+        recent = [w for t, w in self.held if now - t < self.WORK_MEMORY_S]
+        return max(recent) if recent else None
+
+    def fast_check(self, now: float, real_median: Optional[float], draw_w: Optional[float]) -> str:
+        """Called every loop iteration with the last few seconds of real FPS.
+
+        Only ever raises: lowering stays with the 15 s windows.  A game short
+        of its real cap whose draw sits at the cap is starved, not loading, so a
+        collapse below half the cap counts here when the draw says so.
+        """
+        if not (self.tdp_control and self.tdp is not None and not self.cap_ignored):
+            self.starved_checks = 0
+            return "hold"
+        if not isinstance(real_median, (int, float)) or not math.isfinite(float(real_median)):
+            return "hold"
+        base = float(self.point.base_target_fps)
+        short = float(real_median) < base * HOLD_REAL_RATIO
+        binding = isinstance(draw_w, (int, float)) and float(draw_w) >= self.tdp - self.DRAW_BINDING_MARGIN_W
+        stall = float(real_median) < base * STALL_REAL_RATIO
+        if not short or (stall and not binding) or self.probe == "up":
+            # A fewer-generated-frames probe asks for more real frames on purpose;
+            # its own window decides whether the point stays, not extra watts.
+            self.starved_checks = 0
+            return "hold"
+        self.starved_checks += 1
+        if self.starved_checks < self.FAST_STARVED_CHECKS:
+            return "hold"
+        if self.fast_at is not None and now - self.fast_at < self.FAST_GAP_S:
+            return "hold"
+        return self._fast_raise(now)
+
+    def _fast_raise(self, now: float) -> str:
+        if self.probe == "down" and self.last_good is not None:
+            # The lower level did not hold: back to the one that did, at once.
+            idx, tdp = self.last_good
+            from_phase = self.phase
+            self.probe = None
+            self._move("probe-failed:starved", idx=idx, tdp=tdp)
+            if from_phase == "search_down":
+                self.phase = "upgrade"
+                self.good = self.HEALTHY_WINDOWS - 1
+            else:
+                if from_phase == "probe":
+                    self.reprobe_interval = min(self.reprobe_interval * 2.0, self.REPROBE_MAX_S)
+                self._lock(now, "probe-failed:starved")
+            self.fast_at, self.starved_checks = now, 0
+            return "move"
+        ceiling = self.normal_max_w
+        if self.tdp >= ceiling - 1e-6:
+            return "hold"   # past the normal budget only the slow, evidence-heavy path decides
+        target = max(self._work_tdp(now) or 0.0, self.tdp + self.FAST_STEP_W)
+        target = min(target, ceiling)
+        self.probe = None
+        self._move("fast-raise:starved", tdp=target)
+        self.phase = "locked"
+        self.locked_since = now
+        self.short_since = self.stall_since = self.stall_step_at = None
+        self.fast_at, self.starved_checks = now, 0
+        return "move"
 
     def _probe_delay(self) -> float:
         return self.recover_interval if self.recover is not None else self.reprobe_interval
@@ -853,6 +931,7 @@ class BudgetController:
         if self.good < self.HEALTHY_WINDOWS:
             return "hold"
         self.last_good = (self.idx, self.tdp)
+        self._remember_held(now)
         self.exhausted = False
         if self.quality_debt is not None and self.idx >= self.quality_debt:
             self.quality_debt = None
@@ -1009,6 +1088,7 @@ class BudgetController:
             ),
             "rejected": sorted(self.rejected),
             "reprobe_interval_s": self._probe_delay(),
+            "work_tdp_w": max((w for _, w in self.held), default=None),
             "recovering_to": (
                 {"point": self.points[self.recover[0]].key, "tdp_w": self.recover[1]} if self.recover else None
             ),
