@@ -22,6 +22,7 @@ from .runtime_state import RuntimeStateService
 from .pipeline_inspector import PipelineInspectorService
 from .gamescope_display import GamescopeDisplayService
 from .governor_service import GovernorService
+from .session_recorder import SessionRecorder
 from .config_schema import ConfigurationManager, DEFAULT_PROFILE_NAME
 from shared_config import FG_BACKEND_GFG
 from .config_schema_generated import ConfigurationPatch
@@ -70,6 +71,7 @@ class Plugin:
             self.configuration_service, self.gamescope_display_service, decky.logger,
             self.pipeline_inspector_service,
         )
+        self.session_recorder = self._build_session_recorder()
         self._display_sync_task = None
         self._dock_monitor_task = None
         self._display_io_lock = asyncio.Lock()
@@ -718,6 +720,41 @@ class Plugin:
         except (OSError, UnicodeError) as error:
             decky.logger.debug("Could not read OptiScaler status: %s", error)
         return status
+
+    def _build_session_recorder(self) -> SessionRecorder:
+        cfg = self.configuration_service
+        home = cfg.user_home
+        from .constants import (
+            MAKO_ROOT, MANGOHUD_LAYER_DIR, MANGOHUD_MANIFEST_FILENAME_64, VULKAN_LAYER_DIR, JSON_FILENAME,
+            PRESENT_DIAGNOSTICS_LOG_FILENAME,
+        )
+        plugin_log = getattr(decky, "DECKY_PLUGIN_LOG", None)
+        return SessionRecorder(
+            user_home=home, config_dir=cfg.config_dir, runtime_state_dir=cfg.runtime_state_dir,
+            wrapper_path=cfg.mako_script_path,
+            status_provider=lambda: self.governor_service.get_status(),
+            events_path=self.governor_service.events_path,
+            diagnostics_paths=[cfg.config_dir / PRESENT_DIAGNOSTICS_LOG_FILENAME,
+                               Path("/dev/shm/gfg-present-diagnostics.log")],
+            saved_config_path=cfg.config_file_path,
+            layer_files={
+                "renderer layer manifest": home / VULKAN_LAYER_DIR / JSON_FILENAME,
+                "MangoHud layer manifest": home / MANGOHUD_LAYER_DIR / MANGOHUD_MANIFEST_FILENAME_64,
+                "MAKO root": home / MAKO_ROOT,
+            },
+            plugin_log=Path(plugin_log) if plugin_log else None, logger=decky.logger,
+        )
+
+    async def start_log_recording(self, profile_name: str = "") -> Dict[str, Any]:
+        """Begin recording a diagnostic log (timeline + renderer diagnostics)."""
+        return await self.session_recorder.start(profile_name)
+
+    async def stop_log_recording(self) -> Dict[str, Any]:
+        """Stop and write the zip to the Steam Deck desktop."""
+        return await self.session_recorder.stop()
+
+    async def get_log_recording_status(self) -> Dict[str, Any]:
+        return self.session_recorder.status()
 
     async def get_governor_status(self, profile_name: str = "") -> Dict[str, Any]:
         """Return the live GFG Governor state without mutating the profile."""

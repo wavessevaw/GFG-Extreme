@@ -113,6 +113,7 @@ class RuntimeBase(unittest.TestCase):
         self.inspector = FakeInspector()
         self.svc = GovernorService(self.cfg, self.display, logging.getLogger("gov-rt"), self.inspector)
         self.svc.power = FakePower()
+        self.svc.PREDICTIVE_SKIP = False  # these tests walk the full ladder; see PredictiveStartTests
         self.t = {"now": 100.0}
         self.svc.observer.time_fn = lambda: self.t["now"]
         self.svc._last_display_poll = -1e9
@@ -217,6 +218,17 @@ class RuntimeBase(unittest.TestCase):
         """Running 60 FPS native: proves 45x2 capacity but is not any proven point."""
         self.feed(20, 60, 60)
         self.t["now"] += 0.5
+
+
+class PredictiveStartTests(RuntimeBase):
+    def test_native_60_for_90_target_starts_at_a_feasible_point(self):
+        self.svc.PREDICTIVE_SKIP = True
+        self.prime_not_matching()
+        st = self.step()
+        self.assertEqual(st["state"], "APPLY")
+        self.assertEqual(st["request"]["point"], "60x1.5")  # native90 and 72x1.25 need >66 real fps
+        self.assertEqual(st["ladder"]["rejected"], {})
+        self.assertIn("native90", st["ladder"]["predicted_infeasible"])
 
 
 class TrialFlowTests(RuntimeBase):

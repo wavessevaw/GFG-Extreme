@@ -56,6 +56,7 @@ def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
     if not status.get("enabled"):
         return "GFG off"
     tel = status.get("telemetry") or {}
+    tel = tel.get("summary") or tel  # service stores {"snapshot", "summary"}
     real = (tel.get("real") or {}).get("median")
     out = (tel.get("output") or {}).get("median")
     mult = (tel.get("latest") or {}).get("effective_multiplier")
@@ -90,8 +91,11 @@ def mangohud_config(preset: str, position: str, status_file: Path) -> str:
         "font_size=18", "round_corners=6", "text_color=FFFFFF",
         "fps", "frametime", "fps_color_change=0", "no_display=0",
     ]
+    if preset != "minimal":
+        # Native MangoHud sensors: still useful if the `exec` status line is not refreshed on a given build.
+        lines += ["gpu_power", "battery", "battery_time"]
     if preset == "detailed":
-        lines += ["gpu_stats", "gpu_power"]
+        lines += ["gpu_stats"]
     lines.append(f"exec=cat {status_file}")
     return "\n".join(lines) + "\n"
 

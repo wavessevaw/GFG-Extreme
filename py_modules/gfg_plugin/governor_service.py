@@ -103,6 +103,7 @@ class GovernorService:
     CAP_BOUND_HEALTH_RATIO = 0.97
     UNCAPPED_HEALTH_RATIO = 1.05
     ROLLBACK_RETRY_SECONDS = 5.0
+    PREDICTIVE_SKIP = True  # skip points the observed native cadence already rules out
 
     def __init__(
         self,
@@ -232,14 +233,38 @@ class GovernorService:
         except Exception as error:  # sysfs quirks must never break the loop
             self.log.debug("Governor battery read failed: %s", error)
 
+    def _delivering_target(self, telemetry: Dict[str, Any]) -> Optional[str]:
+        """'easy'/'medium' when measured output already holds the target (stable game), else None."""
+        target = self._status.get("target_output_fps") or ((self._ladder.target_output_fps) if self._ladder else None)
+        output = (telemetry.get("output") or {}).get("median")
+        real = (telemetry.get("real") or {}).get("median")
+        p5 = (telemetry.get("output") or {}).get("p5")
+        try:
+            if not target or output is None or float(output) < 0.95 * float(target):
+                return None
+            if p5 is not None and float(p5) < 0.85 * float(target):
+                return None
+            ratio = float(output) / float(real) if real else 1.0
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
+        return "easy" if ratio <= 1.5 else "medium"
+
     def _update_effort(self) -> None:
         """Feed the slow effort rating.  Never published while still assessing."""
         status = self._status
+        telemetry = status.get("telemetry") or {}
+        telemetry = telemetry.get("summary") or telemetry  # service stores {"snapshot", "summary"}
+        stable = self._delivering_target(telemetry)
         if not status.get("enabled") or status.get("state") not in ("LOCKED", "OPTIMIZE_POWER", "GUARD", "OBSERVE_ONLY"):
-            raw = "nightmare" if self._exhausted and status.get("enabled") else None
+            if self._exhausted and status.get("enabled"):
+                # A game that already holds the target is not a nightmare just because
+                # no Governor point was accepted.
+                raw = stable or "nightmare"
+            else:
+                raw = None
         else:
-            real = ((status.get("telemetry") or {}).get("real") or {}).get("median")
-            raw = raw_effort(self._point, real, self._exhausted)
+            real = (telemetry.get("real") or {}).get("median")
+            raw = raw_effort(self._point, real, self._exhausted and not stable)
         self._effort.update(self._clock(), raw)
 
     def hud_settings(self, profile: str) -> Dict[str, Any]:
@@ -973,6 +998,12 @@ class GovernorService:
                 return error.reason
             return None
 
+        # Model-based start: native cadence (if ever observed) bounds the real FPS of any point.
+        summary = self.observer.summary(self.WINDOW_SECONDS)
+        if self.PREDICTIVE_SKIP:
+            self._ladder.observe_native_capacity(
+                (summary.get("real") or {}).get("median"), (summary.get("multiplier") or {}).get("median"),
+            )
         point = self._ladder.next_point(applicable)
         if point is None:
             released = await self._release_point_keep_ladder(profile)

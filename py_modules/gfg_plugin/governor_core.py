@@ -194,7 +194,23 @@ class TrialLadder:
         self.target_output_fps = int(target_output_fps) if target_output_fps else (60 if external_display else 90)
         self.rejected: Dict[str, str] = {}
         self.skipped: Dict[str, str] = {}
+        self.predicted: Dict[str, str] = {}
+        self.native_capacity: Optional[float] = None
         self.attempts = 0
+
+    CAPACITY_SLACK = 1.10
+
+    def observe_native_capacity(self, real_median: Any, multiplier: Any) -> None:
+        """Remember uncapped native cadence; it is an upper bound for every FG point's real FPS.
+
+        Only evidence taken while no generation was active counts (``multiplier`` <= 1.12).
+        """
+        try:
+            real, mult = float(real_median), float(multiplier)
+        except (TypeError, ValueError):
+            return
+        if math.isfinite(real) and real > 0 and mult <= 1.12:
+            self.native_capacity = max(self.native_capacity or 0.0, real)
 
     def candidates(self) -> tuple[OperatingPoint, ...]:
         return OperatingPointPlanner.candidates(
@@ -211,8 +227,18 @@ class TrialLadder:
         if self.attempts >= self.MAX_ATTEMPTS:
             return None
         self.skipped = {}
+        self.predicted = {}
         for point in self.candidates():
             if point.key in self.rejected:
+                continue
+            # Predictive skip: generation cannot make the real stream faster than native,
+            # so a point whose real-frame budget exceeds the native capacity cannot hold.
+            # Not a rejection: stale evidence must not poison the session.
+            if (
+                self.native_capacity is not None
+                and point.base_target_fps > self.native_capacity * self.CAPACITY_SLACK
+            ):
+                self.predicted[point.key] = f"native-capacity-{self.native_capacity:.0f}-below-base-{point.base_target_fps}"
                 continue
             reason = applicable(point)
             if reason:
@@ -262,6 +288,8 @@ class TrialLadder:
             "max_attempts": self.MAX_ATTEMPTS,
             "rejected": dict(self.rejected),
             "skipped": dict(self.skipped),
+            "predicted_infeasible": dict(self.predicted),
+            "native_capacity": self.native_capacity,
         }
 
 

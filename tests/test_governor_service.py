@@ -68,6 +68,21 @@ class GovernorServiceTests(unittest.TestCase):
         # Service uses monotonic now; use observer's time function compatible with the synthetic timeline.
         svc.observer.time_fn = lambda: 11.5
 
+    def test_stable_native_target_is_not_nightmare_when_ladder_exhausted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            svc = self.make_service(Path(temp))
+            svc._status["target_output_fps"] = 90
+            tel = {"real": {"median": 90}, "output": {"median": 90, "p5": 88}}
+            self.assertEqual(svc._delivering_target(tel), "easy")
+            tel = {"real": {"median": 14}, "output": {"median": 40, "p5": 30}}
+            self.assertIsNone(svc._delivering_target(tel))
+
+    def test_hud_and_effort_read_service_telemetry_shape(self):
+        from gfg_plugin.governor_hud import status_line
+        summary = {"real": {"median": 45}, "output": {"median": 90}, "latest": {"effective_multiplier": 2.0}}
+        line = status_line({"enabled": True, "telemetry": {"snapshot": {}, "summary": summary}}, "minimal")
+        self.assertEqual(line, "x2  45>90")
+
     def test_disabled_by_default_never_claims_power(self):
         with tempfile.TemporaryDirectory() as temp:
             svc = self.make_service(Path(temp))

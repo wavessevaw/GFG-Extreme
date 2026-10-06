@@ -86,3 +86,22 @@ class GovernorPowerSearchTests(unittest.TestCase):
         outcome = search.evaluate(p5_fps=40, base_target_fps=45, hard_pressure=1)
         self.assertEqual(outcome["action"], "hold")
         self.assertEqual(search.status.state, "guard")
+
+
+class PredictiveLadderTests(unittest.TestCase):
+    def test_native_capacity_skips_infeasible_points_without_rejecting(self):
+        from gfg_plugin.governor_core import TrialLadder
+        ladder = TrialLadder(target_output_fps=90)
+        ladder.observe_native_capacity(50, 1.0)  # 50 fps native: x1..x1.5 need 60+ real fps
+        point = ladder.next_point(lambda p: None)
+        self.assertGreaterEqual(point.multiplier, 1.5)
+        self.assertLessEqual(point.base_target_fps, 50 * ladder.CAPACITY_SLACK)
+        self.assertEqual(ladder.rejected, {})
+        self.assertIn("native90", ladder.predicted)
+
+    def test_capacity_ignored_while_generation_active(self):
+        from gfg_plugin.governor_core import TrialLadder
+        ladder = TrialLadder(target_output_fps=90)
+        ladder.observe_native_capacity(45, 2.0)
+        self.assertIsNone(ladder.native_capacity)
+        self.assertEqual(ladder.next_point(lambda p: None).key, "native90")

@@ -32,6 +32,9 @@ const rpc = {
   fpApps: callable("get_flatpak_apps"),
   fpSet: callable("set_flatpak_app_override"),
   fpRemove: callable("remove_flatpak_app_override"),
+  logStart: callable("start_log_recording"),
+  logStop: callable("stop_log_recording"),
+  logStatus: callable("get_log_recording_status"),
 };
 
 // ---------- helpers
@@ -62,11 +65,58 @@ const ICONS = {
   user: "M12 12a4 4 0 100-8 4 4 0 000 8zM4 21a8 8 0 0116 0", hud: "M3 5h18v10H3zM8 19h8", cog: "M12 15a3 3 0 100-6 3 3 0 000 6zM19 12h2M3 12h2M12 3v2M12 19v2",
   play: "M6 4l14 8-14 8z", stop: "M6 6h12v12H6z",
 };
-const Focusable = ({ onClick, className, children }) => {
+// Gamepad / Steam Deck buttons only reach `onActivate` (A button) and `onOKButton`; `onClick` is touch/mouse only.
+const Focusable = ({ onClick, className, children, style }) => {
   const F = window.DFL && window.DFL.Focusable;
-  const props = { className: (className || ""), onClick, "flow-children": "horizontal" };
-  return F ? h(F, props, children) : h("div", { ...props, tabIndex: 0 }, children);
+  const fire = onClick ? (e) => onClick(e || {}) : undefined;
+  const props = { className: (className || ""), onClick, style, "flow-children": "horizontal" };
+  if (F) return h(F, { ...props, onActivate: fire, onOKButton: fire }, children);
+  return h("div", { ...props, tabIndex: 0, onKeyDown: onClick ? (e) => { if (e.key === "Enter" || e.key === " ") onClick(e); } : undefined }, children);
 };
+// Clipboard inside the Steam/CEF page: the async API needs focus + secure context, so fall back to execCommand.
+async function copyText(text) {
+  try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(text); return true; } } catch (e) {}
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.setAttribute("readonly", ""); ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    const ok = document.execCommand("copy"); document.body.removeChild(ta); return !!ok;
+  } catch (e) { return false; }
+}
+const LAUNCH_DEFAULT = "/home/deck/.local/bin/gfg %command%";
+function LaunchCopy({ launch }) {
+  const cmd = launch || LAUNCH_DEFAULT;
+  const [state, setState] = useState("");
+  const copy = async () => { const ok = await copyText(cmd); setState(ok ? "Copied" : "Select and type it manually"); setTimeout(() => setState(""), 2500); };
+  return h("div", null,
+    h("div", { className: "card" }, h("div", { style: { fontFamily: "monospace", fontSize: 12, wordBreak: "break-all", userSelect: "all" } }, cmd)),
+    h("div", { className: "list" }, h(Row, { icon: "play", title: state || "Copy launch command", sub: "Paste into the game's Steam Properties → Launch Options", value: state ? "" : "Copy", onClick: copy })));
+}
+function LogRecorder({ profile }) {
+  const [st, setSt] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const load = useCallback(async () => { try { setSt((await rpc.logStatus()) || {}); } catch (e) {} }, []);
+  useEffect(() => { load(); const t = setInterval(load, 2000); return () => clearInterval(t); }, []);
+  const toggle = async () => {
+    setBusy(true); setErr("");
+    try {
+      const r = st.recording ? await rpc.logStop() : await rpc.logStart(profile || "");
+      if (r && r.success === false) setErr(r.error || "failed");
+      setSt(r || {});
+    } catch (e) { setErr(String(e)); }
+    setBusy(false);
+  };
+  const mm = (n) => Math.floor(n / 60) + ":" + String(Math.floor(n % 60)).padStart(2, "0");
+  return h("div", null,
+    h("div", { className: "list" }, h(Row, {
+      icon: st.recording ? "stop" : "play",
+      title: st.recording ? "Stop and save log to Desktop" : "Record log",
+      sub: st.recording ? "Recording " + mm(st.elapsed_s || 0) + " · play the game, then stop" : "Start, play for a minute or two, stop. A zip lands on the Steam Deck desktop.",
+      value: busy ? "…" : "", onClick: busy ? undefined : toggle })),
+    st.last_file && !st.recording ? h(Note, { quiet: true }, "Saved: " + st.last_file) : null,
+    err ? h(Note, null, "Log error: " + err) : null);
+}
 const Row = ({ icon, title, sub, value, onClick }) =>
   h(Focusable, { className: "row", onClick },
     icon ? h("div", { className: "ic" }, h(Icon, { d: ICONS[icon] })) : null,
@@ -77,7 +127,7 @@ const Toggle = ({ on, onChange, title, sub }) =>
     h("div", { className: "t" }, h("b", null, title), sub ? h("span", { style: { whiteSpace: "normal" } }, sub) : null),
     h("div", { className: "tog" + (on ? " on" : "") }));
 const Seg = ({ value, options, onChange }) =>
-  h("div", { className: "seg" }, options.map(([v, l]) => h("button", { key: v, className: v === value ? "on" : "", onClick: () => onChange(v) }, l)));
+  h("div", { className: "seg" }, options.map(([v, l]) => h(Focusable, { key: v, className: "segb" + (v === value ? " on" : ""), onClick: () => onChange(v) }, l)));
 const Page = ({ title, onBack, children }) =>
   h("div", null, h("div", { className: "bar-top" }, h(Focusable, { className: "back", onClick: onBack }, "‹"), h("div", { className: "title" }, title)), children);
 const Note = ({ quiet, children }) => h("div", { className: "note" + (quiet ? " quiet" : "") }, children);
@@ -101,12 +151,13 @@ function Ring({ value, max, label, sub }) {
     h("div", { className: "num" }, h("div", { className: "big" }, label), h("div", { className: "sub" }, sub)));
 }
 
-function Home({ s, profile, go, refresh, inst, reloadInst }) {
+function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
   const [busy, setBusy] = useState(false);
   const missing = inst && inst.installed === false;
   const d = describe(s);
   const dev = s.device || {};
-  const tel = s.telemetry || {};
+  const tel0 = s.telemetry || {};
+  const tel = tel0.summary || tel0; // backend sends {snapshot, summary}
   const latest = tel.latest || {};
   const target = s.target_output_fps || dev.target || 60;
   const real = tel.real && tel.real.median, out = tel.output && tel.output.median;
@@ -146,7 +197,11 @@ function Home({ s, profile, go, refresh, inst, reloadInst }) {
       h(Row, { icon: "scale", title: "Scaling", sub: "Render scale for extra headroom", onClick: () => go("scaling") }),
       h(Row, { icon: "hud", title: "In-game overlay", sub: "FPS, ×N, TDP while playing", onClick: () => go("hud") }),
       h(Row, { icon: "user", title: "Profile", value: profile || "Default", onClick: () => go("profiles") }),
-      h(Row, { icon: "cog", title: "Advanced", sub: "Inspector, journal, install", onClick: () => go("advanced") })));
+      h(Row, { icon: "cog", title: "Advanced", sub: "Inspector, journal, install", onClick: () => go("advanced") })),
+    h("div", { className: "sec" }, "STEP 1 · LAUNCH OPTION"),
+    h(LaunchCopy, { launch }),
+    h("div", { className: "sec" }, "SOMETHING WRONG? SEND ME A LOG"),
+    h(LogRecorder, { profile }));
 }
 
 // ---------- Sub screens
@@ -176,11 +231,12 @@ function FgPage({ back, cfg, patch }) {
   const mult = (cfg && cfg.multiplier) || 2;
   return h(Page, { title: "Frame Generation", onBack: back },
     h("div", { className: "sec" }, "BACKEND"),
-    h(Seg, { value: be, options: [["gfg", "GFG"], ["optiscaler", "OptiScaler"], ["native", "Native"], ["off", "Off"]], onChange: (v) => patch({ fg_backend: v }) }),
+    h(Seg, { value: be, options: [["gfg", "GFG Engine"], ["optiscaler", "OptiScaler"], ["native", "In-game"], ["off", "Off"]], onChange: (v) => patch({ fg_backend: v }) }),
+    h(Note, { quiet: true }, { gfg: "GFG Engine makes the extra frames. This is the only mode the Governor controls.", optiscaler: "The game's OptiScaler makes the frames. GFG only watches.", native: "The game's own frame generation (DLSS/FSR) is used. GFG only watches.", off: "No frame generation from GFG." }[be]),
     be === "gfg" ? h("div", null,
       h("div", { className: "sec" }, "SAVED MULTIPLIER"),
       h(Seg, { value: String(mult), options: [["2", "×2"], ["3", "×3"]], onChange: (v) => patch({ multiplier: Number(v) }) }),
-      h(Note, { quiet: true }, "Governor may pick ×1, ×2 or ×3 on its own. This is only your saved preference.")) :
+      h(Note, { quiet: true }, "Used when the Governor is off. With the Governor on, it picks ×1 to ×3 itself and never changes this value.")) :
       h(Note, { quiet: true }, "External backend: GFG observes only and does not change it."));
 }
 
@@ -200,7 +256,7 @@ function HudPage({ back, s, profile, refresh }) {
     h("div", { className: "sec" }, "DETAIL"),
     h(Seg, { value: hud.preset, options: [["minimal", "Minimal"], ["standard", "Standard"], ["detailed", "Detailed"]], onChange: (v) => set({ preset: v }) }),
     h("div", { className: "sec" }, "POSITION"),
-    h(Seg, { value: hud.position, options: [["top-right", "Top right"], ["top-left", "Top left"], ["bottom-left", "Bottom"]], onChange: (v) => set({ position: v }) }),
+    h(Seg, { value: hud.position, options: [["top-right", "Top right"], ["top-left", "Top left"], ["bottom-left", "Bottom left"]], onChange: (v) => set({ position: v }) }),
     h(Note, { quiet: true }, "Takes effect on next game launch. Not used when another overlay layer (MangoHud/vkBasalt) is chosen for the profile."));
 }
 
@@ -253,7 +309,7 @@ function AdvancedPage({ back, s, insp, launch, go }) {
     ...Object.entries(o || {}).slice(0, 5).map(([k, v]) => h("div", { key: k }, h("span", null, k), String(v))));
   return h(Page, { title: "Advanced", onBack: back },
     h("div", { className: "sec" }, "LAUNCH OPTION"),
-    h("div", { className: "card" }, h("div", { style: { fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" } }, launch || "/home/deck/.local/bin/gfg %command%")),
+    h(LaunchCopy, { launch }),
     h("div", { className: "list" }, h(Row, { icon: "cog", title: "All settings", sub: "Every profile option", onClick: () => go("all") }),
       h(Row, { icon: "cog", title: "Journal", sub: "Undo recent changes", onClick: () => go("journal") }),
       h(Row, { icon: "cog", title: "System", sub: "Engine install, Flatpak access", onClick: () => go("system") })),
@@ -276,8 +332,8 @@ function AllSettingsPage({ back, cfg, patch }) {
     if (t === "boolean") return h("div", { className: "tog" + (v ? " on" : "") });
     if (t === "integer" || t === "float") {
       const st = t === "integer" ? 1 : 0.1;
-      const set = (d) => (e) => { e.stopPropagation(); const nv = Math.round((Number(v) + d) * 1000) / 1000; patch({ [n]: t === "integer" ? Math.round(nv) : nv }); };
-      return h("div", { className: "step" }, h("button", { onClick: set(-st) }, "−"), h("div", { className: "v" }, String(v)), h("button", { onClick: set(st) }, "+"));
+      const set = (d) => (e) => { e.stopPropagation && e.stopPropagation(); const nv = Math.round((Number(v) + d) * 1000) / 1000; patch({ [n]: t === "integer" ? Math.round(nv) : nv }); };
+      return h("div", { className: "step" }, h(Focusable, { className: "stepb", onClick: set(-st) }, "−"), h("div", { className: "v" }, String(v)), h(Focusable, { className: "stepb", onClick: set(st) }, "+"));
     }
     const TF = window.DFL && window.DFL.TextField;
     return TF ? h(TF, { value: String(v == null ? "" : v), onChange: (e) => patch({ [n]: e.target.value }) }) : h("div", { className: "val" }, String(v == null ? "" : v) || "–");
@@ -368,7 +424,7 @@ function Content() {
   else if (screen === "all") body = h(AllSettingsPage, { back: () => setScreen("advanced"), cfg, patch });
   else if (screen === "system") body = h(SystemPage, { back: () => setScreen("advanced"), inst, reloadInst });
   else if (screen === "advanced") body = h(AdvancedPage, { back, s, insp, launch, go });
-  else body = h(Home, { s, profile, go, refresh, inst, reloadInst });
+  else body = h(Home, { s, profile, go, refresh, inst, reloadInst, launch });
   return h("div", { className: "gfg" }, h("style", null, css), body);
 }
 
