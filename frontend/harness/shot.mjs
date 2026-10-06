@@ -1,17 +1,20 @@
+// README screenshots of the current interface (mock Decky globals, sample data). Writes docs/img/*.png.
 import fs from "node:fs";
 import { launch, openPage, STATES } from "./lib.mjs";
+const out = new URL("../../docs/img/", import.meta.url).pathname;
+fs.mkdirSync(out, { recursive: true });
 const browser = await launch();
-const shots = [];
-async function shot(name, state, nav, extra = {}) {
-  const page = await openPage(browser, state, nav, extra);
-  const f = `/tmp/claude-0/shots/${name}.png`; fs.mkdirSync("/tmp/claude-0/shots", { recursive: true });
-  await page.screenshot({ path: f, fullPage: true }); shots.push(f); await page.close();
+async function shot(name, state, nav = []) {
+  const page = await openPage(browser, STATES[state], nav);
+  await page.screenshot({ path: out + name + ".png", fullPage: true });
+  await page.close();
+  console.log(out + name + ".png");
 }
-for (const [k, v] of Object.entries(STATES)) await shot(k, v, []);
-await shot("page-governor", STATES["home-locked-oled"], ["Governor"]);
-await shot("page-fg", STATES["home-locked-oled"], ["Frame Generation"]);
-await shot("page-hud", STATES["home-locked-oled"], ["In-game overlay"]);
-await shot("page-advanced", STATES["home-locked-oled"], ["Advanced"]);
-await shot("page-all", STATES["home-locked-oled"], ["Advanced", "All settings"]);
-await shot("page-system", STATES["home-locked-oled"], ["Advanced", "System"]);
-await browser.close(); console.log(shots.join("\n"));
+await shot("home-idle-oled", "home-idle-oled");
+await shot("home-adapting-oled", "readme-home");
+await shot("home-balanced-oled", "home-balanced");
+await shot("page-details", "readme-home", ["Details"]);
+await shot("page-settings", "readme-home", ["Settings"]);
+await shot("page-setup", "setup-bad", ["Settings", "Diagnostics", "Check setup"]);
+await shot("page-hud", "readme-home", ["Settings", "In-game overlay"]);
+await browser.close();
