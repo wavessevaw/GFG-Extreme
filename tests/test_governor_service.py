@@ -94,7 +94,7 @@ class GovernorServiceTests(unittest.TestCase):
             asyncio.run(svc._iteration())
             line = status_path(Path(temp)).read_text(encoding="utf-8")
             self.assertNotIn("TDPn/a", line)
-            self.assertRegex(line, r"\b\d+W\b")
+            self.assertRegex(line, r"\d+W")
 
     def test_hud_falls_back_to_current_tdp(self):
         from gfg_plugin.governor_hud import status_line

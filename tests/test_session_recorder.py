@@ -2,7 +2,8 @@ import asyncio, json, sys, tempfile, unittest, zipfile
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "py_modules"))
-from gfg_plugin.session_recorder import SessionRecorder, compact_status, desktop_dir, probe_game_processes  # noqa: E402
+from gfg_plugin.session_recorder import (  # noqa: E402
+    SessionRecorder, compact_status, desktop_dir, probe_game_processes, probe_power_sensors)
 
 
 class RecorderTests(unittest.TestCase):
@@ -105,6 +106,33 @@ class RecorderTests(unittest.TestCase):
                 checks = {c["check"]: c["ok"] for c in json.loads(z.read("self_test.json"))}
                 self.assertTrue(checks["in-game overlay switched on for this profile"])
                 self.assertIn("host MangoHud Vulkan layer present", checks)
+
+    def test_power_sensors_probe_and_bundle(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "hwmon"
+            h = root / "hwmon3"; h.mkdir(parents=True)
+            (h / "name").write_text("amdgpu\n")
+            (h / "power1_cap").write_text("18000000\n")
+            (h / "power1_average").write_text("15100000\n")
+            (root / "hwmon0").mkdir()  # no power files: skipped
+            found = probe_power_sensors(root)
+            self.assertEqual(len(found), 1)
+            self.assertEqual((found[0]["name"], found[0]["power1_cap"], found[0]["power1_average"]),
+                             ("amdgpu", "18000000", "15100000"))
+            self.assertEqual(compact_status({"power": {"draw_w": 15.1, "observed_fast_w": 21.0}})["apu_w"], 15.1)
+
+            async def scenario(rec):
+                await rec.start("game")
+                (h / "power1_cap").write_text("20000000\n")  # someone rewrote the cap
+                return await rec.stop()
+            home = Path(temp) / "home"; home.mkdir()
+            rec, _ = self.make(home)
+            rec.power_probe = lambda: probe_power_sensors(root)
+            result = asyncio.run(scenario(rec))
+            with zipfile.ZipFile(result["file"]) as z:
+                sensors = json.loads(z.read("power-sensors.json"))
+            self.assertEqual(sensors["start"][0]["power1_cap"], "18000000")
+            self.assertEqual(sensors["end"][0]["power1_cap"], "20000000")
 
     def test_stop_without_start_fails_cleanly(self):
         with tempfile.TemporaryDirectory() as temp:

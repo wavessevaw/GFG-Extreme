@@ -44,6 +44,29 @@ class GovernorPowerActuatorTests(unittest.TestCase):
             self.assertTrue(restored["restored"])
             self.assertEqual(int((h / "power2_cap").read_text()), 15000000)
 
+    def test_reports_measured_apu_draw_and_raw_sensors(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            h = self.make_hwmon(root)
+            write(h / "name", "amdgpu")
+            write(h / "power2_average", 12345678)
+            actuator = SteamDeckPowerActuator(drm_root=root / "drm", hwmon_root=root / "hwmon")
+            status = actuator.discover()
+            self.assertEqual(status["draw_w"], 12.35)
+            self.assertEqual(status["observed_tdp_w"], 15.0)
+            sensors = actuator.sensors()
+            self.assertEqual(sensors["name"], "amdgpu")
+            self.assertEqual(sensors["power2_average"], "12345678")
+            self.assertEqual(sensors["power1_label"], "fastPPT")
+            self.assertTrue(sensors["draw_path"].endswith("power2_average"))
+
+    def test_draw_unknown_without_sensor(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.make_hwmon(root)
+            actuator = SteamDeckPowerActuator(drm_root=root / "drm", hwmon_root=root / "hwmon")
+            self.assertIsNone(actuator.discover()["draw_w"])
+
     def test_external_change_releases_ownership_and_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

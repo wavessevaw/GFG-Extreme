@@ -422,6 +422,7 @@ class PowerSearchState:
     recovery_tdp_w: Optional[float] = None
     min_tdp_w: Optional[float] = None
     ceiling_tdp_w: Optional[float] = None
+    ceiling_failures: int = 0
     reason: str = "not-started"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -436,6 +437,10 @@ class PowerSearch:
     window.  A failed lower candidate restores the last known-good level and
     locks.  This is intentionally not a continuously hunting PID controller.
     """
+
+    # One bad window at the ceiling (a hitch, a camera turn) must not end the
+    # search for the whole session: re-check before giving up on the point.
+    CEILING_CHECKS = 2
 
     def __init__(self) -> None:
         self.status = PowerSearchState()
@@ -490,6 +495,10 @@ class PowerSearch:
             if s.last_good_tdp_w is None:
                 # The selected point is not healthy even at the initial/user
                 # ceiling.  Never exceed that ceiling automatically.
+                s.ceiling_failures += 1
+                if s.ceiling_failures < self.CEILING_CHECKS:
+                    s.reason = "rechecking-at-ceiling"
+                    return {"action": "wait", "state": s.to_dict()}
                 s.state = "guard"
                 s.reason = "point-not-healthy-at-ceiling"
                 return {"action": "hold", "state": s.to_dict()}

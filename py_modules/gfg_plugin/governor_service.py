@@ -1114,6 +1114,22 @@ class GovernorService:
             health_ratio=health_ratio,
         )
         action = outcome.get("action")
+        if action == "wait":
+            # Judge the next window on fresh samples only.
+            self._evaluation_after_seq = self.observer.sample_seq
+        if self.search.status.reason == "point-not-healthy-at-ceiling" and self._point_mode == "applied" \
+                and self._ladder is not None:
+            # Governor chose this point and it cannot hold even at the user's
+            # TDP: reject it and let the ladder try the next (cheaper) point
+            # instead of parking at the ceiling for the rest of the session.
+            key = str(point.get("key"))
+            self._ladder.reject(key, "not-healthy-at-ceiling")
+            self._event("operating-point-rejected", "not-healthy-at-ceiling", profile=profile, point=key)
+            ladder = self._ladder
+            await self._release_point(profile, "not-healthy-at-ceiling")
+            self._ladder = ladder
+            self._status.update({"state": "PLAN", "reason": "rejected:not-healthy-at-ceiling"})
+            return
         if action == "set":
             target_w = float(outcome["target_tdp_w"])
             result = await asyncio.to_thread(self.power.set_tdp_w, target_w)

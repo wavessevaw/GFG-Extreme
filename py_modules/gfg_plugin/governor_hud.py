@@ -90,7 +90,12 @@ def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
     tdp = power.get("observed_tdp_w")
     if tdp is None:
         tdp = power.get("current_tdp_w")
-    parts.append(f"{round(tdp)}W" if tdp is not None else "TDPn/a")
+    draw = power.get("draw_w")
+    if tdp is not None and draw is not None:
+        # Limit and measured APU draw side by side: the limit alone proves nothing.
+        parts.append(f"TDP {round(tdp)}W  APU {round(draw)}W")
+    else:
+        parts.append(f"{round(tdp)}W" if tdp is not None else "TDPn/a")
     left = format_minutes((status.get("battery") or {}).get("minutes_left"))
     if left:
         parts.append(left)
