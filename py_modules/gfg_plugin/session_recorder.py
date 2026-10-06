@@ -21,6 +21,15 @@ MAX_DIAG_BYTES = 12 * 1024 * 1024
 MAX_FILE_BYTES = 1024 * 1024
 SAMPLE_SECONDS = 1.0
 DESKTOP_DIRNAME = "Desktop"
+PROBE_EVERY_SAMPLES = 5
+HOST_MANGOHUD_MANIFEST = Path("/usr/share/vulkan/implicit_layer.d/MangoHud.x86_64.json")
+# Environment the launch wrapper sets for the game; enough to tell why a layer did or did not load.
+PROBE_ENV_KEYS = (
+    "MAKO_PROFILE", "MAKO_CONFIG", "MAKO_EXTERNAL_VULKAN_LAYER", "MANGOHUD", "DISABLE_MANGOHUD",
+    "MANGOHUD_CONFIGFILE", "VK_INSTANCE_LAYERS", "VK_IMPLICIT_LAYER_PATH", "VK_ADD_IMPLICIT_LAYER_PATH",
+    "VK_LAYER_PATH", "VK_LOADER_LAYERS_ENABLE", "VK_LOADER_LAYERS_DISABLE", "GAMESCOPE_WAYLAND_DISPLAY",
+    "PRESSURE_VESSEL_RUNTIME", "STEAM_COMPAT_APP_ID", "SteamAppId",
+)
 
 
 def desktop_dir(user_home: Path) -> Path:
@@ -85,6 +94,48 @@ def compact_status(status: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def probe_game_processes(proc_root: Path = Path("/proc"), limit: int = 8) -> List[Dict[str, Any]]:
+    """Vulkan processes started through the GFG wrapper: their layer env and which layers are mapped.
+
+    A game counts when its environment carries ``MAKO_CONFIG`` (exported by the wrapper) and it has
+    ``libvulkan`` mapped.  ``mangohud_loaded`` answers "did the in-game overlay layer load at all".
+    """
+    found: List[Dict[str, Any]] = []
+    try:
+        entries = sorted((p for p in Path(proc_root).iterdir() if p.name.isdigit()), key=lambda p: int(p.name))
+    except OSError:
+        return found
+    for proc in entries:
+        try:
+            env: Dict[str, str] = {}
+            for item in (proc / "environ").read_bytes().split(b"\0"):
+                key, sep, value = item.partition(b"=")
+                if sep:
+                    env[key.decode("utf-8", "ignore")] = value.decode("utf-8", "ignore")
+            if "MAKO_CONFIG" not in env:
+                continue
+            maps = (proc / "maps").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "libvulkan" not in maps:
+            continue
+        libs = sorted({line.rsplit(" ", 1)[-1] for line in maps.splitlines() if ".so" in line})
+        try:
+            comm = (proc / "comm").read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            comm = ""
+        found.append({
+            "pid": int(proc.name), "comm": comm,
+            "env": {k: env[k] for k in PROBE_ENV_KEYS if k in env},
+            "mangohud_loaded": any("libMangoHud" in lib for lib in libs),
+            "layer_libraries": [lib for lib in libs if "vulkan" in lib.lower() or "MangoHud" in lib
+                                or "mako" in lib.lower() or "gamescope" in lib.lower()][:40],
+        })
+        if len(found) >= limit:
+            break
+    return found
+
+
 class SessionRecorder:
     def __init__(
         self,
@@ -101,6 +152,9 @@ class SessionRecorder:
         plugin_log: Optional[Path] = None,
         logger: Any = None,
         clock: Callable[[], float] = time.time,
+        hud_enabled: Optional[Callable[[str], bool]] = None,
+        process_probe: Callable[[], List[Dict[str, Any]]] = probe_game_processes,
+        host_mangohud_manifest: Path = HOST_MANGOHUD_MANIFEST,
     ) -> None:
         self.user_home = Path(user_home)
         self.config_dir = Path(config_dir)
@@ -114,6 +168,10 @@ class SessionRecorder:
         self.plugin_log = Path(plugin_log) if plugin_log else None
         self.log = logger
         self.clock = clock
+        self.hud_enabled = hud_enabled
+        self.process_probe = process_probe
+        self.host_mangohud_manifest = Path(host_mangohud_manifest)
+        self._game_processes: List[Dict[str, Any]] = []
         self.recording = False
         self.started_at = 0.0
         self.last_file: Optional[str] = None
@@ -155,6 +213,7 @@ class SessionRecorder:
             except OSError:
                 self._offsets[path] = 0
         self._profile = profile
+        self._game_processes = []
         self._lines = 0
         self.started_at = self.clock()
         self.recording = True
@@ -189,9 +248,17 @@ class SessionRecorder:
                 record = compact_status(self.status_provider())
                 record["t"] = self.clock()
                 self._append(record)
+                if self._lines % PROBE_EVERY_SAMPLES == 1:
+                    await self._probe()
             except Exception as error:
                 self._append({"t": self.clock(), "marker": "sample-error", "error": str(error)})
             await asyncio.sleep(SAMPLE_SECONDS)
+
+    async def _probe(self) -> None:
+        """Keep the latest non-empty snapshot: the game may already be closed when Stop is pressed."""
+        found = await asyncio.to_thread(self.process_probe)
+        if found:
+            self._game_processes = found
 
     def _append(self, record: Dict[str, Any]) -> None:
         if self._timeline is None:
@@ -223,6 +290,10 @@ class SessionRecorder:
         for name, path in self.layer_files.items():
             add(f"file present: {name}", path.exists(), str(path))
         hud = self.config_dir / "hud"
+        if self.hud_enabled is not None:
+            add("in-game overlay switched on for this profile", self.hud_enabled(self._profile), self._profile)
+        add("host MangoHud Vulkan layer present", self.host_mangohud_manifest.is_file(),
+            str(self.host_mangohud_manifest))
         add("overlay config published (active.conf)", (hud / "active.conf").is_file(), str(hud / "active.conf"))
         add("overlay status line file present", (hud / "status.txt").is_file(), str(hud / "status.txt"))
         for path in self.diagnostics_paths:
@@ -287,12 +358,15 @@ class SessionRecorder:
                 "governor-events.jsonl  Governor decisions during the recording\n"
                 "launch-wrapper.sh the generated launcher\n"
                 "overlay/         in-game overlay config and status line\n"
+                "game-processes.json  layer env of the running game and whether MangoHud was loaded\n"
                 "profile.json     saved profile\n"
                 "plugin.log       tail of the Decky plugin log\n"))
             if self._timeline is not None and self._timeline.is_file():
                 bundle.write(self._timeline, "timeline.jsonl")
             bundle.writestr("self_test.json", json.dumps(self.self_test(), indent=2))
             bundle.writestr("system.json", json.dumps(self._system_info(), indent=2))
+            processes = self._game_processes or self.process_probe()
+            bundle.writestr("game-processes.json", json.dumps(processes, indent=2))
             for path, start in self._offsets.items():
                 data = _read_range(path, start, MAX_DIAG_BYTES)
                 if data:
@@ -322,7 +396,9 @@ class SessionRecorder:
                 if data:
                     bundle.writestr("plugin.log", data)
             try:
-                for manifest in sorted(self.runtime_state_dir.glob("*launch*.json"))[:10]:
+                manifests = sorted(self.runtime_state_dir.glob("launches/*.json"),
+                                   key=lambda p: p.stat().st_mtime, reverse=True)
+                for manifest in manifests[:10]:
                     data = _read_tail(manifest, 64 * 1024)
                     if data:
                         bundle.writestr(f"launch-manifests/{manifest.name}", data)

@@ -743,6 +743,7 @@ class Plugin:
                 "MAKO root": home / MAKO_ROOT,
             },
             plugin_log=Path(plugin_log) if plugin_log else None, logger=decky.logger,
+            hud_enabled=lambda profile: bool(self.governor_service.hud_settings(profile)["enabled"]),
         )
 
     async def start_log_recording(self, profile_name: str = "") -> Dict[str, Any]:
@@ -758,7 +759,16 @@ class Plugin:
 
     async def get_governor_status(self, profile_name: str = "") -> Dict[str, Any]:
         """Return the live GFG Governor state without mutating the profile."""
-        return self.governor_service.get_status(profile_name)
+        status = self.governor_service.get_status(profile_name)
+        hud = status.get("hud")
+        if isinstance(hud, dict):
+            # The overlay needs SteamOS's own MangoHud layer, staged at plugin start.
+            hud["layer_available"] = self._mangohud_manifest_path().is_file()
+        return status
+
+    def _mangohud_manifest_path(self) -> Path:
+        from .constants import MANGOHUD_LAYER_DIR, MANGOHUD_MANIFEST_FILENAME_64
+        return self.configuration_service.user_home / MANGOHUD_LAYER_DIR / MANGOHUD_MANIFEST_FILENAME_64
 
     async def set_governor_enabled(
             self, profile_name: str, enabled: bool
