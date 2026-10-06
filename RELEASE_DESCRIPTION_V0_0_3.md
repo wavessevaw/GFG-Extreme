@@ -23,3 +23,8 @@ A zip `GFG-Extreme-log-<date>.zip` is written to the Steam Deck desktop (`~/Desk
 
 ### Known limitations
 See `docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md`. Native (x1) telemetry and the MangoHud `exec` refresh rate remain unverified until a log from a real Deck is available.
+
+### Checksum
+```
+8091f16d18166271a1c7bece1a1ef604d989c7e152c5fcaacba289b38f6a995e  GFG-Extreme-Governor-v0_0_3.zip
+```
