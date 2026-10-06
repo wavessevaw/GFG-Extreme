@@ -1,6 +1,6 @@
 // GFG design tokens + stylesheet. Palette: near-black, graphite surfaces, white/grey text, ONE red accent.
 export const css = `
-.gfg{--bg:#0a0a0c;--s1:#141417;--s2:#1c1c21;--s3:#26262d;--line:#2e2e36;--tx:#f5f5f7;--tx2:#a1a1ab;--tx3:#6b6b76;--red:#ff3b30;--red2:#c92a22;--redbg:rgba(255,59,48,.12);
+.gfg{--bg:#0a0a0c;--s1:#141417;--s2:#1c1c21;--s3:#26262d;--line:#2e2e36;--tx:#f5f5f7;--tx2:#a1a1ab;--tx3:#6b6b76;--red:#fb0d00;--red2:#d40b00;--redbg:rgba(251,13,0,.12);
  font-family:"Motiva Sans","Inter","Segoe UI",system-ui,sans-serif;color:var(--tx);background:var(--bg);box-sizing:border-box;-webkit-font-smoothing:antialiased;
  padding:12px 12px 20px;min-height:100%;letter-spacing:.005em}
 .gfg *{box-sizing:border-box}
@@ -27,7 +27,7 @@ export const css = `
 .gfg .power{width:100%;margin-top:12px}
 .gfg .power .r{display:flex;justify-content:space-between;font-size:11px;color:var(--tx2);margin-bottom:6px;font-weight:600}
 .gfg .bar{height:6px;background:var(--s3);border-radius:6px;overflow:hidden}.gfg .bar>div{height:100%;background:var(--red);border-radius:6px}
-.gfg .run{margin-top:12px;width:100%;height:58px;border-radius:16px;border:0;display:flex;align-items:center;justify-content:center;gap:10px;font-size:17px;font-weight:800;letter-spacing:.18em;color:#fff;background:linear-gradient(180deg,#ff4a3f,var(--red2));box-shadow:0 8px 24px rgba(255,59,48,.28);cursor:pointer}
+.gfg .run{margin-top:12px;width:100%;height:58px;border-radius:16px;border:0;display:flex;align-items:center;justify-content:center;gap:10px;font-size:17px;font-weight:800;letter-spacing:.18em;color:#fff;background:var(--red);box-shadow:0 8px 24px rgba(251,13,0,.30);cursor:pointer}
 .gfg .run.stop{background:var(--s2);border:1px solid var(--line);box-shadow:none;color:var(--tx)}
 .gfg .run svg{width:18px;height:18px}
 .gfg .hint{font-size:11.5px;color:var(--tx2);text-align:center;margin:10px 6px 0;line-height:1.4}
@@ -52,13 +52,13 @@ export const css = `
 .gfg .step{display:flex;align-items:center;gap:6px}
 .gfg .step button{width:36px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--s2);color:var(--tx);font-size:18px;font-weight:700;cursor:pointer}
 .gfg .step .v{min-width:48px;text-align:center;font-weight:700;font-variant-numeric:tabular-nums}
-.gfg .note{display:flex;gap:10px;background:var(--redbg);border:1px solid rgba(255,59,48,.35);border-radius:14px;padding:11px 12px;font-size:12px;line-height:1.4;color:#ffd4d1;margin-top:12px}
+.gfg .note{display:flex;gap:10px;background:var(--redbg);border:1px solid rgba(251,13,0,.35);border-radius:14px;padding:11px 12px;font-size:12px;line-height:1.4;color:#ffd4d1;margin-top:12px}
 .gfg .note.quiet{background:var(--s2);border-color:var(--line);color:var(--tx2)}
 .gfg .kv{display:grid;grid-template-columns:auto 1fr;gap:7px 12px;font-size:12.5px;padding:2px 2px}
 .gfg .kv span{color:var(--tx2)}.gfg .kv b{font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
 .gfg .cols{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
 .gfg .col{background:var(--s2);border:1px solid var(--line);border-radius:12px;padding:10px}
 .gfg .col h4{margin:0 0 6px;font-size:10px;letter-spacing:.16em;color:var(--tx3)}
-.gfg .col.hot{border-color:rgba(255,59,48,.5)}.gfg .col.hot h4{color:var(--red)}
+.gfg .col.hot{border-color:rgba(251,13,0,.5)}.gfg .col.hot h4{color:var(--red)}
 .gfg .col div{font-size:12px;display:flex;justify-content:space-between;padding:2px 0}.gfg .col div span{color:var(--tx2)}
 `;

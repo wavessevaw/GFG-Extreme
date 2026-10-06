@@ -22,6 +22,8 @@ window.__state = ${JSON.stringify(state)};
 window.__cfg = ${JSON.stringify(extra.cfg || { fg_backend: "gfg", multiplier: 2, })};
 var callable = (n) => async (...a) => ({ get_governor_status: () => window.__state, get_profiles: () => ({ profiles: ["Default", "Elden Ring", "Cyberpunk 2077"], current_profile: "Elden Ring" }),
   get_profile_config: () => ({ config: window.__cfg }), get_pipeline_inspector: () => ({ saved: { fg_backend: "gfg", multiplier: 2, scaling: "off" }, effective: { fg_backend: "gfg", multiplier: 2, scaling: "off" }, actual: { renderer: "loaded", multiplier: 2 } }),
+  check_mako_installed: () => ({ installed: true, installed_engine_version: '4.0.1', expected_engine_version: '4.0.1', engine_update_required: false, host_architecture_supported: true }), check_flatpak_extension_status: () => ({ success: true, installed_23_08: false, installed_24_08: true, installed_25_08: true }), get_flatpak_apps: () => ({ success: true, total_apps: 2, apps: [{ app_id: 'org.example.A', app_name: 'Heroic', has_filesystem_override: true, has_wrapper_override: true, has_required_env_override: true }, { app_id: 'org.example.B', app_name: 'Lutris', has_filesystem_override: false, has_wrapper_override: false }] }),
+  get_config_schema: () => ({ field_names: ['scaling_enabled','scaling_factor','multiplier','dll','allow_fp16'], field_types: { scaling_enabled: 'boolean', scaling_factor: 'float', multiplier: 'integer', dll: 'string', allow_fp16: 'boolean' }, defaults: { scaling_enabled: false, scaling_factor: 1.5, multiplier: 2, dll: '', allow_fp16: true }, descriptions: { scaling_enabled: 'restart-bound scaling engine switch', scaling_factor: 'output scaling factor from 1.0x to 2.0x', multiplier: 'fixed multiplier', dll: 'optional full path to Lossless.dll', allow_fp16: 'allow FP16 acceleration' } }),
   get_launch_option: () => ({ launch_option: "/home/deck/.local/bin/gfg %command%" }) }[n] || (() => ({ success: true })))();
 var definePlugin = (f) => f;`;
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || undefined, args: ["--no-sandbox"] });
@@ -43,4 +45,6 @@ await shot("page-governor", STATES["home-locked-oled"], ["Governor"]);
 await shot("page-fg", STATES["home-locked-oled"], ["Frame Generation"]);
 await shot("page-hud", STATES["home-locked-oled"], ["In-game overlay"]);
 await shot("page-advanced", STATES["home-locked-oled"], ["Advanced"]);
+await shot("page-all", STATES["home-locked-oled"], ["Advanced", "All settings"]);
+await shot("page-system", STATES["home-locked-oled"], ["Advanced", "System"]);
 await browser.close(); console.log(shots.join("\n"));

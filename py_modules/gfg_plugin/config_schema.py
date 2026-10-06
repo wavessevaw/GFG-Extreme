@@ -140,6 +140,10 @@ class ConfigurationManager:
         return {name: field.field_type for name, field in CONFIG_SCHEMA.items()}
 
     @staticmethod
+    def get_field_descriptions() -> Dict[str, str]:
+        return {name: field.description for name, field in CONFIG_SCHEMA.items()}
+
+    @staticmethod
     def validate_config(config: Dict[str, Any]) -> ConfigurationData:
         """Return current-schema values and deliberately discard unknown keys.
 

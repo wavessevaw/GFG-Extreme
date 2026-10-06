@@ -804,7 +804,8 @@ class Plugin:
             schema_data = {
                 "field_names": ConfigurationManager.get_field_names(),
                 "field_types": {name: field_type.value for name, field_type in ConfigurationManager.get_field_types().items()},
-                "defaults": ConfigurationManager.get_defaults()
+                "defaults": ConfigurationManager.get_defaults(),
+                "descriptions": ConfigurationManager.get_field_descriptions(),
             }
 
             if profiles_response.get("success"):
@@ -822,6 +823,7 @@ class Plugin:
                 "field_names": ConfigurationManager.get_field_names(),
                 "field_types": {name: field_type.value for name, field_type in ConfigurationManager.get_field_types().items()},
                 "defaults": ConfigurationManager.get_defaults(),
+                "descriptions": ConfigurationManager.get_field_descriptions(),
                 "profiles": [DEFAULT_PROFILE_NAME],
                 "current_profile": DEFAULT_PROFILE_NAME
             }

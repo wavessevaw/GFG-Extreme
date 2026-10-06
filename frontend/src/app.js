@@ -17,6 +17,16 @@ const rpc = {
   inspector: callable("get_pipeline_inspector"),
   runtime: callable("get_runtime_status"),
   launch: callable("get_launch_option"),
+  schema: callable("get_config_schema"),
+  checkInstalled: callable("check_mako_installed"),
+  install: callable("install_mako"),
+  uninstall: callable("uninstall_mako"),
+  fpStatus: callable("check_flatpak_extension_status"),
+  fpInstall: callable("install_flatpak_extension"),
+  fpUninstall: callable("uninstall_flatpak_extension"),
+  fpApps: callable("get_flatpak_apps"),
+  fpSet: callable("set_flatpak_app_override"),
+  fpRemove: callable("remove_flatpak_app_override"),
 };
 
 // ---------- helpers
@@ -81,12 +91,13 @@ function Ring({ value, max, label, sub }) {
   return h("div", { className: "ring" },
     h("svg", { viewBox: "0 0 176 176", width: 176, height: 176 },
       h("circle", { cx: 88, cy: 88, r, fill: "none", stroke: "#26262d", strokeWidth: 9 }),
-      h("circle", { cx: 88, cy: 88, r, fill: "none", stroke: "#ff3b30", strokeWidth: 9, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } })),
+      h("circle", { cx: 88, cy: 88, r, fill: "none", stroke: "#fb0d00", strokeWidth: 9, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } })),
     h("div", { className: "num" }, h("div", { className: "big" }, label), h("div", { className: "sub" }, sub)));
 }
 
-function Home({ s, profile, go, refresh }) {
+function Home({ s, profile, go, refresh, inst, reloadInst }) {
   const [busy, setBusy] = useState(false);
+  const missing = inst && inst.installed === false;
   const d = describe(s);
   const dev = s.device || {};
   const tel = s.telemetry || {};
@@ -95,7 +106,11 @@ function Home({ s, profile, go, refresh }) {
   const real = tel.real && tel.real.median, out = tel.output && tel.output.median;
   const mult = latest.effective_multiplier;
   const pw = s.power || {};
-  const toggle = async () => { setBusy(true); try { await rpc.setGovernor(profile, !s.enabled); } catch (e) {} await refresh(); setBusy(false); };
+  const toggle = async () => {
+    setBusy(true);
+    try { if (missing) { await rpc.install(); await reloadInst(); } else { await rpc.setGovernor(profile, !s.enabled); } } catch (e) {}
+    await refresh(); setBusy(false);
+  };
   const showLive = s.enabled && out != null;
   const tdp = pw.observed_tdp_w != null ? pw.observed_tdp_w : pw.current_w;
   const eff = s.effort && s.effort.level;
@@ -116,8 +131,8 @@ function Home({ s, profile, go, refresh }) {
       tdp != null ? h("div", { className: "power" }, h("div", { className: "r" }, h("span", null, "TDP NOW"), h("span", null, num(tdp, 0) + " W" + (left ? "  ·  " + left + " left" : ""))),
         h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, (tdp / (pw.saved_w || 15)) * 100) + "%" } }))) : null),
     h(Focusable, { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? undefined : toggle },
-      h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 18 }), s.enabled ? "STOP" : "RUN"),
-    h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : "Target " + target + " FPS · " + (dev.reason || "picked automatically for this screen")),
+      h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 18 }), busy ? "WORKING…" : missing ? "INSTALL ENGINE" : s.enabled ? "STOP" : "RUN"),
+    h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : missing ? "The GFG engine is not installed yet. One tap installs it." : "Target " + target + " FPS · " + (dev.reason || "picked automatically for this screen")),
     h("div", { className: "list" },
       h(Row, { icon: "bolt", title: "Governor", sub: "What it decided and why", onClick: () => go("governor") }),
       h(Row, { icon: "layers", title: "Frame Generation", sub: "Backend and quality", onClick: () => go("fg") }),
@@ -187,15 +202,88 @@ function ProfilesPage({ back, profiles, current, pick }) {
     h("div", { className: "list", style: { marginTop: 0 } }, (profiles || []).map((p) => h(Row, { key: p, title: p, value: p === current ? "Active" : "", onClick: () => pick(p) }))));
 }
 
-function AdvancedPage({ back, s, insp, launch }) {
+function AdvancedPage({ back, s, insp, launch, go }) {
   const sv = insp && insp.saved, ef = insp && insp.effective, ac = insp && insp.actual;
   const col = (t, o, hot) => h("div", { className: "col" + (hot ? " hot" : "") }, h("h4", null, t),
     ...Object.entries(o || {}).slice(0, 5).map(([k, v]) => h("div", { key: k }, h("span", null, k), String(v))));
   return h(Page, { title: "Advanced", onBack: back },
     h("div", { className: "sec" }, "LAUNCH OPTION"),
     h("div", { className: "card" }, h("div", { style: { fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" } }, launch || "/home/deck/.local/bin/gfg %command%")),
+    h("div", { className: "list" }, h(Row, { icon: "cog", title: "All settings", sub: "Every profile option", onClick: () => go("all") }),
+      h(Row, { icon: "cog", title: "System", sub: "Engine install, Flatpak access", onClick: () => go("system") })),
     h("div", { className: "sec" }, "INSPECTOR"),
     h("div", { className: "cols" }, col("SAVED", sv), col("EFFECTIVE", ef), col("GOVERNOR", s && s.active_point ? { point: POINT_LABEL(s.active_point) } : {}, true), col("ACTUAL", ac)));
+}
+
+
+// Generic schema-driven editor: every profile setting stays reachable, validated server-side.
+function AllSettingsPage({ back, cfg, patch }) {
+  const [schema, setSchema] = useState(null);
+  const [q, setQ] = useState("");
+  useEffect(() => { rpc.schema().then(setSchema).catch(() => {}); }, []);
+  if (!schema) return h(Page, { title: "All settings", onBack: back }, h("div", { className: "hint" }, "Loading…"));
+  const names = (schema.field_names || []).filter((n) => !q || n.includes(q.toLowerCase())).sort();
+  const types = schema.field_types || {}, defs = schema.defaults || {}, desc = schema.descriptions || {};
+  const val = (n) => (cfg && cfg[n] != null ? cfg[n] : defs[n]);
+  const control = (n) => {
+    const t = types[n], v = val(n);
+    if (t === "boolean") return h("div", { className: "tog" + (v ? " on" : "") });
+    if (t === "integer" || t === "float") {
+      const st = t === "integer" ? 1 : 0.1;
+      const set = (d) => (e) => { e.stopPropagation(); const nv = Math.round((Number(v) + d) * 1000) / 1000; patch({ [n]: t === "integer" ? Math.round(nv) : nv }); };
+      return h("div", { className: "step" }, h("button", { onClick: set(-st) }, "−"), h("div", { className: "v" }, String(v)), h("button", { onClick: set(st) }, "+"));
+    }
+    const TF = window.DFL && window.DFL.TextField;
+    return TF ? h(TF, { value: String(v == null ? "" : v), onChange: (e) => patch({ [n]: e.target.value }) }) : h("div", { className: "val" }, String(v == null ? "" : v) || "–");
+  };
+  return h(Page, { title: "All settings", onBack: back },
+    h("div", { className: "list", style: { marginTop: 0 } }, names.map((n) =>
+      h(Focusable, { key: n, className: "row", onClick: types[n] === "boolean" ? () => patch({ [n]: !val(n) }) : undefined },
+        h("div", { className: "t" }, h("b", { style: { fontSize: 13 } }, n), h("span", { style: { whiteSpace: "normal" } }, desc[n] || "")),
+        control(n)))),
+    h(Note, { quiet: true }, "Values are validated by the engine. Saved profile only; Governor never writes here."));
+}
+
+const RUNTIMES = [["23.08", "installed_23_08"], ["24.08", "installed_24_08"], ["25.08", "installed_25_08"]];
+function SystemPage({ back, inst, reloadInst }) {
+  const [fp, setFp] = useState(null);
+  const [apps, setApps] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [msg, setMsg] = useState("");
+  const load = useCallback(async () => {
+    try { setFp(await rpc.fpStatus()); } catch (e) {}
+    try { setApps(await rpc.fpApps()); } catch (e) {}
+  }, []);
+  useEffect(() => { load(); }, []);
+  const run = async (key, fn) => {
+    setBusy(key); setMsg("");
+    try { const r = await fn(); if (r && r.success === false) setMsg(r.error || r.message || "Failed"); } catch (e) { setMsg(String(e)); }
+    await load(); await reloadInst(); setBusy("");
+  };
+  const engine = inst || {};
+  return h(Page, { title: "System", onBack: back },
+    h("div", { className: "sec" }, "ENGINE"),
+    h("div", { className: "card" }, h("div", { className: "kv" },
+      h("span", null, "Status"), h("b", null, engine.installed ? (engine.engine_update_required ? "Update required" : "Installed") : "Not installed"),
+      h("span", null, "Version"), h("b", null, engine.installed_engine_version || "–"),
+      h("span", null, "Expected"), h("b", null, engine.expected_engine_version || "–"))),
+    engine.host_architecture_supported === false ? h(Note, null, "This host architecture is not supported.") : null,
+    h("div", { className: "list" },
+      h(Row, { title: engine.installed ? (engine.engine_update_required ? "Update engine" : "Reinstall engine") : "Install engine", value: busy === "install" ? "Working…" : "", onClick: () => busy ? null : run("install", rpc.install) }),
+      engine.installed ? h(Row, { title: "Uninstall engine", value: busy === "uninstall" ? "Working…" : "", onClick: () => busy ? null : run("uninstall", rpc.uninstall) }) : null),
+    msg ? h(Note, null, msg) : null,
+    h("div", { className: "sec" }, "FLATPAK RUNTIMES"),
+    h("div", { className: "list", style: { marginTop: 0 } }, RUNTIMES.map(([v, field]) => {
+      const on = !!(fp && fp[field]);
+      return h(Row, { key: v, title: "Runtime " + v, sub: on ? "Extension installed" : "Not installed", value: busy === v ? "Working…" : (on ? "Remove" : "Install"),
+        onClick: () => busy ? null : run(v, () => (on ? rpc.fpUninstall(v) : rpc.fpInstall(v))) });
+    })),
+    h("div", { className: "sec" }, "FLATPAK APPS"),
+    apps && apps.apps && apps.apps.length ? h("div", { className: "list", style: { marginTop: 0 } }, apps.apps.map((a) => {
+      const on = a.has_filesystem_override && a.has_wrapper_override && a.has_required_env_override !== false;
+      return h(Row, { key: a.app_id, title: a.app_name || a.app_id, sub: on ? "GFG enabled" : "GFG off", value: busy === a.app_id ? "Working…" : (on ? "Disable" : "Enable"),
+        onClick: () => busy ? null : run(a.app_id, () => (on ? rpc.fpRemove(a.app_id) : rpc.fpSet(a.app_id))) });
+    })) : h(Note, { quiet: true }, apps ? "No Flatpak apps found." : "Loading…"));
 }
 
 // ---------- Root
@@ -206,13 +294,15 @@ function Content() {
   const [cfg, setCfg] = useState(null);
   const [insp, setInsp] = useState(null);
   const [launch, setLaunch] = useState("");
+  const [inst, setInst] = useState(null);
+  const reloadInst = useCallback(async () => { try { setInst(await rpc.checkInstalled()); } catch (e) {} }, []);
   const [s, refresh] = useGovernor(profile);
 
   const loadProfiles = useCallback(async () => {
     try { const r = await rpc.profiles(); setProfiles(r.profiles || []); setProfileName(r.current_profile || r.current || ""); } catch (e) {}
   }, []);
   const loadCfg = useCallback(async (p) => { try { const r = await rpc.profileConfig(p); setCfg(r.config || r); } catch (e) {} }, []);
-  useEffect(() => { loadProfiles(); try { rpc.launch().then((r) => setLaunch((r && (r.launch_option || r.option)) || "")); } catch (e) {} }, []);
+  useEffect(() => { reloadInst(); loadProfiles(); try { rpc.launch().then((r) => setLaunch((r && (r.launch_option || r.option)) || "")); } catch (e) {} }, []);
   useEffect(() => { if (profile) loadCfg(profile); }, [profile]);
   useEffect(() => { if (screen === "advanced") rpc.inspector(profile).then(setInsp).catch(() => {}); }, [screen]);
 
@@ -228,8 +318,10 @@ function Content() {
   else if (screen === "scaling") body = h(ScalingPage, { s, back, profile, refresh });
   else if (screen === "hud") body = h(HudPage, { back, s, profile, refresh });
   else if (screen === "profiles") body = h(ProfilesPage, { back, profiles, current: profile, pick });
-  else if (screen === "advanced") body = h(AdvancedPage, { back, s, insp, launch });
-  else body = h(Home, { s, profile, go, refresh });
+  else if (screen === "all") body = h(AllSettingsPage, { back: () => setScreen("advanced"), cfg, patch });
+  else if (screen === "system") body = h(SystemPage, { back: () => setScreen("advanced"), inst, reloadInst });
+  else if (screen === "advanced") body = h(AdvancedPage, { back, s, insp, launch, go });
+  else body = h(Home, { s, profile, go, refresh, inst, reloadInst });
   return h("div", { className: "gfg" }, h("style", null, css), body);
 }
 
