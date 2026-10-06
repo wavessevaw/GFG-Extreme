@@ -1,10 +1,15 @@
-# GFG Governor v0.0.1 Beta Known Limitations
+# GFG Governor v0.0.2 Known Limitations
 
-1. Operating Point actuation is deliberately incomplete. Beta 1 recommends Native/45x2/30x3 or Dock equivalents, but does not automatically rewrite saved FG multiplier or render scale. Automatic TDP search runs only when actual telemetry already confirms the recommended unscaled point.
-2. Renderer diagnostics are consumed from the retained diagnostics log. A dedicated shared-memory telemetry ABI was not confirmed in the current bundled Renderer v4.
-3. GPU/CPU utilization, clocks, temperature and package-power telemetry are not yet normalized into the Governor snapshot. Beta decisions use renderer cadence/pressure plus the PPT actuator.
-4. Automatic TDP requires writable amdgpu hwmon `fastPPT`/`slowPPT` cap controls. If unavailable, Governor stays observe-only.
-5. External FG backends are observe-only. Governor never changes OptiScaler or in-game Native FG settings.
-6. Native in-game FG remains opaque unless a future evidence source proves its internal state.
-7. The full final UI redesign is not complete. Beta 1 introduces a sparse Governor-first home surface and moves the existing engineering controls behind `Advanced Controls`; deeper screens remain from gfg.4.
-8. Live Steam Deck Game Mode hardware validation is still required. Offline/unit/replay tests cannot prove actual SteamOS permissions, renderer cadence behaviour, or game-specific stability.
+1. **No hardware validation yet.** All behaviour is verified with unit, replay, service and real-bash wrapper tests. Replay lines are modelled on the Renderer's diagnostic format strings, not captured from a Deck. First on-device testing is the v0.0.10 release.
+2. **`fixed-plan` cadence is unverified.** Real FPS is derived from `fixed-plan` events; their emission rate while FG is active has to be confirmed on a Deck.
+3. **Native (x1) points may have no evidence.** With Frame Generation off the Renderer may emit no periodic FPS event, so a native trial could time out and be rejected.
+4. **Restart-bound toggles.** Scaling Engine and Frame Generation provisioning are process-static. The game must be (re)launched once after enabling the Governor; scaled points need the opt-in *Scale-ready launch* and a relaunch.
+5. **Saved snapshot while running.** After the Governor is disabled, a running game keeps the Saved snapshot taken at launch; later Saved edits apply on the next launch.
+6. **Guard is minimal.** Full Runtime Guard is planned for v0.0.4.
+7. **Dock interplay not yet audited.** Interaction with the plugin's Automatic Dock state machine is the first v0.0.3 audit item.
+8. **Overlay directory in Flatpak.** The overlay lives next to the Saved config and is assumed readable from Flatpak sandboxes; unverified.
+9. **In-game overlay.** MangoHud horizontal layout and the refresh rate of the `exec` status line are unverified on device. The overlay is skipped when another external layer (MangoHud/vkBasalt) is chosen for the profile.
+10. **TDP control** needs writable amdgpu `fastPPT`/`slowPPT` caps; otherwise the Governor stays observe-only. TDP display needs readable hwmon values (otherwise `TDPn/a`).
+11. **GFG Effort thresholds** (nightmare below 18 real FPS, dwell times) are design choices not yet tuned on real games.
+12. **UI.** Frontend is verified in a mock Decky environment (Chromium) with sample data; focus/controller navigation on a real Deck is untested. Shader-effect and per-field presets from the old UI are reachable only through *All settings*.
+13. **External backends** (OptiScaler, Game Native) are observe-only; the Governor never changes them.
