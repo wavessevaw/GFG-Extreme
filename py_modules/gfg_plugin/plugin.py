@@ -67,7 +67,8 @@ class Plugin:
         self.flatpak_service = FlatpakService()
         self.gamescope_display_service = GamescopeDisplayService()
         self.governor_service = GovernorService(
-            self.configuration_service, self.gamescope_display_service, decky.logger
+            self.configuration_service, self.gamescope_display_service, decky.logger,
+            self.pipeline_inspector_service,
         )
         self._display_sync_task = None
         self._dock_monitor_task = None
@@ -730,6 +731,14 @@ class Plugin:
             self.governor_service.set_enabled, profile_name, enabled
         )
 
+    async def set_governor_scale_ready(
+            self, profile_name: str, scale_ready: bool
+    ) -> Dict[str, Any]:
+        """Provision the Scaling Engine at launch so scaled points can be live."""
+        return await asyncio.to_thread(
+            self.governor_service.set_scale_ready, profile_name, scale_ready
+        )
+
     async def get_pipeline_inspector(self, profile_name: str = "") -> Dict[str, Any]:
         """Return Saved -> Effective -> Actual pipeline truth."""
         return await asyncio.to_thread(
@@ -1337,7 +1346,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Governor v0.0.1 Beta started")
+        decky.logger.info("GFG Governor v0.0.2 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""

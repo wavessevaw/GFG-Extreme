@@ -74,6 +74,13 @@ class Request:
         }
 
 
+POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
+
+
+def _power_state_name(state: str) -> str:
+    return POWER_STATE_NAMES.get(str(state).lower(), str(state).upper())
+
+
 class GovernorService:
     LOOP_SECONDS = 1.0
     DISPLAY_REFRESH_SECONDS = 10.0
@@ -645,6 +652,9 @@ class GovernorService:
             return
         fingerprint = getattr(self.configuration, "saved_config_fingerprint", lambda: None)()
         header = self.overlay.read_header(profile)
+        if self._saved_fp is None and header is not None and header.get("owner") == self.overlay.owner_pid:
+            self._saved_fp = fingerprint  # first look: overlay was projected at enable/reconcile
+            return
         stale = (
             header is None
             or header.get("owner") != self.overlay.owner_pid
@@ -908,7 +918,7 @@ class GovernorService:
 
         fresh = self.observer.summary(self.WINDOW_SECONDS, after_seq=self._evaluation_after_seq)
         if fresh.get("samples", 0) < self.MIN_SAMPLES or fresh.get("sample_span_s", 0.0) < self.MIN_SAMPLE_SPAN_SECONDS:
-            self._status.update({"state": self.search.status.state.upper(), "reason": "evaluating-current-power"})
+            self._status.update({"state": _power_state_name(self.search.status.state), "reason": "evaluating-current-power"})
             return
         outcome = self.search.evaluate(
             p5_fps=(fresh.get("real") or {}).get("p5"),
@@ -926,7 +936,7 @@ class GovernorService:
                 return
             self._evaluation_after_seq = self.observer.sample_seq
             self._event("tdp-set", self.search.status.reason, watts=target_w, profile=profile)
-        state = self.search.status.state.upper()
+        state = _power_state_name(self.search.status.state)
         self._status.update({"state": state, "reason": self.search.status.reason})
         if state == "LOCKED":
             self._event("operating-point-locked", self.search.status.reason, profile=profile, point=point,
