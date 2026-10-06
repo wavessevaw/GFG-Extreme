@@ -157,6 +157,7 @@ function LogRecorder({ profile }) {
       sub: st.recording ? "Recording " + mm(st.elapsed_s || 0) + " · play the game, then stop" : "Start, play for a minute or two, stop. A zip lands on the Steam Deck desktop.",
       value: busy ? "…" : "", onClick: busy ? undefined : toggle })),
     st.last_file && !st.recording ? h(Note, { quiet: true }, "Saved: " + st.last_file) : null,
+    !st.recording && (st.findings || []).length ? h("div", { className: "card" }, h("div", { className: "sec" }, "WHAT THE LOG SHOWS"), ...(st.findings || []).map((f, i) => h("div", { key: i, className: "hint", style: { textAlign: "left" } }, "• " + f))) : null,
     err ? h(Note, null, "Log error: " + err) : null);
 }
 const Row = ({ icon, title, sub, value, onClick }) =>

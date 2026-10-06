@@ -220,6 +220,7 @@ class SessionRecorder:
         self.started_at = 0.0
         self.last_file: Optional[str] = None
         self.last_error: Optional[str] = None
+        self.last_findings: List[str] = []
         self._timeline: Optional[Path] = None
         self._offsets: Dict[Path, int] = {}
         self._task: Optional[asyncio.Task] = None
@@ -233,6 +234,7 @@ class SessionRecorder:
             "elapsed_s": round(self.clock() - self.started_at, 1) if self.recording else 0,
             "samples": self._lines,
             "last_file": self.last_file,
+            "findings": self.last_findings,
             "last_error": self.last_error,
             "desktop": str(desktop_dir(self.user_home)),
         }
@@ -410,7 +412,7 @@ class SessionRecorder:
             "decky_plugins": sorted(p.name for p in (self.user_home / "homebrew" / "plugins").glob("*"))
             if (self.user_home / "homebrew" / "plugins").is_dir() else [],
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.12",
+            "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.13",
         }
 
     def _write_bundle(self) -> Path:
@@ -423,6 +425,7 @@ class SessionRecorder:
             bundle.writestr("README.txt", (
                 "GFG Extreme diagnostic log.\n"
                 f"profile: {self._profile}\nduration_s: {round(self.clock() - self.started_at, 1)}\n"
+                "summary.txt      plain-language verdict of this log (read this first)\n"
                 "timeline.jsonl   1 Hz Governor state (state, reason, real/output FPS, point, ladder, TDP, overlay)\n"
                 "self_test.json   every precondition with ok/detail\n"
                 "system.json      device, kernel, gamescope\n"
@@ -489,6 +492,17 @@ class SessionRecorder:
                         bundle.writestr(f"launch-manifests/{manifest.name}", data)
             except OSError:
                 pass
+        try:  # the verdict goes first in the bundle; a failed analysis must never lose the log
+            from .log_report import analyze, render
+            with zipfile.ZipFile(tmp) as finished:
+                report = analyze(finished)
+            summary = render(report)
+            self.last_findings = list(report["findings"])[:4]
+            with zipfile.ZipFile(tmp, "a", zipfile.ZIP_DEFLATED) as bundle:
+                bundle.writestr("summary.txt", summary)
+        except Exception as error:
+            if self.log:
+                self.log.warning("Log summary failed: %s", error)
         os.replace(tmp, target)
         try:
             os.chmod(target, 0o644)
