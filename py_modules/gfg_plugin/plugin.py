@@ -1411,7 +1411,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Governor v0.0.4 started")
+        decky.logger.info("GFG Governor v0.0.5 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""
