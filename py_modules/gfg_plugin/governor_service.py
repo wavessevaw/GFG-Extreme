@@ -916,12 +916,24 @@ class GovernorService:
                                  "active_point_matches": True})
             return
 
-        if not snapshot.get("available") or (snapshot.get("sample_age_ms") or 10**9) > self.MAX_SAMPLE_AGE_MS:
+        sample_age_ms = snapshot.get("sample_age_ms")
+        if not snapshot.get("available") or sample_age_ms is None or sample_age_ms > self.MAX_SAMPLE_AGE_MS:
             if self.power.state.owned:
                 await asyncio.to_thread(self.power.restore_if_owned)
             telemetry_reason = "waiting-for-fps-events"
             path = str(snapshot.get("path") or "")
-            if snapshot.get("last_poll_error"):
+            # A game launched before Governor was enabled has neither renderer
+            # diagnostics nor the overlay binding: no FPS will ever arrive, so
+            # say "relaunch" instead of waiting forever.
+            capability = self._capability(profile, launch) if self.overlay is not None else None
+            if capability is not None:
+                self._status["capability"] = capability
+            if (
+                capability is not None and not capability["overlay_active"]
+                and snapshot.get("sample_seq", 0) == 0
+            ):
+                telemetry_reason = capability["reason"]
+            elif snapshot.get("last_poll_error"):
                 telemetry_reason = "diagnostics-log-unavailable"
             elif not path:
                 telemetry_reason = "diagnostics-path-unavailable"
@@ -1025,7 +1037,8 @@ class GovernorService:
         assert point is not None
         health_ratio = self.CAP_BOUND_HEALTH_RATIO if self._point_mode == "applied" else self.UNCAPPED_HEALTH_RATIO
         if not self.power.state.available:
-            self._status.update({"state": "OBSERVE_ONLY", "reason": "tdp-control-unavailable"})
+            reason = "tdp-control-not-writable" if self.power.state.fast_cap_path else "tdp-control-unavailable"
+            self._status.update({"state": "OBSERVE_ONLY", "reason": reason})
             return
         if not self.power.state.owned:
             claimed = await asyncio.to_thread(self.power.claim)

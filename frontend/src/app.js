@@ -43,12 +43,23 @@ const MODE_NAME = { oled: "Steam Deck OLED", lcd: "Steam Deck LCD", dock: "Dock"
 const fmtMult = (m) => { const q = Math.round(Number(m) * 4) / 4; return "×" + (Number.isInteger(q) ? q : String(q)); };
 const POINT_LABEL = (p) => (p ? (p.multiplier > 1 ? fmtMult(p.multiplier) : "Native") + (p.render_scale_pct < 100 ? " · " + p.render_scale_pct + "%" : "") : "–");
 
+const PAUSED_TEXT = {
+  "overlay-restore-failed": "Could not restore settings — retrying.",
+  "game-not-running": "Start the game with the GFG launch command.",
+  "diagnostics-active-no-events": "No FPS from the engine yet. If the game was started before GFG was turned on, relaunch it.",
+  "diagnostics-events-no-fps-samples": "The engine reports no FPS yet. Is frame generation on?",
+  "telemetry-stale": "FPS from the engine stopped arriving.",
+  "external-tdp-change": "TDP was changed outside GFG — not fighting it.",
+  "tdp-write-failed": "Could not write TDP.",
+};
+
 // Plain-language state for the hero card. Returns {head, body, tone}
 function describe(s) {
   const cap = (s.capability && s.capability.reason) || "";
   if (!s.enabled) return { head: "Ready", body: "Press Run — GFG will pick the target for this screen and manage the engine.", tone: "idle" };
-  if (s.state === "PAUSED") return { head: "Paused", body: s.reason === "overlay-restore-failed" ? "Could not restore settings — retrying." : "Waiting. Your saved profile is untouched.", tone: "warn" };
-  if (cap === "relaunch-required-for-governor-overlay") return { head: "Restart the game", body: "GFG is on. Relaunch the game once so the engine can attach.", tone: "warn" };
+  if (cap === "relaunch-required-for-governor-overlay" || s.reason === "relaunch-required-for-governor-overlay") return { head: "Restart the game", body: "GFG is on. Relaunch the game once so the engine can attach.", tone: "warn" };
+  if (s.state === "PAUSED") return { head: "Paused", body: PAUSED_TEXT[s.reason] || "Waiting (" + (s.reason || "unknown") + "). Your saved profile is untouched.", tone: "warn" };
+  if (s.state === "OBSERVE_ONLY" && s.reason === "tdp-control-not-writable") return { head: "No TDP access", body: "GFG manages frame generation, but cannot change TDP: the plugin has no write access to the power caps.", tone: "warn" };
   if (s.state === "OBSERVE_ONLY") return { head: "Observing", body: "Another backend owns the pipeline. GFG only watches.", tone: "idle" };
   if (s.state === "PROBE" || s.state === "PLAN") return { head: "Measuring", body: "Learning how the game runs. Nothing is changed yet.", tone: "busy" };
   if (s.state === "APPLY") return { head: "Testing " + POINT_LABEL(s.request && s.request.point), body: "Checking the result before keeping it.", tone: "busy" };

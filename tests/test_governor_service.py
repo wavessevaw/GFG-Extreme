@@ -131,6 +131,17 @@ class GovernorServiceTests(unittest.TestCase):
             svc.set_enabled("Game", False)
             self.assertFalse(marker.exists())
 
+    def test_unwritable_tdp_is_reported_not_silent(self):
+        with tempfile.TemporaryDirectory() as temp:
+            svc = self.make_service(Path(temp))
+            svc.power.state.available = False
+            svc.power.state.fast_cap_path = "/sys/class/hwmon/hwmon5/power1_cap"
+            svc.set_enabled("Game", True)
+            self.seed(svc, 48, 96)
+            asyncio.run(svc._iteration())
+            self.assertEqual(svc.get_status()["state"], "OBSERVE_ONLY")
+            self.assertEqual(svc.get_status()["reason"], "tdp-control-not-writable")
+
     def test_unavailable_telemetry_reports_specific_reason(self):
         with tempfile.TemporaryDirectory() as temp:
             svc = self.make_service(Path(temp))

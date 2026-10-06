@@ -405,6 +405,19 @@ class TrialFlowTests(RuntimeBase):
         self.assertIsNone(st["request"])
         self.assertEqual(self.header()["rev"], rev)
 
+    def test_game_started_before_governor_says_relaunch_instead_of_waiting(self):
+        # Field log: Governor enabled mid-game -> no diagnostics, no FPS ever.
+        self.inspector.info["governor_launch"] = None
+        st = self.step()
+        self.assertEqual(st["state"], "PAUSED")
+        self.assertEqual(st["reason"], "relaunch-required-for-governor-overlay")
+        self.assertEqual(st["capability"]["reason"], "relaunch-required-for-governor-overlay")
+
+    def test_no_events_with_governor_launch_keeps_telemetry_reason(self):
+        st = self.step()
+        self.assertEqual(st["state"], "PAUSED")
+        self.assertNotIn(st["reason"], ("relaunch-required-for-governor-overlay", "game-not-running"))
+
 
 class AdoptionTests(RuntimeBase):
     def test_already_running_proven_point_is_adopted_without_overlay_change(self):

@@ -67,3 +67,17 @@ class GovernorPowerActuatorTests(unittest.TestCase):
             actuator.set_tdp_w(30)
             self.assertEqual(int((h / "power2_cap").read_text()), 15000000)
             self.assertEqual(int((h / "power1_cap").read_text()), 18000000)
+
+    def test_read_only_caps_are_reported_unavailable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            h = self.make_hwmon(root)
+            actuator = SteamDeckPowerActuator(
+                drm_root=root / "drm", hwmon_root=root / "hwmon", access=lambda path, mode: False,
+            )
+            status = actuator.discover()
+            self.assertFalse(status["available"])
+            self.assertFalse(status["writable"])
+            self.assertEqual(status["observed_tdp_w"], 15.0)
+            self.assertFalse(actuator.claim()["owned"])
+            self.assertEqual(int((h / "power2_cap").read_text()), 15000000)
