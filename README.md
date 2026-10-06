@@ -27,7 +27,7 @@ Most frame-generation tools hand you a wall of switches and leave you to guess. 
 |---|---|
 | **One button** | Press **RUN**. The Governor reads your device, picks the target, starts the engine and manages it while you play. |
 | **Knows your screen** | **Steam Deck OLED → 90 FPS**, **Steam Deck LCD → 60 FPS**, **Dock / external display → 60 FPS**. No manual tuning. |
-| **Mostly does nothing** | It tries the highest-quality setting first (×1, then ×2, ×3 only), checks the result on real renderer data, and **stops** once the target is held. No constant tinkering. |
+| **Mostly does nothing** | It tries the highest-quality setting first (native first, then fractional ×1.25 to ×2.75 in quarter steps, x2 with a reduced render scale before the heaviest generation, and ×3 at most; never ×4/×5), checks the result on real renderer data, and **stops** once the target is held. No constant tinkering. |
 | **Saves battery** | Once the target is stable it lowers TDP step by step while the frame rate holds, and shows you the estimated time left. |
 | **Never touches your profile** | Your saved profile is **never modified**. The Governor works through a temporary overlay and always restores the original state. |
 | **Safe by design** | No overclocking, no raising your power ceiling, never ×4/×5 automatically, and it backs off when another tool owns TDP or the pipeline. |

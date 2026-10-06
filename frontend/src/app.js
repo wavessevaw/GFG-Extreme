@@ -37,7 +37,8 @@ const rpc = {
 // ---------- helpers
 const num = (v, d = 1) => (v == null || isNaN(v) ? "–" : Number(v).toFixed(d).replace(/\.0$/, ""));
 const MODE_NAME = { oled: "Steam Deck OLED", lcd: "Steam Deck LCD", dock: "Dock", external: "Dock", unknown: "Display" };
-const POINT_LABEL = (p) => (p ? (p.multiplier > 1 ? "×" + p.multiplier : "Native") + (p.render_scale_pct < 100 ? " · " + p.render_scale_pct + "%" : "") : "–");
+const fmtMult = (m) => { const q = Math.round(Number(m) * 4) / 4; return "×" + (Number.isInteger(q) ? q : String(q)); };
+const POINT_LABEL = (p) => (p ? (p.multiplier > 1 ? fmtMult(p.multiplier) : "Native") + (p.render_scale_pct < 100 ? " · " + p.render_scale_pct + "%" : "") : "–");
 
 // Plain-language state for the hero card. Returns {head, body, tone}
 function describe(s) {
@@ -130,7 +131,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst }) {
       h("div", { className: "status" }, h("div", { className: "h" }, d.head), d.body ? h("div", { className: "p" }, d.body) : null),
       showLive ? h("div", { className: "flow" },
         h("div", { className: "stat" }, h("div", { className: "v" }, num(real, 0)), h("div", { className: "l" }, "REAL")), h("div", { className: "a" }, "→"),
-        h("div", { className: "stat hot" }, h("div", { className: "v" }, mult ? "×" + num(mult, 0) : POINT_LABEL(s.active_point)), h("div", { className: "l" }, "GFG")), h("div", { className: "a" }, "→"),
+        h("div", { className: "stat hot" }, h("div", { className: "v" }, mult ? fmtMult(mult) : POINT_LABEL(s.active_point)), h("div", { className: "l" }, "GFG")), h("div", { className: "a" }, "→"),
         h("div", { className: "stat" }, h("div", { className: "v" }, num(out, 0)), h("div", { className: "l" }, "OUTPUT"))) : null,
       s.enabled ? h("div", { className: "effort" }, h("span", null, "GFG EFFORT"),
         h("b", { className: eff ? "lv " + eff : "lv" }, eff ? eff.toUpperCase() : "ASSESSING…")) : null,
@@ -159,11 +160,11 @@ function GovernorPage({ s, back }) {
       h("span", null, "Target"), h("b", null, (s.target_output_fps || dev.target || "–") + " FPS"),
       h("span", null, "Active point"), h("b", null, POINT_LABEL(pt) + (s.active_point_mode ? " (" + s.active_point_mode + ")" : "")),
       h("span", null, "Testing"), h("b", null, req ? POINT_LABEL(req.point) : "–"),
-      h("span", null, "Attempts"), h("b", null, lad.attempts != null ? lad.attempts + " / " + (lad.max_attempts || 6) : "–"))),
+      h("span", null, "Attempts"), h("b", null, lad.attempts != null ? lad.attempts + " / " + (lad.max_attempts || 12) : "–"))),
     dev.reason ? h(Note, { quiet: true }, dev.reason) : null,
     h("div", { className: "sec" }, "RULES"),
     h("div", { className: "card" }, h("div", { className: "kv" },
-      h("span", null, "Multipliers"), h("b", null, "×1 ×2 ×3 only"),
+      h("span", null, "Multipliers"), h("b", null, "×1 to ×3, steps of 0.25"),
       h("span", null, "Saved profile"), h("b", null, "never modified"),
       h("span", null, "TDP"), h("b", null, "never above your own"))),
     (s.limitations || []).length ? h("div", { className: "sec" }, "LIMITS") : null,

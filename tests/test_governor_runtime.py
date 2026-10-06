@@ -35,6 +35,12 @@ def fixed_plan(real, output):
             "target_applies=0 display_budget_hz=90")
 
 
+def adaptive_plan(real, output):
+    """Adaptive-mode line (how a fractional ratio is reported): interval means carry the ratio."""
+    return (H + f"operation=adaptive-plan base_fps={real} target_fps={output} generated=1 "
+            f"source_interval_mean_ms={1000.0 / real:.3f} requested_interval_mean_ms={1000.0 / output:.3f}")
+
+
 class FakeDisplay:
     def __init__(self):
         self.external = False
@@ -174,6 +180,11 @@ class RuntimeBase(unittest.TestCase):
         asyncio.run(self.svc._iteration())
         return self.svc.get_status()
 
+    def feed_adaptive(self, count, real, output, dt=0.6):
+        for _ in range(count):
+            self.t["now"] += dt
+            self.svc.observer.consume_line(adaptive_plan(real, output), now=self.t["now"])
+
     def feed(self, count, real, output, dt=0.6):
         for _ in range(count):
             self.t["now"] += dt
@@ -185,6 +196,22 @@ class RuntimeBase(unittest.TestCase):
 
     def header(self):
         return self.svc.overlay.read_header("game")
+
+    FRACTIONAL_RUNGS = ("72x1.25", "60x1.5", "51x1.75")
+
+    def reject_fractional(self, key="60x1.5"):
+        """The pending fractional request is never confirmed -> timeout, rollback, rejected."""
+        self.assertEqual(self.svc.get_status()["request"]["point"], key)
+        st = self.step(self.svc.CONFIRM_TIMEOUT_SECONDS + 1)
+        self.assertEqual(st["ladder"]["rejected"][key], "confirmation-timeout")
+        self.feed(20, 60, 60)            # fresh telemetry after the long wait (clock moved on)
+        self.t["now"] += 0.5
+
+    def reject_all_fractionals(self):
+        """Every fractional rung below x2 (x1.25, x1.5, x1.75) times out in turn."""
+        for key in self.FRACTIONAL_RUNGS:
+            self.step()
+            self.reject_fractional(key)
 
     def prime_not_matching(self):
         """Running 60 FPS native: proves 45x2 capacity but is not any proven point."""
@@ -205,7 +232,9 @@ class TrialFlowTests(RuntimeBase):
         self.assertIsNone(st["request"])
         self.assertEqual(self.overlay_profile()["frame_generation_enabled"],
                          self.cfg.get_profile_config("game")["config"]["frame_generation_enabled"])
-        # Next iteration tries 45x2.
+        # Next iterations try x1.25, x1.5 and x1.75; this renderer cannot reach
+        # any of them (stays a 2x cadence) so each confirmation times out.
+        self.reject_all_fractionals()
         st = self.step()
         self.assertEqual(st["request"]["point"], "45x2")
         prof = self.overlay_profile()
@@ -221,6 +250,71 @@ class TrialFlowTests(RuntimeBase):
         st = self.step()
         self.assertEqual(st["state"], "OPTIMIZE_POWER")
         self.assertTrue(self.svc.power.state.owned)
+
+    def test_fractional_x15_is_tried_before_x2_and_confirmed_on_real_ratio(self):
+        self.prime_not_matching()
+        self.step()                      # native90 trial
+        self.feed(16, 60, 60)
+        self.step()                      # native rejected
+        self.step()                      # x1.25 trial
+        self.reject_fractional("72x1.25")
+        st = self.step()                 # x1.5 trial
+        self.assertEqual(st["request"]["point"], "60x1.5")
+        prof = self.overlay_profile()
+        self.assertEqual((prof["adaptive"], prof["target_fps"], prof["base_fps_cap"]), (True, 90, 60))
+        self.assertFalse(prof["adaptive_auto_base_fps_cap"])
+        self.assertFalse(prof["adaptive_stable_cadence"])
+        self.assertTrue(prof["frame_generation_enabled"])
+        self.feed_adaptive(16, 60, 90)   # real 60 -> output 90 = x1.5 on the real ratio
+        st = self.step()
+        self.assertEqual(st["reason"], "operating-point-confirmed")
+        self.assertEqual(st["active_point"]["key"], "60x1.5")
+        self.assertEqual(st["active_point"]["multiplier"], 1.5)
+
+    def test_x175_is_confirmed_on_its_real_ratio(self):
+        self.prime_not_matching()
+        self.step()
+        self.feed(16, 60, 60)
+        self.step()
+        for key in self.FRACTIONAL_RUNGS[:2]:
+            self.step()
+            self.reject_fractional(key)
+        st = self.step()
+        self.assertEqual(st["request"]["point"], "51x1.75")
+        prof = self.overlay_profile()
+        self.assertEqual((prof["adaptive"], prof["target_fps"], prof["base_fps_cap"]), (True, 90, 51))
+        self.assertEqual(prof["adaptive_max_multiplier"], 2)
+        self.feed_adaptive(16, 51, 90)   # ratio 1.76
+        st = self.step()
+        self.assertEqual(st["reason"], "operating-point-confirmed")
+        self.assertEqual(st["active_point"]["key"], "51x1.75")
+
+    def test_neighbouring_fraction_does_not_confirm_a_point(self):
+        """x1.5 cadence while x1.75 is pending: 0.25 apart, must not be accepted."""
+        self.prime_not_matching()
+        self.step()
+        self.feed(16, 60, 60)
+        self.step()
+        for key in self.FRACTIONAL_RUNGS[:2]:
+            self.step()
+            self.reject_fractional(key)
+        self.step()
+        self.assertEqual(self.svc.get_status()["request"]["point"], "51x1.75")
+        self.feed_adaptive(16, 60, 90)   # ratio 1.5
+        st = self.step()
+        self.assertEqual(st["state"], "APPLY")
+        self.assertIsNone(st["active_point"])
+
+    def test_integer_cadence_does_not_confirm_fractional_point(self):
+        self.prime_not_matching()
+        self.step()
+        self.feed(16, 60, 60)
+        self.step()
+        self.step()                      # 60x1.5 pending
+        self.feed(16, 45, 90)            # renderer settled on x2: ratio 2.0 != 1.5
+        st = self.step()
+        self.assertEqual(st["state"], "APPLY")
+        self.assertIsNone(st["active_point"])
 
     def test_write_alone_is_not_application_timeout_rolls_back(self):
         self.prime_not_matching()
@@ -251,8 +345,8 @@ class TrialFlowTests(RuntimeBase):
         self.step()  # request native90
         self.feed(16, 60, 60)
         self.step()  # rejected
-        self.step()  # request 45x2 now pending
-        self.assertEqual(self.svc.get_status()["request"]["point"], "45x2")
+        self.step()  # request 72x1.25 now pending
+        self.assertEqual(self.svc.get_status()["request"]["point"], "72x1.25")
         # 20 old 60 FPS native samples exist in the observer; none postdate the mark.
         st = self.step(2.0)
         self.assertEqual(st["state"], "APPLY")
@@ -268,7 +362,7 @@ class TrialFlowTests(RuntimeBase):
 
     def test_bounded_ladder_ends_in_not_viable_and_restores_base(self):
         self.prime_not_matching()
-        for _ in range(14):
+        for _ in range(40):
             self.feed(2, 20, 20)
             st = self.step()
             if st["request"]:
@@ -278,7 +372,7 @@ class TrialFlowTests(RuntimeBase):
         self.feed(2, 20, 20)
         st = self.step()
         self.assertEqual(st["reason"], "target-not-proven-viable")
-        self.assertLessEqual(st["ladder"]["attempts"], 6)
+        self.assertLessEqual(st["ladder"]["attempts"], 12)
         # Scaled points were skipped (engine not provisioned at launch), never rejected as a trial.
         self.assertTrue(all(v == "scaling-engine-not-provisioned-at-launch" for v in st["ladder"]["skipped"].values()))
         saved = self.cfg.get_profile_config("game")["config"]
@@ -319,6 +413,7 @@ class ReleaseTests(RuntimeBase):
         self.step()
         self.feed(16, 60, 60)
         self.step()
+        self.reject_all_fractionals()
         self.step()
         self.feed(16, 45, 90)
         st = self.step()

@@ -15,7 +15,7 @@ class OperatingPoint:
     key: str
     target_output_fps: int
     base_target_fps: int
-    multiplier: int
+    multiplier: float
     render_scale_pct: int
     degraded: bool = False
     requires_scale_validation: bool = False
@@ -60,21 +60,45 @@ class OperatingPointPlanner:
     ) -> tuple[OperatingPoint, ...]:
         """Ladder for a 60 FPS target (Dock / Deck LCD) or a 90 FPS target (Deck OLED)."""
         sixty = (int(target_output_fps) == 60) if target_output_fps else bool(external_display)
-        if sixty:
-            return (
-                OperatingPoint("native60", 60, 60, 1, 100),
-                OperatingPoint("30x2", 60, 30, 2, 100),
-                OperatingPoint("30x2-s90", 60, 30, 2, 90, requires_scale_validation=True),
-                OperatingPoint("30x2-s80", 60, 30, 2, 80, requires_scale_validation=True),
-                OperatingPoint("20x3-degraded", 60, 20, 3, 100, degraded=True),
-            )
-        return (
-            OperatingPoint("native90", 90, 90, 1, 100),
-            OperatingPoint("45x2", 90, 45, 2, 100),
-            OperatingPoint("30x3", 90, 30, 3, 100),
-            OperatingPoint("30x3-s90", 90, 30, 3, 90, requires_scale_validation=True),
-            OperatingPoint("30x3-s80", 90, 30, 3, 80, requires_scale_validation=True),
+        target = 60 if sixty else 90
+        ladder = cls.fg_ladder(target)
+        base2 = int(round(target / 2))
+        # Render scale is a tool of its own: before pushing generation to x2.75/x3
+        # (more artefacts, more latency) try x2 with a reduced render scale, which
+        # frees GPU time for the real frames instead.
+        mid = (
+            OperatingPoint(f"{base2}x2-s90", target, base2, 2, 90, requires_scale_validation=True),
+            OperatingPoint(f"{base2}x2-s80", target, base2, 2, 80, requires_scale_validation=True),
         )
+        head = tuple(p for p in ladder if p.multiplier <= 2.5)
+        rest = tuple(p for p in ladder if p.multiplier > 2.5)
+        if sixty:
+            tail = (OperatingPoint("20x3-degraded", 60, 20, 3, 100, degraded=True),)
+        else:
+            tail = (
+                OperatingPoint("30x3-s90", 90, 30, 3, 90, requires_scale_validation=True),
+                OperatingPoint("30x3-s80", 90, 30, 3, 80, requires_scale_validation=True),
+            )
+        return head + mid + rest + tail
+
+    # Automatic multipliers: native, then quarter steps up to x3.  x4/x5 are
+    # never chosen automatically.
+    MULTIPLIER_GRID = (1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0)
+
+    @classmethod
+    def fg_ladder(cls, target: int) -> tuple[OperatingPoint, ...]:
+        """Highest quality (lowest multiplier, highest real FPS) first."""
+        points = []
+        for m in cls.MULTIPLIER_GRID:
+            base = int(round(target / m))
+            if m == 1.0:
+                key = f"native{target}"
+            else:
+                key = f"{base}x{m:g}"
+            if target == 60 and m == 3.0:
+                continue  # 20x3 only exists as the degraded last resort
+            points.append(OperatingPoint(key, target, base, m if m != int(m) else int(m), 100))
+        return tuple(points)
 
     @classmethod
     def required_p5(cls, point: OperatingPoint) -> float:
@@ -157,7 +181,7 @@ class TrialLadder:
     never exceeds ``MAX_ATTEMPTS`` applications, so it cannot oscillate.
     """
 
-    MAX_ATTEMPTS = 6
+    MAX_ATTEMPTS = 12
     # Cap-bound health: the real cadence sits on the cap, so require it to hold
     # within 5 % of the cap, with output close to the display target and no
     # delivery pressure.  (Uncapped headroom evidence is impossible here.)
@@ -241,20 +265,26 @@ class TrialLadder:
         }
 
 
+def multiplier_tolerance(multiplier: float) -> float:
+    """Fractional neighbours are 0.25 apart, so they need a tighter match than integers."""
+    m = float(multiplier)
+    return 0.22 if m == int(m) else 0.12
+
+
 EFFORT_LEVELS = ("easy", "medium", "hard", "nightmare")
 
 
 def raw_effort(point: Optional[Dict[str, Any]], real_median: Optional[float], exhausted: bool = False) -> Optional[str]:
     """Instantaneous effort level, before any smoothing.
 
-    easy: no generation needed; medium: x2; hard: x3 or reduced render scale;
+    easy: native or up to x1.5; medium: above x1.5 and below x3; hard: x3 or reduced render scale;
     nightmare: target not reachable, very low real FPS, or x3 *and* reduced scale.
     """
     if exhausted:
         return "nightmare"
     if point is None:
         return None
-    mult = int(point.get("multiplier", 1) or 1)
+    mult = float(point.get("multiplier", 1) or 1)
     scale = int(point.get("render_scale_pct", 100) or 100)
     if real_median is not None and real_median < EffortEstimator.NIGHTMARE_REAL_FPS:
         return "nightmare"
@@ -262,9 +292,9 @@ def raw_effort(point: Optional[Dict[str, Any]], real_median: Optional[float], ex
         return "nightmare"
     if mult >= 3 or scale < 100:
         return "hard"
-    if mult == 2:
+    if mult > 1.5:
         return "medium"
-    return "easy"
+    return "easy"  # native or up to x1.5: generation fills a minority of frames
 
 
 class EffortEstimator:
@@ -324,8 +354,17 @@ class EffortEstimator:
 class CostModel:
     """Transparent relative cost model used for rare point comparisons."""
 
-    MULTIPLIER_PENALTY = {1: 0.0, 2: 1.0, 3: 4.0}
     SCALE_PENALTY = {100: 0.0, 90: 2.0, 80: 6.0}
+
+    @staticmethod
+    def multiplier_penalty(multiplier: float) -> float:
+        """Piecewise linear: x1 0, x2 1, x3 4 (x1.5 0.5, x2.5 2.5); anything else is steep."""
+        m = float(multiplier)
+        if 1.0 <= m <= 2.0:
+            return (m - 1.0) * 1.0
+        if 2.0 < m <= 3.0:
+            return 1.0 + (m - 2.0) * 3.0
+        return 20.0
 
     def score(
         self,
@@ -339,7 +378,7 @@ class CostModel:
         degraded = 4.0 if point.degraded else 0.0
         return (
             max(0.0, float(estimated_power_w))
-            + self.MULTIPLIER_PENALTY.get(point.multiplier, 20.0)
+            + self.multiplier_penalty(point.multiplier)
             + self.SCALE_PENALTY.get(point.render_scale_pct, 20.0)
             + max(0.0, float(instability_penalty))
             + transition

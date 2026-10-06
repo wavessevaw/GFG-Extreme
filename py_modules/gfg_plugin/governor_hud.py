@@ -42,6 +42,12 @@ def active_config_path(config_dir: Path) -> Path:
     return Path(config_dir) / HUD_DIRNAME / "active.conf"
 
 
+def _fmt_multiplier(value: float) -> str:
+    """Nearest quarter step: 2.01 -> 2, 1.46 -> 1.5, 1.76 -> 1.75."""
+    q = round(float(value) * 4) / 4
+    return str(int(q)) if q == int(q) else f"{q:g}"
+
+
 _EFFORT_SHORT = {"easy": "easy", "medium": "med", "hard": "hard", "nightmare": "nightmare"}
 
 
@@ -53,7 +59,7 @@ def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
     real = (tel.get("real") or {}).get("median")
     out = (tel.get("output") or {}).get("median")
     mult = (tel.get("latest") or {}).get("effective_multiplier")
-    parts = [f"x{round(mult)}" if mult else "GFG"]
+    parts = [f"x{_fmt_multiplier(mult)}" if mult else "GFG"]
     if real is not None and out is not None:
         parts.append(f"{round(real)}>{round(out)}")
     if preset == "minimal":

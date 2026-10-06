@@ -23,6 +23,17 @@ class GovernorPlannerTests(unittest.TestCase):
         self.assertEqual(decision.point.key, "45x2")
         self.assertEqual(decision.point.multiplier, 2)
 
+    def test_fractional_x15_preferred_when_60_real_fps_is_proven(self):
+        decision = self.planner.recommend(external_display=False, observed_p5_fps=64, observed_multiplier=1.5)
+        self.assertEqual(decision.point.key, "60x1.5")
+        self.assertEqual(decision.point.multiplier, 1.5)
+        dock = self.planner.recommend(external_display=True, observed_p5_fps=43, observed_multiplier=1.5)
+        self.assertEqual(dock.point.key, "40x1.5")
+
+    def test_x15_not_chosen_without_capacity_falls_back_to_x2(self):
+        decision = self.planner.recommend(external_display=False, observed_p5_fps=50, observed_multiplier=2.0)
+        self.assertEqual(decision.point.key, "45x2")
+
     def test_30x3_when_45_not_proven(self):
         decision = self.planner.recommend(external_display=False, observed_p5_fps=33, observed_multiplier=3.0)
         self.assertEqual(decision.point.key, "30x3")
@@ -34,7 +45,20 @@ class GovernorPlannerTests(unittest.TestCase):
 
     def test_no_automatic_x4_x5_candidates(self):
         multipliers = {point.multiplier for point in self.planner.candidates(external_display=False)}
-        self.assertEqual(multipliers, {1, 2, 3})
+        self.assertEqual(multipliers, {1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3})
+        self.assertLessEqual(max(multipliers), 3)
+
+    def test_quarter_steps_are_chosen_from_proven_capacity(self):
+        cases = ((76, "72x1.25"), (54, "51x1.75"), (43, "40x2.25"), (38, "36x2.5"), (35, "33x2.75"))
+        for p5, key in cases:
+            decision = self.planner.recommend(external_display=False, observed_p5_fps=p5, observed_multiplier=2.0)
+            self.assertEqual(decision.point.key, key, p5)
+
+    def test_cost_model_is_monotonic_in_multiplier(self):
+        from gfg_plugin.governor_core import CostModel
+        pen = [CostModel.multiplier_penalty(m) for m in OperatingPointPlanner.MULTIPLIER_GRID]
+        self.assertEqual(pen, sorted(pen))
+        self.assertEqual((pen[0], CostModel.multiplier_penalty(1.5), CostModel.multiplier_penalty(2), CostModel.multiplier_penalty(3)), (0, 0.5, 1, 4))
 
 
 class GovernorPowerSearchTests(unittest.TestCase):

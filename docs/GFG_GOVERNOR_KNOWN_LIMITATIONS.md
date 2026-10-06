@@ -13,3 +13,4 @@
 11. **GFG Effort thresholds** (nightmare below 18 real FPS, dwell times) are design choices not yet tuned on real games.
 12. **UI.** Frontend is verified in a mock Decky environment (Chromium) with sample data; focus/controller navigation on a real Deck is untested. Shader-effect and per-field presets from the old UI are reachable only through *All settings*.
 13. **External backends** (OptiScaler, Game Native) are observe-only; the Governor never changes them.
+14. **Fractional multipliers (x1.25 to x2.75) are unverified on hardware.** It relies on switching the renderer between fixed and adaptive mode live and on `adaptive-plan` interval telemetry. A renderer that does not reach the 1.5 ratio fails the confirmation, times out and rolls back, so the worst case is losing that rung, not a wrong setting. A full unsuccessful ladder is up to 12 attempts of 25 s to 60 s each, so finding the right point on a very demanding game can take several minutes.

@@ -15,6 +15,12 @@ class HudTests(unittest.TestCase):
         self.assertEqual(hud.status_line(s, "detailed"), "x2  45>90  sc90  9W  2h05  med  locked")
         self.assertEqual(hud.status_line({"enabled": False}), "GFG off")
 
+    def test_fractional_multiplier_is_shown_to_the_nearest_quarter(self):
+        base = {"enabled": True, "state": "LOCKED", "telemetry": {"real": {"median": 60.0}, "output": {"median": 90.0}, "latest": {"effective_multiplier": 1.47}}}
+        self.assertTrue(hud.status_line(base, "minimal").startswith("x1.5  60>90"))
+        base["telemetry"]["latest"]["effective_multiplier"] = 2.04
+        self.assertTrue(hud.status_line(base, "minimal").startswith("x2  "))
+
     def test_battery_time_omitted_when_unknown(self):
         s = {"enabled": True, "state": "LOCKED", "battery": {"minutes_left": None}}
         self.assertEqual(hud.status_line(s), "GFG  sc100  TDPn/a")

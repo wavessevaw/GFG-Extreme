@@ -133,7 +133,11 @@ var rpc = {
 };
 var num = (v, d = 1) => v == null || isNaN(v) ? "\u2013" : Number(v).toFixed(d).replace(/\.0$/, "");
 var MODE_NAME = { oled: "Steam Deck OLED", lcd: "Steam Deck LCD", dock: "Dock", external: "Dock", unknown: "Display" };
-var POINT_LABEL = (p) => p ? (p.multiplier > 1 ? "\xD7" + p.multiplier : "Native") + (p.render_scale_pct < 100 ? " \xB7 " + p.render_scale_pct + "%" : "") : "\u2013";
+var fmtMult = (m) => {
+  const q = Math.round(Number(m) * 4) / 4;
+  return "\xD7" + (Number.isInteger(q) ? q : String(q));
+};
+var POINT_LABEL = (p) => p ? (p.multiplier > 1 ? fmtMult(p.multiplier) : "Native") + (p.render_scale_pct < 100 ? " \xB7 " + p.render_scale_pct + "%" : "") : "\u2013";
 function describe(s) {
   const cap = s.capability && s.capability.reason || "";
   if (!s.enabled) return { head: "Ready", body: "Press Run \u2014 GFG will pick the target for this screen and manage the engine.", tone: "idle" };
@@ -265,7 +269,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst }) {
         { className: "flow" },
         h("div", { className: "stat" }, h("div", { className: "v" }, num(real, 0)), h("div", { className: "l" }, "REAL")),
         h("div", { className: "a" }, "\u2192"),
-        h("div", { className: "stat hot" }, h("div", { className: "v" }, mult ? "\xD7" + num(mult, 0) : POINT_LABEL(s.active_point)), h("div", { className: "l" }, "GFG")),
+        h("div", { className: "stat hot" }, h("div", { className: "v" }, mult ? fmtMult(mult) : POINT_LABEL(s.active_point)), h("div", { className: "l" }, "GFG")),
         h("div", { className: "a" }, "\u2192"),
         h("div", { className: "stat" }, h("div", { className: "v" }, num(out, 0)), h("div", { className: "l" }, "OUTPUT"))
       ) : null,
@@ -321,7 +325,7 @@ function GovernorPage({ s, back }) {
       h("span", null, "Testing"),
       h("b", null, req ? POINT_LABEL(req.point) : "\u2013"),
       h("span", null, "Attempts"),
-      h("b", null, lad.attempts != null ? lad.attempts + " / " + (lad.max_attempts || 6) : "\u2013")
+      h("b", null, lad.attempts != null ? lad.attempts + " / " + (lad.max_attempts || 12) : "\u2013")
     )),
     dev.reason ? h(Note, { quiet: true }, dev.reason) : null,
     h("div", { className: "sec" }, "RULES"),
@@ -329,7 +333,7 @@ function GovernorPage({ s, back }) {
       "div",
       { className: "kv" },
       h("span", null, "Multipliers"),
-      h("b", null, "\xD71 \xD72 \xD73 only"),
+      h("b", null, "\xD71 to \xD73, steps of 0.25"),
       h("span", null, "Saved profile"),
       h("b", null, "never modified"),
       h("span", null, "TDP"),

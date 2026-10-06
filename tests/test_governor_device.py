@@ -35,9 +35,13 @@ class DeviceTargetTests(unittest.TestCase):
         self.assertEqual(target_for("unknown", external=False)["target"], 60)
 
     def test_candidates_follow_target_and_never_offer_x4_x5(self):
-        for target, keys in ((90, ["native90", "45x2", "30x3"]), (60, ["native60", "30x2"])):
+        for target, keys in (
+            (90, ["native90", "72x1.25", "60x1.5", "51x1.75", "45x2", "40x2.25", "36x2.5", "45x2-s90", "45x2-s80", "33x2.75", "30x3", "30x3-s90", "30x3-s80"]),
+            (60, ["native60", "48x1.25", "40x1.5", "34x1.75", "30x2", "27x2.25", "24x2.5", "30x2-s90", "30x2-s80", "22x2.75", "20x3-degraded"]),
+        ):
             points = OperatingPointPlanner.candidates(target_output_fps=target)
             self.assertEqual([p.key for p in points][:len(keys)], keys)
+            self.assertEqual(len(points), len(keys))
             self.assertTrue(all(p.multiplier <= 3 and p.target_output_fps == target for p in points))
         self.assertEqual(TrialLadder(target_output_fps=60).candidates()[0].key, "native60")
 

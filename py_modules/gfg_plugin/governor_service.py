@@ -30,6 +30,7 @@ from typing import Any, Dict, Optional
 from shared_config import FG_BACKEND_GFG
 from .constants import PRESENT_DIAGNOSTICS_LOG_FILENAME
 from .governor_core import (
+    multiplier_tolerance,
     EffortEstimator, OperatingPoint, OperatingPointPlanner, PowerSearch, TrialLadder, raw_effort,
 )
 from .governor_battery import BatteryEstimator, read_battery
@@ -532,7 +533,7 @@ class GovernorService:
         if not all(isinstance(v, (int, float)) and math.isfinite(float(v)) for v in (mult, output, p5)):
             return False
         return (
-            abs(float(mult) - float(point["multiplier"])) <= 0.22
+            abs(float(mult) - float(point["multiplier"])) <= multiplier_tolerance(point["multiplier"])
             and float(output) >= float(point["target_output_fps"]) * 0.94
             and float(p5) >= float(point["base_target_fps"]) * 1.05
             and int(point["render_scale_pct"]) == 100
@@ -675,16 +676,17 @@ class GovernorService:
         applied = [event for event in events if event.operation in APPLIED_OPERATIONS]
         samples = self.observer.samples_after_event(applied[-1].event_seq if applied else req.event_mark)
         want = float(req.point.multiplier)
+        tol = multiplier_tolerance(want)
         tail = samples[-self.MIN_SAMPLES:]
         consistent = len(tail) >= self.MIN_SAMPLES and all(
-            abs(sample.effective_multiplier - want) <= self.MULTIPLIER_TOLERANCE
+            abs(sample.effective_multiplier - want) <= tol
             or (req.point.multiplier == 1 and sample.effective_multiplier <= 1.12)
             for sample in tail
         )
         if consistent and (tail[-1].monotonic - tail[0].monotonic) >= self.MIN_SAMPLE_SPAN_SECONDS:
             run: list = []
             for sample in reversed(samples):
-                if abs(sample.effective_multiplier - want) <= self.MULTIPLIER_TOLERANCE or (
+                if abs(sample.effective_multiplier - want) <= tol or (
                     req.point.multiplier == 1 and sample.effective_multiplier <= 1.12
                 ):
                     run.append(sample)

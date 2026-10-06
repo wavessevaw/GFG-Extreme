@@ -27,6 +27,7 @@ exists, so a crashed plugin cannot leave new launches bound to a stale point.
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import re
 import tempfile
@@ -46,6 +47,9 @@ _LAUNCH_RE = re.compile(
 # Saved intent and must stay byte-for-byte equal to the Saved projection.
 LIVE_FIELDS = frozenset({
     "adaptive",
+    "adaptive_auto_base_fps_cap",
+    "adaptive_stable_cadence",
+    "adaptive_max_multiplier",
     "multiplier",
     "target_fps",
     "base_fps_cap",
@@ -53,6 +57,8 @@ LIVE_FIELDS = frozenset({
     "scaling_factor",
     "scaling_method",
 })
+# x4/x5 are never chosen automatically.
+MAX_AUTO_MULTIPLIER = 3.0
 # Launch-time only (process-static): may appear only in the base overlay.
 LAUNCH_FIELDS = frozenset({"scaling_enabled"})
 
@@ -112,16 +118,33 @@ def point_deltas(
     scale_ready: bool,
 ) -> Dict[str, Any]:
     """Map an Operating Point to live overlay fields (never Saved)."""
-    multiplier = int(point["multiplier"])
-    if multiplier not in (1, 2, 3):
+    multiplier = float(point["multiplier"])
+    if not (1.0 <= multiplier <= MAX_AUTO_MULTIPLIER):
         raise PointNotApplicable("multiplier-not-allowed-automatically")
-    deltas: Dict[str, Any] = {
-        "adaptive": False,
-        "multiplier": multiplier if multiplier > 1 else int(saved.get("multiplier", 2) or 2),
-        "target_fps": int(point["target_output_fps"]),
-        "base_fps_cap": int(point["base_target_fps"]),
-        "frame_generation_enabled": multiplier > 1,
-    }
+    if multiplier != int(multiplier):
+        # Fractional ratio (x1.25 .. x2.75): the renderer only does non-integer ratios in adaptive
+        # mode.  Pin the real-frame cap and the target so the ratio is exactly
+        # target / base, and stop the auto-cap / stable-cadence heuristics from
+        # re-aligning it to an integer rung.
+        deltas: Dict[str, Any] = {
+            "adaptive": True,
+            "adaptive_auto_base_fps_cap": False,
+            "adaptive_stable_cadence": False,
+            "adaptive_max_multiplier": max(2, math.ceil(multiplier)),
+            "multiplier": int(saved.get("multiplier", 2) or 2),
+            "target_fps": int(point["target_output_fps"]),
+            "base_fps_cap": int(point["base_target_fps"]),
+            "frame_generation_enabled": True,
+        }
+    else:
+        mult_i = int(multiplier)
+        deltas = {
+            "adaptive": False,
+            "multiplier": mult_i if mult_i > 1 else int(saved.get("multiplier", 2) or 2),
+            "target_fps": int(point["target_output_fps"]),
+            "base_fps_cap": int(point["base_target_fps"]),
+            "frame_generation_enabled": mult_i > 1,
+        }
     scale_pct = int(point.get("render_scale_pct", 100))
     if scale_pct != 100:
         if not scale_capable:

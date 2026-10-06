@@ -1,6 +1,6 @@
 # GFG Governor v0.0.2 - Functional and architectural release
 
-Branch: `main`. Baseline: Governor v0.0.1 Beta.2 (97 tests). This release: 195 tests, none removed.
+Branch: `main`. Baseline: Governor v0.0.1 Beta.2 (97 tests). This release: 205 tests, none removed.
 Renderer, Flatpak extensions, helper binaries: byte-identical to Beta.2 (see `bin/SHA256SUMS.txt`).
 
 ## What changed
@@ -8,12 +8,13 @@ Renderer, Flatpak extensions, helper binaries: byte-identical to Beta.2 (see `bi
 ### Governor engine
 - **Runtime overlay.** Operating points are applied through a temporary per-profile overlay config selected by the launch wrapper only while the plugin's owner-PID lease is alive. The Saved profile is never written by the Governor. Overlay writes are atomic (tmp + fsync + replace + read-back verify). `owner=0` means released.
 - **Confirmed actuation.** Each request is confirmed on fresh renderer samples (own request correlation, event/sample sequence bridge). `runtime-transition-failed` rolls back at once; confirm/trial timeouts are bounded.
-- **Bounded trial ladder.** Highest quality first, x1/x2/x3 only, at most 6 attempts, rejected points never retried in a session. Scaled points are skipped (not rejected) when the engine was not provisioned at launch.
+- **Bounded trial ladder.** Highest quality first, native, then fractional x1.25 .. x2.75 in 0.25 steps (target 90 -> real 72, 60, 51, 45, 40, 36, 33; target 60 -> 48, 40, 34, 30, 27, 24, 22), then x2 with render scale 90/80 before x2.75 and x3, at most 12 attempts, rejected points never retried in a session. Scaled points are skipped (not rejected) when the engine was not provisioned at launch.
 - **Release invariant.** Overlay is restored to Saved (verified) before power ownership is released; on failure ownership is kept and restoration retried.
 - **Telemetry fix.** Real FPS is derived from `fixed-plan` (`real = output / (generated_per_real + 1)`); replay corpus rewritten to the real diagnostic shape.
 - **Device-aware targets.** DMI `Galileo` = OLED 90, `Jupiter` = LCD 60, docked/external = 60, unknown = internal panel maximum.
 - **Capability gate.** `relaunch-required-for-governor-overlay` when the game was not launched with an overlay.
 - **GFG Effort.** Easy / Medium / Hard / Nightmare, hysteretic, withheld until stable (45 s initial dwell; up 20 s, down 60 s one step at a time; min 30 s between changes; unreachable target reported at once).
+- **Fractional multipliers (x1.25 .. x2.75, 0.25 steps; x1.7 maps to the nearest, x1.75).** Expressed as a pinned adaptive-mode overlay (adaptive on, target and real-frame cap fixed, auto-cap and stable-cadence off, max multiplier 2) and confirmed on the real ratio from `adaptive-plan` interval telemetry (tolerance 0.12 for fractions, 0.22 for integers, so neighbouring rungs are not confused). Anything above x3 is never produced. Cost model: penalty is piecewise linear in the multiplier, so the planner spends render scale and TDP headroom before generation depth.
 - **Idle loop.** With nothing enabled the loop sleeps 5 s and wakes instantly on enable/HUD changes.
 
 ### In-game overlay

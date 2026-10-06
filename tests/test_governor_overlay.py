@@ -23,6 +23,7 @@ from gfg_plugin.config_schema import ConfigurationManager  # noqa: E402
 from gfg_plugin.configuration import ConfigurationService  # noqa: E402
 from gfg_plugin.governor_overlay import (  # noqa: E402
     LAUNCH_HEADER,
+    LIVE_FIELDS,
     OverlayStore,
     PointNotApplicable,
     base_deltas,
@@ -105,6 +106,33 @@ class OverlayTests(unittest.TestCase):
         self.assertFalse(d["frame_generation_enabled"])
         self.assertEqual(d["multiplier"], int(self.saved["multiplier"]))
         self.assertEqual(d["base_fps_cap"], 90)
+
+    def test_fractional_x15_uses_pinned_adaptive_mode(self):
+        point = {"key": "60x1.5", "target_output_fps": 90, "base_target_fps": 60, "multiplier": 1.5, "render_scale_pct": 100}
+        d = point_deltas(point, self.saved, scale_capable=False, scale_ready=False)
+        self.assertEqual((d["adaptive"], d["target_fps"], d["base_fps_cap"]), (True, 90, 60))
+        self.assertFalse(d["adaptive_auto_base_fps_cap"])
+        self.assertFalse(d["adaptive_stable_cadence"])
+        self.assertEqual(d["adaptive_max_multiplier"], 2)
+        self.assertTrue(d["frame_generation_enabled"])
+        self.assertTrue(set(d) <= LIVE_FIELDS | {"multiplier"})
+        # the projection must accept it without silently normalising anything
+        self.store.write("game", d, point_key="60x1.5")
+
+    def test_quarter_step_fractions_are_expressible_up_to_x3(self):
+        for m, base in ((1.25, 72), (1.75, 51), (2.25, 40), (2.5, 36), (2.75, 33)):
+            point = {"key": f"{base}x{m:g}", "target_output_fps": 90, "base_target_fps": base,
+                     "multiplier": m, "render_scale_pct": 100}
+            d = point_deltas(point, self.saved, scale_capable=False, scale_ready=False)
+            self.assertEqual((d["adaptive"], d["base_fps_cap"], d["target_fps"]), (True, base, 90))
+            self.assertEqual(d["adaptive_max_multiplier"], max(2, int(-(-m // 1))))
+            self.store.write("game", d, point_key=point["key"])  # projection accepts it unchanged
+
+    def test_multipliers_outside_one_to_three_are_not_expressible(self):
+        for m in (0.5, 3.25, 3.5, 4.5):
+            point = {"key": "x", "target_output_fps": 90, "base_target_fps": 36, "multiplier": m, "render_scale_pct": 100}
+            with self.assertRaises(PointNotApplicable):
+                point_deltas(point, self.saved, scale_capable=False, scale_ready=False)
 
     def test_x4_x5_are_never_expressible(self):
         bad = dict(P30, multiplier=4)

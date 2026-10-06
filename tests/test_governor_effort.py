@@ -12,6 +12,7 @@ def pt(m=2, scale=100):
 class RawEffortTests(unittest.TestCase):
     def test_levels(self):
         self.assertEqual(raw_effort(pt(1), 60), "easy")
+        self.assertEqual(raw_effort(pt(1.5), 60), "easy")
         self.assertEqual(raw_effort(pt(2), 45), "medium")
         self.assertEqual(raw_effort(pt(3), 30), "hard")
         self.assertEqual(raw_effort(pt(2, 90), 45), "hard")
