@@ -27,7 +27,7 @@ export const css = `
 .gfg .power{width:100%;margin-top:12px}
 .gfg .power .r{display:flex;justify-content:space-between;font-size:11px;color:var(--tx2);margin-bottom:6px;font-weight:600}
 .gfg .bar{height:6px;background:var(--s3);border-radius:6px;overflow:hidden}.gfg .bar>div{height:100%;background:var(--red);border-radius:6px}
-.gfg .run{margin-top:12px;width:100%;height:58px;border-radius:16px;border:0;display:flex;align-items:center;justify-content:center;gap:10px;font-size:17px;font-weight:800;letter-spacing:.18em;color:#fff;background:var(--red);box-shadow:0 8px 24px rgba(251,13,0,.30);cursor:pointer}
+.gfg .run{margin-top:12px;width:100%;height:58px;border-radius:16px;border:0;display:flex;align-items:center;justify-content:center;gap:10px;font-size:17px;font-weight:800;letter-spacing:.18em;color:#fff;background:linear-gradient(180deg,#ff3b2a 0%,#fb0d00 50%,#d10b00 100%);box-shadow:0 8px 24px rgba(251,13,0,.30);cursor:pointer}
 .gfg .run.stop{background:var(--s2);border:1px solid var(--line);box-shadow:none;color:var(--tx)}
 .gfg .run svg{width:18px;height:18px}
 .gfg .hint{font-size:11.5px;color:var(--tx2);text-align:center;margin:10px 6px 0;line-height:1.4}
