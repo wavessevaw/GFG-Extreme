@@ -334,12 +334,16 @@ var Note = ({ quiet, children }) => h("div", { className: "note" + (quiet ? " qu
 function useGovernor(profile) {
   const [s, setS] = useState(null);
   const alive = useRef(true);
+  const busy = useRef(false);
   const refresh = useCallback(async () => {
+    if (busy.current) return;
+    busy.current = true;
     try {
-      const r = await rpc.governor(profile || "");
+      const r = await Promise.race([rpc.governor(profile || ""), new Promise((_, rej) => setTimeout(() => rej(new Error("status call timed out")), 1e4))]);
       if (alive.current) setS(r);
     } catch (e) {
     }
+    busy.current = false;
   }, [profile]);
   useEffect(() => {
     alive.current = true;
