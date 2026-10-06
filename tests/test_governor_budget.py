@@ -154,6 +154,22 @@ class BudgetGuardTests(unittest.TestCase):
         self.assertEqual(ctl.tdp, 20.0)
         self.assertTrue(ctl.exhausted)
 
+    def test_device_ceiling_is_the_hardware_maximum_not_20(self):
+        """A stock OLED caps at 15 W; this user's Deck allows 20 W."""
+        stock = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=15)
+        self.assertEqual((stock.normal_max_w, stock.emergency_max_w), (15.0, 15.0))
+        run(stock, Game(0.5), 0.0, 200)
+        self.assertEqual(stock.tdp, 15.0)          # never above the hardware maximum
+        self.assertEqual(stock.point.key, "22x4")  # x4 is the only escalation left
+        self.assertTrue(stock.exhausted)
+        wide = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
+        self.assertEqual((wide.normal_max_w, wide.emergency_max_w), (15.0, 20.0))
+
+    def test_low_hardware_maximum_below_the_start_watts(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=8)
+        self.assertEqual(ctl.tdp, 8.0)
+        self.assertEqual((ctl.ideal_max_w, ctl.normal_max_w, ctl.emergency_max_w), (8.0, 8.0, 8.0))
+
     def test_reprobe_lowers_power_after_scene_gets_lighter(self):
         ctl, game, now = self.locked()
         game.scene = 0.85

@@ -62,8 +62,15 @@ const TIER_TEXT = {
 };
 const PHASE_TEXT = { settle: "Starting at 10 W", search_down: "Lowering TDP", upgrade: "Fewer generated frames", probe: "Re-checking", locked: "Holding", guard: "Protecting" };
 const MODE_TEXT = {
-  budget: "Battery: lowest TDP first (9–11 W ideal, 15 W max). Real FPS stays at 24 or more; ×4 and up to 20 W only as a last resort.",
+  budget: "Battery: lowest TDP first, 9–11 W ideal. Real FPS stays at 24 or more; ×4 and the highest watts your Deck allows only as a last resort.",
   quality: "Quality: fewest generated frames first, then lowers TDP. Uses more battery.",
+};
+// The ceilings come from the device: a stock OLED stops at 15 W, some Decks allow 20 W.
+const budgetRule = (b) => {
+  const lim = (b && b.limits_w) || {};
+  if (lim.normal == null) return "9–11 W ideal, then what your Deck allows";
+  const last = lim.emergency > lim.normal ? ", " + num(lim.emergency, 0) + " W last resort" : " (this Deck's maximum)";
+  return "9–11 W ideal, " + num(lim.normal, 0) + " W max" + last;
 };
 
 // Plain-language state for the hero card. Returns {head, body, tone}
@@ -259,7 +266,7 @@ function GovernorPage({ s, back, profile, refresh }) {
     h("div", { className: "card" }, h("div", { className: "kv" },
       h("span", null, "Multipliers"), h("b", null, mode === "budget" ? "×1 to ×3.75, ×4 last resort" : "×1 to ×3, steps of 0.25"),
       h("span", null, "Saved profile"), h("b", null, "never modified"),
-      h("span", null, "TDP"), h("b", null, mode === "budget" ? "9–11 W ideal, 15 W max, 20 W last resort" : "never above your own"))),
+      h("span", null, "TDP"), h("b", null, mode === "budget" ? budgetRule(b) : "never above your own"))),
     (s.limitations || []).length ? h("div", { className: "sec" }, "LIMITS") : null,
     ...(s.limitations || []).map((t, i) => h(Note, { key: i, quiet: true }, t)));
 }

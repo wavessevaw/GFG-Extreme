@@ -159,8 +159,14 @@ var TIER_TEXT = {
 };
 var PHASE_TEXT = { settle: "Starting at 10 W", search_down: "Lowering TDP", upgrade: "Fewer generated frames", probe: "Re-checking", locked: "Holding", guard: "Protecting" };
 var MODE_TEXT = {
-  budget: "Battery: lowest TDP first (9\u201311 W ideal, 15 W max). Real FPS stays at 24 or more; \xD74 and up to 20 W only as a last resort.",
+  budget: "Battery: lowest TDP first, 9\u201311 W ideal. Real FPS stays at 24 or more; \xD74 and the highest watts your Deck allows only as a last resort.",
   quality: "Quality: fewest generated frames first, then lowers TDP. Uses more battery."
+};
+var budgetRule = (b) => {
+  const lim = b && b.limits_w || {};
+  if (lim.normal == null) return "9\u201311 W ideal, then what your Deck allows";
+  const last = lim.emergency > lim.normal ? ", " + num(lim.emergency, 0) + " W last resort" : " (this Deck's maximum)";
+  return "9\u201311 W ideal, " + num(lim.normal, 0) + " W max" + last;
 };
 function describe(s) {
   const cap = s.capability && s.capability.reason || "";
@@ -477,7 +483,7 @@ function GovernorPage({ s, back, profile, refresh }) {
       h("span", null, "Saved profile"),
       h("b", null, "never modified"),
       h("span", null, "TDP"),
-      h("b", null, mode === "budget" ? "9\u201311 W ideal, 15 W max, 20 W last resort" : "never above your own")
+      h("b", null, mode === "budget" ? budgetRule(b) : "never above your own")
     )),
     (s.limitations || []).length ? h("div", { className: "sec" }, "LIMITS") : null,
     ...(s.limitations || []).map((t, i) => h(Note, { key: i, quiet: true }, t))

@@ -5,10 +5,10 @@
 > **Pre-release, not yet tested on a Steam Deck.** Please record a log (Home → Record log) and send it.
 
 ### New: Battery mode (default)
-- **TDP budget.** 9–11 W is the target. 12–15 W is for heavy games. 16–20 W is used only as a last resort, while real FPS stays below about 22 for a minute.
+- **TDP budget.** 9–11 W is the target. 12–15 W is for heavy games. Above 15 W only as a last resort, while real FPS stays below about 22 for a minute, and never above what your Deck allows: a stock OLED stops at 15 W, some Decks allow 20 W. The limits are read from the hardware, not assumed.
 - **Multipliers ×1 to ×3.75** in 0.25 steps (real FPS never below 24). **×4** only as a last resort.
 - **How it searches.** It starts at 30 real FPS (30x3 at 90 Hz, 30x2 at 60 Hz) and 10 W, then lowers TDP 1 W at a time. A failed level returns to the last good one. After that it tries fewer generated frames at the same watts.
-- **When a scene gets heavier** the order is: more generated frames (down to 30 real), then up to 11 W, then ×3.25–×3.75, then up to 15 W, then ×4, and 16–20 W last.
+- **When a scene gets heavier** the order is: more generated frames (down to 30 real), then up to 11 W, then ×3.25–×3.75, then up to 15 W, then ×4, and the highest watts the device allows last.
 - **When a scene gets lighter** it tries −1 W again after 5 minutes of clean play, backing off after a miss. Quality given up to a heavy scene is won back.
 - **Quality mode** (the previous behaviour) stays available: Governor → Mode.
 
