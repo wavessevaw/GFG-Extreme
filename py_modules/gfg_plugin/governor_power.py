@@ -12,6 +12,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional
 
+from .privileged_power import allowed_cap_path, writer as privileged_writer
+
 
 _FAST_LABELS = {"fastppt", "ppt1", "fast ppt"}
 _SLOW_LABELS = {"slowppt", "ppt", "slow ppt"}
@@ -73,10 +75,12 @@ class SteamDeckPowerActuator:
         drm_root: Path = Path("/sys/class/drm"),
         hwmon_root: Path = Path("/sys/class/hwmon"),
         access: Any = os.access,
+        helper: Any = privileged_writer,
     ) -> None:
         self.drm_root = Path(drm_root)
         self.hwmon_root = Path(hwmon_root)
         self._access = access
+        self._helper = helper
         self.journal: Optional[Callable[..., None]] = None
         self.state = PowerControlState()
         self._fast_path: Optional[Path] = None
@@ -149,7 +153,11 @@ class SteamDeckPowerActuator:
             # hwmon caps are root-only: a plugin running as the desktop user can
             # read them but every write fails.  Report that up front instead of
             # claiming control that cannot work.
-            writable = bool(self._access(fast, os.W_OK) and self._access(slow, os.W_OK))
+            helper = self._helper()
+            if helper is not None:
+                writable = bool(allowed_cap_path(str(fast)) and allowed_cap_path(str(slow)))
+            else:
+                writable = bool(self._access(fast, os.W_OK) and self._access(slow, os.W_OK))
             self._fast_path = fast
             self._slow_path = slow
             self.state = PowerControlState(
@@ -228,9 +236,12 @@ class SteamDeckPowerActuator:
             value = min(value, maximum)
         return value
 
-    @staticmethod
-    def _write_value(path: Path, value: int) -> None:
-        path.write_text(f"{int(value)}\n", encoding="utf-8")
+    def _write_value(self, path: Path, value: int) -> None:
+        helper = self._helper()
+        if helper is not None:
+            helper.write(path, int(value))
+        else:
+            path.write_text(f"{int(value)}\n", encoding="utf-8")
 
     def set_tdp_w(self, watts: float) -> Dict[str, Any]:
         result = self._set_tdp_w(watts)

@@ -1,7 +1,9 @@
 {
   "name": "GFG Extreme",
   "author": "Eugenio Segala",
-  "flags": [],
+  "flags": [
+    "root"
+  ],
   "api_version": 1,
   "publish": {
     "tags": [
