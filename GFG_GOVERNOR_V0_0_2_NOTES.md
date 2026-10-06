@@ -38,3 +38,8 @@ Renderer, Flatpak extensions, helper binaries: byte-identical to Beta.2 (see `bi
 
 ## Not done / needs hardware (see docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md)
 Nothing in this release was run on a Steam Deck. Hardware validation is scheduled for v0.0.10.
+
+## Package contents
+- `GFG-Extreme-Governor-v0_0_2.zip` - full plugin tree (includes the unchanged binaries and Flatpak extensions).
+- `GFG-Extreme-Governor-v0_0_2-from-Beta_2.patch` - unified diff of text files against Beta.2 (`patch -p1`). Binary assets (logo and documentation PNGs) are only in the zip.
+- Notes, test report, known limitations and `SHA256SUMS.txt`.
