@@ -580,6 +580,38 @@ class ConfigurationService(BaseService):
                 config=None,
             )
 
+    def saved_config_fingerprint(self) -> Optional[tuple[int, int]]:
+        """Cheap change detector for the Saved config file (mtime_ns, size)."""
+        try:
+            stat = self.config_file_path.stat()
+        except OSError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
+
+    def build_governor_overlay_text(
+            self, profile_name: str, deltas: Dict[str, Any],
+    ) -> str:
+        """Return the Saved TOML with Governor ``deltas`` applied to one profile.
+
+        Pure projection: nothing is written and Saved is never modified.  A
+        delta that validation would silently clamp or rewrite is an error, so
+        the renderer can never be given a value Governor did not intend.
+        """
+        profile_data = self._get_profile_data()
+        if profile_name not in profile_data["profiles"]:
+            raise ValueError(f"Profile '{profile_name}' does not exist")
+        config = dict(self._config_for_profile(profile_data, profile_name))
+        config.update(deltas)
+        validated = ConfigurationManager.validate_config(config)
+        for field_name, wanted in deltas.items():
+            if validated.get(field_name) != wanted:
+                raise ValueError(
+                    f"Governor overlay field {field_name}={wanted!r} was "
+                    f"normalised to {validated.get(field_name)!r}"
+                )
+        profile_data["profiles"][profile_name] = validated
+        return ConfigurationManager.generate_toml_content_multi_profile(profile_data)
+
     def get_profile_config(self, profile_name: str) -> ConfigurationResponse:
         """Read one saved profile without changing the runtime selection."""
         try:

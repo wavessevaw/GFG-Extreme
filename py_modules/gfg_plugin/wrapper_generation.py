@@ -65,6 +65,7 @@ from .constants import (
     VKBASALT_LAYER_NAME_64,
     WAYLAND_DISPLAY_ENV,
 )
+from .governor_overlay import overlay_path as governor_overlay_path
 from .profile_storage import (
     ProfileMetadata,
     WrapperProfileSettings,
@@ -75,7 +76,7 @@ from .profile_storage import (
 )
 
 
-WRAPPER_FORMAT_VERSION = 75
+WRAPPER_FORMAT_VERSION = 76
 WRAPPER_FORMAT_MARKER = f"# mako-wrapper-format: {WRAPPER_FORMAT_VERSION}"
 HOST_COMPATIBILITY_MARKER = "# mako-host-compatibility: aarch64-passthrough-v1"
 DIAGNOSTICS_DEFAULT_MARKER = (
@@ -113,6 +114,7 @@ REQUIRED_WRAPPER_EXPORTS = (
     "mako_steam_overlay_layers=",
     f"export {MAKO_PROFILE_FALLBACK_ENV}=",
     "mako_diagnostics_default=",
+    "mako_governor_overlay_active=",
 )
 def is_current_wrapper(
         content: str,
@@ -213,6 +215,34 @@ def _manifest_key(profile_name: str) -> str:
     return hashlib.sha256(profile_name.encode("utf-8")).hexdigest()[:16]
 
 
+def governor_overlay_lines(profile_name: str, runtime_state_dir: Path) -> list[str]:
+    """Name this profile's Governor overlay; selection happens at env export.
+
+    The overlay lives next to the Saved config (``<config_dir>/governor-overlay``)
+    so any sandbox that can read the Saved config can read the overlay too.
+    """
+    path = governor_overlay_path(Path(runtime_state_dir).parent, profile_name)
+    return [f"mako_governor_overlay={shlex.quote(str(path))}"]
+
+
+def governor_overlay_selection_lines() -> list[str]:
+    """Pick the overlay only while its owner lease is alive; else use Saved."""
+    return [
+        'mako_governor_overlay_active=""',
+        'if [ -n "${mako_governor_overlay:-}" ] && [ -r "$mako_governor_overlay" ]; then',
+        "    mako_governor_launch=\"$(sed -n 's/^# gfg-governor-launch: //p' \"$mako_governor_overlay\" 2>/dev/null | head -n 1)\"",
+        '    mako_governor_owner="${mako_governor_launch##*owner=}"',
+        '    mako_governor_owner="${mako_governor_owner%% *}"',
+        '    case "$mako_governor_owner" in \'\'|*[!0-9]*) mako_governor_owner=0 ;; esac',
+        '    if [ "$mako_governor_owner" -gt 0 ] && [ -d "/proc/$mako_governor_owner" ]; then',
+        f'        export {MAKO_CONFIG_ENV}="$mako_governor_overlay"',
+        '        mako_governor_overlay_active="$mako_governor_overlay"',
+        "    fi",
+        "fi",
+        "unset mako_governor_overlay mako_governor_launch mako_governor_owner",
+    ]
+
+
 def launch_manifest_profile_lines(
         profile_name: str,
         config: ConfigurationData,
@@ -252,7 +282,7 @@ def launch_manifest_write_lines() -> list[str]:
         '"saved":{"fg_backend":"%s","frame_generation_enabled":%s,"automatic_dock_mode":%s},'
         '"effective":{"frame_generation_enabled":%s,"automatic_dock_mode":%s,'
         '"scaling_enabled":%s,"shaders_enabled":%s,"renderer_required":%s,"target_fps":%s},'
-        '"optiscaler_proxy":"%s"}\\n'
+        '"optiscaler_proxy":"%s","governor_launch":"%s"}\\n'
     )
     printf_line = (
         "    printf " + shlex.quote(json_format) +
@@ -261,7 +291,7 @@ def launch_manifest_write_lines() -> list[str]:
         '"$gfg_manifest_saved_backend" "$gfg_manifest_saved_fg" "$gfg_manifest_saved_dock" '
         '"$gfg_manifest_effective_fg" "$gfg_manifest_effective_dock" "$gfg_manifest_scaling" '
         '"$gfg_manifest_shaders" "$gfg_manifest_renderer_required" "$gfg_manifest_target_fps" '
-        '"$gfg_manifest_proxy" > "$gfg_launch_tmp" 2>/dev/null && '
+        '"$gfg_manifest_proxy" "$gfg_launch_governor" > "$gfg_launch_tmp" 2>/dev/null && '
         'mv -f "$gfg_launch_tmp" "$gfg_manifest_path" || rm -f "$gfg_launch_tmp"'
     )
     return [
@@ -281,6 +311,11 @@ def launch_manifest_write_lines() -> list[str]:
         '    gfg_launch_profile="$(gfg_json_escape "${mako_wrapper_profile:-mako}")"',
         '    gfg_launch_wrapper="$(gfg_json_escape "$0")"',
         '    gfg_launch_command="$(gfg_json_escape "${1:-}")"',
+        '    gfg_launch_governor=""',
+        '    if [ -n "${mako_governor_overlay_active:-}" ]; then',
+        "        gfg_launch_governor=\"$(sed -n 's/^# gfg-governor-launch: //p' \"$mako_governor_overlay_active\" 2>/dev/null | head -n 1)\"",
+        '        gfg_launch_governor="$(gfg_json_escape "$gfg_launch_governor")"',
+        '    fi',
         '    gfg_launch_tmp="${gfg_manifest_path}.tmp.$$"',
         printf_line,
         '    unset -f gfg_json_escape',
@@ -894,6 +929,7 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         f'export {VK_IMPLICIT_LAYER_PATH_ENV}="$mako_implicit_layer_path"',
         f"unset {VK_ADD_IMPLICIT_LAYER_PATH_ENV}",
         f"export {MAKO_CONFIG_ENV}={shlex.quote(str(context.config_file_path))}",
+        *governor_overlay_selection_lines(),
         # A direct EmuDeck/Flatpak shortcut executes this wrapper on the host.
         # Per-launch Flatpak options must override its persisted app-wide
         # preparation so the explicit managed chain and the selected bundled
@@ -1089,6 +1125,11 @@ def wrapper_profile_configuration_lines(
                     profile_name, config, runtime_state_dir
                 )
             )
+            lines.extend(
+                f"        {line}" for line in governor_overlay_lines(
+                    profile_name, runtime_state_dir
+                )
+            )
         lines.extend(
             f"        {line}" for line in vkbasalt_profile_environment_lines(
                 profile_name,
@@ -1114,6 +1155,11 @@ def wrapper_profile_configuration_lines(
         lines.extend(
             f"        {line}" for line in launch_manifest_profile_lines(
                 current_profile, fallback_config, runtime_state_dir
+            )
+        )
+        lines.extend(
+            f"        {line}" for line in governor_overlay_lines(
+                current_profile, runtime_state_dir
             )
         )
     lines.extend(
