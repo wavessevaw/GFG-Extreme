@@ -32,6 +32,7 @@ from .constants import PRESENT_DIAGNOSTICS_LOG_FILENAME
 from .governor_core import (
     EffortEstimator, OperatingPoint, OperatingPointPlanner, PowerSearch, TrialLadder, raw_effort,
 )
+from .governor_battery import BatteryEstimator, read_battery
 from .governor_hud import HudWriter, normalize as hud_normalize
 from .governor_overlay import (
     OverlayRecord,
@@ -126,6 +127,8 @@ class GovernorService:
             OverlayStore(self.configuration.config_dir, builder) if callable(builder) else None
         )
         self.hud = HudWriter(self.configuration.config_dir)
+        self._battery = BatteryEstimator()
+        self.battery_reader = read_battery
         self._io_lock = threading.RLock()
         self._forced_release: set[str] = set()
         self._restore_pending: Dict[str, str] = {}
@@ -218,6 +221,12 @@ class GovernorService:
 
     def _profile_enabled(self, profile: str) -> bool:
         return bool(self._profile_settings(profile).get("enabled", False))
+
+    def _update_battery(self) -> None:
+        try:
+            self._status["battery"] = self._battery.update(self.battery_reader())
+        except Exception as error:  # sysfs quirks must never break the loop
+            self.log.debug("Governor battery read failed: %s", error)
 
     def _update_effort(self) -> None:
         """Feed the slow effort rating.  Never published while still assessing."""
@@ -728,6 +737,7 @@ class GovernorService:
     async def _iteration(self) -> None:
         await self._iteration_core()
         self._update_effort()
+        self._update_battery()
         profile = self._status.get("profile") or ""
         if profile:
             await asyncio.to_thread(self._sync_hud, profile)

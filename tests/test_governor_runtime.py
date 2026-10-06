@@ -127,7 +127,7 @@ class RuntimeBase(unittest.TestCase):
         self.assertIn("exec=cat " + str(status_path(self.cfg.config_dir)), text)
         self.assertEqual(self.svc.get_status("game")["hud"], {"enabled": True, "preset": "detailed", "position": "top-right"})
         self.step()
-        self.assertIn("scale", status_path(self.cfg.config_dir).read_text())
+        self.assertIn("sc100", status_path(self.cfg.config_dir).read_text())
         self.svc.set_hud("game", False)
         self.assertFalse(active.exists())
         # bogus values are normalised, never written raw

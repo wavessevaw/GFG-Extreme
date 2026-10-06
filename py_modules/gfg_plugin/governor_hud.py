@@ -12,6 +12,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from .governor_battery import format_minutes
+
 PRESETS = ("minimal", "standard", "detailed")
 POSITIONS = ("top-left", "top-right", "bottom-left", "bottom-right")
 HUD_DIRNAME = "hud"
@@ -40,8 +42,11 @@ def active_config_path(config_dir: Path) -> Path:
     return Path(config_dir) / HUD_DIRNAME / "active.conf"
 
 
+_EFFORT_SHORT = {"easy": "easy", "medium": "med", "hard": "hard", "nightmare": "nightmare"}
+
+
 def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
-    """One compact line: ``x2 | 45 > 90 | scale 100% | 9W | medium``."""
+    """Compact: ``x2 45>90 sc100 9W 2h05 med`` (two spaces between fields)."""
     if not status.get("enabled"):
         return "GFG off"
     tel = status.get("telemetry") or {}
@@ -50,34 +55,37 @@ def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
     mult = (tel.get("latest") or {}).get("effective_multiplier")
     parts = [f"x{round(mult)}" if mult else "GFG"]
     if real is not None and out is not None:
-        parts.append(f"{round(real)} > {round(out)}")
+        parts.append(f"{round(real)}>{round(out)}")
     if preset == "minimal":
-        return " | ".join(parts)
+        return "  ".join(parts)
     point = status.get("active_point") or {}
-    parts.append(f"scale {int(point.get('render_scale_pct', 100))}%")
+    parts.append(f"sc{int(point.get('render_scale_pct', 100))}")
     power = status.get("power") or {}
     tdp = power.get("observed_tdp_w")
     if tdp is None:
         tdp = power.get("current_w")
-    parts.append(f"{round(tdp)}W" if tdp is not None else "TDP n/a")
+    parts.append(f"{round(tdp)}W" if tdp is not None else "TDPn/a")
+    left = format_minutes((status.get("battery") or {}).get("minutes_left"))
+    if left:
+        parts.append(left)
     effort = (status.get("effort") or {}).get("level")
     if effort:
-        parts.append(effort)
+        parts.append(_EFFORT_SHORT[effort])
     if preset == "detailed":
         parts.append(_STATE_WORD.get(str(status.get("state")), "on"))
-    return " | ".join(parts)
+    return "  ".join(parts)
 
 
 def mangohud_config(preset: str, position: str, status_file: Path) -> str:
-    """No CPU load.  Frametime, GFG multiplier/scale/TDP; GPU only in Detailed."""
+    """Compact horizontal bar.  No CPU load; GPU only in Detailed."""
     preset, position = normalize(preset, position)
     lines = [
-        f"position={position}", "legacy_layout=0", "background_alpha=0.45",
-        "font_size=20", "round_corners=8", "text_color=FFFFFF",
+        f"position={position}", "legacy_layout=0", "horizontal", "background_alpha=0.4",
+        "font_size=18", "round_corners=6", "text_color=FFFFFF",
         "fps", "frametime", "fps_color_change=0", "no_display=0",
     ]
     if preset == "detailed":
-        lines += ["frame_timing=1", "gpu_stats", "gpu_power", "battery", "battery_watt"]
+        lines += ["gpu_stats", "gpu_power"]
     lines.append(f"exec=cat {status_file}")
     return "\n".join(lines) + "\n"
 

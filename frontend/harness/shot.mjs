@@ -12,7 +12,7 @@ const tel = (real, out, m) => ({ real: { median: real }, output: { median: out }
 const STATES = {
   "home-idle-oled": { ...base, device: dev("oled", 90), target_output_fps: 90 },
   "home-measuring": { ...base, enabled: true, state: "PROBE", device: dev("oled", 90), target_output_fps: 90, capability: {} },
-  "home-locked-oled": { ...base, enabled: true, state: "LOCKED", device: dev("oled", 90), target_output_fps: 90, telemetry: tel(45, 90, 2), active_point: { multiplier: 2, render_scale_pct: 100 }, active_point_mode: "applied", power: { owned: true, observed_tdp_w: 9, saved_w: 15 }, effort: { level: "medium" } },
+  "home-locked-oled": { ...base, enabled: true, state: "LOCKED", device: dev("oled", 90), target_output_fps: 90, telemetry: tel(45, 90, 2), active_point: { multiplier: 2, render_scale_pct: 100 }, active_point_mode: "applied", power: { owned: true, observed_tdp_w: 9, saved_w: 15 }, effort: { level: "medium" }, battery: { minutes_left: 125 } },
   "home-locked-lcd": { ...base, enabled: true, state: "OPTIMIZE_POWER", device: dev("lcd", 60), target_output_fps: 60, telemetry: tel(30, 60, 2), active_point: { multiplier: 2, render_scale_pct: 100 }, power: { owned: true, observed_tdp_w: 8, saved_w: 15 }, effort: { level: null, assessing: true } },
   "home-relaunch-dock": { ...base, enabled: true, state: "PLAN", device: dev("dock", 60), target_output_fps: 60, capability: { reason: "relaunch-required-for-governor-overlay" } },
 };

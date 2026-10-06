@@ -9,14 +9,18 @@ class HudTests(unittest.TestCase):
         self.assertEqual(hud.normalize("MINIMAL", "top-left"), ("minimal", "top-left"))
 
     def test_status_line_variants(self):
-        s = {"enabled": True, "state": "LOCKED", "telemetry": {"real": {"median": 44.6}, "output": {"median": 90.2}, "latest": {"effective_multiplier": 2.01}}, "power": {"owned": False, "observed_tdp_w": 9.2}, "active_point": {"render_scale_pct": 90}, "effort": {"level": "medium"}}
-        self.assertEqual(hud.status_line(s), "x2 | 45 > 90 | scale 90% | 9W | medium")
-        self.assertEqual(hud.status_line(s, "minimal"), "x2 | 45 > 90")
-        self.assertEqual(hud.status_line(s, "detailed"), "x2 | 45 > 90 | scale 90% | 9W | medium | locked")
+        s = {"enabled": True, "state": "LOCKED", "telemetry": {"real": {"median": 44.6}, "output": {"median": 90.2}, "latest": {"effective_multiplier": 2.01}}, "power": {"owned": False, "observed_tdp_w": 9.2}, "active_point": {"render_scale_pct": 90}, "effort": {"level": "medium"}, "battery": {"minutes_left": 125}}
+        self.assertEqual(hud.status_line(s), "x2  45>90  sc90  9W  2h05  med")
+        self.assertEqual(hud.status_line(s, "minimal"), "x2  45>90")
+        self.assertEqual(hud.status_line(s, "detailed"), "x2  45>90  sc90  9W  2h05  med  locked")
         self.assertEqual(hud.status_line({"enabled": False}), "GFG off")
 
+    def test_battery_time_omitted_when_unknown(self):
+        s = {"enabled": True, "state": "LOCKED", "battery": {"minutes_left": None}}
+        self.assertEqual(hud.status_line(s), "GFG  sc100  TDPn/a")
+
     def test_status_line_without_telemetry(self):
-        self.assertEqual(hud.status_line({"enabled": True, "state": "PROBE"}), "GFG | scale 100% | TDP n/a")
+        self.assertEqual(hud.status_line({"enabled": True, "state": "PROBE"}), "GFG  sc100  TDPn/a")
 
     def test_config_has_no_cpu_and_always_frametime(self):
         p = Path("/x/status.txt")
@@ -24,6 +28,7 @@ class HudTests(unittest.TestCase):
             cfg = hud.mangohud_config(preset, "top-right", p)
             self.assertNotIn("cpu", cfg)
             self.assertIn("\nframetime\n", cfg)
+            self.assertIn("\nhorizontal\n", cfg)
             self.assertIn("exec=cat /x/status.txt", cfg)
         self.assertNotIn("gpu_stats", hud.mangohud_config("standard", "top-right", p))
         self.assertIn("gpu_stats", hud.mangohud_config("detailed", "top-right", p))

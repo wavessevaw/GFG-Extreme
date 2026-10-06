@@ -98,6 +98,8 @@ function Home({ s, profile, go, refresh }) {
   const showLive = s.enabled && out != null;
   const tdp = pw.observed_tdp_w != null ? pw.observed_tdp_w : pw.current_w;
   const eff = s.effort && s.effort.level;
+  const mins = s.battery && s.battery.minutes_left;
+  const left = mins != null ? (mins >= 60 ? Math.floor(mins / 60) + "h" + String(mins % 60).padStart(2, "0") : mins + "m") : "";
   return h("div", null,
     h("div", { className: "top" }, h("div", { className: "brand" }, "GFG", h("b", null, "·"), "EXTREME"),
       h("div", { className: "chip" + (s.enabled ? " on" : "") }, h("i"), MODE_NAME[dev.mode] || "Display")),
@@ -110,7 +112,7 @@ function Home({ s, profile, go, refresh }) {
         h("div", { className: "stat" }, h("div", { className: "v" }, num(out, 0)), h("div", { className: "l" }, "OUTPUT"))) : null,
       s.enabled ? h("div", { className: "effort" }, h("span", null, "GFG EFFORT"),
         h("b", { className: eff ? "lv " + eff : "lv" }, eff ? eff.toUpperCase() : "ASSESSING…")) : null,
-      tdp != null ? h("div", { className: "power" }, h("div", { className: "r" }, h("span", null, "TDP NOW"), h("span", null, num(tdp, 0) + " W" + (pw.saved_w ? " / " + num(pw.saved_w, 0) + " W saved" : ""))),
+      tdp != null ? h("div", { className: "power" }, h("div", { className: "r" }, h("span", null, "TDP NOW"), h("span", null, num(tdp, 0) + " W" + (left ? "  ·  " + left + " left" : ""))),
         h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, (tdp / (pw.saved_w || 15)) * 100) + "%" } }))) : null),
     h(Focusable, { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? undefined : toggle },
       h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 18 }), s.enabled ? "STOP" : "RUN"),
