@@ -291,6 +291,13 @@ class TrialFlowTests(RuntimeBase):
         st = self.step()
         self.assertEqual(st["state"], "APPLY")
         self.assertNotEqual(st["request"]["point"], "45x2")
+        # Not for the whole session: a cutscene must not cost the point forever.
+        ladder = self.svc._ladder
+        ladder.attempts = 0
+        self.assertIn("45x2", ladder.rejected)
+        ladder.next_point(lambda p: None, now=self.svc._clock() + self.svc.CEILING_REJECT_TTL_S + 1)
+        self.assertNotIn("45x2", ladder.rejected)
+        self.assertIn("native90", ladder.rejected)  # other rejections stay
 
     def test_fractional_x15_is_tried_before_x2_and_confirmed_on_real_ratio(self):
         self.prime_not_matching()

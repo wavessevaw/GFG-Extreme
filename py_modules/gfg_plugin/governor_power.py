@@ -152,27 +152,6 @@ class SteamDeckPowerActuator:
                 return path
         return None
 
-    def sensors(self) -> Dict[str, Any]:
-        """Every power* attribute of the controlled hwmon, for the diagnostic log."""
-        if self.state.hwmon_path is None:
-            return {}
-        hwmon = Path(self.state.hwmon_path)
-        value: Dict[str, Any] = {"hwmon": str(hwmon), "draw_path": str(self._draw_path) if self._draw_path else None}
-        try:
-            value["name"] = (hwmon / "name").read_text(encoding="utf-8").strip()
-        except (OSError, UnicodeError):
-            value["name"] = None
-        try:
-            entries = sorted(hwmon.glob("power*"))
-        except OSError:
-            entries = []
-        for path in entries:
-            try:
-                value[path.name] = path.read_text(encoding="utf-8").strip()
-            except (OSError, UnicodeError) as error:
-                value[path.name] = f"<{type(error).__name__}>"
-        return value
-
     def discover(self) -> Dict[str, Any]:
         for hwmon in self._candidate_hwmons(self.drm_root, self.hwmon_root):
             channels = self._power_channels(hwmon)

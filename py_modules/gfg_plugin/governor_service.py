@@ -103,7 +103,10 @@ class GovernorService:
     CAP_BOUND_HEALTH_RATIO = 0.97
     UNCAPPED_HEALTH_RATIO = 1.05
     ROLLBACK_RETRY_SECONDS = 5.0
-    PREDICTIVE_SKIP = True  # skip points the observed native cadence already rules out
+    PREDICTIVE_SKIP = True
+    # A point failing at the user's TDP may have met a cutscene or loading screen:
+    # drop it for a while, not for the rest of the session.
+    CEILING_REJECT_TTL_S = 600.0  # skip points the observed native cadence already rules out
 
     def __init__(
         self,
@@ -1053,7 +1056,7 @@ class GovernorService:
             self._ladder.observe_native_capacity(
                 (summary.get("real") or {}).get("median"), (summary.get("multiplier") or {}).get("median"),
             )
-        point = self._ladder.next_point(applicable)
+        point = self._ladder.next_point(applicable, now=self._clock())
         if point is None:
             released = await self._release_point_keep_ladder(profile)
             if released:
@@ -1123,7 +1126,7 @@ class GovernorService:
             # TDP: reject it and let the ladder try the next (cheaper) point
             # instead of parking at the ceiling for the rest of the session.
             key = str(point.get("key"))
-            self._ladder.reject(key, "not-healthy-at-ceiling")
+            self._ladder.reject(key, "not-healthy-at-ceiling", until=self._clock() + self.CEILING_REJECT_TTL_S)
             self._event("operating-point-rejected", "not-healthy-at-ceiling", profile=profile, point=key)
             ladder = self._ladder
             await self._release_point(profile, "not-healthy-at-ceiling")
