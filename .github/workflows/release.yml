@@ -1,0 +1,82 @@
+name: Release
+
+# Every push to main whose governor version (package.json) has no tag yet
+# becomes a GitHub pre-release: tests, zip for Decky, SHA-256, description
+# from RELEASE_DESCRIPTION_V<version>.md.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: version
+        run: |
+          version="$(python3 -c 'import json; print(json.load(open("package.json"))["version"].split("governor.")[-1])')"
+          tag="v${version}-governor"
+          notes="RELEASE_DESCRIPTION_V${version//./_}.md"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "notes=$notes" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $tag already exists, nothing to release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            test -f "$notes" || { echo "::error::$notes is missing"; exit 1; }
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.version.outputs.exists == 'false'
+        with:
+          python-version: "3.13"
+
+      - name: Backend tests
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          python3 scripts/check_generated_config.py
+          python3 -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Fetch Flatpak payloads from the previous release
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          previous="$(gh release list --limit 20 --json tagName,isDraft --jq '[.[] | select(.isDraft | not)][0].tagName')"
+          test -n "$previous" || { echo "::error::no previous release to take Flatpak payloads from"; exit 1; }
+          mkdir -p prev payloads
+          gh release download "$previous" --pattern '*.zip' --dir prev
+          unzip -q -j prev/*.zip 'GFG-Extreme/bin/*.flatpak' -d payloads
+          ls -la payloads
+
+      - name: Build zip
+        if: steps.version.outputs.exists == 'false'
+        run: scripts/build_release.sh "${{ steps.version.outputs.version }}" payloads out
+
+      - name: Publish pre-release
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          sha="$(cut -d' ' -f1 out/SHA256SUMS.txt)"
+          python3 - "${{ steps.version.outputs.notes }}" "$sha" > notes.md <<'PY'
+          import re, sys
+          text = open(sys.argv[1], encoding="utf-8").read()
+          text = re.sub(r"`(<sha256>|[0-9a-f]{64})`", f"`{sys.argv[2]}`", text)
+          print(text)
+          PY
+          gh release create "${{ steps.version.outputs.tag }}" out/*.zip out/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "${{ steps.version.outputs.tag }}" --notes-file notes.md
