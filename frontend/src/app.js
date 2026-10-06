@@ -226,7 +226,16 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
   const mins = s.battery && s.battery.minutes_left;
   const cap0 = (s.capability && s.capability.reason) || "";
   const needsLaunch = s.enabled && (cap0 === "relaunch-required-for-governor-overlay" || s.reason === "relaunch-required-for-governor-overlay" || s.reason === "game-not-running" || s.reason === "diagnostics-active-no-events");
-  const troubled = s.state === "PAUSED" || (s.enabled && s.reason === "target-not-proven-viable");
+  const [problems, setProblems] = useState([]);
+  const troubledNow = s.state === "PAUSED" || (s.enabled && s.reason === "target-not-proven-viable");
+  const troubled = troubledNow;
+  // Trouble: look for a concrete cause once (not on every poll) and say what to do about it.
+  useEffect(() => {
+    if (!troubledNow) { setProblems([]); return; }
+    let alive = true;
+    rpc.setupCheck(profile || "").then((r) => { if (alive && r && r.checks) setProblems(r.checks.filter((c) => !c.ok && c.advice).slice(0, 2)); }).catch(() => {});
+    return () => { alive = false; };
+  }, [troubledNow, s.reason]);
   const dg = s.diagnosis || {}, sn = s.sensors || {};
   const health = s.enabled ? [dg.bottleneck && dg.bottleneck !== "unknown" && dg.bottleneck !== "none" ? { gpu: "GPU-bound", cpu: "CPU-bound", power: "Power-limited" }[dg.bottleneck] : null,
     sn.temp_c != null ? Math.round(sn.temp_c) + " °C" + (dg.thermal === "hot" ? " · hot" : dg.thermal === "heating" ? " · heating up" : "") : null,
@@ -254,7 +263,8 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
     h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
     health ? h("div", { className: "hint" }, health) : null,
     needsLaunch ? h("div", null, h("div", { className: "sec" }, "START THE GAME WITH THIS LAUNCH OPTION"), h(LaunchCopy, { launch })) : null,
-    troubled ? h("div", { className: "list" }, h(Row, { icon: "play", title: "Something wrong? Record a log", sub: "Settings → Diagnostics", onClick: () => go("advanced") })) : null,
+    troubled && problems.length ? h("div", { className: "card" }, h("div", { className: "sec" }, "LIKELY CAUSE"), ...problems.map((c, i) => h("div", { key: i, className: "hint", style: { textAlign: "left" } }, "• " + c.advice))) : null,
+    troubled ? h("div", { className: "list" }, h(Row, { icon: "play", title: problems.length ? "Check setup" : "Something wrong? Record a log", sub: "Settings → Diagnostics", onClick: () => go(problems.length ? "setup" : "advanced") })) : null,
     h("div", { className: "list" },
       h(Row, { icon: "bolt", title: "Details", sub: "What GFG does and why", onClick: () => go("governor") }),
       h(Row, { icon: "cog", title: "Settings", sub: "Overlay, profile, diagnostics", onClick: () => go("settings") })));
