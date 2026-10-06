@@ -89,3 +89,25 @@ class GovernorTelemetryTests(unittest.TestCase):
         observer.consume_line(diag(current_base_fps=45, current_output_fps=90), now=1.0)
         seq = observer.sample_seq
         self.assertEqual(observer.summary(window_seconds=10, after_seq=seq, now=2.0)["samples"], 0)
+
+class GeneratedCapacityTests(unittest.TestCase):
+    """Lines from the Deck log of 2026-10-07 (Witcher 3, Steam Deck OLED)."""
+
+    APPLIED = ("MAKO Renderer: present diagnostics: operation=runtime-state-applied context=19104014532612 "
+               "role=frame-generation state_revision=23 transition=live frame_generation_enabled=1 adaptive=0 "
+               "target_fps=90 multiplier=3 base_fps_cap=28 adaptive_max_multiplier=4 "
+               "frame_generation_resources_available=1 generated_frame_capacity=2 hdr=0")
+    PENDING = ("MAKO Renderer: present diagnostics: operation=runtime-transition-pending context=19104014532612 "
+               "role=frame-generation state_revision=23 reason=profile-resources generated_capacity_pending=1 "
+               "available_generated_capacity=2 available_wsi_generated_capacity=2 requested_generated_capacity=3 "
+               "process_restart_required=0 action=wait-for-natural-swapchain-recreation")
+
+    def test_capacity_from_applied_and_pending_lines(self):
+        observer = TelemetryObserver(Path("/nonexistent"))
+        self.assertIsNone(observer.max_multiplier)
+        observer.consume_line(self.PENDING, now=1.0)
+        self.assertEqual((observer.generated_capacity, observer.max_multiplier), (2, 3.0))
+        observer.consume_line(self.APPLIED.replace("generated_frame_capacity=2", "generated_frame_capacity=3"), now=2.0)
+        self.assertEqual(observer.max_multiplier, 4.0)
+        self.assertEqual(observer.snapshot(now=2.0)["generated_capacity"], 3)
+

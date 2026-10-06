@@ -489,6 +489,27 @@ class BalancedModeTests(unittest.TestCase):
         self.assertEqual((c.point.base_target_fps, c.tdp, c.flavor), (30, 10.0, "battery"))
 
 
+class GeneratedCapacityLimitTests(unittest.TestCase):
+    """Deck log 2026-10-07 #2: 28x3.25 / 26x3.5 / 24x3.75 became a fixed x3 at 84/78/72 FPS."""
+
+    def test_points_beyond_capacity_are_never_used_and_the_guard_buys_watts_instead(self):
+        c = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
+        c.max_multiplier = 3.0
+        c.idx = next(i for i, p in enumerate(c.points) if p.key == "30x3")
+        c.tdp = 11.0
+        c.phase = "locked"
+        bad = WindowVerdict(False, True, "real-below-cap", short=True)
+        c.observe(10.0, bad, 22.8)
+        self.assertEqual(c.point.key, "30x3", c.last_reason)
+        self.assertGreater(c.tdp, 11.0)
+        self.assertFalse(any(c._usable(i, 10.0) for i, p in enumerate(c.points) if p.multiplier > 3))
+
+    def test_unknown_capacity_keeps_the_old_behaviour(self):
+        c = BudgetController(target_output_fps=90, now=0.0)
+        self.assertIsNone(c.max_multiplier)
+        self.assertTrue(any(c._usable(i, 0.0) for i, p in enumerate(c.points) if 3 < p.multiplier < 4))
+
+
 class DeckLog20261007Tests(unittest.TestCase):
     """Witcher 3 on a Steam Deck OLED, Balanced mode (log GFG-Extreme-log-20261007-083050)."""
 

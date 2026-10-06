@@ -48,6 +48,7 @@ def analyze_diagnostics(text: str) -> Dict[str, Any]:
     clock = {"t": 0.0}
     observer = TelemetryObserver(Path("/nonexistent/gfg-diagnostics.log"), time_fn=lambda: clock["t"])  # parse only
     operations: Counter = Counter()
+    capacity_waits: List[Any] = []
     samples = lines = 0
     real: List[float] = []
     output: List[float] = []
@@ -59,6 +60,8 @@ def analyze_diagnostics(text: str) -> Dict[str, Any]:
         if fields is None:
             continue
         operations[str(fields.get("operation") or "?")] += 1
+        if fields.get("operation") == "runtime-transition-pending" and fields.get("generated_capacity_pending") == "1":
+            capacity_waits.append(fields.get("available_generated_capacity"))
         clock["t"] += 0.25
         sample = observer.consume_line(raw, now=clock["t"])
         if sample is not None:
@@ -68,6 +71,8 @@ def analyze_diagnostics(text: str) -> Dict[str, Any]:
     return {
         "lines": lines, "parsed_events": sum(operations.values()), "fps_samples": samples,
         "operations": dict(operations.most_common(12)),
+        "capacity_waits": len(capacity_waits),
+        "available_capacity": capacity_waits[-1] if capacity_waits else None,
         "real_median": statistics.median(real) if real else None,
         "output_median": statistics.median(output) if output else None,
     }
@@ -139,6 +144,11 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
     elif diag["fps_samples"] == 0:
         out.append(f"The renderer wrote {diag['lines']} diagnostic lines but none carried an FPS reading "
                    f"(operations: {', '.join(diag['operations']) or 'none'}): the Governor cannot see the frame rate.")
+    if diag.get("capacity_waits"):
+        cap = diag.get("available_capacity")
+        out.append(f"{diag['capacity_waits']} requests needed more generated frames than the renderer had "
+                   f"(capacity {cap}, so at most x{int(cap) + 1 if str(cap).isdigit() else '?'}); "
+                   "it fell back to a lower ratio instead.")
     share = report.get("telemetry_available_share")
     if share is not None and share < 0.5 and diag["fps_samples"]:
         out.append(f"Telemetry was usable only {int(share * 100)}% of the time (stale or missing FPS events).")

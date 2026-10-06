@@ -166,6 +166,26 @@ class TelemetryObserver:
         self._last_application: Dict[str, Any] = {}
         self._last_poll_error: Optional[str] = None
         self._session_generation = 0
+        # Generated frames per real frame the renderer has resources for (2 = up to x3).
+        # Raising it needs a swapchain recreation, so a deeper ratio silently falls back.
+        self._generated_capacity: Optional[int] = None
+
+    def _note_capacity(self, value: Any) -> None:
+        try:
+            capacity = int(float(value))
+        except (TypeError, ValueError):
+            return
+        if capacity >= 1:
+            self._generated_capacity = capacity
+
+    @property
+    def generated_capacity(self) -> Optional[int]:
+        return self._generated_capacity
+
+    @property
+    def max_multiplier(self) -> Optional[float]:
+        """Deepest ratio the renderer can deliver right now (capacity + 1), or None if unknown."""
+        return float(self._generated_capacity + 1) if self._generated_capacity else None
 
     @property
     def sample_seq(self) -> int:
@@ -217,6 +237,7 @@ class TelemetryObserver:
         self._last_fields = {}
         self._last_application = {}
         self._session_generation += 1
+        self._generated_capacity = None
 
     @staticmethod
     def parse_fields(line: str) -> Optional[Dict[str, str]]:
@@ -232,6 +253,10 @@ class TelemetryObserver:
         self._event_seq += 1
         operation = str(fields.get("operation") or "")
         self._last_fields = dict(fields)
+        if operation == "runtime-state-applied" and "generated_frame_capacity" in fields:
+            self._note_capacity(fields.get("generated_frame_capacity"))
+        elif operation == "runtime-transition-pending" and "available_generated_capacity" in fields:
+            self._note_capacity(fields.get("available_generated_capacity"))
         self._events.append(TelemetryEvent(
             self._event_seq, now_mono, operation,
             dict(fields) if operation in APPLICATION_OPERATIONS else None,
@@ -482,4 +507,5 @@ class TelemetryObserver:
             } if self._last_application else None,
             "last_poll_error": self._last_poll_error,
             "session_generation": self._session_generation,
+            "generated_capacity": self._generated_capacity,
         }
