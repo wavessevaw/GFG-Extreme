@@ -50,9 +50,9 @@ class WrapperOverlayTests(unittest.TestCase):
         data = json.loads(manifest.read_text()) if manifest.exists() else {}
         return values.get("MAKO_CONFIG"), data
 
-    def test_script_declares_overlay_and_format_77(self):
+    def test_script_declares_overlay_and_format_78(self):
         text = self.script.read_text()
-        self.assertIn("# mako-wrapper-format: 77", text)
+        self.assertIn("# mako-wrapper-format: 78", text)
         self.assertIn("mako_governor_overlay=", text)
         self.assertIn("mako_governor_overlay_active=", text)
 
@@ -76,6 +76,29 @@ class WrapperOverlayTests(unittest.TestCase):
         self.assertEqual(env.get("MANGOHUD_CONFIGFILE"), str(active))
         active.unlink()
         self.assertNotIn("MANGOHUD_CONFIGFILE", self.run_env())
+
+    def test_hud_stacks_after_vkbasalt_shader_effects(self):
+        self.assertTrue(self.svc.update_profile_config_fields(
+            "game", {"external_vulkan_layer": "vkbasalt"})["success"])
+        for manifest in (self.svc.mangohud_layer_dir / "MangoHud.x86_64.json",
+                         self.svc.vkbasalt_layer_dir / "vkBasalt.json"):
+            manifest.parent.mkdir(parents=True, exist_ok=True)
+            manifest.write_text("{}")
+        vkbasalt_conf = Path(HOME) / ".config" / "vkBasalt" / "vkBasalt.conf"
+        vkbasalt_conf.parent.mkdir(parents=True, exist_ok=True)
+        vkbasalt_conf.write_text("effects = cas\n")
+        env = self.run_env()
+        self.assertEqual(env.get("ENABLE_VKBASALT"), "1")
+        self.assertNotIn("MANGOHUD", env)
+        active = self.svc.config_dir / "hud" / "active.conf"
+        active.parent.mkdir(parents=True, exist_ok=True)
+        active.write_text("fps\n")
+        env = self.run_env()
+        self.assertEqual(env.get("ENABLE_VKBASALT"), "1")
+        self.assertEqual(env.get("MANGOHUD"), "1")
+        self.assertEqual(env.get("MANGOHUD_CONFIGFILE"), str(active))
+        paths = env["VK_IMPLICIT_LAYER_PATH"].split(":")
+        self.assertLess(paths.index(str(self.svc.vkbasalt_layer_dir)), paths.index(str(self.svc.mangohud_layer_dir)))
 
     def test_no_overlay_uses_saved_config(self):
         config, manifest = self.run_wrapper()

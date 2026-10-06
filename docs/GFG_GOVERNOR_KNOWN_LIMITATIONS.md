@@ -8,7 +8,7 @@
 6. **Guard is minimal.** Full Runtime Guard is planned for v0.0.4.
 7. **Dock interplay not yet audited.** Interaction with the plugin's Automatic Dock state machine is the first v0.0.3 audit item.
 8. **Overlay directory in Flatpak.** The overlay lives next to the Saved config and is assumed readable from Flatpak sandboxes; unverified.
-9. **In-game overlay.** MangoHud horizontal layout and the refresh rate of the `exec` status line are unverified on device. The overlay is skipped when another external layer (MangoHud/vkBasalt) is chosen for the profile.
+9. **In-game overlay.** MangoHud horizontal layout and the refresh rate of the `exec` status line are unverified on device. With shader effects (vkBasalt) on, the overlay is stacked after vkBasalt; it is skipped only when the profile loads its own MangoHud, and inside Flatpak launches.
 10. **TDP control** needs writable amdgpu `fastPPT`/`slowPPT` caps; otherwise the Governor stays observe-only. TDP display needs readable hwmon values (otherwise `TDPn/a`).
 11. **GFG Effort thresholds** (nightmare below 18 real FPS, dwell times) are design choices not yet tuned on real games.
 12. **UI.** Frontend is verified in a mock Decky environment (Chromium) with sample data; focus/controller navigation on a real Deck is untested. Shader-effect and per-field presets from the old UI are reachable only through *All settings*.

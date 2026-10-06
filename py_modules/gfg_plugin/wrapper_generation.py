@@ -76,7 +76,7 @@ from .profile_storage import (
 )
 
 
-WRAPPER_FORMAT_VERSION = 77
+WRAPPER_FORMAT_VERSION = 78
 WRAPPER_FORMAT_MARKER = f"# mako-wrapper-format: {WRAPPER_FORMAT_VERSION}"
 HOST_COMPATIBILITY_MARKER = "# mako-host-compatibility: aarch64-passthrough-v1"
 DIAGNOSTICS_DEFAULT_MARKER = (
@@ -228,15 +228,45 @@ def governor_overlay_lines(profile_name: str, runtime_state_dir: Path) -> list[s
 def governor_hud_lines(config_file_path: Path) -> list[str]:
     """Enable the GFG in-game HUD through the managed MangoHud layer.
 
-    Only when the user chose no other external layer and the Governor service
-    has published an active HUD config (``<config_dir>/hud/active.conf``).
+    Only while the Governor service has published an active HUD config
+    (``<config_dir>/hud/active.conf``).  With no external layer chosen the HUD
+    becomes the external layer; next to vkBasalt (shader effects) it is stacked
+    after vkBasalt by ``governor_hud_stack_lines`` so the text is not filtered.
+    A user-chosen MangoHud keeps its own config.
     """
     active = shlex.quote(str(Path(config_file_path).parent / "hud" / "active.conf"))
     return [
-        f'if [ -z "$mako_external_vulkan_layer" ] && [ -r {active} ]; then',
-        f"    mako_external_vulkan_layer={EXTERNAL_VULKAN_LAYER_MANGOHUD}",
-        f"    export MANGOHUD_CONFIGFILE={active}",
+        "mako_governor_hud=0",
+        f"if [ -r {active} ]; then",
+        '    if [ -z "$mako_external_vulkan_layer" ]; then',
+        f"        mako_external_vulkan_layer={EXTERNAL_VULKAN_LAYER_MANGOHUD}",
+        f"        export MANGOHUD_CONFIGFILE={active}",
+        f'    elif [ "$mako_external_vulkan_layer" = {EXTERNAL_VULKAN_LAYER_VKBASALT} ]; then',
+        "        mako_governor_hud=1",
+        f"        export MANGOHUD_CONFIGFILE={active}",
+        "    fi",
         "fi",
+    ]
+
+
+def governor_hud_stack_lines(mangohud_manifest: str, mangohud_manifest32: str) -> list[str]:
+    """Add the GFG HUD (MangoHud) after an already selected vkBasalt layer."""
+    return [
+        'if [ "$mako_governor_hud" = 1 ] && [ "$mako_flatpak_runtime" != 1 ] && '
+        f"{{ [ -r {mangohud_manifest} ] || [ -r {mangohud_manifest32} ]; }}; then",
+        "    unset DISABLE_MANGOHUD",
+        "    export MANGOHUD=1",
+        "    export NODEVICE_SELECT=1",
+        "    export DISABLE_LAYER_MESA_ANTI_LAG=1",
+        '    mako_implicit_layer_path="$mako_implicit_layer_path:$mako_mangohud_layer_dir"',
+        f"    if [ -r {mangohud_manifest} ]; then",
+        '        mako_managed_external_layer="${mako_managed_external_layer:+$mako_managed_external_layer:}'
+        f'{MANGOHUD_LAYER_NAME_64}"',
+        "    fi",
+        'elif [ "$mako_governor_hud" = 1 ]; then',
+        "    unset MANGOHUD_CONFIGFILE",
+        "fi",
+        "unset mako_governor_hud",
     ]
 
 
@@ -859,6 +889,7 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         "            fi",
         "            ;;",
         "esac",
+        *governor_hud_stack_lines(mangohud_manifest, mangohud_manifest32),
         # Steam installs its architecture-specific overlay manifests in the
         # standard per-user implicit directory. MAKO keeps that directory out
         # of implicit discovery, but Desktop Mode can safely expose it only as
@@ -911,13 +942,12 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         f"    unset {MAKO_LAYER_ENABLE_ENV}",
         f"    unset {GAMESCOPE_WSI_ENABLE_ENV}",
         f"    unset {SPATIAL_SCALING_LAYER_ENABLE_ENV}",
-        '    if [ "$mako_managed_external_layer" = "'
-        f'{MANGOHUD_LAYER_NAME_64}" ]; then',
-        "        unset MANGOHUD",
-        '    elif [ "$mako_managed_external_layer" = "'
-        f'{VKBASALT_LAYER_NAME_64}" ]; then',
-        f"        unset {VKBASALT_LAYER_ENABLE_ENV}",
-        "    fi",
+        '    case ":$mako_managed_external_layer:" in',
+        f'        *":{MANGOHUD_LAYER_NAME_64}:"*) unset MANGOHUD ;;',
+        "    esac",
+        '    case ":$mako_managed_external_layer:" in',
+        f'        *":{VKBASALT_LAYER_NAME_64}:"*) unset {VKBASALT_LAYER_ENABLE_ENV} ;;',
+        "    esac",
         'elif [ -n "$mako_steam_overlay_layers" ]; then',
         '    if [ -n "$mako_existing_instance_layers" ]; then',
         f'        export {VK_INSTANCE_LAYERS_ENV}="$mako_steam_overlay_layers:$mako_existing_instance_layers"',
