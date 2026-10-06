@@ -72,7 +72,12 @@ def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
     tel = tel.get("summary") or tel  # service stores {"snapshot", "summary"}
     real = (tel.get("real") or {}).get("median")
     out = (tel.get("output") or {}).get("median")
-    mult = (tel.get("latest") or {}).get("effective_multiplier")
+    # The multiplier must agree with the two medians next to it.  The latest
+    # sample alone reads x1 while a menu or pause stops generation.
+    if real and out is not None:
+        mult = out / real
+    else:
+        mult = (tel.get("multiplier") or {}).get("median") or (tel.get("latest") or {}).get("effective_multiplier")
     parts = [f"{round(out)} FPS"] if out is not None else []
     parts.append(f"x{_fmt_multiplier(mult)}" if mult else "GFG")
     if real is not None and out is not None:
