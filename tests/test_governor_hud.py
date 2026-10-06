@@ -18,8 +18,17 @@ class HudTests(unittest.TestCase):
     def test_fractional_multiplier_is_shown_to_the_nearest_quarter(self):
         base = {"enabled": True, "state": "LOCKED", "telemetry": {"real": {"median": 60.0}, "output": {"median": 90.0}, "latest": {"effective_multiplier": 1.47}}}
         self.assertTrue(hud.status_line(base, "minimal").startswith("90 FPS  x1.5  (60)"))
-        base["telemetry"]["latest"]["effective_multiplier"] = 2.04
-        self.assertTrue(hud.status_line(base, "minimal").startswith("90 FPS  x2  "))
+        base["telemetry"]["output"]["median"] = 121.0
+        self.assertTrue(hud.status_line(base, "minimal").startswith("121 FPS  x2  "))
+
+    def test_multiplier_follows_medians_not_the_last_sample(self):
+        # Field log: active point 45x2, last sample from a menu with generation stopped.
+        s = {"enabled": True, "telemetry": {"summary": {"real": {"median": 44.0}, "output": {"median": 88.0},
+                                                        "multiplier": {"median": 2.0},
+                                                        "latest": {"effective_multiplier": 1.0}}}}
+        self.assertEqual(hud.status_line(s, "minimal"), "88 FPS  x2  (44)")
+        s["telemetry"]["summary"]["real"] = {"median": None}
+        self.assertEqual(hud.status_line(s, "minimal"), "88 FPS  x2")
 
     def test_battery_time_omitted_when_unknown(self):
         s = {"enabled": True, "state": "LOCKED", "battery": {"minutes_left": None}}
