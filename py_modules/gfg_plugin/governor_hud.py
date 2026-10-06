@@ -26,9 +26,9 @@ _STATE_WORD = {
 
 def normalize(preset: Any, position: Any) -> tuple[str, str]:
     preset = str(preset or "standard").lower()
-    position = str(position or "top-left").lower()
+    position = str(position or "top-right").lower()
     return (preset if preset in PRESETS else "standard",
-            position if position in POSITIONS else "top-left")
+            position if position in POSITIONS else "top-right")
 
 
 def status_path(config_dir: Path) -> Path:
@@ -41,36 +41,38 @@ def active_config_path(config_dir: Path) -> Path:
 
 
 def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
-    """One compact line: ``GFG x2 | 45 > 90 | 9W | locked``."""
+    """One compact line: ``x2 | 45 > 90 | scale 100% | 9W``."""
     if not status.get("enabled"):
         return "GFG off"
     tel = status.get("telemetry") or {}
     real = (tel.get("real") or {}).get("median")
     out = (tel.get("output") or {}).get("median")
     mult = (tel.get("latest") or {}).get("effective_multiplier")
-    parts = ["GFG" + (f" x{round(mult)}" if mult else "")]
+    parts = [f"x{round(mult)}" if mult else "GFG"]
     if real is not None and out is not None:
         parts.append(f"{round(real)} > {round(out)}")
     if preset == "minimal":
         return " | ".join(parts)
+    point = status.get("active_point") or {}
+    parts.append(f"scale {int(point.get('render_scale_pct', 100))}%")
     power = status.get("power") or {}
     if power.get("owned") and power.get("current_w") is not None:
         parts.append(f"{round(power['current_w'])}W")
-    parts.append(_STATE_WORD.get(str(status.get("state")), "on"))
+    if preset == "detailed":
+        parts.append(_STATE_WORD.get(str(status.get("state")), "on"))
     return " | ".join(parts)
 
 
 def mangohud_config(preset: str, position: str, status_file: Path) -> str:
+    """No CPU load.  Frametime, GFG multiplier/scale/TDP; GPU only in Detailed."""
     preset, position = normalize(preset, position)
     lines = [
         f"position={position}", "legacy_layout=0", "background_alpha=0.45",
-        "font_size=20", "round_corners=8", "text_color=FFFFFF", "fps",
-        "fps_color_change=0", "no_display=0",
+        "font_size=20", "round_corners=8", "text_color=FFFFFF",
+        "fps", "frametime", "fps_color_change=0", "no_display=0",
     ]
-    if preset != "minimal":
-        lines += ["frametime=0", "gpu_stats", "cpu_stats", "battery"]
     if preset == "detailed":
-        lines += ["gpu_power", "cpu_power", "ram", "vram", "frame_timing=1"]
+        lines += ["frame_timing=1", "gpu_stats", "gpu_power", "battery", "battery_watt"]
     lines.append(f"exec=cat {status_file}")
     return "\n".join(lines) + "\n"
 

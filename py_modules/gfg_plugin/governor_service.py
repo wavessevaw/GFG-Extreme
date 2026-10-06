@@ -710,13 +710,18 @@ class GovernorService:
             self._status.setdefault("overlay", {})["sync_error"] = str(error)
 
     async def _iteration(self) -> None:
+        await self._iteration_core()
+        profile = self._status.get("profile") or ""
+        if profile:
+            await asyncio.to_thread(self._sync_hud, profile)
+
+    async def _iteration_core(self) -> None:
         profile, response = await asyncio.to_thread(self.configuration.get_current_profile_snapshot)
         config = response.get("config") if isinstance(response, dict) else None
         if not profile or not isinstance(config, dict):
             self._status.update({"state": "PAUSED", "reason": "profile-unavailable", "profile": profile or ""})
             return
         await self._retry_restores()
-        await asyncio.to_thread(self._sync_hud, profile)
         for forced in list(self._forced_release):
             self._forced_release.discard(forced)
             if forced == self._active_profile:

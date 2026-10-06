@@ -164,14 +164,14 @@ function ScalingPage({ s, back, profile, refresh }) {
 }
 
 function HudPage({ back, s, profile, refresh }) {
-  const hud = s.hud || { enabled: false, preset: "standard", position: "top-left" };
+  const hud = s.hud || { enabled: false, preset: "standard", position: "top-right" };
   const set = async (c) => { await rpc.setHud(profile, c.enabled, c.preset, c.position); refresh(); };
   return h(Page, { title: "In-game overlay", onBack: back },
-    h("div", { className: "list", style: { marginTop: 0 } }, h(Toggle, { on: hud.enabled, title: "Show overlay in game", sub: "FPS, frametime, TDP and GFG state: real → ×N → output.", onChange: (v) => set({ enabled: v }) })),
+    h("div", { className: "list", style: { marginTop: 0 } }, h(Toggle, { on: hud.enabled, title: "Show overlay in game", sub: "FPS, frametime, multiplier, scale and TDP.", onChange: (v) => set({ enabled: v }) })),
     h("div", { className: "sec" }, "DETAIL"),
     h(Seg, { value: hud.preset, options: [["minimal", "Minimal"], ["standard", "Standard"], ["detailed", "Detailed"]], onChange: (v) => set({ preset: v }) }),
     h("div", { className: "sec" }, "POSITION"),
-    h(Seg, { value: hud.position, options: [["top-left", "Top left"], ["top-right", "Top right"], ["bottom-left", "Bottom"]], onChange: (v) => set({ position: v }) }),
+    h(Seg, { value: hud.position, options: [["top-right", "Top right"], ["top-left", "Top left"], ["bottom-left", "Bottom"]], onChange: (v) => set({ position: v }) }),
     h(Note, { quiet: true }, "Takes effect on next game launch. Not used when another overlay layer (MangoHud/vkBasalt) is chosen for the profile."));
 }
 

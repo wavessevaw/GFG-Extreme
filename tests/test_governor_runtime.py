@@ -127,13 +127,13 @@ class RuntimeBase(unittest.TestCase):
         self.assertIn("exec=cat " + str(status_path(self.cfg.config_dir)), text)
         self.assertEqual(self.svc.get_status("game")["hud"], {"enabled": True, "preset": "detailed", "position": "top-right"})
         self.step()
-        self.assertTrue(status_path(self.cfg.config_dir).read_text().startswith("GFG"))
+        self.assertIn("scale", status_path(self.cfg.config_dir).read_text())
         self.svc.set_hud("game", False)
         self.assertFalse(active.exists())
         # bogus values are normalised, never written raw
         self.svc.set_hud("game", True, "evil;rm", "nowhere")
         self.assertEqual(self.svc.hud_settings("game")["preset"], "standard")
-        self.assertEqual(self.svc.hud_settings("game")["position"], "top-left")
+        self.assertEqual(self.svc.hud_settings("game")["position"], "top-right")
 
     # -- helpers
     def step(self, seconds=1.0):
