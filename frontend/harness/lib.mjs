@@ -1,15 +1,16 @@
-import { build } from "/opt/npm-tools/node_modules/esbuild/lib/main.js";
+import { build } from "esbuild";
 import fs from "node:fs";
 import { createRequire } from "node:module";
-const require = createRequire("/opt/npm-tools/node_modules/");
+const require = createRequire(import.meta.url);
 const { chromium } = require("playwright");
-export const launch = () => chromium.launch({ args: ["--no-sandbox"] });
+export const launch = () => chromium.launch({ args: ["--no-sandbox"], ...(process.env.GFG_CHROMIUM ? { executablePath: process.env.GFG_CHROMIUM } : {}) });
 const out = await build({ entryPoints: [new URL("../src/app.js", import.meta.url).pathname], bundle: true, format: "iife", globalName: "GFGPlugin", write: false, target: "es2020" });
-const rb = await build({ entryPoints: [new URL("./reactbundle.js", import.meta.url).pathname], bundle: true, format: "iife", write: false, nodePaths: ["/opt/npm-tools/node_modules"], define: {"process.env.NODE_ENV":"\"development\""} });
+const rb = await build({ entryPoints: [new URL("./reactbundle.js", import.meta.url).pathname], bundle: true, format: "iife", write: false, define: {"process.env.NODE_ENV":"\"development\""} });
 const reactJs = rb.outputFiles[0].text; const domJs = "";
 const dev = (mode, target) => ({ mode, target, reason: { oled: "Steam Deck OLED panel runs 90 Hz", lcd: "Steam Deck LCD panel tops out at 60 Hz", dock: "External display: 60 FPS" }[mode] });
 const base = { hud: { enabled: true, preset: "standard", position: "top-left" }, success: true, enabled: false, state: "DISABLED", telemetry: {}, power: {}, limitations: ["a game must be (re)launched after Governor is enabled to use the overlay and diagnostics"], ladder: { attempts: 2, max_attempts: 6 } };
-const tel = (real, out, m) => ({ real: { median: real }, output: { median: out }, latest: { effective_multiplier: m } });
+// Real backend shape: {snapshot, summary}.
+const tel = (real, out, m) => ({ snapshot: { available: true }, summary: { real: { median: real }, output: { median: out }, latest: { effective_multiplier: m }, frametime: { p95_ms: 24.5, p99_ms: 31.2, stutter_ratio: 0.01 } } });
 export const STATES = {
   "home-idle-oled": { ...base, device: dev("oled", 90), target_output_fps: 90 },
   "home-measuring": { ...base, enabled: true, state: "PROBE", device: dev("oled", 90), target_output_fps: 90, capability: {} },
