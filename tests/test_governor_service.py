@@ -83,6 +83,24 @@ class GovernorServiceTests(unittest.TestCase):
         line = status_line({"enabled": True, "telemetry": {"snapshot": {}, "summary": summary}}, "minimal")
         self.assertEqual(line, "90 FPS  x2  (45)")
 
+    def test_hud_status_file_shows_live_tdp(self):
+        from gfg_plugin.governor_hud import status_path
+        with tempfile.TemporaryDirectory() as temp:
+            svc = self.make_service(Path(temp))
+            svc._status["power"] = {}  # snapshot taken before discovery, as on a real start
+            svc.set_enabled("Game", True)
+            svc.set_hud("Game", enabled=True)
+            self.seed(svc, 48, 96)
+            asyncio.run(svc._iteration())
+            line = status_path(Path(temp)).read_text(encoding="utf-8")
+            self.assertNotIn("TDPn/a", line)
+            self.assertRegex(line, r"\b\d+W\b")
+
+    def test_hud_falls_back_to_current_tdp(self):
+        from gfg_plugin.governor_hud import status_line
+        line = status_line({"enabled": True, "power": {"current_tdp_w": 9.0}})
+        self.assertIn("9W", line)
+
     def test_disabled_by_default_never_claims_power(self):
         with tempfile.TemporaryDirectory() as temp:
             svc = self.make_service(Path(temp))

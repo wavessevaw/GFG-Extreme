@@ -298,10 +298,12 @@ class GovernorService:
         try:
             settings = self.hud_settings(profile)
             if settings["enabled"]:
+                status = self.get_status(profile)
                 # MangoHud re-reads a changed config, so the FPS source follows the telemetry.
                 self.hud.activate(settings["preset"], settings["position"],
-                                  generated_fps=hud_output_fps(self._status) is not None)
-                self.hud.write_status(self._status, settings["preset"])
+                                  generated_fps=hud_output_fps(status) is not None)
+                # get_status, not _status: power/effort/active point are only merged in there.
+                self.hud.write_status(status, settings["preset"])
             else:
                 self.hud.deactivate()
         except OSError as error:
