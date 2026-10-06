@@ -29,7 +29,9 @@ from typing import Any, Dict, Optional
 
 from shared_config import FG_BACKEND_GFG
 from .constants import PRESENT_DIAGNOSTICS_LOG_FILENAME
-from .governor_core import OperatingPoint, OperatingPointPlanner, PowerSearch, TrialLadder
+from .governor_core import (
+    EffortEstimator, OperatingPoint, OperatingPointPlanner, PowerSearch, TrialLadder, raw_effort,
+)
 from .governor_hud import HudWriter, normalize as hud_normalize
 from .governor_overlay import (
     OverlayRecord,
@@ -142,6 +144,9 @@ class GovernorService:
     def _reset_run_state(self) -> None:
         self._point: Optional[Dict[str, Any]] = None
         self._point_mode = ""
+        self._effort = getattr(self, "_effort", None) or EffortEstimator()
+        self._effort.reset()
+        self._exhausted = False
         self._point_external: Optional[bool] = None
         self._point_deltas: Dict[str, Any] = {}
         self._request: Optional[Request] = None
@@ -213,6 +218,16 @@ class GovernorService:
 
     def _profile_enabled(self, profile: str) -> bool:
         return bool(self._profile_settings(profile).get("enabled", False))
+
+    def _update_effort(self) -> None:
+        """Feed the slow effort rating.  Never published while still assessing."""
+        status = self._status
+        if not status.get("enabled") or status.get("state") not in ("LOCKED", "OPTIMIZE_POWER", "GUARD", "OBSERVE_ONLY"):
+            raw = "nightmare" if self._exhausted and status.get("enabled") else None
+        else:
+            real = ((status.get("telemetry") or {}).get("real") or {}).get("median")
+            raw = raw_effort(self._point, real, self._exhausted)
+        self._effort.update(self._clock(), raw)
 
     def hud_settings(self, profile: str) -> Dict[str, Any]:
         raw = self._profile_settings(profile).get("hud") or {}
@@ -450,6 +465,7 @@ class GovernorService:
             value["enabled"] = self._profile_enabled(profile)
         value["scale_ready"] = self._scale_ready(profile or value.get("profile", ""))
         value["hud"] = self.hud_settings(profile or value.get("profile", ""))
+        value["effort"] = self._effort.status()
         value["power"] = self.power.status()
         value["power_search"] = self.search.status.to_dict()
         value["request"] = self._request.to_dict() if self._request else None
@@ -711,6 +727,7 @@ class GovernorService:
 
     async def _iteration(self) -> None:
         await self._iteration_core()
+        self._update_effort()
         profile = self._status.get("profile") or ""
         if profile:
             await asyncio.to_thread(self._sync_hud, profile)
@@ -933,6 +950,7 @@ class GovernorService:
         ladder = self._ladder
         ok = await self._release_point(profile, "ladder-exhausted")
         self._ladder = ladder  # remember rejections: no re-trial until the session changes
+        self._exhausted = True
         return ok
 
     async def _power_step(self, profile: str, summary: Dict[str, Any]) -> None:

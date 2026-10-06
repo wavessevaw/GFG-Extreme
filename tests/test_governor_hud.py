@@ -9,14 +9,14 @@ class HudTests(unittest.TestCase):
         self.assertEqual(hud.normalize("MINIMAL", "top-left"), ("minimal", "top-left"))
 
     def test_status_line_variants(self):
-        s = {"enabled": True, "state": "LOCKED", "telemetry": {"real": {"median": 44.6}, "output": {"median": 90.2}, "latest": {"effective_multiplier": 2.01}}, "power": {"owned": True, "current_w": 9.2}, "active_point": {"render_scale_pct": 90}}
-        self.assertEqual(hud.status_line(s), "x2 | 45 > 90 | scale 90% | 9W")
+        s = {"enabled": True, "state": "LOCKED", "telemetry": {"real": {"median": 44.6}, "output": {"median": 90.2}, "latest": {"effective_multiplier": 2.01}}, "power": {"owned": False, "observed_tdp_w": 9.2}, "active_point": {"render_scale_pct": 90}, "effort": {"level": "medium"}}
+        self.assertEqual(hud.status_line(s), "x2 | 45 > 90 | scale 90% | 9W | medium")
         self.assertEqual(hud.status_line(s, "minimal"), "x2 | 45 > 90")
-        self.assertEqual(hud.status_line(s, "detailed"), "x2 | 45 > 90 | scale 90% | 9W | locked")
+        self.assertEqual(hud.status_line(s, "detailed"), "x2 | 45 > 90 | scale 90% | 9W | medium | locked")
         self.assertEqual(hud.status_line({"enabled": False}), "GFG off")
 
     def test_status_line_without_telemetry(self):
-        self.assertEqual(hud.status_line({"enabled": True, "state": "PROBE"}), "GFG | scale 100%")
+        self.assertEqual(hud.status_line({"enabled": True, "state": "PROBE"}), "GFG | scale 100% | TDP n/a")
 
     def test_config_has_no_cpu_and_always_frametime(self):
         p = Path("/x/status.txt")

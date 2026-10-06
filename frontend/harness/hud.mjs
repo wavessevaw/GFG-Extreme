@@ -3,8 +3,8 @@ const require = createRequire("/opt/npm-tools/node_modules/");
 const { chromium } = require("playwright");
 const rows = {
   minimal: [["FPS", "90"], ["FRAME", "11.1 ms"], ["", "x2 | 45 > 90"]],
-  standard: [["FPS", "90"], ["FRAME", "11.1 ms"], ["", "x2 | 45 > 90 | scale 100% | 9W"]],
-  detailed: [["FPS", "90"], ["FRAME", "11.1 ms"], ["GPU", "71%  6.1W"], ["BAT", "86%  9.2W"], ["", "x2 | 45 > 90 | scale 90% | 9W | locked"]],
+  standard: [["FPS", "90"], ["FRAME", "11.1 ms"], ["", "x2 | 45 > 90 | scale 100% | 9W | medium"]],
+  detailed: [["FPS", "90"], ["FRAME", "11.1 ms"], ["GPU", "71%  6.1W"], ["BAT", "86%  9.2W"], ["", "x2 | 45 > 90 | scale 90% | 9W | medium | locked"]],
 };
 const box = (k) => `<div class=h><div class=t>${rows[k].map(([a, b]) => a ? `<div class=r><b>${a}</b><span>${b}</span></div>` : `<div class="r g"><span>${b}</span></div>`).join("")}</div></div>`;
 const html = (k) => `<html><body style="margin:0;width:1280px;height:800px;background:radial-gradient(90% 80% at 60% 30%,#2a3a52,#10141c 70%);font-family:Inter,sans-serif;position:relative;overflow:hidden">

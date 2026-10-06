@@ -241,6 +241,86 @@ class TrialLadder:
         }
 
 
+EFFORT_LEVELS = ("easy", "medium", "hard", "nightmare")
+
+
+def raw_effort(point: Optional[Dict[str, Any]], real_median: Optional[float], exhausted: bool = False) -> Optional[str]:
+    """Instantaneous effort level, before any smoothing.
+
+    easy: no generation needed; medium: x2; hard: x3 or reduced render scale;
+    nightmare: target not reachable, very low real FPS, or x3 *and* reduced scale.
+    """
+    if exhausted:
+        return "nightmare"
+    if point is None:
+        return None
+    mult = int(point.get("multiplier", 1) or 1)
+    scale = int(point.get("render_scale_pct", 100) or 100)
+    if real_median is not None and real_median < EffortEstimator.NIGHTMARE_REAL_FPS:
+        return "nightmare"
+    if mult >= 3 and scale < 100:
+        return "nightmare"
+    if mult >= 3 or scale < 100:
+        return "hard"
+    if mult == 2:
+        return "medium"
+    return "easy"
+
+
+class EffortEstimator:
+    """Slow, hysteretic 'GFG effort' rating: Easy / Medium / Hard / Nightmare.
+
+    Nothing is published until the same raw level has held for ``INITIAL_DWELL``
+    seconds, so the rating never flickers while the Governor is still trying
+    operating points.  Afterwards a *harder* level needs ``UP_DWELL`` seconds,
+    an *easier* one ``DOWN_DWELL`` and moves a single step at a time; changes
+    are at least ``MIN_HOLD`` seconds apart.
+    """
+
+    INITIAL_DWELL = 45.0
+    UP_DWELL = 20.0
+    DOWN_DWELL = 60.0
+    MIN_HOLD = 30.0
+    NIGHTMARE_REAL_FPS = 18.0
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.level: Optional[str] = None
+        self._candidate: Optional[str] = None
+        self._since = 0.0
+        self._changed = 0.0
+
+    def update(self, now: float, raw: Optional[str]) -> Optional[str]:
+        if raw is None:
+            self._candidate = None  # evidence paused; keep what was published
+            return self.level
+        if raw != self._candidate:
+            self._candidate, self._since = raw, now
+        held = now - self._since
+        if self.level is None:
+            if held >= self.INITIAL_DWELL:
+                self.level, self._changed = raw, now
+            return self.level
+        if raw == self.level:
+            return self.level
+        order = EFFORT_LEVELS.index
+        harder = order(raw) > order(self.level)
+        need = self.UP_DWELL if harder else self.DOWN_DWELL
+        if held >= need and now - self._changed >= self.MIN_HOLD:
+            step = order(self.level) + (1 if harder else -1)
+            if harder and raw == "nightmare":
+                step = order(raw)  # unreachable target is reported at once
+            self.level, self._changed = EFFORT_LEVELS[step], now
+            if self.level != raw:
+                self._since = now  # next single step needs its own dwell
+        return self.level
+
+    def status(self) -> Dict[str, Any]:
+        return {"level": self.level, "assessing": self.level is None}
+
+
 class CostModel:
     """Transparent relative cost model used for rare point comparisons."""
 

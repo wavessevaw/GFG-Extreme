@@ -96,6 +96,8 @@ function Home({ s, profile, go, refresh }) {
   const pw = s.power || {};
   const toggle = async () => { setBusy(true); try { await rpc.setGovernor(profile, !s.enabled); } catch (e) {} await refresh(); setBusy(false); };
   const showLive = s.enabled && out != null;
+  const tdp = pw.observed_tdp_w != null ? pw.observed_tdp_w : pw.current_w;
+  const eff = s.effort && s.effort.level;
   return h("div", null,
     h("div", { className: "top" }, h("div", { className: "brand" }, "GFG", h("b", null, "·"), "EXTREME"),
       h("div", { className: "chip" + (s.enabled ? " on" : "") }, h("i"), MODE_NAME[dev.mode] || "Display")),
@@ -106,8 +108,10 @@ function Home({ s, profile, go, refresh }) {
         h("div", { className: "stat" }, h("div", { className: "v" }, num(real, 0)), h("div", { className: "l" }, "REAL")), h("div", { className: "a" }, "→"),
         h("div", { className: "stat hot" }, h("div", { className: "v" }, mult ? "×" + num(mult, 0) : POINT_LABEL(s.active_point)), h("div", { className: "l" }, "GFG")), h("div", { className: "a" }, "→"),
         h("div", { className: "stat" }, h("div", { className: "v" }, num(out, 0)), h("div", { className: "l" }, "OUTPUT"))) : null,
-      s.enabled && pw.owned ? h("div", { className: "power" }, h("div", { className: "r" }, h("span", null, "TDP"), h("span", null, num(pw.current_w, 0) + " W" + (pw.saved_w ? " / " + num(pw.saved_w, 0) + " W saved" : ""))),
-        h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, (pw.current_w / (pw.saved_w || 15)) * 100) + "%" } }))) : null),
+      s.enabled ? h("div", { className: "effort" }, h("span", null, "GFG EFFORT"),
+        h("b", { className: eff ? "lv " + eff : "lv" }, eff ? eff.toUpperCase() : "ASSESSING…")) : null,
+      tdp != null ? h("div", { className: "power" }, h("div", { className: "r" }, h("span", null, "TDP NOW"), h("span", null, num(tdp, 0) + " W" + (pw.saved_w ? " / " + num(pw.saved_w, 0) + " W saved" : ""))),
+        h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, (tdp / (pw.saved_w || 15)) * 100) + "%" } }))) : null),
     h(Focusable, { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? undefined : toggle },
       h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 18 }), s.enabled ? "STOP" : "RUN"),
     h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : "Target " + target + " FPS · " + (dev.reason || "picked automatically for this screen")),

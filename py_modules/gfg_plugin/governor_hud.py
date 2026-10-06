@@ -41,7 +41,7 @@ def active_config_path(config_dir: Path) -> Path:
 
 
 def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
-    """One compact line: ``x2 | 45 > 90 | scale 100% | 9W``."""
+    """One compact line: ``x2 | 45 > 90 | scale 100% | 9W | medium``."""
     if not status.get("enabled"):
         return "GFG off"
     tel = status.get("telemetry") or {}
@@ -56,8 +56,13 @@ def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
     point = status.get("active_point") or {}
     parts.append(f"scale {int(point.get('render_scale_pct', 100))}%")
     power = status.get("power") or {}
-    if power.get("owned") and power.get("current_w") is not None:
-        parts.append(f"{round(power['current_w'])}W")
+    tdp = power.get("observed_tdp_w")
+    if tdp is None:
+        tdp = power.get("current_w")
+    parts.append(f"{round(tdp)}W" if tdp is not None else "TDP n/a")
+    effort = (status.get("effort") or {}).get("level")
+    if effort:
+        parts.append(effort)
     if preset == "detailed":
         parts.append(_STATE_WORD.get(str(status.get("state")), "on"))
     return " | ".join(parts)
