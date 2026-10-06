@@ -81,7 +81,7 @@ class GovernorServiceTests(unittest.TestCase):
         from gfg_plugin.governor_hud import status_line
         summary = {"real": {"median": 45}, "output": {"median": 90}, "latest": {"effective_multiplier": 2.0}}
         line = status_line({"enabled": True, "telemetry": {"snapshot": {}, "summary": summary}}, "minimal")
-        self.assertEqual(line, "x2  45>90")
+        self.assertEqual(line, "90 FPS  x2  (45)")
 
     def test_disabled_by_default_never_claims_power(self):
         with tempfile.TemporaryDirectory() as temp:

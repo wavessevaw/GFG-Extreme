@@ -34,7 +34,7 @@ from .governor_core import (
     EffortEstimator, OperatingPoint, OperatingPointPlanner, PowerSearch, TrialLadder, raw_effort,
 )
 from .governor_battery import BatteryEstimator, read_battery
-from .governor_hud import HudWriter, normalize as hud_normalize
+from .governor_hud import HudWriter, normalize as hud_normalize, output_fps as hud_output_fps
 from .governor_overlay import (
     OverlayRecord,
     OverlayStore,
@@ -298,7 +298,9 @@ class GovernorService:
         try:
             settings = self.hud_settings(profile)
             if settings["enabled"]:
-                self.hud.activate(settings["preset"], settings["position"])
+                # MangoHud re-reads a changed config, so the FPS source follows the telemetry.
+                self.hud.activate(settings["preset"], settings["position"],
+                                  generated_fps=hud_output_fps(self._status) is not None)
                 self.hud.write_status(self._status, settings["preset"])
             else:
                 self.hud.deactivate()

@@ -57,8 +57,8 @@ One compact line, top right, just the numbers that matter:
 <img src="docs/img/hud-ingame-standard.png" width="620">
 </div>
 
-`90 FPS · 11.1 ms │ ×2 · 45>90 · sc100 · 9W · 2h05 · med`
-(output FPS, frame time │ multiplier, real>output FPS, render scale, TDP, time left, effort)
+`90 FPS  x2  (45)  sc100  9W  2h05  med`
+(FPS with generated frames, multiplier, real FPS, render scale, TDP, time left, effort; MangoHud's own FPS and frame time appear only while the Governor has no renderer telemetry)
 
 Choose **Minimal**, **Standard** or **Detailed**, and put it where you like. No CPU load clutter.
 
