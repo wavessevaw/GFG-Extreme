@@ -272,13 +272,25 @@ class RatchetTests(unittest.TestCase):
             now = self.hold(ctl, game, now, 5)
         self.assertEqual((ctl.point.key, ctl.tdp), start)
 
-    def test_a_single_stall_window_does_not_escalate_but_two_do(self):
+    def test_three_minute_loading_screen_changes_nothing_and_never_buys_emergency_watts(self):
         ctl, game, now = self.locked_at_the_edge()
-        tdp = ctl.tdp
-        now = self.dip(ctl, now, stall=True)
-        self.assertEqual((ctl.tdp, ctl.phase), (tdp, "locked"))
-        self.dip(ctl, now, stall=True)
-        self.assertEqual(ctl.phase, "guard")
+        before = (ctl.point.key, ctl.tdp)
+        now = self.dip(ctl, now, stall=True, windows=int(120 / WINDOW) - 1)
+        self.assertEqual((ctl.point.key, ctl.tdp, ctl.phase), before + ("locked",))
+        self.assertIsNone(ctl.short_since)
+        now = self.dip(ctl, now, stall=True, windows=int(60 / WINDOW) + 1)  # 3 min in total
+        self.assertLessEqual(ctl.tdp, before[1] + 2.0)     # at most one budget step
+        self.assertIsNone(ctl.short_since)
+        now = self.dip(ctl, now, stall=True, windows=int(120 / WINDOW) - 1)  # still under 5 min
+        self.assertLessEqual(ctl.tdp, ctl.normal_max_w)     # never the emergency tier
+        now = self.hold(ctl, game, now, 15)
+        self.assertEqual((ctl.point.key, ctl.tdp), before)  # and all of it comes back
+
+    def test_a_game_that_really_runs_at_a_third_of_the_cap_still_gets_help(self):
+        """Settling at 10 W in a game that can only do 12 real is not a loading screen forever."""
+        ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
+        run(ctl, Game(1.2), 0.0, 120)                        # 10 W -> 12 real: stall-looking
+        self.assertGreater(ctl.tdp, 10.0)
 
     def test_what_the_guard_spends_is_given_back_within_minutes(self):
         ctl, game, now = self.locked_at_the_edge()

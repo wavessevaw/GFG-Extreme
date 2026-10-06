@@ -692,6 +692,13 @@ class BudgetController:
     NORMAL_CEILING_W = 15.0
     EMERGENCY_CEILING_W = 20.0
     EMERGENCY_SUSTAIN_S = 60.0
+    # A collapse below half the cap is a loading screen far more often than a
+    # power level.  It buys one budget step per STALL_ESCALATE_S, and emergency
+    # watts only once it has lasted STALL_EMERGENCY_S without a single window
+    # above half the cap (no loading screen is that long; a game that is
+    # really that slow is the case emergency watts exist for).
+    STALL_ESCALATE_S = 120.0
+    STALL_EMERGENCY_S = 300.0
     HEALTHY_WINDOWS = 2
     GUARD_WINDOWS = 2
     REPROBE_S = 300.0
@@ -729,6 +736,8 @@ class BudgetController:
         self.good = 0
         self.bad = 0
         self.short_since: Optional[float] = None
+        self.stall_since: Optional[float] = None
+        self.stall_step_at: Optional[float] = None
         self.recover: Optional[tuple[int, Optional[float]]] = None
         self.recover_interval = self.RECOVER_S
         self.rejected: Dict[str, float] = {}
@@ -805,10 +814,17 @@ class BudgetController:
         absolute FPS threshold cannot work here: a deep point caps the real
         cadence itself, so it would always look like a power shortage.
         """
-        if verdict.healthy or not verdict.short:
+        if verdict.stall:
+            # Not evidence about power: neither start nor continue the shortfall clock.
             self.short_since = None
-        elif self.short_since is None:
-            self.short_since = now
+            if self.stall_since is None:
+                self.stall_since = self.stall_step_at = now
+        else:
+            self.stall_since = self.stall_step_at = None
+            if verdict.healthy or not verdict.short:
+                self.short_since = None
+            elif self.short_since is None:
+                self.short_since = now
         if verdict.healthy:
             return self._healthy(now)
         return self._unhealthy(now, verdict)
@@ -895,11 +911,16 @@ class BudgetController:
                         self.reprobe_interval = min(self.reprobe_interval * 2.0, self.REPROBE_MAX_S)
                 self._lock(now, f"probe-failed:{verdict.reason}")
             return "move"
+        if verdict.stall:
+            # Loading screen / transition: hold, in any phase, until it has lasted
+            # long enough to be the game itself.
+            if self.stall_step_at is None or now - self.stall_step_at < self.STALL_ESCALATE_S:
+                self.last_reason = f"hold-through-stall:{verdict.reason}"
+                return "hold"
+            self.stall_step_at = now  # one budget step per STALL_ESCALATE_S at most
+            return self._escalate(now, verdict)
         self.bad += 1
-        # A collapse to half the cap is a loading screen or a transition far more
-        # often than a power level, so it never escalates on a single window.
-        immediate = verdict.severe and not verdict.stall
-        if self.phase == "locked" and not immediate and self.bad < self.GUARD_WINDOWS:
+        if self.phase == "locked" and not verdict.severe and self.bad < self.GUARD_WINDOWS:
             return "hold"
         return self._escalate(now, verdict)
 
@@ -928,7 +949,10 @@ class BudgetController:
         # Above the normal budget only while the real stream keeps missing the
         # cap of the deepest point there is: that, not an FPS number, is what
         # "the game cannot hold 20-22 real FPS" means.
-        sustained = self.short_since is not None and now - self.short_since >= self.EMERGENCY_SUSTAIN_S
+        if verdict.stall:
+            sustained = self.stall_since is not None and now - self.stall_since >= self.STALL_EMERGENCY_S
+        else:
+            sustained = self.short_since is not None and now - self.short_since >= self.EMERGENCY_SUSTAIN_S
         if (
             sustained and self.tdp_control and self.tdp is not None
             and self.tdp < self.emergency_max_w - 1e-6
