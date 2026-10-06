@@ -252,6 +252,7 @@ class GovernorService:
         """Feed the slow effort rating.  Never published while still assessing."""
         status = self._status
         telemetry = status.get("telemetry") or {}
+        telemetry = telemetry.get("summary") or telemetry  # service stores {"snapshot", "summary"}
         stable = self._delivering_target(telemetry)
         if not status.get("enabled") or status.get("state") not in ("LOCKED", "OPTIMIZE_POWER", "GUARD", "OBSERVE_ONLY"):
             if self._exhausted and status.get("enabled"):

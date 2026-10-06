@@ -109,7 +109,8 @@ function Home({ s, profile, go, refresh, inst, reloadInst }) {
   const missing = inst && inst.installed === false;
   const d = describe(s);
   const dev = s.device || {};
-  const tel = s.telemetry || {};
+  const tel0 = s.telemetry || {};
+  const tel = tel0.summary || tel0; // backend sends {snapshot, summary}
   const latest = tel.latest || {};
   const target = s.target_output_fps || dev.target || 60;
   const real = tel.real && tel.real.median, out = tel.output && tel.output.median;

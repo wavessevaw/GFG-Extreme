@@ -56,6 +56,7 @@ def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
     if not status.get("enabled"):
         return "GFG off"
     tel = status.get("telemetry") or {}
+    tel = tel.get("summary") or tel  # service stores {"snapshot", "summary"}
     real = (tel.get("real") or {}).get("median")
     out = (tel.get("output") or {}).get("median")
     mult = (tel.get("latest") or {}).get("effective_multiplier")
