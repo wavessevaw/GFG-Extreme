@@ -62,6 +62,13 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(rep["overlay_burst_before_exit"], 6)
         self.assertTrue(any("6 in-game overlay changes" in f for f in rep["findings"]))
 
+    def test_renderer_capacity_fallback_is_reported(self):
+        pending = (H + "operation=runtime-transition-pending state_revision=23 generated_capacity_pending=1 "
+                   "available_generated_capacity=2 requested_generated_capacity=3\n")
+        rep = analyze(bundle({"timeline.jsonl": timeline(self.rows()), "diagnostics-x.log": pending * 3}))
+        self.assertEqual(rep["diagnostics"]["capacity_waits"], 3)
+        self.assertTrue(any("at most x3" in f for f in rep["findings"]))
+
 
 if __name__ == "__main__":
     unittest.main()
