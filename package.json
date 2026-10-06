@@ -1,6 +1,6 @@
 {
   "name": "gfg-extreme-plugin",
-  "version": "4.0.0-gfg.4-governor.0.0.2",
+  "version": "4.0.0-gfg.4-governor.0.0.3",
   "description": "GFG Extreme pipeline orchestrator with per-profile Frame Generation backends, scaling, and shaders",
   "type": "module",
   "scripts": {

@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (v0.0.2).
+"""Live orchestration service for GFG Governor (v0.0.3).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from shared_config import FG_BACKEND_GFG
-from .constants import PRESENT_DIAGNOSTICS_LOG_FILENAME
+from .constants import PRESENT_DIAGNOSTICS_FALLBACK_LOG, PRESENT_DIAGNOSTICS_LOG_FILENAME
 from .governor_core import (
     multiplier_tolerance,
     EffortEstimator, OperatingPoint, OperatingPointPlanner, PowerSearch, TrialLadder, raw_effort,
@@ -48,7 +48,7 @@ from .governor_telemetry import TelemetryObserver
 
 APPLIED_OPERATIONS = frozenset({"runtime-state-applied", "runtime-transition-applied"})
 FAILED_OPERATIONS = frozenset({"runtime-transition-failed"})
-VERSION = "0.0.2"
+VERSION = "0.0.3"
 
 
 @dataclass
@@ -117,9 +117,13 @@ class GovernorService:
         self.log = logger
         self.inspector = pipeline_inspector
         disk = self.configuration.config_dir / PRESENT_DIAGNOSTICS_LOG_FILENAME
-        self.observer = TelemetryObserver(disk, Path("/dev/shm/gfg-present-diagnostics.log"))
+        self.observer = TelemetryObserver(disk, Path(PRESENT_DIAGNOSTICS_FALLBACK_LOG))
         self.planner = OperatingPointPlanner()
+        self.activity: Any = None  # ActivityLog, set by the plugin
+        self._journal_state: tuple = ()
+        self._journal_game: Optional[tuple] = None
         self.power = SteamDeckPowerActuator()
+        self.power.journal = self._journal_power
         self.search = PowerSearch()
         self.settings_path = self.configuration.config_dir / "gfg-governor.json"
         self.events_path = self.configuration.runtime_state_dir / "governor-events.jsonl"
@@ -785,8 +789,37 @@ class GovernorService:
         except (OSError, ValueError) as error:
             self._status.setdefault("overlay", {})["sync_error"] = str(error)
 
+    def _journal(self, kind: str, **fields: Any) -> None:
+        if self.activity is not None:
+            self.activity.record("governor", kind, **fields)
+
+    def _journal_power(self, kind: str, **fields: Any) -> None:
+        self._journal(kind, profile=self._status.get("profile"), **fields)
+
+    def _journal_transitions(self) -> None:
+        status = self._status
+        key = (status.get("enabled"), status.get("state"), status.get("reason"))
+        if key != self._journal_state:
+            self._journal_state = key
+            self._journal("state", enabled=key[0], state=key[1], reason=key[2], profile=status.get("profile"),
+                          point=(self._point or {}).get("key"), capability=status.get("capability"))
+        launch = self._launch if status.get("enabled") else None
+        if launch is None:
+            return
+        game = tuple(launch.get("launch_key") or ()) if launch.get("running") else None
+        if game != self._journal_game:
+            if game is not None:
+                self._journal("game-detected", profile=status.get("profile"), launch_key=list(game),
+                              governor_launch=bool(launch.get("governor_launch")),
+                              renderer_loaded=launch.get("renderer_loaded"))
+            elif self._journal_game is not None:
+                self._journal("game-exited", profile=status.get("profile"), launch_key=list(self._journal_game),
+                              reason=launch.get("reason"))
+            self._journal_game = game
+
     async def _iteration(self) -> None:
         await self._iteration_core()
+        self._journal_transitions()
         self._update_effort()
         self._update_battery()
         profile = self._status.get("profile") or ""
@@ -916,12 +949,24 @@ class GovernorService:
                                  "active_point_matches": True})
             return
 
-        if not snapshot.get("available") or (snapshot.get("sample_age_ms") or 10**9) > self.MAX_SAMPLE_AGE_MS:
+        sample_age_ms = snapshot.get("sample_age_ms")
+        if not snapshot.get("available") or sample_age_ms is None or sample_age_ms > self.MAX_SAMPLE_AGE_MS:
             if self.power.state.owned:
                 await asyncio.to_thread(self.power.restore_if_owned)
             telemetry_reason = "waiting-for-fps-events"
             path = str(snapshot.get("path") or "")
-            if snapshot.get("last_poll_error"):
+            # A game launched before Governor was enabled has neither renderer
+            # diagnostics nor the overlay binding: no FPS will ever arrive, so
+            # say "relaunch" instead of waiting forever.
+            capability = self._capability(profile, launch) if self.overlay is not None else None
+            if capability is not None:
+                self._status["capability"] = capability
+            if (
+                capability is not None and not capability["overlay_active"]
+                and snapshot.get("sample_seq", 0) == 0
+            ):
+                telemetry_reason = capability["reason"]
+            elif snapshot.get("last_poll_error"):
                 telemetry_reason = "diagnostics-log-unavailable"
             elif not path:
                 telemetry_reason = "diagnostics-path-unavailable"
@@ -1025,7 +1070,8 @@ class GovernorService:
         assert point is not None
         health_ratio = self.CAP_BOUND_HEALTH_RATIO if self._point_mode == "applied" else self.UNCAPPED_HEALTH_RATIO
         if not self.power.state.available:
-            self._status.update({"state": "OBSERVE_ONLY", "reason": "tdp-control-unavailable"})
+            reason = "tdp-control-not-writable" if self.power.state.fast_cap_path else "tdp-control-unavailable"
+            self._status.update({"state": "OBSERVE_ONLY", "reason": reason})
             return
         if not self.power.state.owned:
             claimed = await asyncio.to_thread(self.power.claim)

@@ -35,6 +35,7 @@ const rpc = {
   logStart: callable("start_log_recording"),
   logStop: callable("stop_log_recording"),
   logStatus: callable("get_log_recording_status"),
+  logUi: callable("log_ui_event"),
 };
 
 // ---------- helpers
@@ -43,12 +44,23 @@ const MODE_NAME = { oled: "Steam Deck OLED", lcd: "Steam Deck LCD", dock: "Dock"
 const fmtMult = (m) => { const q = Math.round(Number(m) * 4) / 4; return "×" + (Number.isInteger(q) ? q : String(q)); };
 const POINT_LABEL = (p) => (p ? (p.multiplier > 1 ? fmtMult(p.multiplier) : "Native") + (p.render_scale_pct < 100 ? " · " + p.render_scale_pct + "%" : "") : "–");
 
+const PAUSED_TEXT = {
+  "overlay-restore-failed": "Could not restore settings — retrying.",
+  "game-not-running": "Start the game with the GFG launch command.",
+  "diagnostics-active-no-events": "No FPS from the engine yet. If the game was started before GFG was turned on, relaunch it.",
+  "diagnostics-events-no-fps-samples": "The engine reports no FPS yet. Is frame generation on?",
+  "telemetry-stale": "FPS from the engine stopped arriving.",
+  "external-tdp-change": "TDP was changed outside GFG — not fighting it.",
+  "tdp-write-failed": "Could not write TDP.",
+};
+
 // Plain-language state for the hero card. Returns {head, body, tone}
 function describe(s) {
   const cap = (s.capability && s.capability.reason) || "";
   if (!s.enabled) return { head: "Ready", body: "Press Run — GFG will pick the target for this screen and manage the engine.", tone: "idle" };
-  if (s.state === "PAUSED") return { head: "Paused", body: s.reason === "overlay-restore-failed" ? "Could not restore settings — retrying." : "Waiting. Your saved profile is untouched.", tone: "warn" };
-  if (cap === "relaunch-required-for-governor-overlay") return { head: "Restart the game", body: "GFG is on. Relaunch the game once so the engine can attach.", tone: "warn" };
+  if (cap === "relaunch-required-for-governor-overlay" || s.reason === "relaunch-required-for-governor-overlay") return { head: "Restart the game", body: "GFG is on. Relaunch the game once so the engine can attach.", tone: "warn" };
+  if (s.state === "PAUSED") return { head: "Paused", body: PAUSED_TEXT[s.reason] || "Waiting (" + (s.reason || "unknown") + "). Your saved profile is untouched.", tone: "warn" };
+  if (s.state === "OBSERVE_ONLY" && s.reason === "tdp-control-not-writable") return { head: "No TDP access", body: "GFG manages frame generation, but cannot change TDP: the plugin has no write access to the power caps.", tone: "warn" };
   if (s.state === "OBSERVE_ONLY") return { head: "Observing", body: "Another backend owns the pipeline. GFG only watches.", tone: "idle" };
   if (s.state === "PROBE" || s.state === "PLAN") return { head: "Measuring", body: "Learning how the game runs. Nothing is changed yet.", tone: "busy" };
   if (s.state === "APPLY") return { head: "Testing " + POINT_LABEL(s.request && s.request.point), body: "Checking the result before keeping it.", tone: "busy" };
@@ -87,7 +99,7 @@ const LAUNCH_DEFAULT = "/home/deck/.local/bin/gfg %command%";
 function LaunchCopy({ launch }) {
   const cmd = launch || LAUNCH_DEFAULT;
   const [state, setState] = useState("");
-  const copy = async () => { const ok = await copyText(cmd); setState(ok ? "Copied" : "Select and type it manually"); setTimeout(() => setState(""), 2500); };
+  const copy = async () => { const ok = await copyText(cmd); rpc.logUi("copy-launch-command", { ok, cmd }).catch(() => {}); setState(ok ? "Copied" : "Select and type it manually"); setTimeout(() => setState(""), 2500); };
   return h("div", null,
     h("div", { className: "card" }, h("div", { style: { fontFamily: "monospace", fontSize: 12, wordBreak: "break-all", userSelect: "all" } }, cmd)),
     h("div", { className: "list" }, h(Row, { icon: "play", title: state || "Copy launch command", sub: "Paste into the game's Steam Properties → Launch Options", value: state ? "" : "Copy", onClick: copy })));
@@ -257,7 +269,8 @@ function HudPage({ back, s, profile, refresh }) {
     h(Seg, { value: hud.preset, options: [["minimal", "Minimal"], ["standard", "Standard"], ["detailed", "Detailed"]], onChange: (v) => set({ preset: v }) }),
     h("div", { className: "sec" }, "POSITION"),
     h(Seg, { value: hud.position, options: [["top-right", "Top right"], ["top-left", "Top left"], ["bottom-left", "Bottom left"]], onChange: (v) => set({ position: v }) }),
-    h(Note, { quiet: true }, "Takes effect on next game launch. Not used when another overlay layer (MangoHud/vkBasalt) is chosen for the profile."));
+    hud.layer_available === false ? h(Note, null, "MangoHud layer not found on this system, so the overlay cannot appear. Record a log and send it.") : null,
+    h(Note, { quiet: true }, "Takes effect on next game launch, only for games started with the GFG launch command. Works together with shader effects (vkBasalt); not used when the profile already loads its own MangoHud."));
 }
 
 function ProfilesPage({ back, profiles, current, pick, reload }) {

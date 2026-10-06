@@ -48,6 +48,7 @@ from .constants import (
     PRESENT_ACQUIRE_TIMEOUT_ENV,
     PRESENT_ACQUIRE_TIMEOUT_MS,
     PRESENT_DIAGNOSTICS_ENV,
+    PRESENT_DIAGNOSTICS_FALLBACK_LOG,
     PRESENT_DIAGNOSTICS_LOG_ENV,
     PRESENT_DIAGNOSTICS_LOG_FILENAME,
     PRESENT_DIAGNOSTICS_RETAINED_SESSION_COUNT,
@@ -76,7 +77,7 @@ from .profile_storage import (
 )
 
 
-WRAPPER_FORMAT_VERSION = 77
+WRAPPER_FORMAT_VERSION = 79
 WRAPPER_FORMAT_MARKER = f"# mako-wrapper-format: {WRAPPER_FORMAT_VERSION}"
 HOST_COMPATIBILITY_MARKER = "# mako-host-compatibility: aarch64-passthrough-v1"
 DIAGNOSTICS_DEFAULT_MARKER = (
@@ -228,15 +229,45 @@ def governor_overlay_lines(profile_name: str, runtime_state_dir: Path) -> list[s
 def governor_hud_lines(config_file_path: Path) -> list[str]:
     """Enable the GFG in-game HUD through the managed MangoHud layer.
 
-    Only when the user chose no other external layer and the Governor service
-    has published an active HUD config (``<config_dir>/hud/active.conf``).
+    Only while the Governor service has published an active HUD config
+    (``<config_dir>/hud/active.conf``).  With no external layer chosen the HUD
+    becomes the external layer; next to vkBasalt (shader effects) it is stacked
+    after vkBasalt by ``governor_hud_stack_lines`` so the text is not filtered.
+    A user-chosen MangoHud keeps its own config.
     """
     active = shlex.quote(str(Path(config_file_path).parent / "hud" / "active.conf"))
     return [
-        f'if [ -z "$mako_external_vulkan_layer" ] && [ -r {active} ]; then',
-        f"    mako_external_vulkan_layer={EXTERNAL_VULKAN_LAYER_MANGOHUD}",
-        f"    export MANGOHUD_CONFIGFILE={active}",
+        "mako_governor_hud=0",
+        f"if [ -r {active} ]; then",
+        '    if [ -z "$mako_external_vulkan_layer" ]; then',
+        f"        mako_external_vulkan_layer={EXTERNAL_VULKAN_LAYER_MANGOHUD}",
+        f"        export MANGOHUD_CONFIGFILE={active}",
+        f'    elif [ "$mako_external_vulkan_layer" = {EXTERNAL_VULKAN_LAYER_VKBASALT} ]; then',
+        "        mako_governor_hud=1",
+        f"        export MANGOHUD_CONFIGFILE={active}",
+        "    fi",
         "fi",
+    ]
+
+
+def governor_hud_stack_lines(mangohud_manifest: str, mangohud_manifest32: str) -> list[str]:
+    """Add the GFG HUD (MangoHud) after an already selected vkBasalt layer."""
+    return [
+        'if [ "$mako_governor_hud" = 1 ] && [ "$mako_flatpak_runtime" != 1 ] && '
+        f"{{ [ -r {mangohud_manifest} ] || [ -r {mangohud_manifest32} ]; }}; then",
+        "    unset DISABLE_MANGOHUD",
+        "    export MANGOHUD=1",
+        "    export NODEVICE_SELECT=1",
+        "    export DISABLE_LAYER_MESA_ANTI_LAG=1",
+        '    mako_implicit_layer_path="$mako_implicit_layer_path:$mako_mangohud_layer_dir"',
+        f"    if [ -r {mangohud_manifest} ]; then",
+        '        mako_managed_external_layer="${mako_managed_external_layer:+$mako_managed_external_layer:}'
+        f'{MANGOHUD_LAYER_NAME_64}"',
+        "    fi",
+        'elif [ "$mako_governor_hud" = 1 ]; then',
+        "    unset MANGOHUD_CONFIGFILE",
+        "fi",
+        "unset mako_governor_hud",
     ]
 
 
@@ -333,8 +364,22 @@ def launch_manifest_write_lines() -> list[str]:
         '    fi',
         '    gfg_launch_tmp="${gfg_manifest_path}.tmp.$$"',
         printf_line,
+        # One line per launch in the user-action journal: what the game got.
+        '    gfg_activity_log="$(dirname -- "$(dirname -- "$gfg_manifest_path")")/activity.jsonl"',
+        '    gfg_launch_overlay=inactive',
+        '    [ -n "${mako_governor_overlay_active:-}" ] && gfg_launch_overlay=active',
+        "    printf " + shlex.quote(
+            '{"ts":%s,"source":"wrapper","kind":"game-launch","pid":%s,"app_id":"%s","profile":"%s",'
+            '"command":"%s","diagnostics":"%s","diagnostics_log":"%s","governor_overlay":"%s",'
+            '"vk_instance_layers":"%s"}\\n'
+        ) + ' "$gfg_launch_timestamp" "$$" "$gfg_launch_app_id" "$gfg_launch_profile" '
+        '"$gfg_launch_command" "${mako_diagnostics_state:-off}" '
+        '"$(gfg_json_escape "${mako_diagnostics_log:-}")" "$gfg_launch_overlay" '
+        '"$(gfg_json_escape "${VK_INSTANCE_LAYERS:-}")" >> "$gfg_activity_log" 2>/dev/null || :',
+        '    unset gfg_activity_log gfg_launch_overlay',
         '    unset -f gfg_json_escape',
         'fi',
+        'unset mako_diagnostics_state mako_diagnostics_log',
     ]
 
 
@@ -859,6 +904,7 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         "            fi",
         "            ;;",
         "esac",
+        *governor_hud_stack_lines(mangohud_manifest, mangohud_manifest32),
         # Steam installs its architecture-specific overlay manifests in the
         # standard per-user implicit directory. MAKO keeps that directory out
         # of implicit discovery, but Desktop Mode can safely expose it only as
@@ -911,13 +957,12 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         f"    unset {MAKO_LAYER_ENABLE_ENV}",
         f"    unset {GAMESCOPE_WSI_ENABLE_ENV}",
         f"    unset {SPATIAL_SCALING_LAYER_ENABLE_ENV}",
-        '    if [ "$mako_managed_external_layer" = "'
-        f'{MANGOHUD_LAYER_NAME_64}" ]; then',
-        "        unset MANGOHUD",
-        '    elif [ "$mako_managed_external_layer" = "'
-        f'{VKBASALT_LAYER_NAME_64}" ]; then',
-        f"        unset {VKBASALT_LAYER_ENABLE_ENV}",
-        "    fi",
+        '    case ":$mako_managed_external_layer:" in',
+        f'        *":{MANGOHUD_LAYER_NAME_64}:"*) unset MANGOHUD ;;',
+        "    esac",
+        '    case ":$mako_managed_external_layer:" in',
+        f'        *":{VKBASALT_LAYER_NAME_64}:"*) unset {VKBASALT_LAYER_ENABLE_ENV} ;;',
+        "    esac",
         'elif [ -n "$mako_steam_overlay_layers" ]; then',
         '    if [ -n "$mako_existing_instance_layers" ]; then',
         f'        export {VK_INSTANCE_LAYERS_ENV}="$mako_steam_overlay_layers:$mako_existing_instance_layers"',
@@ -1014,7 +1059,9 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         "unset mako_flatpak_launch",
         "# Heroic can discard a game's stderr. Capture opt-in engine diagnostics here instead.",
         f"mako_diagnostics_default={shlex.quote(str(diagnostics_log_path))}",
+        "mako_diagnostics_state=off",
         f'if [ "${{{PRESENT_DIAGNOSTICS_ENV}:-0}}" != "0" ]; then',
+        "    mako_diagnostics_state=unavailable",
         f'    mako_diagnostics_log="${{{PRESENT_DIAGNOSTICS_LOG_ENV}:-$mako_diagnostics_default}}"',
         "    mako_diagnostics_rotation_ready=1",
         f"    for mako_diagnostics_entry in {diagnostics_history_paths}; do",
@@ -1023,6 +1070,18 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         "            break",
         "        fi",
         "    done",
+        "    # A stale log or rotation owned by another user (or a symlink) used to disable",
+        "    # diagnostics silently. The default log lives in our own config dir: drop them.",
+        '    if [ "$mako_diagnostics_rotation_ready" = 0 ] && [ "$mako_diagnostics_log" = "$mako_diagnostics_default" ]; then',
+        "        mako_diagnostics_rotation_ready=1",
+        f"        for mako_diagnostics_entry in {diagnostics_history_paths}; do",
+        '            if [ -L "$mako_diagnostics_entry" ] || { [ -f "$mako_diagnostics_entry" ] && [ ! -O "$mako_diagnostics_entry" ]; }; then',
+        '                rm -f -- "$mako_diagnostics_entry" 2>/dev/null || mako_diagnostics_rotation_ready=0',
+        '            elif [ -e "$mako_diagnostics_entry" ] && [ ! -f "$mako_diagnostics_entry" ]; then',
+        "                mako_diagnostics_rotation_ready=0",
+        "            fi",
+        "        done",
+        "    fi",
         '    if [ "$mako_diagnostics_rotation_ready" = 1 ] && [ -f "$mako_diagnostics_log" ]; then',
         *diagnostics_rotation_lines,
         "    fi",
@@ -1031,6 +1090,15 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
             '(set -C; : > "$mako_diagnostics_log") 2>/dev/null; then'
         ),
         '        exec 2>> "$mako_diagnostics_log"',
+        "        mako_diagnostics_state=log",
+        "    else",
+        "        # Last resort: the Governor also reads this RAM log (newest wins).",
+        f"        mako_diagnostics_log={shlex.quote(PRESENT_DIAGNOSTICS_FALLBACK_LOG)}",
+        '        if { [ ! -e "$mako_diagnostics_log" ] && [ ! -L "$mako_diagnostics_log" ] && (set -C; : > "$mako_diagnostics_log") 2>/dev/null; } || '
+        '{ [ ! -L "$mako_diagnostics_log" ] && [ -f "$mako_diagnostics_log" ] && [ -O "$mako_diagnostics_log" ] && : > "$mako_diagnostics_log"; }; then',
+        '            exec 2>> "$mako_diagnostics_log"',
+        "            mako_diagnostics_state=fallback",
+        "        fi",
         "    fi",
         "fi",
         "unset mako_diagnostics_entry",
