@@ -193,6 +193,7 @@ class TrialLadder:
         self.external_display = bool(external_display)
         self.target_output_fps = int(target_output_fps) if target_output_fps else (60 if external_display else 90)
         self.rejected: Dict[str, str] = {}
+        self._reject_until: Dict[str, float] = {}
         self.skipped: Dict[str, str] = {}
         self.predicted: Dict[str, str] = {}
         self.native_capacity: Optional[float] = None
@@ -217,13 +218,18 @@ class TrialLadder:
             external_display=self.external_display, target_output_fps=self.target_output_fps,
         )
 
-    def next_point(self, applicable: Any) -> Optional[OperatingPoint]:
+    def next_point(self, applicable: Any, now: Optional[float] = None) -> Optional[OperatingPoint]:
         """First unrejected point for which ``applicable(point)`` returns None.
 
         ``applicable`` returns a reason string when a point cannot currently be
         expressed (for example a scaled point on a process launched without the
         Scaling Engine); such points are skipped and reported, not rejected.
         """
+        if now is not None:
+            for key, until in list(self._reject_until.items()):
+                if now >= until:
+                    self._reject_until.pop(key)
+                    self.rejected.pop(key, None)
         if self.attempts >= self.MAX_ATTEMPTS:
             return None
         self.skipped = {}
@@ -250,8 +256,13 @@ class TrialLadder:
     def mark_attempt(self) -> None:
         self.attempts += 1
 
-    def reject(self, point_key: str, reason: str) -> None:
+    def reject(self, point_key: str, reason: str, until: Optional[float] = None) -> None:
+        """Permanent for the session, or until ``until`` (service clock) for transient evidence."""
         self.rejected[point_key] = reason
+        if until is None:
+            self._reject_until.pop(point_key, None)
+        else:
+            self._reject_until[point_key] = float(until)
 
     def evaluate(
         self,
@@ -434,6 +445,7 @@ class PowerSearchState:
     recovery_tdp_w: Optional[float] = None
     min_tdp_w: Optional[float] = None
     ceiling_tdp_w: Optional[float] = None
+    ceiling_failures: int = 0
     reason: str = "not-started"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -448,6 +460,10 @@ class PowerSearch:
     window.  A failed lower candidate restores the last known-good level and
     locks.  This is intentionally not a continuously hunting PID controller.
     """
+
+    # One bad window at the ceiling (a hitch, a camera turn) must not end the
+    # search for the whole session: re-check before giving up on the point.
+    CEILING_CHECKS = 2
 
     def __init__(self) -> None:
         self.status = PowerSearchState()
@@ -502,6 +518,10 @@ class PowerSearch:
             if s.last_good_tdp_w is None:
                 # The selected point is not healthy even at the initial/user
                 # ceiling.  Never exceed that ceiling automatically.
+                s.ceiling_failures += 1
+                if s.ceiling_failures < self.CEILING_CHECKS:
+                    s.reason = "rechecking-at-ceiling"
+                    return {"action": "wait", "state": s.to_dict()}
                 s.state = "guard"
                 s.reason = "point-not-healthy-at-ceiling"
                 return {"action": "hold", "state": s.to_dict()}

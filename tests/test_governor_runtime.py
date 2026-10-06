@@ -264,6 +264,42 @@ class TrialFlowTests(RuntimeBase):
         self.assertEqual(st["state"], "OPTIMIZE_POWER")
         self.assertTrue(self.svc.power.state.owned)
 
+    def test_point_unhealthy_at_ceiling_is_rejected_and_ladder_moves_on(self):
+        self.prime_not_matching()
+        self.step()
+        self.feed(16, 60, 60)
+        self.step()
+        self.reject_all_fractionals()
+        self.step()                      # 45x2 trial
+        self.feed(16, 45, 90)
+        st = self.step()
+        self.assertEqual(st["active_point"]["key"], "45x2")
+        self.feed(4, 45, 90)
+        st = self.step()
+        self.assertEqual(st["state"], "OPTIMIZE_POWER")
+        # At the user's TDP the game cannot hold 45 real: one bad window is re-checked ...
+        self.feed(16, 38, 76)
+        st = self.step()
+        self.assertEqual(st["reason"], "rechecking-at-ceiling")
+        self.assertEqual(st["active_point"]["key"], "45x2")
+        # ... the second rejects the point instead of parking at the ceiling for the session.
+        self.feed(16, 38, 76)
+        st = self.step()
+        self.assertEqual(st["ladder"]["rejected"].get("45x2"), "not-healthy-at-ceiling")
+        self.assertIsNone(st["active_point"])
+        self.assertFalse(self.svc.power.state.owned)
+        self.assertEqual(self.svc.power.writes, [])
+        st = self.step()
+        self.assertEqual(st["state"], "APPLY")
+        self.assertNotEqual(st["request"]["point"], "45x2")
+        # Not for the whole session: a cutscene must not cost the point forever.
+        ladder = self.svc._ladder
+        ladder.attempts = 0
+        self.assertIn("45x2", ladder.rejected)
+        ladder.next_point(lambda p: None, now=self.svc._clock() + self.svc.CEILING_REJECT_TTL_S + 1)
+        self.assertNotIn("45x2", ladder.rejected)
+        self.assertIn("native90", ladder.rejected)  # other rejections stay
+
     def test_fractional_x15_is_tried_before_x2_and_confirmed_on_real_ratio(self):
         self.prime_not_matching()
         self.step()                      # native90 trial
