@@ -751,6 +751,7 @@ class BudgetController:
         # raised the limit through the SMU).  A lower cap is then fiction, so
         # spare "headroom" must not be spent on more real frames.
         self.cap_ignored = False
+        self.draw_w: Optional[float] = None   # window median of the measured APU draw
         self.last_reason = "budget-start"
 
     # ------------------------------------------------------------- targets
@@ -803,7 +804,19 @@ class BudgetController:
         return self.recover_interval if self.recover is not None else self.reprobe_interval
 
     def _can_lower(self) -> bool:
-        return self.tdp_control and self.tdp is not None and self.tdp - 1.0 >= self.min_w - 1e-6
+        # With an ignored cap a "lower" level is fiction: it would hold at any
+        # value and walk the label down to the minimum while the APU draws the same.
+        return (
+            self.tdp_control and not self.cap_ignored
+            and self.tdp is not None and self.tdp - 1.0 >= self.min_w - 1e-6
+        )
+
+    @property
+    def effective_w(self) -> Optional[float]:
+        """Watts the APU actually gets: the cap, or the measured draw when the cap does not bind."""
+        if self.cap_ignored and self.draw_w is not None:
+            return max(self.tdp or 0.0, self.draw_w)
+        return self.tdp
 
     # ------------------------------------------------------------ evidence
     def observe(self, now: float, verdict: WindowVerdict, real_median: Optional[float] = None) -> str:
@@ -988,7 +1001,7 @@ class BudgetController:
             "point": self.point.key,
             "tdp_w": self.tdp,
             "tdp_control": self.tdp_control,
-            "tier": budget_tier(self.tdp, self.point),
+            "tier": budget_tier(self.effective_w, self.point),
             "probe": self.probe,
             "last_good": (
                 {"point": self.points[self.last_good[0]].key, "tdp_w": self.last_good[1]}

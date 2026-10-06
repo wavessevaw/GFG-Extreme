@@ -22,10 +22,11 @@ import json
 import math
 import os
 import threading
+import statistics
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from shared_config import FG_BACKEND_GFG
 from .constants import PRESENT_DIAGNOSTICS_FALLBACK_LOG, PRESENT_DIAGNOSTICS_LOG_FILENAME
@@ -183,6 +184,7 @@ class GovernorService:
         self._external_at: Optional[float] = None
         self._reclaims = 0
         self._over_cap_windows = 0
+        self._draw_samples: List[float] = []
         self._rollback_deltas: Optional[Dict[str, Any]] = None
         self._rollback_at = 0.0
         self._generation_seen: Optional[int] = None
@@ -307,7 +309,7 @@ class GovernorService:
             real = (telemetry.get("real") or {}).get("median")
             budget = self._budget
             raw = raw_effort(self._point, real, budget.exhausted,
-                             tdp_w=budget.tdp if budget.tdp_control else None)
+                             tdp_w=budget.effective_w if budget.tdp_control else None)
         else:
             real = (telemetry.get("real") or {}).get("median")
             raw = raw_effort(self._point, real, self._exhausted and not stable)
@@ -635,6 +637,7 @@ class GovernorService:
         self._budget = None
         self._applied_tdp = None
         self._over_cap_windows = 0
+        self._draw_samples = []
         self._rollback_deltas = None
         self._synced_deltas = None
         self._evaluation_after_seq = self.observer.sample_seq
@@ -1237,6 +1240,12 @@ class GovernorService:
         if not await self._apply_budget_tdp(profile):
             return
 
+        # The draw sensor is an instantaneous / ~1 s value: sample it every
+        # iteration and judge the window by its median, not its last reading.
+        draw = self.power.status().get("draw_w")
+        if isinstance(draw, (int, float)) and math.isfinite(float(draw)):
+            self._draw_samples.append(float(draw))
+
         # 3. Judge one fresh, non-overlapping window.
         fresh = self.observer.summary(self.BUDGET_WINDOW_SECONDS, after_seq=self._evaluation_after_seq)
         if fresh.get("samples", 0) < self.MIN_SAMPLES or fresh.get("sample_span_s", 0.0) < self.BUDGET_MIN_SPAN_SECONDS:
@@ -1261,7 +1270,9 @@ class GovernorService:
 
     def _power_feedback(self, profile: str, budget: BudgetController) -> Dict[str, Any]:
         """Compare the measured APU draw with the cap we wrote."""
-        draw = self.power.status().get("draw_w")
+        samples, self._draw_samples = self._draw_samples, []
+        draw = round(statistics.median(samples), 2) if samples else None
+        budget.draw_w = draw
         cap = self._applied_tdp
         result: Dict[str, Any] = {"draw_w": draw, "cap_w": cap, "cap_ignored": budget.cap_ignored}
         if not isinstance(draw, (int, float)) or cap is None or not budget.tdp_control:

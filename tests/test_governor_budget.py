@@ -335,6 +335,14 @@ class CapIgnoredTests(unittest.TestCase):
         self.assertEqual(ctl.point.key, "30x3")
         self.assertEqual(ctl.phase, "locked")
 
+    def test_ignored_cap_freezes_the_watt_search_and_the_tier_follows_the_draw(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
+        tdp = ctl.tdp
+        ctl.cap_ignored, ctl.draw_w = True, 15.2
+        run(ctl, Game(20.0), 0.0, 60)
+        self.assertEqual(ctl.tdp, tdp)                      # no fictional walk down to 6 W
+        self.assertEqual(ctl.status()["tier"], "emergency")  # 15.2 W real draw, not "ideal"
+
 
 class VerdictTests(unittest.TestCase):
     P = OperatingPoint("30x3", 90, 30, 3, 100)
