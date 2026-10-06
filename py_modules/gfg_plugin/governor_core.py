@@ -768,6 +768,25 @@ class BudgetController:
         self.fast_at: Optional[float] = None
         self.held: list[tuple[float, float]] = []   # (time, tdp) of levels that held
         self.last_reason = "budget-start"
+        self.warm_started = False
+
+    def warm_start(self, point_key: str, tdp_w: Optional[float], now: float) -> bool:
+        """Start from a remembered point/TDP that held in an earlier session instead of searching.
+
+        Only normal points qualify (never the last-resort point) and the TDP is clamped to what this
+        Deck allows without the emergency range.  The usual lock/guard rules still apply: if the
+        remembered state does not hold today, the guard escalates exactly as in a fresh search.
+        """
+        index = next((i for i, p in enumerate(self.points) if p.key == point_key and i > 0), None)
+        if index is None or self.phase != "settle":
+            return False
+        self.idx = index
+        if self.tdp_control and tdp_w is not None:
+            self.tdp = round(min(max(float(tdp_w), self.min_w), self.normal_max_w), 1)
+        self.good = self.bad = 0
+        self.warm_started = True
+        self._lock(now, "warm-start")
+        return True
 
     # ------------------------------------------------------------- targets
     @property
@@ -1110,6 +1129,7 @@ class BudgetController:
             ),
             "exhausted": self.exhausted,
             "cap_ignored": self.cap_ignored,
+            "warm_started": self.warm_started,
             "reason": self.last_reason,
             "limits_w": {"min": self.min_w, "normal": self.normal_max_w, "emergency": self.emergency_max_w},
         }

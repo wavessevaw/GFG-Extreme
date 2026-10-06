@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (v0.0.10).
+"""Live orchestration service for GFG Governor (v0.0.11).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -37,6 +37,7 @@ from .governor_core import (
 )
 from .governor_battery import BatteryEstimator, read_battery
 from .steamos_tdp import SteamOSManagerTdp
+from .game_model import GameModelStore, context_key
 from .host_sensors import HostSensors, diagnose
 from .governor_hud import HudWriter, normalize as hud_normalize, output_fps as hud_output_fps
 from .governor_overlay import (
@@ -52,7 +53,7 @@ from .governor_telemetry import TelemetryObserver
 
 APPLIED_OPERATIONS = frozenset({"runtime-state-applied", "runtime-transition-applied"})
 FAILED_OPERATIONS = frozenset({"runtime-transition-failed"})
-VERSION = "0.0.10"
+VERSION = "0.0.11"
 
 
 @dataclass
@@ -144,6 +145,7 @@ class GovernorService:
         self._journal_state: tuple = ()
         self._journal_game: Optional[tuple] = None
         self.sensors = HostSensors()
+        self.game_models = GameModelStore(self.configuration.config_dir / "gfg-game-models.json")
         self.power = SteamDeckPowerActuator(manager=SteamOSManagerTdp(home=os.environ.get("HOME")))
         self.power.journal = self._journal_power
         self.search = PowerSearch()
@@ -1404,8 +1406,13 @@ class GovernorService:
                 tdp_control=limits is not None,
             )
             self._budget = budget
-            self._event("budget-start", "battery-first", profile=profile, point=budget.point.key,
-                        tdp_w=budget.tdp, tdp_control=budget.tdp_control)
+            remembered = self.game_models.get(context_key(profile, target, self._mode(profile)))
+            if remembered and budget.warm_start(remembered["point"], remembered.get("tdp_w"), now):
+                self._event("budget-warm-start", "remembered-from-last-session", profile=profile,
+                            point=budget.point.key, tdp_w=budget.tdp, confirmations=remembered.get("confirmations"))
+            else:
+                self._event("budget-start", "battery-first", profile=profile, point=budget.point.key,
+                            tdp_w=budget.tdp, tdp_control=budget.tdp_control)
         elif limits is None and budget.tdp_control and self._external_at is not None:
             if self._reclaims < self.MAX_EXTERNAL_RECLAIMS:
                 self._status.update({"state": "PAUSED", "reason": "external-tdp-change"})
@@ -1436,6 +1443,7 @@ class GovernorService:
         # 2. The point is live: apply this level's watts.
         if not await self._apply_budget_tdp(profile):
             return
+        self._remember_if_held(profile, target, budget, point, now)
 
         # The draw sensor is an instantaneous / ~1 s value: sample it every
         # iteration and judge the window by its median, not its last reading.
@@ -1504,6 +1512,22 @@ class GovernorService:
             self._event("tdp-cap-ignored", "draw-above-cap", profile=profile, draw_w=draw, cap_w=cap)
         result["cap_ignored"] = budget.cap_ignored
         return result
+
+    HOLD_BEFORE_REMEMBER_S = 90.0
+
+    def _remember_if_held(self, profile: str, target: int, budget: Any, point: Any, now: float) -> None:
+        """Store the point/TDP once it has held, so the next session can start there."""
+        if (
+            budget.phase != "locked" or budget.recover is not None or budget.cap_ignored or budget.exhausted
+            or point.degraded or now - budget.locked_since < self.HOLD_BEFORE_REMEMBER_S
+            or (budget.tdp_control and budget.tdp != self._applied_tdp)
+        ):
+            return
+        try:
+            self.game_models.record(context_key(profile, target, self._mode(profile)), point.key,
+                                    budget.tdp if budget.tdp_control else None)
+        except Exception as error:  # remembering is best-effort and must never disturb the loop
+            self.log.debug("Game model not stored: %s", error)
 
     async def _apply_budget_tdp(self, profile: str) -> bool:
         budget = self._budget

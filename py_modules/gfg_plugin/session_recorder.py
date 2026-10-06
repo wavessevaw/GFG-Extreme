@@ -410,7 +410,7 @@ class SessionRecorder:
             "decky_plugins": sorted(p.name for p in (self.user_home / "homebrew" / "plugins").glob("*"))
             if (self.user_home / "homebrew" / "plugins").is_dir() else [],
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.10",
+            "plugin_version": "GFG Extreme Decky 4.0.0-gfg.4 / Governor 0.0.11",
         }
 
     def _write_bundle(self) -> Path:

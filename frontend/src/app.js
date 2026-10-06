@@ -91,7 +91,7 @@ function describe(s) {
   const fb = s.power_feedback || {};
   if (b && b.cap_ignored) return { head: "TDP limit overridden", body: "The APU draws " + num(fb.draw_w, 1) + " W while GFG's limit is " + num(fb.cap_w, 0) + " W: another tool (ryzenadj, PowerTools…) sets the real limit. GFG keeps a deep ratio instead of spending power.", tone: "warn" };
   if (b && s.state === "OPTIMIZE_POWER") return { head: "Saving battery", body: b.probe === "up" ? "Trying fewer generated frames at " + num(b.tdp_w, 0) + " W." : "Looking for the lowest TDP that holds the target (now " + num(b.tdp_w, 0) + " W).", tone: "ok" };
-  if (b && s.state === "LOCKED") return { head: "Adapting · " + num(b.tdp_w, 0) + " W", body: TIER_TEXT[b.tier] || "Checks FPS every second: adds watts at once when the game falls short, tries lower watts every 45 s.", tone: b.tier === "emergency" ? "warn" : "ok" };
+  if (b && s.state === "LOCKED") return { head: "Adapting · " + num(b.tdp_w, 0) + " W", body: (b.warm_started ? "Started from what worked last time. " : "") + (TIER_TEXT[b.tier] || "Checks FPS every second: adds watts at once when the game falls short, tries lower watts every 45 s."), tone: b.tier === "emergency" ? "warn" : "ok" };
   if (b && s.state === "GUARD") return { head: "Protecting", body: "A scene got heavier: more generated frames first, then more watts.", tone: "warn" };
   if (s.state === "OPTIMIZE_POWER") return { head: "Saving power", body: "Lowering TDP while holding the target.", tone: "ok" };
   if (s.state === "LOCKED") return { head: "Locked in", body: "Stable at target. GFG stays out of the way.", tone: "ok" };
@@ -260,7 +260,8 @@ function GovernorPage({ s, back, profile, refresh }) {
       h("span", null, "TDP target"), h("b", null, b.tdp_w != null ? num(b.tdp_w, 0) + " W" : "no TDP access"),
       h("span", null, "Budget"), h("b", null, { ideal: "Ideal (≤ 11 W)", heavy: "Heavy (12–15 W)", emergency: "Last resort", unknown: "–" }[b.tier] || "–"),
       h("span", null, "Point"), h("b", null, POINT_LABEL(pt)),
-      h("span", null, "Step"), h("b", null, PHASE_TEXT[b.phase] || b.phase))) : null,
+      h("span", null, "Step"), h("b", null, PHASE_TEXT[b.phase] || b.phase),
+      h("span", null, "Start"), h("b", null, b.warm_started ? "Remembered from last session" : "Searched from scratch"))) : null,
     h("div", { className: "sec" }, "DECISION"),
     h("div", { className: "card" }, h("div", { className: "kv" },
       h("span", null, "State"), h("b", null, describe(s).head),
