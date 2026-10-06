@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (v0.0.15).
+"""Live orchestration service for GFG Governor (v0.0.16).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -53,7 +53,7 @@ from .governor_telemetry import TelemetryObserver
 
 APPLIED_OPERATIONS = frozenset({"runtime-state-applied", "runtime-transition-applied"})
 FAILED_OPERATIONS = frozenset({"runtime-transition-failed"})
-VERSION = "0.0.15"
+VERSION = "0.0.16"
 
 
 @dataclass
