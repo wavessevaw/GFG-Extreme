@@ -1,5 +1,6 @@
 """`mako-run` was renamed to `gfg`; the old command must keep working as an alias."""
 import logging
+import shlex
 import os
 import shutil
 import sys
@@ -43,7 +44,7 @@ class LauncherRenameTests(unittest.TestCase):
         self.svc.update_mako_script(self.svc._get_profile_data()["profiles"]["mako"])
         text = self.legacy.read_text()
         self.assertIn("gfg-legacy-launcher", text)
-        self.assertIn(f'exec "{self.svc.mako_script_path}"', text)
+        self.assertIn(f'exec {shlex.quote(str(self.svc.mako_script_path))} "$@"', text)
         self.assertTrue(os.access(self.legacy, os.X_OK))
 
     def test_user_owned_file_is_never_overwritten(self):

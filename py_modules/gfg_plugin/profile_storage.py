@@ -412,6 +412,15 @@ def read_wrapper_profile_settings(
             path,
             error,
         )
+        # The next save rewrites this file from what is readable now: keep the damaged copy so
+        # other profiles' settings can still be recovered by hand.
+        try:
+            if isinstance(error, ValueError) and path.is_file():  # unparseable, not unreadable
+                backup = path.with_name(path.name + ".damaged")
+                if not backup.exists():
+                    path.replace(backup)
+        except OSError:
+            pass
         return {}
 
 
