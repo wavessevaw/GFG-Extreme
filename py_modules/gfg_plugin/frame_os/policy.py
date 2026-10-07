@@ -62,8 +62,12 @@ class EnergyBroker:
 
     calm_w: float
     floor_w: float = 4.0
-    max_bank_s: float = 8.0         # bank at most this many seconds of the calm cap
+    max_bank_s: float = 30.0        # bank at most this many seconds of the calm cap
     boost_extra_w: float = 4.0      # how much above calm a boost may draw
+    # Energy the player grants for boosts on top of calm play (0.05 = 5 % of the calm cap).
+    # Calm play near its cap saves almost nothing, so without a premium boosts would only be
+    # paid by menus and pauses.
+    premium: float = 0.05
     bank_j: float = 0.0
     _last: Optional[float] = None
 
@@ -77,7 +81,8 @@ class EnergyBroker:
         if draw_w is None or dt <= 0:
             return
         # the bank is the area between the calm cap and what was actually drawn
-        self.bank_j = max(0.0, min(self.max_bank_j, self.bank_j + (self.calm_w - draw_w) * dt))
+        income = (self.calm_w * (1.0 + self.premium) - draw_w) * dt
+        self.bank_j = max(0.0, min(self.max_bank_j, self.bank_j + income))
 
     def can_boost(self) -> bool:
         return self.bank_j >= self.boost_extra_w * 0.5     # at least half a second of boost

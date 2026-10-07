@@ -66,7 +66,7 @@ class InjectionTests(unittest.TestCase):
 
 class BrokerTests(unittest.TestCase):
     def test_boosts_are_paid_from_calm_savings_only(self):
-        broker = EnergyBroker(calm_w=10.0, boost_extra_w=4.0)
+        broker = EnergyBroker(calm_w=10.0, boost_extra_w=4.0, premium=0.0)
         p = InjectionPolicy(output_hz=90, calm_real_hz=30, broker=broker)
         flick = {"camera": 0.9, "idle_s": 0.0}
         # no savings yet: refused
@@ -105,3 +105,20 @@ class SceneChangeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PremiumTests(unittest.TestCase):
+    def test_premium_funds_boosts_even_when_calm_play_uses_its_cap(self):
+        broker = EnergyBroker(calm_w=10.0, premium=0.05)
+        for i in range(101):
+            broker.tick(i * 0.1, 10.0, "calm")          # calm play right at its cap
+        self.assertAlmostEqual(broker.bank_j, 5.0, delta=0.05)   # 0.5 W x 10 s
+
+
+class SimulationTests(unittest.TestCase):
+    def test_frame_os_buys_real_frames_where_the_camera_moves(self):
+        from gfg_plugin.frame_os.simulate import compare
+        for seed in (1, 2, 3, 7):
+            c = compare(seed)
+            self.assertGreater(c["frame_os"]["real_fps_in_motion"], c["governor"]["real_fps_in_motion"] + 3)
+            self.assertLess(c["frame_os"]["avg_w"], c["governor"]["avg_w"] * 1.15, "energy premium bounded")
