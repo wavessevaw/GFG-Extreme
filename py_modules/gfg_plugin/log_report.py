@@ -146,8 +146,42 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
     report["rejected_points"] = sorted({str(e.get("point")) for e in events if e.get("event") == "operating-point-rejected"})
     report["failed_checks"] = [c for c in self_test if not c.get("ok")]
     report["overlay_burst_before_exit"] = overlay_burst_before_exit(_jsonl(_read(bundle, "activity.jsonl")))
+    report["frame_os"] = frame_os_summary(samples, _read(bundle, "game-processes.json"))
     report["findings"] = findings(report, names)
     return report
+
+
+def frame_os_summary(samples: List[Dict[str, Any]], processes_json: str) -> Optional[Dict[str, Any]]:
+    """Frame OS (development): did the layer load and answer, and what it measured."""
+    rows = [r["frame_os"] for r in samples if isinstance(r.get("frame_os"), dict)]
+    if not rows:
+        return None
+    layer = [r.get("layer") or {} for r in rows]
+    answering = [x for x in layer if (x.get("frames") or 0) > 0]
+
+    def med(key: str) -> Optional[float]:
+        values = [x[key] for x in answering if isinstance(x.get(key), (int, float)) and x[key] > 0]
+        return round(statistics.median(values), 2) if values else None
+
+    try:
+        processes = json.loads(processes_json or "[]")
+    except ValueError:
+        processes = []
+    loaded = [p.get("frame_os_layer_loaded") for p in processes if isinstance(p, dict)]
+    return {
+        "modes": dict(Counter(str(r.get("mode")) for r in rows)),
+        "layer_installed": any(r.get("layer_installed") for r in rows),
+        "layer_errors": sorted({str(r["layer_error"]) for r in rows if r.get("layer_error")}),
+        "answering_share": round(len(answering) / len(rows), 2),
+        "frames": max((x.get("frames") or 0 for x in layer), default=0),
+        "freshness_ms": med("freshness_ms"),
+        "present_interval_p50_ms": med("present_interval_p50_ms"),
+        "present_interval_p95_ms": med("present_interval_p95_ms"),
+        "cost_p50_ms": med("cost_p50_ms"),
+        "swapchain_recreations": max((x.get("swapchain_recreations") or 0 for x in layer), default=0),
+        "levels": dict(Counter(str(r.get("level")) for r in rows if r.get("level"))),
+        "loaded_in_game": (any(loaded) if loaded else None),
+    }
 
 
 def overlay_burst_before_exit(activity: List[Dict[str, Any]], window_s: float = 30.0) -> Optional[int]:
@@ -237,6 +271,19 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
                    "(MangoHud re-reads its config on every change).")
     if not any(n.startswith("overlay/") for n in names):
         out.append("No overlay files were captured: the in-game overlay was never published (Settings → In-game overlay).")
+    fo = report.get("frame_os")
+    if fo:
+        if fo["layer_errors"]:
+            out.append("Frame OS: the layer could not be installed: " + "; ".join(fo["layer_errors"]) + ".")
+        elif fo["loaded_in_game"] is False:
+            out.append("Frame OS was on, but the game process did not load the Frame OS layer.")
+        elif fo["answering_share"] == 0:
+            out.append("Frame OS was on, but the layer never reported frames (it did not load, or it "
+                       "could not open the control file).")
+        else:
+            out.append(f"Frame OS ({', '.join(fo['modes'])}): the layer reported {fo['frames']} frames; "
+                       f"freshness {fo['freshness_ms']} ms, present interval {fo['present_interval_p50_ms']} / "
+                       f"{fo['present_interval_p95_ms']} ms (p50 / p95).")
     if not out:
         out.append("Nothing unusual found.")
     return out

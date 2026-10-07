@@ -123,3 +123,28 @@ class ReportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FrameOsReportTests(unittest.TestCase):
+    def rows(self, layer):
+        return [{"t": float(i), "state": "LOCKED", "target": 90,
+                 "frame_os": {"mode": "observe", "layer_installed": True, "level": "calm", "layer": layer}}
+                for i in range(10)]
+
+    def test_answering_layer_is_summarised(self):
+        layer = {"frames": 900, "freshness_ms": 21.5, "present_interval_p50_ms": 33.3,
+                 "present_interval_p95_ms": 34.0, "swapchain_recreations": 1}
+        rep = analyze(bundle({"timeline.jsonl": timeline(self.rows(layer)),
+                              "game-processes.json": json.dumps([{"pid": 1, "frame_os_layer_loaded": True}])}))
+        fo = rep["frame_os"]
+        self.assertEqual((fo["frames"], fo["freshness_ms"], fo["loaded_in_game"]), (900, 21.5, True))
+        self.assertIn("Frame OS (observe): the layer reported 900 frames", "\n".join(rep["findings"]))
+
+    def test_layer_not_loaded_is_called_out(self):
+        rep = analyze(bundle({"timeline.jsonl": timeline(self.rows({})),
+                              "game-processes.json": json.dumps([{"pid": 1, "frame_os_layer_loaded": False}])}))
+        self.assertIn("did not load the Frame OS layer", "\n".join(rep["findings"]))
+
+    def test_no_frame_os_rows_no_summary(self):
+        rep = analyze(bundle({"timeline.jsonl": timeline([{"t": 0.0, "state": "LOCKED"}])}))
+        self.assertIsNone(rep["frame_os"])

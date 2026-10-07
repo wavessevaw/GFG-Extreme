@@ -107,6 +107,28 @@ class RecorderTests(unittest.TestCase):
             self.assertFalse(found[1]["mangohud_loaded"])
             self.assertEqual(found[0]["env"], {"MAKO_CONFIG": "/c.toml", "MANGOHUD_CONFIGFILE": "/a.conf"})
 
+    def test_probe_reports_the_frame_os_layer(self):
+        with tempfile.TemporaryDirectory() as temp:
+            d = Path(temp) / "20"; d.mkdir()
+            (d / "environ").write_bytes(b"MAKO_CONFIG=/c.toml\0GFG_FRAME_OS_SHM=/dev/shm/gfg-frame-os\0")
+            (d / "maps").write_text("7f00 r-xp 0 0:0 1 /usr/lib/libvulkan.so.1\n"
+                                    "7f02 r-xp 0 0:0 3 /home/deck/.local/share/mako-render/vulkan/gfg-frame-os/libVkLayer_gfg_pacer.so\n")
+            (d / "comm").write_text("game.exe\n")
+            found = probe_game_processes(Path(temp))
+            self.assertTrue(found[0]["frame_os_layer_loaded"])
+            self.assertEqual(found[0]["env"]["GFG_FRAME_OS_SHM"], "/dev/shm/gfg-frame-os")
+            self.assertTrue(any("gfg_pacer" in lib for lib in found[0]["layer_libraries"]))
+
+    def test_compact_status_carries_frame_os_only_when_on(self):
+        from gfg_plugin.session_recorder import compact_status
+        self.assertIsNone(compact_status({"frame_os": {"mode": "off"}})["frame_os"])
+        record = compact_status({"frame_os": {
+            "mode": "observe", "layer_installed": True, "enabled": True, "acting": False,
+            "decision": {"level": "boost", "real_hz": 45.0, "reason": "camera"},
+            "telemetry": {"frames": 900, "freshness_ms": 21.0, "writer_pid": 4242}}})["frame_os"]
+        self.assertEqual((record["mode"], record["level"], record["decision_reason"]), ("observe", "boost", "camera"))
+        self.assertEqual((record["layer"]["frames"], record["layer"]["writer_pid"]), (900, 4242))
+
     def test_bundle_has_game_processes_and_launch_manifests(self):
         async def scenario(rec):
             await rec.start("game")
