@@ -7,6 +7,7 @@ analysis is deliberately conservative: a finding states what the log shows, not 
 from __future__ import annotations
 
 import json
+import re
 import statistics
 import zipfile
 from collections import Counter
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from .governor_telemetry import TelemetryObserver
+
+CURRENT_VERSION = "1.0.6"  # kept in step by scripts/bump_version.py
 
 
 def _percentile(values: List[float], pct: float) -> Optional[float]:
@@ -151,8 +154,17 @@ def overlay_burst_before_exit(activity: List[Dict[str, Any]], window_s: float = 
     return len(changes)
 
 
+def _version(text: Any) -> Optional[tuple]:
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", str(text or ""))
+    return tuple(int(x) for x in match.groups()) if match else None
+
+
 def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
     out: List[str] = []
+    recorded, current = _version(report.get("plugin_version")), _version(CURRENT_VERSION)
+    if recorded and current and recorded < current:
+        out.append(f"Recorded with {'.'.join(map(str, recorded))}; this report is from {CURRENT_VERSION}. "
+                   "Some of what the log shows may already be fixed (see the release notes).")
     diag = report["diagnostics"]
     for check in report["failed_checks"]:
         out.append(f"Self-test failed: {check.get('check')} ({check.get('detail') or 'no detail'})")

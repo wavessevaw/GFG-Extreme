@@ -27,6 +27,7 @@ def main() -> None:
     sub("py_modules/gfg_plugin/governor_service.py", r"\(GFG Extreme [0-9.]+\)", f"(GFG Extreme {v})")
     sub("py_modules/gfg_plugin/plugin.py", r'"GFG Extreme [0-9.]+ started"', f'"GFG Extreme {v} started"')
     sub("py_modules/gfg_plugin/session_recorder.py", r'"GFG Extreme [0-9.]+ \(engine', f'"GFG Extreme {v} (engine')
+    sub("py_modules/gfg_plugin/log_report.py", r'^CURRENT_VERSION = "[^"]+"', f'CURRENT_VERSION = "{v}"')
     print(f"version set to {v}")
 
 

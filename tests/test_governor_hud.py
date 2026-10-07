@@ -93,7 +93,7 @@ class HudTests(unittest.TestCase):
             self.assertEqual(hud.status_path(Path(d)).read_text(), "GFG off\n")
 
     def test_burst_of_overlay_changes_reaches_mangohud_as_one_rewrite(self):
-        """Deck log 2026-10-07: six changes in eight seconds, then the game crashed."""
+        """Field log: six changes in eight seconds, then the game crashed."""
         with tempfile.TemporaryDirectory() as d:
             now = {"t": 1000.0}
             w = hud.HudWriter(Path(d), clock=lambda: now["t"])

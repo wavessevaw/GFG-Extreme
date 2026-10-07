@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.0.5).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.0.6).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -54,7 +54,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.0.5"
+VERSION = "1.0.6"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -117,6 +117,7 @@ class GovernorService:
         self._journal_state: tuple = ()
         self._journal_game: Optional[tuple] = None
         self.session_stats = SessionStats()
+        self._session_app_id = ""
         self.sensors = HostSensors()
         self.game_models = GameModelStore(self.configuration.config_dir / "gfg-game-models.json")
         self.power = SteamDeckPowerActuator(manager=SteamOSManagerTdp(home=os.environ.get("HOME")))
@@ -895,7 +896,7 @@ class GovernorService:
     def _evaluate_confirmation(self, req: Request) -> tuple[str, str]:
         """Return (wait|confirmed|failed, reason).  Never trusts the file write."""
         return evaluate_confirmation(
-            req, self.observer, self._clock(), budget=self._budget is not None,
+            req, self.observer, self._clock(), budget=True,  # Quality too since 1.0.6: reject in 8 s, not 25
             min_samples=self.MIN_SAMPLES, min_span_s=self.MIN_SAMPLE_SPAN_SECONDS,
             timeout_s=self.CONFIRM_TIMEOUT_SECONDS, early_span_s=self.EARLY_DELIVERED_SPAN_SECONDS,
         )
@@ -907,6 +908,8 @@ class GovernorService:
             return
         if self._ladder is not None:
             self._ladder.reject(req.point.key, reason)
+            if self._budget is None and reason not in self.TRANSIENT_FAILURES:
+                self._remember_ladder_failure(profile, req.point)
         if self._budget is not None:
             observed = None
             if reason in ("confirmation-timeout", "delivered-deeper-ratio"):
@@ -1007,7 +1010,7 @@ class GovernorService:
             return
         result.update({"ended": time.time(), "profile": profile or "",
                        "mode": self._mode(profile) if profile else "",
-                       "app_id": str((self._launch or {}).get("app_id") or "")})
+                       "app_id": self._session_app_id})
         self._settings["last_session"] = result
         history = [h for h in self._settings.get("session_history") or [] if isinstance(h, dict)]
         self._settings["session_history"] = ([result] + history)[: self.SESSION_HISTORY]
@@ -1032,6 +1035,7 @@ class GovernorService:
                 self._finish_session(status.get("profile"))
             if game is not None:
                 self.session_stats.start(game, self._clock())
+                self._session_app_id = str(launch.get("app_id") or "")  # the launch is gone by the exit
                 self._journal("game-detected", profile=status.get("profile"), launch_key=list(game),
                               governor_launch=bool(launch.get("governor_launch")),
                               renderer_loaded=launch.get("renderer_loaded"))
@@ -1175,6 +1179,7 @@ class GovernorService:
             )
             if self._ladder is None:  # defensive; requests are only created by the ladder
                 self._ladder = TrialLadder(external_display=external, target_output_fps=target)
+                self._load_ladder_failures(profile, target)
             outcome = self._ladder.evaluate(
                 req.point, fresh, min_samples=self.MIN_SAMPLES, min_span_s=self.TRIAL_MIN_SPAN_SECONDS,
             )
@@ -1289,6 +1294,7 @@ class GovernorService:
             return
         if self._ladder is None:
             self._ladder = TrialLadder(external_display=external, target_output_fps=target)
+            self._load_ladder_failures(profile, target)
 
         saved = await asyncio.to_thread(self._saved_profile_config, profile) or config
 
@@ -1523,6 +1529,30 @@ class GovernorService:
         launch = self._launch if isinstance(self._launch, dict) else {}
         app_id = launch.get("app_id", "") if launch.get("running") else ""
         return context_key(profile, target, self._mode(profile), app_id)
+
+    # Not evidence about the point itself: a new game session, or a log line that lost its numbers.
+    TRANSIENT_FAILURES = frozenset({"telemetry-session-changed", "trial-evidence-incomplete"})
+
+    def _remember_ladder_failure(self, profile: str, point: OperatingPoint) -> None:
+        """Quality mode: a point that did not hold is skipped by the next ladder for 10 minutes
+        (mode switch, reload), like Battery's failure memory.  Stored at the TDP it failed at."""
+        try:
+            tdp = (self.power.status() or {}).get("observed_tdp_w")
+            self.game_models.record_failure(self._game_key(profile, int(point.target_output_fps)), point.key,
+                                            float(tdp) if isinstance(tdp, (int, float)) and tdp > 0 else 15.0)
+        except Exception as error:  # best-effort
+            self.log.debug("Game model failure not stored: %s", error)
+
+    def _load_ladder_failures(self, profile: str, target: int) -> None:
+        if self._ladder is None:
+            return
+        now = self._clock()
+        try:
+            failures = self.game_models.failures(self._game_key(profile, target))
+        except Exception:
+            return
+        for key, (_tdp, age) in failures.items():
+            self._ladder.reject(key, "remembered-failure", until=now + self.game_models.FAILURE_TTL_S - age)
 
     def _store_failures(self, profile: str, target: int, budget: Any) -> None:
         while budget.new_failures:

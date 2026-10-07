@@ -91,7 +91,7 @@ class GovernorPowerActuatorTests(unittest.TestCase):
             h = self.make_hwmon(root)
             actuator = SteamDeckPowerActuator(drm_root=root / "drm", hwmon_root=root / "hwmon")
             actuator.discover(); actuator.claim()
-            actuator.set_ceiling_w(25)              # clamped to the 20 W hardware maximum
+            actuator.set_ceiling_w(25)              # clamped to the hardware maximum
             self.assertEqual(actuator.status()["ceiling_tdp_w"], 20.0)
             self.assertEqual(actuator.status()["maximum_tdp_w"], 20.0)
             actuator.set_tdp_w(18)

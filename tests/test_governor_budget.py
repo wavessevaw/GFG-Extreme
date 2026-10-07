@@ -180,7 +180,7 @@ class BudgetGuardTests(unittest.TestCase):
         self.assertTrue(ctl.exhausted)
 
     def test_device_ceiling_is_the_hardware_maximum_not_20(self):
-        """A stock OLED caps at 15 W; this user's Deck allows 20 W."""
+        """A stock Deck caps at 15 W; the ceiling follows the device."""
         stock = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=15)
         self.assertEqual((stock.normal_max_w, stock.emergency_max_w), (15.0, 15.0))
         run(stock, Game(0.5), 0.0, 200)
@@ -525,7 +525,7 @@ class SixtyHertzTests(unittest.TestCase):
 
 
 class FailureMemoryTests(unittest.TestCase):
-    """Deck log 2026-10-07 #2: 33x2.75 at 10 W tried in three controllers (mode switches)."""
+    """Field log: 33x2.75 at 10 W tried in three controllers (mode switches)."""
 
     def test_failed_upgrade_is_reported_and_a_new_controller_skips_it_at_the_same_tdp(self):
         c = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
@@ -547,7 +547,7 @@ class FailureMemoryTests(unittest.TestCase):
 
 
 class GeneratedCapacityLimitTests(unittest.TestCase):
-    """Deck log 2026-10-07 #2: 28x3.25 / 26x3.5 / 24x3.75 became a fixed x3 at 84/78/72 FPS."""
+    """Field log: 28x3.25 / 26x3.5 / 24x3.75 became a fixed x3 at 84/78/72 FPS."""
 
     def test_points_beyond_capacity_are_never_used_and_the_guard_buys_watts_instead(self):
         c = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
@@ -578,8 +578,8 @@ class GeneratedCapacityLimitTests(unittest.TestCase):
         self.assertTrue(any(c._usable(i, 0.0) for i, p in enumerate(c.points) if 3 < p.multiplier < 4))
 
 
-class DeckLog20261007Tests(unittest.TestCase):
-    """Witcher 3 on a Steam Deck OLED, Balanced mode (log GFG-Extreme-log-20261007-083050)."""
+class FieldLogTests(unittest.TestCase):
+    """Balanced mode, from a field log."""
 
     def balanced(self):
         return BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20, flavor="balanced")
@@ -729,7 +729,7 @@ class ThermalTests(unittest.TestCase):
 
 
 class FloorMemoryTests(unittest.TestCase):
-    """Deck log 2026-10-07 #3: after each guard raise the walk back down probed 9 W again, which
+    """Field log: after each guard raise the walk back down probed 9 W again, which
     had just failed; nine visible dips in 29 minutes at the same level."""
 
     def simulate(self):

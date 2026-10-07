@@ -570,7 +570,7 @@ class PowerSearch:
 #
 #   9-11 W   ideal
 #   12-15 W  heavy / poorly optimised game
-#   16-20 W  last resort, only while real FPS stays below ~22 for a while
+#   >15 W    last resort (only where the device allows it), only while real FPS stays below ~22 for a while
 #
 # Multipliers 1.0 .. 3.75 in 0.25 steps are normal tools; x4 is a last resort.
 
@@ -681,7 +681,7 @@ class BudgetController:
     * ``guard``       escalation, cheapest first: deeper multiplier down to ~30
       real, +1 W up to 11 W, x3.25 .. x3.75 (real 28 .. 24), +1 W up to 15 W,
       the last-resort point, then (only while the real stream keeps falling
-      short of its own cap for ``EMERGENCY_SUSTAIN_S``) up to 20 W.
+      short of its own cap for ``EMERGENCY_SUSTAIN_S``) up to the device maximum.
 
     Everything the guard spends is a debt: the state the point held before the
     guard is remembered and walked back to on a short ``RECOVER_S`` timer, so a
@@ -718,7 +718,7 @@ class BudgetController:
     FAST_STEP_W = 2.0
     WORK_MEMORY_S = 900.0        # how long a level the game needed is remembered
     # Draw this close to the cap: the cap is what limits.  The Deck's draw
-    # sensor swings about 1 W around a binding cap (log of 2026-10-06: 5.1-6.2 W
+    # sensor swings about 1 W around a binding cap (field log: 5.1-6.2 W
     # at a 6 W cap while the game crawled at 13 real).
     DRAW_BINDING_MARGIN_W = 1.2
     EMERGENCY_REPROBE_S = 90.0
@@ -726,7 +726,7 @@ class BudgetController:
     RECOVER_MAX_S = 300.0
     REJECT_TTL_S = 600.0
     # A lower level that just failed is not tried again at once, even after a guard raise and a
-    # successful walk back down (Deck log 2026-10-07 #3: 9 W failed nine times in 29 min with this
+    # successful walk back down (Field log: 9 W failed nine times in 29 min with this
     # point, each failure a visible dip).  The wait doubles with every repeat at the same level.
     FLOOR_BACKOFF_S = 120.0
     FLOOR_BACKOFF_MAX_S = 600.0
@@ -836,7 +836,7 @@ class BudgetController:
     def _usable(self, i: int, now: float) -> bool:
         if not 0 <= i < len(self.points):
             return False
-        # Deck log 2026-10-07: with capacity for 2 generated frames the renderer turned 28x3.25,
+        # Field log: with capacity for 2 generated frames the renderer turned 28x3.25,
         # 26x3.5 and 24x3.75 into a fixed x3 (84/78/72 FPS) and each request timed out.
         if self.current_max_multiplier is not None and float(self.points[i].multiplier) > self.current_max_multiplier + 1e-6:
             return False
@@ -1068,7 +1068,7 @@ class BudgetController:
     def _upgrade_allowed(self, i: int, now: float) -> bool:
         """A step to fewer generated frames, unless this game already failed it at this TDP or more.
 
-        Deck log 2026-10-07 #2: 33x2.75 at 10 W was tried three times in one session (each mode
+        Field log: 33x2.75 at 10 W was tried three times in one session (each mode
         switch starts a new controller); it never held.
         """
         if not self._usable(i, now):
@@ -1189,7 +1189,7 @@ class BudgetController:
     def _deeper(self, now: float, floor: int = 1) -> Optional[int]:
         """Nearest usable deeper point (>= ``floor``), skipping rejected ones.
 
-        Deck log 2026-10-07: one rejected neighbour (40x2.25) used to block every deeper point,
+        Field log: one rejected neighbour (40x2.25) used to block every deeper point,
         so Balanced sat at 15 W and 80 FPS while 30x3 held 90 FPS at 10 W.
         """
         for i in range(self.idx - 1, floor - 1, -1):

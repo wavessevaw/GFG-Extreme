@@ -91,7 +91,7 @@ class GovernorTelemetryTests(unittest.TestCase):
         self.assertEqual(observer.summary(window_seconds=10, after_seq=seq, now=2.0)["samples"], 0)
 
 class GeneratedCapacityTests(unittest.TestCase):
-    """Lines from the Deck log of 2026-10-07 (Witcher 3, Steam Deck OLED)."""
+    """Lines from a field log."""
 
     APPLIED = ("MAKO Renderer: present diagnostics: operation=runtime-state-applied context=19104014532612 "
                "role=frame-generation state_revision=23 transition=live frame_generation_enabled=1 adaptive=0 "

@@ -304,6 +304,38 @@ class TrialFlowTests(RuntimeBase):
         self.assertEqual(st["state"], "OPTIMIZE_POWER")
         self.assertTrue(self.svc.power.state.owned)
 
+    def test_quality_rejects_a_deeper_delivered_ratio_in_seconds(self):
+        """Field log: 40x2.25 waited the full 25 s while x2 was delivered."""
+        self.prime_not_matching()
+        self.step()                                  # native90 trial
+        self.feed(16, 60, 60)
+        self.step()                                  # rejected: real below cap
+        st = self.step()
+        self.assertEqual(st["request"]["point"], "72x1.25")
+        started = self.t["now"]
+        self.svc.observer.consume_line(
+            H + "operation=runtime-state-applied role=frame-generation state_revision=99 transition=live "
+            "frame_generation_enabled=1 adaptive=1 target_fps=90 multiplier=1.25 base_fps_cap=72 "
+            "frame_generation_resources_available=1 generated_frame_capacity=2", now=self.t["now"])
+        self.feed(16, 45, 90)                        # the renderer holds 90 at x2 instead
+        st = self.step()
+        self.assertEqual(st["ladder"]["rejected"].get("72x1.25"), "delivered-deeper-ratio")
+        self.assertLess(self.t["now"] - started, 15.0)
+
+    def test_quality_failures_survive_a_new_ladder(self):
+        """A mode switch or reload builds a new ladder; it must not retry what just failed."""
+        self.prime_not_matching()
+        self.step()
+        self.feed(16, 60, 60)
+        st = self.step()
+        self.assertEqual(st["ladder"]["rejected"].get("native90"), "real-cadence-below-cap")
+        self.svc._ladder = None                      # as after a mode switch
+        self.feed(20, 60, 60)
+        self.t["now"] += 0.5
+        st = self.step()
+        self.assertEqual(self.svc._ladder.rejected.get("native90"), "remembered-failure")
+        self.assertNotEqual(st["request"]["point"], "native90")
+
     def test_point_unhealthy_at_ceiling_is_rejected_and_ladder_moves_on(self):
         self.prime_not_matching()
         self.step()
@@ -801,7 +833,7 @@ class BudgetRuntimeTests(RuntimeBase):
                 "frame_generation_resources_available=1 generated_frame_capacity=2")
 
     def test_delivered_deeper_ratio_is_resolved_in_seconds_not_25(self):
-        """Deck log 2026-10-07 #2: 36x2.5 / 33x2.75 requests each waited the full 25 s."""
+        """Field log: 36x2.5 / 33x2.75 requests each waited the full 25 s."""
         self.feed(20, 45, 90)
         self.step()
         self.feed(16, 30, 90)
@@ -837,6 +869,7 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertIsNotNone(st["request"])
 
     def test_session_summary_is_kept_after_the_game_exits(self):
+        self.inspector.info["app_id"] = "292030"
         self.feed(20, 45, 90)
         self.step()
         self.feed(16, 30, 90)
@@ -848,6 +881,7 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertGreaterEqual(st["session"]["minutes"], 0.5)
         self.assertEqual(st["session"]["avg_output_fps"], 90.0)
         self.inspector.info["running"] = False          # game closed
+        self.inspector.info.pop("app_id")
         self.svc._launch_polled = -1e9
         st = self.step(6.0)
         self.assertIsNone(st["session"])
@@ -856,6 +890,7 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual(last["avg_output_fps"], 90.0)
         self.assertEqual(last["profile"], "game")
         self.assertEqual(last["mode"], "budget")
+        self.assertEqual(last["app_id"], "292030", "taken at the start: the exit no longer knows it")
         self.assertEqual(st["session_history"], [last])
 
     def test_failed_lower_power_restores_and_guard_reacts_after_lock(self):
