@@ -55,7 +55,7 @@ class FakePower:
     def __init__(self, on_restore=None):
         self.state = type("S", (), {"available": True, "owned": False})()
         self.values = {"available": True, "owned": False, "observed_tdp_w": 15.0, "current_tdp_w": 15.0,
-                       "ceiling_tdp_w": 15.0, "minimum_tdp_w": 3.0}
+                       "ceiling_tdp_w": 15.0, "initial_tdp_w": 12.0, "minimum_tdp_w": 3.0}
         self.on_restore = on_restore
         self.writes = []
 
@@ -891,7 +891,22 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual(last["profile"], "game")
         self.assertEqual(last["mode"], "budget")
         self.assertEqual(last["app_id"], "292030", "taken at the start: the exit no longer knows it")
+        self.assertEqual(last["reference_w"], 12.0, "the user's TDP before GFG, not the Battery ceiling")
         self.assertEqual(st["session_history"], [last])
+
+    def test_turning_gfg_off_mid_game_ends_the_session_then(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        for _ in range(40):
+            self.feed(2, 30, 90)
+            self.step(1.0)
+        self.svc.set_enabled("game", False)
+        st = self.step(1.0)
+        self.assertIsNone(st.get("session"))
+        self.assertIsNotNone(st["last_session"])
+        self.assertEqual(st["last_session"]["profile"], "game")
 
     def test_failed_lower_power_restores_and_guard_reacts_after_lock(self):
         self.feed(20, 45, 90)
@@ -1041,3 +1056,23 @@ class DeviceTargetRuntimeTests(RuntimeBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PointStateResetTests(RuntimeBase):
+    """Audit 1.0.7: per-point state that survived a new game, mode or display change."""
+
+    def test_release_clears_exhaustion_reclaims_and_power_feedback(self):
+        self.svc._exhausted = True
+        self.svc._reclaims, self.svc._external_at = 3, 12.0
+        self.svc._status["power_feedback"] = {"cap_w": 7.0, "draw_w": 7.1}
+        asyncio.run(self.svc._release_point("game", "new-game-session"))
+        self.assertFalse(self.svc._exhausted)
+        self.assertEqual((self.svc._reclaims, self.svc._external_at), (0, None))
+        self.assertNotIn("power_feedback", self.svc._status)
+
+    def test_stale_power_feedback_does_not_fake_a_power_bottleneck(self):
+        self.svc.sensors.sample = lambda force=False: {"gpu_busy_pct": 40.0, "cpu_top_core_pct": 98.0}
+        self.svc._budget = None
+        self.svc._status["power_feedback"] = {"cap_w": 7.0, "draw_w": 7.1}   # left by Battery mode
+        self.svc._update_sensors()
+        self.assertEqual(self.svc._status["diagnosis"]["bottleneck"], "cpu")

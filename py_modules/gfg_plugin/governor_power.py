@@ -60,6 +60,10 @@ class PowerControlState:
         )
         ceiling = self.ceiling_override_uw if self.ceiling_override_uw is not None else self.initial_slow_uw
         value["ceiling_tdp_w"] = round(ceiling / 1_000_000.0, 3) if ceiling is not None else None
+        # The user's own limit before GFG took over (the ceiling may be a Battery-mode override).
+        value["initial_tdp_w"] = (
+            round(self.initial_slow_uw / 1_000_000.0, 3) if self.initial_slow_uw is not None else None
+        )
         value["maximum_tdp_w"] = (
             round(self.slow_max_uw / 1_000_000.0, 3) if self.slow_max_uw is not None else None
         )

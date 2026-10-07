@@ -1285,7 +1285,9 @@ class BudgetController:
             self.request_failures = 0
             self.probe = None
             self.good = self.bad = 0
-            self.prev = (self.idx, self.tdp)
+            # ``prev`` keeps the point that was live before the failed request: if the delivered
+            # point is not confirmed either, that is where to fall back (audit 1.0.7), never the
+            # point that just failed.
             self.idx = delivered
             # An observation, not a verification: the service requests this point from the
             # renderer (confirmed on fresh samples), and only HEALTHY_WINDOWS fresh windows
@@ -1298,13 +1300,13 @@ class BudgetController:
         self.probe = None
         self.good = self.bad = 0
         self._clear_recovered()
-        if self.prev is not None and self.prev[0] != self.idx:
+        if self.prev is not None and self.prev[0] != self.idx and self._usable(self.prev[0], now):
             self.idx = self.prev[0]
         else:
             # Nothing applied yet: try the next usable point, cheapest-first from here.
             options = [i for i in range(len(self.points)) if i >= 1 and self._usable(i, now)]
-            if options:
-                self.idx = min(options, key=lambda i: abs(i - self.idx))
+            if options:  # ties go to the deeper (safer) point
+                self.idx = min(options, key=lambda i: (abs(i - self.idx), i))
         if self.request_failures >= self.MAX_REQUEST_FAILURES:
             self.exhausted = True
         if self.verifying is not None and self.points[self.idx].key != self.verifying:

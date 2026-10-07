@@ -773,3 +773,27 @@ class FloorMemoryTests(unittest.TestCase):
         run(ctl, game, 600.0, 30)
         self.assertEqual(ctl.tdp, 6.0)
         self.assertNotIn(ctl.idx, ctl.floor_failures)
+
+
+class RequestFallbackTests(unittest.TestCase):
+    """Audit 1.0.7: after 'use what was delivered' failed too, the fallback was the rejected point."""
+
+    def test_second_failure_falls_back_to_the_live_point(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0)
+        live = ctl.point.key                                   # 30x3, confirmed
+        ctl.probe = "up"
+        ctl._move("testing-fewer-generated-frames", idx=ctl.idx + 1)
+        failed = ctl.point.key                                 # 33x2.75
+        ctl.request_failed(10.0, "delivered-deeper-ratio", {"real": 28.0, "output": 90.0})
+        self.assertEqual(ctl.point.key, "28x3.25")
+        ctl.request_failed(40.0, "confirmation-timeout")
+        self.assertEqual(ctl.point.key, live)
+        self.assertNotEqual(ctl.point.key, failed)
+
+    def test_fallback_never_returns_to_a_point_beyond_the_renderer_capacity(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0)
+        ctl._move("x", idx=ctl.idx - 1)                        # 28x3.25 requested, prev 30x3
+        ctl._move("y", idx=ctl.idx - 1)                        # 26x3.5 requested, prev 28x3.25
+        ctl.current_max_multiplier = 3.0
+        ctl.request_failed(5.0, "renderer-generated-capacity")
+        self.assertLessEqual(float(ctl.point.multiplier), 3.0)

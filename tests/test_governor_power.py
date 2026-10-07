@@ -93,6 +93,7 @@ class GovernorPowerActuatorTests(unittest.TestCase):
             actuator.discover(); actuator.claim()
             actuator.set_ceiling_w(25)              # clamped to the hardware maximum
             self.assertEqual(actuator.status()["ceiling_tdp_w"], 20.0)
+            self.assertEqual(actuator.status()["initial_tdp_w"], 15.0, "the user's own limit, not the override")
             self.assertEqual(actuator.status()["maximum_tdp_w"], 20.0)
             actuator.set_tdp_w(18)
             self.assertEqual(int((h / "power2_cap").read_text()), 18000000)
