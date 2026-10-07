@@ -1024,6 +1024,117 @@ class BudgetRuntimeTests(RuntimeBase):
             self.step(0.1)
         self.assertEqual(self.svc.power.writes[-1], tdp)
 
+    # -- review 1.1.x backlog
+    def test_mode_switch_keeps_the_floor_back_off(self):
+        self.inspector.info["app_id"] = "292030"
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.windows(2, 30, 90)                 # 10 W holds -> 9 W
+        self.windows(1, 25, 75)                 # 9 W fails -> back to 10 W
+        self.step(0.1)                          # drained into game memory
+        stored = self.svc.game_models.floor_failures(self.svc._floor_key("game", 90))
+        self.assertEqual(stored["30x3"][0], 9.0)
+        self.assertEqual(stored["30x3"][2], 1)
+        self.assertTrue(self.svc.set_mode("game", "balanced")["success"])
+        self.step()
+        self.feed(20, 45, 90)
+        self.step()
+        b = self.svc._budget
+        self.assertIsNotNone(b)
+        self.assertEqual(b.flavor, "balanced")
+        idx = next(i for i, p in enumerate(b.points) if p.key == "30x3")
+        tdp, when, count = b.floor_failures[idx]
+        self.assertEqual((tdp, count), (9.0, 1))
+        self.assertLessEqual(when, self.t["now"], "the original back-off keeps running")
+
+    def test_hot_states_are_not_remembered(self):
+        svc = self.svc
+        svc._applied_tdp = 9.0
+        point = types.SimpleNamespace(key="30x3", degraded=False)
+        budget = types.SimpleNamespace(phase="locked", recover=None, cap_ignored=False, exhausted=False,
+                                       verifying=None, locked_since=0.0, tdp_control=True, tdp=9.0,
+                                       heat_limited=True)
+        key = svc._game_key("game", 90)
+        svc._remember_if_held("game", 90, budget, point, 1000.0)
+        self.assertIsNone(svc.game_models.get(key), "heat held quality back: not what the game needs")
+        budget.heat_limited = False
+        svc._status["diagnosis"] = {"thermal": "heating"}
+        svc._remember_if_held("game", 90, budget, point, 1000.0)
+        self.assertIsNone(svc.game_models.get(key))
+        svc._status["diagnosis"] = {"thermal": "ok"}
+        svc._remember_if_held("game", 90, budget, point, 1000.0)
+        self.assertEqual(svc.game_models.get(key)["point"], "30x3")
+
+    def test_guard_hold_without_power_shortage_is_logged(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        b = self.svc._budget
+        b.phase, b.probe, b.locked_since = "locked", None, self.t["now"]
+        self.svc.power.values["draw_w"] = 4.0   # far under the 10 W cap: not power-bound
+        self.windows(2, 27, 81)
+        self.assertTrue(b.last_reason.startswith("guard-not-power-bound"))
+        events = [json.loads(l) for l in Path(self.svc.events_path).read_text().splitlines()]
+        held = [e for e in events if e.get("event") == "budget-guard-not-power-bound"]
+        self.assertEqual(len(held), 1)
+        self.assertEqual((held[0]["draw_w"], held[0]["cap_w"]), (4.0, 10.0))
+        self.assertTrue(held[0]["verdict"])
+        self.windows(2, 27, 81)                 # in the guard every window holds again, same reason
+        events = [json.loads(l) for l in Path(self.svc.events_path).read_text().splitlines()]
+        held = [e for e in events if e.get("event") == "budget-guard-not-power-bound"]
+        self.assertEqual(len(held), b.not_power_bound_holds)
+        self.assertEqual(held[-1]["count"], 3)
+
+    def test_mixed_mode_session_is_filed_as_mixed(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        for _ in range(40):
+            self.feed(2, 30, 90)
+            self.step(1.0)
+        self.svc.set_mode("game", "balanced")
+        for _ in range(40):
+            self.feed(2, 45, 90)
+            self.step(1.0)
+        self.inspector.info["running"] = False
+        self.svc._launch_polled = -1e9
+        last = self.step(6.0)["last_session"]
+        self.assertEqual(last["mode"], "mixed")
+        self.assertEqual(set(last["modes"]), {"budget", "balanced"})
+
+    def test_forget_game_model_resets_this_game_only(self):
+        svc = self.svc
+        svc._settings["last_session"] = {"profile": "game", "app_id": "292030"}
+        from gfg_plugin.game_model import context_key, floor_key
+        mine = context_key("game", 90, "budget", "292030")
+        other = context_key("other", 90, "budget", "570")
+        svc.game_models.record(mine, "30x3", 9.0)
+        svc.game_models.record(context_key("game", 60, "balanced", "292030"), "30x2", 12.0)
+        svc.game_models.record_floor_failure(floor_key("game", 90, "292030"), "30x3", 8.0)
+        svc.game_models.record(other, "45x2", 11.0)
+        r = svc.forget_game_model("game")
+        self.assertTrue(r["success"])
+        self.assertEqual((r["game"], r["forgotten"]), ("app:292030", 3))
+        self.assertIsNone(svc.game_models.get(mine))
+        self.assertIsNotNone(svc.game_models.get(other))
+        self.assertFalse(svc.forget_game_model("")["success"])
+
+    def test_forget_game_model_clears_the_live_controller(self):
+        self.inspector.info["app_id"] = "292030"
+        self.feed(20, 45, 90)
+        self.step()
+        b = self.svc._budget
+        b.known_failures["33x2.75"] = (10.0, 0.0)
+        b.floor_failures[b.idx] = (9.0, 0.0, 2)
+        self.svc._active_profile = "game"
+        r = self.svc.forget_game_model("game")
+        self.assertEqual(r["game"], "app:292030")
+        self.assertEqual((b.known_failures, b.floor_failures), ({}, {}))
+
     def test_mode_switch_to_quality_releases_budget_point(self):
         self.feed(20, 45, 90)
         self.step()

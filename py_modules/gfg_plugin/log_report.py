@@ -136,6 +136,13 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
                 and after["tdp_w"] > before["tdp_w"]):
             failed_power[before["tdp_w"]] += 1
     report["failed_power_probes"] = {f"{w:g} W": n for w, n in sorted(failed_power.items())}
+    not_bound = [e for e in events if e.get("event") == "budget-guard-not-power-bound"]
+    draws = [e["draw_w"] for e in not_bound if isinstance(e.get("draw_w"), (int, float))]
+    report["not_power_bound_holds"] = {
+        "count": len(not_bound),
+        "draw_w_median": round(statistics.median(draws), 1) if draws else None,
+        "caps_w": sorted({e["cap_w"] for e in not_bound if isinstance(e.get("cap_w"), (int, float))}),
+    }
     report["rejected_points"] = sorted({str(e.get("point")) for e in events if e.get("event") == "operating-point-rejected"})
     report["failed_checks"] = [c for c in self_test if not c.get("ok")]
     report["overlay_burst_before_exit"] = overlay_burst_before_exit(_jsonl(_read(bundle, "activity.jsonl")))
@@ -200,6 +207,12 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
         out.append("Lower-power probes failed repeatedly at the same level ("
                    + ", ".join(f"{w} x{n}" for w, n in repeated.items())
                    + "); each failure is a short FPS dip.")
+    held = report.get("not_power_bound_holds") or {}
+    if held.get("count", 0) >= 3:
+        caps = ", ".join(f"{w:g} W" for w in held.get("caps_w") or []) or "?"
+        out.append(f"The guard held {held['count']} times without adding watts because the APU drew well under "
+                   f"the cap (median draw {held.get('draw_w_median')} W at {caps}): the shortfall was not power "
+                   "(CPU, streaming or hitches).")
     if report.get("rejected_points"):
         out.append("Operating points the renderer did not confirm or that failed their trial: "
                    + ", ".join(report["rejected_points"]) + ".")

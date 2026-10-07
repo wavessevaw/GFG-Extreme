@@ -32,11 +32,11 @@ from .constants import PRESENT_DIAGNOSTICS_FALLBACK_LOG, PRESENT_DIAGNOSTICS_LOG
 from .governor_core import (
     multiplier_tolerance,
     BudgetController, EffortEstimator, OperatingPoint, OperatingPointPlanner, PowerSearch, TrialLadder,
-    raw_effort, window_verdict,
+    effort_assessment, window_verdict,
 )
 from .governor_battery import BatteryEstimator, read_battery
 from .steamos_tdp import SteamOSManagerTdp
-from .game_model import GameModelStore, context_key
+from .game_model import GameModelStore, context_key, floor_key, game_prefix
 from .session_stats import SessionStats
 from .frame_os.control_channel import DEFAULT_PATH as DEFAULT_SHM, ControlChannel
 from .frame_os.runner import FrameOsRunner
@@ -266,6 +266,35 @@ class GovernorService:
         self._poke()
         return {"success": True, "error": None, "profile": profile, "mode": mode}
 
+    def forget_game_model(self, profile: str) -> Dict[str, Any]:
+        """Forget what was learned for the profile's game (every target and mode): warm starts,
+        failed points and failed lower levels (review 1.1.x: a stale memory had no reset).
+
+        The game is the one running under this profile, else the profile's last session; keyed by
+        Steam AppID when known, else by profile, exactly as it was stored.
+        """
+        profile = str(profile or "").strip()
+        if not profile:
+            return {"success": False, "error": "Profile is required"}
+        app_id = ""
+        if profile == self._active_profile:
+            app_id = self._game_app_id()
+        last = self._settings.get("last_session") or {}
+        if not app_id and isinstance(last, dict) and last.get("profile") == profile:
+            app_id = str(last.get("app_id") or "")
+        prefix = game_prefix(profile, app_id)
+        with self._io_lock:
+            forgotten = self.game_models.forget_game(prefix)
+        budget = self._budget
+        if budget is not None and profile == self._active_profile:
+            # The live controller forgets too, or the next drain would write it all back.
+            budget.known_failures.clear()
+            budget.new_failures.clear()
+            budget.floor_failures.clear()
+            budget.new_floor_failures.clear()
+        self._journal("game-model-forgotten", profile=profile, game=prefix, entries=forgotten)
+        return {"success": True, "error": None, "profile": profile, "game": prefix, "forgotten": forgotten}
+
     def _update_sensors(self) -> None:
         """Host sensors + a one-line diagnosis. Never allowed to break the control loop."""
         try:
@@ -313,22 +342,26 @@ class GovernorService:
         telemetry = status.get("telemetry") or {}
         telemetry = telemetry.get("summary") or telemetry  # service stores {"snapshot", "summary"}
         stable = self._delivering_target(telemetry)
+        thermal = (status.get("diagnosis") or {}).get("thermal")
+        reason: Optional[str] = None
         if not status.get("enabled") or status.get("state") not in ("LOCKED", "OPTIMIZE_POWER", "GUARD", "OBSERVE_ONLY"):
             if self._exhausted and status.get("enabled"):
                 # A game that already holds the target is not a nightmare just because
                 # no Governor point was accepted.
                 raw = stable or "nightmare"
+                reason = "holds the target on its own" if stable else "no setting held the target"
             else:
                 raw = None
         elif self._budget is not None:
             real = (telemetry.get("real") or {}).get("median")
             budget = self._budget
-            raw = raw_effort(self._point, real, budget.exhausted,
-                             tdp_w=budget.effective_w if budget.tdp_control else None)
+            raw, reason = effort_assessment(self._point, real, budget.exhausted,
+                                            tdp_w=budget.effective_w if budget.tdp_control else None,
+                                            thermal=thermal)
         else:
             real = (telemetry.get("real") or {}).get("median")
-            raw = raw_effort(self._point, real, self._exhausted and not stable)
-        self._effort.update(self._clock(), raw)
+            raw, reason = effort_assessment(self._point, real, self._exhausted and not stable, thermal=thermal)
+        self._effort.update(self._clock(), raw, reason)
 
     def hud_settings(self, profile: str) -> Dict[str, Any]:
         raw = self._profile_settings(profile).get("hud") or {}
@@ -1081,7 +1114,16 @@ class GovernorService:
             temp_c=(self._status.get("sensors") or {}).get("temp_c"),
             stuttering=diagnosis.get("smoothness") == "stuttering",
             hot=diagnosis.get("thermal") in ("hot", "heating"),
+            mode=self._mode(self._session_profile or str(self._status.get("profile") or "")),
+            battery_w=self._battery_discharge_w(),
         )
+
+    def _battery_discharge_w(self) -> Optional[float]:
+        battery = self._status.get("battery") or {}
+        power = battery.get("power_uw")
+        if not battery.get("discharging") or not isinstance(power, (int, float)) or power <= 500_000:
+            return None  # on the charger (or noise): no battery time to gain
+        return float(power) / 1_000_000.0
 
     def _finish_session(self) -> None:
         """Store the summary under the profile the game was played with (audit 1.0.7: a profile
@@ -1090,9 +1132,10 @@ class GovernorService:
         result = self.session_stats.finish()
         if result is None:
             return
-        result.update({"ended": time.time(), "profile": profile or "",
-                       "mode": self._mode(profile) if profile else "",
-                       "app_id": self._session_app_id})
+        # The mode comes from the per-mode seconds ("mixed" after a switch); the current mode only
+        # when none was sampled.
+        result.setdefault("mode", self._mode(profile) if profile else "")
+        result.update({"ended": time.time(), "profile": profile or "", "app_id": self._session_app_id})
         self._settings["last_session"] = result
         history = [h for h in self._settings.get("session_history") or [] if isinstance(h, dict)]
         self._settings["session_history"] = ([result] + history)[: self.SESSION_HISTORY]
@@ -1506,6 +1549,8 @@ class GovernorService:
             budget.scale_capable = self._budget_can_scale(capability)
             key = self._game_key(profile, target)
             budget.load_failures(self.game_models.failures(key), now)
+            # review 1.1.x: a rebuilt controller keeps the remaining back-off of failed lower levels.
+            budget.load_floor_failures(self.game_models.floor_failures(self._floor_key(profile, target)), now)
             remembered = self.game_models.get(key)
             if remembered and budget.warm_start(remembered["point"], remembered.get("tdp_w"), now):
                 self._event("budget-warm-start", "remembered-from-last-session", profile=profile,
@@ -1574,6 +1619,7 @@ class GovernorService:
                             before={"tdp_w": before}, after={"point": budget.point.key, "tdp_w": budget.tdp,
                                                             "phase": budget.phase})
                 self._draw_samples = []
+                self._store_failures(profile, target, budget)  # a mode switch may drop this controller next
                 self._status.update({"state": self._budget_state(), "reason": budget.last_reason})
                 await self._apply_budget_tdp(profile)
                 return
@@ -1587,8 +1633,16 @@ class GovernorService:
         self._evaluation_after_seq = self.observer.sample_seq
         feedback = self._power_feedback(profile, budget)
         before = (budget.point.key, budget.tdp, budget.phase)
+        reason_before, holds_before = budget.last_reason, getattr(budget, "not_power_bound_holds", 0)
         action = budget.observe(now, verdict, (fresh.get("real") or {}).get("median"))
         after = (budget.point.key, budget.tdp, budget.phase)
+        if str(budget.last_reason).startswith("guard-not-power-bound") and (
+                budget.last_reason != reason_before or getattr(budget, "not_power_bound_holds", 0) != holds_before):
+            # review 1.1.x: the guard spent nothing because the APU drew well under the cap; without
+            # this event a log showed only a missed window and no reaction.
+            self._event("budget-guard-not-power-bound", budget.last_reason, profile=profile,
+                        draw_w=feedback.get("draw_w"), cap_w=budget.tdp, verdict=verdict.reason,
+                        count=getattr(budget, "not_power_bound_holds", 0))
         if action == "move" or before != after:
             self._event("budget-step", budget.last_reason, profile=profile, verdict=verdict.to_dict(),
                         before={"point": before[0], "tdp_w": before[1], "phase": before[2]},
@@ -1624,10 +1678,15 @@ class GovernorService:
 
     HOLD_BEFORE_REMEMBER_S = 90.0
 
-    def _game_key(self, profile: str, target: int) -> str:
+    def _game_app_id(self) -> str:
         launch = self._launch if isinstance(self._launch, dict) else {}
-        app_id = launch.get("app_id", "") if launch.get("running") else ""
-        return context_key(profile, target, self._mode(profile), app_id)
+        return launch.get("app_id", "") if launch.get("running") else ""
+
+    def _game_key(self, profile: str, target: int) -> str:
+        return context_key(profile, target, self._mode(profile), self._game_app_id())
+
+    def _floor_key(self, profile: str, target: int) -> str:
+        return floor_key(profile, target, self._game_app_id())
 
     # Not evidence about the point itself: a new game session, or a log line that lost its numbers.
     TRANSIENT_FAILURES = frozenset({"telemetry-session-changed", "trial-evidence-incomplete"})
@@ -1660,6 +1719,13 @@ class GovernorService:
                 self.game_models.record_failure(self._game_key(profile, target), point_key, tdp)
             except Exception as error:  # best-effort, like remembering held points
                 self.log.debug("Game model failure not stored: %s", error)
+        floors = getattr(budget, "new_floor_failures", None) or []
+        while floors:
+            point_key, tdp, count = floors.pop(0)
+            try:
+                self.game_models.record_floor_failure(self._floor_key(profile, target), point_key, tdp, count)
+            except Exception as error:
+                self.log.debug("Game model floor failure not stored: %s", error)
 
     def _remember_if_held(self, profile: str, target: int, budget: Any, point: Any, now: float) -> None:
         """Store the point/TDP once it has held, so the next session can start there."""
@@ -1669,6 +1735,11 @@ class GovernorService:
             or point.degraded or now - budget.locked_since < self.HOLD_BEFORE_REMEMBER_S
             or (budget.tdp_control and budget.tdp != self._applied_tdp)
         ):
+            return
+        # review 1.1.x: a state that held while heat held quality back is not what the game needs
+        # when cool; remembering it would warm-start the next session from a throttled state.
+        thermal = (self._status.get("diagnosis") or {}).get("thermal")
+        if getattr(budget, "heat_limited", False) or thermal in ("hot", "heating"):
             return
         try:
             self.game_models.record(self._game_key(profile, target), point.key,

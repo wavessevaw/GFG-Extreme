@@ -47,5 +47,51 @@ class SessionStatsTests(unittest.TestCase):
         self.assertEqual(r["hot_pct"], 25)
 
 
+    def test_seconds_per_mode_and_mixed_sessions(self):
+        # review 1.1.x: the mode at the exit alone filed an 18 min Battery + 13 min Balanced session as Balanced.
+        s = SessionStats()
+        s.start("k", 0.0)
+        t = 0.0
+        for mode, seconds in (("budget", 18 * 60), ("balanced", 13 * 60), ("quality", 10)):
+            for _ in range(seconds):
+                t += 1.0
+                s.add(t, output=90, real=30, tdp=9, draw=None, reference_w=None, mode=mode)
+        r = s.summary()
+        self.assertEqual(r["mode"], "mixed")
+        self.assertEqual(r["modes"], {"budget": 18.0, "balanced": 13.0}, "a 10 s misclick is not a mode")
+        self.assertEqual(list(r["modes"]), ["budget", "balanced"], "longest first")
+        single = SessionStats()
+        single.start("k", 0.0)
+        for i in range(60):
+            single.add(1.0 + i, output=90, real=30, tdp=9, draw=None, reference_w=None, mode="budget")
+        self.assertEqual((single.summary()["mode"], single.summary()["modes"]), ("budget", {"budget": 1.0}))
+        unknown = SessionStats()
+        unknown.start("k", 0.0)
+        for i in range(60):
+            unknown.add(1.0 + i, output=90, real=30, tdp=9, draw=None, reference_w=None)
+        self.assertNotIn("mode", unknown.summary(), "the service falls back to the current mode")
+
+    def test_energy_saved_and_battery_minutes(self):
+        s = SessionStats()
+        s.start("k", 0.0)
+        for i in range(30 * 60):                   # 30 min at 9 W against a 15 W limit, 12 W from the battery
+            s.add(1.0 + i, output=90, real=30, tdp=9, draw=None, reference_w=15, battery_w=12.0)
+        r = s.summary()
+        self.assertEqual(r["saved_wh"], 3.0)
+        self.assertEqual(r["battery_minutes_gained"], 15)
+        plugged = SessionStats()
+        plugged.start("k", 0.0)
+        for i in range(60):
+            plugged.add(1.0 + i, output=90, real=30, tdp=9, draw=None, reference_w=15)
+        self.assertEqual(plugged.summary()["saved_wh"], 0.1)
+        self.assertNotIn("battery_minutes_gained", plugged.summary(), "no discharge rate: omitted")
+        none = SessionStats()
+        none.start("k", 0.0)
+        for i in range(60):
+            none.add(1.0 + i, output=90, real=30, tdp=16, draw=None, reference_w=15, battery_w=12.0)
+        self.assertIsNone(none.summary()["saved_wh"], "no saving above the limit")
+        self.assertNotIn("battery_minutes_gained", none.summary())
+
+
 if __name__ == "__main__":
     unittest.main()

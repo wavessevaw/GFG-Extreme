@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import os
 import re
+import select
+import signal
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -71,17 +74,33 @@ def _serve(requests: int, replies: int) -> None:  # pragma: no cover - runs in t
 class PrivilegedCapWriter:
     """Client side of the root helper (one request at a time)."""
 
+    # review 1.1.x: a helper stuck in a sysfs write used to block the Governor loop forever (os.read
+    # without a timeout) and plugin unload with it (blocking waitpid).
+    REPLY_TIMEOUT_S = 3.0
+    CLOSE_TIMEOUT_S = 2.0
+
     def __init__(self, requests: int, replies: int, pid: int) -> None:
         self._requests = requests
         self._replies = replies
         self.pid = pid
         self._lock = threading.Lock()
 
+    def _drain_stale(self) -> None:
+        """Drop a late reply to a request that already timed out, so it is not taken for this one."""
+        while select.select([self._replies], [], [], 0)[0]:
+            if not os.read(self._replies, 256):
+                raise OSError("TDP helper exited")
+
     def write(self, path: Path, value: int) -> None:
         with self._lock:
+            self._drain_stale()
             os.write(self._requests, f"{path} {int(value)}\n".encode())
             data = b""
+            deadline = time.monotonic() + self.REPLY_TIMEOUT_S
             while not data.endswith(b"\n"):
+                left = deadline - time.monotonic()
+                if left <= 0 or not select.select([self._replies], [], [], left)[0]:
+                    raise OSError(f"TDP helper did not answer within {self.REPLY_TIMEOUT_S:g} s")
                 chunk = os.read(self._replies, 256)
                 if not chunk:
                     raise OSError("TDP helper exited")
@@ -96,8 +115,26 @@ class PrivilegedCapWriter:
                 os.close(fd)
             except OSError:
                 pass
+        # EOF on its pipe ends the helper; one stuck in a write gets a bounded wait, then SIGKILL
+        # (refused once this process has dropped root: it is then left to exit on its own).
+        deadline = time.monotonic() + self.CLOSE_TIMEOUT_S
+        while True:
+            try:
+                done, _ = os.waitpid(self.pid, os.WNOHANG)
+            except OSError:
+                return  # already reaped / not our child
+            if done:
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.02)
         try:
-            os.waitpid(self.pid, 0)
+            os.kill(self.pid, signal.SIGKILL)
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                if os.waitpid(self.pid, os.WNOHANG)[0]:
+                    return
+                time.sleep(0.02)
         except OSError:
             pass
 

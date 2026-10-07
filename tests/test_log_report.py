@@ -101,6 +101,19 @@ class ReportTests(unittest.TestCase):
         self.assertIn("recorded with: GFG Extreme 1.0.0", render(rep))
         self.assertTrue(rep["findings"][0].startswith("Recorded with 1.0.0; this report is from"))
 
+    def test_frequent_not_power_bound_holds_are_reported(self):
+        # review 1.1.x: the guard holding because the draw was far under the cap was invisible in logs.
+        hold = lambda d: {"event": "budget-guard-not-power-bound", "reason": "guard-not-power-bound:real-p5-short",
+                          "draw_w": d, "cap_w": 10.0, "verdict": "real-p5-short"}
+        rep = analyze(bundle({"timeline.jsonl": timeline(self.rows()),
+                              "governor-events.jsonl": timeline([hold(4.0), hold(5.0), hold(6.0)])}))
+        self.assertEqual(rep["not_power_bound_holds"], {"count": 3, "draw_w_median": 5.0, "caps_w": [10.0]})
+        self.assertIn("The guard held 3 times without adding watts", "\n".join(rep["findings"]))
+        self.assertIn("median draw 5.0 W at 10 W", "\n".join(rep["findings"]))
+        rare = analyze(bundle({"timeline.jsonl": timeline(self.rows()), "governor-events.jsonl": timeline([hold(4.0)])}))
+        self.assertEqual(rare["not_power_bound_holds"]["count"], 1)
+        self.assertFalse(any("without adding watts" in f for f in rare["findings"]), "a single hold is not a finding")
+
     def test_current_version_log_has_no_version_note(self):
         from gfg_plugin.log_report import CURRENT_VERSION
         rep = analyze(bundle({"timeline.jsonl": timeline(self.rows()),

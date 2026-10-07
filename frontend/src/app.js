@@ -16,6 +16,7 @@ const rpc = {
   setScaleReady: safeCallable("set_governor_scale_ready"),
   setFrameOs: safeCallable("set_governor_frame_os"),
   setMode: safeCallable("set_governor_mode"),
+  forgetModel: safeCallable("forget_governor_game_model"),
   profiles: safeCallable("get_profiles"),
   setProfile: safeCallable("set_current_profile"),
   profileConfig: safeCallable("get_profile_config"),
@@ -49,6 +50,9 @@ const rpc = {
 const num = (v, d = 1) => (v == null || isNaN(v) ? "–" : Number(v).toFixed(d).replace(/\.0$/, ""));
 const MODE_NAME = { oled: "Steam Deck OLED", lcd: "Steam Deck LCD", dock: "Dock", external: "Dock", unknown: "Display" };
 const fmtMult = (m) => { const q = Math.round(Number(m) * 4) / 4; return "×" + (Number.isInteger(q) ? q : String(q)); };
+const MODE_LABEL = { budget: "Battery", balanced: "Balanced", quality: "Quality" };
+// review 1.1.x: a session switched between modes reads "Battery 18m · Balanced 13m", not just its last mode.
+const sessionModes = (x) => (x && x.mode === "mixed" && x.modes ? Object.entries(x.modes).map(([m, v]) => (MODE_LABEL[m] || m) + " " + num(v, 0) + "m").join(" · ") : (MODE_LABEL[x && x.mode] || "–"));
 const POINT_LABEL = (p) => (p ? (p.multiplier > 1 ? fmtMult(p.multiplier) : "Native") + (p.render_scale_pct < 100 ? " · " + p.render_scale_pct + "%" : "") : "–");
 
 const PAUSED_TEXT = {
@@ -225,6 +229,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
   const showLive = s.enabled && out != null;
   const tdp = pw.observed_tdp_w != null ? pw.observed_tdp_w : pw.current_tdp_w;
   const eff = s.effort && s.effort.level;
+  const effWhy = eff && s.effort.reason;
   const mins = s.battery && s.battery.minutes_left;
   const cap0 = (s.capability && s.capability.reason) || "";
   const needsLaunch = s.enabled && (cap0 === "relaunch-required-for-governor-overlay" || s.reason === "relaunch-required-for-governor-overlay" || s.reason === "game-not-running" || s.reason === "diagnostics-active-no-events");
@@ -254,7 +259,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
         h("div", { className: "stat hot" }, h("div", { className: "v" }, mult ? fmtMult(mult) : POINT_LABEL(s.active_point)), h("div", { className: "l" }, "GFG")), h("div", { className: "a" }, "→"),
         h("div", { className: "stat" }, h("div", { className: "v" }, num(out, 0)), h("div", { className: "l" }, "OUTPUT"))) : null,
       s.enabled ? h("div", { className: "effort" }, h("span", null, "GFG EFFORT"),
-        h("b", { className: eff ? "lv " + eff : "lv" }, eff ? eff.toUpperCase() : "ASSESSING…")) : null,
+        h("b", { className: eff ? "lv " + eff : "lv" }, eff ? eff.toUpperCase() : "ASSESSING…", effWhy ? h("span", { className: "why" }, " · " + effWhy) : null)) : null,
       tdp != null ? h("div", { className: "power" }, h("div", { className: "r" }, h("span", null, "TDP NOW"), h("span", null, num(tdp, 0) + " W" + (left ? "  ·  " + left + " left" : ""))),
         pw.owned && pw.initial_tdp_w && pw.initial_tdp_w - tdp >= 1 ? h("div", { className: "r" }, h("span", null, "SAVING"), h("span", null, num(pw.initial_tdp_w - tdp, 0) + " W under your " + num(pw.initial_tdp_w, 0) + " W limit")) : null,
         h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, (tdp / (pw.initial_tdp_w || pw.maximum_tdp_w || 15)) * 100) + "%" } }))) : null),
@@ -268,9 +273,11 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
     !s.session && s.last_session ? h("div", { className: "card" }, h("div", { className: "sec" }, "LAST SESSION"),
       h("div", { className: "kv" },
         h("span", null, "Played"), h("b", null, num(s.last_session.minutes, 0) + " min"),
+        s.last_session.mode === "mixed" ? h("span", null, "Modes") : null, s.last_session.mode === "mixed" ? h("b", null, sessionModes(s.last_session)) : null,
         h("span", null, "Frames on screen"), h("b", null, num(s.last_session.avg_output_fps, 0) + " FPS avg (" + num(s.last_session.avg_real_fps, 0) + " real)"),
         h("span", null, "Power"), h("b", null, s.last_session.avg_tdp_w != null ? num(s.last_session.avg_tdp_w, 1) + " W avg" + (s.last_session.reference_w ? " · limit " + num(s.last_session.reference_w, 0) + " W" : "") : "–"),
         s.last_session.saved_w ? h("span", null, "Saved") : null, s.last_session.saved_w ? h("b", null, "~" + num(s.last_session.saved_w, 1) + " W on average") : null,
+        s.last_session.saved_wh ? h("span", null, "Energy saved") : null, s.last_session.saved_wh ? h("b", null, "~" + num(s.last_session.saved_wh, 1) + " Wh" + (s.last_session.battery_minutes_gained ? " · ~" + s.last_session.battery_minutes_gained + " min more battery" : "")) : null,
         s.last_session.max_temp_c ? h("span", null, "Hottest") : null, s.last_session.max_temp_c ? h("b", null, num(s.last_session.max_temp_c, 0) + " °C" + (s.last_session.hot_pct ? " · warm " + s.last_session.hot_pct + "% of the time" : "")) : null,
         s.last_session.stutter_pct ? h("span", null, "Stutter") : null, s.last_session.stutter_pct ? h("b", null, s.last_session.stutter_pct + "% of the time") : null)) : null,
     needsLaunch ? h("div", null, h("div", { className: "sec" }, "START THE GAME WITH THIS LAUNCH OPTION"), h(LaunchCopy, { launch })) : null,
@@ -326,7 +333,7 @@ function GovernorPage({ s, back, profile, refresh }) {
     (s.session_history || []).length ? h("div", { className: "sec" }, "RECENT SESSIONS") : null,
     (s.session_history || []).length ? h("div", { className: "card" }, h("div", { className: "kv" },
       ...(s.session_history || []).slice(0, 5).flatMap((x, i) => [
-        h("span", { key: "k" + i }, num(x.minutes, 0) + " min · " + ({ budget: "Battery", balanced: "Balanced", quality: "Quality" }[x.mode] || "–")),
+        h("span", { key: "k" + i }, num(x.minutes, 0) + " min · " + sessionModes(x)),
         h("b", { key: "v" + i }, num(x.avg_output_fps, 0) + " FPS · " + (x.avg_tdp_w != null ? num(x.avg_tdp_w, 1) + " W" : "–") + (x.max_temp_c ? " · " + num(x.max_temp_c, 0) + " °C" : ""))]))) : null,
     (s.limitations || []).length ? h("div", { className: "sec" }, "LIMITS") : null,
     ...(s.limitations || []).map((t, i) => h(Note, { key: i, quiet: true }, t)));
@@ -459,11 +466,29 @@ function AdvancedPage({ back, s, insp, launch, go, profile }) {
     h("div", { className: "sec" }, "RECORD A LOG"),
     h(LogRecorder, { profile }),
     h("div", { className: "list" }, h(Row, { icon: "cog", title: "Journal", sub: "Undo recent changes", onClick: () => go("journal") })),
+    h(ForgetModel, { profile }),
     h(FrameOsPanel, { s, profile }),
     h("div", { className: "sec" }, "INSPECTOR"),
     h("div", { className: "cols" }, col("SAVED", sv), col("EFFECTIVE", ef), col("GOVERNOR", s && s.active_point ? { point: POINT_LABEL(s.active_point) } : {}, true), col("ACTUAL", ac)));
 }
 
+
+// review 1.1.x: a stale memory (new driver, game patch) could only be outlived, never reset.  Two taps.
+function ForgetModel({ profile }) {
+  const [step, setStep] = useState("idle"); // idle -> confirm -> done
+  const [msg, setMsg] = useState("");
+  const forget = async () => {
+    setStep("busy");
+    try { const r = await rpc.forgetModel(profile || ""); setMsg(r && r.success ? (r.forgotten ? "Forgotten. The next start searches from scratch." : "Nothing was learned for this game yet.") : "Could not reset: " + ((r && r.error) || "unknown error")); } catch (e) { setMsg("Could not reset."); }
+    setStep("done");
+  };
+  return h("div", null,
+    h("div", { className: "list" }, step === "confirm"
+      ? h(Row, { icon: "stop", title: "Tap again to forget", sub: "Watts, points and failures it remembered", onClick: forget })
+      : h(Row, { icon: "cog", title: "Reset what GFG learned for this game", sub: step === "busy" ? "Working…" : "Starts the next search from scratch", onClick: step === "busy" ? undefined : () => { setMsg(""); setStep("confirm"); } })),
+    step === "confirm" ? h(Note, { quiet: true }, "This cannot be undone. Your saved profile is not touched.") : null,
+    step === "done" && msg ? h(Note, { quiet: true }, msg) : null);
+}
 
 // GFG Frame OS (development): observe/shadow only measure; act changes frame timing and watts.
 function FrameOsPanel({ s, profile }) {

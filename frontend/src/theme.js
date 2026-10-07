@@ -24,6 +24,7 @@ export const css = `
 .gfg .effort{display:flex;justify-content:space-between;align-items:center;width:100%;margin-top:12px;font-size:11px;font-weight:700;letter-spacing:.14em;color:var(--tx3)}
 .gfg .effort .lv{font-size:12px;letter-spacing:.12em;color:var(--tx2)}
 .gfg .effort .lv.hard,.gfg .effort .lv.nightmare{color:var(--red)}
+.gfg .effort .lv .why{font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--tx3);text-transform:none}
 .gfg .power{width:100%;margin-top:12px}
 .gfg .power .r{display:flex;justify-content:space-between;font-size:11px;color:var(--tx2);margin-bottom:6px;font-weight:600}
 .gfg .bar{height:6px;background:var(--s3);border-radius:6px;overflow:hidden}.gfg .bar>div{height:100%;background:var(--red);border-radius:6px}

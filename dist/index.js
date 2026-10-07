@@ -57,6 +57,7 @@ var css = `
 .gfg .effort{display:flex;justify-content:space-between;align-items:center;width:100%;margin-top:12px;font-size:11px;font-weight:700;letter-spacing:.14em;color:var(--tx3)}
 .gfg .effort .lv{font-size:12px;letter-spacing:.12em;color:var(--tx2)}
 .gfg .effort .lv.hard,.gfg .effort .lv.nightmare{color:var(--red)}
+.gfg .effort .lv .why{font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--tx3);text-transform:none}
 .gfg .power{width:100%;margin-top:12px}
 .gfg .power .r{display:flex;justify-content:space-between;font-size:11px;color:var(--tx2);margin-bottom:6px;font-weight:600}
 .gfg .bar{height:6px;background:var(--s3);border-radius:6px;overflow:hidden}.gfg .bar>div{height:100%;background:var(--red);border-radius:6px}
@@ -131,6 +132,7 @@ var rpc = {
   setScaleReady: safeCallable("set_governor_scale_ready"),
   setFrameOs: safeCallable("set_governor_frame_os"),
   setMode: safeCallable("set_governor_mode"),
+  forgetModel: safeCallable("forget_governor_game_model"),
   profiles: safeCallable("get_profiles"),
   setProfile: safeCallable("set_current_profile"),
   profileConfig: safeCallable("get_profile_config"),
@@ -165,6 +167,8 @@ var fmtMult = (m) => {
   const q = Math.round(Number(m) * 4) / 4;
   return "\xD7" + (Number.isInteger(q) ? q : String(q));
 };
+var MODE_LABEL = { budget: "Battery", balanced: "Balanced", quality: "Quality" };
+var sessionModes = (x) => x && x.mode === "mixed" && x.modes ? Object.entries(x.modes).map(([m, v]) => (MODE_LABEL[m] || m) + " " + num(v, 0) + "m").join(" \xB7 ") : MODE_LABEL[x && x.mode] || "\u2013";
 var POINT_LABEL = (p) => p ? (p.multiplier > 1 ? fmtMult(p.multiplier) : "Native") + (p.render_scale_pct < 100 ? " \xB7 " + p.render_scale_pct + "%" : "") : "\u2013";
 var PAUSED_TEXT = {
   "overlay-restore-failed": "Could not restore settings \u2014 retrying.",
@@ -403,6 +407,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
   const showLive = s.enabled && out != null;
   const tdp = pw.observed_tdp_w != null ? pw.observed_tdp_w : pw.current_tdp_w;
   const eff = s.effort && s.effort.level;
+  const effWhy = eff && s.effort.reason;
   const mins = s.battery && s.battery.minutes_left;
   const cap0 = s.capability && s.capability.reason || "";
   const needsLaunch = s.enabled && (cap0 === "relaunch-required-for-governor-overlay" || s.reason === "relaunch-required-for-governor-overlay" || s.reason === "game-not-running" || s.reason === "diagnostics-active-no-events");
@@ -457,7 +462,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
         "div",
         { className: "effort" },
         h("span", null, "GFG EFFORT"),
-        h("b", { className: eff ? "lv " + eff : "lv" }, eff ? eff.toUpperCase() : "ASSESSING\u2026")
+        h("b", { className: eff ? "lv " + eff : "lv" }, eff ? eff.toUpperCase() : "ASSESSING\u2026", effWhy ? h("span", { className: "why" }, " \xB7 " + effWhy) : null)
       ) : null,
       tdp != null ? h(
         "div",
@@ -493,12 +498,16 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
         { className: "kv" },
         h("span", null, "Played"),
         h("b", null, num(s.last_session.minutes, 0) + " min"),
+        s.last_session.mode === "mixed" ? h("span", null, "Modes") : null,
+        s.last_session.mode === "mixed" ? h("b", null, sessionModes(s.last_session)) : null,
         h("span", null, "Frames on screen"),
         h("b", null, num(s.last_session.avg_output_fps, 0) + " FPS avg (" + num(s.last_session.avg_real_fps, 0) + " real)"),
         h("span", null, "Power"),
         h("b", null, s.last_session.avg_tdp_w != null ? num(s.last_session.avg_tdp_w, 1) + " W avg" + (s.last_session.reference_w ? " \xB7 limit " + num(s.last_session.reference_w, 0) + " W" : "") : "\u2013"),
         s.last_session.saved_w ? h("span", null, "Saved") : null,
         s.last_session.saved_w ? h("b", null, "~" + num(s.last_session.saved_w, 1) + " W on average") : null,
+        s.last_session.saved_wh ? h("span", null, "Energy saved") : null,
+        s.last_session.saved_wh ? h("b", null, "~" + num(s.last_session.saved_wh, 1) + " Wh" + (s.last_session.battery_minutes_gained ? " \xB7 ~" + s.last_session.battery_minutes_gained + " min more battery" : "")) : null,
         s.last_session.max_temp_c ? h("span", null, "Hottest") : null,
         s.last_session.max_temp_c ? h("b", null, num(s.last_session.max_temp_c, 0) + " \xB0C" + (s.last_session.hot_pct ? " \xB7 warm " + s.last_session.hot_pct + "% of the time" : "")) : null,
         s.last_session.stutter_pct ? h("span", null, "Stutter") : null,
@@ -599,7 +608,7 @@ function GovernorPage({ s, back, profile, refresh }) {
       "div",
       { className: "kv" },
       ...(s.session_history || []).slice(0, 5).flatMap((x, i) => [
-        h("span", { key: "k" + i }, num(x.minutes, 0) + " min \xB7 " + ({ budget: "Battery", balanced: "Balanced", quality: "Quality" }[x.mode] || "\u2013")),
+        h("span", { key: "k" + i }, num(x.minutes, 0) + " min \xB7 " + sessionModes(x)),
         h("b", { key: "v" + i }, num(x.avg_output_fps, 0) + " FPS \xB7 " + (x.avg_tdp_w != null ? num(x.avg_tdp_w, 1) + " W" : "\u2013") + (x.max_temp_c ? " \xB7 " + num(x.max_temp_c, 0) + " \xB0C" : ""))
       ])
     )) : null,
@@ -848,9 +857,34 @@ function AdvancedPage({ back, s, insp, launch, go, profile }) {
     h("div", { className: "sec" }, "RECORD A LOG"),
     h(LogRecorder, { profile }),
     h("div", { className: "list" }, h(Row, { icon: "cog", title: "Journal", sub: "Undo recent changes", onClick: () => go("journal") })),
+    h(ForgetModel, { profile }),
     h(FrameOsPanel, { s, profile }),
     h("div", { className: "sec" }, "INSPECTOR"),
     h("div", { className: "cols" }, col("SAVED", sv), col("EFFECTIVE", ef), col("GOVERNOR", s && s.active_point ? { point: POINT_LABEL(s.active_point) } : {}, true), col("ACTUAL", ac))
+  );
+}
+function ForgetModel({ profile }) {
+  const [step, setStep] = useState("idle");
+  const [msg, setMsg] = useState("");
+  const forget = async () => {
+    setStep("busy");
+    try {
+      const r = await rpc.forgetModel(profile || "");
+      setMsg(r && r.success ? r.forgotten ? "Forgotten. The next start searches from scratch." : "Nothing was learned for this game yet." : "Could not reset: " + (r && r.error || "unknown error"));
+    } catch (e) {
+      setMsg("Could not reset.");
+    }
+    setStep("done");
+  };
+  return h(
+    "div",
+    null,
+    h("div", { className: "list" }, step === "confirm" ? h(Row, { icon: "stop", title: "Tap again to forget", sub: "Watts, points and failures it remembered", onClick: forget }) : h(Row, { icon: "cog", title: "Reset what GFG learned for this game", sub: step === "busy" ? "Working\u2026" : "Starts the next search from scratch", onClick: step === "busy" ? void 0 : () => {
+      setMsg("");
+      setStep("confirm");
+    } })),
+    step === "confirm" ? h(Note, { quiet: true }, "This cannot be undone. Your saved profile is not touched.") : null,
+    step === "done" && msg ? h(Note, { quiet: true }, msg) : null
   );
 }
 function FrameOsPanel({ s, profile }) {

@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 
 MAX_STEP_S = 5.0
 MIN_SESSION_S = 30.0
+MIN_MODE_S = 30.0  # a mode used for less than this (a misclick) does not make a session "mixed"
 
 
 class SessionStats:
@@ -28,6 +29,7 @@ class SessionStats:
         self.max_temp_c: Optional[float] = None
         self.stutter_s = 0.0
         self.hot_s = 0.0
+        self.mode_s: Dict[str, float] = {}
 
     def start(self, key: Any, now: float) -> None:
         self.key = tuple(key) if isinstance(key, (list, tuple)) else key
@@ -36,7 +38,8 @@ class SessionStats:
 
     def add(self, now: float, *, output: Optional[float], real: Optional[float], tdp: Optional[float],
             draw: Optional[float], reference_w: Optional[float], temp_c: Optional[float] = None,
-            stuttering: bool = False, hot: bool = False) -> None:
+            stuttering: bool = False, hot: bool = False, mode: Optional[str] = None,
+            battery_w: Optional[float] = None) -> None:
         if self.started is None or self.last is None:
             return
         dt = min(MAX_STEP_S, max(0.0, now - self.last))
@@ -44,7 +47,9 @@ class SessionStats:
         if dt <= 0:
             return
         self.seconds += dt
-        for name, value in (("output", output), ("real", real), ("tdp", tdp), ("draw", draw)):
+        if mode:  # review 1.1.x: the mode at the exit alone misfiled mixed sessions
+            self.mode_s[str(mode)] = self.mode_s.get(str(mode), 0.0) + dt
+        for name, value in (("output", output), ("real", real), ("tdp", tdp), ("draw", draw), ("battery", battery_w)):
             if isinstance(value, (int, float)) and value > 0:
                 self._sums[name] = self._sums.get(name, 0.0) + float(value) * dt
                 self._weights[name] = self._weights.get(name, 0.0) + dt
@@ -63,18 +68,34 @@ class SessionStats:
         if self.started is None or self.seconds < MIN_SESSION_S:
             return None
         tdp = self._avg("tdp")
-        return {
+        used = {m: t for m, t in self.mode_s.items() if t >= MIN_MODE_S}
+        if not used and self.mode_s:
+            top = max(self.mode_s, key=self.mode_s.get)
+            used = {top: self.mode_s[top]}
+        saved_w = round(self.reference_w - tdp, 1) if self.reference_w and tdp else None
+        # Energy, not just watts: the cap saved over the time played.  Battery minutes only when the
+        # battery's own discharge rate was measured (on a charger it is not).
+        saved_wh = round(saved_w * self.seconds / 3600.0, 2) if saved_w and saved_w > 0 else None
+        battery = self._avg("battery")
+        result = {
             "minutes": round(self.seconds / 60.0, 1),
             "avg_output_fps": self._avg("output"),
             "avg_real_fps": self._avg("real"),
             "avg_tdp_w": tdp,
             "avg_draw_w": self._avg("draw"),
             "reference_w": self.reference_w,
-            "saved_w": round(self.reference_w - tdp, 1) if self.reference_w and tdp else None,
+            "saved_w": saved_w,
+            "saved_wh": saved_wh,
             "max_temp_c": round(self.max_temp_c, 0) if self.max_temp_c else None,
             "stutter_pct": round(100.0 * self.stutter_s / self.seconds),
             "hot_pct": round(100.0 * self.hot_s / self.seconds),
         }
+        if used:
+            result["modes"] = {m: round(t / 60.0, 1) for m, t in sorted(used.items(), key=lambda kv: -kv[1])}
+            result["mode"] = next(iter(used)) if len(used) == 1 else "mixed"
+        if saved_wh and battery and battery > 0:
+            result["battery_minutes_gained"] = int(round(saved_wh / battery * 60.0))
+        return result
 
     def finish(self) -> Optional[Dict[str, Any]]:
         result = self.summary()

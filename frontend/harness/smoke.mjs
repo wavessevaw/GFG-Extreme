@@ -28,6 +28,11 @@ const cases = [
   ["home-cooling", ["Details"], ["Heat", "on hold until the APU cools", "Lower resolution", "Scale-ready launch"]],
   ["home-history", ["Details"], ["RECENT SESSIONS", "29 min · Battery", "90 FPS · 10.7 W · 77 °C", "12 min · Quality", "88 FPS · 19.4 W"]],
   ["home-saving", [], ["SAVING", "6 W under your 15 W limit"]],
+  ["home-effort-reason", [], ["GFG EFFORT", "HARD", "x3 required"]],
+  ["home-last-session-mixed", [], ["LAST SESSION", "Modes", "Battery 18m · Balanced 13m", "Energy saved", "~2.3 Wh · ~14 min more battery"]],
+  ["home-last-session-mixed", ["Details"], ["RECENT SESSIONS", "31 min · Battery 18m · Balanced 13m"]],
+  ["home-idle-oled", ["Settings", "Diagnostics"], ["Reset what GFG learned for this game", "Starts the next search from scratch"]],
+  ["home-idle-oled", ["Settings", "Diagnostics", "Reset what GFG learned for this game"], ["Tap again to forget", "This cannot be undone"]],
   ["home-cap-ignored", [], ["TDP limit overridden", "17.4 W", "another tool"]],
   ["home-quality-oled", ["Details"], ["×1 to ×3, steps of 0.25", "never above your own"]],
   ["home-quality-oled", [], ["fewest generated frames first"]],
@@ -81,6 +86,20 @@ for (const [state, nav, expected] of cases) {
   if (saved.length !== 1 || saved[0].dll !== "xyz") { failed++; console.error(`FAIL text field lost on Back: ${JSON.stringify(saved)}`); }
   await page.close();
   cases.push(["text-field-back"]);
+}
+// Reset what GFG learned: the first tap only asks, the second one forgets.
+{
+  const page = await openPage(browser, STATES["home-idle-oled"], ["Settings", "Diagnostics", "Reset what GFG learned for this game"]);
+  const asked = await page.evaluate(() => (window.__forgets || []).length);
+  await page.getByText("Tap again to forget", { exact: true }).first().click();
+  await page.waitForTimeout(150);
+  const forgets = await page.evaluate(() => window.__forgets || []);
+  const text = await page.evaluate(() => document.body.innerText);
+  if (asked !== 0) { failed++; console.error(`FAIL forget model ran without confirmation`); }
+  if (forgets.length !== 1) { failed++; console.error(`FAIL forget model calls: ${JSON.stringify(forgets)}`); }
+  if (!text.includes("Forgotten. The next start searches from scratch.")) { failed++; console.error(`FAIL forget model result not shown`); }
+  await page.close();
+  cases.push(["forget-model-confirm"]);
 }
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);

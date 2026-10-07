@@ -26,6 +26,8 @@ export const STATES = {
   "home-loading": { ...base, enabled: true, state: "PAUSED", reason: "diagnostics-events-no-fps-samples", device: dev("oled", 90) },
   "home-testing": { ...base, enabled: true, state: "APPLY", reason: "awaiting-fresh-evidence", device: dev("oled", 90), request: { point: "33x2.75" } },
   "home-last-session": { ...base, last_session: { minutes: 42.3, avg_output_fps: 89.6, avg_real_fps: 30.2, avg_tdp_w: 10.6, avg_draw_w: 10.1, reference_w: 15, saved_w: 4.4, max_temp_c: 83, hot_pct: 12, stutter_pct: 3, profile: "mako" } },
+  "home-effort-reason": { ...base, enabled: true, state: "LOCKED", mode: "quality", device: dev("oled", 90), target_output_fps: 90, telemetry: tel(30, 90, 3), active_point: { multiplier: 3, render_scale_pct: 100 }, effort: { level: "hard", reason: "x3 required" } },
+  "home-last-session-mixed": { ...base, last_session: { minutes: 31, mode: "mixed", modes: { budget: 18, balanced: 13 }, avg_output_fps: 89.6, avg_real_fps: 36, avg_tdp_w: 10.6, reference_w: 15, saved_w: 4.4, saved_wh: 2.3, battery_minutes_gained: 14, profile: "mako" }, session_history: [{ minutes: 31, mode: "mixed", modes: { budget: 18, balanced: 13 }, avg_output_fps: 89.6, avg_tdp_w: 10.6 }] },
   "home-cooling": { ...base, enabled: true, state: "LOCKED", mode: "budget", device: dev("oled", 90), target_output_fps: 90, telemetry: tel(30, 90, 3), active_point: { multiplier: 3, render_scale_pct: 100 }, diagnosis: { thermal: "hot" }, sensors: { temp_c: 84 }, budget: { phase: "locked", point: "30x3", tdp_w: 8, tdp_control: true, tier: "ideal", thermal: "hot", thermal_deferred: true, heat_limited: true, limits_w: { min: 6, normal: 15, emergency: 15 } } },
   "home-history": { ...base, session_history: [{ minutes: 29, mode: "budget", avg_output_fps: 89.6, avg_tdp_w: 10.7, max_temp_c: 77 }, { minutes: 12, mode: "quality", avg_output_fps: 88.1, avg_tdp_w: 19.4 }] },
   "home-saving": { ...base, enabled: true, state: "LOCKED", mode: "budget", device: dev("oled", 90), target_output_fps: 90, telemetry: tel(30, 90, 3), active_point: { multiplier: 3, render_scale_pct: 100 }, power: { owned: true, observed_tdp_w: 9, ceiling_tdp_w: 15, initial_tdp_w: 15 }, session: { minutes: 3 }, budget: { phase: "locked", point: "30x3", tdp_w: 9, tdp_control: true, tier: "ideal", limits_w: { min: 6, normal: 15, emergency: 15 } } },
@@ -48,6 +50,7 @@ var callable = (n) => async (...a) => ({ get_governor_status: () => window.__sta
   run_setup_check: () => window.__state.__setup || ({ success: true, total: 3, failed: 0, checks: [{ check: 'launch wrapper installed', ok: true }, { check: 'overlay config published (active.conf)', ok: true }, { check: 'TDP control: fastPPT/slowPPT cap writable', ok: true }] }),
   get_log_recording_status: () => window.__state.__log || {},
   get_launch_option: () => ({ launch_option: "/home/deck/.local/bin/gfg %command%" }),
+  forget_governor_game_model: (p) => { (window.__forgets = window.__forgets || []).push(p); return { success: true, forgotten: 2, game: "app:292030" }; },
   update_profile_config_fields: (p, c) => { window.__patches.push(c); return { success: true }; } }[n] || (() => ({ success: true })))(...a);
 var definePlugin = (f) => f;`;
 
