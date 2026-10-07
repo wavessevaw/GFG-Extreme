@@ -1,6 +1,6 @@
 """Governor side of the gfg-pacer control channel (``engine/gfg-pacer/src/control.h``).
 
-Same 136-byte layout, same seqlock protocol: the Governor writes the policy block, the layer
+Same 176-byte layout (v2), same seqlock protocol: the Governor writes the policy block, the layer
 writes the telemetry block.  The Deck is x86-64 (stores are not reordered with stores), so the
 odd/even sequence writes through ``mmap`` are enough for the layer's reader.
 """
