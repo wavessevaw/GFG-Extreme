@@ -25,7 +25,7 @@ const cases = [
   ["home-testing", [], ["Testing ×2.75", "a few seconds"]],
   ["home-last-session", [], ["LAST SESSION", "42 min", "90 FPS avg (30 real)", "10.6 W avg · limit 15 W", "~4.4 W on average", "83 °C · warm 12% of the time", "Stutter", "3% of the time"]],
   ["home-cooling", [], ["Cooling · 8 W", "only tries lower watts"]],
-  ["home-cooling", ["Details"], ["Heat", "on hold until the APU cools"]],
+  ["home-cooling", ["Details"], ["Heat", "on hold until the APU cools", "Lower resolution", "Scale-ready launch"]],
   ["home-history", ["Details"], ["RECENT SESSIONS", "29 min · Battery", "90 FPS · 10.7 W · 77 °C", "12 min · Quality", "88 FPS · 19.4 W"]],
   ["home-saving", [], ["SAVING", "6 W under your 15 W limit"]],
   ["home-cap-ignored", [], ["TDP limit overridden", "17.4 W", "another tool"]],

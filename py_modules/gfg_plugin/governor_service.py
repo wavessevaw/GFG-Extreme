@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.0.11).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.1.0).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -54,7 +54,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.0.11"
+VERSION = "1.1.0"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -1411,6 +1411,10 @@ class GovernorService:
         values = power.status()
         return {"min": values.get("minimum_tdp_w"), "max": values.get("maximum_tdp_w")}
 
+    def _budget_can_scale(self, capability: Dict[str, Any]) -> bool:
+        cpu_bound = (self._status.get("diagnosis") or {}).get("bottleneck") == "cpu"
+        return bool(capability.get("scale_capable")) and not cpu_bound
+
     async def _budget_step(self, profile: str, external: bool, target: int) -> None:
         launch = await self._launch_info(profile)
         capability = self._capability(profile, launch)
@@ -1431,6 +1435,7 @@ class GovernorService:
                 flavor="balanced" if self._mode(profile) == "balanced" else "battery",
             )
             self._budget = budget
+            budget.scale_capable = self._budget_can_scale(capability)
             key = self._game_key(profile, target)
             budget.load_failures(self.game_models.failures(key), now)
             remembered = self.game_models.get(key)
@@ -1448,6 +1453,8 @@ class GovernorService:
             budget.tdp_control = False
             self._event("tdp-control-yielded", "external-tdp-change", profile=profile)
 
+        # Render-scale rungs need the Scaling Engine provisioned at launch and a GPU-bound game.
+        budget.scale_capable = self._budget_can_scale(capability)
         # Current resources, re-read every step: a swapchain recreation can raise it again.
         budget.current_max_multiplier = self.observer.current_max_multiplier
         if (budget.current_max_multiplier is not None

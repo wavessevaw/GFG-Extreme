@@ -828,3 +828,51 @@ class NotPowerBoundTests(unittest.TestCase):
         ctl.observe(15.0, WindowVerdict(False, False, "real-below-cap", short=True), 29.0)
         ctl.observe(30.0, WindowVerdict(False, False, "real-below-cap", short=True), 29.0)
         self.assertEqual(ctl.tdp, 11.0)
+
+
+class RenderScaleTests(unittest.TestCase):
+    """1.1.0: Battery/Balanced lower the render resolution before deeper ratios and 12-15 W."""
+
+    def heavy(self, capable, windows=2):
+        ctl = BudgetController(target_output_fps=90, now=0.0)
+        ctl.scale_capable = capable
+        ctl.current_max_multiplier = 3.0          # the renderer cannot go deeper than x3
+        ctl.phase, ctl.tdp, ctl.draw_w = "locked", 11.0, 10.8
+        now = 0.0
+        for _ in range(windows):
+            now += 15.0
+            ctl.observe(now, WindowVerdict(False, False, "real-below-cap", short=True), 28.5)
+        return ctl
+
+    def test_ladder_has_scaled_rungs_below_30x3(self):
+        keys = [p.key for p in BudgetController(target_output_fps=90, now=0.0).points]
+        i = keys.index("30x3")
+        self.assertEqual(keys[i - 2:i + 1], ["30x3@80", "30x3@90", "30x3"])
+        self.assertEqual(BudgetController(target_output_fps=90, now=0.0).point.key, "30x3")
+
+    def test_heavy_scene_gets_lower_resolution_before_more_watts(self):
+        ctl = self.heavy(True)
+        self.assertEqual((ctl.point.key, ctl.tdp), ("30x3@90", 11.0))
+        ctl = self.heavy(True, windows=3)
+        self.assertEqual((ctl.point.key, ctl.tdp), ("30x3@80", 11.0))
+        ctl = self.heavy(True, windows=4)                 # only then watts
+        self.assertEqual((ctl.point.key, ctl.tdp), ("30x3@80", 12.0))
+
+    def test_without_the_scaling_engine_nothing_changes(self):
+        ctl = self.heavy(False)
+        self.assertEqual(ctl.point.key, "30x3")
+        self.assertGreater(ctl.tdp, 11.0)
+
+    def test_full_resolution_is_won_back_first(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0)
+        ctl.scale_capable = True
+        ctl.idx = [p.key for p in ctl.points].index("30x3@90")
+        ctl.phase = "upgrade"
+        ctl._upgrade(0.0)
+        self.assertEqual(ctl.point.key, "30x3")
+
+    def test_scaled_memory_is_not_used_when_the_launch_cannot_scale(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0)
+        self.assertFalse(ctl.warm_start("30x3@90", 10.0, 0.0))
+        ctl.scale_capable = True
+        self.assertTrue(ctl.warm_start("30x3@90", 10.0, 0.0))
