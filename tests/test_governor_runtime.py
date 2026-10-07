@@ -1220,12 +1220,14 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.assertFalse(frame_os["layer_installed"])
         self.assertIn("does not include", frame_os["layer_error"])
         self.svc.frame_os_layer_source.mkdir(parents=True)
-        for name in layer_install.FILES:
-            (self.svc.frame_os_layer_source / name).write_text(name)
+        (self.svc.frame_os_layer_source / layer_install.LIBRARY).write_bytes(b"ELF")
+        (self.svc.frame_os_layer_source / layer_install.MANIFEST).write_text('{"layer": {"name": "VK_LAYER_GFG_pacer"}}')
+        self.svc.frame_os_registry_dir = base / "registry"
         self.svc.set_frame_os("game", "shadow")
         frame_os = self.svc.get_status("game")["frame_os"]
         self.assertTrue(frame_os["layer_installed"])
         self.assertIsNone(frame_os["layer_error"])
+        self.assertTrue((base / "registry" / layer_install.REGISTERED_MANIFEST).is_file())
 
     def test_runner_follows_the_live_budget_point(self):
         self.svc.set_frame_os("game", "observe")

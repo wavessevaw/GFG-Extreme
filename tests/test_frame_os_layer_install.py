@@ -47,6 +47,20 @@ class LayerInstallTests(unittest.TestCase):
         self.assertTrue(layer_install.stage(self.source, self.target, self.log)["changed"])
         self.assertEqual((self.target / layer_install.LIBRARY).read_bytes(), b"ELF-2")
 
+    def test_registered_manifest_points_at_the_private_library_and_stays_gated(self):
+        import json
+        self._bundle()
+        self.source.joinpath(layer_install.MANIFEST).write_text(json.dumps(
+            {"file_format_version": "1.2.1", "layer": {"name": "VK_LAYER_GFG_pacer", "library_path": "./x.so"}}))
+        registry = self.target.parent / "registry"
+        self.assertIsNone(layer_install.stage(self.source, self.target, self.log, registry_dir=registry)["error"])
+        layer = json.loads((registry / layer_install.REGISTERED_MANIFEST).read_text())["layer"]
+        self.assertEqual(layer["library_path"], str(self.target / layer_install.LIBRARY))
+        self.assertEqual(layer["enable_environment"], {"GFG_FRAME_OS": "1"})
+        self.assertEqual(layer["library_arch"], "64")
+        layer_install.remove(self.target, registry)
+        self.assertFalse((registry / layer_install.REGISTERED_MANIFEST).exists())
+
     def test_remove_takes_the_manifest_and_the_directory(self):
         self._bundle()
         layer_install.stage(self.source, self.target, self.log)

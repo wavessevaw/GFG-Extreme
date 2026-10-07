@@ -138,6 +138,7 @@ class GovernorService:
         share = getattr(self.configuration, "local_share_dir", None)
         self.frame_os_layer_dir: Optional[Path] = frame_os_layer.target_dir(share) if share else None
         self.frame_os_layer_error: Optional[str] = None
+        self.frame_os_registry_dir: Optional[Path] = getattr(self.configuration, "user_vulkan_layer_dir", None)
         self._settings = self._load_settings()
         builder = getattr(self.configuration, "build_governor_overlay_text", None)
         self.overlay: Optional[OverlayStore] = (
@@ -686,7 +687,8 @@ class GovernorService:
         if wanted:
             # The launcher loads the layer only when it is staged; a build without it stays inert.
             if self.frame_os_layer_dir is not None:
-                staged = frame_os_layer.stage(self.frame_os_layer_source, self.frame_os_layer_dir, self.log)
+                staged = frame_os_layer.stage(self.frame_os_layer_source, self.frame_os_layer_dir, self.log,
+                                              registry_dir=self.frame_os_registry_dir)
                 self.frame_os_layer_error = staged["error"]
             self.frame_os_marker_path.parent.mkdir(parents=True, exist_ok=True)
             self.frame_os_marker_path.write_text("enabled\n", encoding="utf-8")

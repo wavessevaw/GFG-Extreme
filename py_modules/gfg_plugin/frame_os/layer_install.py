@@ -8,15 +8,23 @@ the library it mapped.
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from ..managed_files import copy_managed_file_atomically
+from ..managed_files import copy_managed_file_atomically, write_managed_text_atomically
 
 LIBRARY = "libVkLayer_gfg_pacer.so"
 MANIFEST = "VkLayer_gfg_pacer.json"
 FILES = (LIBRARY, MANIFEST)          # manifest last: the launcher keys on it
+# Copy registered in the user's standard implicit-layer directory: Steam's container (Pressure
+# Vessel) imports layers from the standard search paths, not from a wrapper-only path. Gated by
+# GFG_FRAME_OS, which nothing sets (the launcher names the layer explicitly instead), so it never
+# activates on its own.
+REGISTERED_MANIFEST = "VkLayer_GFG_Extreme_frame_os.json"
+GATE_ENV = "GFG_FRAME_OS"
+DISABLE_ENV = "DISABLE_GFG_FRAME_OS"
 
 
 def bundled_dir(plugin_root: Path) -> Path:
@@ -33,7 +41,18 @@ def _digest(path: Path) -> str:
         return hashlib.sha256(handle.read()).hexdigest()
 
 
-def stage(source_dir: Path, target_dir: Path, logger: Any) -> Dict[str, Any]:
+def registered_manifest_text(target_dir: Path, source_manifest: Path) -> str:
+    data = json.loads(source_manifest.read_text(encoding="utf-8"))
+    layer = data["layer"]
+    layer["library_path"] = str(target_dir / LIBRARY)
+    layer["library_arch"] = "64"
+    layer["enable_environment"] = {GATE_ENV: "1"}
+    layer["disable_environment"] = {DISABLE_ENV: "1"}
+    return json.dumps(data, indent=2) + "\n"
+
+
+def stage(source_dir: Path, target_dir: Path, logger: Any,
+          registry_dir: Optional[Path] = None) -> Dict[str, Any]:
     """Copy the layer when it differs. Returns {"installed", "changed", "error"}."""
     missing = [name for name in FILES if not (source_dir / name).is_file()]
     if missing:
@@ -47,7 +66,10 @@ def stage(source_dir: Path, target_dir: Path, logger: Any) -> Dict[str, Any]:
                 continue
             copy_managed_file_atomically(source, target, 0o644, logger)
             changed = True
-    except OSError as error:
+        if registry_dir is not None:
+            text = registered_manifest_text(target_dir, source_dir / MANIFEST)
+            changed = write_managed_text_atomically(registry_dir / REGISTERED_MANIFEST, text, 0o644, logger) or changed
+    except (OSError, ValueError, KeyError, TypeError) as error:
         return {"installed": is_staged(target_dir), "changed": changed, "error": str(error)}
     return {"installed": True, "changed": changed, "error": None}
 
@@ -56,7 +78,12 @@ def is_staged(target_dir: Path) -> bool:
     return all((target_dir / name).is_file() for name in FILES)
 
 
-def remove(target_dir: Path) -> None:
+def remove(target_dir: Path, registry_dir: Optional[Path] = None) -> None:
+    if registry_dir is not None:
+        try:
+            (registry_dir / REGISTERED_MANIFEST).unlink()
+        except FileNotFoundError:
+            pass
     for name in reversed(FILES):                      # manifest first: the launcher stops using it
         try:
             (target_dir / name).unlink()

@@ -1608,7 +1608,7 @@ class InstallationService(BaseService):
                 + [self.standalone_installer_state_file]
             )
 
-            frame_os_layer.remove(frame_os_layer.target_dir(self.local_share_dir))
+            frame_os_layer.remove(frame_os_layer.target_dir(self.local_share_dir), self.user_vulkan_layer_dir)
 
             if removed_files:
                 self.log.info(f"Cleaned up {len(removed_files)} GFG Engine files during plugin uninstall: {removed_files}")
