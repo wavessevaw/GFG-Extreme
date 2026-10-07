@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.0.9).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.0.10).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -54,7 +54,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.0.9"
+VERSION = "1.0.10"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -791,8 +791,8 @@ class GovernorService:
         # Per-point state that must not outlive the point (audit 1.0.7).  A ladder kept on purpose
         # sets ``_exhausted`` again right after (``_release_point_keep_ladder``).
         self._exhausted = False
-        self._external_at = None
-        self._reclaims = 0
+        # Reclaim attempts against an outside TDP tool are kept (they reset with the profile or
+        # enable state): a new game or display change must not restart that fight.
         self._status.pop("power_feedback", None)
         self._status.pop("last_verdict", None)
 

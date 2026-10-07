@@ -172,6 +172,19 @@ class PowerRestoreSafetyTests(GovernorPowerActuatorTests):
             self.assertEqual(int((h / "power2_cap").read_text()), 15000000)
             self.assertEqual(int((h / "power1_cap").read_text()), 18000000)
 
+    def test_unverified_write_never_restores_over_another_tool(self):
+        """Review 1.0.10: an outside write is exactly what makes our readback fail."""
+        with tempfile.TemporaryDirectory() as temp:
+            h, actuator = self.make(Path(temp))
+            original = actuator._write_value
+            actuator._write_value = lambda path, value: original(path, value - 1000)
+            self.assertFalse(actuator.set_tdp_w(9)["success"])
+            actuator._write_value = original
+            write(h / "power2_cap", 10000000); write(h / "power1_cap", 12000000)   # QAM slider
+            result = actuator.restore_if_owned()
+            self.assertEqual((result["restored"], result["reason"]), (False, "external-change"))
+            self.assertEqual(int((h / "power2_cap").read_text()), 10000000)
+
     def test_shutdown_waits_for_a_write_in_flight_and_refuses_later_ones(self):
         import threading
         import time as _time

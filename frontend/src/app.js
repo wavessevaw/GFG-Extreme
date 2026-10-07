@@ -497,6 +497,10 @@ function DraftText({ value, onCommit }) {
   const [editing, setEditing] = useState(false);
   const [err, setErr] = useState("");
   useEffect(() => { if (!editing) setDraft(shown); }, [shown, editing]);
+  // React fires no blur when a focused input unmounts (Back, closing the menu): save it then.
+  const pending = useRef({ editing: false, draft: shown, shown, onCommit });
+  pending.current = { editing, draft, shown, onCommit };
+  useEffect(() => () => { const p = pending.current; if (p.editing && p.draft !== p.shown) p.onCommit(p.draft); }, []);
   const commit = async () => {
     setEditing(false);
     if (draft === shown) return;

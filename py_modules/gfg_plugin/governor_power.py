@@ -107,6 +107,7 @@ class SteamDeckPowerActuator:
         # already running in a worker thread (audit 1.0.8).  ``_closed`` refuses writes after it.
         self._lock = threading.RLock()
         self._closed = False
+        self._unverified_caps: set = set()
 
     def reopen(self) -> None:
         with self._lock:
@@ -426,6 +427,11 @@ class SteamDeckPowerActuator:
                 self.state.expected_slow_uw = _read_int(self._slow_path)
                 self.state.expected_fast_uw = _read_int(self._fast_path)
             if kind == "unverified":
+                # What the caps may read if our write did land (late or rounded): restore only
+                # from these, never over a value another tool wrote meanwhile.
+                self._unverified_caps = {(_read_int(self._slow_path), _read_int(self._fast_path)),
+                                         (slow, fast),
+                                         (self.state.expected_slow_uw, self.state.expected_fast_uw)}
                 self.state.owned = False
                 # Our own write failed, nobody else touched the caps: a re-claim in
                 # this session must keep the user's original values for restore.
@@ -449,6 +455,11 @@ class SteamDeckPowerActuator:
             if not (self._keep_initial and self.state.initial_slow_uw and self.state.initial_fast_uw
                     and self._fast_path is not None and self._slow_path is not None):
                 return {"success": True, "restored": False, "reason": "not-owned", "state": self.status()}
+            now_caps = (_read_int(self._slow_path), _read_int(self._fast_path))
+            if now_caps not in self._unverified_caps:
+                # Someone else set the caps after our write failed: theirs stay (review 1.0.10).
+                self._keep_initial = False
+                return {"success": True, "restored": False, "reason": "external-change", "state": self.status()}
         elif not self._verify_ownership():
             return {"success": True, "restored": False, "reason": "external-change", "state": self.status()}
         assert self._fast_path is not None and self._slow_path is not None

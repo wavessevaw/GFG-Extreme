@@ -1061,13 +1061,14 @@ if __name__ == "__main__":
 class PointStateResetTests(RuntimeBase):
     """Audit 1.0.7: per-point state that survived a new game, mode or display change."""
 
-    def test_release_clears_exhaustion_reclaims_and_power_feedback(self):
+    def test_release_clears_exhaustion_and_power_feedback_but_not_reclaims(self):
         self.svc._exhausted = True
         self.svc._reclaims, self.svc._external_at = 3, 12.0
         self.svc._status["power_feedback"] = {"cap_w": 7.0, "draw_w": 7.1}
         asyncio.run(self.svc._release_point("game", "new-game-session"))
         self.assertFalse(self.svc._exhausted)
-        self.assertEqual((self.svc._reclaims, self.svc._external_at), (0, None))
+        # Review 1.0.10: a new game must not restart the fight with an outside TDP tool.
+        self.assertEqual((self.svc._reclaims, self.svc._external_at), (3, 12.0))
         self.assertNotIn("power_feedback", self.svc._status)
 
     def test_stale_power_feedback_does_not_fake_a_power_bottleneck(self):

@@ -69,6 +69,19 @@ for (const [state, nav, expected] of cases) {
   await page.close();
   cases.push(["text-field-commit"]);
 }
+// ... and when the page is left with Back before Enter (no blur fires on unmount).
+{
+  const page = await openPage(browser, STATES["home-locked-oled"], ["Settings", "All settings"]);
+  const field = page.locator("input[data-tf]").first();
+  await field.click();
+  await field.type("xyz");
+  await page.locator(".back").first().click();
+  await page.waitForTimeout(150);
+  const saved = await page.evaluate(() => window.__patches);
+  if (saved.length !== 1 || saved[0].dll !== "xyz") { failed++; console.error(`FAIL text field lost on Back: ${JSON.stringify(saved)}`); }
+  await page.close();
+  cases.push(["text-field-back"]);
+}
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);
 process.exit(failed ? 1 : 0);
