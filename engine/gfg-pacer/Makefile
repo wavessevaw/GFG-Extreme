@@ -8,8 +8,8 @@ VULKAN_HEADERS ?= $(VULKAN_DEPS)/vkh/include
 VULKAN_LOADER_DIR ?= $(VULKAN_DEPS)/vkl/build/loader
 MOCK_ICD_JSON ?= $(VULKAN_DEPS)/vkt/build/icd/VkICD_mock_icd.json
 
-LAYER_SRC := src/layer.c src/control.c src/scheduler.c
-LAYER_HDR := src/control.h src/scheduler.h
+LAYER_SRC := src/layer.c src/control.c src/metrics.c src/scheduler.c
+LAYER_HDR := src/control.h src/metrics.h src/scheduler.h
 
 .PHONY: test layer integration clean
 test: $(BUILD)/test_scheduler $(BUILD)/test_control
@@ -20,9 +20,9 @@ $(BUILD)/test_scheduler: tests/test_scheduler.c src/scheduler.c src/scheduler.h
 	mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_scheduler.c src/scheduler.c -lm
 
-$(BUILD)/test_control: tests/test_control.c src/control.c src/scheduler.c $(LAYER_HDR)
+$(BUILD)/test_control: tests/test_control.c src/control.c src/metrics.c src/scheduler.c $(LAYER_HDR)
 	mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -o $@ tests/test_control.c src/control.c src/scheduler.c -lm -lpthread
+	$(CC) $(CFLAGS) -o $@ tests/test_control.c src/control.c src/metrics.c src/scheduler.c -lm -lpthread
 
 layer: $(BUILD)/libVkLayer_gfg_pacer.so $(BUILD)/VkLayer_gfg_pacer.json
 

@@ -14,12 +14,22 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+_Static_assert(offsetof(gfg_ctl_shm, writer_pid) == 12, "abi");
 _Static_assert(offsetof(gfg_ctl_shm, policy_seq) == 16, "abi");
 _Static_assert(offsetof(gfg_ctl_shm, policy) == 24, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, policy.mode) == 36, "abi");
 _Static_assert(offsetof(gfg_ctl_shm, policy.real_target_hz) == 40, "abi");
-_Static_assert(offsetof(gfg_ctl_shm, telemetry_seq) == 64, "abi");
-_Static_assert(offsetof(gfg_ctl_shm, telemetry) == 72, "abi");
-_Static_assert(sizeof(gfg_ctl_shm) == 136, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, policy.max_wait_ms) == 56, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, policy.generation) == 64, "abi");
+_Static_assert(sizeof(gfg_ctl_policy) == 48, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, telemetry_seq) == 72, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, telemetry) == 80, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, telemetry.freshness_ms) == 136, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, telemetry.last_present_ns) == 160, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, telemetry.applied_generation) == 168, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, telemetry.swapchain_recreations) == 172, "abi");
+_Static_assert(sizeof(gfg_ctl_telemetry) == 96, "abi");
+_Static_assert(sizeof(gfg_ctl_shm) == 176, "abi");
 
 #define SEQ_TRIES 64
 
@@ -97,6 +107,7 @@ static dev_t g_dev;
 static ino_t g_ino;
 static int g_created;          /* we created g_path (env test mode): unlink at exit */
 static int g_env_enabled;
+static uint32_t g_env_mode;
 static gfg_policy g_env_policy;
 static int64_t g_next_poll;
 static gfg_ctl_state g_state;
@@ -112,7 +123,8 @@ static int to_sched_policy(const gfg_ctl_policy *c, gfg_policy *out)
 {
     gfg_policy_defaults(out);
     if (!isfinite(c->real_target_hz) || c->real_target_hz < 0 || c->real_target_hz > 1000 ||
-        !isfinite(c->margin_ms) || c->margin_ms > 100 || !isfinite(c->max_wait_ms) || c->max_wait_ms > 100)
+        !isfinite(c->margin_ms) || c->margin_ms > 100 || !isfinite(c->max_wait_ms) || c->max_wait_ms > 100 ||
+        c->mode > GFG_MODE_SHADOW)
         return 0;
     out->real_target_hz = c->real_target_hz;
     out->tick_shaping = c->tick_shaping != 0;
@@ -201,6 +213,16 @@ static void init_locked(void)
         c.real_target_hz = hz ? strtod(hz, NULL) : 0.0;
         c.tick_shaping = (uint32_t)env_int("GFG_FRAME_OS_TICK_SHAPING", 1);
         c.pacing = (uint32_t)env_int("GFG_FRAME_OS_PACING", 1);
+        const char *mode = getenv("GFG_FRAME_OS_MODE");
+        if (!mode || !*mode || !strcmp(mode, "act"))
+            c.mode = GFG_MODE_ACT;
+        else if (!strcmp(mode, "observe"))
+            c.mode = GFG_MODE_OBSERVE;
+        else if (!strcmp(mode, "shadow"))
+            c.mode = GFG_MODE_SHADOW;
+        else
+            c.mode = 0xffffffffu;   /* unknown: rejected below => disabled */
+        g_env_mode = c.mode;
         if (!to_sched_policy(&c, &g_env_policy))
             g_env_enabled = 0;
     }
@@ -215,27 +237,31 @@ int gfg_ctl_poll(int64_t now_ns, gfg_ctl_state *out)
     if (now_ns >= g_next_poll) {
         g_next_poll = now_ns + GFG_CTL_POLL_NS;
         sync_mapping();
-        int enabled = 0;
-        gfg_policy pol;
-        gfg_policy_defaults(&pol);
+        gfg_ctl_state n = { .enabled = 0 };
+        gfg_policy_defaults(&n.policy);
         if (g_env_enabled) {
-            enabled = 1;
-            pol = g_env_policy;
+            n.enabled = 1;
+            n.mode = g_env_mode;
+            n.policy = g_env_policy;
         } else if (g_shm && header_ok(g_shm)) {
             gfg_ctl_policy c;
             if (gfg_ctl_read_policy(g_shm, &c) != 0) {
-                enabled = g_state.enabled;   /* writer busy: keep the last policy */
-                pol = g_state.policy;
-            } else {
-                enabled = c.enabled == 1 && to_sched_policy(&c, &pol);
+                n = g_state;                 /* writer busy: keep the last policy */
+            } else if (c.enabled == 1 && to_sched_policy(&c, &n.policy)) {
+                n.enabled = 1;
+                n.mode = c.mode;
+                n.generation = c.generation;
             }
         }
-        if (!enabled)
-            gfg_policy_defaults(&pol);
-        if (enabled != g_state.enabled || memcmp(&pol, &g_state.policy, sizeof(pol)) != 0) {
-            g_state.enabled = enabled;
-            g_state.policy = pol;
-            g_state.generation++;
+        if (!n.enabled) {
+            gfg_policy_defaults(&n.policy);
+            n.mode = 0;
+            n.generation = 0;
+        }
+        if (n.enabled != g_state.enabled || n.mode != g_state.mode || n.generation != g_state.generation ||
+            memcmp(&n.policy, &g_state.policy, sizeof(n.policy)) != 0) {
+            n.serial = g_state.serial + 1;
+            g_state = n;
         }
     }
     *out = g_state;
@@ -243,17 +269,12 @@ int gfg_ctl_poll(int64_t now_ns, gfg_ctl_state *out)
     return 0;
 }
 
-void gfg_ctl_publish(const gfg_stats *s, int64_t last_present_ns)
+void gfg_ctl_publish(const gfg_ctl_telemetry *t)
 {
-    gfg_ctl_telemetry t = {
-        .frames = s->frames, .hits = s->hits, .misses = s->misses,
-        .cost_p50_ms = s->cost_p50_ms, .cost_q_ms = s->cost_q_ms, .margin_ms = s->margin_ms,
-        .avg_delay_ms = s->avg_delay_ms, .last_present_ns = last_present_ns,
-    };
     if (pthread_mutex_lock(&g_lock) != 0)
         return;
     if (g_shm && g_pid == getpid() && header_ok(g_shm))
-        gfg_ctl_write_telemetry(g_shm, &t);   /* one writer at a time: under g_lock */
+        gfg_ctl_write_telemetry(g_shm, t);   /* one writer at a time: under g_lock */
     pthread_mutex_unlock(&g_lock);
 }
 

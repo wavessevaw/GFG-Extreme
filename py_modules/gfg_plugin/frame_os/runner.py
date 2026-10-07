@@ -88,8 +88,11 @@ class FrameOsRunner:
         real_hz = decision.real_hz if acting else self.policy.calm_real_hz
         wanted = (self.mode, round(real_hz, 3))
         if wanted != self._published:
+            # Tick shaping must be able to move a frame start through most of a real-frame slot:
+            # at 30 real a one-refresh cap (11 ms) leaves two thirds of the queueing in place.
             self.channel.write_policy(enabled=True, real_hz=real_hz, mode=self.mode,
-                                      tick_shaping=True, pacing=True, generation=self._bump())
+                                      tick_shaping=True, pacing=True, generation=self._bump(),
+                                      max_wait_ms=round(0.8 * 1000.0 / real_hz, 2) if real_hz > 0 else 0.0)
             self._published = wanted
         self.last = {
             "enabled": True, "mode": self.mode, "input": inp, "scene_change": cut,

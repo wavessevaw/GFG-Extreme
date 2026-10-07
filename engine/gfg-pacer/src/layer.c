@@ -1,10 +1,15 @@
 /* GFG Frame OS — gfg-pacer Vulkan layer glue (VK_LAYER_GFG_pacer).
  *
- * Implicit layer.  Hooks two calls and hands the timing questions to the Presentation Scheduler:
+ * Implicit layer.  Hooks the frame boundaries and hands the timing questions to the
+ * Presentation Scheduler:
  *
  *   vkAcquireNextImageKHR  frame start: gfg_sched_frame_start(now), sleep the answer, forward
  *   vkQueuePresentKHR      frame ready (= now): gfg_sched_present(ready), sleep until the
  *                          release time, forward, publish telemetry
+ *   vkCreateSwapchainKHR   counted (recreations are a stutter/resize signal), forwarded
+ *
+ * Modes (control channel): act = the above; shadow = scheduler runs, no sleeps; observe = no
+ * scheduler, measurements only.  All three publish the same telemetry (metrics.h).
  *
  * Everything else is forwarded untouched.  The layer acts only while the control channel says
  * enabled (see control.h); otherwise every hook is a plain forward.  Any internal error switches
@@ -26,6 +31,7 @@
 #include <vulkan/vulkan.h>
 
 #include "control.h"
+#include "metrics.h"
 #include "scheduler.h"
 
 #define LAYER_EXPORT __attribute__((visibility("default")))
@@ -48,10 +54,17 @@ typedef struct dev_data {
     PFN_vkAcquireNextImageKHR acquire;
     PFN_vkAcquireNextImage2KHR acquire2;
     PFN_vkQueuePresentKHR present;
+    PFN_vkCreateSwapchainKHR create_swapchain;
     pthread_mutex_t lock;          /* guards everything below */
-    int active;                    /* scheduler initialised for the current enable period */
-    uint64_t generation;           /* control-channel policy generation applied */
+    int enabled;                   /* layer enabled at the last hook: metrics belong to this period */
+    int sched_active;              /* scheduler initialised (act/shadow) */
+    uint64_t serial;               /* control-channel state serial applied */
+    uint32_t mode;
+    uint32_t generation;           /* Governor's policy generation in effect */
+    int64_t shadow_delay_ns;       /* shadow: start delay act would have applied to this frame */
+    uint32_t swapchains_created;
     gfg_sched sched;
+    gfg_metrics metrics;
 } dev_data;
 
 static pthread_rwlock_t g_map_lock = PTHREAD_RWLOCK_INITIALIZER;
@@ -127,30 +140,39 @@ static dev_data *find_device(void *key)
 
 /* ---- scheduler glue ---- */
 
-/* Poll the control channel; when enabled, bring d's scheduler to the current policy (d->lock
- * held).  Returns 1 when the layer should act, 0 to forward only, -1 on an internal error. */
+/* Bring d to the control-channel state st (d->lock held).  Returns 0 when the layer is disabled
+ * (forward only), else 1 with d->mode set. */
 static int sync_policy_locked(dev_data *d, const gfg_ctl_state *st)
 {
     if (!st->enabled) {
-        d->active = 0;           /* re-enable starts from a fresh timeline */
+        d->enabled = 0;          /* re-enable starts from a fresh timeline and fresh metrics */
+        d->sched_active = 0;
         return 0;
     }
-    if (!d->active) {
-        gfg_sched_init(&d->sched, &st->policy);
-        d->active = 1;
-        d->generation = st->generation;
-    } else if (d->generation != st->generation) {
-        gfg_sched_set_policy(&d->sched, &st->policy);
-        d->generation = st->generation;
+    if (!d->enabled) {
+        gfg_metrics_reset(&d->metrics);
+        d->enabled = 1;
     }
+    if (st->mode == GFG_MODE_OBSERVE) {
+        d->sched_active = 0;
+    } else if (!d->sched_active) {
+        gfg_sched_init(&d->sched, &st->policy);
+        d->sched_active = 1;
+        d->shadow_delay_ns = 0;
+    } else if (d->serial != st->serial) {
+        gfg_sched_set_policy(&d->sched, &st->policy);   /* shadow -> act keeps what was learned */
+    }
+    d->serial = st->serial;
+    d->mode = st->mode;
+    d->generation = st->generation;
     return 1;
 }
 
 static void frame_start(dev_data *d)
 {
     gfg_ctl_state st;
-    int64_t now, delay, cap;
-    int act;
+    int64_t now, delay = 0, cap;
+    int sleep_it = 0;
     if (passthrough())
         return;
     if ((now = now_ns()) < 0 || gfg_ctl_poll(now, &st) != 0) {
@@ -161,24 +183,31 @@ static void frame_start(dev_data *d)
         fail("mutex");
         return;
     }
-    act = sync_policy_locked(d, &st);
-    delay = act ? gfg_sched_frame_start(&d->sched, now) : 0;
-    cap = (int64_t)(d->sched.policy.max_wait_ms * NS_PER_MS) + NS_PER_MS;
-    pthread_mutex_unlock(&d->lock);
-    if (delay < 0 || delay > cap) {
-        fail("frame_start delay out of range");
-        return;
+    if (sync_policy_locked(d, &st)) {
+        if (d->sched_active)
+            delay = gfg_sched_frame_start(&d->sched, now);
+        cap = (int64_t)(d->sched.policy.max_wait_ms * NS_PER_MS) + NS_PER_MS;
+        if (delay < 0 || delay > cap) {
+            pthread_mutex_unlock(&d->lock);
+            fail("frame_start delay out of range");
+            return;
+        }
+        sleep_it = d->mode == GFG_MODE_ACT;
+        /* shadow: the frame really starts now; remember what act would have added */
+        d->shadow_delay_ns = d->mode == GFG_MODE_SHADOW ? delay : 0;
+        gfg_metrics_frame_start(&d->metrics, sleep_it ? now + delay : now);
     }
-    if (delay > 0)
+    pthread_mutex_unlock(&d->lock);
+    if (sleep_it && delay > 0)
         sleep_until(now + delay);
 }
 
-/* Returns 1 when telemetry should be published after the present is forwarded. */
-static int present_gate(dev_data *d, gfg_stats *stats)
+/* Before forwarding a present.  Returns 1 when telemetry must be published after forwarding
+ * (filled into *t, with last_present_ns = the forward time). */
+static int present_gate(dev_data *d, gfg_ctl_telemetry *t)
 {
     gfg_ctl_state st;
-    int64_t ready, release, wait, period;
-    int act;
+    int64_t ready, release, wait = 0, fwd;
     if (passthrough())
         return 0;
     if ((ready = now_ns()) < 0 || gfg_ctl_poll(ready, &st) != 0) {
@@ -189,25 +218,67 @@ static int present_gate(dev_data *d, gfg_stats *stats)
         fail("mutex");
         return 0;
     }
-    act = sync_policy_locked(d, &st);
-    release = act ? gfg_sched_present(&d->sched, ready) : ready;
-    period = d->sched.period_ns;
-    if (act)
-        *stats = *gfg_sched_stats(&d->sched);
-    pthread_mutex_unlock(&d->lock);
-    if (!act)
-        return 0;
-    wait = release - ready;
-    if (wait < 0 || wait > MAX_SLEEP_NS) {
-        fail("present release out of range");
+    if (!sync_policy_locked(d, &st)) {
+        pthread_mutex_unlock(&d->lock);
         return 0;
     }
-    /* Hold at most one real-frame slot: a later release only happens when the frame beat its
-     * cost estimate after a capped start delay; the next slot absorbs the difference. */
-    if (wait > period)
-        wait = period;
+    gfg_metrics_ready(&d->metrics, ready);
+    if (d->mode == GFG_MODE_ACT) {
+        release = gfg_sched_present(&d->sched, ready);
+        wait = release - ready;
+        if (wait < 0 || wait > MAX_SLEEP_NS) {
+            pthread_mutex_unlock(&d->lock);
+            fail("present release out of range");
+            return 0;
+        }
+        /* Hold at most one real-frame slot: a later release only happens when the frame beat
+         * its cost estimate after a capped start delay; the next slot absorbs the difference. */
+        if (wait > d->sched.period_ns)
+            wait = d->sched.period_ns;
+    } else if (d->mode == GFG_MODE_SHADOW) {
+        /* Replay the frame on act's timeline: same cost, started shadow_delay later. */
+        release = gfg_sched_present(&d->sched, ready + d->shadow_delay_ns);
+        if (release < ready + d->shadow_delay_ns) {
+            pthread_mutex_unlock(&d->lock);
+            fail("present release out of range");
+            return 0;
+        }
+        d->shadow_delay_ns = 0;
+    }
+    pthread_mutex_unlock(&d->lock);
+
     if (wait > 0)
         sleep_until(ready + wait);
+    if ((fwd = now_ns()) < 0) {
+        fail("clock");
+        return 0;
+    }
+
+    if (pthread_mutex_lock(&d->lock) != 0) {
+        fail("mutex");
+        return 0;
+    }
+    gfg_metrics *m = &d->metrics;
+    gfg_metrics_released(m, fwd);
+    memset(t, 0, sizeof(*t));
+    t->frames = m->frames;
+    t->cost_p50_ms = gfg_ring_quantile(&m->costs_ms, 0.5);
+    t->cost_q_ms = gfg_ring_quantile(&m->costs_ms, d->sched_active ? d->sched.policy.cost_quantile : 0.95);
+    t->freshness_ms = m->freshness_ms;
+    t->present_interval_p50_ms = gfg_ring_quantile(&m->intervals_ms, 0.5);
+    t->present_interval_p95_ms = gfg_ring_quantile(&m->intervals_ms, 0.95);
+    t->last_present_ns = fwd;
+    t->applied_generation = d->generation;
+    uint32_t sc = __atomic_load_n(&d->swapchains_created, __ATOMIC_RELAXED);
+    t->swapchain_recreations = sc > 1 ? sc - 1 : 0;
+    if (d->sched_active) {
+        const gfg_stats *s = gfg_sched_stats(&d->sched);
+        t->hits = s->hits;
+        t->misses = s->misses;
+        t->margin_ms = s->margin_ms;
+        t->avg_delay_ms = s->avg_delay_ms;
+    }
+    pthread_mutex_unlock(&d->lock);
     return 1;
 }
 
@@ -238,14 +309,26 @@ static VKAPI_ATTR VkResult VKAPI_CALL layer_AcquireNextImage2KHR(VkDevice device
 static VKAPI_ATTR VkResult VKAPI_CALL layer_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info)
 {
     dev_data *d = find_device(dispatch_key(queue));
-    gfg_stats stats;
+    gfg_ctl_telemetry t;
     if (!d || !d->present)
         return VK_ERROR_INITIALIZATION_FAILED;
-    int publish = present_gate(d, &stats);
-    int64_t t = now_ns();
+    int publish = present_gate(d, &t);
     VkResult r = d->present(queue, info);
     if (publish)
-        gfg_ctl_publish(&stats, t);
+        gfg_ctl_publish(&t);
+    return r;
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL layer_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
+                                                                const VkAllocationCallbacks *alloc,
+                                                                VkSwapchainKHR *out)
+{
+    dev_data *d = find_device(dispatch_key(device));
+    if (!d || !d->create_swapchain)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    VkResult r = d->create_swapchain(device, ci, alloc, out);
+    if (r == VK_SUCCESS)
+        __atomic_add_fetch(&d->swapchains_created, 1, __ATOMIC_RELAXED);
     return r;
 }
 
@@ -342,6 +425,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL layer_CreateDevice(VkPhysicalDevice phys, 
     d->acquire = (PFN_vkAcquireNextImageKHR)gdpa(*out, "vkAcquireNextImageKHR");
     d->acquire2 = (PFN_vkAcquireNextImage2KHR)gdpa(*out, "vkAcquireNextImage2KHR");
     d->present = (PFN_vkQueuePresentKHR)gdpa(*out, "vkQueuePresentKHR");
+    d->create_swapchain = (PFN_vkCreateSwapchainKHR)gdpa(*out, "vkCreateSwapchainKHR");
     pthread_rwlock_wrlock(&g_map_lock);
     d->next = g_devices;
     g_devices = d;
@@ -387,6 +471,7 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL layer_GetDeviceProcAddr(VkDevice
     if (d->acquire) HOOK(AcquireNextImageKHR);
     if (d->acquire2) HOOK(AcquireNextImage2KHR);
     if (d->present) HOOK(QueuePresentKHR);
+    if (d->create_swapchain) HOOK(CreateSwapchainKHR);
     return d->gdpa(device, name);
 }
 

@@ -107,6 +107,8 @@ specific engines).
 - Off by default; enabled per profile; the layer is a no-op unless the control channel says
   `enabled=1` with a matching version.
 - Any internal error disables the layer's actions for the rest of the process (pass-through).
-- A frame-start wait never exceeds `max_wait_ms` (one refresh); a present hold never exceeds one
-  real-frame period (pacing a 30 Hz real cadence needs up to 33 ms). Never changes game speed.
+- A frame-start wait never exceeds `max_wait_ms` (the Governor sets 80 % of one real-frame slot, e.g.
+  26 ms at 30 real); a present hold never exceeds one real-frame period. Never changes game speed.
+- Rollout modes: `observe` (measure only), `shadow` (scheduler runs, never sleeps: would-be
+  decisions), `act`. A profile moves to the next mode only after the previous one ran clean on a Deck.
 - Telemetry is local only.

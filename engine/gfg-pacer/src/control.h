@@ -14,7 +14,8 @@
  * they differ or are odd.
  *
  * Test mode without the file: GFG_FRAME_OS_ENABLE=1 GFG_FRAME_OS_REAL_HZ=<hz>
- * [GFG_FRAME_OS_TICK_SHAPING=0|1] [GFG_FRAME_OS_PACING=0|1].  The policy then comes from the
+ * [GFG_FRAME_OS_MODE=act|observe|shadow] [GFG_FRAME_OS_TICK_SHAPING=0|1] [GFG_FRAME_OS_PACING=0|1]
+ * (generation 0).  The policy then comes from the
  * environment; the layer creates the file itself (if absent) to publish telemetry and removes it
  * at exit.
  */
@@ -30,47 +31,61 @@ extern "C" {
 #endif
 
 #define GFG_CTL_MAGIC 0x43474647u   /* "GFGC" */
-#define GFG_CTL_VERSION 1u
+#define GFG_CTL_VERSION 2u
 #define GFG_CTL_POLL_NS 100000000ll /* policy re-read period */
 
+/* policy.mode */
+#define GFG_MODE_ACT 0u       /* scheduler decides and the layer sleeps */
+#define GFG_MODE_OBSERVE 1u   /* measure and publish only: no scheduler, no sleeps */
+#define GFG_MODE_SHADOW 2u    /* scheduler decides, the layer never sleeps (what act would do) */
+
 typedef struct gfg_ctl_policy {
-    uint32_t enabled;          /* 0: layer is pass-through */
+    uint32_t enabled;          /* 0: layer is pass-through, nothing written */
     uint32_t tick_shaping;
     uint32_t pacing;
-    uint32_t reserved;
+    uint32_t mode;             /* GFG_MODE_*; anything else => disabled */
     double real_target_hz;     /* <= 0: no grid */
     double margin_ms;          /* <= 0: scheduler default */
     double max_wait_ms;        /* <= 0: scheduler default */
-} gfg_ctl_policy;
+    uint32_t generation;       /* Governor's policy id, echoed as telemetry.applied_generation */
+    uint32_t reserved;
+} gfg_ctl_policy;              /* 48 bytes */
 
 typedef struct gfg_ctl_telemetry {
-    uint64_t frames;
-    uint64_t hits;
+    uint64_t frames;           /* presents since the layer was (re-)enabled */
+    uint64_t hits;             /* act/shadow: scheduler slot hits (shadow: would-be) */
     uint64_t misses;
-    double cost_p50_ms;
-    double cost_q_ms;
-    double margin_ms;
-    double avg_delay_ms;
-    int64_t last_present_ns;   /* CLOCK_MONOTONIC */
-} gfg_ctl_telemetry;
+    double cost_p50_ms;        /* frame start (after any applied delay) -> present call */
+    double cost_q_ms;          /* same, at the scheduler's cost quantile */
+    double margin_ms;          /* act/shadow */
+    double avg_delay_ms;       /* act/shadow: EWMA of frame-start delays (shadow: not applied) */
+    double freshness_ms;       /* EWMA(0.05) of present release - frame start: age of the input */
+    double present_interval_p50_ms; /* over the last 64 presents */
+    double present_interval_p95_ms;
+    int64_t last_present_ns;   /* CLOCK_MONOTONIC, when the present was forwarded */
+    uint32_t applied_generation; /* policy.generation in effect (ack) */
+    uint32_t swapchain_recreations; /* vkCreateSwapchainKHR calls after the first, per device */
+} gfg_ctl_telemetry;           /* 96 bytes */
 
 typedef struct gfg_ctl_shm {
     uint32_t magic;            /* @0  */
     uint32_t version;          /* @4  */
-    uint32_t size;             /* @8  sizeof(gfg_ctl_shm) */
+    uint32_t size;             /* @8  sizeof(gfg_ctl_shm) = 176 */
     uint32_t writer_pid;       /* @12 pid of the layer process publishing telemetry */
     uint32_t policy_seq;       /* @16 */
     uint32_t reserved0;
     gfg_ctl_policy policy;     /* @24 */
-    uint32_t telemetry_seq;    /* @64 */
+    uint32_t telemetry_seq;    /* @72 */
     uint32_t reserved1;
-    gfg_ctl_telemetry telemetry; /* @72 */
-} gfg_ctl_shm;                 /* 136 bytes */
+    gfg_ctl_telemetry telemetry; /* @80 */
+} gfg_ctl_shm;                 /* 176 bytes */
 
-/* Policy resolved for the scheduler; generation changes whenever the policy changes. */
+/* Policy resolved for the layer; serial changes whenever anything in it changes. */
 typedef struct gfg_ctl_state {
     int enabled;
-    uint64_t generation;
+    uint32_t mode;
+    uint32_t generation;       /* Governor's policy.generation (0 in env test mode) */
+    uint64_t serial;
     gfg_policy policy;
 } gfg_ctl_state;
 
@@ -78,8 +93,8 @@ typedef struct gfg_ctl_state {
  * Returns 0, or -1 on an internal error (caller goes pass-through). */
 int gfg_ctl_poll(int64_t now_ns, gfg_ctl_state *out);
 
-/* Publish scheduler stats (thread-safe; no-op when no file is mapped). */
-void gfg_ctl_publish(const gfg_stats *stats, int64_t last_present_ns);
+/* Publish telemetry (thread-safe; no-op when no file is mapped). */
+void gfg_ctl_publish(const gfg_ctl_telemetry *t);
 
 /* Unmap; unlinks the file if this process created it.  Also runs at process exit. */
 void gfg_ctl_shutdown(void);

@@ -32,13 +32,17 @@ run() {
     if [ $rc -ne 0 ]; then echo "FAIL $name: exit $rc"; FAILED=1; fi
 }
 
-run "enabled from env (default shm path)" yes GFG_FRAME_OS=1 GFG_FRAME_OS_ENABLE=1 GFG_FRAME_OS_REAL_HZ=60 -- env 120
+run "act, enabled from env (default shm path)" yes GFG_FRAME_OS=1 GFG_FRAME_OS_ENABLE=1 GFG_FRAME_OS_REAL_HZ=60 -- env 120
 shm=$(sed -n 's/^mode=env frames=[0-9]* shm=//p' "$LOG")
 if [ -n "$shm" ] && [ -e "$shm" ]; then echo "FAIL: $shm left behind"; FAILED=1; else echo "PASS layer removed its $shm at exit"; fi
+run "observe (phase A)" yes GFG_FRAME_OS=1 GFG_FRAME_OS_ENABLE=1 GFG_FRAME_OS_REAL_HZ=60 GFG_FRAME_OS_MODE=observe \
+    GFG_FRAME_OS_SHM="$SHM_BASE-observe" -- env 120
+run "shadow (phase B)" yes GFG_FRAME_OS=1 GFG_FRAME_OS_ENABLE=1 GFG_FRAME_OS_REAL_HZ=60 GFG_FRAME_OS_MODE=shadow \
+    GFG_FRAME_OS_SHM="$SHM_BASE-shadow" -- env 120
 
-run "governor policy file" yes GFG_FRAME_OS=1 GFG_FRAME_OS_SHM="$SHM_BASE-file" -- file 120
+run "governor policy file (generation ack, swapchain recreation)" yes GFG_FRAME_OS=1 GFG_FRAME_OS_SHM="$SHM_BASE-file" -- file 120
 run "loaded, not enabled" yes GFG_FRAME_OS=1 GFG_FRAME_OS_SHM="$SHM_BASE-off" -- off 120
-run "policy file of another version" yes GFG_FRAME_OS=1 GFG_FRAME_OS_SHM="$SHM_BASE-ver" -- badver 120
+run "version-1 policy file is foreign" yes GFG_FRAME_OS=1 GFG_FRAME_OS_SHM="$SHM_BASE-ver" -- badver 120
 run "implicit layer not enabled (no GFG_FRAME_OS)" no GFG_FRAME_OS_ENABLE=1 GFG_FRAME_OS_REAL_HZ=60 \
     GFG_FRAME_OS_SHM="$SHM_BASE-noenv" -- off 120
 run "disable_environment wins" no GFG_FRAME_OS=1 DISABLE_GFG_FRAME_OS=1 GFG_FRAME_OS_ENABLE=1 GFG_FRAME_OS_REAL_HZ=60 \
