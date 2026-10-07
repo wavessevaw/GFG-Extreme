@@ -80,6 +80,15 @@ class ReportTests(unittest.TestCase):
         self.assertIn("50% of the session waiting", joined)
         self.assertIn("switched 1 times", joined)
 
+    def test_heat_and_stutter_are_reported(self):
+        rows = self.rows(10) + self.rows(10, reason="thermal-quality-held:heating",
+                                         diagnosis={"thermal": "heating", "smoothness": "stuttering"})
+        rep = analyze(bundle({"timeline.jsonl": timeline(rows)}))
+        self.assertEqual((rep["warm_share"], rep["stutter_share"], rep["thermal_holds"]), (0.5, 0.5, 10))
+        joined = "\n".join(rep["findings"])
+        self.assertIn("hot or heating up 50% of the time; quality steps were held back for heat in 10 samples", joined)
+        self.assertIn("stutter (spikes over the median) in 50%", joined)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -795,6 +795,11 @@ class BudgetController:
         self.known_failures: Dict[str, tuple[float, float]] = {}
         self.new_failures: list[tuple[str, float]] = []  # drained by the service into game memory
         self.verifying: Optional[str] = None  # point inferred from delivered FPS, not yet verified
+        # Host thermal verdict (ok / heating / hot / unknown), set by the service each step.  While
+        # the APU heats up, probes towards more real frames (more watts, more heat) wait; probes
+        # towards fewer watts continue.  A skipped upgrade is owed and tried once it has cooled.
+        self.thermal = "unknown"
+        self.thermal_deferred = False
 
     def warm_start(self, point_key: str, tdp_w: Optional[float], now: float) -> bool:
         """Start from a remembered point/TDP that held in an earlier session instead of searching.
@@ -1051,10 +1056,18 @@ class BudgetController:
             tdp, age = value if isinstance(value, (tuple, list)) else (value, 0.0)
             self.known_failures[key] = (float(tdp), now - float(age))
 
+    @property
+    def heat_limited(self) -> bool:
+        return self.thermal in ("heating", "hot")
+
     def _upgrade(self, now: float) -> str:
         if self.cap_ignored and self.idx >= self.comfort_idx:
             return self._lock(now, "cap-ignored-quality-held")
         if self._upgrade_allowed(self.idx + 1, now):
+            if self.heat_limited:
+                self.thermal_deferred = True
+                return self._lock(now, f"thermal-quality-held:{self.thermal}")
+            self.thermal_deferred = False
             self.probe = "up"
             return self._move("testing-fewer-generated-frames", idx=self.idx + 1)
         return self._lock(now, "minimum-power-found")
@@ -1063,6 +1076,7 @@ class BudgetController:
         """Quality was given up to defend watts or a heavy scene and may be won back."""
         return (
             self.idx < self.comfort_idx
+            or self.thermal_deferred
             or (self.quality_debt is not None and self.idx < self.quality_debt)
             or (self.recover is not None and self.idx < self.recover[0])
         )
@@ -1071,6 +1085,8 @@ class BudgetController:
         # Watts first: try -1 W with the current point.  Upward probes only win
         # back quality that the guard gave up; spare headroom goes to watts.
         kinds = ["down", "up"] if self.next_probe == "down" else ["up", "down"]
+        if self.heat_limited:
+            kinds = ["down"]  # more real frames would mean more heat
         for kind in kinds:
             if kind == "down" and self._can_lower():
                 self.phase, self.probe = "probe", "down"
@@ -1078,7 +1094,10 @@ class BudgetController:
                 return self._move("reprobe-lower-power", tdp=self.tdp - 1.0)
             if kind == "up" and self._owed_quality() and self._upgrade_allowed(self.idx + 1, now):
                 self.phase, self.probe, self.next_probe = "probe", "up", "down"
+                self.thermal_deferred = False
                 return self._move("reprobe-fewer-generated-frames", idx=self.idx + 1)
+        if self.heat_limited and self._owed_quality():
+            return self._lock(now, f"thermal-quality-held:{self.thermal}")
         return self._lock(now, "budget-point-holds")
 
     def _unhealthy(self, now: float, verdict: WindowVerdict) -> str:
@@ -1248,6 +1267,8 @@ class BudgetController:
             "flavor": self.flavor,
             "verifying": self.verifying,
             "current_max_multiplier": self.current_max_multiplier,
+            "thermal": self.thermal,
+            "thermal_deferred": self.thermal_deferred,
             "known_failures": {k: v[0] for k, v in self.known_failures.items()},
             "reason": self.last_reason,
             "limits_w": {"min": self.min_w, "normal": self.normal_max_w, "emergency": self.emergency_max_w},

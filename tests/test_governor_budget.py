@@ -673,3 +673,43 @@ class DeckLog20261007Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ThermalTests(unittest.TestCase):
+    """1.0.4: while the APU heats up, no probe towards more real frames (more watts, more heat)."""
+
+    def test_heating_holds_quality_but_still_lowers_watts(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25)
+        ctl.thermal = "heating"
+        _, trace = run(ctl, Game(8.0), 0.0, 60)
+        # Watts still go down to the floor; the point stays at 30x3 instead of 45x2.
+        self.assertEqual(ctl.tdp, 6.0)
+        self.assertEqual(ctl.point.key, "30x3")
+        self.assertTrue(ctl.thermal_deferred)
+        self.assertTrue(ctl.last_reason.startswith("thermal-quality-held"))
+        self.assertFalse(any(key != "30x3" for key, _, _ in trace))
+
+    def test_deferred_quality_is_won_back_after_cooling(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25)
+        ctl.thermal = "hot"
+        now, _ = run(ctl, Game(8.0), 0.0, 40)
+        self.assertEqual(ctl.point.key, "30x3")
+        ctl.thermal = "ok"
+        run(ctl, Game(8.0), now, 80)
+        self.assertEqual((ctl.tdp, ctl.point.key), (6.0, "45x2"))
+        self.assertFalse(ctl.thermal_deferred)
+
+    def test_unknown_thermal_changes_nothing(self):
+        a = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25)
+        b = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25)
+        b.thermal = "unknown"
+        a.thermal = "ok"
+        _, ta = run(a, Game(8.0), 0.0, 60)
+        _, tb = run(b, Game(8.0), 0.0, 60)
+        self.assertEqual(ta, tb)
+
+    def test_status_reports_thermal(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0)
+        ctl.thermal = "hot"
+        self.assertEqual(ctl.status()["thermal"], "hot")
+        self.assertIn("thermal_deferred", ctl.status())

@@ -93,6 +93,7 @@ function describe(s) {
   const fb = s.power_feedback || {};
   if (b && b.cap_ignored) return { head: "TDP limit overridden", body: "The APU draws " + num(fb.draw_w, 1) + " W while GFG's limit is " + num(fb.cap_w, 0) + " W: another tool (ryzenadj, PowerTools…) sets the real limit. GFG keeps a deep ratio instead of spending power.", tone: "warn" };
   if (b && s.state === "OPTIMIZE_POWER") return { head: "Saving battery", body: b.probe === "up" ? "Trying fewer generated frames at " + num(b.tdp_w, 0) + " W." : "Looking for the lowest TDP that holds the target (now " + num(b.tdp_w, 0) + " W).", tone: "ok" };
+  if (b && s.state === "LOCKED" && b.thermal_deferred && (b.thermal === "hot" || b.thermal === "heating")) return { head: "Cooling · " + num(b.tdp_w, 0) + " W", body: "The Deck is " + (b.thermal === "hot" ? "hot" : "heating up") + ": GFG keeps the current ratio and only tries lower watts. Fewer generated frames are tried again once it cools.", tone: "warn" };
   if (b && s.state === "LOCKED") return { head: "Adapting · " + num(b.tdp_w, 0) + " W", body: (b.warm_started ? "Started from what worked last time. " : "") + (TIER_TEXT[b.tier] || "Checks FPS every second: adds watts at once when the game falls short, tries lower watts every 45 s."), tone: b.tier === "emergency" ? "warn" : "ok" };
   if (b && s.state === "GUARD") return { head: "Protecting", body: "A scene got heavier: more generated frames first, then more watts.", tone: "warn" };
   if (s.state === "OPTIMIZE_POWER") return { head: "Saving power", body: "Lowering TDP while holding the target.", tone: "ok" };
@@ -268,7 +269,9 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
         h("span", null, "Played"), h("b", null, num(s.last_session.minutes, 0) + " min"),
         h("span", null, "Frames on screen"), h("b", null, num(s.last_session.avg_output_fps, 0) + " FPS avg (" + num(s.last_session.avg_real_fps, 0) + " real)"),
         h("span", null, "Power"), h("b", null, s.last_session.avg_tdp_w != null ? num(s.last_session.avg_tdp_w, 1) + " W avg" + (s.last_session.reference_w ? " · limit " + num(s.last_session.reference_w, 0) + " W" : "") : "–"),
-        s.last_session.saved_w ? h("span", null, "Saved") : null, s.last_session.saved_w ? h("b", null, "~" + num(s.last_session.saved_w, 1) + " W on average") : null)) : null,
+        s.last_session.saved_w ? h("span", null, "Saved") : null, s.last_session.saved_w ? h("b", null, "~" + num(s.last_session.saved_w, 1) + " W on average") : null,
+        s.last_session.max_temp_c ? h("span", null, "Hottest") : null, s.last_session.max_temp_c ? h("b", null, num(s.last_session.max_temp_c, 0) + " °C" + (s.last_session.hot_pct ? " · warm " + s.last_session.hot_pct + "% of the time" : "")) : null,
+        s.last_session.stutter_pct ? h("span", null, "Stutter") : null, s.last_session.stutter_pct ? h("b", null, s.last_session.stutter_pct + "% of the time") : null)) : null,
     needsLaunch ? h("div", null, h("div", { className: "sec" }, "START THE GAME WITH THIS LAUNCH OPTION"), h(LaunchCopy, { launch })) : null,
     troubled && problems.length ? h("div", { className: "card" }, h("div", { className: "sec" }, "LIKELY CAUSE"), ...problems.map((c, i) => h("div", { key: i, className: "hint", style: { textAlign: "left" } }, "• " + c.advice))) : null,
     troubled ? h("div", { className: "list" }, h(Row, { icon: "play", title: problems.length ? "Check setup" : "Something wrong? Record a log", sub: "Settings → Diagnostics", onClick: () => go(problems.length ? "setup" : "advanced") })) : null,
@@ -290,6 +293,7 @@ function GovernorPage({ s, back, profile, refresh }) {
       h("span", null, "Step"), h("b", null, PHASE_TEXT[b.phase] || b.phase),
       h("span", null, "Start"), h("b", null, b.warm_started ? "Remembered from last session" : "Searched from scratch"),
       b.verifying ? h("span", null, "Verifying") : null, b.verifying ? h("b", null, fmtMult(String(b.verifying).split("x")[1] || 1) + " — the engine chose it, checking it holds") : null,
+      b.thermal_deferred ? h("span", null, "Heat") : null, b.thermal_deferred ? h("b", null, b.thermal === "hot" || b.thermal === "heating" ? "Quality step on hold until the APU cools" : "Cooled — quality step will be retried") : null,
       b.current_max_multiplier ? h("span", null, "Engine allows") : null, b.current_max_multiplier ? h("b", null, "up to " + fmtMult(b.current_max_multiplier)) : null,
       Object.keys(b.known_failures || {}).length ? h("span", null, "Recently failed") : null,
       Object.keys(b.known_failures || {}).length ? h("b", null, Object.entries(b.known_failures).slice(0, 3).map(([k, w]) => fmtMult(k.split("x")[1] || 1) + " at ≤" + num(w, 0) + " W").join(", ")) : null)) : null,

@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.0.3).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.0.4).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -24,7 +24,6 @@ import os
 import threading
 import statistics
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -51,39 +50,11 @@ from .governor_overlay import (
 from .governor_device import detect_model, target_for
 from .governor_power import SteamDeckPowerActuator
 from .governor_telemetry import TelemetryObserver
+from .governor_confirmation import (  # noqa: F401  (Request and the operation sets are re-exported)
+    APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
+)
 
-APPLIED_OPERATIONS = frozenset({"runtime-state-applied", "runtime-transition-applied"})
-FAILED_OPERATIONS = frozenset({"runtime-transition-failed"})
-VERSION = "1.0.3"
-
-
-@dataclass
-class Request:
-    """One pending Operating Point application (own correlation, not sample_seq)."""
-
-    request_id: int
-    point: OperatingPoint
-    deltas: Dict[str, Any]
-    previous_deltas: Dict[str, Any]
-    revision: int
-    created: float
-    event_mark: int
-    generation: int
-    external: bool
-    stage: str = "confirming"  # confirming -> trial
-    confirmation_mode: str = ""
-    window_floor_event_seq: int = 0
-    confirmed_at: float = 0.0
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "request_id": self.request_id,
-            "point": self.point.key,
-            "stage": self.stage,
-            "revision": self.revision,
-            "event_mark": self.event_mark,
-            "confirmation_mode": self.confirmation_mode,
-        }
+VERSION = "1.0.4"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -301,6 +272,8 @@ class GovernorService:
                 sensors, cap_w=fb.get("cap_w") or budget.get("tdp_w"), draw_w=fb.get("draw_w"),
                 frametime=summary.get("frametime"),
             )
+            if self._budget is not None:  # heat holds back probes towards more real frames
+                self._budget.thermal = str(self._status["diagnosis"].get("thermal") or "unknown")
         except Exception as error:
             self.log.debug("Governor sensors unavailable: %s", error)
 
@@ -782,21 +755,6 @@ class GovernorService:
         return self._last_display
 
     # -------------------------------------------------------------- helpers
-    @staticmethod
-    def _matches(point: Dict[str, Any], summary: Dict[str, Any]) -> bool:
-        latest = summary.get("latest") or {}
-        mult = latest.get("effective_multiplier")
-        output = (summary.get("output") or {}).get("median")
-        p5 = (summary.get("real") or {}).get("p5")
-        if not all(isinstance(v, (int, float)) and math.isfinite(float(v)) for v in (mult, output, p5)):
-            return False
-        return (
-            abs(float(mult) - float(point["multiplier"])) <= multiplier_tolerance(point["multiplier"])
-            and float(output) >= float(point["target_output_fps"]) * 0.94
-            and float(p5) >= float(point["base_target_fps"]) * 1.05
-            and int(point["render_scale_pct"]) == 100
-        )
-
     async def _restore_power(self, reason: str) -> None:
         setter = getattr(self.power, "set_ceiling_w", None)
         if callable(setter):
@@ -930,66 +888,14 @@ class GovernorService:
         self._status.update({"state": "APPLY", "reason": "awaiting-renderer-confirmation"})
         return True
 
+    EARLY_DELIVERED_SPAN_SECONDS = EARLY_DELIVERED_SPAN_SECONDS
+
     def _evaluate_confirmation(self, req: Request) -> tuple[str, str]:
         """Return (wait|confirmed|failed, reason).  Never trusts the file write."""
-        now = self._clock()
-        if self.observer.session_generation != req.generation:
-            return "failed", "telemetry-session-changed"
-        events = self.observer.application_events_after(req.event_mark)
-        if any(event.operation in FAILED_OPERATIONS for event in events):
-            return "failed", "renderer-transition-failed"
-        applied = [event for event in events if event.operation in APPLIED_OPERATIONS]
-        samples = self.observer.samples_after_event(applied[-1].event_seq if applied else req.event_mark)
-        want = float(req.point.multiplier)
-        tol = multiplier_tolerance(want)
-        tail = samples[-self.MIN_SAMPLES:]
-        consistent = len(tail) >= self.MIN_SAMPLES and all(
-            abs(sample.effective_multiplier - want) <= tol
-            or (req.point.multiplier == 1 and sample.effective_multiplier <= 1.12)
-            for sample in tail
-        )
-        if consistent and (tail[-1].monotonic - tail[0].monotonic) >= self.MIN_SAMPLE_SPAN_SECONDS:
-            run: list = []
-            for sample in reversed(samples):
-                if abs(sample.effective_multiplier - want) <= tol or (
-                    req.point.multiplier == 1 and sample.effective_multiplier <= 1.12
-                ):
-                    run.append(sample)
-                else:
-                    break
-            req.window_floor_event_seq = run[-1].event_seq - 1
-            req.confirmation_mode = "event+cadence" if applied else "cadence-only"
-            req.confirmed_at = now
-            return "confirmed", req.confirmation_mode
-        if self._delivered_deeper(req, applied, samples, want, tol):
-            return "failed", "delivered-deeper-ratio"
-        if now - req.created > self.CONFIRM_TIMEOUT_SECONDS:
-            return "failed", "confirmation-timeout"
-        return "wait", "awaiting-fresh-evidence"
-
-    EARLY_DELIVERED_SPAN_SECONDS = 8.0
-
-    def _delivered_deeper(self, req: Request, applied: list, samples: list, want: float, tol: float) -> bool:
-        """Battery/Balanced only: the renderer took the request but holds the target with fewer
-        real frames (the GPU cannot feed the requested cap).  Seen on a Deck for 40x2.25,
-        36x2.5 and 33x2.75: each waited the full 25 s timeout.  Decide after 8 s of fresh,
-        consistent samples instead; the budget then follows the delivered point (verifying).
-        """
-        if self._budget is None or not applied:
-            return False
-        if len(samples) < self.MIN_SAMPLES:
-            return False
-        end = samples[-1].monotonic
-        tail = [sample for sample in samples if end - sample.monotonic <= self.EARLY_DELIVERED_SPAN_SECONDS]
-        if len(tail) < self.MIN_SAMPLES or len(tail) == len(samples) and (end - samples[0].monotonic) < self.EARLY_DELIVERED_SPAN_SECONDS:
-            return False  # not yet 8 s of evidence after the renderer applied the request
-        target = float(req.point.target_output_fps)
-        base = float(req.point.base_target_fps)
-        return all(
-            sample.effective_multiplier > want + tol
-            and sample.output_fps >= 0.94 * target
-            and sample.real_fps <= 0.95 * base
-            for sample in tail
+        return evaluate_confirmation(
+            req, self.observer, self._clock(), budget=self._budget is not None,
+            min_samples=self.MIN_SAMPLES, min_span_s=self.MIN_SAMPLE_SPAN_SECONDS,
+            timeout_s=self.CONFIRM_TIMEOUT_SECONDS, early_span_s=self.EARLY_DELIVERED_SPAN_SECONDS,
         )
 
     async def _fail_request(self, profile: str, reason: str) -> None:
@@ -1081,12 +987,16 @@ class GovernorService:
             power = self.power.status()
         except Exception:
             power = {}
+        diagnosis = self._status.get("diagnosis") or {}
         self.session_stats.add(
             self._clock(),
             output=(summary.get("output") or {}).get("median"),
             real=(summary.get("real") or {}).get("median"),
             tdp=power.get("observed_tdp_w"), draw=power.get("draw_w"),
             reference_w=power.get("ceiling_tdp_w") if power.get("owned") else None,
+            temp_c=(self._status.get("sensors") or {}).get("temp_c"),
+            stuttering=diagnosis.get("smoothness") == "stuttering",
+            hot=diagnosis.get("thermal") in ("hot", "heating"),
         )
 
     def _finish_session(self, profile: Any) -> None:
@@ -1331,7 +1241,7 @@ class GovernorService:
                 observed_multiplier=(summary.get("multiplier") or {}).get("median"),
             )
             candidate = decision.point.to_dict() if decision.point else None
-            adopt = bool(candidate and decision.proven and self._matches(candidate, summary))
+            adopt = bool(candidate and decision.proven and matches(candidate, summary))
             self._status.update({
                 "recommended_point": candidate,
                 "recommendation_proven": decision.proven,

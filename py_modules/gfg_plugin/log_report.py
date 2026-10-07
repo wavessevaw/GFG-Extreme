@@ -112,6 +112,10 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
             sum(bool((r.get("snapshot") or {}).get("available")) for r in samples) / len(samples), 2)
         report["bottlenecks"] = dict(Counter((r.get("diagnosis") or {}).get("bottleneck") for r in samples if r.get("diagnosis")))
         report["apply_share"] = round(sum(r.get("state") == "APPLY" for r in samples) / len(samples), 2)
+        diag_rows = [r.get("diagnosis") or {} for r in samples]
+        report["warm_share"] = round(sum(d.get("thermal") in ("hot", "heating") for d in diag_rows) / len(samples), 2)
+        report["stutter_share"] = round(sum(d.get("smoothness") == "stuttering" for d in diag_rows) / len(samples), 2)
+        report["thermal_holds"] = sum(1 for r in samples if str(r.get("reason") or "").startswith("thermal-quality-held"))
     report["events"] = dict(Counter(str(e.get("event")) for e in events).most_common(12))
     report["rejections_by_reason"] = dict(Counter(str(e.get("reason")) for e in events
                                                   if e.get("event") == "operating-point-rejected"))
@@ -177,6 +181,14 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
         out.append(f"Median output FPS {out_med:.0f} against a {target} FPS target.")
     if report.get("temp_max_c") is not None and report["temp_max_c"] >= 85:
         out.append(f"The APU reached {report['temp_max_c']:.0f} °C.")
+    warm = report.get("warm_share")
+    if warm and warm >= 0.1:
+        held = report.get("thermal_holds") or 0
+        out.append(f"The APU was hot or heating up {int(warm * 100)}% of the time"
+                   + (f"; quality steps were held back for heat in {held} samples." if held else "."))
+    stutter = report.get("stutter_share")
+    if stutter and stutter >= 0.1:
+        out.append(f"Frametime stutter (spikes over the median) in {int(stutter * 100)}% of the samples.")
     burst = report.get("overlay_burst_before_exit")
     if burst and burst >= 3:
         out.append(f"The game exited within 30 s after {burst} in-game overlay changes "

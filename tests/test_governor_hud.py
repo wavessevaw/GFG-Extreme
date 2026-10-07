@@ -34,6 +34,13 @@ class HudTests(unittest.TestCase):
         s["telemetry"]["summary"]["real"] = {"median": None}
         self.assertEqual(hud.status_line(s, "minimal"), "88 FPS  x2")
 
+    def test_hot_apu_is_flagged_outside_minimal(self):
+        s = {"enabled": True, "state": "LOCKED", "diagnosis": {"thermal": "hot"}}
+        self.assertIn("HOT", hud.status_line(s))
+        self.assertNotIn("HOT", hud.status_line(s, "minimal"))
+        s["diagnosis"]["thermal"] = "heating"
+        self.assertNotIn("HOT", hud.status_line(s))
+
     def test_battery_time_omitted_when_unknown(self):
         s = {"enabled": True, "state": "LOCKED", "battery": {"minutes_left": None}}
         self.assertEqual(hud.status_line(s), "GFG  sc100  TDPn/a")

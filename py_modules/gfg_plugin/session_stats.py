@@ -25,6 +25,9 @@ class SessionStats:
         self._sums: Dict[str, float] = {}
         self._weights: Dict[str, float] = {}
         self.reference_w: Optional[float] = None
+        self.max_temp_c: Optional[float] = None
+        self.stutter_s = 0.0
+        self.hot_s = 0.0
 
     def start(self, key: Any, now: float) -> None:
         self.key = tuple(key) if isinstance(key, (list, tuple)) else key
@@ -32,7 +35,8 @@ class SessionStats:
         self.started = self.last = now
 
     def add(self, now: float, *, output: Optional[float], real: Optional[float], tdp: Optional[float],
-            draw: Optional[float], reference_w: Optional[float]) -> None:
+            draw: Optional[float], reference_w: Optional[float], temp_c: Optional[float] = None,
+            stuttering: bool = False, hot: bool = False) -> None:
         if self.started is None or self.last is None:
             return
         dt = min(MAX_STEP_S, max(0.0, now - self.last))
@@ -46,6 +50,10 @@ class SessionStats:
                 self._weights[name] = self._weights.get(name, 0.0) + dt
         if isinstance(reference_w, (int, float)) and reference_w > 0:
             self.reference_w = float(reference_w)
+        if isinstance(temp_c, (int, float)) and temp_c > 0:
+            self.max_temp_c = max(self.max_temp_c or 0.0, float(temp_c))
+        self.stutter_s += dt if stuttering else 0.0
+        self.hot_s += dt if hot else 0.0
 
     def _avg(self, name: str) -> Optional[float]:
         weight = self._weights.get(name, 0.0)
@@ -63,6 +71,9 @@ class SessionStats:
             "avg_draw_w": self._avg("draw"),
             "reference_w": self.reference_w,
             "saved_w": round(self.reference_w - tdp, 1) if self.reference_w and tdp else None,
+            "max_temp_c": round(self.max_temp_c, 0) if self.max_temp_c else None,
+            "stutter_pct": round(100.0 * self.stutter_s / self.seconds),
+            "hot_pct": round(100.0 * self.hot_s / self.seconds),
         }
 
     def finish(self) -> Optional[Dict[str, Any]]:
