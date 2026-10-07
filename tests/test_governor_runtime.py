@@ -855,6 +855,8 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertIsNotNone(last)
         self.assertEqual(last["avg_output_fps"], 90.0)
         self.assertEqual(last["profile"], "game")
+        self.assertEqual(last["mode"], "budget")
+        self.assertEqual(st["session_history"], [last])
 
     def test_failed_lower_power_restores_and_guard_reacts_after_lock(self):
         self.feed(20, 45, 90)

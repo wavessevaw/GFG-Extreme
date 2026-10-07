@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.0.4).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.0.5).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -54,7 +54,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -273,7 +273,7 @@ class GovernorService:
                 frametime=summary.get("frametime"),
             )
             if self._budget is not None:  # heat holds back probes towards more real frames
-                self._budget.thermal = str(self._status["diagnosis"].get("thermal") or "unknown")
+                self._budget.set_thermal(str(self._status["diagnosis"].get("thermal") or "unknown"), self._clock())
         except Exception as error:
             self.log.debug("Governor sensors unavailable: %s", error)
 
@@ -729,6 +729,7 @@ class GovernorService:
         value["effort"] = self._effort.status()
         value["session"] = self.session_stats.summary()
         value["last_session"] = self._settings.get("last_session")
+        value["session_history"] = (self._settings.get("session_history") or [])[: self.SESSION_HISTORY]
         value["power"] = self.power.status()
         value["power_search"] = self.search.status.to_dict()
         value["request"] = self._request.to_dict() if self._request else None
@@ -889,6 +890,7 @@ class GovernorService:
         return True
 
     EARLY_DELIVERED_SPAN_SECONDS = EARLY_DELIVERED_SPAN_SECONDS
+    SESSION_HISTORY = 8
 
     def _evaluate_confirmation(self, req: Request) -> tuple[str, str]:
         """Return (wait|confirmed|failed, reason).  Never trusts the file write."""
@@ -1003,8 +1005,12 @@ class GovernorService:
         result = self.session_stats.finish()
         if result is None:
             return
-        result.update({"ended": time.time(), "profile": profile or ""})
+        result.update({"ended": time.time(), "profile": profile or "",
+                       "mode": self._mode(profile) if profile else "",
+                       "app_id": str((self._launch or {}).get("app_id") or "")})
         self._settings["last_session"] = result
+        history = [h for h in self._settings.get("session_history") or [] if isinstance(h, dict)]
+        self._settings["session_history"] = ([result] + history)[: self.SESSION_HISTORY]
         try:
             self._save_settings()
         except OSError as error:

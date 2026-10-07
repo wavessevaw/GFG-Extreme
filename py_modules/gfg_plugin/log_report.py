@@ -92,6 +92,10 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
     diag = analyze_diagnostics(diag_text)
 
     report: Dict[str, Any] = {"files": len(names), "samples": len(samples), "diagnostics": diag}
+    try:
+        report["plugin_version"] = json.loads(_read(bundle, "system.json") or "{}").get("plugin_version")
+    except (ValueError, AttributeError):
+        report["plugin_version"] = None
     if samples:
         t0, t1 = samples[0].get("t"), samples[-1].get("t")
         report["duration_s"] = round(t1 - t0, 1) if isinstance(t0, (int, float)) and isinstance(t1, (int, float)) else None
@@ -121,6 +125,14 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
                                                   if e.get("event") == "operating-point-rejected"))
     report["mode_switches"] = sum(1 for e in events if e.get("event") == "operating-point-released"
                                   and e.get("reason") == "governor-mode-changed")
+    failed_power = Counter()
+    for e in events:
+        before, after = e.get("before") or {}, e.get("after") or {}
+        if (e.get("event") == "budget-step" and str(e.get("reason") or "").startswith("probe-failed")
+                and isinstance(before.get("tdp_w"), (int, float)) and isinstance(after.get("tdp_w"), (int, float))
+                and after["tdp_w"] > before["tdp_w"]):
+            failed_power[before["tdp_w"]] += 1
+    report["failed_power_probes"] = {f"{w:g} W": n for w, n in sorted(failed_power.items())}
     report["rejected_points"] = sorted({str(e.get("point")) for e in events if e.get("event") == "operating-point-rejected"})
     report["failed_checks"] = [c for c in self_test if not c.get("ok")]
     report["overlay_burst_before_exit"] = overlay_burst_before_exit(_jsonl(_read(bundle, "activity.jsonl")))
@@ -171,6 +183,11 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
                    f"a setting (rejections by reason: {report.get('rejections_by_reason')}).")
     if report.get("mode_switches"):
         out.append(f"The mode was switched {report['mode_switches']} times during the recording; each switch starts a new search.")
+    repeated = {w: n for w, n in (report.get("failed_power_probes") or {}).items() if n >= 3}
+    if repeated:
+        out.append("Lower-power probes failed repeatedly at the same level ("
+                   + ", ".join(f"{w} x{n}" for w, n in repeated.items())
+                   + "); each failure is a short FPS dip.")
     if report.get("rejected_points"):
         out.append("Operating points the renderer did not confirm or that failed their trial: "
                    + ", ".join(report["rejected_points"]) + ".")
@@ -203,7 +220,8 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
 def render(report: Dict[str, Any]) -> str:
     lines = ["GFG Extreme log summary", "=" * 24, ""]
     lines += [f"- {f}" for f in report["findings"]]
-    lines += ["", f"samples: {report['samples']}  duration: {report.get('duration_s')} s  target: {report.get('target')}"]
+    lines += ["", f"recorded with: {report.get('plugin_version') or 'unknown version'}"]
+    lines += [f"samples: {report['samples']}  duration: {report.get('duration_s')} s  target: {report.get('target')}"]
     if report["samples"]:
         lines.append(f"states: {report.get('states')}")
         lines.append(f"top reasons: {report.get('reasons')}")
