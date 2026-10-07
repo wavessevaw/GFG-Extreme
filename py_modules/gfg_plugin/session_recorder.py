@@ -100,7 +100,7 @@ def compact_status(status: Dict[str, Any]) -> Dict[str, Any]:
         "diagnosis": status.get("diagnosis"),
         "budget": {k: (status.get("budget") or {}).get(k) for k in (
             "phase", "probe", "flavor", "verifying", "thermal", "thermal_deferred", "current_max_multiplier",
-            "known_failures", "warm_started")} if status.get("budget") else None,
+            "known_failures", "warm_started", "floor_w", "heat_limited")} if status.get("budget") else None,
     }
 
 
@@ -458,7 +458,7 @@ class SessionRecorder:
             "decky_plugins": sorted(p.name for p in (self.user_home / "homebrew" / "plugins").glob("*"))
             if (self.user_home / "homebrew" / "plugins").is_dir() else [],
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme 1.0.10 (engine 4.0.0-gfg.4)",
+            "plugin_version": "GFG Extreme 1.0.11 (engine 4.0.0-gfg.4)",
         }
 
     def _write_bundle(self) -> Path:
