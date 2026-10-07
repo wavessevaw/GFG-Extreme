@@ -12,6 +12,13 @@ def write(path, text):
 
 
 class SensorTests(unittest.TestCase):
+    def test_charging_power_is_not_reported_as_battery_draw(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            write(root / "ps/BAT1/capacity", "64\n"); write(root / "ps/BAT1/status", "Charging\n"); write(root / "ps/BAT1/power_now", "30000000\n")
+            s = HostSensors(hwmon_root=root / "hw", drm_root=root / "drm", power_supply_root=root / "ps", proc_stat=root / "stat")
+            self.assertIsNone(s.sample(force=True)["battery_discharge_w"])
+
     def test_reads_sysfs_and_computes_cpu_delta_and_slope(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)

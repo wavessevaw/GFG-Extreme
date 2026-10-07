@@ -1419,10 +1419,16 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Extreme 1.0.7 started")
+        decky.logger.info("GFG Extreme 1.0.8 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""
+        # A recording in progress is saved, not lost, when the plugin reloads or updates.
+        try:
+            if self.session_recorder.recording:
+                await self.session_recorder.stop()
+        except Exception as error:
+            decky.logger.warning("Log recording could not be saved on unload: %s", error)
         # Governor owns a separate runtime TDP overlay. Stop it first so an
         # owned PPT cap is restored before Dock/profile shutdown proceeds.
         await self.governor_service.stop()

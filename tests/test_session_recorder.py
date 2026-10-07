@@ -52,6 +52,20 @@ class RecorderTests(unittest.TestCase):
                 checks = {c["check"]: c["ok"] for c in json.loads(z.read("self_test.json"))}
                 self.assertTrue(checks["overlay config published (active.conf)"])
             self.assertFalse(rec.status()["recording"])
+            self.assertEqual(list((home / "cfg" / "recordings").glob("timeline-*")), [], "inside the zip now")
+
+    def test_failed_export_leaves_no_partial_zip(self):
+        async def scenario(rec):
+            await rec.start("game")
+            await asyncio.sleep(0.1)
+            rec._write_bundle_to = lambda tmp, target: (tmp.write_bytes(b"half"), (_ for _ in ()).throw(OSError("disk full")))
+            return await rec.stop()
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            rec, _ = self.make(home)
+            result = asyncio.run(scenario(rec))
+            self.assertFalse(result["success"])
+            self.assertEqual(list(desktop_dir(home).glob("*.part")), [])
 
     def test_bundle_has_launch_manifest_and_diagnostics_checks(self):
         async def scenario(rec):

@@ -132,3 +132,65 @@ class PowerJournalTests(unittest.TestCase):
             self.assertEqual([k for k, _ in notes], ["tdp-claim", "tdp-write", "tdp-restore"])
             self.assertTrue(notes[1][1]["success"])
             self.assertEqual(notes[1][1]["observed_w"], 10.0)
+
+
+class PowerRestoreSafetyTests(GovernorPowerActuatorTests):
+    """Audit 1.0.8: paths where the user's TDP was not put back."""
+
+    def make(self, root):
+        h = self.make_hwmon(root)
+        actuator = SteamDeckPowerActuator(drm_root=root / "drm", hwmon_root=root / "hwmon")
+        actuator.discover(); actuator.claim()
+        return h, actuator
+
+    def test_half_done_write_is_still_restored(self):
+        with tempfile.TemporaryDirectory() as temp:
+            h, actuator = self.make(Path(temp))
+            original = actuator._write_value
+
+            def fast_refused(path, value):
+                if path.name == "power1_cap":
+                    raise OSError("fast cap busy")
+                original(path, value)
+            actuator._write_value = fast_refused
+            self.assertFalse(actuator.set_tdp_w(9)["success"])
+            self.assertEqual(int((h / "power2_cap").read_text()), 9000000)   # slow was written
+            actuator._write_value = original
+            self.assertTrue(actuator.verify_ownership()["owned"], "our own write is not an outside change")
+            self.assertTrue(actuator.restore_if_owned()["restored"])
+            self.assertEqual(int((h / "power2_cap").read_text()), 15000000)
+
+    def test_unverified_write_is_still_restored(self):
+        with tempfile.TemporaryDirectory() as temp:
+            h, actuator = self.make(Path(temp))
+            original = actuator._write_value
+            actuator._write_value = lambda path, value: original(path, value - 1000)  # cap reads off by 1 mW
+            self.assertFalse(actuator.set_tdp_w(9)["success"])
+            self.assertFalse(actuator.status()["owned"])
+            actuator._write_value = original
+            self.assertTrue(actuator.restore_if_owned()["restored"])
+            self.assertEqual(int((h / "power2_cap").read_text()), 15000000)
+            self.assertEqual(int((h / "power1_cap").read_text()), 18000000)
+
+    def test_shutdown_waits_for_a_write_in_flight_and_refuses_later_ones(self):
+        import threading
+        import time as _time
+        with tempfile.TemporaryDirectory() as temp:
+            h, actuator = self.make(Path(temp))
+            original = actuator._write_value
+
+            def slow_write(path, value):
+                _time.sleep(0.2)
+                original(path, value)
+            actuator._write_value = slow_write
+            writer = threading.Thread(target=actuator.set_tdp_w, args=(9,))
+            writer.start()
+            _time.sleep(0.05)                           # the write is in flight
+            self.assertTrue(actuator.shutdown()["restored"])
+            writer.join()
+            self.assertEqual(int((h / "power2_cap").read_text()), 15000000)
+            self.assertFalse(actuator.set_tdp_w(8)["success"])
+            self.assertEqual(int((h / "power2_cap").read_text()), 15000000)
+            actuator.reopen()
+            actuator.claim()
+            self.assertTrue(actuator.set_tdp_w(8)["success"])
