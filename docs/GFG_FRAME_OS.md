@@ -144,6 +144,7 @@ artefacts from the renderer's own diagnostics.
 | Phase | Deliverable | Gate before the next phase |
 |---|---|---|
 | 0 ✅ | This document; scheduler core with host tests; layer through the real Vulkan loader on the mock driver (headless swapchain); control channel v2; Governor wiring behind a per-profile switch | Done: `make -C engine/gfg-pacer test layer integration` |
+| 1a ✅ | Layer shipped in the plugin zip (64-bit, glibc ≤ 2.31 checked by `make abi`), staged by the Governor when a profile turns Frame OS on, named first in the launcher's layer list | Done on the branch; not in a release |
 | 1 | **Observe, then shadow on a Deck**: the layer in the real chain above Render v4, telemetry (freshness, present intervals) in recorded logs | 30+ min clean sessions: no picture change, no pacing/latency effect, game exit, swapchain recreation, suspend/resume |
 | 2 | **Adaptive real-frame injection** (input sensor + energy broker, adaptive-mode executor contract above) | On a Deck: lower freshness in motion, equal smoothness, energy within the premium |
 | 3 | Tick shaping for native points / deeper queues; executor work on showing the real frame first | Separate design |
