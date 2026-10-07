@@ -93,7 +93,31 @@ These need our own FG executor (FSR3-FG-class, MV based) beside LSFG.
 Kept on the map; no work until there is an engine integration path (e.g. a plugin SDK for
 specific engines).
 
-## 4. Phases and gates
+## 3a. What the field logs say (evidence, 2026-10-07)
+
+`tools/frame_os_breakdown.py` over three recorded Deck sessions (~31 000 real frames, 30 real x3
+at 90 Hz, Render v4 interpolation):
+
+| per real frame | p50 | p90 |
+|---|---|---|
+| present call holds the game thread (`total_ms`) | 20.5–21.1 ms | 21.7–21.9 ms |
+| of which: waiting to show the generated frames (`acquire_ms`) | 19.7–20.3 ms | 20.7–21.0 ms |
+| of which: waiting for the game's GPU work (`render_fence_ms`) | 0.02 ms | 0.04–6.5 ms |
+
+Consequences:
+
+* With interpolating FG the game has **no queue** for tick shaping to remove: it is already held
+  inside present while the executor shows the frames generated *before* the new real one. The
+  latency is the FG hold itself, ≈ (multiplier − 1) × output slot: x3 ≈ 22 ms, x2 ≈ 11 ms.
+* So the strongest latency lever is the **real cadence**: Adaptive Real-Frame Injection (x3 → x2 in
+  motion) removes ~11 ms exactly where the player feels it. Priority over tick shaping.
+* Tick shaping stays useful where a queue exists: native (x1) points, games with deeper
+  swapchains, FG executors that do not hold present.
+* The next large step is in the executor: **show the real frame first** (extrapolate the generated
+  frames *after* it instead of interpolating before it). That needs executor work (Tier 2 or a
+  Render v4 change) and is where Predictive Presentation leads.
+
+
 
 | Phase | Deliverable | Gate before the next phase |
 |---|---|---|
