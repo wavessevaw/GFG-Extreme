@@ -66,6 +66,8 @@ from .constants import (
     VKBASALT_LAYER_NAME_64,
     WAYLAND_DISPLAY_ENV,
 )
+from .frame_os.layer_install import MANIFEST as FRAME_OS_MANIFEST_FILENAME
+from .frame_os.layer_install import target_dir as frame_os_layer_target_dir
 from .governor_overlay import overlay_path as governor_overlay_path
 from .profile_storage import (
     ProfileMetadata,
@@ -85,7 +87,6 @@ DIAGNOSTICS_DEFAULT_MARKER = (
 )
 LEGACY_EXTREME_PFG_LAYER_NAME = "VK_LAYER_MAKO_EXTREME_predictive"
 FRAME_OS_LAYER_NAME = "VK_LAYER_GFG_pacer"
-FRAME_OS_MANIFEST_FILENAME = "VkLayer_gfg_pacer.json"
 
 REQUIRED_WRAPPER_EXPORTS = (
     f"export {PRESENT_ACQUIRE_TIMEOUT_ENV}=",
@@ -736,7 +737,7 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         context.user_vulkan_layer_dir / "steamoverlay_i386.json"
     ))
     user_vulkan_layer_dir = shlex.quote(str(context.user_vulkan_layer_dir))
-    frame_os_layer_dir = context.frame_os_layer_dir or context.local_share_dir.parent / "gfg-frame-os"
+    frame_os_layer_dir = context.frame_os_layer_dir or frame_os_layer_target_dir(context.local_share_dir)
     inherited_managed_layer_removal_lines: list[str] = []
     for layer_name in (
         MAKO_LAYER_NAME,

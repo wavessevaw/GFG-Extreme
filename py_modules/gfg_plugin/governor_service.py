@@ -39,7 +39,9 @@ from .steamos_tdp import SteamOSManagerTdp
 from .game_model import GameModelStore, context_key, floor_key, game_prefix
 from .session_stats import SessionStats
 from .frame_os.control_channel import DEFAULT_PATH as DEFAULT_SHM, ControlChannel
+from .frame_os import layer_install as frame_os_layer
 from .frame_os.runner import FrameOsRunner
+from .package_paths import PLUGIN_ROOT
 from .host_sensors import HostSensors, diagnose
 from .governor_hud import HudWriter, normalize as hud_normalize, output_fps as hud_output_fps
 from .governor_overlay import (
@@ -132,6 +134,10 @@ class GovernorService:
         # GFG Frame OS (development, off by default): per-profile mode, launch marker, 10 Hz runner.
         self.frame_os_marker_path = self.configuration.runtime_state_dir / "frame-os.enabled"
         self.frame_os = FrameOsRunner(ControlChannel(Path(os.environ.get("GFG_FRAME_OS_SHM") or DEFAULT_SHM)))
+        self.frame_os_layer_source = frame_os_layer.bundled_dir(PLUGIN_ROOT)
+        share = getattr(self.configuration, "local_share_dir", None)
+        self.frame_os_layer_dir: Optional[Path] = frame_os_layer.target_dir(share) if share else None
+        self.frame_os_layer_error: Optional[str] = None
         self._settings = self._load_settings()
         builder = getattr(self.configuration, "build_governor_overlay_text", None)
         self.overlay: Optional[OverlayStore] = (
@@ -678,6 +684,10 @@ class GovernorService:
         wanted = isinstance(profiles, dict) and any(
             isinstance(v, dict) and v.get("frame_os", "off") in self.FRAME_OS_MODES[1:] for v in profiles.values())
         if wanted:
+            # The launcher loads the layer only when it is staged; a build without it stays inert.
+            if self.frame_os_layer_dir is not None:
+                staged = frame_os_layer.stage(self.frame_os_layer_source, self.frame_os_layer_dir, self.log)
+                self.frame_os_layer_error = staged["error"]
             self.frame_os_marker_path.parent.mkdir(parents=True, exist_ok=True)
             self.frame_os_marker_path.write_text("enabled\n", encoding="utf-8")
         else:
@@ -835,6 +845,8 @@ class GovernorService:
         value["last_session"] = self._settings.get("last_session")
         value["session_history"] = (self._settings.get("session_history") or [])[: self.SESSION_HISTORY]
         value["frame_os"] = {"mode": self._frame_os_mode(profile or value.get("profile", "")),
+                             "layer_installed": bool(self.frame_os_layer_dir and frame_os_layer.is_staged(self.frame_os_layer_dir)),
+                             "layer_error": self.frame_os_layer_error,
                              **{k: v for k, v in self.frame_os.last.items() if k != "input"}}
         value["power"] = self.power.status()
         value["power_search"] = self.search.status.to_dict()

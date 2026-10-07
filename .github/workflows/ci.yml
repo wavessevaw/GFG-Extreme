@@ -23,7 +23,7 @@ jobs:
       - name: Frame OS engine tests (scheduler, control channel, layer on the mock Vulkan driver)
         run: |
           VULKAN_DEPS="$RUNNER_TEMP/vk" engine/gfg-pacer/tests/setup_vulkan_deps.sh
-          make -C engine/gfg-pacer VULKAN_DEPS="$RUNNER_TEMP/vk" test layer integration ordering
+          make -C engine/gfg-pacer VULKAN_DEPS="$RUNNER_TEMP/vk" test layer abi integration ordering
 
       - name: Frontend build is committed and current
         run: |

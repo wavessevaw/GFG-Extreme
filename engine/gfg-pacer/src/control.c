@@ -103,8 +103,8 @@ static int g_init;
 static pid_t g_pid;
 static char g_path[512];
 static gfg_ctl_shm *g_shm;     /* mapping of g_path, or NULL */
-static dev_t g_dev;
-static ino_t g_ino;
+static uint64_t g_dev;
+static uint64_t g_ino;
 static int g_created;          /* we created g_path (env test mode): unlink at exit */
 static int g_env_enabled;
 static uint32_t g_env_mode;
@@ -114,8 +114,35 @@ static gfg_ctl_state g_state;
 
 static int env_int(const char *name, int def)
 {
+    /* No atoi/strtol: with _GNU_SOURCE, glibc 2.38+ headers bind them to __isoc23_strtol,
+     * which the Steam Runtime's older glibc does not have. */
     const char *v = getenv(name);
-    return (v && *v) ? atoi(v) : def;
+    if (!v || !*v)
+        return def;
+    int sign = 1, n = 0;
+    if (*v == '-' || *v == '+')
+        sign = (*v++ == '-') ? -1 : 1;
+    if (*v < '0' || *v > '9')
+        return 0;
+    for (; *v >= '0' && *v <= '9' && n < 100000000; v++)
+        n = n * 10 + (*v - '0');
+    return sign * n;
+}
+
+/* statx (glibc 2.28) instead of stat/fstat, which glibc 2.33+ versions as new symbols. */
+static int file_id(int dirfd, const char *path, int flags, uint64_t *dev, uint64_t *ino,
+                   uint64_t *size, int *regular)
+{
+    struct statx sx;
+    if (statx(dirfd, path, flags, STATX_TYPE | STATX_INO | STATX_SIZE, &sx) != 0)
+        return -1;
+    *dev = ((uint64_t)sx.stx_dev_major << 32) | sx.stx_dev_minor;
+    *ino = sx.stx_ino;
+    if (size)
+        *size = sx.stx_size;
+    if (regular)
+        *regular = S_ISREG(sx.stx_mode);
+    return 0;
 }
 
 /* Control-channel policy -> scheduler policy; 0 when the values are not sane. */
@@ -153,8 +180,9 @@ static int header_ok(const gfg_ctl_shm *shm)
 /* Keep g_shm in sync with the file at g_path (the Governor may recreate it). */
 static void sync_mapping(void)
 {
-    struct stat st;
-    if (stat(g_path, &st) != 0) {
+    uint64_t dev, ino, size;
+    int regular;
+    if (file_id(AT_FDCWD, g_path, 0, &dev, &ino, NULL, NULL) != 0) {
         unmap();
         if (!g_env_enabled)
             return;
@@ -163,7 +191,8 @@ static void sync_mapping(void)
         if (fd < 0)
             return;
         void *m = MAP_FAILED;
-        if (ftruncate(fd, sizeof(gfg_ctl_shm)) == 0 && fstat(fd, &st) == 0)
+        if (ftruncate(fd, sizeof(gfg_ctl_shm)) == 0 &&
+            file_id(fd, "", AT_EMPTY_PATH, &dev, &ino, NULL, NULL) == 0)
             m = mmap(NULL, sizeof(gfg_ctl_shm), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         close(fd);
         if (m == MAP_FAILED) {
@@ -172,24 +201,25 @@ static void sync_mapping(void)
         }
         g_shm = m;
         g_created = 1;
-        g_dev = st.st_dev;
-        g_ino = st.st_ino;
+        g_dev = dev;
+        g_ino = ino;
         gfg_ctl_init_header(g_shm);
         g_shm->writer_pid = (uint32_t)g_pid;
         return;
     }
-    if (g_shm && st.st_dev == g_dev && st.st_ino == g_ino)
+    if (g_shm && dev == g_dev && ino == g_ino)
         return;
     unmap();
     int fd = open(g_path, O_RDWR | O_CLOEXEC);
     if (fd < 0)
         return;
-    if (fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_size >= (off_t)sizeof(gfg_ctl_shm)) {
+    if (file_id(fd, "", AT_EMPTY_PATH, &dev, &ino, &size, &regular) == 0 && regular &&
+        size >= sizeof(gfg_ctl_shm)) {
         void *m = mmap(NULL, sizeof(gfg_ctl_shm), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if (m != MAP_FAILED) {
             g_shm = m;
-            g_dev = st.st_dev;
-            g_ino = st.st_ino;
+            g_dev = dev;
+            g_ino = ino;
             if (header_ok(g_shm))
                 g_shm->writer_pid = (uint32_t)g_pid;
         }

@@ -87,7 +87,9 @@ jobs:
 
       - name: Build zip
         if: steps.version.outputs.exists == 'false'
-        run: scripts/build_release.sh "${{ steps.version.outputs.version }}" payloads out
+        run: |
+          git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
+          VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" scripts/build_release.sh "${{ steps.version.outputs.version }}" payloads out
 
       - name: Publish pre-release
         if: steps.version.outputs.exists == 'false'

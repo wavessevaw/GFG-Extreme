@@ -1210,6 +1210,23 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.svc.set_frame_os("game", "off")
         self.assertFalse(self.svc.frame_os_marker_path.exists())
 
+    def test_turning_frame_os_on_stages_the_bundled_layer(self):
+        from gfg_plugin.frame_os import layer_install
+        base = self.svc.frame_os_marker_path.parent
+        self.svc.frame_os_layer_source = base / "bundle"
+        self.svc.frame_os_layer_dir = base / "staged"
+        self.svc.set_frame_os("game", "observe")             # a build without the layer
+        frame_os = self.svc.get_status("game")["frame_os"]
+        self.assertFalse(frame_os["layer_installed"])
+        self.assertIn("does not include", frame_os["layer_error"])
+        self.svc.frame_os_layer_source.mkdir(parents=True)
+        for name in layer_install.FILES:
+            (self.svc.frame_os_layer_source / name).write_text(name)
+        self.svc.set_frame_os("game", "shadow")
+        frame_os = self.svc.get_status("game")["frame_os"]
+        self.assertTrue(frame_os["layer_installed"])
+        self.assertIsNone(frame_os["layer_error"])
+
     def test_runner_follows_the_live_budget_point(self):
         self.svc.set_frame_os("game", "observe")
         self.feed(20, 45, 90)

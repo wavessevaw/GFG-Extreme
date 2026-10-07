@@ -67,7 +67,8 @@ typedef struct dev_data {
     gfg_metrics metrics;
 } dev_data;
 
-static pthread_rwlock_t g_map_lock = PTHREAD_RWLOCK_INITIALIZER;
+/* A mutex, not a rwlock: pthread_rwlock_* are GLIBC_2.34 symbols when built on a new glibc. */
+static pthread_mutex_t g_map_lock = PTHREAD_MUTEX_INITIALIZER;
 static inst_data *g_instances;
 static dev_data *g_devices;
 static int g_passthrough;          /* sticky; atomic access */
@@ -121,20 +122,20 @@ static void sleep_until(int64_t t_ns)
 static inst_data *find_instance(void *key)
 {
     inst_data *i;
-    pthread_rwlock_rdlock(&g_map_lock);
+    pthread_mutex_lock(&g_map_lock);
     for (i = g_instances; i && i->key != key; i = i->next)
         ;
-    pthread_rwlock_unlock(&g_map_lock);
+    pthread_mutex_unlock(&g_map_lock);
     return i;
 }
 
 static dev_data *find_device(void *key)
 {
     dev_data *d;
-    pthread_rwlock_rdlock(&g_map_lock);
+    pthread_mutex_lock(&g_map_lock);
     for (d = g_devices; d && d->key != key; d = d->next)
         ;
-    pthread_rwlock_unlock(&g_map_lock);
+    pthread_mutex_unlock(&g_map_lock);
     return d;
 }
 
@@ -364,10 +365,10 @@ static VKAPI_ATTR VkResult VKAPI_CALL layer_CreateInstance(const VkInstanceCreat
     i->key = dispatch_key(*out);
     i->gipa = gipa;
     i->destroy_instance = destroy;
-    pthread_rwlock_wrlock(&g_map_lock);
+    pthread_mutex_lock(&g_map_lock);
     i->next = g_instances;
     g_instances = i;
-    pthread_rwlock_unlock(&g_map_lock);
+    pthread_mutex_unlock(&g_map_lock);
     if (debug_on())
         fprintf(stderr, "[gfg-pacer] instance created\n");
     return VK_SUCCESS;
@@ -378,14 +379,14 @@ static VKAPI_ATTR void VKAPI_CALL layer_DestroyInstance(VkInstance instance, con
     inst_data **pp, *i = NULL;
     if (!instance)
         return;
-    pthread_rwlock_wrlock(&g_map_lock);
+    pthread_mutex_lock(&g_map_lock);
     for (pp = &g_instances; *pp; pp = &(*pp)->next)
         if ((*pp)->key == dispatch_key(instance)) {
             i = *pp;
             *pp = i->next;
             break;
         }
-    pthread_rwlock_unlock(&g_map_lock);
+    pthread_mutex_unlock(&g_map_lock);
     if (!i)
         return;
     i->destroy_instance(instance, alloc);
@@ -426,10 +427,10 @@ static VKAPI_ATTR VkResult VKAPI_CALL layer_CreateDevice(VkPhysicalDevice phys, 
     d->acquire2 = (PFN_vkAcquireNextImage2KHR)gdpa(*out, "vkAcquireNextImage2KHR");
     d->present = (PFN_vkQueuePresentKHR)gdpa(*out, "vkQueuePresentKHR");
     d->create_swapchain = (PFN_vkCreateSwapchainKHR)gdpa(*out, "vkCreateSwapchainKHR");
-    pthread_rwlock_wrlock(&g_map_lock);
+    pthread_mutex_lock(&g_map_lock);
     d->next = g_devices;
     g_devices = d;
-    pthread_rwlock_unlock(&g_map_lock);
+    pthread_mutex_unlock(&g_map_lock);
     if (debug_on())
         fprintf(stderr, "[gfg-pacer] device created (swapchain hooks: %s)\n", d->present ? "yes" : "no");
     return VK_SUCCESS;
@@ -440,14 +441,14 @@ static VKAPI_ATTR void VKAPI_CALL layer_DestroyDevice(VkDevice device, const VkA
     dev_data **pp, *d = NULL;
     if (!device)
         return;
-    pthread_rwlock_wrlock(&g_map_lock);
+    pthread_mutex_lock(&g_map_lock);
     for (pp = &g_devices; *pp; pp = &(*pp)->next)
         if ((*pp)->key == dispatch_key(device)) {
             d = *pp;
             *pp = d->next;
             break;
         }
-    pthread_rwlock_unlock(&g_map_lock);
+    pthread_mutex_unlock(&g_map_lock);
     if (!d)
         return;
     d->destroy_device(device, alloc);

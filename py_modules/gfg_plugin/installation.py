@@ -47,6 +47,7 @@ from .constants import (
     PLUGIN_ROOT,
 )
 from .config_schema import ConfigurationManager, DEFAULT_PROFILE_NAME
+from .frame_os import layer_install as frame_os_layer
 from .host_environment import detect_host_environment
 from .managed_files import (
     copy_managed_file_atomically,
@@ -1606,6 +1607,8 @@ class InstallationService(BaseService):
                 + [path for _checksum, path in standalone_entries]
                 + [self.standalone_installer_state_file]
             )
+
+            frame_os_layer.remove(frame_os_layer.target_dir(self.local_share_dir))
 
             if removed_files:
                 self.log.info(f"Cleaned up {len(removed_files)} GFG Engine files during plugin uninstall: {removed_files}")

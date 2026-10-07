@@ -11,7 +11,7 @@ MOCK_ICD_JSON ?= $(VULKAN_DEPS)/vkt/build/icd/VkICD_mock_icd.json
 LAYER_SRC := src/layer.c src/control.c src/metrics.c src/scheduler.c
 LAYER_HDR := src/control.h src/metrics.h src/scheduler.h
 
-.PHONY: test layer integration ordering clean
+.PHONY: test layer abi integration ordering clean
 test: $(BUILD)/test_scheduler $(BUILD)/test_control
 	$(BUILD)/test_scheduler
 	$(BUILD)/test_control
@@ -30,6 +30,15 @@ $(BUILD)/libVkLayer_gfg_pacer.so: $(LAYER_SRC) $(LAYER_HDR)
 	@test -f $(VULKAN_HEADERS)/vulkan/vk_layer.h || { echo "Vulkan headers not found in $(VULKAN_HEADERS) (set VULKAN_HEADERS or run tests/setup_vulkan_deps.sh)"; exit 1; }
 	mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -fvisibility=hidden -I$(VULKAN_HEADERS) -shared -Wl,-z,defs -o $@ $(LAYER_SRC) -lm -lpthread
+
+# Games run under the Steam Runtime (sniper: glibc 2.31) or the host's newer glibc, whichever
+# is newer: the shipped library may not need any symbol newer than GLIBC_MAX.
+GLIBC_MAX ?= 2.31
+abi: $(BUILD)/libVkLayer_gfg_pacer.so
+	@need=$$(objdump -T $< | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -1); \
+	echo "gfg-pacer needs glibc $$need (max $(GLIBC_MAX))"; \
+	[ "$$(printf '%s\n%s\n' "$$need" "$(GLIBC_MAX)" | sort -V | tail -1)" = "$(GLIBC_MAX)" ] || \
+	{ objdump -T $< | grep -E 'GLIBC_2\.(3[2-9]|[4-9][0-9])'; exit 1; }
 
 # The manifest's library_path is relative: it sits next to the .so.
 $(BUILD)/VkLayer_gfg_pacer.json: VkLayer_gfg_pacer.json
