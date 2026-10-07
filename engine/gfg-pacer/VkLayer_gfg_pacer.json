@@ -1,9 +1,10 @@
 {
-    "file_format_version": "1.2.0",
+    "file_format_version": "1.2.1",
     "layer": {
         "name": "VK_LAYER_GFG_pacer",
         "type": "GLOBAL",
         "library_path": "./libVkLayer_gfg_pacer.so",
+        "library_arch": "64",
         "api_version": "1.4.0",
         "implementation_version": "1",
         "description": "GFG Frame OS pacer: game-agnostic tick shaping and present pacing",

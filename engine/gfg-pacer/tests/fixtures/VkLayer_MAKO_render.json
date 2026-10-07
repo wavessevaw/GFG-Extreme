@@ -1,0 +1,17 @@
+{
+    "file_format_version": "1.2.1",
+    "layer": {
+        "name": "VK_LAYER_MAKO_render",
+        "description": "TEST FIXTURE: stand-in for the MAKO Renderer layer (2x present generator)",
+        "implementation_version": "2",
+        "library_path": "./libVkLayer_MAKO_dummy.so",
+        "type": "GLOBAL",
+        "api_version": "1.4.328",
+        "enable_environment": {
+            "ENABLE_MAKO": "1"
+        },
+        "disable_environment": {
+            "DISABLE_MAKO": "1"
+        }
+    }
+}

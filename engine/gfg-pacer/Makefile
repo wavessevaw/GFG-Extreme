@@ -11,7 +11,7 @@ MOCK_ICD_JSON ?= $(VULKAN_DEPS)/vkt/build/icd/VkICD_mock_icd.json
 LAYER_SRC := src/layer.c src/control.c src/metrics.c src/scheduler.c
 LAYER_HDR := src/control.h src/metrics.h src/scheduler.h
 
-.PHONY: test layer integration clean
+.PHONY: test layer integration ordering clean
 test: $(BUILD)/test_scheduler $(BUILD)/test_control
 	$(BUILD)/test_scheduler
 	$(BUILD)/test_control
@@ -45,6 +45,19 @@ $(BUILD)/test_layer: tests/test_layer.c src/control.c src/scheduler.c $(LAYER_HD
 integration: layer $(BUILD)/test_layer
 	@test -f $(MOCK_ICD_JSON) || { echo "mock ICD manifest not found: $(MOCK_ICD_JSON) (set MOCK_ICD_JSON or run tests/setup_vulkan_deps.sh)"; exit 1; }
 	MOCK_ICD_JSON=$(MOCK_ICD_JSON) tests/run_integration.sh $(BUILD)
+
+# Test-only stand-in for VK_LAYER_MAKO_render (2x present generator), for the layer-order test.
+$(BUILD)/fixtures/libVkLayer_MAKO_dummy.so: tests/fixtures/mako_dummy_layer.c
+	@test -f $(VULKAN_HEADERS)/vulkan/vk_layer.h || { echo "Vulkan headers not found in $(VULKAN_HEADERS)"; exit 1; }
+	mkdir -p $(BUILD)/fixtures
+	$(CC) $(CFLAGS) -fvisibility=hidden -I$(VULKAN_HEADERS) -shared -Wl,-z,defs -o $@ $<
+
+# Layer order: gfg-pacer must sit above the frame generator whatever the manifest readdir order.
+# Extra loaders to check: ORDER_LOADER_DIRS="dir1 dir2" (default: the build loader).
+ordering: layer $(BUILD)/test_layer $(BUILD)/fixtures/libVkLayer_MAKO_dummy.so
+	@test -f $(MOCK_ICD_JSON) || { echo "mock ICD manifest not found: $(MOCK_ICD_JSON)"; exit 1; }
+	MOCK_ICD_JSON=$(MOCK_ICD_JSON) ORDER_LOADER_DIRS="$(or $(ORDER_LOADER_DIRS),$(VULKAN_LOADER_DIR))" \
+		tests/run_ordering.sh $(BUILD)
 
 clean:
 	rm -rf $(BUILD)
