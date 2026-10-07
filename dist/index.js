@@ -133,6 +133,7 @@ var rpc = {
   setFrameOs: safeCallable("set_governor_frame_os"),
   setMode: safeCallable("set_governor_mode"),
   forgetModel: safeCallable("forget_governor_game_model"),
+  modelTarget: safeCallable("get_governor_game_model_target"),
   profiles: safeCallable("get_profiles"),
   setProfile: safeCallable("set_current_profile"),
   profileConfig: safeCallable("get_profile_config"),
@@ -176,7 +177,7 @@ var PAUSED_TEXT = {
   "diagnostics-active-no-events": "Waiting for the game to draw frames (loading, intro or menu). If it stays like this in gameplay, relaunch the game once.",
   "diagnostics-events-no-fps-samples": "Waiting for the game to draw frames (loading screen or menu). GFG starts on its own as soon as frames arrive.",
   "telemetry-stale": "FPS from the engine stopped arriving.",
-  "external-tdp-change": "TDP was changed outside GFG. In Battery mode GFG takes it back after 30 s (at most 3 times).",
+  "external-tdp-change": "TDP was changed outside GFG. In Battery and Balanced modes GFG takes it back after 30 s (at most 3 times).",
   "tdp-write-failed": "Could not write TDP."
 };
 var TIER_TEXT = {
@@ -504,10 +505,10 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
         h("b", null, num(s.last_session.avg_output_fps, 0) + " FPS avg (" + num(s.last_session.avg_real_fps, 0) + " real)"),
         h("span", null, "Power"),
         h("b", null, s.last_session.avg_tdp_w != null ? num(s.last_session.avg_tdp_w, 1) + " W avg" + (s.last_session.reference_w ? " \xB7 limit " + num(s.last_session.reference_w, 0) + " W" : "") : "\u2013"),
-        s.last_session.saved_w ? h("span", null, "Saved") : null,
-        s.last_session.saved_w ? h("b", null, "~" + num(s.last_session.saved_w, 1) + " W on average") : null,
-        s.last_session.saved_wh ? h("span", null, "Energy saved") : null,
-        s.last_session.saved_wh ? h("b", null, "~" + num(s.last_session.saved_wh, 1) + " Wh" + (s.last_session.battery_minutes_gained ? " \xB7 ~" + s.last_session.battery_minutes_gained + " min more battery" : "")) : null,
+        s.last_session.saved_w > 0 ? h("span", null, "Saved") : null,
+        s.last_session.saved_w > 0 ? h("b", null, "~" + num(s.last_session.saved_w, 1) + " W under your limit on average") : null,
+        s.last_session.saved_wh > 0 ? h("span", null, "Energy saved") : null,
+        s.last_session.saved_wh > 0 ? h("b", null, "~" + num(s.last_session.saved_wh, 1) + " Wh measured" + (s.last_session.battery_minutes_gained > 0 ? " \xB7 ~" + s.last_session.battery_minutes_gained + " min more battery" : "")) : null,
         s.last_session.max_temp_c ? h("span", null, "Hottest") : null,
         s.last_session.max_temp_c ? h("b", null, num(s.last_session.max_temp_c, 0) + " \xB0C" + (s.last_session.hot_pct ? " \xB7 warm " + s.last_session.hot_pct + "% of the time" : "")) : null,
         s.last_session.stutter_pct ? h("span", null, "Stutter") : null,
@@ -643,7 +644,10 @@ function ScalingPage({ s, back, profile, refresh }) {
       "div",
       { className: "list", style: { marginTop: 0 } },
       h(Toggle, { on: ready, title: "Scale-ready launch", sub: "Provision the Scaling Engine at launch so Governor can lower render scale live without relaunching. Applies from the next game start.", onChange: async (v) => {
-        await rpc.setScaleReady(profile, v);
+        try {
+          await rpc.setScaleReady(profile, v);
+        } catch (e) {
+        }
         refresh();
       } })
     ),
@@ -653,7 +657,10 @@ function ScalingPage({ s, back, profile, refresh }) {
 function HudPage({ back, s, profile, refresh }) {
   const hud = s.hud || { enabled: false, preset: "standard", position: "top-right" };
   const set = async (c) => {
-    await rpc.setHud(profile, c.enabled, c.preset, c.position);
+    try {
+      await rpc.setHud(profile, c.enabled, c.preset, c.position);
+    } catch (e) {
+    }
     refresh();
   };
   return h(
@@ -863,27 +870,55 @@ function AdvancedPage({ back, s, insp, launch, go, profile }) {
     h("div", { className: "cols" }, col("SAVED", sv), col("EFFECTIVE", ef), col("GOVERNOR", s && s.active_point ? { point: POINT_LABEL(s.active_point) } : {}, true), col("ACTUAL", ac))
   );
 }
+var steamName = (id) => {
+  try {
+    const o = id && window.appStore && window.appStore.GetAppOverviewByAppID(Number(id));
+    return o && o.display_name || "";
+  } catch (e) {
+    return "";
+  }
+};
+var gameLabel = (g) => g.name || steamName(g.app_id) || (g.app_id ? "Steam app " + g.app_id : "games on profile " + g.profile);
 function ForgetModel({ profile }) {
   const [step, setStep] = useState("idle");
   const [msg, setMsg] = useState("");
+  const [target, setTarget] = useState(void 0);
+  useEffect(() => {
+    let on = true;
+    setTarget(void 0);
+    rpc.modelTarget(profile || "").then((r) => {
+      if (on) setTarget(r && r.target || null);
+    }).catch(() => {
+      if (on) setTarget(null);
+    });
+    return () => {
+      on = false;
+    };
+  }, [profile, step === "done"]);
   const forget = async () => {
     setStep("busy");
     try {
       const r = await rpc.forgetModel(profile || "");
-      setMsg(r && r.success ? r.forgotten ? "Forgotten. The next start searches from scratch." : "Nothing was learned for this game yet." : "Could not reset: " + (r && r.error || "unknown error"));
+      setMsg(r && r.success ? r.forgotten ? "Forgotten. The next start searches from scratch." : "Nothing was learned for this game yet." : r && r.error === "no-game-identified" ? "GFG cannot tell which game to reset. Play the game under this profile once, then try again." : "Could not reset: " + (r && r.error || "unknown error"));
     } catch (e) {
       setMsg("Could not reset.");
     }
     setStep("done");
   };
+  const name = target ? gameLabel(target) : "";
   return h(
     "div",
     null,
-    h("div", { className: "list" }, step === "confirm" ? h(Row, { icon: "stop", title: "Tap again to forget", sub: "Watts, points and failures it remembered", onClick: forget }) : h(Row, { icon: "cog", title: "Reset what GFG learned for this game", sub: step === "busy" ? "Working\u2026" : "Starts the next search from scratch", onClick: step === "busy" ? void 0 : () => {
-      setMsg("");
-      setStep("confirm");
-    } })),
-    step === "confirm" ? h(Note, { quiet: true }, "This cannot be undone. Your saved profile is not touched.") : null,
+    h("div", { className: "list" }, step === "confirm" && target ? h(Row, { icon: "stop", title: "Tap again to forget", sub: "Watts, points and failures it remembered for " + name, onClick: forget }) : h(Row, {
+      icon: "cog",
+      title: "Reset what GFG learned for " + (target ? name : "this game"),
+      sub: step === "busy" ? "Working\u2026" : target === void 0 ? "Checking\u2026" : target ? "Starts the next search from scratch" : "No game identified yet: play one under this profile first",
+      onClick: step === "busy" || !target ? void 0 : () => {
+        setMsg("");
+        setStep("confirm");
+      }
+    })),
+    step === "confirm" && target ? h(Note, { quiet: true }, "This cannot be undone. Your saved profile is not touched.") : null,
     step === "done" && msg ? h(Note, { quiet: true }, msg) : null
   );
 }
@@ -903,8 +938,15 @@ function FrameOsPanel({ s, profile }) {
       value: mode,
       options: [["off", "Off"], ["observe", "Observe"], ["shadow", "Shadow"], ["act", "Act"]],
       onChange: async (v) => {
+        const prev = mode;
         setMode(v);
-        await rpc.setFrameOs(profile, v);
+        let ok = false;
+        try {
+          const r = await rpc.setFrameOs(profile, v);
+          ok = !!(r && r.success);
+        } catch (e) {
+        }
+        if (!ok) setMode(prev);
       }
     }),
     h(Note, { quiet: true }, "Observe and Shadow only measure. Act changes frame timing and power. Applies from the next game start."),

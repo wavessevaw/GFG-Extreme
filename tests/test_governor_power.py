@@ -185,6 +185,41 @@ class PowerRestoreSafetyTests(GovernorPowerActuatorTests):
             self.assertEqual((result["restored"], result["reason"]), (False, "external-change"))
             self.assertEqual(int((h / "power2_cap").read_text()), 10000000)
 
+    def test_helper_timeout_whose_write_lands_late_is_still_restored(self):
+        """A timed-out helper write that lands later is ours: no external change, initial kept."""
+        from gfg_plugin.privileged_power import HelperTimeout
+        with tempfile.TemporaryDirectory() as temp:
+            h, actuator = self.make(Path(temp))
+            original = actuator._write_value
+
+            def stuck(path, value):
+                raise HelperTimeout("TDP helper did not answer within 3 s")
+            actuator._write_value = stuck
+            self.assertFalse(actuator.set_tdp_w(9)["success"])
+            actuator._write_value = original
+            write(h / "power2_cap", 9000000)                 # the helper's write lands late
+            self.assertNotIn("changed outside", actuator.verify_ownership()["error"] or "")
+            reclaimed = actuator.claim()
+            self.assertEqual(reclaimed["initial_tdp_w"], 15.0, "the user's limit, not ours")
+            self.assertTrue(actuator.restore_if_owned()["restored"])
+            self.assertEqual(int((h / "power2_cap").read_text()), 15000000)
+            self.assertEqual(int((h / "power1_cap").read_text()), 18000000)
+
+    def test_helper_timeout_without_reclaim_is_still_restored(self):
+        from gfg_plugin.privileged_power import HelperTimeout
+        with tempfile.TemporaryDirectory() as temp:
+            h, actuator = self.make(Path(temp))
+            original = actuator._write_value
+
+            def late(path, value):
+                original(path, value)
+                raise HelperTimeout("TDP helper did not answer within 3 s")
+            actuator._write_value = late
+            self.assertFalse(actuator.set_tdp_w(9)["success"])
+            actuator._write_value = original
+            self.assertTrue(actuator.restore_if_owned()["restored"])
+            self.assertEqual(int((h / "power2_cap").read_text()), 15000000)
+
     def test_shutdown_waits_for_a_write_in_flight_and_refuses_later_ones(self):
         import threading
         import time as _time

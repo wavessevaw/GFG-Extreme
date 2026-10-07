@@ -181,6 +181,9 @@ class GovernorService:
         self._request_counter = getattr(self, "_request_counter", 0)
         self._ladder: Optional[TrialLadder] = None
         self._budget: Optional[BudgetController] = None
+        # The live controller's game-model keys, fixed when it was built: failures drained after a
+        # mode switch or game exit still go to the mode/game they were found in.
+        self._budget_keys: Optional[tuple] = None
         self._applied_tdp: Optional[float] = None
         self._external_at: Optional[float] = None
         self._reclaims = 0
@@ -273,16 +276,16 @@ class GovernorService:
         self._poke()
         return {"success": True, "error": None, "profile": profile, "mode": mode}
 
-    def forget_game_model(self, profile: str) -> Dict[str, Any]:
-        """Forget what was learned for the profile's game (every target and mode): warm starts,
-        failed points and failed lower levels (review 1.1.x: a stale memory had no reset).
+    def game_model_target(self, profile: str) -> Optional[Dict[str, Any]]:
+        """Which game "Reset what GFG learned" would reset for ``profile``, or None.
 
-        The game is the one running under this profile, else the profile's last session; keyed by
-        Steam AppID when known, else by profile, exactly as it was stored.
+        The game running under this profile, else the profile's last session, by Steam AppID.
+        Without an AppID only what was stored under the profile itself (games launched without
+        one), and only when there is something: never a silent reset of nothing.
         """
         profile = str(profile or "").strip()
         if not profile:
-            return {"success": False, "error": "Profile is required"}
+            return None
         app_id = ""
         if profile == self._active_profile:
             app_id = self._game_app_id()
@@ -290,8 +293,27 @@ class GovernorService:
         if not app_id and isinstance(last, dict) and last.get("profile") == profile:
             app_id = str(last.get("app_id") or "")
         prefix = game_prefix(profile, app_id)
-        with self._io_lock:
-            forgotten = self.game_models.forget_game(prefix)
+        if not prefix.startswith("app:"):
+            if not self.game_models.count_game(prefix):
+                return None
+            app_id = ""
+        return {"profile": profile, "app_id": app_id, "game": prefix}
+
+    def forget_game_model(self, profile: str) -> Dict[str, Any]:
+        """Forget what was learned for the profile's game (every target and mode): warm starts,
+        failed points and failed lower levels (review 1.1.x: a stale memory had no reset).
+
+        The game is ``game_model_target``'s, keyed exactly as it was stored.  Runs on the event
+        loop (plugin RPC), like every other game-model write, so it never races the Governor loop.
+        """
+        profile = str(profile or "").strip()
+        if not profile:
+            return {"success": False, "error": "Profile is required"}
+        target = self.game_model_target(profile)
+        if target is None:
+            return {"success": False, "error": "no-game-identified", "profile": profile, "game": None}
+        prefix = target["game"]
+        forgotten = self.game_models.forget_game(prefix)
         budget = self._budget
         if budget is not None and profile == self._active_profile:
             # The live controller forgets too, or the next drain would write it all back.
@@ -300,7 +322,8 @@ class GovernorService:
             budget.floor_failures.clear()
             budget.new_floor_failures.clear()
         self._journal("game-model-forgotten", profile=profile, game=prefix, entries=forgotten)
-        return {"success": True, "error": None, "profile": profile, "game": prefix, "forgotten": forgotten}
+        return {"success": True, "error": None, "profile": profile, "game": prefix,
+                "app_id": target["app_id"], "forgotten": forgotten}
 
     def _update_sensors(self) -> None:
         """Host sensors + a one-line diagnosis. Never allowed to break the control loop."""
@@ -862,13 +885,24 @@ class GovernorService:
             value["restore_pending"] = dict(self._restore_pending)
         return value
 
+    def _display_probe(self) -> Dict[str, Any]:
+        """Active display + the internal panel's actual refresh rate when Gamescope reports it."""
+        result = self.display.get_active_display_info()
+        reader = getattr(self.display, "read_current_refresh_hz", None)
+        if isinstance(result, dict) and result.get("success") and not result.get("external") and callable(reader):
+            try:
+                result = {**result, "current_refresh_hz": reader()}
+            except Exception as error:
+                self.log.debug("Governor refresh-rate probe unavailable: %s", error)
+        return result
+
     async def _display_info(self) -> Dict[str, Any]:
         now = time.monotonic()
         if now - self._last_display_poll < self.DISPLAY_REFRESH_SECONDS and self._last_display:
             return self._last_display
         self._last_display_poll = now
         try:
-            result = await asyncio.to_thread(self.display.get_active_display_info)
+            result = await asyncio.to_thread(self._display_probe)
             if isinstance(result, dict) and result.get("success"):
                 self._last_display = result
         except Exception as error:
@@ -892,7 +926,10 @@ class GovernorService:
         self._point_deltas = {}
         self._request = None
         self._ladder = None
+        # Failures the controller found since its last drain would be lost with it.
+        self._store_failures(self._budget)
         self._budget = None
+        self._budget_keys = None
         self._applied_tdp = None
         self._over_cap_windows = 0
         self._draw_samples = []
@@ -1265,7 +1302,8 @@ class GovernorService:
         external = bool(display.get("external", False))
         if self._device is None:
             self._device = await asyncio.to_thread(detect_model)
-        policy = target_for(self._device["model"], external=external, valid_rates=display.get("valid_rates"))
+        policy = target_for(self._device["model"], external=external, valid_rates=display.get("valid_rates"),
+                            current_hz=display.get("current_refresh_hz"))
         target = int(policy["target"])
         self._status.update({
             "target_output_fps": target,
@@ -1274,6 +1312,7 @@ class GovernorService:
                 "external": external,
                 "internal": bool(display.get("internal", not external)),
                 "valid_rates": display.get("valid_rates", []),
+                "current_refresh_hz": display.get("current_refresh_hz"),
             },
             "telemetry": {"snapshot": snapshot, "summary": summary},
         })
@@ -1282,8 +1321,12 @@ class GovernorService:
         launch = await self._launch_info(profile)
         launch_key = launch.get("launch_key") if launch.get("running") else None
         generation = snapshot.get("session_generation")
+        # The panel's refresh rate changed the target: a controller built for the old one is stale.
+        controller = self._budget or self._ladder
+        target_changed = controller is not None and int(getattr(controller, "target_output_fps", target)) != target
         changed = (
-            (self._generation_seen is not None and generation != self._generation_seen)
+            target_changed
+            or (self._generation_seen is not None and generation != self._generation_seen)
             or (self._launch_key is not None and launch_key is not None and launch_key != self._launch_key)
             or (self._point_external is not None and external != self._point_external)
         )
@@ -1297,7 +1340,7 @@ class GovernorService:
                 self._status.update({"state": "PLAN", "reason": "governor-mode-changed"})
                 return
         if changed and (self._point or self._request or self._ladder or self._budget):
-            reason = "display-mode-changed" if (
+            reason = "display-mode-changed" if target_changed or (
                 self._point_external is not None and external != self._point_external
             ) else "new-game-session"
             await self._release_point(profile, reason)
@@ -1561,10 +1604,11 @@ class GovernorService:
             )
             self._budget = budget
             budget.scale_capable = self._budget_can_scale(capability)
-            key = self._game_key(profile, target)
+            key, floor = self._game_key(profile, target), self._floor_key(profile, target)
+            self._budget_keys = (key, floor)
             budget.load_failures(self.game_models.failures(key), now)
             # review 1.1.x: a rebuilt controller keeps the remaining back-off of failed lower levels.
-            budget.load_floor_failures(self.game_models.floor_failures(self._floor_key(profile, target)), now)
+            budget.load_floor_failures(self.game_models.floor_failures(floor), now)
             remembered = self.game_models.get(key)
             if remembered and budget.warm_start(remembered["point"], remembered.get("tdp_w"), now):
                 self._event("budget-warm-start", "remembered-from-last-session", profile=profile,
@@ -1611,7 +1655,7 @@ class GovernorService:
         if not await self._apply_budget_tdp(profile):
             return
         self._remember_if_held(profile, target, budget, point, now)
-        self._store_failures(profile, target, budget)
+        self._store_failures(budget)
 
         # The draw sensor is an instantaneous / ~1 s value: sample it every
         # iteration and judge the window by its median, not its last reading.
@@ -1633,7 +1677,7 @@ class GovernorService:
                             before={"tdp_w": before}, after={"point": budget.point.key, "tdp_w": budget.tdp,
                                                             "phase": budget.phase})
                 self._draw_samples = []
-                self._store_failures(profile, target, budget)  # a mode switch may drop this controller next
+                self._store_failures(budget)  # a mode switch may drop this controller next
                 self._status.update({"state": self._budget_state(), "reason": budget.last_reason})
                 await self._apply_budget_tdp(profile)
                 return
@@ -1649,6 +1693,7 @@ class GovernorService:
         before = (budget.point.key, budget.tdp, budget.phase)
         reason_before, holds_before = budget.last_reason, getattr(budget, "not_power_bound_holds", 0)
         action = budget.observe(now, verdict, (fresh.get("real") or {}).get("median"))
+        self._store_failures(budget)  # now, not after the next TDP write: a release may come first
         after = (budget.point.key, budget.tdp, budget.phase)
         if str(budget.last_reason).startswith("guard-not-power-bound") and (
                 budget.last_reason != reason_before or getattr(budget, "not_power_bound_holds", 0) != holds_before):
@@ -1726,18 +1771,21 @@ class GovernorService:
         for key, (_tdp, age) in failures.items():
             self._ladder.reject(key, "remembered-failure", until=now + self.game_models.FAILURE_TTL_S - age)
 
-    def _store_failures(self, profile: str, target: int, budget: Any) -> None:
+    def _store_failures(self, budget: Any) -> None:
+        if budget is None or self._budget_keys is None:
+            return
+        key, floor = self._budget_keys
         while budget.new_failures:
             point_key, tdp = budget.new_failures.pop(0)
             try:
-                self.game_models.record_failure(self._game_key(profile, target), point_key, tdp)
+                self.game_models.record_failure(key, point_key, tdp)
             except Exception as error:  # best-effort, like remembering held points
                 self.log.debug("Game model failure not stored: %s", error)
         floors = getattr(budget, "new_floor_failures", None) or []
         while floors:
             point_key, tdp, count = floors.pop(0)
             try:
-                self.game_models.record_floor_failure(self._floor_key(profile, target), point_key, tdp, count)
+                self.game_models.record_floor_failure(floor, point_key, tdp, count)
             except Exception as error:
                 self.log.debug("Game model floor failure not stored: %s", error)
 

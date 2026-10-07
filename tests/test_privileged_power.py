@@ -54,6 +54,8 @@ class PrivilegedPowerTests(unittest.TestCase):
         with self.assertRaisesRegex(OSError, "did not answer"):
             writer.write(Path("/sys/devices/x/hwmon/hwmon0/power1_cap"), 5_000_000)
         self.assertLess(time.monotonic() - started, 2.0)
+        with self.assertRaises(privileged_power.HelperTimeout):  # distinct: the write may still land
+            writer.write(Path("/sys/devices/x/hwmon/hwmon0/power1_cap"), 5_000_000)
         os.write(rep_w, b"ok\n")                 # a late reply to the timed-out request ...
         with self.assertRaisesRegex(OSError, "did not answer"):
             writer.write(Path("/sys/devices/x/hwmon/hwmon0/power1_cap"), 5_000_000)  # ... is not taken for this one

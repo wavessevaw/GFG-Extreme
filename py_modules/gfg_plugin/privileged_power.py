@@ -71,6 +71,10 @@ def _serve(requests: int, replies: int) -> None:  # pragma: no cover - runs in t
                 return
 
 
+class HelperTimeout(OSError):
+    """The helper did not answer in time: the write may still land later."""
+
+
 class PrivilegedCapWriter:
     """Client side of the root helper (one request at a time)."""
 
@@ -100,7 +104,7 @@ class PrivilegedCapWriter:
             while not data.endswith(b"\n"):
                 left = deadline - time.monotonic()
                 if left <= 0 or not select.select([self._replies], [], [], left)[0]:
-                    raise OSError(f"TDP helper did not answer within {self.REPLY_TIMEOUT_S:g} s")
+                    raise HelperTimeout(f"TDP helper did not answer within {self.REPLY_TIMEOUT_S:g} s")
                 chunk = os.read(self._replies, 256)
                 if not chunk:
                     raise OSError("TDP helper exited")

@@ -6,7 +6,9 @@ Targets (output FPS):
 * Steam Deck LCD  (DMI ``Jupiter``), handheld ........ 60 (panel is 60 Hz max)
 * Any device docked to an external display ........... 60
 
-Unknown hardware falls back to the internal panel's highest valid refresh rate.
+Unknown hardware falls back to the internal panel's highest valid refresh rate.  On the internal
+panel the target never exceeds the refresh rate it actually runs at, when that is readable (an
+OLED set to 60 Hz cannot show 90 FPS).
 """
 from __future__ import annotations
 
@@ -34,9 +36,21 @@ def detect_model(dmi_root: Path = DMI_ROOT) -> Dict[str, str]:
 
 
 def target_for(
-    model: str, *, external: bool, valid_rates: Optional[Iterable[Any]] = None
+    model: str, *, external: bool, valid_rates: Optional[Iterable[Any]] = None,
+    current_hz: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Pick the output-FPS target and say why (shown verbatim in the UI)."""
+    policy = _device_target(model, external=external, valid_rates=valid_rates)
+    if (not external and isinstance(current_hz, (int, float)) and not isinstance(current_hz, bool)
+            and 20 <= current_hz < policy["target"]):
+        hz = int(round(current_hz))
+        return {"target": hz, "mode": policy["mode"], "reason": f"panel-running-{hz}hz"}
+    return policy
+
+
+def _device_target(
+    model: str, *, external: bool, valid_rates: Optional[Iterable[Any]] = None
+) -> Dict[str, Any]:
     if external:
         return {"target": TARGET_DOCK, "mode": "dock", "reason": "external-display"}
     if model == "oled":

@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional
 
-from .privileged_power import allowed_cap_path, writer as privileged_writer
+from .privileged_power import HelperTimeout, allowed_cap_path, writer as privileged_writer
 
 
 _FAST_LABELS = {"fastppt", "ppt1", "fast ppt"}
@@ -324,7 +324,8 @@ class SteamDeckPowerActuator:
         """Put the caps at slow/fast; returns (kind, message) on failure, None on success.
 
         Kinds: ``unverified`` (a write was accepted but the cap reads something
-        else) and ``write-failed``.  Updates the expected caps on success.
+        else, or the root helper timed out and the write may still land) and
+        ``write-failed``.  Updates the expected caps on success.
         ``exact`` (restore) prefers the direct write, which keeps fast != slow.
         """
         assert self._fast_path is not None and self._slow_path is not None
@@ -365,6 +366,9 @@ class SteamDeckPowerActuator:
         try:
             self._write_value(self._slow_path, slow)
             self._write_value(self._fast_path, fast)
+        except HelperTimeout as error:
+            # A late write is ours, not an outside change: keep the restore path open.
+            return "unverified", str(error)
         except OSError as error:
             return "write-failed", str(error)
         read_slow = _read_int(self._slow_path)
@@ -430,7 +434,7 @@ class SteamDeckPowerActuator:
                 # What the caps may read if our write did land (late or rounded): restore only
                 # from these, never over a value another tool wrote meanwhile.
                 self._unverified_caps = {(_read_int(self._slow_path), _read_int(self._fast_path)),
-                                         (slow, fast),
+                                         (slow, fast), (slow, self.state.expected_fast_uw),
                                          (self.state.expected_slow_uw, self.state.expected_fast_uw)}
                 self.state.owned = False
                 # Our own write failed, nobody else touched the caps: a re-claim in

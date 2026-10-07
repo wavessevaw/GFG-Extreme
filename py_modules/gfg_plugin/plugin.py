@@ -824,9 +824,16 @@ class Plugin:
         """Battery (lowest TDP first) or Quality (fewest generated frames first)."""
         return await asyncio.to_thread(self.governor_service.set_mode, profile_name, mode)
 
+    async def get_governor_game_model_target(self, profile_name: str) -> Dict[str, Any]:
+        """Settings -> Diagnostics: which game "Reset what GFG learned" would reset (None: unknown)."""
+        return {"success": True, "target": self.governor_service.game_model_target(profile_name)}
+
     async def forget_governor_game_model(self, profile_name: str) -> Dict[str, Any]:
-        """Settings -> Diagnostics: forget what the Governor learned for this profile's game."""
-        return await asyncio.to_thread(self.governor_service.forget_game_model, profile_name)
+        """Settings -> Diagnostics: forget what the Governor learned for this profile's game.
+
+        On the event loop, not a worker thread: the Governor loop writes the same store there.
+        """
+        return self.governor_service.forget_game_model(profile_name)
 
     async def set_governor_hud(
             self, profile_name: str, enabled: Any = None, preset: Any = None, position: Any = None

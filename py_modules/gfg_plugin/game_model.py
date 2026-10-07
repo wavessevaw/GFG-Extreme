@@ -180,6 +180,11 @@ class GameModelStore:
         if self._entries.pop(key, None) is not None:
             self._save()
 
+    def count_game(self, prefix: str) -> int:
+        """How many entries were learned for one game (every target and mode)."""
+        head = f"{prefix}|"
+        return sum(1 for k in self._entries if k.startswith(head)) + sum(1 for k in self._floors if k.startswith(head))
+
     def forget_game(self, prefix: str) -> int:
         """Forget everything learned for one game (every target and mode); returns how many entries."""
         head = f"{prefix}|"

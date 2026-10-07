@@ -646,6 +646,23 @@ class ReleaseTests(RuntimeBase):
         self.assertEqual(st["reason"], "new-game-session")
         self.assertIsNone(st["active_point"])
 
+    def test_panel_refresh_rate_caps_the_target_and_invalidates_point(self):
+        self.display.read_current_refresh_hz = lambda: None          # not readable: nothing changes
+        self.apply_45x2()
+        self.assertEqual(self.svc.get_status()["target_output_fps"], 90)
+        self.display.read_current_refresh_hz = lambda: 90
+        self.svc._last_display_poll = -1e9
+        st = self.step()
+        self.assertEqual(st["target_output_fps"], 90)
+        self.assertIsNotNone(st["active_point"])
+        self.display.read_current_refresh_hz = lambda: 60          # the player set the panel to 60 Hz
+        self.svc._last_display_poll = -1e9
+        st = self.step()
+        self.assertEqual(st["target_output_fps"], 60)
+        self.assertEqual(st["device"]["target_reason"], "panel-running-60hz")
+        self.assertEqual(st["reason"], "display-mode-changed")
+        self.assertIsNone(st["active_point"])
+
     def test_dock_switch_invalidates_point(self):
         self.apply_45x2()
         self.display.external = True
@@ -1122,6 +1139,59 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertIsNone(svc.game_models.get(mine))
         self.assertIsNotNone(svc.game_models.get(other))
         self.assertFalse(svc.forget_game_model("")["success"])
+
+    def test_forget_game_model_names_the_game_or_refuses(self):
+        svc = self.svc
+        from gfg_plugin.game_model import context_key
+        svc._settings.pop("last_session", None)
+        self.assertIsNone(svc.game_model_target("Default"))
+        r = svc.forget_game_model("Default")
+        self.assertEqual((r["success"], r["error"]), (False, "no-game-identified"), "never a silent success")
+        # The shared Default profile: the last game played under it, named by AppID before the reset.
+        svc._settings["last_session"] = {"profile": "Default", "app_id": "570"}
+        self.assertEqual(svc.game_model_target("Default"), {"profile": "Default", "app_id": "570", "game": "app:570"})
+        self.assertIsNone(svc.game_model_target("other"), "another profile's last game is not this one's")
+        # No AppID: only what was stored under the profile itself, and only when there is something.
+        svc.game_models.record(context_key("other", 90, "budget"), "30x3", 9.0)
+        self.assertEqual(svc.game_model_target("other"), {"profile": "other", "app_id": "", "game": "other"})
+        self.assertEqual(svc.forget_game_model("other")["forgotten"], 1)
+        self.assertIsNone(svc.game_model_target("other"))
+
+    def test_forget_game_model_runs_on_the_event_loop(self):
+        import asyncio
+        from unittest import mock
+        from gfg_plugin import plugin as plugin_module
+        fake = mock.Mock()
+        fake.governor_service.forget_game_model.return_value = {"success": True}
+        with mock.patch.object(asyncio, "to_thread", side_effect=AssertionError("worker thread")):
+            r = asyncio.run(plugin_module.Plugin.forget_governor_game_model(fake, "game"))
+        self.assertEqual(r, {"success": True})
+        fake.governor_service.forget_game_model.assert_called_once_with("game")
+
+    def test_queued_failures_survive_a_mode_switch_and_game_exit(self):
+        from gfg_plugin.game_model import context_key, floor_key
+        self.inspector.info["app_id"] = "292030"
+        for leave in ("mode", "relaunch"):
+            self.svc.game_models.forget_game("app:292030")
+            self.svc.set_mode("game", "budget")
+            self.inspector.info["running"] = True
+            self.svc._launch_polled = -1e9
+            self.feed(20, 45, 90)
+            self.step()
+            b = self.svc._budget
+            self.assertIsNotNone(b, leave)
+            b.new_failures.append(("33x2.75", 10.0))             # queued, not yet drained
+            b.new_floor_failures.append(("30x3", 8.0, 1))
+            if leave == "mode":
+                self.svc.set_mode("game", "quality")
+            else:                                                 # the game exits, the next one starts
+                self.inspector.info["launch_key"] = [7, 7, 7]
+                self.svc._launch_polled = -1e9
+            self.step()
+            self.assertIsNone(self.svc._budget, leave)
+            self.assertIn("33x2.75", self.svc.game_models.failures(context_key("game", 90, "budget", "292030")),
+                          f"{leave}: stored under the mode it failed in")
+            self.assertIn("30x3", self.svc.game_models.floor_failures(floor_key("game", 90, "292030")), leave)
 
     def test_forget_game_model_clears_the_live_controller(self):
         self.inspector.info["app_id"] = "292030"

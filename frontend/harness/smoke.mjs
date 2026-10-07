@@ -23,17 +23,19 @@ const cases = [
   ["budget-memory", ["Details"], ["Verifying", "×3 — the engine chose it", "Engine allows", "up to ×3", "Recently failed", "×2.75 at ≤10 W"]],
   ["home-loading", [], ["Waiting for the game to draw frames"]],
   ["home-testing", [], ["Testing ×2.75", "a few seconds"]],
-  ["home-last-session", [], ["LAST SESSION", "42 min", "90 FPS avg (30 real)", "10.6 W avg · limit 15 W", "~4.4 W on average", "83 °C · warm 12% of the time", "Stutter", "3% of the time"]],
+  ["home-last-session", [], ["LAST SESSION", "42 min", "90 FPS avg (30 real)", "10.6 W avg · limit 15 W", "~4.4 W under your limit on average", "83 °C · warm 12% of the time", "Stutter", "3% of the time"]],
   ["home-cooling", [], ["Cooling · 8 W", "only tries lower watts"]],
   ["home-cooling", ["Details"], ["Heat", "on hold until the APU cools", "Lower resolution", "Scale-ready launch"]],
   ["home-history", ["Details"], ["RECENT SESSIONS", "29 min · Battery", "90 FPS · 10.7 W · 77 °C", "12 min · Quality", "88 FPS · 19.4 W"]],
   ["home-saving", [], ["SAVING", "6 W under your 15 W limit"]],
   ["home-effort-reason", [], ["GFG EFFORT", "HARD", "x3 required"]],
   ["frame-os-no-layer", ["Settings", "Diagnostics"], ["FRAME OS (EXPERIMENTAL)", "Frame OS layer not installed: this build does not include the Frame OS layer."]],
-  ["home-last-session-mixed", [], ["LAST SESSION", "Modes", "Battery 18m · Balanced 13m", "Energy saved", "~2.3 Wh · ~14 min more battery"]],
+  ["home-last-session-mixed", [], ["LAST SESSION", "Modes", "Battery 18m · Balanced 13m", "Energy saved", "~2.3 Wh measured · ~14 min more battery"]],
   ["home-last-session-mixed", ["Details"], ["RECENT SESSIONS", "31 min · Battery 18m · Balanced 13m"]],
-  ["home-idle-oled", ["Settings", "Diagnostics"], ["Reset what GFG learned for this game", "Starts the next search from scratch"]],
-  ["home-idle-oled", ["Settings", "Diagnostics", "Reset what GFG learned for this game"], ["Tap again to forget", "This cannot be undone"]],
+  ["home-idle-oled", ["Settings", "Diagnostics"], ["Reset what GFG learned for Sample Game", "Starts the next search from scratch"]],
+  ["home-idle-oled", ["Settings", "Diagnostics", "Reset what GFG learned for Sample Game"], ["Tap again to forget", "remembered for Sample Game", "This cannot be undone"]],
+  ["home-paused-external-tdp", [], ["changed outside GFG", "In Battery and Balanced modes GFG takes it back"]],
+  ["home-no-model-game", ["Settings", "Diagnostics"], ["Reset what GFG learned for this game", "No game identified yet"]],
   ["home-cap-ignored", [], ["TDP limit overridden", "17.4 W", "another tool"]],
   ["home-quality-oled", ["Details"], ["×1 to ×3, steps of 0.25", "never above your own"]],
   ["home-quality-oled", [], ["fewest generated frames first"]],
@@ -88,9 +90,28 @@ for (const [state, nav, expected] of cases) {
   await page.close();
   cases.push(["text-field-back"]);
 }
+// A session above the user's limit (or from an older plugin) never shows a negative saving.
+{
+  const page = await openPage(browser, STATES["home-last-session-above-limit"]);
+  const text = await page.evaluate(() => document.body.innerText);
+  if (!text.includes("LAST SESSION")) { failed++; console.error(`FAIL above-limit session not shown`); }
+  for (const bad of ["-2.1", "Energy saved", "under your limit on average"]) if (text.includes(bad)) { failed++; console.error(`FAIL above-limit session shows "${bad}"`); }
+  await page.close();
+  cases.push(["last-session-above-limit"]);
+}
+// Frame OS mode: a refused change does not stay selected.
+{
+  const page = await openPage(browser, STATES["frame-os-refused"], ["Settings", "Diagnostics"]);
+  await page.getByText("Act", { exact: true }).first().click();
+  await page.waitForTimeout(150);
+  const on = await page.evaluate(() => [...document.querySelectorAll(".segb.on")].map((e) => e.textContent));
+  if (!on.includes("Off") || on.includes("Act")) { failed++; console.error(`FAIL frame os mode not rolled back: ${JSON.stringify(on)}`); }
+  await page.close();
+  cases.push(["frame-os-rollback"]);
+}
 // Reset what GFG learned: the first tap only asks, the second one forgets.
 {
-  const page = await openPage(browser, STATES["home-idle-oled"], ["Settings", "Diagnostics", "Reset what GFG learned for this game"]);
+  const page = await openPage(browser, STATES["home-idle-oled"], ["Settings", "Diagnostics", "Reset what GFG learned for Sample Game"]);
   const asked = await page.evaluate(() => (window.__forgets || []).length);
   await page.getByText("Tap again to forget", { exact: true }).first().click();
   await page.waitForTimeout(150);

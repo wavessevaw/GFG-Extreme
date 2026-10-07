@@ -72,17 +72,22 @@ class SessionStats:
         if not used and self.mode_s:
             top = max(self.mode_s, key=self.mode_s.get)
             used = {top: self.mode_s[top]}
+        # Cap below the user's limit; a cap above it (Balanced/emergency) is no saving.
         saved_w = round(self.reference_w - tdp, 1) if self.reference_w and tdp else None
-        # Energy, not just watts: the cap saved over the time played.  Battery minutes only when the
-        # battery's own discharge rate was measured (on a charger it is not).
-        saved_wh = round(saved_w * self.seconds / 3600.0, 2) if saved_w and saved_w > 0 else None
+        saved_w = saved_w if saved_w and saved_w > 0 else None
+        # Energy, not just watts: what the APU measurably drew below the user's limit over the time
+        # played (the cap alone says what was allowed, not what was used); left out without a draw
+        # sensor.  Battery minutes only when the battery's own discharge rate was measured.
+        draw = self._avg("draw")
+        draw_saved_w = self.reference_w - draw if self.reference_w and draw else None
+        saved_wh = round(max(0.0, draw_saved_w or 0.0) * self.seconds / 3600.0, 2) or None
         battery = self._avg("battery")
         result = {
             "minutes": round(self.seconds / 60.0, 1),
             "avg_output_fps": self._avg("output"),
             "avg_real_fps": self._avg("real"),
             "avg_tdp_w": tdp,
-            "avg_draw_w": self._avg("draw"),
+            "avg_draw_w": draw,
             "reference_w": self.reference_w,
             "saved_w": saved_w,
             "saved_wh": saved_wh,
