@@ -13,7 +13,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
 MAX_ENTRIES = 200
 MAX_AGE_S = 30 * 24 * 3600.0
@@ -86,15 +86,24 @@ class GameModelStore:
 
     # Session-scale: a point that failed in one scene can hold in a lighter one later, so a failure
     # only bridges controller restarts (mode switches, plugin reloads) within the same play session.
-    FAILURE_TTL_S = 15 * 60.0
+    FAILURE_TTL_S = 10 * 60.0  # == BudgetController.REJECT_TTL_S
 
-    def failures(self, key: str) -> Dict[str, float]:
-        """Points that did not hold for this game, with the highest TDP they failed at."""
+    def failures(self, key: str) -> Dict[str, Tuple[float, float]]:
+        """Points that did not hold for this game: key -> (highest TDP it failed at, age in seconds).
+
+        The age is returned (not just the TDP) so a reload keeps the *remaining* TTL instead of
+        restarting it; expired entries are not returned.
+        """
         entry = self._entries.get(key) or {}
         now = self.clock()
         raw = entry.get("failed") if isinstance(entry.get("failed"), dict) else {}
-        return {k: float(v[0]) for k, v in raw.items()
-                if isinstance(v, list) and len(v) == 2 and now - float(v[1]) <= self.FAILURE_TTL_S}
+        out: Dict[str, Tuple[float, float]] = {}
+        for k, v in raw.items():
+            if isinstance(v, list) and len(v) == 2:
+                age = max(0.0, now - float(v[1]))
+                if age < self.FAILURE_TTL_S:
+                    out[k] = (float(v[0]), age)
+        return out
 
     def record_failure(self, key: str, point: str, tdp_w: Optional[float]) -> bool:
         """Remember 'point did not hold at tdp_w' (keeps the highest TDP it failed at)."""

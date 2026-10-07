@@ -53,14 +53,43 @@ class GameIdentityAndFailureTests(unittest.TestCase):
             key = context_key("mako", 90, "budget", "292030")
             self.assertTrue(store.record_failure(key, "33x2.75", 10.0))
             store.record_failure(key, "33x2.75", 9.0)            # keeps the highest TDP it failed at
-            self.assertEqual(store.failures(key), {"33x2.75": 10.0})
+            self.assertEqual(store.failures(key), {"33x2.75": (10.0, 0.0)})
             self.assertIsNone(store.get(key), "a failure alone is nothing to start from")
             now["t"] += 61
             store.record(key, "30x3", 10.0)
             self.assertEqual(store.get(key)["point"], "30x3")
-            self.assertEqual(store.failures(key), {"33x2.75": 10.0})  # kept by record()
+            self.assertEqual(store.failures(key), {"33x2.75": (10.0, 61.0)})  # kept by record(), age kept
             now["t"] += GameModelStore.FAILURE_TTL_S + 1
             self.assertEqual(store.failures(key), {})
+
+
+class FailureTtlAcrossReloadTests(unittest.TestCase):
+    """PR #40 review: a reload must keep the remaining TTL, not start a new 15 minutes."""
+
+    def test_reload_after_7_minutes_leaves_about_3(self):
+        with tempfile.TemporaryDirectory() as t:
+            wall = {"t": 50_000.0}
+            path = Path(t) / "m.json"
+            key = context_key("mako", 90, "budget", "292030")
+            GameModelStore(path, clock=lambda: wall["t"]).record_failure(key, "33x2.75", 10.0)
+            wall["t"] += 7 * 60
+            failures = GameModelStore(path, clock=lambda: wall["t"]).failures(key)   # plugin reload
+            c = BudgetController(target_output_fps=90, now=7.0, min_tdp_w=3, max_tdp_w=20)
+            c.load_failures(failures, 7.0)
+            c.tdp = 10.0
+            up = next(i for i, p in enumerate(c.points) if p.key == "33x2.75")
+            self.assertFalse(c._upgrade_allowed(up, 7.0))
+            self.assertFalse(c._upgrade_allowed(up, 7.0 + 2 * 60))
+            self.assertTrue(c._upgrade_allowed(up, 7.0 + 3 * 60 + 1), "expired at the original 10 min")
+
+    def test_reload_after_expiry_restores_nothing(self):
+        with tempfile.TemporaryDirectory() as t:
+            wall = {"t": 50_000.0}
+            path = Path(t) / "m.json"
+            key = context_key("mako", 90, "budget", "292030")
+            GameModelStore(path, clock=lambda: wall["t"]).record_failure(key, "33x2.75", 10.0)
+            wall["t"] += GameModelStore.FAILURE_TTL_S + 1
+            self.assertEqual(GameModelStore(path, clock=lambda: wall["t"]).failures(key), {})
 
 
 class WarmStartTests(unittest.TestCase):

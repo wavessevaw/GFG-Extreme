@@ -725,6 +725,7 @@ class BudgetController:
     RECOVER_S = 60.0       # giving back what the guard spent is not a new experiment
     RECOVER_MAX_S = 300.0
     REJECT_TTL_S = 600.0
+    FAILURE_TTL_S = REJECT_TTL_S  # failures loaded from game memory expire like in-session rejections
     MAX_REQUEST_FAILURES = 4
 
     def __init__(
@@ -1028,7 +1029,7 @@ class BudgetController:
         if not self._usable(i, now):
             return False
         known = self.known_failures.get(self.points[i].key)
-        if known is None or now - known[1] >= self.REJECT_TTL_S:
+        if known is None or now - known[1] >= self.FAILURE_TTL_S:
             return True
         return not (self.tdp is not None and self.tdp <= known[0] + 0.05)
 
@@ -1040,10 +1041,15 @@ class BudgetController:
         self.known_failures[point.key] = (worst, now)
         self.new_failures.append((point.key, worst))
 
-    def load_failures(self, failures: Dict[str, float], now: float) -> None:
-        """Recent failures of this game from game memory (already filtered by age)."""
-        for key, tdp in failures.items():
-            self.known_failures[key] = (float(tdp), now)
+    def load_failures(self, failures: Dict[str, Any], now: float) -> None:
+        """Recent failures of this game from game memory: key -> (tdp, age_s).
+
+        Anchored at ``now - age`` so the original expiry is kept across reloads (PR #40 review:
+        re-anchoring at ``now`` turned the TTL into a sliding one).
+        """
+        for key, value in failures.items():
+            tdp, age = value if isinstance(value, (tuple, list)) else (value, 0.0)
+            self.known_failures[key] = (float(tdp), now - float(age))
 
     def _upgrade(self, now: float) -> str:
         if self.cap_ignored and self.idx >= self.comfort_idx:

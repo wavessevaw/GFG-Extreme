@@ -533,14 +533,14 @@ class FailureMemoryTests(unittest.TestCase):
         self.assertEqual(c.new_failures, [("33x2.75", 10.0)])
 
         fresh = BudgetController(target_output_fps=90, now=100.0, min_tdp_w=3, max_tdp_w=20)
-        fresh.load_failures({"33x2.75": 10.0}, 100.0)
+        fresh.load_failures({"33x2.75": (10.0, 0.0)}, 100.0)
         up = next(i for i, p in enumerate(fresh.points) if p.key == "33x2.75")
         fresh.tdp = 10.0
         self.assertFalse(fresh._upgrade_allowed(up, 100.0))
         fresh.tdp = 11.0
         self.assertTrue(fresh._upgrade_allowed(up, 100.0), "more watts: worth trying again")
         fresh.tdp = 10.0
-        self.assertTrue(fresh._upgrade_allowed(up, 100.0 + fresh.REJECT_TTL_S), "a lighter scene later")
+        self.assertTrue(fresh._upgrade_allowed(up, 100.0 + fresh.FAILURE_TTL_S), "a lighter scene later")
 
 
 class GeneratedCapacityLimitTests(unittest.TestCase):
