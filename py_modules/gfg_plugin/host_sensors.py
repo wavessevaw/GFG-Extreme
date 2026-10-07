@@ -188,7 +188,8 @@ class HostSensors:
             if power is None:
                 current, voltage = _num(supply / "current_now"), _num(supply / "voltage_now")
                 power = current * voltage / 1e6 if current is not None and voltage is not None else None
-            if power is not None:
+            charging = str(out["battery_status"] or "").lower() in ("charging", "full")
+            if power is not None and not charging:  # a charging battery's power is not the game's draw
                 out["battery_discharge_w"] = round(abs(power) / 1e6, 2)  # power is in µW here
             break
         return out

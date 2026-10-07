@@ -383,14 +383,18 @@ class SessionRecorder:
         add("overlay config published (active.conf)", (hud / "active.conf").is_file(), str(hud / "active.conf"))
         add("overlay status line file present", (hud / "status.txt").is_file(), str(hud / "status.txt"))
         for index, path in enumerate(self.diagnostics_paths):
-            present = path.is_file()
+            try:  # one stat: the wrapper may rotate the log between two calls
+                size = path.stat().st_size if path.is_file() else None
+            except OSError:
+                size = None
+            present = size is not None
             if index == 0:
                 add(f"renderer diagnostics log: {path.name}", present,
-                    f"{path.stat().st_size} bytes" if present else "missing")
+                    f"{size} bytes" if present else "missing")
             else:
                 # Legacy RAM fallback: the renderer writes it only on old setups.  Missing is normal.
                 add(f"optional diagnostics fallback: {path.name}", True,
-                    f"{path.stat().st_size} bytes" if present else "not used (normal)")
+                    f"{size} bytes" if present else "not used (normal)")
         marker = self.runtime_state_dir / "governor-diagnostics.enabled"
         add("Governor diagnostics marker present", marker.is_file(), str(marker))
         # The wrapper silently skips diagnostics when the log or a rotation is
@@ -454,7 +458,7 @@ class SessionRecorder:
             "decky_plugins": sorted(p.name for p in (self.user_home / "homebrew" / "plugins").glob("*"))
             if (self.user_home / "homebrew" / "plugins").is_dir() else [],
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme 1.0.7 (engine 4.0.0-gfg.4)",
+            "plugin_version": "GFG Extreme 1.0.8 (engine 4.0.0-gfg.4)",
         }
 
     def _write_bundle(self) -> Path:
@@ -463,6 +467,23 @@ class SessionRecorder:
         stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(self.clock()))
         target = out_dir / f"GFG-Extreme-log-{stamp}.zip"
         tmp = target.with_suffix(".zip.part")
+        try:
+            self._write_bundle_to(tmp, target)
+        except BaseException:
+            try:
+                tmp.unlink()  # no half-written .zip.part left on the Desktop
+            except OSError:
+                pass
+            raise
+        if self._timeline is not None:
+            try:
+                self._timeline.unlink()  # it is inside the zip now
+                self._timeline = None
+            except OSError:
+                pass
+        return target
+
+    def _write_bundle_to(self, tmp: Path, target: Path) -> None:
         with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as bundle:
             bundle.writestr("README.txt", (
                 "GFG Extreme diagnostic log.\n"
@@ -550,4 +571,3 @@ class SessionRecorder:
             os.chmod(target, 0o644)
         except OSError:
             pass
-        return target

@@ -8,6 +8,7 @@ Governor ownership.
 from __future__ import annotations
 
 import os
+import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -102,6 +103,20 @@ class SteamDeckPowerActuator:
         self._slow_path: Optional[Path] = None
         self._draw_path: Optional[Path] = None
         self._keep_initial = False
+        # One writer at a time: an unload restore must not be overtaken by a slow write that was
+        # already running in a worker thread (audit 1.0.8).  ``_closed`` refuses writes after it.
+        self._lock = threading.RLock()
+        self._closed = False
+
+    def reopen(self) -> None:
+        with self._lock:
+            self._closed = False
+
+    def shutdown(self) -> Dict[str, Any]:
+        """Plugin stop: wait for any write in flight, put the user's caps back, refuse later writes."""
+        with self._lock:
+            self._closed = True
+            return self.restore_if_owned()
 
     @staticmethod
     def _candidate_hwmons(drm_root: Path, hwmon_root: Path) -> Iterable[Path]:
@@ -237,7 +252,10 @@ class SteamDeckPowerActuator:
                 pass
 
     def claim(self) -> Dict[str, Any]:
-        result = self._claim()
+        with self._lock:
+            if self._closed:
+                return self.status()
+            result = self._claim()
         self._note("tdp-claim", owned=result.get("owned"), available=result.get("available"),
                    writable=result.get("writable"), current_w=result.get("current_tdp_w"),
                    error=result.get("error"))
@@ -367,7 +385,10 @@ class SteamDeckPowerActuator:
         self.state.ceiling_override_uw = value
 
     def set_tdp_w(self, watts: float) -> Dict[str, Any]:
-        result = self._set_tdp_w(watts)
+        with self._lock:
+            if self._closed:
+                return {"success": False, "error": "power control closed", "state": self.status()}
+            result = self._set_tdp_w(watts)
         state = result.get("state") or {}
         self._note("tdp-write", requested_w=watts, success=result.get("success"), error=result.get("error"),
                    observed_w=state.get("observed_tdp_w"), observed_fast_w=state.get("observed_fast_w"),
@@ -399,6 +420,11 @@ class SteamDeckPowerActuator:
         if failure is not None:
             kind, error = failure
             self.state.error = error
+            if kind == "write-failed":
+                # A half-done write (slow written, fast refused) is still ours: track what the caps
+                # read now, so the next check does not call it an outside change and skip restore.
+                self.state.expected_slow_uw = _read_int(self._slow_path)
+                self.state.expected_fast_uw = _read_int(self._fast_path)
             if kind == "unverified":
                 self.state.owned = False
                 # Our own write failed, nobody else touched the caps: a re-claim in
@@ -409,7 +435,8 @@ class SteamDeckPowerActuator:
         return {"success": True, "error": None, "state": self.status()}
 
     def restore_if_owned(self) -> Dict[str, Any]:
-        result = self._restore_if_owned()
+        with self._lock:
+            result = self._restore_if_owned()
         if result.get("restored") or not result.get("success", True):
             self._note("tdp-restore", restored=result.get("restored"), reason=result.get("reason"),
                        error=result.get("error"), observed_w=(result.get("state") or {}).get("observed_tdp_w"))
@@ -417,8 +444,12 @@ class SteamDeckPowerActuator:
 
     def _restore_if_owned(self) -> Dict[str, Any]:
         if not self.state.owned:
-            return {"success": True, "restored": False, "reason": "not-owned", "state": self.status()}
-        if not self._verify_ownership():
+            # Our own write did not verify (ownership dropped, nobody else touched the caps):
+            # the user's values must still come back (audit 1.0.8).
+            if not (self._keep_initial and self.state.initial_slow_uw and self.state.initial_fast_uw
+                    and self._fast_path is not None and self._slow_path is not None):
+                return {"success": True, "restored": False, "reason": "not-owned", "state": self.status()}
+        elif not self._verify_ownership():
             return {"success": True, "restored": False, "reason": "external-change", "state": self.status()}
         assert self._fast_path is not None and self._slow_path is not None
         assert self.state.initial_fast_uw is not None and self.state.initial_slow_uw is not None
@@ -435,9 +466,10 @@ class SteamDeckPowerActuator:
 
     def verify_ownership(self) -> Dict[str, Any]:
         """Check that external Steam/QAM tooling has not changed our caps."""
-        if self.state.owned:
-            self._verify_ownership()
-        return self.status()
+        with self._lock:
+            if self.state.owned:
+                self._verify_ownership()
+            return self.status()
 
     def status(self) -> Dict[str, Any]:
         value = self.state.to_dict()

@@ -54,6 +54,21 @@ for (const [state, nav, expected] of cases) {
   for (const e of page.__errors) { failed++; console.error(`FAIL ${state}: page error ${e}`); }
   await page.close();
 }
+// Text settings are saved on Enter / blur, never per keystroke.
+{
+  const page = await openPage(browser, STATES["home-locked-oled"], ["Settings", "All settings"]);
+  const field = page.locator("input[data-tf]").first();
+  await field.click();
+  await field.type("abc");
+  const typed = await page.evaluate(() => window.__patches.length);
+  await field.press("Enter");
+  await page.waitForTimeout(100);
+  const saved = await page.evaluate(() => window.__patches);
+  if (typed !== 0) { failed++; console.error(`FAIL text field saved ${typed} times while typing`); }
+  if (saved.length !== 1 || saved[0].dll !== "abc") { failed++; console.error(`FAIL text field commit: ${JSON.stringify(saved)}`); }
+  await page.close();
+  cases.push(["text-field-commit"]);
+}
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);
 process.exit(failed ? 1 : 0);

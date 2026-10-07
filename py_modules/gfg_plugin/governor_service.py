@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.0.7).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.0.8).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -54,7 +54,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.0.7"
+VERSION = "1.0.8"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -674,6 +674,9 @@ class GovernorService:
             await asyncio.to_thread(self._sync_hud_presence)
         except OSError as error:
             self.log.debug("Governor could not prepare the hidden HUD config: %s", error)
+        reopen = getattr(self.power, "reopen", None)
+        if callable(reopen):
+            reopen()
         await asyncio.to_thread(self.power.discover)
         self._wake = asyncio.Event()
         self._wake_loop = asyncio.get_running_loop()
@@ -716,7 +719,10 @@ class GovernorService:
                 self._event("overlay-restore-failed", "plugin-stop", profile=profile, error=error)
         self._reset_run_state()
         try:
-            result = await asyncio.to_thread(self.power.restore_if_owned)
+            # shutdown(): waits for a write still running in a worker thread, then restores and
+            # refuses later writes, so a slow write cannot land after the restore.
+            shutdown = getattr(self.power, "shutdown", None)
+            result = await asyncio.to_thread(shutdown if callable(shutdown) else self.power.restore_if_owned)
             if result.get("restored"):
                 self._event("power-restored", "plugin-stop")
         except Exception as error:
@@ -1376,7 +1382,7 @@ class GovernorService:
     async def _budget_power(self, profile: str) -> Optional[Dict[str, Any]]:
         """Own the PPT caps for budget mode.  Returns limits, or None when observe-only on TDP."""
         power = self.power
-        if not power.state.available:
+        if not power.state.available and not await self._rediscover_power():
             return None
         if not power.state.owned:
             if self._external_at is not None:
@@ -1619,11 +1625,27 @@ class GovernorService:
         self._exhausted = True
         return ok
 
+    POWER_REDISCOVER_SECONDS = 30.0
+
+    async def _rediscover_power(self) -> bool:
+        """TDP control was probed only at plugin start; steamos-manager or the session bus may come
+        up later (audit 1.0.8).  Probe again, at most every 30 s."""
+        now = self._clock()
+        if now - getattr(self, "_power_probed_at", -1e9) < self.POWER_REDISCOVER_SECONDS:
+            return False
+        self._power_probed_at = now
+        try:
+            await asyncio.to_thread(self.power.discover)
+        except Exception as error:
+            self.log.debug("Governor power rediscovery failed: %s", error)
+            return False
+        return bool(self.power.state.available)
+
     async def _power_step(self, profile: str, summary: Dict[str, Any]) -> None:
         point = self._point
         assert point is not None
         health_ratio = self.CAP_BOUND_HEALTH_RATIO if self._point_mode == "applied" else self.UNCAPPED_HEALTH_RATIO
-        if not self.power.state.available:
+        if not self.power.state.available and not await self._rediscover_power():
             reason = "tdp-control-not-writable" if self.power.state.fast_cap_path else "tdp-control-unavailable"
             self._status.update({"state": "OBSERVE_ONLY", "reason": reason})
             return

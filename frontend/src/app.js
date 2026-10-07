@@ -222,7 +222,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
     await refresh(); setBusy(false);
   };
   const showLive = s.enabled && out != null;
-  const tdp = pw.observed_tdp_w != null ? pw.observed_tdp_w : pw.current_w;
+  const tdp = pw.observed_tdp_w != null ? pw.observed_tdp_w : pw.current_tdp_w;
   const eff = s.effort && s.effort.level;
   const mins = s.battery && s.battery.minutes_left;
   const cap0 = (s.capability && s.capability.reason) || "";
@@ -256,7 +256,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
         h("b", { className: eff ? "lv " + eff : "lv" }, eff ? eff.toUpperCase() : "ASSESSING…")) : null,
       tdp != null ? h("div", { className: "power" }, h("div", { className: "r" }, h("span", null, "TDP NOW"), h("span", null, num(tdp, 0) + " W" + (left ? "  ·  " + left + " left" : ""))),
         pw.owned && pw.initial_tdp_w && pw.initial_tdp_w - tdp >= 1 ? h("div", { className: "r" }, h("span", null, "SAVING"), h("span", null, num(pw.initial_tdp_w - tdp, 0) + " W under your " + num(pw.initial_tdp_w, 0) + " W limit")) : null,
-        h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, (tdp / (pw.saved_w || 15)) * 100) + "%" } }))) : null),
+        h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, (tdp / (pw.initial_tdp_w || pw.maximum_tdp_w || 15)) * 100) + "%" } }))) : null),
     h(Focusable, { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? undefined : toggle },
       h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 18 }), busy ? "WORKING…" : missing ? "INSTALL ENGINE" : s.enabled ? "STOP" : "RUN"),
     h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : missing ? "The GFG engine is not installed yet. One tap installs it." : "Target " + target + " FPS · " + (dev.reason || "picked automatically for this screen")),
@@ -479,8 +479,7 @@ function AllSettingsPage({ back, cfg, patch }) {
       const set = (d) => (e) => { e.stopPropagation && e.stopPropagation(); const nv = Math.round((Number(v) + d) * 1000) / 1000; patch({ [n]: t === "integer" ? Math.round(nv) : nv }); };
       return h("div", { className: "step" }, h(Focusable, { className: "stepb", onClick: set(-st) }, "−"), h("div", { className: "v" }, String(v)), h(Focusable, { className: "stepb", onClick: set(st) }, "+"));
     }
-    const TF = window.DFL && window.DFL.TextField;
-    return TF ? h(TF, { value: String(v == null ? "" : v), onChange: (e) => patch({ [n]: e.target.value }) }) : h("div", { className: "val" }, String(v == null ? "" : v) || "–");
+    return h(DraftText, { value: v, onCommit: (text) => patch({ [n]: text }) });
   };
   return h(Page, { title: "All settings", onBack: back },
     h("div", { className: "list", style: { marginTop: 0 } }, names.map((n) =>
@@ -488,6 +487,28 @@ function AllSettingsPage({ back, cfg, patch }) {
         h("div", { className: "t" }, h("b", { style: { fontSize: 13 } }, n), h("span", { style: { whiteSpace: "normal" } }, desc[n] || "")),
         control(n)))),
     h(Note, { quiet: true }, "Values are validated by the engine. Saved profile only; Governor never writes here."));
+}
+
+// Text settings are saved on Enter or when the field loses focus, not per keystroke: a partial value
+// ("ls1-") is rejected by the engine, and every save rewrites the Saved config and live overlays.
+function DraftText({ value, onCommit }) {
+  const shown = String(value == null ? "" : value);
+  const [draft, setDraft] = useState(shown);
+  const [editing, setEditing] = useState(false);
+  const [err, setErr] = useState("");
+  useEffect(() => { if (!editing) setDraft(shown); }, [shown, editing]);
+  const commit = async () => {
+    setEditing(false);
+    if (draft === shown) return;
+    const r = await onCommit(draft);
+    if (r && r.success === false) { setErr(r.error || "Not accepted"); setDraft(shown); } else setErr("");
+  };
+  const TF = window.DFL && window.DFL.TextField;
+  if (!TF) return h("div", { className: "val" }, shown || "–");
+  return h("div", null,
+    h(TF, { value: draft, onChange: (e) => { setEditing(true); setDraft(e.target.value); }, onBlur: commit,
+            onKeyDown: (e) => { if (e.key === "Enter") commit(); } }),
+    err ? h("div", { className: "hint", style: { color: "#ff6b6b", textAlign: "left" } }, err) : null);
 }
 
 const RUNTIMES = [["23.08", "installed_23_08"], ["24.08", "installed_24_08"], ["25.08", "installed_25_08"]];
@@ -552,7 +573,13 @@ function Content() {
   useEffect(() => { if (profile) loadCfg(profile); }, [profile]);
   useEffect(() => { if (screen === "advanced") rpc.inspector(profile).then(setInsp).catch(() => {}); }, [screen]);
 
-  const patch = async (c) => { setCfg({ ...(cfg || {}), ...c }); try { await rpc.patch(profile, c); } catch (e) {} loadCfg(profile); };
+  const patch = async (c) => {
+    setCfg({ ...(cfg || {}), ...c });
+    let r = null;
+    try { r = await rpc.patch(profile, c); } catch (e) { r = { success: false, error: String((e && e.message) || e) }; }
+    loadCfg(profile);
+    return r;
+  };
   const pick = async (p) => { await rpc.setProfile(p); await loadProfiles(); setScreen("settings"); };
   const back = () => setScreen("home");
   const go = setScreen;

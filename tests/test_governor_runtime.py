@@ -1076,3 +1076,11 @@ class PointStateResetTests(RuntimeBase):
         self.svc._status["power_feedback"] = {"cap_w": 7.0, "draw_w": 7.1}   # left by Battery mode
         self.svc._update_sensors()
         self.assertEqual(self.svc._status["diagnosis"]["bottleneck"], "cpu")
+
+    def test_tdp_control_is_probed_again_when_it_was_missing_at_start(self):
+        power = self.svc.power
+        power.state.available = False
+        power.discover = lambda: setattr(power.state, "available", True) or power.status()
+        self.assertTrue(asyncio.run(self.svc._rediscover_power()))
+        power.state.available = False
+        self.assertFalse(asyncio.run(self.svc._rediscover_power()), "at most every 30 s")

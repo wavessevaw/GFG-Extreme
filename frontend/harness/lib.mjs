@@ -37,7 +37,8 @@ export const STATES = {
   "home-relaunch-dock": { ...base, enabled: true, state: "PLAN", device: dev("dock", 60), target_output_fps: 60, capability: { reason: "relaunch-required-for-governor-overlay" } },
 };
 const mockSrc = (state, extra) => `
-window.SP_REACT = React; window.DFL = { staticClasses: { Title: "t" }, Focusable: null };
+window.SP_REACT = React; window.DFL = { staticClasses: { Title: "t" }, Focusable: null, TextField: (p) => React.createElement("input", { ...p, "data-tf": "1" }) };
+window.__patches = [];
 window.__state = ${JSON.stringify(state)};
 window.__cfg = ${JSON.stringify(extra.cfg || { fg_backend: "gfg", multiplier: 2, })};
 var callable = (n) => async (...a) => ({ get_governor_status: () => window.__state, get_profiles: () => ({ profiles: ["Default", "Elden Ring", "Cyberpunk 2077"], current_profile: "Elden Ring" }),
@@ -46,7 +47,8 @@ var callable = (n) => async (...a) => ({ get_governor_status: () => window.__sta
   get_config_schema: () => ({ field_names: ['scaling_enabled','scaling_factor','multiplier','dll','allow_fp16'], field_types: { scaling_enabled: 'boolean', scaling_factor: 'float', multiplier: 'integer', dll: 'string', allow_fp16: 'boolean' }, defaults: { scaling_enabled: false, scaling_factor: 1.5, multiplier: 2, dll: '', allow_fp16: true }, descriptions: { scaling_enabled: 'restart-bound scaling engine switch', scaling_factor: 'output scaling factor from 1.0x to 2.0x', multiplier: 'fixed multiplier', dll: 'optional full path to Lossless.dll', allow_fp16: 'allow FP16 acceleration' } }),
   run_setup_check: () => window.__state.__setup || ({ success: true, total: 3, failed: 0, checks: [{ check: 'launch wrapper installed', ok: true }, { check: 'overlay config published (active.conf)', ok: true }, { check: 'TDP control: fastPPT/slowPPT cap writable', ok: true }] }),
   get_log_recording_status: () => window.__state.__log || {},
-  get_launch_option: () => ({ launch_option: "/home/deck/.local/bin/gfg %command%" }) }[n] || (() => ({ success: true })))();
+  get_launch_option: () => ({ launch_option: "/home/deck/.local/bin/gfg %command%" }),
+  update_profile_config_fields: (p, c) => { window.__patches.push(c); return { success: true }; } }[n] || (() => ({ success: true })))(...a);
 var definePlugin = (f) => f;`;
 
 export async function openPage(browser, state, nav = [], extra = {}) {
