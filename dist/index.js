@@ -461,6 +461,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
         "div",
         { className: "power" },
         h("div", { className: "r" }, h("span", null, "TDP NOW"), h("span", null, num(tdp, 0) + " W" + (left ? "  \xB7  " + left + " left" : ""))),
+        pw.owned && pw.ceiling_tdp_w && pw.ceiling_tdp_w - tdp >= 1 ? h("div", { className: "r" }, h("span", null, "SAVING"), h("span", null, num(pw.ceiling_tdp_w - tdp, 0) + " W under your " + num(pw.ceiling_tdp_w, 0) + " W limit")) : null,
         h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, tdp / (pw.saved_w || 15) * 100) + "%" } }))
       ) : null
     ),
@@ -481,6 +482,23 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
     } }),
     h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
     health ? h("div", { className: "hint" }, health) : null,
+    !s.session && s.last_session ? h(
+      "div",
+      { className: "card" },
+      h("div", { className: "sec" }, "LAST SESSION"),
+      h(
+        "div",
+        { className: "kv" },
+        h("span", null, "Played"),
+        h("b", null, num(s.last_session.minutes, 0) + " min"),
+        h("span", null, "Frames on screen"),
+        h("b", null, num(s.last_session.avg_output_fps, 0) + " FPS avg (" + num(s.last_session.avg_real_fps, 0) + " real)"),
+        h("span", null, "Power"),
+        h("b", null, s.last_session.avg_tdp_w != null ? num(s.last_session.avg_tdp_w, 1) + " W avg" + (s.last_session.reference_w ? " \xB7 limit " + num(s.last_session.reference_w, 0) + " W" : "") : "\u2013"),
+        s.last_session.saved_w ? h("span", null, "Saved") : null,
+        s.last_session.saved_w ? h("b", null, "~" + num(s.last_session.saved_w, 1) + " W on average") : null
+      )
+    ) : null,
     needsLaunch ? h("div", null, h("div", { className: "sec" }, "START THE GAME WITH THIS LAUNCH OPTION"), h(LaunchCopy, { launch })) : null,
     troubled && problems.length ? h("div", { className: "card" }, h("div", { className: "sec" }, "LIKELY CAUSE"), ...problems.map((c, i) => h("div", { key: i, className: "hint", style: { textAlign: "left" } }, "\u2022 " + c.advice))) : null,
     troubled ? h("div", { className: "list" }, h(Row, { icon: "play", title: problems.length ? "Check setup" : "Something wrong? Record a log", sub: "Settings \u2192 Diagnostics", onClick: () => go(problems.length ? "setup" : "advanced") })) : null,

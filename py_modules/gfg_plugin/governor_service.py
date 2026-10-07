@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.0.2).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.0.3).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -38,6 +38,7 @@ from .governor_core import (
 from .governor_battery import BatteryEstimator, read_battery
 from .steamos_tdp import SteamOSManagerTdp
 from .game_model import GameModelStore, context_key
+from .session_stats import SessionStats
 from .host_sensors import HostSensors, diagnose
 from .governor_hud import HudWriter, normalize as hud_normalize, output_fps as hud_output_fps
 from .governor_overlay import (
@@ -53,7 +54,7 @@ from .governor_telemetry import TelemetryObserver
 
 APPLIED_OPERATIONS = frozenset({"runtime-state-applied", "runtime-transition-applied"})
 FAILED_OPERATIONS = frozenset({"runtime-transition-failed"})
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 
 
 @dataclass
@@ -144,6 +145,7 @@ class GovernorService:
         self.activity: Any = None  # ActivityLog, set by the plugin
         self._journal_state: tuple = ()
         self._journal_game: Optional[tuple] = None
+        self.session_stats = SessionStats()
         self.sensors = HostSensors()
         self.game_models = GameModelStore(self.configuration.config_dir / "gfg-game-models.json")
         self.power = SteamDeckPowerActuator(manager=SteamOSManagerTdp(home=os.environ.get("HOME")))
@@ -752,6 +754,8 @@ class GovernorService:
         value["scale_ready"] = self._scale_ready(profile or value.get("profile", ""))
         value["hud"] = self.hud_settings(profile or value.get("profile", ""))
         value["effort"] = self._effort.status()
+        value["session"] = self.session_stats.summary()
+        value["last_session"] = self._settings.get("last_session")
         value["power"] = self.power.status()
         value["power_search"] = self.search.status.to_dict()
         value["request"] = self._request.to_dict() if self._request else None
@@ -1064,6 +1068,38 @@ class GovernorService:
     def _journal_power(self, kind: str, **fields: Any) -> None:
         self._journal(kind, profile=self._status.get("profile"), **fields)
 
+    def _sample_session(self) -> None:
+        """One time-weighted sample for the player's session summary (fresh telemetry only)."""
+        if self.session_stats.started is None or not self._status.get("enabled"):
+            return
+        tel = self._status.get("telemetry") or {}
+        snap, summary = tel.get("snapshot") or {}, tel.get("summary") or {}
+        if not snap.get("available") or (snap.get("sample_age_ms") or 1e9) > self.MAX_SAMPLE_AGE_MS:
+            self.session_stats.last = self._clock()  # loading screen / menu: not part of the averages
+            return
+        try:
+            power = self.power.status()
+        except Exception:
+            power = {}
+        self.session_stats.add(
+            self._clock(),
+            output=(summary.get("output") or {}).get("median"),
+            real=(summary.get("real") or {}).get("median"),
+            tdp=power.get("observed_tdp_w"), draw=power.get("draw_w"),
+            reference_w=power.get("ceiling_tdp_w") if power.get("owned") else None,
+        )
+
+    def _finish_session(self, profile: Any) -> None:
+        result = self.session_stats.finish()
+        if result is None:
+            return
+        result.update({"ended": time.time(), "profile": profile or ""})
+        self._settings["last_session"] = result
+        try:
+            self._save_settings()
+        except OSError as error:
+            self.log.debug("Session summary not stored: %s", error)
+
     def _journal_transitions(self) -> None:
         status = self._status
         key = (status.get("enabled"), status.get("state"), status.get("reason"))
@@ -1076,7 +1112,10 @@ class GovernorService:
             return
         game = tuple(launch.get("launch_key") or ()) if launch.get("running") else None
         if game != self._journal_game:
+            if self._journal_game is not None:
+                self._finish_session(status.get("profile"))
             if game is not None:
+                self.session_stats.start(game, self._clock())
                 self._journal("game-detected", profile=status.get("profile"), launch_key=list(game),
                               governor_launch=bool(launch.get("governor_launch")),
                               renderer_loaded=launch.get("renderer_loaded"))
@@ -1108,6 +1147,7 @@ class GovernorService:
         self._update_effort()
         self._update_battery()
         await asyncio.to_thread(self._update_sensors)
+        self._sample_session()
         profile = self._status.get("profile") or ""
         if profile:
             await asyncio.to_thread(self._sync_hud, profile)
