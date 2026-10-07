@@ -446,6 +446,7 @@ class PowerSearchState:
     min_tdp_w: Optional[float] = None
     ceiling_tdp_w: Optional[float] = None
     ceiling_failures: int = 0
+    bad_windows: int = 0
     reason: str = "not-started"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -505,14 +506,18 @@ class PowerSearch:
         the cap is unobservable, so callers pass a cap-bound ratio (< 1.0).
         """
         s = self.status
-        if s.state != "optimizing" or s.current_tdp_w is None:
+        if s.state not in ("optimizing", "locked", "guard") or s.current_tdp_w is None:
             return {"action": "none", "state": s.to_dict()}
+        if s.reason == "point-not-healthy-at-ceiling":
+            return {"action": "none", "state": s.to_dict()}  # the caller rejects the point
         if not isinstance(p5_fps, (int, float)) or not math.isfinite(float(p5_fps)):
-            s.reason = "insufficient-fresh-evidence"
+            s.reason = "insufficient-fresh-evidence" if s.state == "optimizing" else s.reason
             return {"action": "wait", "state": s.to_dict()}
         target = max(1.0, float(base_target_fps))
         p5 = float(p5_fps)
         healthy = p5 >= target * float(health_ratio) and int(hard_pressure) == 0 and int(misses) == 0
+        if s.state != "optimizing":
+            return self._watch_locked(healthy, p5 < target * 0.85)
 
         if not healthy:
             if s.last_good_tdp_w is None:
@@ -545,6 +550,32 @@ class PowerSearch:
         s.current_tdp_w = candidate
         s.reason = "testing-lower-power"
         return {"action": "set", "target_tdp_w": candidate, "state": s.to_dict()}
+
+    LOCKED_BAD_WINDOWS = 2
+
+    def _watch_locked(self, healthy: bool, severe: bool) -> Dict[str, Any]:
+        """After the search: a heavier scene gets watts back (up to the user's ceiling).
+
+        Without this a level found in a menu or a light scene stayed for the whole session
+        (audit 1.0.7): the search locked and nothing ever raised the cap again.
+        """
+        s = self.status
+        if healthy:
+            s.bad_windows = 0
+            return {"action": "none", "state": s.to_dict()}
+        s.bad_windows += 1
+        if s.bad_windows < self.LOCKED_BAD_WINDOWS and not severe:
+            return {"action": "none", "state": s.to_dict()}
+        s.bad_windows = 0
+        ceiling = float(s.ceiling_tdp_w if s.ceiling_tdp_w is not None else s.current_tdp_w)
+        if float(s.current_tdp_w) >= ceiling - 0.01:
+            s.state = "guard"
+            s.reason = "point-not-healthy-at-ceiling"
+            return {"action": "hold", "state": s.to_dict()}
+        result = self.guard_recovery(current_tdp_w=float(s.current_tdp_w), ceiling_tdp_w=ceiling, severe=severe)
+        s.state = "locked"  # watching again at the new level
+        result["state"] = s.to_dict()
+        return result
 
     def guard_recovery(self, *, current_tdp_w: float, ceiling_tdp_w: float, severe: bool = False) -> Dict[str, Any]:
         current = float(current_tdp_w)

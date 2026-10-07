@@ -1056,6 +1056,8 @@ class GovernorService:
         try:
             if self.diagnostics_log_path.stat().st_size > self.DIAGNOSTICS_LOG_MAX_BYTES:
                 os.truncate(self.diagnostics_log_path, 0)
+                if self.observer.path == self.diagnostics_log_path:
+                    self.observer.rewind_after_truncation()
                 self._event("diagnostics-log-truncated", "size-cap", limit=self.DIAGNOSTICS_LOG_MAX_BYTES)
         except OSError:
             pass
@@ -1646,9 +1648,8 @@ class GovernorService:
             health_ratio=health_ratio,
         )
         action = outcome.get("action")
-        if action == "wait":
-            # Judge the next window on fresh samples only.
-            self._evaluation_after_seq = self.observer.sample_seq
+        # Every window is judged once: the next one starts on fresh samples only.
+        self._evaluation_after_seq = self.observer.sample_seq
         if self.search.status.reason == "point-not-healthy-at-ceiling" and self._point_mode == "applied" \
                 and self._ladder is not None:
             # Governor chose this point and it cannot hold even at the user's
