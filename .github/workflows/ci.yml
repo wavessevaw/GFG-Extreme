@@ -20,6 +20,9 @@ jobs:
         run: |
           python3 scripts/check_generated_config.py
           python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Frame OS engine tests (scheduler core)
+        run: make -C engine/gfg-pacer test
+
       - name: Frontend build is committed and current
         run: |
           npm ci
