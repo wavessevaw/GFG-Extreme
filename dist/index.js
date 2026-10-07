@@ -894,6 +894,12 @@ function DraftText({ value, onCommit }) {
   useEffect(() => {
     if (!editing) setDraft(shown);
   }, [shown, editing]);
+  const pending = useRef({ editing: false, draft: shown, shown, onCommit });
+  pending.current = { editing, draft, shown, onCommit };
+  useEffect(() => () => {
+    const p = pending.current;
+    if (p.editing && p.draft !== p.shown) p.onCommit(p.draft);
+  }, []);
   const commit = async () => {
     setEditing(false);
     if (draft === shown) return;

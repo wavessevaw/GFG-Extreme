@@ -94,8 +94,35 @@ class GovernorPowerSearchTests(unittest.TestCase):
         search.evaluate(p5_fps=50, base_target_fps=45)                       # 15 -> 14
         search.evaluate(p5_fps=40, base_target_fps=45)                       # fails -> back to 15, locked
         self.assertEqual((search.status.state, search.status.current_tdp_w), ("locked", 15.0))
+        search.evaluate(p5_fps=20, base_target_fps=45)          # one hitch, however deep: not yet
+        self.assertEqual(search.status.state, "locked")
         search.evaluate(p5_fps=20, base_target_fps=45)
         self.assertEqual(search.status.reason, "point-not-healthy-at-ceiling")
+
+    def test_after_a_raise_the_search_walks_down_again(self):
+        """1.0.10: raises only ever went up, so marginal windows ratcheted the cap to the ceiling."""
+        search = PowerSearch()
+        search.begin(current_tdp_w=15, min_tdp_w=3, ceiling_tdp_w=15)
+        for _ in range(5):
+            search.evaluate(p5_fps=80, base_target_fps=45)    # walks down to 3 W and locks
+        search.evaluate(p5_fps=43, base_target_fps=45)
+        self.assertEqual(search.evaluate(p5_fps=43, base_target_fps=45)["target_tdp_w"], 5.0)
+        for _ in range(PowerSearch.RESEARCH_GOOD_WINDOWS):
+            search.evaluate(p5_fps=50, base_target_fps=45)
+        self.assertEqual((search.status.state, search.status.reason), ("optimizing", "re-searching-lower-power"))
+        lower = search.evaluate(p5_fps=50, base_target_fps=45)
+        self.assertEqual((lower["action"], lower["target_tdp_w"]), ("set", 4.0))
+        back = search.evaluate(p5_fps=40, base_target_fps=45)  # 4 W does not hold: back to 5, locked
+        self.assertEqual((back["target_tdp_w"], search.status.state), (5.0, "locked"))
+
+    def test_without_a_raise_a_locked_level_stays(self):
+        search = PowerSearch()
+        search.begin(current_tdp_w=15, min_tdp_w=3, ceiling_tdp_w=15)
+        search.evaluate(p5_fps=50, base_target_fps=45)
+        search.evaluate(p5_fps=40, base_target_fps=45)          # locked at 15 W, no raise
+        for _ in range(20):
+            self.assertEqual(search.evaluate(p5_fps=50, base_target_fps=45)["action"], "none")
+        self.assertEqual(search.status.state, "locked")
 
     def test_never_exceeds_user_ceiling_in_guard(self):
         search = PowerSearch()

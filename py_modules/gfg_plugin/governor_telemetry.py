@@ -385,6 +385,7 @@ class TelemetryObserver:
         same session.  A shrink seen by ``poll`` otherwise means a new game session (audit 1.0.7:
         the size cap released the operating point mid-game)."""
         self._offset = 0
+        self._partial = b""  # a fragment from before the cut must not glue onto the next line
 
     def poll(self) -> Dict[str, Any]:
         """Read only newly appended diagnostics bytes.
