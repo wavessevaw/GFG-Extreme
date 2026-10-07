@@ -99,6 +99,13 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(rep["failed_power_probes"], {"8 W": 2, "9 W": 5})
         self.assertIn("failed repeatedly at the same level (9 W x5)", "\n".join(rep["findings"]))
         self.assertIn("recorded with: GFG Extreme 1.0.0", render(rep))
+        self.assertTrue(rep["findings"][0].startswith("Recorded with 1.0.0; this report is from"))
+
+    def test_current_version_log_has_no_version_note(self):
+        from gfg_plugin.log_report import CURRENT_VERSION
+        rep = analyze(bundle({"timeline.jsonl": timeline(self.rows()),
+                              "system.json": json.dumps({"plugin_version": f"GFG Extreme {CURRENT_VERSION} (engine x)"})}))
+        self.assertFalse(any(f.startswith("Recorded with") for f in rep["findings"]))
 
 
 if __name__ == "__main__":
