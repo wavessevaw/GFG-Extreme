@@ -3,6 +3,8 @@ Base service class with common functionality.
 """
 
 import os
+import shlex
+import tempfile
 from pathlib import Path
 from typing import Any, Optional, TypeVar, Dict
 
@@ -144,7 +146,7 @@ class BaseService:
             alias = (
                 "#!/bin/bash\n"
                 "# gfg-legacy-launcher: alias of the renamed launcher; safe to delete\n"
-                f'exec "{self.mako_script_path}" "$@"\n'
+                f'exec {shlex.quote(str(self.mako_script_path))} "$@"\n'
             )
             write_managed_text_atomically(legacy, alias, 0o755, self.log)
         except OSError as error:
@@ -232,12 +234,22 @@ class BaseService:
                     self.log.debug(f"MAKO file already current: {path}")
                     return False
 
-            with open(path, "w", encoding="utf-8") as output:
-                output.write(content)
-                output.flush()
-                os.fsync(output.fileno())
-
-            path.chmod(mode)
+            # Atomic: a crash or power loss mid-save must not leave a torn file (a torn settings
+            # sidecar read as empty used to wipe every other profile's settings on the next save).
+            fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as output:
+                    output.write(content)
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.chmod(tmp, mode)
+                os.replace(tmp, path)
+            except BaseException:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
             self.log.info(f"Wrote to {path}")
             return True
         except (OSError, IOError, PermissionError) as error:

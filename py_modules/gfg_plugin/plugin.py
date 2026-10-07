@@ -217,6 +217,14 @@ class Plugin:
         )
         temp.replace(self._dock_state_path)
 
+    def _profile_exists(self, name: str) -> bool:
+        try:
+            response = self.configuration_service.get_profiles()
+        except Exception:
+            return True  # unknown: keep the snapshot
+        profiles = response.get("profiles") if isinstance(response, dict) else None
+        return not isinstance(profiles, list) or name in profiles
+
     def _clear_dock_state(self) -> None:
         try:
             self._dock_state_path.unlink(missing_ok=True)
@@ -248,6 +256,12 @@ class Plugin:
                     int(restore["target_fps"]),
                 )
             elif not result.get("success"):
+                if not await asyncio.to_thread(self._profile_exists, profile_name):
+                    # Deleted while docked: nothing left to restore, and a state that can never
+                    # clear would keep the display owned by Dock forever.
+                    self._clear_dock_state()
+                    decky.logger.info("Automatic Dock dropped the snapshot of deleted profile %s", profile_name)
+                    return
                 decky.logger.warning(
                     "Automatic Dock could not restore profile %s: %s",
                     profile_name,
@@ -264,6 +278,10 @@ class Plugin:
         state = self._read_dock_state()
         if state and state.get("profile") != profile_name:
             await self._restore_dock_profile(state)
+            if self._read_dock_state():
+                # The old profile was not restored: never take a new snapshot over it, the old
+                # handheld values would be lost for good.
+                return
             state = None
 
         if state is None:
@@ -969,9 +987,14 @@ class Plugin:
         Returns:
             ProfileResponse dict with success status
         """
-        return await asyncio.to_thread(
-            self.configuration_service.delete_profile, profile_name
-        )
+        async with self._dock_policy_lock:
+            result = await asyncio.to_thread(
+                self.configuration_service.delete_profile, profile_name
+            )
+            state = await asyncio.to_thread(self._read_dock_state)
+            if result.get("success") and state and state.get("profile") == profile_name:
+                await asyncio.to_thread(self._clear_dock_state)  # its handheld snapshot has no owner
+            return result
 
     async def rename_profile(
             self, old_name: str, new_name: str
@@ -985,9 +1008,16 @@ class Plugin:
         Returns:
             ProfileResponse dict with success status
         """
-        return await asyncio.to_thread(
-            self.configuration_service.rename_profile, old_name, new_name
-        )
+        async with self._dock_policy_lock:
+            result = await asyncio.to_thread(
+                self.configuration_service.rename_profile, old_name, new_name
+            )
+            state = await asyncio.to_thread(self._read_dock_state)
+            if result.get("success") and state and state.get("profile") == old_name:
+                # The Dock snapshot follows the profile, so undocking restores the renamed one.
+                state["profile"] = new_name
+                await asyncio.to_thread(self._write_dock_state, state)
+            return result
 
     async def capture_game_profile(
             self,
@@ -1419,7 +1449,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Extreme 1.0.8 started")
+        decky.logger.info("GFG Extreme 1.0.9 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""

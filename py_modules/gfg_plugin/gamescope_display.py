@@ -556,6 +556,7 @@ class GamescopeDisplayService(BaseService):
                     display_flags, valid_rates_array
             ):
                 state["display_flags"] = int(display_flags)
+                state["display_info_received"] = True
                 state["connector"] = (
                     _connector.decode("utf-8", errors="replace")
                     if _connector else ""
@@ -639,6 +640,11 @@ class GamescopeDisplayService(BaseService):
             self._roundtrip_with_timeout(display)
 
             valid_rates = state["valid_rates"]
+            if inspect_only and not state.get("display_info_received"):
+                # No active_display_info (DPMS off, suspend/resume, a mode transition): unknown is
+                # not "external".  Callers fail closed instead of retargeting a handheld to 60 FPS.
+                return {"success": False, "applied": False,
+                        "error": "Gamescope sent no active display info"}
             if inspect_only:
                 display_flags = int(state.get("display_flags", 0))
                 return {

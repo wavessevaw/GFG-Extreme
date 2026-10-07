@@ -2,6 +2,7 @@
 Installation service for GFG Engine.
 """
 
+import time
 import shutil
 import traceback
 import tarfile
@@ -1086,6 +1087,19 @@ class InstallationService(BaseService):
             vkbasalt_changed
         )
 
+    def _backup_unreadable_config(self) -> Optional[Path]:
+        """Copy a config that could not be merged to ``conf.toml.bak-<time>`` before defaults replace it."""
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        backup = self.config_file_path.with_name(f"{self.config_file_path.name}.bak-{stamp}")
+        try:
+            shutil.copy2(self.config_file_path, backup)
+            return backup
+        except OSError as error:
+            raise OSError(
+                f"GFG Engine configuration at {self.config_file_path} could not be read and could not be "
+                f"backed up ({error}); installation stopped so your profiles are not lost."
+            ) from error
+
     def _create_config_file(self) -> None:
         """Create or update this plugin's private TOML config with detected DLL path.
 
@@ -1122,10 +1136,12 @@ class InstallationService(BaseService):
                 toml_content = ConfigurationManager.generate_toml_content_multi_profile(merged_profile_data)
 
             except Exception as error:
+                # Never drop the user's profiles silently: keep the file next to the new one.
+                backup = self._backup_unreadable_config()
                 self.log.warning(
                     "GFG Extreme: Could not read or merge configuration at %s: %s; "
-                    "replacing it with defaults",
-                    self.config_file_path, error,
+                    "replacing it with defaults (previous file kept at %s)",
+                    self.config_file_path, error, backup,
                 )
                 config = ConfigurationManager.get_defaults_with_dll_detection(dll_service)
                 toml_content = ConfigurationManager.generate_toml_content(config)
