@@ -826,6 +826,26 @@ class BudgetRuntimeTests(RuntimeBase):
         st = self.step()
         self.assertIsNotNone(st["request"])
 
+    def test_session_summary_is_kept_after_the_game_exits(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        for _ in range(40):
+            self.feed(2, 30, 90)
+            st = self.step(1.0)
+        self.assertIsNotNone(st["session"])
+        self.assertGreaterEqual(st["session"]["minutes"], 0.5)
+        self.assertEqual(st["session"]["avg_output_fps"], 90.0)
+        self.inspector.info["running"] = False          # game closed
+        self.svc._launch_polled = -1e9
+        st = self.step(6.0)
+        self.assertIsNone(st["session"])
+        last = st["last_session"]
+        self.assertIsNotNone(last)
+        self.assertEqual(last["avg_output_fps"], 90.0)
+        self.assertEqual(last["profile"], "game")
+
     def test_failed_lower_power_restores_and_guard_reacts_after_lock(self):
         self.feed(20, 45, 90)
         self.step()
