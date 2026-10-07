@@ -35,6 +35,17 @@ class SessionStatsTests(unittest.TestCase):
         self.assertEqual(r["minutes"], round(35 / 60, 1))
         self.assertIsNone(r["saved_w"])
 
+    def test_heat_and_stutter_shares(self):
+        s = SessionStats()
+        s.start("k", 0.0)
+        for i in range(60):
+            s.add(1.0 + i, output=90, real=30, tdp=9, draw=None, reference_w=None,
+                  temp_c=70 + i / 4, stuttering=i < 6, hot=i >= 45)
+        r = s.summary()
+        self.assertEqual(r["max_temp_c"], 85.0)
+        self.assertEqual(r["stutter_pct"], 10)
+        self.assertEqual(r["hot_pct"], 25)
+
 
 if __name__ == "__main__":
     unittest.main()

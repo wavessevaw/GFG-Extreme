@@ -23,6 +23,10 @@ class RecorderTests(unittest.TestCase):
     def test_compact_status_reads_service_shape(self):
         rec = compact_status({"telemetry": {"summary": {"real": {"median": 45}, "output": {"median": 90}}}})
         self.assertEqual((rec["real"], rec["output"]), (45, 90))
+        self.assertIsNone(rec["budget"])
+        rec = compact_status({"budget": {"phase": "locked", "thermal": "hot", "thermal_deferred": True, "rejected": []}})
+        self.assertEqual((rec["budget"]["phase"], rec["budget"]["thermal_deferred"]), ("locked", True))
+        self.assertNotIn("rejected", rec["budget"])
 
     def test_record_and_export_to_desktop(self):
         async def scenario(rec, diag):

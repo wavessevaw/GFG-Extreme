@@ -785,6 +785,16 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual(st["budget"]["phase"], "search_down")
         self.assertEqual(st["state"], "OPTIMIZE_POWER")
 
+    def test_host_heat_reaches_the_budget_controller(self):
+        self.svc.sensors.sample = lambda force=False: {"temp_c": 84.0, "thermal_headroom_c": 6.0}
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        st = self.step()
+        self.assertEqual(st["diagnosis"]["thermal"], "hot")
+        self.assertEqual(self.svc._budget.thermal, "hot")
+        self.assertEqual(st["budget"]["thermal"], "hot")
+
     def applied_line(self, base, mult, adaptive=1):
         return (H + f"operation=runtime-state-applied role=frame-generation state_revision=99 transition=live "
                 f"frame_generation_enabled=1 adaptive={adaptive} target_fps=90 multiplier={mult} base_fps_cap={base} "

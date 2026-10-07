@@ -102,6 +102,8 @@ def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
     effort = (status.get("effort") or {}).get("level")
     if effort:
         parts.append(_EFFORT_SHORT[effort])
+    if (status.get("diagnosis") or {}).get("thermal") == "hot":
+        parts.append("HOT")
     if preset == "detailed":
         parts.append(_STATE_WORD.get(str(status.get("state")), "on"))
     return "  ".join(parts)
