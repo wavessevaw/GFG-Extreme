@@ -908,6 +908,7 @@ function FrameOsPanel({ s, profile }) {
       }
     }),
     h(Note, { quiet: true }, "Observe and Shadow only measure. Act changes frame timing and power. Applies from the next game start."),
+    mode !== "off" && fo.layer_installed === false ? h(Note, null, fo.layer_error ? "Frame OS layer not installed: " + fo.layer_error + "." : "Frame OS layer not installed yet.") : null,
     fo.enabled ? h("div", { className: "card" }, h(
       "div",
       { className: "kv" },

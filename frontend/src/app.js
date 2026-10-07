@@ -502,6 +502,9 @@ function FrameOsPanel({ s, profile }) {
     h(Seg, { value: mode, options: [["off", "Off"], ["observe", "Observe"], ["shadow", "Shadow"], ["act", "Act"]],
              onChange: async (v) => { setMode(v); await rpc.setFrameOs(profile, v); } }),
     h(Note, { quiet: true }, "Observe and Shadow only measure. Act changes frame timing and power. Applies from the next game start."),
+    mode !== "off" && fo.layer_installed === false
+      ? h(Note, null, fo.layer_error ? "Frame OS layer not installed: " + fo.layer_error + "." : "Frame OS layer not installed yet.")
+      : null,
     fo.enabled ? h("div", { className: "card" }, h("div", { className: "kv" },
       h("span", null, "Decision"), h("b", null, (d.level || "–") + (fo.acting ? "" : " (would)") + " · " + num(d.real_hz, 0) + " real"),
       h("span", null, "Freshness"), h("b", null, t.freshness_ms != null ? num(t.freshness_ms, 1) + " ms" : "–"),
