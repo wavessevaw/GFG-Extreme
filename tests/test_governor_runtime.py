@@ -1085,3 +1085,40 @@ class PointStateResetTests(RuntimeBase):
         self.assertTrue(asyncio.run(self.svc._rediscover_power()))
         power.state.available = False
         self.assertFalse(asyncio.run(self.svc._rediscover_power()), "at most every 30 s")
+
+
+class FrameOsIntegrationTests(BudgetRuntimeTests):
+    """Development feature: off by default, marker for the launcher, TDP offset only in act mode."""
+
+    def test_off_by_default_and_marker_follows_the_mode(self):
+        self.assertEqual(self.svc._frame_os_mode("game"), "off")
+        self.assertFalse(self.svc.frame_os_marker_path.exists())
+        self.assertTrue(self.svc.set_frame_os("game", "observe")["success"])
+        self.assertTrue(self.svc.frame_os_marker_path.exists())
+        self.assertFalse(self.svc.set_frame_os("game", "turbo")["success"])
+        self.svc.set_frame_os("game", "off")
+        self.assertFalse(self.svc.frame_os_marker_path.exists())
+
+    def test_runner_follows_the_live_budget_point(self):
+        self.svc.set_frame_os("game", "observe")
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        runner = self.svc.frame_os
+        self.assertTrue(runner.enabled)
+        self.assertEqual((runner.policy.output_hz, runner.policy.calm_real_hz), (90.0, 30.0))
+        self.assertEqual(runner.tdp_offset_w, 0.0, "observe never moves watts")
+        self.assertEqual(self.svc.get_status("game")["frame_os"]["mode"], "observe")
+
+    def test_act_offset_is_applied_on_top_of_the_budget_cap(self):
+        self.svc.set_frame_os("game", "act")
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        runner = self.svc.frame_os
+        runner.last = {"decision": {"tdp_w": runner.policy.broker.calm_w + 4.0}}
+        self.svc._applied_tdp = None
+        asyncio.run(self.svc._apply_budget_tdp("game"))
+        self.assertEqual(self.svc.power.writes[-1], min(self.svc._budget.normal_max_w, self.svc._budget.tdp + 4.0))

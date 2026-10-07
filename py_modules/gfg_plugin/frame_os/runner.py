@@ -130,10 +130,11 @@ class FrameOsRunner:
         self.close()
 
     def close(self) -> None:
-        try:
-            self.channel.write_policy(enabled=False, real_hz=0.0, generation=self._bump())
-        except Exception:
-            pass
+        if self._published is not None or getattr(self.channel, "_map", None) is not None:
+            try:  # only a channel this runner used: never create the file just to say "off"
+                self.channel.write_policy(enabled=False, real_hz=0.0, generation=self._bump())
+            except Exception:
+                pass
         if self.reader is not None:
             try:
                 self.reader.close()

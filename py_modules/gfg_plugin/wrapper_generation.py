@@ -761,6 +761,13 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         f'mako_governor_diagnostics_marker={shlex.quote(str(context.runtime_state_dir / "governor-diagnostics.enabled"))}',
         f'if [ -f "$mako_governor_diagnostics_marker" ]; then export {PRESENT_DIAGNOSTICS_ENV}="${{{PRESENT_DIAGNOSTICS_ENV}:-1}}"; else export {PRESENT_DIAGNOSTICS_ENV}="${{{PRESENT_DIAGNOSTICS_ENV}:-0}}"; fi',
         'unset mako_governor_diagnostics_marker',
+        # GFG Frame OS (development): the gfg-pacer layer loads only when the Governor left this
+        # marker for the profile; the layer itself stays pass-through until the control file
+        # it is pointed at says otherwise.
+        f'gfg_frame_os_marker={shlex.quote(str(context.runtime_state_dir / "frame-os.enabled"))}',
+        'if [ -f "$gfg_frame_os_marker" ]; then export GFG_FRAME_OS=1; '
+        'export GFG_FRAME_OS_SHM="${GFG_FRAME_OS_SHM:-/dev/shm/gfg-frame-os}"; else unset GFG_FRAME_OS; fi',
+        'unset gfg_frame_os_marker',
         "mako_renderer_enabled=0",
         'if [ "${mako_renderer_required:-0}" = 1 ] && '
         f'[ "${{{MAKO_LAYER_DISABLE_ENV}:-0}}" != 1 ]; then',

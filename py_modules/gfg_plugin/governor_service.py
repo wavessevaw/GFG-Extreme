@@ -38,6 +38,8 @@ from .governor_battery import BatteryEstimator, read_battery
 from .steamos_tdp import SteamOSManagerTdp
 from .game_model import GameModelStore, context_key
 from .session_stats import SessionStats
+from .frame_os.control_channel import DEFAULT_PATH as DEFAULT_SHM, ControlChannel
+from .frame_os.runner import FrameOsRunner
 from .host_sensors import HostSensors, diagnose
 from .governor_hud import HudWriter, normalize as hud_normalize, output_fps as hud_output_fps
 from .governor_overlay import (
@@ -127,6 +129,9 @@ class GovernorService:
         self.settings_path = self.configuration.config_dir / "gfg-governor.json"
         self.events_path = self.configuration.runtime_state_dir / "governor-events.jsonl"
         self.diagnostics_marker_path = self.configuration.runtime_state_dir / "governor-diagnostics.enabled"
+        # GFG Frame OS (development, off by default): per-profile mode, launch marker, 10 Hz runner.
+        self.frame_os_marker_path = self.configuration.runtime_state_dir / "frame-os.enabled"
+        self.frame_os = FrameOsRunner(ControlChannel(Path(os.environ.get("GFG_FRAME_OS_SHM") or DEFAULT_SHM)))
         self._settings = self._load_settings()
         builder = getattr(self.configuration, "build_governor_overlay_text", None)
         self.overlay: Optional[OverlayStore] = (
@@ -614,6 +619,57 @@ class GovernorService:
             result["overlay_error"] = overlay_error
         return result
 
+    FRAME_OS_MODES = ("off", "observe", "shadow", "act")
+
+    def _frame_os_mode(self, profile: str) -> str:
+        mode = str(self._profile_settings(profile).get("frame_os", "off"))
+        return mode if mode in self.FRAME_OS_MODES else "off"
+
+    def set_frame_os(self, profile: str, mode: str) -> Dict[str, Any]:
+        """Development switch for GFG Frame OS.  observe/shadow never change frames; act does."""
+        profile = str(profile or "").strip()
+        if not profile or mode not in self.FRAME_OS_MODES:
+            return {"success": False, "error": "profile and a mode of off/observe/shadow/act are required"}
+        self._settings.setdefault("profiles", {}).setdefault(profile, {})["frame_os"] = mode
+        self._save_settings()
+        try:
+            self._sync_frame_os_marker()
+        except OSError as error:
+            return {"success": False, "error": f"marker: {error}"}
+        self._poke()
+        return {"success": True, "error": None, "profile": profile, "mode": mode, "relaunch_required": True}
+
+    def _sync_frame_os_marker(self) -> None:
+        """The launcher loads the gfg-pacer layer only while some profile uses Frame OS."""
+        profiles = self._settings.get("profiles", {})
+        wanted = isinstance(profiles, dict) and any(
+            isinstance(v, dict) and v.get("frame_os", "off") in self.FRAME_OS_MODES[1:] for v in profiles.values())
+        if wanted:
+            self.frame_os_marker_path.parent.mkdir(parents=True, exist_ok=True)
+            self.frame_os_marker_path.write_text("enabled\n", encoding="utf-8")
+        else:
+            try:
+                self.frame_os_marker_path.unlink()
+            except FileNotFoundError:
+                pass
+
+    def _configure_frame_os(self, profile: str) -> None:
+        budget = self._budget
+        mode = self._frame_os_mode(profile) if profile else "off"
+        live = bool(budget is not None and self._point is not None and self._status.get("enabled"))
+        if mode == "off" or not live:
+            self.frame_os.configure(enabled=False, mode="observe", output_hz=0, calm_real_hz=0,
+                                    max_multiplier=1, calm_w=None)
+            return
+        point = budget.point
+        self.frame_os.draw_w = (self._status.get("power_feedback") or {}).get("draw_w")
+        self.frame_os.configure(
+            enabled=True, mode=mode, output_hz=float(point.target_output_fps),
+            calm_real_hz=float(point.base_target_fps),
+            max_multiplier=float(self.observer.current_max_multiplier or 3.0),
+            calm_w=budget.tdp if budget.tdp_control else None,
+        )
+
     def set_scale_ready(self, profile: str, scale_ready: bool) -> Dict[str, Any]:
         profile = str(profile or "").strip()
         if not profile:
@@ -678,6 +734,11 @@ class GovernorService:
         if callable(reopen):
             reopen()
         await asyncio.to_thread(self.power.discover)
+        try:
+            await asyncio.to_thread(self._sync_frame_os_marker)
+        except OSError as error:
+            self.log.debug("Frame OS marker not written: %s", error)
+        self.frame_os.start()
         self._wake = asyncio.Event()
         self._wake_loop = asyncio.get_running_loop()
         self._task = asyncio.create_task(self._loop())
@@ -710,6 +771,7 @@ class GovernorService:
             except Exception as error:
                 self.log.debug("Governor loop ended with error: %s", error)
         self._task = None
+        await self.frame_os.stop()
         # Restore overlays to Saved (verified, lease dropped) before power ownership is released.
         names = list(dict.fromkeys([*self._saved_profile_names(), *self._settings.get("profiles", {})]))
         for profile in names:
@@ -739,6 +801,8 @@ class GovernorService:
         value["session"] = self.session_stats.summary()
         value["last_session"] = self._settings.get("last_session")
         value["session_history"] = (self._settings.get("session_history") or [])[: self.SESSION_HISTORY]
+        value["frame_os"] = {"mode": self._frame_os_mode(profile or value.get("profile", "")),
+                             **{k: v for k, v in self.frame_os.last.items() if k != "input"}}
         value["power"] = self.power.status()
         value["power_search"] = self.search.status.to_dict()
         value["request"] = self._request.to_dict() if self._request else None
@@ -1093,6 +1157,10 @@ class GovernorService:
         await asyncio.to_thread(self._update_sensors)
         self._sample_session()
         profile = self._status.get("profile") or ""
+        try:
+            self._configure_frame_os(profile)
+        except Exception as error:  # development feature: never disturb the Governor
+            self.log.debug("Frame OS configure failed: %s", error)
         if profile:
             await asyncio.to_thread(self._sync_hud, profile)
 
@@ -1610,19 +1678,21 @@ class GovernorService:
 
     async def _apply_budget_tdp(self, profile: str) -> bool:
         budget = self._budget
-        if (
-            budget is None or not budget.tdp_control or budget.tdp is None
-            or not self.power.state.owned or budget.tdp == self._applied_tdp
-        ):
+        if budget is None or not budget.tdp_control or budget.tdp is None or not self.power.state.owned:
             return True
-        result = await asyncio.to_thread(self.power.set_tdp_w, budget.tdp)
+        # Frame OS (act mode) adds the watts of a funded boost / removes them in rest.
+        target = round(min(budget.normal_max_w, max(budget.min_w, budget.tdp + self.frame_os.tdp_offset_w)), 1)
+        if target == self._applied_tdp:
+            return True
+        result = await asyncio.to_thread(self.power.set_tdp_w, target)
         if not result.get("success"):
             self._status.update({"state": "PAUSED", "reason": "tdp-write-failed"})
             return False
-        self._applied_tdp = budget.tdp
+        self._applied_tdp = target
         self._evaluation_after_seq = self.observer.sample_seq
         self._tdp_set_seq = self.observer.sample_seq
-        self._event("tdp-set", budget.last_reason, watts=budget.tdp, profile=profile)
+        self._event("tdp-set", budget.last_reason, watts=target, profile=profile,
+                    **({"frame_os_offset_w": target - budget.tdp} if target != budget.tdp else {}))
         return True
 
     async def _release_point_keep_ladder(self, profile: str) -> bool:

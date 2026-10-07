@@ -129,6 +129,7 @@ var rpc = {
   setGovernor: safeCallable("set_governor_enabled"),
   setHud: safeCallable("set_governor_hud"),
   setScaleReady: safeCallable("set_governor_scale_ready"),
+  setFrameOs: safeCallable("set_governor_frame_os"),
   setMode: safeCallable("set_governor_mode"),
   profiles: safeCallable("get_profiles"),
   setProfile: safeCallable("set_current_profile"),
@@ -847,8 +848,44 @@ function AdvancedPage({ back, s, insp, launch, go, profile }) {
     h("div", { className: "sec" }, "RECORD A LOG"),
     h(LogRecorder, { profile }),
     h("div", { className: "list" }, h(Row, { icon: "cog", title: "Journal", sub: "Undo recent changes", onClick: () => go("journal") })),
+    h(FrameOsPanel, { s, profile }),
     h("div", { className: "sec" }, "INSPECTOR"),
     h("div", { className: "cols" }, col("SAVED", sv), col("EFFECTIVE", ef), col("GOVERNOR", s && s.active_point ? { point: POINT_LABEL(s.active_point) } : {}, true), col("ACTUAL", ac))
+  );
+}
+function FrameOsPanel({ s, profile }) {
+  const fo = s && s.frame_os || {};
+  const [mode, setMode] = useState(fo.mode || "off");
+  useEffect(() => {
+    if (fo.mode) setMode(fo.mode);
+  }, [fo.mode]);
+  const t = fo.telemetry || {};
+  const d = fo.decision || {};
+  return h(
+    "div",
+    null,
+    h("div", { className: "sec" }, "FRAME OS (EXPERIMENTAL)"),
+    h(Seg, {
+      value: mode,
+      options: [["off", "Off"], ["observe", "Observe"], ["shadow", "Shadow"], ["act", "Act"]],
+      onChange: async (v) => {
+        setMode(v);
+        await rpc.setFrameOs(profile, v);
+      }
+    }),
+    h(Note, { quiet: true }, "Observe and Shadow only measure. Act changes frame timing and power. Applies from the next game start."),
+    fo.enabled ? h("div", { className: "card" }, h(
+      "div",
+      { className: "kv" },
+      h("span", null, "Decision"),
+      h("b", null, (d.level || "\u2013") + (fo.acting ? "" : " (would)") + " \xB7 " + num(d.real_hz, 0) + " real"),
+      h("span", null, "Freshness"),
+      h("b", null, t.freshness_ms != null ? num(t.freshness_ms, 1) + " ms" : "\u2013"),
+      h("span", null, "Present interval"),
+      h("b", null, t.present_interval_p50_ms != null ? num(t.present_interval_p50_ms, 1) + " / " + num(t.present_interval_p95_ms, 1) + " ms" : "\u2013"),
+      h("span", null, "Layer"),
+      h("b", null, t.frames ? (fo.acknowledged ? "in sync" : "updating") + " \xB7 " + t.frames + " frames" : "not loaded")
+    )) : null
   );
 }
 function AllSettingsPage({ back, cfg, patch }) {
