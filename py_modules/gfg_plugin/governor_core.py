@@ -725,6 +725,7 @@ class BudgetController:
     RECOVER_S = 60.0       # giving back what the guard spent is not a new experiment
     RECOVER_MAX_S = 300.0
     REJECT_TTL_S = 600.0
+    FAILURE_TTL_S = REJECT_TTL_S  # failures loaded from game memory expire like in-session rejections
     MAX_REQUEST_FAILURES = 4
 
     def __init__(
@@ -742,10 +743,13 @@ class BudgetController:
         self.min_w = max(self.MIN_TDP_W, hw_min)
         self.normal_max_w = min(self.NORMAL_CEILING_W, hw_max)
         self.emergency_max_w = min(self.EMERGENCY_CEILING_W, hw_max)
-        self.idx = min(
-            range(1, len(self.points)),
-            key=lambda i: abs(self.points[i].base_target_fps - (BALANCED_START_REAL_FPS if balanced else START_REAL_FPS)),
-        )
+        start_real = BALANCED_START_REAL_FPS if balanced else START_REAL_FPS
+        # Start on an integer ratio: on a Deck they confirmed in ~10 s, while fractional points often
+        # ran into the 25 s timeout.  Ties go to the deeper (safer) point.  Fractional ratios stay
+        # available for the probes upwards.  (90 Hz: 30x3 / 45x2 as before; 60 Hz Balanced: 30x2.)
+        integer = [i for i in range(1, len(self.points)) if float(self.points[i].multiplier).is_integer()]
+        self.idx = min(integer or range(1, len(self.points)),
+                       key=lambda i: (abs(self.points[i].base_target_fps - start_real), self.points[i].base_target_fps))
         self.comfort_idx = self.idx  # deeper than ~30 real only to defend the budget
         self.ideal_max_w = min(BALANCED_IDEAL_MAX_W if balanced else self.IDEAL_MAX_W, self.normal_max_w)
         start_w = BALANCED_START_TDP_W if balanced else self.START_TDP_W
@@ -785,6 +789,11 @@ class BudgetController:
         # Ceiling of the renderer's current generated-frame resources; updated every step, so it
         # rises again after a swapchain recreation.
         self.current_max_multiplier: Optional[float] = None
+        # Point key -> (highest TDP it failed to hold at, when).  Loaded from game memory so a new
+        # controller (mode switch, reload) does not repeat a probe that just failed; expires like
+        # an in-session rejection, because a lighter scene may hold it later.
+        self.known_failures: Dict[str, tuple[float, float]] = {}
+        self.new_failures: list[tuple[str, float]] = []  # drained by the service into game memory
         self.verifying: Optional[str] = None  # point inferred from delivered FPS, not yet verified
 
     def warm_start(self, point_key: str, tdp_w: Optional[float], now: float) -> bool:
@@ -1011,10 +1020,41 @@ class BudgetController:
             return self._upgrade(now)
         return self._lock(now, "budget-point-holds")
 
+    def _upgrade_allowed(self, i: int, now: float) -> bool:
+        """A step to fewer generated frames, unless this game already failed it at this TDP or more.
+
+        Deck log 2026-10-07 #2: 33x2.75 at 10 W was tried three times in one session (each mode
+        switch starts a new controller); it never held.
+        """
+        if not self._usable(i, now):
+            return False
+        known = self.known_failures.get(self.points[i].key)
+        if known is None or now - known[1] >= self.FAILURE_TTL_S:
+            return True
+        return not (self.tdp is not None and self.tdp <= known[0] + 0.05)
+
+    def _note_failure(self, point: OperatingPoint, now: float) -> None:
+        if self.tdp is None:
+            return
+        previous = self.known_failures.get(point.key)
+        worst = max(self.tdp, previous[0]) if previous else self.tdp
+        self.known_failures[point.key] = (worst, now)
+        self.new_failures.append((point.key, worst))
+
+    def load_failures(self, failures: Dict[str, Any], now: float) -> None:
+        """Recent failures of this game from game memory: key -> (tdp, age_s).
+
+        Anchored at ``now - age`` so the original expiry is kept across reloads (PR #40 review:
+        re-anchoring at ``now`` turned the TTL into a sliding one).
+        """
+        for key, value in failures.items():
+            tdp, age = value if isinstance(value, (tuple, list)) else (value, 0.0)
+            self.known_failures[key] = (float(tdp), now - float(age))
+
     def _upgrade(self, now: float) -> str:
         if self.cap_ignored and self.idx >= self.comfort_idx:
             return self._lock(now, "cap-ignored-quality-held")
-        if self._usable(self.idx + 1, now):
+        if self._upgrade_allowed(self.idx + 1, now):
             self.probe = "up"
             return self._move("testing-fewer-generated-frames", idx=self.idx + 1)
         return self._lock(now, "minimum-power-found")
@@ -1036,7 +1076,7 @@ class BudgetController:
                 self.phase, self.probe = "probe", "down"
                 self.next_probe = "up" if self._owed_quality() else "down"
                 return self._move("reprobe-lower-power", tdp=self.tdp - 1.0)
-            if kind == "up" and self._owed_quality() and self._usable(self.idx + 1, now):
+            if kind == "up" and self._owed_quality() and self._upgrade_allowed(self.idx + 1, now):
                 self.phase, self.probe, self.next_probe = "probe", "up", "down"
                 return self._move("reprobe-fewer-generated-frames", idx=self.idx + 1)
         return self._lock(now, "budget-point-holds")
@@ -1047,6 +1087,7 @@ class BudgetController:
             failed = self.points[self.idx]
             if self.probe == "up":
                 self.rejected[failed.key] = now
+                self._note_failure(failed, now)
             idx, tdp = self.last_good
             from_phase = self.phase
             self.probe = None
@@ -1136,6 +1177,8 @@ class BudgetController:
         """
         failed = self.points[self.idx]
         self.rejected[failed.key] = now
+        if self.probe == "up":
+            self._note_failure(failed, now)  # an upgrade the renderer could not deliver at this TDP
         delivered = self._delivered_point(observed, failed, now)
         if delivered is not None:
             self.request_failures = 0
@@ -1205,6 +1248,7 @@ class BudgetController:
             "flavor": self.flavor,
             "verifying": self.verifying,
             "current_max_multiplier": self.current_max_multiplier,
+            "known_failures": {k: v[0] for k, v in self.known_failures.items()},
             "reason": self.last_reason,
             "limits_w": {"min": self.min_w, "normal": self.normal_max_w, "emergency": self.emergency_max_w},
         }

@@ -168,8 +168,8 @@ var POINT_LABEL = (p) => p ? (p.multiplier > 1 ? fmtMult(p.multiplier) : "Native
 var PAUSED_TEXT = {
   "overlay-restore-failed": "Could not restore settings \u2014 retrying.",
   "game-not-running": "Start the game with the GFG launch command.",
-  "diagnostics-active-no-events": "No FPS from the engine yet. If the game was started before this GFG version was installed, relaunch it once.",
-  "diagnostics-events-no-fps-samples": "The engine reports no FPS yet. Is frame generation on?",
+  "diagnostics-active-no-events": "Waiting for the game to draw frames (loading, intro or menu). If it stays like this in gameplay, relaunch the game once.",
+  "diagnostics-events-no-fps-samples": "Waiting for the game to draw frames (loading screen or menu). GFG starts on its own as soon as frames arrive.",
   "telemetry-stale": "FPS from the engine stopped arriving.",
   "external-tdp-change": "TDP was changed outside GFG. In Battery mode GFG takes it back after 30 s (at most 3 times).",
   "tdp-write-failed": "Could not write TDP."
@@ -199,7 +199,7 @@ function describe(s) {
   if (s.state === "OBSERVE_ONLY" && s.reason === "tdp-control-not-writable") return { head: "No TDP access", body: "GFG manages frame generation, but cannot change TDP: the plugin has no write access to the power caps.", tone: "warn" };
   if (s.state === "OBSERVE_ONLY") return { head: "Observing", body: "Another backend owns the pipeline. GFG only watches.", tone: "idle" };
   if (s.state === "PROBE" || s.state === "PLAN") return { head: "Measuring", body: "Learning how the game runs. Nothing is changed yet.", tone: "busy" };
-  if (s.state === "APPLY") return { head: "Testing " + POINT_LABEL(s.request && s.request.point), body: "Checking the result before keeping it.", tone: "busy" };
+  if (s.state === "APPLY") return { head: "Testing " + (s.request && s.request.point ? fmtMult(String(s.request.point).split("x")[1] || 1) : ""), body: "Checking the result on the engine's own data before keeping it (a few seconds).", tone: "busy" };
   const b = s.budget;
   const fb = s.power_feedback || {};
   if (b && b.cap_ignored) return { head: "TDP limit overridden", body: "The APU draws " + num(fb.draw_w, 1) + " W while GFG's limit is " + num(fb.cap_w, 0) + " W: another tool (ryzenadj, PowerTools\u2026) sets the real limit. GFG keeps a deep ratio instead of spending power.", tone: "warn" };
@@ -511,7 +511,13 @@ function GovernorPage({ s, back, profile, refresh }) {
       h("span", null, "Step"),
       h("b", null, PHASE_TEXT[b.phase] || b.phase),
       h("span", null, "Start"),
-      h("b", null, b.warm_started ? "Remembered from last session" : "Searched from scratch")
+      h("b", null, b.warm_started ? "Remembered from last session" : "Searched from scratch"),
+      b.verifying ? h("span", null, "Verifying") : null,
+      b.verifying ? h("b", null, fmtMult(String(b.verifying).split("x")[1] || 1) + " \u2014 the engine chose it, checking it holds") : null,
+      b.current_max_multiplier ? h("span", null, "Engine allows") : null,
+      b.current_max_multiplier ? h("b", null, "up to " + fmtMult(b.current_max_multiplier)) : null,
+      Object.keys(b.known_failures || {}).length ? h("span", null, "Recently failed") : null,
+      Object.keys(b.known_failures || {}).length ? h("b", null, Object.entries(b.known_failures).slice(0, 3).map(([k, w]) => fmtMult(k.split("x")[1] || 1) + " at \u2264" + num(w, 0) + " W").join(", ")) : null
     )) : null,
     h("div", { className: "sec" }, "DECISION"),
     h("div", { className: "card" }, h(

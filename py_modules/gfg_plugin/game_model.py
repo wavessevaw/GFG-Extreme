@@ -13,7 +13,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
 MAX_ENTRIES = 200
 MAX_AGE_S = 30 * 24 * 3600.0
@@ -21,8 +21,11 @@ MIN_RECORD_INTERVAL_S = 60.0
 MAX_TDP_W = 30.0
 
 
-def context_key(profile: str, target: int, mode: str) -> str:
-    return f"{str(profile).strip()}|{int(target)}|{str(mode or 'budget')}"
+def context_key(profile: str, target: int, mode: str, app_id: str = "") -> str:
+    """Per game when the Steam AppID is known (several games may share one profile), else per profile."""
+    app = str(app_id or "").strip()
+    who = f"app:{app}" if app.isdigit() and app != "0" else str(profile).strip()
+    return f"{who}|{int(target)}|{str(mode or 'budget')}"
 
 
 class GameModelStore:
@@ -55,6 +58,8 @@ class GameModelStore:
         entry = self._entries.get(key)
         if entry is None or self.clock() - float(entry["updated"]) > MAX_AGE_S:
             return None
+        if int(entry.get("confirmations", 0)) < 1 or entry.get("point") is None:
+            return None  # only failures are known: nothing to warm-start from
         return dict(entry)
 
     def record(self, key: str, point: str, tdp_w: Optional[float]) -> bool:
@@ -69,12 +74,50 @@ class GameModelStore:
         same = previous is not None and previous["point"] == point and previous.get("tdp_w") == tdp
         confirmations = (int(previous.get("confirmations", 0)) + 1) if same else 1
         entry = {"point": point, "tdp_w": tdp, "updated": now, "confirmations": min(confirmations, 1000)}
+        if previous is not None and isinstance(previous.get("failed"), dict):
+            entry["failed"] = previous["failed"]
         self._entries[key] = entry
         self._last_write[key] = now
         if len(self._entries) > MAX_ENTRIES:
             oldest = sorted(self._entries, key=lambda k: self._entries[k]["updated"])[: len(self._entries) - MAX_ENTRIES]
             for stale in oldest:
                 del self._entries[stale]
+        return self._save()
+
+    # Session-scale: a point that failed in one scene can hold in a lighter one later, so a failure
+    # only bridges controller restarts (mode switches, plugin reloads) within the same play session.
+    FAILURE_TTL_S = 10 * 60.0  # == BudgetController.REJECT_TTL_S
+
+    def failures(self, key: str) -> Dict[str, Tuple[float, float]]:
+        """Points that did not hold for this game: key -> (highest TDP it failed at, age in seconds).
+
+        The age is returned (not just the TDP) so a reload keeps the *remaining* TTL instead of
+        restarting it; expired entries are not returned.
+        """
+        entry = self._entries.get(key) or {}
+        now = self.clock()
+        raw = entry.get("failed") if isinstance(entry.get("failed"), dict) else {}
+        out: Dict[str, Tuple[float, float]] = {}
+        for k, v in raw.items():
+            if isinstance(v, list) and len(v) == 2:
+                age = max(0.0, now - float(v[1]))
+                if age < self.FAILURE_TTL_S:
+                    out[k] = (float(v[0]), age)
+        return out
+
+    def record_failure(self, key: str, point: str, tdp_w: Optional[float]) -> bool:
+        """Remember 'point did not hold at tdp_w' (keeps the highest TDP it failed at)."""
+        if tdp_w is None or not 0 < float(tdp_w) <= MAX_TDP_W:
+            return False
+        entry = self._entries.setdefault(key, {"point": point, "tdp_w": None, "updated": self.clock(),
+                                               "confirmations": 0})
+        failed = entry.setdefault("failed", {})
+        old = failed.get(point)
+        worst = max(float(tdp_w), float(old[0])) if isinstance(old, list) and len(old) == 2 else float(tdp_w)
+        failed[point] = [round(worst, 1), self.clock()]
+        if len(failed) > 32:
+            for stale in sorted(failed, key=lambda k: failed[k][1])[: len(failed) - 32]:
+                del failed[stale]
         return self._save()
 
     def forget(self, key: str) -> None:

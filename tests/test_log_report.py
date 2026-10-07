@@ -69,6 +69,17 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(rep["diagnostics"]["capacity_waits"], 3)
         self.assertTrue(any("at most x3" in f for f in rep["findings"]))
 
+    def test_time_waiting_for_confirmation_and_mode_switches_are_reported(self):
+        rows = self.rows(10) + self.rows(10, state="APPLY", reason="awaiting-fresh-evidence")
+        events = [{"event": "operating-point-rejected", "reason": "confirmation-timeout", "point": "36x2.5"},
+                  {"event": "operating-point-released", "reason": "governor-mode-changed"}]
+        rep = analyze(bundle({"timeline.jsonl": timeline(rows), "governor-events.jsonl": timeline(events)}))
+        self.assertEqual(rep["apply_share"], 0.5)
+        self.assertEqual(rep["mode_switches"], 1)
+        joined = "\n".join(rep["findings"])
+        self.assertIn("50% of the session waiting", joined)
+        self.assertIn("switched 1 times", joined)
+
 
 if __name__ == "__main__":
     unittest.main()
