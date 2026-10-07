@@ -16,6 +16,28 @@ def diag(operation="adaptive-ramp", **fields):
 
 
 class GovernorTelemetryTests(unittest.TestCase):
+    def test_own_truncation_keeps_the_session(self):
+        """Audit 1.0.7: the size cap truncated the log and the shrink looked like a new game."""
+        line = diag("fixed-plan", generated_per_real=2, observed_output_fps=90, generated_presented=10,
+                    generated_skipped=0, configured_adaptive_target_fps=90, display_budget_hz=90) + "\n"
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "diag.log"
+            path.write_text("")
+            observer = TelemetryObserver(path)
+            observer.poll()
+            with path.open("a") as handle:
+                handle.write(line * 5)
+            observer.poll()
+            generation, samples = observer.session_generation, observer.sample_seq
+            self.assertEqual(samples, 5)
+            path.write_text("")                       # the service's size cap
+            observer.rewind_after_truncation()
+            with path.open("a") as handle:
+                handle.write(line * 3)
+            observer.poll()
+            self.assertEqual(observer.session_generation, generation)
+            self.assertEqual(observer.sample_seq, samples + 3)
+
     def test_direct_measured_fps_has_priority(self):
         observer = TelemetryObserver(Path("/nonexistent"))
         sample = observer.consume_line(diag(current_base_fps=45, current_output_fps=90), now=1.0)

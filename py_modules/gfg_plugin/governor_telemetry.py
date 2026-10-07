@@ -375,6 +375,17 @@ class TelemetryObserver:
                 samples += 1
         return samples
 
+    @property
+    def path(self) -> Optional[Path]:
+        """The log currently being tailed (None before the first poll)."""
+        return self._path
+
+    def rewind_after_truncation(self) -> None:
+        """The service itself truncated the log (size cap): keep reading from the start of the
+        same session.  A shrink seen by ``poll`` otherwise means a new game session (audit 1.0.7:
+        the size cap released the operating point mid-game)."""
+        self._offset = 0
+
     def poll(self) -> Dict[str, Any]:
         """Read only newly appended diagnostics bytes.
 

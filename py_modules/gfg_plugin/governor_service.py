@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.0.6).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.0.7).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -54,7 +54,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -118,6 +118,7 @@ class GovernorService:
         self._journal_game: Optional[tuple] = None
         self.session_stats = SessionStats()
         self._session_app_id = ""
+        self._session_profile = ""
         self.sensors = HostSensors()
         self.game_models = GameModelStore(self.configuration.config_dir / "gfg-game-models.json")
         self.power = SteamDeckPowerActuator(manager=SteamOSManagerTdp(home=os.environ.get("HOME")))
@@ -266,11 +267,12 @@ class GovernorService:
             sensors = self.sensors.sample()
             tel = (self._status.get("telemetry") or {})
             summary = tel.get("summary") or {}
-            budget = self._status.get("budget") or {}
-            fb = self._status.get("power_feedback") or {}
+            # Only the live controller's numbers: a previous mode's feedback must not survive it.
+            fb = (self._status.get("power_feedback") or {}) if self._budget is not None else {}
+            cap = fb.get("cap_w") or (self._budget.tdp if self._budget is not None else None)
             self._status["sensors"] = sensors
             self._status["diagnosis"] = diagnose(
-                sensors, cap_w=fb.get("cap_w") or budget.get("tdp_w"), draw_w=fb.get("draw_w"),
+                sensors, cap_w=cap, draw_w=fb.get("draw_w"),
                 frametime=summary.get("frametime"),
             )
             if self._budget is not None:  # heat holds back probes towards more real frames
@@ -780,6 +782,13 @@ class GovernorService:
         self._rollback_deltas = None
         self._synced_deltas = None
         self._evaluation_after_seq = self.observer.sample_seq
+        # Per-point state that must not outlive the point (audit 1.0.7).  A ladder kept on purpose
+        # sets ``_exhausted`` again right after (``_release_point_keep_ladder``).
+        self._exhausted = False
+        self._external_at = None
+        self._reclaims = 0
+        self._status.pop("power_feedback", None)
+        self._status.pop("last_verdict", None)
 
     async def _release_point(self, profile: str, reason: str) -> bool:
         """Drop the applied point: overlay back to base (lease kept), power restored."""
@@ -985,7 +994,7 @@ class GovernorService:
             return
         tel = self._status.get("telemetry") or {}
         snap, summary = tel.get("snapshot") or {}, tel.get("summary") or {}
-        if not snap.get("available") or (snap.get("sample_age_ms") or 1e9) > self.MAX_SAMPLE_AGE_MS:
+        if not snap.get("available") or (1e9 if snap.get("sample_age_ms") is None else snap["sample_age_ms"]) > self.MAX_SAMPLE_AGE_MS:
             self.session_stats.last = self._clock()  # loading screen / menu: not part of the averages
             return
         try:
@@ -998,13 +1007,16 @@ class GovernorService:
             output=(summary.get("output") or {}).get("median"),
             real=(summary.get("real") or {}).get("median"),
             tdp=power.get("observed_tdp_w"), draw=power.get("draw_w"),
-            reference_w=power.get("ceiling_tdp_w") if power.get("owned") else None,
+            reference_w=power.get("initial_tdp_w") if power.get("owned") else None,
             temp_c=(self._status.get("sensors") or {}).get("temp_c"),
             stuttering=diagnosis.get("smoothness") == "stuttering",
             hot=diagnosis.get("thermal") in ("hot", "heating"),
         )
 
-    def _finish_session(self, profile: Any) -> None:
+    def _finish_session(self) -> None:
+        """Store the summary under the profile the game was played with (audit 1.0.7: a profile
+        switch before the exit was seen filed it under the new one)."""
+        profile = self._session_profile
         result = self.session_stats.finish()
         if result is None:
             return
@@ -1028,13 +1040,17 @@ class GovernorService:
                           point=(self._point or {}).get("key"), capability=status.get("capability"))
         launch = self._launch if status.get("enabled") else None
         if launch is None:
+            if not status.get("enabled") and self._journal_game is not None:
+                self._finish_session()  # turned off mid-game: the session ends now, not at re-enable
+                self._journal_game = None
             return
         game = tuple(launch.get("launch_key") or ()) if launch.get("running") else None
         if game != self._journal_game:
             if self._journal_game is not None:
-                self._finish_session(status.get("profile"))
+                self._finish_session()
             if game is not None:
                 self.session_stats.start(game, self._clock())
+                self._session_profile = str(status.get("profile") or "")
                 self._session_app_id = str(launch.get("app_id") or "")  # the launch is gone by the exit
                 self._journal("game-detected", profile=status.get("profile"), launch_key=list(game),
                               governor_launch=bool(launch.get("governor_launch")),
@@ -1056,6 +1072,8 @@ class GovernorService:
         try:
             if self.diagnostics_log_path.stat().st_size > self.DIAGNOSTICS_LOG_MAX_BYTES:
                 os.truncate(self.diagnostics_log_path, 0)
+                if self.observer.path == self.diagnostics_log_path:
+                    self.observer.rewind_after_truncation()
                 self._event("diagnostics-log-truncated", "size-cap", limit=self.DIAGNOSTICS_LOG_MAX_BYTES)
         except OSError:
             pass
@@ -1646,9 +1664,8 @@ class GovernorService:
             health_ratio=health_ratio,
         )
         action = outcome.get("action")
-        if action == "wait":
-            # Judge the next window on fresh samples only.
-            self._evaluation_after_seq = self.observer.sample_seq
+        # Every window is judged once: the next one starts on fresh samples only.
+        self._evaluation_after_seq = self.observer.sample_seq
         if self.search.status.reason == "point-not-healthy-at-ceiling" and self._point_mode == "applied" \
                 and self._ladder is not None:
             # Governor chose this point and it cannot hold even at the user's

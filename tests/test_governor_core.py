@@ -73,6 +73,30 @@ class GovernorPowerSearchTests(unittest.TestCase):
         self.assertEqual(third["target_tdp_w"], 11)
         self.assertEqual(search.status.state, "locked")
 
+    def test_locked_search_gives_watts_back_to_a_heavier_scene(self):
+        """Audit 1.0.7: a level found in a light scene stayed for the whole session."""
+        search = PowerSearch()
+        search.begin(current_tdp_w=15, min_tdp_w=3, ceiling_tdp_w=15)
+        for p5 in (80, 80, 80, 80, 80):           # menu: walks down to the minimum and locks
+            search.evaluate(p5_fps=p5, base_target_fps=45)
+        self.assertEqual((search.status.state, search.status.current_tdp_w), ("locked", 3.0))
+        self.assertEqual(search.evaluate(p5_fps=43, base_target_fps=45)["action"], "none")   # one bad window
+        raised = search.evaluate(p5_fps=43, base_target_fps=45)
+        self.assertEqual((raised["action"], raised["target_tdp_w"]), ("set", 5.0))
+        severe = search.evaluate(p5_fps=20, base_target_fps=45)                             # severe: at once
+        self.assertEqual((severe["action"], severe["target_tdp_w"]), ("set", 8.0))
+        self.assertEqual(search.status.state, "locked")
+        self.assertEqual(search.evaluate(p5_fps=46, base_target_fps=45)["action"], "none")
+
+    def test_locked_at_the_ceiling_and_still_short_hands_the_point_back(self):
+        search = PowerSearch()
+        search.begin(current_tdp_w=15, min_tdp_w=3, ceiling_tdp_w=15)
+        search.evaluate(p5_fps=50, base_target_fps=45)                       # 15 -> 14
+        search.evaluate(p5_fps=40, base_target_fps=45)                       # fails -> back to 15, locked
+        self.assertEqual((search.status.state, search.status.current_tdp_w), ("locked", 15.0))
+        search.evaluate(p5_fps=20, base_target_fps=45)
+        self.assertEqual(search.status.reason, "point-not-healthy-at-ceiling")
+
     def test_never_exceeds_user_ceiling_in_guard(self):
         search = PowerSearch()
         search.begin(current_tdp_w=12, min_tdp_w=3, ceiling_tdp_w=12)
