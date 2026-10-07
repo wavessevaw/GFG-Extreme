@@ -35,7 +35,7 @@ part of the pipeline gets. Render v4 becomes one executor among several.
 |---|---|---|---|
 | **Presentation Scheduler** | `engine/gfg-pacer/src/scheduler.c` | every frame | Owns the frame timeline. Predicts the next present, decides when the game may start its next frame, and whether the next frame must be real. Pure C, no Vulkan types: unit-tested on the host. |
 | **Layer glue** | `engine/gfg-pacer/src/layer.c` | every frame | Implicit Vulkan layer. Hooks acquire/present, measures, sleeps where the scheduler says, publishes telemetry. |
-| **Control channel** | `/dev/shm/gfg-frame-os.<pid>` | 1–100 Hz | Fixed-layout struct: policy from the Governor in, telemetry out. Versioned, lock-free (seqlock). |
+| **Control channel** | `/dev/shm/gfg-frame-os-<pid>` | 1–100 Hz | Fixed-layout struct: policy from the Governor in, telemetry out. Versioned, lock-free (seqlock). |
 | **Policy (Frame OS policy)** | `py_modules/gfg_plugin/frame_os/` | 10–20 Hz | Input intensity, scene-change detection, real-frame injection plan, energy budget broker. Writes targets into the control channel. |
 | **Governor** | existing | 1 Hz | Mode, TDP ceiling, game memory, UI. Becomes the outer loop of the broker. |
 | **Executors** | Render v4, Scaling Engine, PPT caps | — | Do what the scheduler/policy decide. |
@@ -97,7 +97,7 @@ specific engines).
 
 | Phase | Deliverable | Gate before the next phase |
 |---|---|---|
-| 0 | This document; scheduler core with host tests; layer skeleton running through the Vulkan loader on a mock driver | Layer loads, intercepts, publishes telemetry in CI |
+| 0 ✅ | This document; scheduler core with host tests; layer through the real Vulkan loader on the mock driver (headless swapchain); control channel | Done: `make -C engine/gfg-pacer test layer integration` |
 | 1 | Tick shaping + pacing in the layer; control channel; Governor reads telemetry | On a Deck: measured latency drop, no FPS loss, no stutter regression (needs a field log) |
 | 2 | Adaptive real-frame injection + input sensor + energy broker driving Render v4 adaptive mode | On a Deck: fewer real frames in calm play at equal perceived smoothness, lower energy per minute |
 | 3 | Tier 2 via OptiScaler for upscaler games | Separate design |
@@ -107,5 +107,6 @@ specific engines).
 - Off by default; enabled per profile; the layer is a no-op unless the control channel says
   `enabled=1` with a matching version.
 - Any internal error disables the layer's actions for the rest of the process (pass-through).
-- Never blocks longer than one display refresh in a single wait; never changes game speed.
+- A frame-start wait never exceeds `max_wait_ms` (one refresh); a present hold never exceeds one
+  real-frame period (pacing a 30 Hz real cadence needs up to 33 ms). Never changes game speed.
 - Telemetry is local only.

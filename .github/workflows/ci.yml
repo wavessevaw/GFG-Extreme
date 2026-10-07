@@ -20,8 +20,10 @@ jobs:
         run: |
           python3 scripts/check_generated_config.py
           python3 -m unittest discover -s tests -p 'test_*.py'
-      - name: Frame OS engine tests (scheduler core)
-        run: make -C engine/gfg-pacer test
+      - name: Frame OS engine tests (scheduler, control channel, layer on the mock Vulkan driver)
+        run: |
+          VULKAN_DEPS="$RUNNER_TEMP/vk" engine/gfg-pacer/tests/setup_vulkan_deps.sh
+          make -C engine/gfg-pacer VULKAN_DEPS="$RUNNER_TEMP/vk" test layer integration
 
       - name: Frontend build is committed and current
         run: |
