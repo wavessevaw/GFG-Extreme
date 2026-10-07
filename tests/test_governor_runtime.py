@@ -305,7 +305,7 @@ class TrialFlowTests(RuntimeBase):
         self.assertTrue(self.svc.power.state.owned)
 
     def test_quality_rejects_a_deeper_delivered_ratio_in_seconds(self):
-        """Deck log 2026-10-07 #3 (Quality): 40x2.25 waited the full 25 s while x2 was delivered."""
+        """Field log: 40x2.25 waited the full 25 s while x2 was delivered."""
         self.prime_not_matching()
         self.step()                                  # native90 trial
         self.feed(16, 60, 60)
@@ -833,7 +833,7 @@ class BudgetRuntimeTests(RuntimeBase):
                 "frame_generation_resources_available=1 generated_frame_capacity=2")
 
     def test_delivered_deeper_ratio_is_resolved_in_seconds_not_25(self):
-        """Deck log 2026-10-07 #2: 36x2.5 / 33x2.75 requests each waited the full 25 s."""
+        """Field log: 36x2.5 / 33x2.75 requests each waited the full 25 s."""
         self.feed(20, 45, 90)
         self.step()
         self.feed(16, 30, 90)

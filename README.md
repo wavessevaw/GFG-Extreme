@@ -76,7 +76,7 @@ Heroic, Lutris, EmuDeck and other Flatpak apps: **Settings → System**, enable 
 
 ## Status
 
-**1.0.0 — first official release.** Tested on a Steam Deck OLED in real play (The Witcher 3): Battery holds 90 FPS at 30 real frames and 10–11 W, Balanced at 13 W. Every release is also covered by an automated test suite (Python backend, the generated launcher run in bash, the interface rendered in a headless browser), and every fix since 0.0.17 comes from logs recorded on a real Deck. LCD, docked play and other games have had less real-world testing — logs are very welcome. Known limitations: [docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md).
+**Stable (1.0.x).** Every release is covered by an automated test suite (Python backend, the generated launcher run in bash, the interface rendered in a headless browser) and checked on a real Steam Deck. Logs from more games and setups are very welcome. Known limitations: [docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md).
 
 <details>
 <summary><b>Everything else it can do</b></summary>

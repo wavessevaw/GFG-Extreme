@@ -71,7 +71,7 @@ const MODE_TEXT = {
   budget: "Battery: lowest TDP first, 9–11 W ideal. Real FPS stays at 24 or more; a deeper ratio (down to 20 real) and the highest watts your Deck allows only as a last resort.",
   quality: "Quality: fewest generated frames first, then lowers TDP. Uses more battery.",
 };
-// The ceilings come from the device: a stock OLED stops at 15 W, some Decks allow 20 W.
+// The ceilings come from the device (a stock Deck stops at 15 W).
 const budgetRule = (b) => {
   const lim = (b && b.limits_w) || {};
   if (lim.normal == null) return "9–11 W ideal, then what your Deck allows";

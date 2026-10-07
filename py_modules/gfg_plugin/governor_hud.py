@@ -166,7 +166,7 @@ def _atomic(path: Path, text: str) -> bool:
 class HudWriter:
     """Owns the MangoHud config.  A running MangoHud re-reads it on every change.
 
-    Deck log 2026-10-07: a game crashed seconds after six overlay changes in eight seconds.
+    Field log: a game crashed seconds after six overlay changes in eight seconds.
     Rewrites of the live config are therefore rate-limited: the newest wanted content is kept
     and written once ``MIN_REWRITE_S`` has passed.  Callers always pass the *current* desired
     state (the Governor loop does so every second), so a newer state replaces an older pending

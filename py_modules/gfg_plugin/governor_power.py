@@ -319,7 +319,7 @@ class SteamDeckPowerActuator:
             watts = max(1, int(round(slow / 1_000_000.0)))
             low, high = getattr(manager, "range", None) or (watts, watts)
             if (watts > high or watts < low) and direct:
-                manager = None  # outside what Steam allows (e.g. 16-20 W on a 20 W Deck): hwmon directly
+                manager = None  # outside what Steam allows : hwmon directly
             else:
                 watts = max(low, min(high, watts))
         if manager is not None and not (exact and direct):

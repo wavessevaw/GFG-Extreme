@@ -1,0 +1,46 @@
+name: Release notes
+
+# Keeps the text of already published releases equal to RELEASE_DESCRIPTION_V<version>.md.
+# New releases are created by release.yml; this only edits releases that already exist.
+on:
+  push:
+    branches: [main]
+    paths: ["RELEASE_DESCRIPTION_V*.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-notes
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update published release notes
+        run: |
+          for file in RELEASE_DESCRIPTION_V*.md; do
+            version="${file#RELEASE_DESCRIPTION_V}"; version="${version%.md}"; version="${version//_/.}"
+            if [[ "$version" =~ ^0\. ]]; then tag="v${version}-governor"; else tag="v${version}"; fi
+            if ! gh release view "$tag" >/dev/null 2>&1; then
+              echo "$tag: not published, skipped"; continue
+            fi
+            sha="$(gh release download "$tag" --pattern SHA256SUMS.txt --output - 2>/dev/null | head -n1 | cut -d' ' -f1 || true)"
+            python3 - "$file" "$sha" > notes.md <<'PY'
+          import re, sys
+          text = open(sys.argv[1], encoding="utf-8").read()
+          if re.fullmatch(r"[0-9a-f]{64}", sys.argv[2]):
+              text = re.sub(r"`(<sha256>|[0-9a-f]{64})`", f"`{sys.argv[2]}`", text)
+          else:
+              text = re.sub(r"\n### Verify your download\n.*", "\n", text, flags=re.S)
+          print(text)
+          PY
+            gh release edit "$tag" --notes-file notes.md
+            echo "$tag: notes updated"
+          done
