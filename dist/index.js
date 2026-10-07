@@ -537,6 +537,8 @@ function GovernorPage({ s, back, profile, refresh }) {
       h("b", null, b.warm_started ? "Remembered from last session" : "Searched from scratch"),
       b.verifying ? h("span", null, "Verifying") : null,
       b.verifying ? h("b", null, fmtMult(String(b.verifying).split("x")[1] || 1) + " \u2014 the engine chose it, checking it holds") : null,
+      h("span", null, "Lower resolution"),
+      h("b", null, b.scale_capable ? "On \xB7 90% / 80% before more watts" : "Off \xB7 Settings \u2192 Scaling \u2192 Scale-ready launch, then restart the game"),
       b.thermal_deferred ? h("span", null, "Heat") : null,
       b.thermal_deferred ? h("b", null, b.heat_limited ? "Quality step on hold until the APU cools" : "Cooled \u2014 quality step will be retried") : null,
       b.current_max_multiplier ? h("span", null, "Engine allows") : null,

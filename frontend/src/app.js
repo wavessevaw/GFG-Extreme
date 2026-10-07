@@ -293,6 +293,7 @@ function GovernorPage({ s, back, profile, refresh }) {
       h("span", null, "Step"), h("b", null, PHASE_TEXT[b.phase] || b.phase),
       h("span", null, "Start"), h("b", null, b.warm_started ? "Remembered from last session" : "Searched from scratch"),
       b.verifying ? h("span", null, "Verifying") : null, b.verifying ? h("b", null, fmtMult(String(b.verifying).split("x")[1] || 1) + " — the engine chose it, checking it holds") : null,
+      h("span", null, "Lower resolution"), h("b", null, b.scale_capable ? "On · 90% / 80% before more watts" : "Off · Settings → Scaling → Scale-ready launch, then restart the game"),
       b.thermal_deferred ? h("span", null, "Heat") : null, b.thermal_deferred ? h("b", null, b.heat_limited ? "Quality step on hold until the APU cools" : "Cooled — quality step will be retried") : null,
       b.current_max_multiplier ? h("span", null, "Engine allows") : null, b.current_max_multiplier ? h("b", null, "up to " + fmtMult(b.current_max_multiplier)) : null,
       Object.keys(b.known_failures || {}).length ? h("span", null, "Recently failed") : null,

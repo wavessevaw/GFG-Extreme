@@ -658,6 +658,32 @@ def budget_points(target_output_fps: int, real_floor: int = REAL_FLOOR_FPS) -> t
     return (emergency,) + tuple(normal)
 
 
+RENDER_SCALE_STEPS = (90, 80)   # live Scaling Engine factors the overlay allows (governor_overlay)
+SCALE_ANCHOR_REAL_FPS = 30
+
+
+def with_render_scale(points: tuple[OperatingPoint, ...]) -> tuple[OperatingPoint, ...]:
+    """Battery/Balanced ladder with render-scale rungs.
+
+    Below ~30 real frames the next step used to be a deeper ratio (x3.25 .. x3.75, often not
+    available: the renderer's generated-frame capacity tops out at x3) and then more watts.
+    Rendering at 90 % / 80 % resolution and upscaling frees GPU time instead: ``30x3@90`` and
+    ``30x3@80`` sit right below ``30x3``, so the guard reaches for them before deeper ratios and
+    before 12-15 W, and the usual upgrade path (idx + 1) wins full resolution back first.
+    They are only usable while the game was launched with the Scaling Engine provisioned.
+    """
+    anchor = next((i for i, p in enumerate(points) if i > 0 and p.base_target_fps >= SCALE_ANCHOR_REAL_FPS
+                   and float(p.multiplier).is_integer() and p.render_scale_pct == 100), None)
+    if anchor is None:
+        return points
+    base = points[anchor]
+    scaled = tuple(
+        OperatingPoint(f"{base.key}@{pct}", base.target_output_fps, base.base_target_fps, base.multiplier, pct)
+        for pct in sorted(RENDER_SCALE_STEPS)        # 80 is cheaper than 90: lower index
+    )
+    return points[:anchor] + scaled + points[anchor:]
+
+
 @dataclass(frozen=True)
 class WindowVerdict:
     healthy: bool
@@ -786,7 +812,11 @@ class BudgetController:
         self.flavor = "balanced" if flavor == "balanced" else "battery"
         balanced = self.flavor == "balanced"
         self.target_output_fps = int(target_output_fps)
-        self.points = budget_points(self.target_output_fps, BALANCED_REAL_FLOOR_FPS if balanced else REAL_FLOOR_FPS)
+        self.points = with_render_scale(
+            budget_points(self.target_output_fps, BALANCED_REAL_FLOOR_FPS if balanced else REAL_FLOOR_FPS))
+        # Set by the service every step: the game was launched with the Scaling Engine provisioned
+        # (scale-ready launch or the profile's own scaling) and is not CPU-bound.
+        self.scale_capable = False
         self.tdp_control = bool(tdp_control)
         hw_min = float(min_tdp_w) if min_tdp_w else 0.0
         hw_max = float(max_tdp_w) if max_tdp_w else self.EMERGENCY_CEILING_W
@@ -797,7 +827,8 @@ class BudgetController:
         # Start on an integer ratio: on a Deck they confirmed in ~10 s, while fractional points often
         # ran into the 25 s timeout.  Ties go to the deeper (safer) point.  Fractional ratios stay
         # available for the probes upwards.  (90 Hz: 30x3 / 45x2 as before; 60 Hz Balanced: 30x2.)
-        integer = [i for i in range(1, len(self.points)) if float(self.points[i].multiplier).is_integer()]
+        integer = [i for i in range(1, len(self.points)) if float(self.points[i].multiplier).is_integer()
+                   and self.points[i].render_scale_pct == 100]
         self.idx = min(integer or range(1, len(self.points)),
                        key=lambda i: (abs(self.points[i].base_target_fps - start_real), self.points[i].base_target_fps))
         self.comfort_idx = self.idx  # deeper than ~30 real only to defend the budget
@@ -863,6 +894,8 @@ class BudgetController:
         remembered state does not hold today, the guard escalates exactly as in a fresh search.
         """
         index = next((i for i, p in enumerate(self.points) if p.key == point_key and i > 0), None)
+        if index is not None and self.points[index].render_scale_pct != 100 and not self.scale_capable:
+            index = None  # remembered at a lower resolution, but this launch cannot scale
         if index is None or self.phase != "settle":
             return False
         self.idx = index
@@ -884,6 +917,8 @@ class BudgetController:
         # Field log: with capacity for 2 generated frames the renderer turned 28x3.25,
         # 26x3.5 and 24x3.75 into a fixed x3 (84/78/72 FPS) and each request timed out.
         if self.current_max_multiplier is not None and float(self.points[i].multiplier) > self.current_max_multiplier + 1e-6:
+            return False
+        if self.points[i].render_scale_pct != 100 and not self.scale_capable:
             return False
         at = self.rejected.get(self.points[i].key)
         return at is None or now - at >= self.REJECT_TTL_S
@@ -1384,6 +1419,7 @@ class BudgetController:
             "verifying": self.verifying,
             "current_max_multiplier": self.current_max_multiplier,
             "thermal": self.thermal,
+            "scale_capable": self.scale_capable,
             "thermal_deferred": self.thermal_deferred,
             "heat_limited": self.heat_limited,
             "known_failures": {k: v[0] for k, v in self.known_failures.items()},

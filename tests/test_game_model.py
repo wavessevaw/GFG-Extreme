@@ -109,7 +109,7 @@ class WarmStartTests(unittest.TestCase):
 
     def test_a_remembered_state_that_no_longer_holds_is_corrected_by_the_guard(self):
         c = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25)
-        key = next(p.key for p in c.points[1:] if p.base_target_fps == 30)
+        key = next(p.key for p in c.points[1:] if p.base_target_fps == 30 and p.render_scale_pct == 100)
         self.assertTrue(c.warm_start(key, 6.0, 0.0))     # remembered from a lighter scene / level
         game = Game(4.5)                                   # 6 W gives 27 real: below the 30 real cap
         now, trace = run(c, game, 0.0, 14)
@@ -118,7 +118,7 @@ class WarmStartTests(unittest.TestCase):
 
     def test_a_good_remembered_state_stays_put_without_a_search(self):
         c = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25)
-        key = next(p.key for p in c.points[1:] if p.base_target_fps == 30)
+        key = next(p.key for p in c.points[1:] if p.base_target_fps == 30 and p.render_scale_pct == 100)
         c.warm_start(key, 7.0, 0.0)
         now, trace = run(c, Game(4.5), 0.0, 2)  # before the first lower-power probe (45 s)
         self.assertEqual({t[:2] for t in trace}, {(key, 7.0)}, trace)
