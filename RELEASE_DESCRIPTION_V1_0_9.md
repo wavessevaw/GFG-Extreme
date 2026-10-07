@@ -6,6 +6,7 @@ Bug fixes and improvements.
 - Profile settings are saved safely even if the Deck loses power during a save
 - Automatic Dock: renaming or deleting a profile while docked works correctly
 - Automatic Dock no longer treats the handheld screen as an external display when the display information is missing
+- Removing GFG from a Flatpak app no longer leaves settings that disable the app's own overlay or layers
 - Minor fixes
 
 ### Install

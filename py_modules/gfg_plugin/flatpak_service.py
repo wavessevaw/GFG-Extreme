@@ -6,7 +6,7 @@ import subprocess
 import os
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, TypedDict
+from typing import Dict, Iterable, List, Optional, TypedDict
 
 from .base_service import BaseService
 from .config_schema import ConfigurationManager
@@ -1005,6 +1005,58 @@ class FlatpakService(BaseService):
             return self._error_response(FlatpakOverrideResponse, error_msg,
                                       app_id=app_id, operation="set")
 
+    def _clean_override_negations(self, app_id: str, paths: List[str], variables: Iterable[str]) -> None:
+        """Turn "removed" into "never set" for what GFG added.
+
+        ``flatpak override --nofilesystem`` / ``--unset-env`` store negations ("!path",
+        ``unset-environment``) that would keep stripping the user's own MangoHud, vkBasalt or HDR
+        variables from the app forever.  Drop exactly those entries from the user override file;
+        everything else in it is left byte for byte.
+        """
+        path = self.user_home / ".local" / "share" / "flatpak" / "overrides" / app_id
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return
+        ours_paths = {str(p).rstrip("/") for p in paths}
+        ours_vars = set(variables)
+
+        def base(entry: str) -> str:
+            entry = entry[1:] if entry.startswith("!") else entry
+            for suffix in (":ro", ":rw", ":create"):
+                if entry.endswith(suffix):
+                    entry = entry[: -len(suffix)]
+            return entry.rstrip("/")
+
+        out: List[str] = []
+        section = ""
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                section = stripped
+                out.append(line)
+                continue
+            key, sep, value = line.partition("=")
+            key = key.strip()
+            if sep and section == "[Context]" and key in ("filesystems", "unset-environment"):
+                items = [item for item in value.split(";") if item]
+                if key == "filesystems":
+                    kept = [item for item in items if not (item.startswith("!") and base(item) in ours_paths)]
+                else:
+                    kept = [item for item in items if item not in ours_vars]
+                if kept:
+                    out.append(f"{key}={';'.join(kept)};")
+                continue
+            if sep and section == "[Environment]" and key in ours_vars and value == "":
+                continue  # the empty entry Flatpak writes next to unset-environment
+            out.append(line)
+        if out == lines:
+            return
+        try:
+            self._write_file(path, "\n".join(out) + "\n", 0o644)
+        except OSError as error:
+            self.log.warning("Could not tidy Flatpak overrides for %s: %s", app_id, error)
+
     def remove_app_override(self, app_id: str) -> FlatpakOverrideResponse:
         """Remove GFG Engine overrides for a Flatpak app"""
         try:
@@ -1060,6 +1112,12 @@ class FlatpakService(BaseService):
                     operation="remove",
                 )
 
+            self._clean_override_negations(
+                app_id,
+                [dll_directory, config_path, wrapper_path, str(self.gamescope_wsi_compatibility_dir),
+                 vkbasalt_config_directory],
+                _LAYER_ENVIRONMENT_VARIABLES,
+            )
             self.log.info(f"Completed override removal for {app_id}")
             return self._success_response(FlatpakOverrideResponse,
                                         f"GFG Engine overrides removed for {app_id}",
