@@ -121,9 +121,9 @@ def compact_frame_os(frame_os: Any) -> Any:
         "level": decision.get("level"), "real_hz": decision.get("real_hz"), "tdp_w": decision.get("tdp_w"),
         "decision_reason": decision.get("reason"),
         "layer": {k: tel.get(k) for k in (
-            "writer_pid", "frames", "hits", "misses", "cost_p50_ms", "cost_q_ms", "avg_delay_ms",
-            "freshness_ms", "present_interval_p50_ms", "present_interval_p95_ms",
-            "applied_generation", "swapchain_recreations")} if tel else None,
+            "live", "writer_pid", "engine", "passthrough", "frames", "hits", "misses", "cost_p50_ms", "cost_q_ms",
+            "avg_delay_ms", "freshness_ms", "present_hold_ms", "acquire_block_ms", "present_interval_p50_ms",
+            "present_interval_p95_ms", "applied_generation", "swapchain_recreations")} if tel else None,
     }
 
 

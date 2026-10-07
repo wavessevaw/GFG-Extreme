@@ -49,16 +49,27 @@ void gfg_metrics_ready(gfg_metrics *m, int64_t ready_ns)
         gfg_ring_push(&m->costs_ms, (double)(ready_ns - m->start_ns) / NS_PER_MS);
 }
 
-void gfg_metrics_released(gfg_metrics *m, int64_t release_ns)
+static double ewma(double avg, double v)
 {
-    if (m->start_ns > 0 && release_ns >= m->start_ns) {
-        double age = (double)(release_ns - m->start_ns) / NS_PER_MS;
-        m->freshness_ms = m->freshness_ms > 0 ? (1 - GFG_FRESHNESS_ALPHA) * m->freshness_ms + GFG_FRESHNESS_ALPHA * age
-                                              : age;
-    }
+    return avg > 0 ? (1 - GFG_FRESHNESS_ALPHA) * avg + GFG_FRESHNESS_ALPHA * v : v;
+}
+
+void gfg_metrics_released(gfg_metrics *m, int64_t release_ns, int64_t return_ns)
+{
+    if (return_ns < release_ns)
+        return_ns = release_ns;
+    if (m->start_ns > 0 && return_ns >= m->start_ns)
+        m->freshness_ms = ewma(m->freshness_ms, (double)(return_ns - m->start_ns) / NS_PER_MS);
+    m->present_hold_ms = ewma(m->present_hold_ms, (double)(return_ns - release_ns) / NS_PER_MS);
     if (m->last_present_ns > 0 && release_ns >= m->last_present_ns)
         gfg_ring_push(&m->intervals_ms, (double)(release_ns - m->last_present_ns) / NS_PER_MS);
     m->last_present_ns = release_ns;
     m->start_ns = 0;
     m->frames++;
+}
+
+void gfg_metrics_acquired(gfg_metrics *m, int64_t block_ns)
+{
+    if (block_ns >= 0)
+        m->acquire_block_ms = ewma(m->acquire_block_ms, (double)block_ns / NS_PER_MS);
 }

@@ -132,18 +132,30 @@ class FrameOsReportTests(unittest.TestCase):
                 for i in range(10)]
 
     def test_answering_layer_is_summarised(self):
-        layer = {"frames": 900, "freshness_ms": 21.5, "present_interval_p50_ms": 33.3,
-                 "present_interval_p95_ms": 34.0, "swapchain_recreations": 1}
+        layer = {"live": True, "frames": 900, "freshness_ms": 21.5, "present_interval_p50_ms": 33.3,
+                 "present_interval_p95_ms": 34.0, "swapchain_recreations": 1, "present_hold_ms": 20.4,
+                 "engine": "DXVK"}
         rep = analyze(bundle({"timeline.jsonl": timeline(self.rows(layer)),
                               "game-processes.json": json.dumps([{"pid": 1, "frame_os_layer_loaded": True}])}))
         fo = rep["frame_os"]
         self.assertEqual((fo["frames"], fo["freshness_ms"], fo["loaded_in_game"]), (900, 21.5, True))
         self.assertIn("Frame OS (observe): the layer reported 900 frames", "\n".join(rep["findings"]))
+        self.assertIn("engine DXVK", "\n".join(rep["findings"]))
+        self.assertEqual(fo["present_hold_ms"], 20.4)
+
+    def test_stale_telemetry_does_not_answer(self):
+        layer = {"live": False, "frames": 900, "freshness_ms": 21.5}
+        rep = analyze(bundle({"timeline.jsonl": timeline(self.rows(layer)),
+                              "game-processes.json": json.dumps([{"pid": 1, "frame_os_layer_loaded": True}])}))
+        self.assertEqual((rep["frame_os"]["answering_share"], rep["frame_os"]["frames"]), (0, 0))
+        self.assertIn("never reported live frames", "\n".join(rep["findings"]))
 
     def test_layer_not_loaded_is_called_out(self):
         rep = analyze(bundle({"timeline.jsonl": timeline(self.rows({})),
-                              "game-processes.json": json.dumps([{"pid": 1, "frame_os_layer_loaded": False}])}))
-        self.assertIn("did not load the Frame OS layer", "\n".join(rep["findings"]))
+                              "game-processes.json": json.dumps([{"pid": 1, "comm": "Game.exe",
+                                                                  "frame_os_layer_loaded": False}])}))
+        self.assertIn("Game.exe did not load the Frame OS layer", "\n".join(rep["findings"]))
+        self.assertIn("32-bit game?", "\n".join(rep["findings"]))
 
     def test_no_frame_os_rows_no_summary(self):
         rep = analyze(bundle({"timeline.jsonl": timeline([{"t": 0.0, "state": "LOCKED"}])}))

@@ -21,15 +21,21 @@ _Static_assert(offsetof(gfg_ctl_shm, policy.mode) == 36, "abi");
 _Static_assert(offsetof(gfg_ctl_shm, policy.real_target_hz) == 40, "abi");
 _Static_assert(offsetof(gfg_ctl_shm, policy.max_wait_ms) == 56, "abi");
 _Static_assert(offsetof(gfg_ctl_shm, policy.generation) == 64, "abi");
-_Static_assert(sizeof(gfg_ctl_policy) == 48, "abi");
-_Static_assert(offsetof(gfg_ctl_shm, telemetry_seq) == 72, "abi");
-_Static_assert(offsetof(gfg_ctl_shm, telemetry) == 80, "abi");
-_Static_assert(offsetof(gfg_ctl_shm, telemetry.freshness_ms) == 136, "abi");
-_Static_assert(offsetof(gfg_ctl_shm, telemetry.last_present_ns) == 160, "abi");
-_Static_assert(offsetof(gfg_ctl_shm, telemetry.applied_generation) == 168, "abi");
-_Static_assert(offsetof(gfg_ctl_shm, telemetry.swapchain_recreations) == 172, "abi");
-_Static_assert(sizeof(gfg_ctl_telemetry) == 96, "abi");
-_Static_assert(sizeof(gfg_ctl_shm) == 176, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, policy.written_ns) == 72, "abi");
+_Static_assert(sizeof(gfg_ctl_policy) == 56, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, telemetry_seq) == 80, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, telemetry) == 88, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, telemetry.freshness_ms) == 144, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, telemetry.last_present_ns) == 168, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, telemetry.applied_generation) == 176, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, telemetry.swapchain_recreations) == 180, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, telemetry.present_hold_ms) == 184, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, telemetry.acquire_block_ms) == 192, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, telemetry.last_present_return_ns) == 200, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, telemetry.passthrough) == 208, "abi");
+_Static_assert(offsetof(gfg_ctl_shm, telemetry.engine) == 216, "abi");
+_Static_assert(sizeof(gfg_ctl_telemetry) == 144, "abi");
+_Static_assert(sizeof(gfg_ctl_shm) == 232, "abi");
 
 #define SEQ_TRIES 64
 
@@ -204,7 +210,6 @@ static void sync_mapping(void)
         g_dev = dev;
         g_ino = ino;
         gfg_ctl_init_header(g_shm);
-        g_shm->writer_pid = (uint32_t)g_pid;
         return;
     }
     if (g_shm && dev == g_dev && ino == g_ino)
@@ -220,8 +225,6 @@ static void sync_mapping(void)
             g_shm = m;
             g_dev = dev;
             g_ino = ino;
-            if (header_ok(g_shm))
-                g_shm->writer_pid = (uint32_t)g_pid;
         }
     }
     close(fd);
@@ -277,7 +280,8 @@ int gfg_ctl_poll(int64_t now_ns, gfg_ctl_state *out)
             gfg_ctl_policy c;
             if (gfg_ctl_read_policy(g_shm, &c) != 0) {
                 n = g_state;                 /* writer busy: keep the last policy */
-            } else if (c.enabled == 1 && to_sched_policy(&c, &n.policy)) {
+            } else if (c.enabled == 1 && c.written_ns > 0 && now_ns - c.written_ns <= GFG_CTL_HEARTBEAT_NS &&
+                       to_sched_policy(&c, &n.policy)) {
                 n.enabled = 1;
                 n.mode = c.mode;
                 n.generation = c.generation;
@@ -299,12 +303,45 @@ int gfg_ctl_poll(int64_t now_ns, gfg_ctl_state *out)
     return 0;
 }
 
-void gfg_ctl_publish(const gfg_ctl_telemetry *t)
+/* g_lock held.  This process may write telemetry: it is the writer, or the writer went quiet. */
+static int may_write_locked(int64_t now_ns)
 {
+    gfg_ctl_telemetry cur;
+    if (!g_shm || g_pid != getpid() || !header_ok(g_shm))
+        return 0;
+    if (__atomic_load_n(&g_shm->writer_pid, __ATOMIC_RELAXED) == (uint32_t)g_pid)
+        return 1;
+    if (gfg_ctl_read_telemetry(g_shm, &cur) != 0)
+        return 0;
+    if (cur.last_present_ns > 0 && now_ns - cur.last_present_ns <= GFG_CTL_TAKEOVER_NS)
+        return 0;
+    __atomic_store_n(&g_shm->writer_pid, (uint32_t)g_pid, __ATOMIC_RELAXED);
+    return 1;
+}
+
+int gfg_ctl_publish(const gfg_ctl_telemetry *t)
+{
+    int ok = 0;
+    if (pthread_mutex_lock(&g_lock) != 0)
+        return 0;
+    if (may_write_locked(t->last_present_ns)) {
+        gfg_ctl_write_telemetry(g_shm, t);   /* one writer at a time: under g_lock */
+        ok = 1;
+    }
+    pthread_mutex_unlock(&g_lock);
+    return ok;
+}
+
+void gfg_ctl_mark_passthrough(int64_t now_ns)
+{
+    gfg_ctl_telemetry t;
     if (pthread_mutex_lock(&g_lock) != 0)
         return;
-    if (g_shm && g_pid == getpid() && header_ok(g_shm))
-        gfg_ctl_write_telemetry(g_shm, t);   /* one writer at a time: under g_lock */
+    if (g_shm && header_ok(g_shm) && gfg_ctl_read_telemetry(g_shm, &t) == 0 &&
+        may_write_locked(now_ns)) {
+        t.passthrough = 1;
+        gfg_ctl_write_telemetry(g_shm, &t);
+    }
     pthread_mutex_unlock(&g_lock);
 }
 
@@ -319,6 +356,22 @@ void gfg_ctl_shutdown(void)
     }
     g_init = 0;
     pthread_mutex_unlock(&g_lock);
+}
+
+/* fork() while another thread holds g_lock would leave the child's copy locked for good. */
+static void atfork_prepare(void)
+{
+    pthread_mutex_lock(&g_lock);
+}
+
+static void atfork_release(void)
+{
+    pthread_mutex_unlock(&g_lock);
+}
+
+__attribute__((constructor)) static void ctl_init(void)
+{
+    pthread_atfork(atfork_prepare, atfork_release, atfork_release);
 }
 
 __attribute__((destructor)) static void ctl_fini(void)

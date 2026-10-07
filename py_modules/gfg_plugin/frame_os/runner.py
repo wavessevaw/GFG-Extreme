@@ -45,9 +45,14 @@ class FrameOsRunner:
     def configure(self, *, enabled: bool, mode: str, output_hz: float, calm_real_hz: float,
                   max_multiplier: float, calm_w: Optional[float]) -> None:
         mode = mode if mode in MODES else "observe"
+        was_enabled = self.enabled
         self.enabled, self.mode = bool(enabled), mode
         if not self.enabled:
             return
+        if not was_enabled:
+            # Fresh file per enable: the previous session's telemetry must not read as this one's.
+            self.channel.reset()
+            self._published = None
         same = (self.policy is not None and self.policy.output_hz == output_hz
                 and self.policy.calm_real_hz == calm_real_hz and self.policy.max_multiplier == max_multiplier)
         if not same:
@@ -94,11 +99,13 @@ class FrameOsRunner:
                                       tick_shaping=True, pacing=True, generation=self._bump(),
                                       max_wait_ms=round(0.8 * 1000.0 / real_hz, 2) if real_hz > 0 else 0.0)
             self._published = wanted
+        else:
+            self.channel.heartbeat()
         self.last = {
             "enabled": True, "mode": self.mode, "input": inp, "scene_change": cut,
             "decision": decision.to_dict(), "acting": acting, "published_real_hz": real_hz,
             "generation": self.generation, "telemetry": telemetry,
-            "acknowledged": telemetry.get("applied_generation") == self.generation if telemetry else False,
+            "acknowledged": bool(telemetry.get("live")) and telemetry.get("applied_generation") == self.generation,
         }
         return self.last
 

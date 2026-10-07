@@ -124,6 +124,26 @@ static void test_policy_change_reanchors(void)
     CHECK(s.cost_count > 0, "learned cost lost");
 }
 
+static void test_long_idle_catch_up(void)
+{
+    gfg_policy p;
+    gfg_sched s;
+    gfg_policy_defaults(&p);
+    p.real_target_hz = 30;
+    p.max_wait_ms = 30;
+    gfg_sched_init(&s, &p);
+    int64_t now = 1000000000, period = 33333333;
+    for (int i = 0; i < 20; i++) {             /* 10 ms frames on the 30 Hz grid */
+        now += gfg_sched_frame_start(&s, now);
+        now = gfg_sched_present(&s, now + 10000000);
+    }
+    now += 3600ll * 1000000000ll;              /* an hour paused: one step, not 108000 loop turns */
+    int64_t d = gfg_sched_frame_start(&s, now);
+    CHECK(s.next_slot_ns >= now + 10000000 && s.next_slot_ns < now + 10000000 + period, "slot %lld after idle",
+          (long long)(s.next_slot_ns - now));
+    CHECK(d >= 0 && d < period, "delay after idle %lld", (long long)d);
+}
+
 int main(void)
 {
     test_tick_shaping_removes_queueing_latency();
@@ -132,6 +152,7 @@ int main(void)
     test_waits_are_capped();
     test_no_grid_is_pass_through();
     test_policy_change_reanchors();
+    test_long_idle_catch_up();
     if (failures) {
         printf("%d failure(s)\n", failures);
         return 1;

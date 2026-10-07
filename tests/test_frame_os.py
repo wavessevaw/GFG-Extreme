@@ -136,35 +136,120 @@ class FakeReader:
         pass
 
 
+def layer_publishes(path, *, last_ns, pid, frames=120, engine=b"DXVK"):
+    """What the layer does: telemetry + writer_pid under the seqlock."""
+    from gfg_plugin.frame_os import control_channel as c
+    buf = bytearray(path.read_bytes())
+    c.TELEMETRY.pack_into(buf, c.TELEMETRY_OFF, frames, 118, 1, 12.0, 15.0, 1.5, 4.0, 24.0, 33.3, 35.0,
+                          last_ns, 7, 0, 20.5, 0.25, last_ns + 20_000_000, 0, 0, engine)
+    c.SEQ.pack_into(buf, c.TELEMETRY_SEQ_OFF, 2)
+    c.HEADER.pack_into(buf, 0, c.MAGIC, c.VERSION, c.SIZE, pid)
+    path.write_bytes(bytes(buf))     # same inode: the open mapping sees it
+
+
 class ControlChannelTests(unittest.TestCase):
     def test_layout_matches_control_h(self):
         from gfg_plugin.frame_os import control_channel as c
         header = (ROOT / "engine/gfg-pacer/src/control.h").read_text()
-        if "GFG_CTL_VERSION 2u" not in header:
-            self.skipTest("layer still on v1")
+        self.assertIn(f"GFG_CTL_VERSION {c.VERSION}u", header)
         self.assertIn(f"{c.SIZE} bytes", header)
+        self.assertIn(f"{c.POLICY.size} bytes", header)
+        self.assertIn(f"{c.TELEMETRY.size} bytes", header)
+        self.assertIn(f"@{c.TELEMETRY_SEQ_OFF}", header)
+        self.assertIn(f"@{c.TELEMETRY_OFF}", header)
 
     def test_policy_roundtrip_and_telemetry_read(self):
+        import os
         import tempfile
+        import time
         from gfg_plugin.frame_os import control_channel as c
         with tempfile.TemporaryDirectory() as tmp:
-            ch = c.ControlChannel(Path(tmp) / "ctl")
+            path = Path(tmp) / "ctl"
+            ch = c.ControlChannel(path)
+            before = time.monotonic_ns()
             self.assertTrue(ch.write_policy(enabled=True, real_hz=45.0, mode="shadow", generation=7))
-            raw = (Path(tmp) / "ctl").read_bytes()
+            raw = path.read_bytes()
             self.assertEqual(len(raw), c.SIZE)
             self.assertEqual(c.HEADER.unpack_from(raw, 0)[:3], (c.MAGIC, c.VERSION, c.SIZE))
             self.assertEqual(c.SEQ.unpack_from(raw, c.POLICY_SEQ_OFF)[0] % 2, 0)
-            enabled, _ts, _pace, mode, hz, _m, _w, gen, _r = c.POLICY.unpack_from(raw, c.POLICY_OFF)
+            enabled, _ts, _pace, mode, hz, _m, _w, gen, _r, written = c.POLICY.unpack_from(raw, c.POLICY_OFF)
             self.assertEqual((enabled, mode, hz, gen), (1, 2, 45.0, 7))
-            # the layer publishes telemetry
-            buf = bytearray(raw)
-            c.TELEMETRY.pack_into(buf, c.TELEMETRY_OFF, 120, 118, 1, 12.0, 15.0, 1.5, 4.0, 24.0, 33.3, 35.0,
-                                  123456789, 7, 0)
-            c.SEQ.pack_into(buf, c.TELEMETRY_SEQ_OFF, 2)
-            (Path(tmp) / "ctl").write_bytes(bytes(buf))
-            ch.close()
-            t = c.ControlChannel(Path(tmp) / "ctl").read_telemetry()
+            self.assertTrue(before <= written <= time.monotonic_ns())
+            layer_publishes(path, last_ns=time.monotonic_ns(), pid=os.getpid())
+            t = ch.read_telemetry()
             self.assertEqual((t["frames"], t["freshness_ms"], t["applied_generation"]), (120, 24.0, 7))
+            self.assertEqual((t["present_hold_ms"], t["acquire_block_ms"], t["engine"], t["passthrough"]),
+                             (20.5, 0.25, "DXVK", False))
+            self.assertTrue(t["live"])
+
+    def test_live_needs_a_recent_present_and_a_running_writer(self):
+        import os
+        import tempfile
+        import time
+        from gfg_plugin.frame_os import control_channel as c
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ctl"
+            ch = c.ControlChannel(path)
+            ch.open()
+            layer_publishes(path, last_ns=time.monotonic_ns() - 2_000_000_000, pid=os.getpid())
+            self.assertFalse(ch.read_telemetry()["live"], "presented 2 s ago")
+            layer_publishes(path, last_ns=time.monotonic_ns(), pid=0)
+            self.assertFalse(ch.read_telemetry()["live"], "no writer")
+            child = os.fork()
+            if child == 0:
+                os._exit(0)
+            os.waitpid(child, 0)
+            layer_publishes(path, last_ns=time.monotonic_ns(), pid=child)
+            self.assertFalse(ch.read_telemetry()["live"], "writer exited")
+            self.assertTrue(c.pid_alive(1))  # PermissionError (not root) or alive (root): alive either way
+
+    def test_first_open_in_a_process_recreates_the_file(self):
+        import os
+        import tempfile
+        import time
+        from gfg_plugin.frame_os import control_channel as c
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ctl"
+            old = c.ControlChannel(path)                        # a Governor that crashed while acting
+            old.write_policy(enabled=True, real_hz=45.0, mode="act", generation=3)
+            layer_publishes(path, last_ns=time.monotonic_ns(), pid=os.getpid(), frames=999)
+            inode = path.stat().st_ino
+            fresh = c.ControlChannel(path)                      # the next Governor process
+            t = fresh.read_telemetry()
+            self.assertEqual((t["frames"], t["live"]), (0, False))
+            self.assertEqual(c.POLICY.unpack_from(path.read_bytes(), c.POLICY_OFF)[0], 0, "old act policy gone")
+            self.assertNotEqual(path.stat().st_ino, inode, "new inode: the layer remaps")
+            old.close()
+
+    def test_old_version_files_are_replaced(self):
+        import tempfile
+        from gfg_plugin.frame_os import control_channel as c
+        for version, size in ((1, 136), (2, 176)):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "ctl"
+                raw = bytearray(size)
+                c.HEADER.pack_into(raw, 0, c.MAGIC, version, size, 1234)
+                path.write_bytes(bytes(raw))
+                ch = c.ControlChannel(path)
+                self.assertTrue(ch.write_policy(enabled=True, real_hz=30.0))
+                raw = path.read_bytes()
+                self.assertEqual(c.HEADER.unpack_from(raw, 0), (c.MAGIC, c.VERSION, c.SIZE, 0))
+                self.assertEqual(len(raw), c.SIZE)
+                ch.close()
+
+    def test_heartbeat_rewrites_only_the_timestamp(self):
+        import tempfile
+        from gfg_plugin.frame_os import control_channel as c
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ctl"
+            ch = c.ControlChannel(path)
+            self.assertFalse(ch.heartbeat(), "nothing written yet")
+            ch.write_policy(enabled=True, real_hz=30.0, mode="observe", generation=4)
+            first = c.POLICY.unpack_from(path.read_bytes(), c.POLICY_OFF)
+            self.assertTrue(ch.heartbeat())
+            second = c.POLICY.unpack_from(path.read_bytes(), c.POLICY_OFF)
+            self.assertEqual(first[:9], second[:9])
+            self.assertGreater(second[9], first[9])
 
 
 class RunnerTests(unittest.TestCase):
@@ -203,10 +288,59 @@ class RunnerTests(unittest.TestCase):
             r.policy.broker.bank_j = 50.0
             reader.state.feed(ev(0.0, EV_ABS, ABS_RX, 32000))
             r.tick(0.0)
-            enabled, _t, _p, mode, hz, _m, _w, gen, _ = self.published_hz(tmp)
+            enabled, _t, _p, mode, hz, _m, _w, gen, _, _written = self.published_hz(tmp)
             self.assertEqual((enabled, mode, hz), (1, 0, 45.0))
             self.assertEqual(r.tdp_offset_w, 4.0)
             self.assertEqual(gen, r.generation)
+
+    def test_acknowledged_only_from_live_telemetry(self):
+        import os
+        import tempfile
+        import time
+        from gfg_plugin.frame_os import control_channel as c
+        with tempfile.TemporaryDirectory() as tmp:
+            r, _ = self.make(tmp, "observe")
+            r.tick(0.0)
+            path = Path(tmp) / "ctl"
+            layer_publishes(path, last_ns=time.monotonic_ns() - 5_000_000_000,
+                                                pid=os.getpid())
+            buf = bytearray(path.read_bytes())          # ack the current generation, but stale
+            c.TELEMETRY.pack_into(buf, c.TELEMETRY_OFF, *(c.TELEMETRY.unpack_from(buf, c.TELEMETRY_OFF)[:11]),
+                                  r.generation, *(c.TELEMETRY.unpack_from(buf, c.TELEMETRY_OFF)[12:]))
+            path.write_bytes(bytes(buf))
+            self.assertFalse(r.tick(0.1)["acknowledged"])
+            buf = bytearray(path.read_bytes())
+            values = list(c.TELEMETRY.unpack_from(buf, c.TELEMETRY_OFF))
+            values[10] = time.monotonic_ns()
+            c.TELEMETRY.pack_into(buf, c.TELEMETRY_OFF, *values)
+            path.write_bytes(bytes(buf))
+            self.assertTrue(r.tick(0.2)["acknowledged"])
+
+    def test_every_tick_is_a_heartbeat(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            r, _ = self.make(tmp, "observe")
+            r.tick(0.0)
+            first = self.published_hz(tmp)[9]
+            r.tick(0.1)                                 # nothing changed: same policy, new timestamp
+            self.assertGreater(self.published_hz(tmp)[9], first)
+
+    def test_re_enable_starts_a_fresh_file(self):
+        import os
+        import tempfile
+        import time
+        with tempfile.TemporaryDirectory() as tmp:
+            r, _ = self.make(tmp, "observe")
+            r.tick(0.0)
+            path = Path(tmp) / "ctl"
+            layer_publishes(path, last_ns=time.monotonic_ns(), pid=os.getpid(), frames=500)
+            r.configure(enabled=True, mode="observe", output_hz=90, calm_real_hz=30, max_multiplier=3.0, calm_w=10.0)
+            self.assertEqual(r.tick(0.1)["telemetry"]["frames"], 500, "still enabled: same file")
+            r.configure(enabled=False, mode="observe", output_hz=0, calm_real_hz=0, max_multiplier=1, calm_w=None)
+            r.tick(0.2)
+            r.configure(enabled=True, mode="observe", output_hz=90, calm_real_hz=30, max_multiplier=3.0, calm_w=10.0)
+            status = r.tick(0.3)
+            self.assertEqual((status["telemetry"]["frames"], status["acknowledged"]), (0, False))
 
     def test_disable_and_close_turn_the_layer_off(self):
         import tempfile

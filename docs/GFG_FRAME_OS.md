@@ -35,10 +35,44 @@ part of the pipeline gets. Render v4 becomes one executor among several.
 |---|---|---|---|
 | **Presentation Scheduler** | `engine/gfg-pacer/src/scheduler.c` | every frame | Owns the frame timeline. Predicts the next present, decides when the game may start its next frame, and whether the next frame must be real. Pure C, no Vulkan types: unit-tested on the host. |
 | **Layer glue** | `engine/gfg-pacer/src/layer.c` | every frame | Implicit Vulkan layer. Hooks acquire/present, measures, sleeps where the scheduler says, publishes telemetry. |
-| **Control channel** | `/dev/shm/gfg-frame-os-<pid>` | 1–100 Hz | Fixed-layout struct: policy from the Governor in, telemetry out. Versioned, lock-free (seqlock). |
+| **Control channel** | `/dev/shm/gfg-frame-os` (launcher; layer default `-<pid>`) | 1–100 Hz | Fixed-layout struct: policy from the Governor in, telemetry out. Versioned, lock-free (seqlock). |
 | **Policy (Frame OS policy)** | `py_modules/gfg_plugin/frame_os/` | 10–20 Hz | Input intensity, scene-change detection, real-frame injection plan, energy budget broker. Writes targets into the control channel. |
 | **Governor** | existing | 1 Hz | Mode, TDP ceiling, game memory, UI. Becomes the outer loop of the broker. |
 | **Executors** | Render v4, Scaling Engine, PPT caps | — | Do what the scheduler/policy decide. |
+
+## 2a. Control channel layout (v3, 232 bytes)
+
+`engine/gfg-pacer/src/control.h` is the reference (offsets checked by static asserts and by
+`tests/test_frame_os.py` against `control_channel.py`). Any other version or a short file means
+disabled; the Governor replaces such a file.
+
+| Offset | Block | Fields |
+|---|---|---|
+| 0 | header | magic `GFGC`, version 3, size 232, `writer_pid` (set by the layer when it publishes), `policy_seq` |
+| 24 | policy (56 B, Governor) | enabled, tick_shaping, pacing, mode, real_target_hz, margin_ms, max_wait_ms, generation, `written_ns` |
+| 80 | `telemetry_seq` | |
+| 88 | telemetry (144 B, layer) | frames, hits, misses, cost p50/q, margin, avg_delay, freshness, present interval p50/p95, `last_present_ns`, applied_generation, swapchain_recreations, `present_hold_ms`, `acquire_block_ms`, `last_present_return_ns`, `passthrough`, `engine[16]` |
+
+Rules that keep stale or foreign data out:
+
+- **Heartbeat** — the runner rewrites the policy with `written_ns` (CLOCK_MONOTONIC) every 10 Hz
+  tick; the layer treats a policy older than 2 s as disabled (pure forward). Env test mode
+  (`GFG_FRAME_OS_ENABLE=1`) has no heartbeat.
+- **Fresh file** — the Governor unlinks and recreates the file on its first open in a process and
+  whenever Frame OS goes from disabled to enabled; the layer remaps on the inode change. A
+  Governor that crashed while acting therefore never leaves its policy in force for the next one
+  (and the heartbeat ends it within 2 s anyway).
+- **Live** — `read_telemetry()["live"]`: the last present was forwarded within 1 s and
+  `writer_pid` still runs. The runner's `acknowledged` and the log report's "answering" count
+  only live telemetry.
+- **One writer** — a process writes telemetry only when it is `writer_pid` or the telemetry there
+  is 500 ms old; inside a process one (device, swapchain) owns it, with the same takeover rule.
+- **Timing** — frame start = return of the acquire that produced the presented
+  (swapchain, image), so DXVK/vkd3d presenter threads that acquire ahead are measured per image;
+  freshness runs to the return of the forwarded present, so it includes a frame generator's hold
+  below (`present_hold_ms`). `engine` is `VkApplicationInfo.pEngineName` (DXVK, vkd3d, ...).
+- **32-bit games** do not load the layer (64-bit manifest only); the log report says so when the
+  probed game process shows the layer not loaded.
 
 ## 3. The ideas, by what they need
 
@@ -129,8 +163,9 @@ confirm, and a burst of live config changes has crashed a game before). Instead:
   slot grid: 30 Hz in calm play, 45 Hz while the policy boosts. The renderer sees a variable
   real cadence and adapts its generated-frame count; no config write per decision.
 * Layer order: implicit layers load in directory-listing order, which differs per filesystem.
-  The launcher names both layers in `VK_INSTANCE_LAYERS` (pacer first) and clears both implicit
-  enable variables; that is the only setup that held with both listing orders on loaders
+  The launcher names both layers in `VK_INSTANCE_LAYERS` (pacer first), clears both implicit
+  enable variables and exports `DISABLE_GFG_FRAME_OS=1` (the disable gate only blocks the implicit
+  path, not the explicit list: ordering case (w) runs exactly that env); that is the only setup that held with both listing orders on loaders
   1.3.275, 1.4.321 and 1.4.365 (`make -C engine/gfg-pacer ordering`, stand-in 2x frame
   generator: the pacer sees N presents, not 2N). The layer is 64-bit only (`library_arch`), and
   Flatpak sandboxes need it staged plus a shared `/dev/shm` before it can run there.
@@ -143,7 +178,7 @@ artefacts from the renderer's own diagnostics.
 
 | Phase | Deliverable | Gate before the next phase |
 |---|---|---|
-| 0 ✅ | This document; scheduler core with host tests; layer through the real Vulkan loader on the mock driver (headless swapchain); control channel v2; Governor wiring behind a per-profile switch | Done: `make -C engine/gfg-pacer test layer integration` |
+| 0 ✅ | This document; scheduler core with host tests; layer through the real Vulkan loader on the mock driver (headless swapchain); control channel (now v3); Governor wiring behind a per-profile switch | Done: `make -C engine/gfg-pacer test layer integration` |
 | 1a ✅ | Layer shipped in the plugin zip (64-bit, glibc ≤ 2.31 checked by `make abi`), staged by the Governor when a profile turns Frame OS on, named first in the launcher's layer list | Done on the branch; not in a release |
 | 1 | **Observe, then shadow on a Deck**: the layer in the real chain above Render v4, telemetry (freshness, present intervals) in recorded logs | 30+ min clean sessions: no picture change, no pacing/latency effect, game exit, swapchain recreation, suspend/resume |
 | 2 | **Adaptive real-frame injection** (input sensor + energy broker, adaptive-mode executor contract above) | On a Deck: lower freshness in motion, equal smoothness, energy within the premium |

@@ -1,29 +1,38 @@
 """Governor side of the gfg-pacer control channel (``engine/gfg-pacer/src/control.h``).
 
-Same 176-byte layout (v2), same seqlock protocol: the Governor writes the policy block, the layer
+Same 232-byte layout (v3), same seqlock protocol: the Governor writes the policy block, the layer
 writes the telemetry block.  The Deck is x86-64 (stores are not reordered with stores), so the
 odd/even sequence writes through ``mmap`` are enough for the layer's reader.
+
+Nothing in the file outlives the Governor that wrote it: the first ``open`` in a process and every
+``reset`` (Frame OS re-enabled) recreate the file (the layer remaps on the inode change), and the
+policy carries a CLOCK_MONOTONIC heartbeat (``heartbeat`` every runner tick) that the layer stops
+trusting after 2 s.  Telemetry counts as ``live`` only while its writer runs and presents.
 """
 from __future__ import annotations
 
 import mmap
 import os
 import struct
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 MAGIC = 0x43474647          # "GFGC"
-VERSION = 2
-SIZE = 176
+VERSION = 3
+SIZE = 232
 HEADER = struct.Struct("<IIII")                # magic, version, size, writer_pid      @0
 POLICY_SEQ_OFF = 16
 POLICY_OFF = 24
-POLICY = struct.Struct("<IIIIdddII")         # enabled, tick_shaping, pacing, mode, hz, margin, max_wait, generation, rsv
-TELEMETRY_SEQ_OFF = 72
-TELEMETRY_OFF = 80
+# enabled, tick_shaping, pacing, mode, hz, margin, max_wait, generation, rsv, written_ns (heartbeat)
+POLICY = struct.Struct("<IIIIdddIIq")
+TELEMETRY_SEQ_OFF = 80
+TELEMETRY_OFF = 88
 # frames, hits, misses, cost p50, cost q, margin, avg_delay, freshness, interval p50, interval p95,
-# last_present_ns, applied_generation, swapchain_recreations
-TELEMETRY = struct.Struct("<QQQdddddddqII")
+# last_present_ns, applied_generation, swapchain_recreations, present_hold, acquire_block,
+# last_present_return_ns, passthrough, rsv, engine
+TELEMETRY = struct.Struct("<QQQdddddddqIIddqII16s")
+LIVE_NS = 1_000_000_000
 MODES = {"act": 0, "observe": 1, "shadow": 2}
 SEQ = struct.Struct("<I")
 DEFAULT_PATH = Path("/dev/shm/gfg-frame-os")
@@ -39,10 +48,14 @@ class ControlChannel:
         self.path = Path(path)
         self._fd: Optional[int] = None
         self._map: Optional[mmap.mmap] = None
+        self._fresh = False                 # this process recreated the file
+        self._policy: Optional[Dict[str, Any]] = None
 
     def open(self) -> bool:
         if self._map is not None:
             return True
+        if not self._fresh:
+            return self.reset()
         try:
             fd = os.open(str(self.path), os.O_RDWR | os.O_CREAT, 0o600)
             if os.fstat(fd).st_size < SIZE:
@@ -56,6 +69,12 @@ class ControlChannel:
             HEADER.pack_into(mapped, 0, MAGIC, VERSION, SIZE, 0)
         self._fd, self._map = fd, mapped
         return True
+
+    def reset(self) -> bool:
+        """Recreate the file: nothing an earlier Governor or game left there is read as current."""
+        self.close(remove=True)
+        self._fresh, self._policy = True, None
+        return self.open()
 
     def close(self, remove: bool = False) -> None:
         if self._map is not None:
@@ -80,9 +99,16 @@ class ControlChannel:
             seq += 1                                    # a crashed writer left it odd
         SEQ.pack_into(m, POLICY_SEQ_OFF, (seq + 1) & 0xFFFFFFFF)
         POLICY.pack_into(m, POLICY_OFF, int(enabled), int(tick_shaping), int(pacing), MODES[mode],
-                         float(real_hz), float(margin_ms), float(max_wait_ms), int(generation) & 0xFFFFFFFF, 0)
+                         float(real_hz), float(margin_ms), float(max_wait_ms), int(generation) & 0xFFFFFFFF, 0,
+                         time.monotonic_ns())
         SEQ.pack_into(m, POLICY_SEQ_OFF, (seq + 2) & 0xFFFFFFFF)
+        self._policy = dict(enabled=enabled, real_hz=real_hz, tick_shaping=tick_shaping, pacing=pacing,
+                            margin_ms=margin_ms, max_wait_ms=max_wait_ms, mode=mode, generation=generation)
         return True
+
+    def heartbeat(self) -> bool:
+        """Rewrite the last policy with a new timestamp (the layer drops a policy 2 s old)."""
+        return self.write_policy(**self._policy) if self._policy is not None and self._map is not None else False
 
     def read_telemetry(self, retries: int = 8) -> Optional[Dict[str, Any]]:
         if not self.open():
@@ -95,11 +121,28 @@ class ControlChannel:
             values = TELEMETRY.unpack_from(m, TELEMETRY_OFF)
             if SEQ.unpack_from(m, TELEMETRY_SEQ_OFF)[0] == before:
                 (frames, hits, misses, p50, q, margin, delay, fresh, iv50, iv95, last, gen,
-                 recreations) = values
+                 recreations, hold, acquire_block, last_return, passthrough, _rsv, engine) = values
+                pid = HEADER.unpack_from(m, 0)[3]
                 return {"frames": frames, "hits": hits, "misses": misses, "cost_p50_ms": p50,
                         "cost_q_ms": q, "margin_ms": margin, "avg_delay_ms": delay,
                         "freshness_ms": fresh, "present_interval_p50_ms": iv50,
                         "present_interval_p95_ms": iv95, "last_present_ns": last,
                         "applied_generation": gen, "swapchain_recreations": recreations,
-                        "writer_pid": HEADER.unpack_from(m, 0)[3]}
+                        "present_hold_ms": hold, "acquire_block_ms": acquire_block,
+                        "last_present_return_ns": last_return, "passthrough": bool(passthrough),
+                        "engine": engine.split(b"\0", 1)[0].decode("ascii", "replace"),
+                        "writer_pid": pid,
+                        "live": last > 0 and abs(time.monotonic_ns() - last) <= LIVE_NS and pid_alive(pid)}
         return None
+
+
+def pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True

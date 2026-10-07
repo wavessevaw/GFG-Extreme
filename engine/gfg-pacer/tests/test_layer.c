@@ -7,7 +7,10 @@
  *   test_layer file   N   this process plays Governor: writes the policy file, then flips it
  *                         (60 Hz gen 7 -> disabled -> swapchain recreated -> 30 Hz gen 8)
  *   test_layer off    N   layer not enabled: must not pace, must not create the file
- *   test_layer badver N   version-1 policy file (enabled): foreign, must not pace or be written
+ *   test_layer badver N   version-1 and version-2 policy files (enabled): foreign, must not pace or
+ *                         be written
+ *   test_layer dxvk   N   DXVK/vkd3d-like: two swapchains, each image presented 6 ms after its own
+ *                         acquire, acquires interleaved (env-enabled observe mode)
  *
  * The mock ICD presents instantly, so any pacing measured here comes from the layer. */
 #define _GNU_SOURCE
@@ -34,13 +37,17 @@ typedef struct app {
     VkInstance inst;
     VkDevice dev;
     VkQueue queue;
-    VkSurfaceKHR surface;
-    VkSwapchainKHR swapchain;
+    VkSurfaceKHR surface, surface2;
+    VkSwapchainKHR swapchain, swapchain2;   /* swapchain2: dxvk mode only */
     VkSwapchainCreateInfoKHR sci;
     VkFence fence;
 } app;
 
 static char path[512];
+/* file mode: this process plays Governor and keeps the policy heartbeat fresh while it runs */
+static gfg_ctl_shm *g_gov;
+static gfg_ctl_policy g_gov_policy;
+static int g_two_swapchains;
 
 static double now_s(void)
 {
@@ -53,6 +60,20 @@ static void sleep_ms(int ms)
 {
     struct timespec ts = { ms / 1000, (ms % 1000) * 1000000l };
     nanosleep(&ts, NULL);
+}
+
+static void governor_write(gfg_ctl_shm *m, const gfg_ctl_policy *p, int64_t age_ns)
+{
+    g_gov = m;
+    g_gov_policy = *p;
+    g_gov_policy.written_ns = (int64_t)(now_s() * 1e9) - age_ns;
+    gfg_ctl_write_policy(m, &g_gov_policy);
+}
+
+static void governor_heartbeat(void)
+{
+    if (g_gov && (int64_t)(now_s() * 1e9) - g_gov_policy.written_ns > 100000000ll)
+        governor_write(g_gov, &g_gov_policy, 0);
 }
 
 static int has_instance_ext(const char *name)
@@ -77,6 +98,7 @@ static void app_init(app *a)
         exit(1);
     }
     VkApplicationInfo ai = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "gfg-pacer-test",
+                             .pEngineName = "gfg-test-engine-long-name",
                              .apiVersion = VK_API_VERSION_1_3 };
     VkInstanceCreateInfo ici = { .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &ai,
                                  .enabledExtensionCount = 2, .ppEnabledExtensionNames = iext };
@@ -116,7 +138,14 @@ static void app_init(app *a)
     VKCHECK(vkCreateSwapchainKHR(a->dev, &sci, NULL, &a->swapchain));
     VkFenceCreateInfo fci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
     VKCHECK(vkCreateFence(a->dev, &fci, NULL, &a->fence));
-    printf("instance/device/headless swapchain created (supported=%u)\n", supported);
+    a->surface2 = VK_NULL_HANDLE;
+    a->swapchain2 = VK_NULL_HANDLE;
+    if (g_two_swapchains) {
+        VKCHECK(create_headless(a->inst, &hci, NULL, &a->surface2));
+        sci.surface = a->surface2;
+        VKCHECK(vkCreateSwapchainKHR(a->dev, &sci, NULL, &a->swapchain2));
+    }
+    printf("instance/device/headless swapchain(s) created (supported=%u)\n", supported);
 }
 
 /* What a game does on resize / mode switch. */
@@ -133,8 +162,12 @@ static void app_destroy(app *a)
 {
     vkDestroyFence(a->dev, a->fence, NULL);
     vkDestroySwapchainKHR(a->dev, a->swapchain, NULL);
+    if (a->swapchain2)
+        vkDestroySwapchainKHR(a->dev, a->swapchain2, NULL);
     vkDestroyDevice(a->dev, NULL);
     vkDestroySurfaceKHR(a->inst, a->surface, NULL);
+    if (a->surface2)
+        vkDestroySurfaceKHR(a->inst, a->surface2, NULL);
     vkDestroyInstance(a->inst, NULL);
 }
 
@@ -144,6 +177,7 @@ static double run_frames(app *a, int n)
     double t0 = now_s();
     for (int i = 0; i < n; i++) {
         uint32_t idx = 0;
+        governor_heartbeat();
         VKCHECK(vkAcquireNextImageKHR(a->dev, a->swapchain, UINT64_MAX, VK_NULL_HANDLE, a->fence, &idx));
         VKCHECK(vkWaitForFences(a->dev, 1, &a->fence, VK_TRUE, UINT64_MAX));
         VKCHECK(vkResetFences(a->dev, 1, &a->fence));
@@ -152,6 +186,20 @@ static double run_frames(app *a, int n)
         VKCHECK(vkQueuePresentKHR(a->queue, &pi));
     }
     return now_s() - t0;
+}
+
+static void acquire(app *a, VkSwapchainKHR sc, uint32_t *idx)
+{
+    VKCHECK(vkAcquireNextImageKHR(a->dev, sc, UINT64_MAX, VK_NULL_HANDLE, a->fence, idx));
+    VKCHECK(vkWaitForFences(a->dev, 1, &a->fence, VK_TRUE, UINT64_MAX));
+    VKCHECK(vkResetFences(a->dev, 1, &a->fence));
+}
+
+static void present(app *a, VkSwapchainKHR sc, uint32_t idx)
+{
+    VkPresentInfoKHR pi = { .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, .swapchainCount = 1, .pSwapchains = &sc,
+                            .pImageIndices = &idx };
+    VKCHECK(vkQueuePresentKHR(a->queue, &pi));
 }
 
 static gfg_ctl_shm *map_file(int create, uint32_t version, size_t file_size)
@@ -182,10 +230,12 @@ static gfg_ctl_telemetry telemetry(const gfg_ctl_shm *m)
         printf("telemetry busy\n");
     printf("telemetry: frames=%llu hits=%llu misses=%llu cost_p50=%.3fms cost_q=%.3fms margin=%.2fms "
            "avg_delay=%.2fms freshness=%.3fms interval_p50=%.3fms interval_p95=%.3fms last_present_ns=%lld "
-           "applied_generation=%u swapchain_recreations=%u\n",
+           "applied_generation=%u swapchain_recreations=%u present_hold=%.4fms acquire_block=%.4fms "
+           "last_present_return_ns=%lld passthrough=%u engine=%.16s\n",
            (unsigned long long)t.frames, (unsigned long long)t.hits, (unsigned long long)t.misses, t.cost_p50_ms,
            t.cost_q_ms, t.margin_ms, t.avg_delay_ms, t.freshness_ms, t.present_interval_p50_ms,
-           t.present_interval_p95_ms, (long long)t.last_present_ns, t.applied_generation, t.swapchain_recreations);
+           t.present_interval_p95_ms, (long long)t.last_present_ns, t.applied_generation, t.swapchain_recreations,
+           t.present_hold_ms, t.acquire_block_ms, (long long)t.last_present_return_ns, t.passthrough, t.engine);
     return t;
 }
 
@@ -241,6 +291,9 @@ int main(int argc, char **argv)
         CHECK(t.last_present_ns > 0, "last_present_ns set");
         CHECK(t.freshness_ms > 0, "freshness %.3f ms > 0", t.freshness_ms);
         CHECK(t.applied_generation == 0 && t.swapchain_recreations == 0, "env generation 0, no recreations");
+        CHECK(t.last_present_return_ns >= t.last_present_ns && t.present_hold_ms >= 0 && t.acquire_block_ms >= 0 &&
+              !t.passthrough, "present return / hold / acquire block published");
+        CHECK(!strcmp(t.engine, "gfg-test-engine"), "engine name '%s' (truncated to 15 chars)", t.engine);
         if (!strcmp(lm, "act")) {
             double period = 1000.0 / hz;
             CHECK(t.hits + t.misses + 1 == t.frames && t.misses <= (uint64_t)n / 20, "hits %llu misses %llu",
@@ -275,7 +328,7 @@ int main(int argc, char **argv)
             return 1;
         }
         gfg_ctl_policy p = policy(1, 60, 7);
-        gfg_ctl_write_policy(m, &p);
+        governor_write(m, &p, 0);
         app_init(&a);
         double el = run_frames(&a, n);
         gfg_ctl_telemetry t = telemetry(m);
@@ -284,7 +337,7 @@ int main(int argc, char **argv)
         check_paced(el, n, 60);
 
         p = policy(0, 60, 7);
-        gfg_ctl_write_policy(m, &p);
+        governor_write(m, &p, 0);
         sleep_ms(150);   /* > one policy re-read period */
         el = run_frames(&a, n);
         t = telemetry(m);
@@ -293,7 +346,7 @@ int main(int argc, char **argv)
 
         app_recreate_swapchain(&a);
         p = policy(1, 30, 8);
-        gfg_ctl_write_policy(m, &p);
+        governor_write(m, &p, 0);
         sleep_ms(150);
         el = run_frames(&a, n / 2);
         t = telemetry(m);
@@ -302,6 +355,15 @@ int main(int argc, char **argv)
         CHECK(t.swapchain_recreations == 1, "swapchain recreation counted (%u)", t.swapchain_recreations);
         check_paced(el, n / 2, 30);
         CHECK(m->writer_pid == (uint32_t)getpid(), "writer_pid = %u", m->writer_pid);
+
+        governor_write(m, &p, 3000000000ll);   /* the Governor died 3 s ago: heartbeat stale */
+        g_gov = NULL;
+        sleep_ms(150);
+        el = run_frames(&a, n);
+        t = telemetry(m);
+        CHECK(t.frames == (uint64_t)(n / 2), "stale heartbeat: layer forwards only, telemetry frozen at %llu",
+              (unsigned long long)t.frames);
+        check_unpaced(el, n);
         app_destroy(&a);
         munmap(m, sizeof(*m));
         unlink(path);
@@ -312,23 +374,52 @@ int main(int argc, char **argv)
         CHECK(access(path, F_OK) != 0, "no control file created");
         app_destroy(&a);
     } else if (!strcmp(mode, "badver")) {
-        /* version 1: 136 bytes, enabled/hz at the same offsets as today */
-        gfg_ctl_shm *m = map_file(1, 1, 136);
-        if (!m) {
-            printf("FAIL: cannot create %s\n", path);
-            return 1;
-        }
-        gfg_ctl_policy p = policy(1, 60, 0);
-        gfg_ctl_write_policy(m, &p);
-        munmap(m, sizeof(*m));
-        char before[256], after[256];
-        int nb = read_file(before, sizeof(before));
+        /* version 1 (136 bytes) and version 2 (176 bytes): enabled/hz at the same offsets as today */
+        static const struct { uint32_t version; int size; } old[] = { { 1, 136 }, { 2, 176 } };
         app_init(&a);
-        check_unpaced(run_frames(&a, n), n);
-        int na = read_file(after, sizeof(after));
-        CHECK(nb == 136 && na == 136 && !memcmp(before, after, 136), "version-1 file left untouched (%d bytes)", na);
+        for (int v = 0; v < 2; v++) {
+            gfg_ctl_shm *m = map_file(1, old[v].version, (size_t)old[v].size);
+            if (!m) {
+                printf("FAIL: cannot create %s\n", path);
+                return 1;
+            }
+            gfg_ctl_policy p = policy(1, 60, 0);
+            governor_write(m, &p, 0);
+            g_gov = NULL;
+            munmap(m, sizeof(*m));
+            char before[256], after[256];
+            int nb = read_file(before, sizeof(before));
+            sleep_ms(150);   /* the layer re-reads the (recreated) file */
+            check_unpaced(run_frames(&a, n), n);
+            int na = read_file(after, sizeof(after));
+            CHECK(nb == old[v].size && na == old[v].size && !memcmp(before, after, (size_t)na),
+                  "version-%u file left untouched (%d bytes)", old[v].version, na);
+            unlink(path);
+        }
         app_destroy(&a);
-        unlink(path);
+    } else if (!strcmp(mode, "dxvk")) {
+        g_two_swapchains = 1;
+        app_init(&a);
+        for (int i = 0; i < n; i++) {
+            uint32_t ia, ib;
+            acquire(&a, a.swapchain, &ia);
+            sleep_ms(6);
+            acquire(&a, a.swapchain2, &ib);
+            present(&a, a.swapchain, ia);
+            sleep_ms(6);
+            present(&a, a.swapchain2, ib);
+        }
+        gfg_ctl_shm *m = map_file(0, 0, 0);
+        gfg_ctl_telemetry t = telemetry(m);
+        /* the first swapchain owns the telemetry: its last present carries the count */
+        CHECK(t.frames >= (uint64_t)(2 * n - 1), "counted %llu/%d presents", (unsigned long long)t.frames, 2 * n);
+        /* one start per device would give ~0 ms (the other swapchain's acquire) */
+        CHECK(t.cost_p50_ms > 5.0 && t.cost_p50_ms < 12.0, "cost p50 %.3f ms from each image's own acquire",
+              t.cost_p50_ms);
+        CHECK(t.freshness_ms > 5.0 && t.freshness_ms < 12.0, "freshness %.3f ms", t.freshness_ms);
+        if (m)
+            munmap(m, sizeof(*m));
+        app_destroy(&a);
     } else {
         printf("unknown mode %s\n", mode);
         return 2;

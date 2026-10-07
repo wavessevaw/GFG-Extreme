@@ -79,6 +79,9 @@ for L in $LOADERS; do
         # recommended: both named in VK_INSTANCE_LAYERS, GFG first, implicit gates unset
         check "$L" "(b) VK_INSTANCE_LAYERS=GFG:MAKO, gates unset" above \
             VK_INSTANCE_LAYERS=VK_LAYER_GFG_pacer:VK_LAYER_MAKO_render
+        # exactly what the launch wrapper exports: implicit gates unset, GFG's disable gate set
+        check "$L" "(w) wrapper env: DISABLE_GFG_FRAME_OS=1 + GFG:MAKO" above \
+            DISABLE_GFG_FRAME_OS=1 VK_INSTANCE_LAYERS=VK_LAYER_GFG_pacer:VK_LAYER_MAKO_render
         # alternative: GFG implicit, MAKO only through VK_INSTANCE_LAYERS
         check "$L" "(a2) GFG implicit + VK_INSTANCE_LAYERS=MAKO" above \
             GFG_FRAME_OS=1 VK_INSTANCE_LAYERS=VK_LAYER_MAKO_render

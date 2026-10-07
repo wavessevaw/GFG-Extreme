@@ -104,8 +104,8 @@ int64_t gfg_sched_frame_start(gfg_sched *s, int64_t now_ns)
         }
         /* A slot the frame cannot make even when started now is gone: plan for the next one.
          * Its frame would land there anyway, so starting later only removes queueing. */
-        while (slot < now_ns + cost_ns)
-            slot += s->period_ns;
+        if (slot < now_ns + cost_ns)   /* after a long idle: many slots, no loop */
+            slot += (now_ns + cost_ns - slot + s->period_ns - 1) / s->period_ns * s->period_ns;
         s->next_slot_ns = slot;
         if (slot - plan_ns > now_ns)
             delay = slot - plan_ns - now_ns;

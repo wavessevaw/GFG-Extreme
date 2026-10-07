@@ -40,9 +40,11 @@ run "observe (phase A)" yes GFG_FRAME_OS=1 GFG_FRAME_OS_ENABLE=1 GFG_FRAME_OS_RE
 run "shadow (phase B)" yes GFG_FRAME_OS=1 GFG_FRAME_OS_ENABLE=1 GFG_FRAME_OS_REAL_HZ=60 GFG_FRAME_OS_MODE=shadow \
     GFG_FRAME_OS_SHM="$SHM_BASE-shadow" -- env 120
 
-run "governor policy file (generation ack, swapchain recreation)" yes GFG_FRAME_OS=1 GFG_FRAME_OS_SHM="$SHM_BASE-file" -- file 120
+run "DXVK-like: interleaved acquires on two swapchains" yes GFG_FRAME_OS=1 GFG_FRAME_OS_ENABLE=1 \
+    GFG_FRAME_OS_MODE=observe GFG_FRAME_OS_SHM="$SHM_BASE-dxvk" -- dxvk 40
+run "governor policy file (generation ack, swapchain recreation, heartbeat)" yes GFG_FRAME_OS=1 GFG_FRAME_OS_SHM="$SHM_BASE-file" -- file 120
 run "loaded, not enabled" yes GFG_FRAME_OS=1 GFG_FRAME_OS_SHM="$SHM_BASE-off" -- off 120
-run "version-1 policy file is foreign" yes GFG_FRAME_OS=1 GFG_FRAME_OS_SHM="$SHM_BASE-ver" -- badver 120
+run "version-1/2 policy files are foreign" yes GFG_FRAME_OS=1 GFG_FRAME_OS_SHM="$SHM_BASE-ver" -- badver 120
 run "implicit layer not enabled (no GFG_FRAME_OS)" no GFG_FRAME_OS_ENABLE=1 GFG_FRAME_OS_REAL_HZ=60 \
     GFG_FRAME_OS_SHM="$SHM_BASE-noenv" -- off 120
 run "disable_environment wins" no GFG_FRAME_OS=1 DISABLE_GFG_FRAME_OS=1 GFG_FRAME_OS_ENABLE=1 GFG_FRAME_OS_REAL_HZ=60 \
