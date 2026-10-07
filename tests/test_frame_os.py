@@ -122,3 +122,99 @@ class SimulationTests(unittest.TestCase):
             c = compare(seed)
             self.assertGreater(c["frame_os"]["real_fps_in_motion"], c["governor"]["real_fps_in_motion"] + 3)
             self.assertLess(c["frame_os"]["avg_w"], c["governor"]["avg_w"] * 1.15, "energy premium bounded")
+
+
+class FakeReader:
+    def __init__(self):
+        self.state = InputState()
+        self.available = False
+
+    def poll(self):
+        return 0
+
+    def close(self):
+        pass
+
+
+class ControlChannelTests(unittest.TestCase):
+    def test_layout_matches_control_h(self):
+        from gfg_plugin.frame_os import control_channel as c
+        header = (ROOT / "engine/gfg-pacer/src/control.h").read_text()
+        if "GFG_CTL_VERSION 2u" not in header:
+            self.skipTest("layer still on v1")
+        self.assertIn(f"{c.SIZE} bytes", header)
+
+    def test_policy_roundtrip_and_telemetry_read(self):
+        import tempfile
+        from gfg_plugin.frame_os import control_channel as c
+        with tempfile.TemporaryDirectory() as tmp:
+            ch = c.ControlChannel(Path(tmp) / "ctl")
+            self.assertTrue(ch.write_policy(enabled=True, real_hz=45.0, mode="shadow", generation=7))
+            raw = (Path(tmp) / "ctl").read_bytes()
+            self.assertEqual(len(raw), c.SIZE)
+            self.assertEqual(c.HEADER.unpack_from(raw, 0)[:3], (c.MAGIC, c.VERSION, c.SIZE))
+            self.assertEqual(c.SEQ.unpack_from(raw, c.POLICY_SEQ_OFF)[0] % 2, 0)
+            enabled, _ts, _pace, mode, hz, _m, _w, gen, _r = c.POLICY.unpack_from(raw, c.POLICY_OFF)
+            self.assertEqual((enabled, mode, hz, gen), (1, 2, 45.0, 7))
+            # the layer publishes telemetry
+            buf = bytearray(raw)
+            c.TELEMETRY.pack_into(buf, c.TELEMETRY_OFF, 120, 118, 1, 12.0, 15.0, 1.5, 4.0, 24.0, 33.3, 35.0,
+                                  123456789, 7, 0)
+            c.SEQ.pack_into(buf, c.TELEMETRY_SEQ_OFF, 2)
+            (Path(tmp) / "ctl").write_bytes(bytes(buf))
+            ch.close()
+            t = c.ControlChannel(Path(tmp) / "ctl").read_telemetry()
+            self.assertEqual((t["frames"], t["freshness_ms"], t["applied_generation"]), (120, 24.0, 7))
+
+
+class RunnerTests(unittest.TestCase):
+    def make(self, tmp, mode):
+        from gfg_plugin.frame_os.control_channel import ControlChannel
+        from gfg_plugin.frame_os.runner import FrameOsRunner
+        reader = FakeReader()
+        r = FrameOsRunner(ControlChannel(Path(tmp) / "ctl"), clock=lambda: 0.0, reader_factory=lambda: reader)
+        r.configure(enabled=True, mode=mode, output_hz=90, calm_real_hz=30, max_multiplier=3.0, calm_w=10.0)
+        return r, reader
+
+    def published_hz(self, tmp):
+        from gfg_plugin.frame_os import control_channel as c
+        raw = (Path(tmp) / "ctl").read_bytes()
+        return c.POLICY.unpack_from(raw, c.POLICY_OFF)
+
+    def test_observe_reports_would_boost_but_publishes_calm(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            r, reader = self.make(tmp, "observe")
+            reader.state.feed(ev(0.0, EV_ABS, ABS_RX, 32000))
+            status = r.tick(0.0)
+            self.assertEqual(status["decision"]["level"], "calm")       # no bank yet
+            r.policy.broker.bank_j = 50.0
+            reader.state.feed(ev(0.1, EV_ABS, ABS_RX, 31000))
+            status = r.tick(0.1)
+            self.assertEqual((status["decision"]["level"], status["acting"]), ("boost", False))
+            self.assertEqual(self.published_hz(tmp)[4], 30.0)
+            self.assertEqual(self.published_hz(tmp)[3], 1, "observe mode")
+            self.assertEqual(r.tdp_offset_w, 0.0)
+
+    def test_act_publishes_the_boost_and_its_watts(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            r, reader = self.make(tmp, "act")
+            r.policy.broker.bank_j = 50.0
+            reader.state.feed(ev(0.0, EV_ABS, ABS_RX, 32000))
+            r.tick(0.0)
+            enabled, _t, _p, mode, hz, _m, _w, gen, _ = self.published_hz(tmp)
+            self.assertEqual((enabled, mode, hz), (1, 0, 45.0))
+            self.assertEqual(r.tdp_offset_w, 4.0)
+            self.assertEqual(gen, r.generation)
+
+    def test_disable_and_close_turn_the_layer_off(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            r, _ = self.make(tmp, "act")
+            r.tick(0.0)
+            r.configure(enabled=False, mode="act", output_hz=90, calm_real_hz=30, max_multiplier=3, calm_w=10)
+            r.tick(0.1)
+            self.assertEqual(self.published_hz(tmp)[0], 0)
+            r.close()
+            self.assertEqual(self.published_hz(tmp)[0], 0)
