@@ -117,14 +117,33 @@ Consequences:
   frames *after* it instead of interpolating before it). That needs executor work (Tier 2 or a
   Render v4 change) and is where Predictive Presentation leads.
 
+## 3b. Executor contract for real-frame injection (Phase 2 design)
 
+Rewriting the renderer config per stick flick is not an option (config rewrites take seconds to
+confirm, and a burst of live config changes has crashed a game before). Instead:
+
+* The Governor applies, once per point, Render v4 **adaptive mode** with the output target (90)
+  and a real-frame cap at the **boost** level (45): the renderer may receive up to 45 real frames
+  and fills the rest to the target.
+* gfg-pacer, sitting **above** Render v4 in the layer chain, gates the game's real frames on its
+  slot grid: 30 Hz in calm play, 45 Hz while the policy boosts. The renderer sees a variable
+  real cadence and adapts its generated-frame count; no config write per decision.
+* Layer order is guaranteed by the launcher's explicit `VK_INSTANCE_LAYERS` list (implicit
+  layer order is readdir-random); being verified on the mock loader.
+
+Deck experiment that gates Phase 2: adaptive mode at target 90 / cap 45, layer pacing switching
+30 <-> 45 every few seconds; measure output stability, generated-frame misses and transition
+artefacts from the renderer's own diagnostics.
+
+## 4. Phases and gates
 
 | Phase | Deliverable | Gate before the next phase |
 |---|---|---|
-| 0 ✅ | This document; scheduler core with host tests; layer through the real Vulkan loader on the mock driver (headless swapchain); control channel | Done: `make -C engine/gfg-pacer test layer integration` |
-| 1 | Tick shaping + pacing in the layer; control channel; Governor reads telemetry | On a Deck: measured latency drop, no FPS loss, no stutter regression (needs a field log) |
-| 2 | Adaptive real-frame injection + input sensor + energy broker driving Render v4 adaptive mode | On a Deck: fewer real frames in calm play at equal perceived smoothness, lower energy per minute |
-| 3 | Tier 2 via OptiScaler for upscaler games | Separate design |
+| 0 ✅ | This document; scheduler core with host tests; layer through the real Vulkan loader on the mock driver (headless swapchain); control channel v2; Governor wiring behind a per-profile switch | Done: `make -C engine/gfg-pacer test layer integration` |
+| 1 | **Observe, then shadow on a Deck**: the layer in the real chain above Render v4, telemetry (freshness, present intervals) in recorded logs | 30+ min clean sessions: no picture change, no pacing/latency effect, game exit, swapchain recreation, suspend/resume |
+| 2 | **Adaptive real-frame injection** (input sensor + energy broker, adaptive-mode executor contract above) | On a Deck: lower freshness in motion, equal smoothness, energy within the premium |
+| 3 | Tick shaping for native points / deeper queues; executor work on showing the real frame first | Separate design |
+| 4 | Tier 2 via OptiScaler for upscaler games | Separate design |
 
 ## 5. Safety rules (same as the Governor)
 
