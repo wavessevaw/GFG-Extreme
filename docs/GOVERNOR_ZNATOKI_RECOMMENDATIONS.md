@@ -763,3 +763,14 @@ MAKO Render v4 даёт GFG Extreme сильный исполнительный 
 То есть использовать multiplier, scale и TDP не как три ползунка, а как набор инструментов для управления одной целью:
 
 **максимум хорошего игрового опыта на каждый потраченный ватт.**
+
+
+---
+
+# Актуализация после 1.0.11
+
+Текущие конкретные замечания по серии 1.0.0–1.0.11, включая выводы из реальных Steam Deck логов, persistence `floor_failures`, mixed-mode session history, ограничения эвристики actual-draw, StateEstimator, validation matrix и release cadence вынесены в:
+
+[`docs/ZNATOKI_REVIEW_1_0_11_2026-10-07.md`](ZNATOKI_REVIEW_1_0_11_2026-10-07.md)
+
+Этот документ считать текущим operational review поверх базовой архитектурной доктрины выше.
