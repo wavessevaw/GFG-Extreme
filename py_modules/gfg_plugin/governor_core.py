@@ -1030,8 +1030,10 @@ class BudgetController:
         if known is None:
             return False
         failed_w, when, count = known
-        if self.draw_w is not None and self.draw_w < level - self.DRAW_BINDING_MARGIN_W:
-            return False  # the game now draws clearly less than that level: the scene got lighter
+        if count == 1 and self.draw_w is not None and self.draw_w < level - self.DRAW_BINDING_MARGIN_W:
+            # The game now draws clearly less than that level: the scene got lighter.  Only after
+            # one failure: a level that failed repeatedly needs more than a (noisy) draw reading.
+            return False
         return level <= failed_w + 0.05 and now - when < self._floor_backoff(count)
 
     def _note_floor_failure(self, now: float) -> None:
@@ -1150,6 +1152,9 @@ class BudgetController:
         if state in ("heating", "hot"):
             self._heat_until = now + self.THERMAL_CLEAR_S
 
+    def _heat_word(self) -> str:
+        return self.thermal if self.thermal in ("heating", "hot") else "cooling-down"
+
     @property
     def heat_limited(self) -> bool:
         return self.thermal in ("heating", "hot") or self._now < self._heat_until
@@ -1160,7 +1165,7 @@ class BudgetController:
         if self._upgrade_allowed(self.idx + 1, now):
             if self.heat_limited:
                 self.thermal_deferred = True
-                return self._lock(now, f"thermal-quality-held:{self.thermal}")
+                return self._lock(now, f"thermal-quality-held:{self._heat_word()}")
             self.thermal_deferred = False
             self.probe = "up"
             return self._move("testing-fewer-generated-frames", idx=self.idx + 1)
@@ -1191,7 +1196,7 @@ class BudgetController:
                 self.thermal_deferred = False
                 return self._move("reprobe-fewer-generated-frames", idx=self.idx + 1)
         if self.heat_limited and self._owed_quality():
-            return self._lock(now, f"thermal-quality-held:{self.thermal}")
+            return self._lock(now, f"thermal-quality-held:{self._heat_word()}")
         return self._lock(now, "budget-point-holds")
 
     def _unhealthy(self, now: float, verdict: WindowVerdict) -> str:
@@ -1255,6 +1260,12 @@ class BudgetController:
         if deeper is not None:
             self.quality_debt = max(self.quality_debt or 0, self.idx)
             return self._move(f"guard-deeper-multiplier:{verdict.reason}", idx=deeper)
+        # Watts only help a game that uses the watts it has.  A window short of its cap with the
+        # measured draw well below the cap (a hitch, streaming, a CPU spike) is not fixed by a
+        # higher limit; field log: the guard climbed to 15 W while the APU drew 5-11 W.
+        if self._draw_says_not_power_bound(verdict):
+            self.last_reason = f"guard-not-power-bound:{verdict.reason}"
+            return "hold"
         # Inside the ideal 9-11 W a watt is cheaper than real FPS below 30.
         if self.tdp_control and self.tdp is not None and self.tdp < self.ideal_max_w - 1e-6:
             return self._move(f"guard-more-power:{verdict.reason}", tdp=min(self.ideal_max_w, self.tdp + step))
@@ -1281,6 +1292,13 @@ class BudgetController:
         self.exhausted = True
         self.last_reason = f"budget-exhausted:{verdict.reason}"
         return "hold"
+
+    NOT_POWER_BOUND_MARGIN_W = 2.5
+
+    def _draw_says_not_power_bound(self, verdict: WindowVerdict) -> bool:
+        if verdict.stall or not self.tdp_control or self.tdp is None or self.draw_w is None:
+            return False
+        return float(self.draw_w) < float(self.tdp) - self.NOT_POWER_BOUND_MARGIN_W
 
     def request_failed(self, now: float, reason: str, observed: Optional[Dict[str, float]] = None) -> None:
         """The renderer never confirmed the requested point: mark it and fall back.

@@ -218,7 +218,9 @@ class BudgetGuardTests(unittest.TestCase):
     def test_spare_headroom_goes_to_watts_not_quality(self):
         ctl, game, now = self.locked()
         game.scene = 1.5  # much lighter: 7 W now gives 47 real
-        now, _ = run(ctl, game, now, int(ctl.REPROBE_S / WINDOW) + 20)
+        # 6 W failed three times while locking: it waits out its back-off (draw readings alone do
+        # not lift a repeated failure, 1.0.11), then the lighter scene gets it.
+        now, _ = run(ctl, game, now, int(ctl.FLOOR_BACKOFF_MAX_S / WINDOW) + 8)
         self.assertEqual(ctl.tdp, 6.0)
 
     def test_failed_reprobe_backs_off(self):
@@ -756,7 +758,7 @@ class FloorMemoryTests(unittest.TestCase):
 
     def test_lighter_scene_lifts_the_block(self):
         ctl = BudgetController(target_output_fps=90, now=0.0)
-        ctl.floor_failures[ctl.idx] = (9.0, 0.0, 3)
+        ctl.floor_failures[ctl.idx] = (9.0, 0.0, 1)
         ctl.draw_w = 9.6
         self.assertTrue(ctl._floor_blocked(9.0, 60.0))
         ctl.draw_w = 7.0   # the game uses clearly less than 9 W now
@@ -764,13 +766,16 @@ class FloorMemoryTests(unittest.TestCase):
         ctl.draw_w = None
         self.assertFalse(ctl._floor_blocked(9.0, 600.0), "expired")
         self.assertFalse(ctl._floor_blocked(10.0 + 0.5, 60.0), "a higher level is not blocked")
+        ctl.floor_failures[ctl.idx] = (9.0, 0.0, 3)
+        ctl.draw_w = 7.0
+        self.assertTrue(ctl._floor_blocked(9.0, 60.0), "a repeated failure needs its back-off")
 
     def test_a_level_that_holds_clears_its_failure(self):
         ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25)
         run(ctl, Game(4.5), 0.0, 40)                 # 6 W failed, 7 W holds
         self.assertIn(ctl.idx, ctl.floor_failures)
         game = Game(4.5, scene=1.5)
-        run(ctl, game, 600.0, 30)
+        run(ctl, game, 600.0, int(ctl.FLOOR_BACKOFF_MAX_S / WINDOW) + 8)
         self.assertEqual(ctl.tdp, 6.0)
         self.assertNotIn(ctl.idx, ctl.floor_failures)
 
@@ -797,3 +802,29 @@ class RequestFallbackTests(unittest.TestCase):
         ctl.current_max_multiplier = 3.0
         ctl.request_failed(5.0, "renderer-generated-capacity")
         self.assertLessEqual(float(ctl.point.multiplier), 3.0)
+
+
+class NotPowerBoundTests(unittest.TestCase):
+    """1.0.11 field log: the guard climbed to 15 W while the APU drew 5-11 W."""
+
+    def test_short_window_with_low_draw_buys_no_watts(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0)
+        ctl.phase, ctl.tdp, ctl.draw_w = "locked", 11.0, 7.0
+        ctl.observe(15.0, WindowVerdict(False, False, "real-below-cap", short=True), 29.0)
+        ctl.observe(30.0, WindowVerdict(False, False, "real-below-cap", short=True), 29.0)
+        self.assertEqual(ctl.tdp, 11.0)
+        self.assertTrue(ctl.last_reason.startswith("guard-not-power-bound"))
+
+    def test_binding_draw_still_gets_watts(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0)
+        ctl.phase, ctl.tdp, ctl.draw_w = "locked", 10.0, 9.8
+        ctl.observe(15.0, WindowVerdict(False, False, "real-below-cap", short=True), 29.0)
+        ctl.observe(30.0, WindowVerdict(False, False, "real-below-cap", short=True), 29.0)
+        self.assertEqual(ctl.tdp, 11.0)
+
+    def test_without_a_draw_sensor_nothing_changes(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0)
+        ctl.phase, ctl.tdp, ctl.draw_w = "locked", 10.0, None
+        ctl.observe(15.0, WindowVerdict(False, False, "real-below-cap", short=True), 29.0)
+        ctl.observe(30.0, WindowVerdict(False, False, "real-below-cap", short=True), 29.0)
+        self.assertEqual(ctl.tdp, 11.0)
