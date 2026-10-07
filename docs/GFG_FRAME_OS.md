@@ -128,8 +128,12 @@ confirm, and a burst of live config changes has crashed a game before). Instead:
 * gfg-pacer, sitting **above** Render v4 in the layer chain, gates the game's real frames on its
   slot grid: 30 Hz in calm play, 45 Hz while the policy boosts. The renderer sees a variable
   real cadence and adapts its generated-frame count; no config write per decision.
-* Layer order is guaranteed by the launcher's explicit `VK_INSTANCE_LAYERS` list (implicit
-  layer order is readdir-random); being verified on the mock loader.
+* Layer order: implicit layers load in directory-listing order, which differs per filesystem.
+  The launcher names both layers in `VK_INSTANCE_LAYERS` (pacer first) and clears both implicit
+  enable variables; that is the only setup that held with both listing orders on loaders
+  1.3.275, 1.4.321 and 1.4.365 (`make -C engine/gfg-pacer ordering`, stand-in 2x frame
+  generator: the pacer sees N presents, not 2N). The layer is 64-bit only (`library_arch`), and
+  Flatpak sandboxes need it staged plus a shared `/dev/shm` before it can run there.
 
 Deck experiment that gates Phase 2: adaptive mode at target 90 / cap 45, layer pacing switching
 30 <-> 45 every few seconds; measure output stability, generated-frame misses and transition
