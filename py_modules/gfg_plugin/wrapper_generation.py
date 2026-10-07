@@ -77,13 +77,15 @@ from .profile_storage import (
 )
 
 
-WRAPPER_FORMAT_VERSION = 80
+WRAPPER_FORMAT_VERSION = 81
 WRAPPER_FORMAT_MARKER = f"# mako-wrapper-format: {WRAPPER_FORMAT_VERSION}"
 HOST_COMPATIBILITY_MARKER = "# mako-host-compatibility: aarch64-passthrough-v1"
 DIAGNOSTICS_DEFAULT_MARKER = (
     "# governor diagnostics: enabled only by runtime marker"
 )
 LEGACY_EXTREME_PFG_LAYER_NAME = "VK_LAYER_MAKO_EXTREME_predictive"
+FRAME_OS_LAYER_NAME = "VK_LAYER_GFG_pacer"
+FRAME_OS_MANIFEST_FILENAME = "VkLayer_gfg_pacer.json"
 
 REQUIRED_WRAPPER_EXPORTS = (
     f"export {PRESENT_ACQUIRE_TIMEOUT_ENV}=",
@@ -161,6 +163,7 @@ class WrapperGenerationContext:
     vkbasalt_manifest_filename_32: str
     armada_device_env: Path
     armada_game_launch: Path
+    frame_os_layer_dir: Optional[Path] = None
 
 
 def has_active_in(config: ConfigurationData) -> bool:
@@ -733,6 +736,7 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         context.user_vulkan_layer_dir / "steamoverlay_i386.json"
     ))
     user_vulkan_layer_dir = shlex.quote(str(context.user_vulkan_layer_dir))
+    frame_os_layer_dir = context.frame_os_layer_dir or context.local_share_dir.parent / "gfg-frame-os"
     inherited_managed_layer_removal_lines: list[str] = []
     for layer_name in (
         MAKO_LAYER_NAME,
@@ -740,6 +744,7 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         GAMESCOPE_WSI_LAYER_NAME_64,
         VKBASALT_LAYER_NAME_64,
         LEGACY_EXTREME_PFG_LAYER_NAME,
+        FRAME_OS_LAYER_NAME,
     ):
         inherited_managed_layer_removal_lines.extend((
             (
@@ -762,11 +767,19 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         f'if [ -f "$mako_governor_diagnostics_marker" ]; then export {PRESENT_DIAGNOSTICS_ENV}="${{{PRESENT_DIAGNOSTICS_ENV}:-1}}"; else export {PRESENT_DIAGNOSTICS_ENV}="${{{PRESENT_DIAGNOSTICS_ENV}:-0}}"; fi',
         'unset mako_governor_diagnostics_marker',
         # GFG Frame OS (development): the gfg-pacer layer loads only when the Governor left this
-        # marker for the profile; the layer itself stays pass-through until the control file
-        # it is pointed at says otherwise.
+        # marker and the layer is installed; the layer itself stays pass-through until the
+        # control file it is pointed at says otherwise. It never joins through its implicit
+        # gate: implicit order follows directory listing order, so the layer is named first in
+        # the explicit list below (above the renderer) or not at all.
         f'gfg_frame_os_marker={shlex.quote(str(context.runtime_state_dir / "frame-os.enabled"))}',
-        'if [ -f "$gfg_frame_os_marker" ]; then export GFG_FRAME_OS=1; '
-        'export GFG_FRAME_OS_SHM="${GFG_FRAME_OS_SHM:-/dev/shm/gfg-frame-os}"; else unset GFG_FRAME_OS; fi',
+        "gfg_frame_os=0",
+        'if [ -f "$gfg_frame_os_marker" ] && [ -r '
+        f'{shlex.quote(str(frame_os_layer_dir / FRAME_OS_MANIFEST_FILENAME))} ]; then',
+        "    gfg_frame_os=1",
+        '    export GFG_FRAME_OS_SHM="${GFG_FRAME_OS_SHM:-/dev/shm/gfg-frame-os}"',
+        "fi",
+        "unset GFG_FRAME_OS",
+        "export DISABLE_GFG_FRAME_OS=1",
         'unset gfg_frame_os_marker',
         "mako_renderer_enabled=0",
         'if [ "${mako_renderer_required:-0}" = 1 ] && '
@@ -943,6 +956,17 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         f"        mako_managed_instance_layers={MAKO_LAYER_NAME}",
         "    fi",
         "fi",
+        # Frame OS: the pacer must see the game's real frames, so it goes above the renderer.
+        # The renderer then also needs the explicit list (its implicit gate is cleared below).
+        # Flatpak sandboxes do not get the layer until it is staged there.
+        'if [ "$gfg_frame_os" = 1 ] && [ "$mako_flatpak_runtime" != 1 ]; then',
+        '    if [ "$mako_renderer_enabled" = 1 ] && [ -z "$mako_managed_instance_layers" ]; then',
+        f"        mako_managed_instance_layers={MAKO_LAYER_NAME}",
+        "    fi",
+        f'    mako_managed_instance_layers="{FRAME_OS_LAYER_NAME}${{mako_managed_instance_layers:+:$mako_managed_instance_layers}}"',
+        f'    mako_implicit_layer_path="$mako_implicit_layer_path:"{shlex.quote(str(frame_os_layer_dir))}',
+        "fi",
+        "unset gfg_frame_os",
         # Clear retired PFG environment from old launch-option experiments.
         "unset MAKO_EXTREME_PFG",
         "unset DISABLE_MAKO_EXTREME_PFG",
