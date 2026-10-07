@@ -725,6 +725,11 @@ class BudgetController:
     RECOVER_S = 60.0       # giving back what the guard spent is not a new experiment
     RECOVER_MAX_S = 300.0
     REJECT_TTL_S = 600.0
+    # A lower level that just failed is not tried again at once, even after a guard raise and a
+    # successful walk back down (Deck log 2026-10-07 #3: 9 W failed nine times in 29 min with this
+    # point, each failure a visible dip).  The wait doubles with every repeat at the same level.
+    FLOOR_BACKOFF_S = 120.0
+    FLOOR_BACKOFF_MAX_S = 600.0
     FAILURE_TTL_S = REJECT_TTL_S  # failures loaded from game memory expire like in-session rejections
     MAX_REQUEST_FAILURES = 4
 
@@ -795,11 +800,15 @@ class BudgetController:
         self.known_failures: Dict[str, tuple[float, float]] = {}
         self.new_failures: list[tuple[str, float]] = []  # drained by the service into game memory
         self.verifying: Optional[str] = None  # point inferred from delivered FPS, not yet verified
+        # Point index -> (highest TDP a lower-power probe failed at, when, how many times in a row).
+        self.floor_failures: Dict[int, tuple[float, float, int]] = {}
+        self._now = now
         # Host thermal verdict (ok / heating / hot / unknown), set by the service each step.  While
         # the APU heats up, probes towards more real frames (more watts, more heat) wait; probes
         # towards fewer watts continue.  A skipped upgrade is owed and tried once it has cooled.
         self.thermal = "unknown"
         self.thermal_deferred = False
+        self._heat_until = -1e9
 
     def warm_start(self, point_key: str, tdp_w: Optional[float], now: float) -> bool:
         """Start from a remembered point/TDP that held in an earlier session instead of searching.
@@ -897,6 +906,7 @@ class BudgetController:
         binding (CPU, engine) is the windows' job, which deepen the multiplier
         first.  Up to the ideal budget only; above it the slow path decides.
         """
+        self._now = now
         if not (self.tdp_control and self.tdp is not None and not self.cap_ignored):
             self.starved_checks = 0
             return "hold"
@@ -919,6 +929,7 @@ class BudgetController:
     def _fast_raise(self, now: float) -> str:
         if self.probe == "down" and self.last_good is not None:
             # The lower level did not hold: back to the one that did, at once.
+            self._note_floor_failure(now)
             idx, tdp = self.last_good
             from_phase = self.phase
             self.probe = None
@@ -927,8 +938,11 @@ class BudgetController:
                 self.phase = "upgrade"
                 self.good = self.HEALTHY_WINDOWS - 1
             else:
-                if from_phase == "probe":
-                    self.reprobe_interval = min(self.reprobe_interval * 2.0, self.REPROBE_MAX_S)
+                if from_phase == "probe":  # same back-off as a failed window (_unhealthy)
+                    if self.recover is not None:
+                        self.recover_interval = min(self.recover_interval * 2.0, self.RECOVER_MAX_S)
+                    else:
+                        self.reprobe_interval = min(self.reprobe_interval * 2.0, self.REPROBE_MAX_S)
                 self._lock(now, "probe-failed:starved")
             self.fast_at, self.starved_checks = now, 0
             return "move"
@@ -959,7 +973,28 @@ class BudgetController:
         return (
             self.tdp_control and not self.cap_ignored
             and self.tdp is not None and self.tdp - 1.0 >= self.min_w - 1e-6
+            and not self._floor_blocked(self.tdp - 1.0, self._now)
         )
+
+    def _floor_backoff(self, count: int) -> float:
+        return min(self.FLOOR_BACKOFF_S * (2.0 ** max(0, count - 1)), self.FLOOR_BACKOFF_MAX_S)
+
+    def _floor_blocked(self, level: float, now: float) -> bool:
+        """``level`` (or a higher one) failed recently with this point: do not probe it yet."""
+        known = self.floor_failures.get(self.idx)
+        if known is None:
+            return False
+        failed_w, when, count = known
+        if self.draw_w is not None and self.draw_w < level - self.DRAW_BINDING_MARGIN_W:
+            return False  # the game now draws clearly less than that level: the scene got lighter
+        return level <= failed_w + 0.05 and now - when < self._floor_backoff(count)
+
+    def _note_floor_failure(self, now: float) -> None:
+        if self.tdp is None:
+            return
+        previous = self.floor_failures.get(self.idx)
+        count = previous[2] + 1 if previous and abs(previous[0] - self.tdp) < 0.05 else 1
+        self.floor_failures[self.idx] = (float(self.tdp), now, count)
 
     @property
     def effective_w(self) -> Optional[float]:
@@ -977,6 +1012,7 @@ class BudgetController:
         absolute FPS threshold cannot work here: a deep point caps the real
         cadence itself, so it would always look like a power shortage.
         """
+        self._now = now
         if verdict.stall:
             # Not evidence about power: neither start nor continue the shortfall clock.
             self.short_since = None
@@ -1011,6 +1047,10 @@ class BudgetController:
         self._clear_recovered()
         was = self.probe
         self.probe = None
+        if was == "down" and self.tdp is not None:
+            known = self.floor_failures.get(self.idx)
+            if known is not None and self.tdp <= known[0] + 0.05:
+                del self.floor_failures[self.idx]  # the level holds now: the scene got lighter
         if self.phase == "probe":
             # The scene got lighter: keep going the same way until it fails.
             self.reprobe_interval = self.REPROBE_S
@@ -1056,9 +1096,18 @@ class BudgetController:
             tdp, age = value if isinstance(value, (tuple, list)) else (value, 0.0)
             self.known_failures[key] = (float(tdp), now - float(age))
 
+    # The heating verdict comes from a 2-minute temperature slope and flips around its thresholds;
+    # once heat has held quality back, the APU must read "ok" for this long before it is released.
+    THERMAL_CLEAR_S = 90.0
+
+    def set_thermal(self, state: str, now: float) -> None:
+        self.thermal = state
+        if state in ("heating", "hot"):
+            self._heat_until = now + self.THERMAL_CLEAR_S
+
     @property
     def heat_limited(self) -> bool:
-        return self.thermal in ("heating", "hot")
+        return self.thermal in ("heating", "hot") or self._now < self._heat_until
 
     def _upgrade(self, now: float) -> str:
         if self.cap_ignored and self.idx >= self.comfort_idx:
@@ -1107,6 +1156,8 @@ class BudgetController:
             if self.probe == "up":
                 self.rejected[failed.key] = now
                 self._note_failure(failed, now)
+            elif self.probe == "down":
+                self._note_floor_failure(now)
             idx, tdp = self.last_good
             from_phase = self.phase
             self.probe = None
@@ -1269,7 +1320,10 @@ class BudgetController:
             "current_max_multiplier": self.current_max_multiplier,
             "thermal": self.thermal,
             "thermal_deferred": self.thermal_deferred,
+            "heat_limited": self.heat_limited,
             "known_failures": {k: v[0] for k, v in self.known_failures.items()},
+            "floor_w": (lambda f: f[0] if f and self._now - f[1] < self._floor_backoff(f[2]) else None)(
+                self.floor_failures.get(self.idx)),
             "reason": self.last_reason,
             "limits_w": {"min": self.min_w, "normal": self.normal_max_w, "emergency": self.emergency_max_w},
         }

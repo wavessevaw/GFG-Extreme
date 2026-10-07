@@ -89,6 +89,17 @@ class ReportTests(unittest.TestCase):
         self.assertIn("hot or heating up 50% of the time; quality steps were held back for heat in 10 samples", joined)
         self.assertIn("stutter (spikes over the median) in 50%", joined)
 
+    def test_repeated_failed_power_probes_and_version_are_reported(self):
+        step = lambda w: {"event": "budget-step", "reason": "probe-failed:starved",
+                          "before": {"tdp_w": w}, "after": {"tdp_w": w + 1}}
+        events = [step(9.0)] * 5 + [step(8.0)] * 2 + [{"event": "budget-step", "reason": "testing-lower-power",
+                                                       "before": {"tdp_w": 10.0}, "after": {"tdp_w": 9.0}}]
+        rep = analyze(bundle({"timeline.jsonl": timeline(self.rows()), "governor-events.jsonl": timeline(events),
+                              "system.json": json.dumps({"plugin_version": "GFG Extreme 1.0.0"})}))
+        self.assertEqual(rep["failed_power_probes"], {"8 W": 2, "9 W": 5})
+        self.assertIn("failed repeatedly at the same level (9 W x5)", "\n".join(rep["findings"]))
+        self.assertIn("recorded with: GFG Extreme 1.0.0", render(rep))
+
 
 if __name__ == "__main__":
     unittest.main()

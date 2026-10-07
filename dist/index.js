@@ -204,7 +204,7 @@ function describe(s) {
   const fb = s.power_feedback || {};
   if (b && b.cap_ignored) return { head: "TDP limit overridden", body: "The APU draws " + num(fb.draw_w, 1) + " W while GFG's limit is " + num(fb.cap_w, 0) + " W: another tool (ryzenadj, PowerTools\u2026) sets the real limit. GFG keeps a deep ratio instead of spending power.", tone: "warn" };
   if (b && s.state === "OPTIMIZE_POWER") return { head: "Saving battery", body: b.probe === "up" ? "Trying fewer generated frames at " + num(b.tdp_w, 0) + " W." : "Looking for the lowest TDP that holds the target (now " + num(b.tdp_w, 0) + " W).", tone: "ok" };
-  if (b && s.state === "LOCKED" && b.thermal_deferred && (b.thermal === "hot" || b.thermal === "heating")) return { head: "Cooling \xB7 " + num(b.tdp_w, 0) + " W", body: "The Deck is " + (b.thermal === "hot" ? "hot" : "heating up") + ": GFG keeps the current ratio and only tries lower watts. Fewer generated frames are tried again once it cools.", tone: "warn" };
+  if (b && s.state === "LOCKED" && b.thermal_deferred && b.heat_limited) return { head: "Cooling \xB7 " + num(b.tdp_w, 0) + " W", body: "The Deck is " + (b.thermal === "hot" ? "hot" : b.thermal === "heating" ? "heating up" : "cooling down") + ": GFG keeps the current ratio and only tries lower watts. Fewer generated frames are tried again once it cools.", tone: "warn" };
   if (b && s.state === "LOCKED") return { head: "Adapting \xB7 " + num(b.tdp_w, 0) + " W", body: (b.warm_started ? "Started from what worked last time. " : "") + (TIER_TEXT[b.tier] || "Checks FPS every second: adds watts at once when the game falls short, tries lower watts every 45 s."), tone: b.tier === "emergency" ? "warn" : "ok" };
   if (b && s.state === "GUARD") return { head: "Protecting", body: "A scene got heavier: more generated frames first, then more watts.", tone: "warn" };
   if (s.state === "OPTIMIZE_POWER") return { head: "Saving power", body: "Lowering TDP while holding the target.", tone: "ok" };
@@ -538,7 +538,7 @@ function GovernorPage({ s, back, profile, refresh }) {
       b.verifying ? h("span", null, "Verifying") : null,
       b.verifying ? h("b", null, fmtMult(String(b.verifying).split("x")[1] || 1) + " \u2014 the engine chose it, checking it holds") : null,
       b.thermal_deferred ? h("span", null, "Heat") : null,
-      b.thermal_deferred ? h("b", null, b.thermal === "hot" || b.thermal === "heating" ? "Quality step on hold until the APU cools" : "Cooled \u2014 quality step will be retried") : null,
+      b.thermal_deferred ? h("b", null, b.heat_limited ? "Quality step on hold until the APU cools" : "Cooled \u2014 quality step will be retried") : null,
       b.current_max_multiplier ? h("span", null, "Engine allows") : null,
       b.current_max_multiplier ? h("b", null, "up to " + fmtMult(b.current_max_multiplier)) : null,
       Object.keys(b.known_failures || {}).length ? h("span", null, "Recently failed") : null,
@@ -591,6 +591,15 @@ function GovernorPage({ s, back, profile, refresh }) {
       mode !== "quality" ? h("span", null, "Reacts") : null,
       mode !== "quality" ? h("b", null, "up within ~2 s, down in 1 W steps") : null
     )),
+    (s.session_history || []).length ? h("div", { className: "sec" }, "RECENT SESSIONS") : null,
+    (s.session_history || []).length ? h("div", { className: "card" }, h(
+      "div",
+      { className: "kv" },
+      ...(s.session_history || []).slice(0, 5).flatMap((x, i) => [
+        h("span", { key: "k" + i }, num(x.minutes, 0) + " min \xB7 " + ({ budget: "Battery", balanced: "Balanced", quality: "Quality" }[x.mode] || "\u2013")),
+        h("b", { key: "v" + i }, num(x.avg_output_fps, 0) + " FPS \xB7 " + (x.avg_tdp_w != null ? num(x.avg_tdp_w, 1) + " W" : "\u2013") + (x.max_temp_c ? " \xB7 " + num(x.max_temp_c, 0) + " \xB0C" : ""))
+      ])
+    )) : null,
     (s.limitations || []).length ? h("div", { className: "sec" }, "LIMITS") : null,
     ...(s.limitations || []).map((t, i) => h(Note, { key: i, quiet: true }, t))
   );

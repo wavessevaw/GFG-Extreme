@@ -101,9 +101,10 @@ class BudgetSearchTests(unittest.TestCase):
     def test_failed_lower_level_restores_last_good_not_the_edge(self):
         ctl = BudgetController(target_output_fps=90, now=0.0)
         game = Game(3.2)  # 30 real needs 9.4 W
-        run(ctl, game, 0.0, 30)
-        self.assertEqual(ctl.tdp, 10.0)
-        self.assertEqual(ctl.phase, "locked")
+        _, trace = run(ctl, game, 0.0, 30)
+        # 9 W is only ever a short probe; every settled state is 10 W.
+        self.assertTrue(all(tdp == 10.0 for _, tdp, phase in trace if phase == "locked"))
+        self.assertEqual(ctl.floor_failures[ctl.idx][0], 9.0)
 
 
 class BudgetGuardTests(unittest.TestCase):
@@ -223,9 +224,11 @@ class BudgetGuardTests(unittest.TestCase):
     def test_failed_reprobe_backs_off(self):
         ctl, game, now = self.locked()
         ctl.reprobe_interval = interval = ctl.REPROBE_S
-        now, _ = run(ctl, game, now, int(interval / WINDOW) + 4)
-        self.assertGreater(ctl.reprobe_interval, interval)
+        now, trace = run(ctl, game, now, int(interval / WINDOW) + 4)
+        # 6 W just failed with this point and the game still draws the whole cap: not retried yet.
+        self.assertNotIn(6.0, [tdp for _, tdp, _ in trace])
         self.assertEqual((ctl.point.key, ctl.tdp), ("30x3", 7.0))
+        self.assertEqual(ctl.status()["floor_w"], 6.0)
 
     def test_no_tdp_control_still_picks_points(self):
         ctl = BudgetController(target_output_fps=90, now=0.0, tdp_control=False)
@@ -708,8 +711,65 @@ class ThermalTests(unittest.TestCase):
         _, tb = run(b, Game(8.0), 0.0, 60)
         self.assertEqual(ta, tb)
 
+    def test_heat_verdict_has_hysteresis(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0)
+        ctl.set_thermal("heating", 100.0)
+        ctl._now = 150.0
+        ctl.set_thermal("ok", 150.0)
+        self.assertTrue(ctl.heat_limited, "a flip to ok does not release quality at once")
+        ctl._now = 100.0 + ctl.THERMAL_CLEAR_S + 1
+        self.assertFalse(ctl.heat_limited)
+        self.assertFalse(ctl.status()["heat_limited"])
+
     def test_status_reports_thermal(self):
         ctl = BudgetController(target_output_fps=90, now=0.0)
         ctl.thermal = "hot"
         self.assertEqual(ctl.status()["thermal"], "hot")
         self.assertIn("thermal_deferred", ctl.status())
+
+
+class FloorMemoryTests(unittest.TestCase):
+    """Deck log 2026-10-07 #3: after each guard raise the walk back down probed 9 W again, which
+    had just failed; nine visible dips in 29 minutes at the same level."""
+
+    def simulate(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0)
+        game, now, failed_down = Game(3.0), 0.0, 0   # 30 real needs 10 W
+        for i in range(1800 // int(WINDOW)):
+            game.scene = 0.85 if i % 10 in (6, 7) else 1.0   # a heavier scene every 150 s
+            now += WINDOW
+            was = ctl.probe
+            verdict, real = game.window(ctl)
+            ctl.draw_w = game.draw(ctl)
+            ctl.observe(now, verdict, real)
+            failed_down += was == "down" and ctl.last_reason.startswith("probe-failed")
+        return ctl, failed_down
+
+    def test_heavy_scenes_do_not_restart_failed_power_probes(self):
+        ctl, failed = self.simulate()
+        self.assertLessEqual(failed, 4)   # 12 before 1.0.5
+        self.assertEqual(ctl.point.key, "30x3")
+
+    def test_backoff_doubles_per_repeat_and_is_capped(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0)
+        self.assertEqual([ctl._floor_backoff(n) for n in (1, 2, 3, 4, 9)], [120.0, 240.0, 480.0, 600.0, 600.0])
+
+    def test_lighter_scene_lifts_the_block(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0)
+        ctl.floor_failures[ctl.idx] = (9.0, 0.0, 3)
+        ctl.draw_w = 9.6
+        self.assertTrue(ctl._floor_blocked(9.0, 60.0))
+        ctl.draw_w = 7.0   # the game uses clearly less than 9 W now
+        self.assertFalse(ctl._floor_blocked(9.0, 60.0))
+        ctl.draw_w = None
+        self.assertFalse(ctl._floor_blocked(9.0, 600.0), "expired")
+        self.assertFalse(ctl._floor_blocked(10.0 + 0.5, 60.0), "a higher level is not blocked")
+
+    def test_a_level_that_holds_clears_its_failure(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25)
+        run(ctl, Game(4.5), 0.0, 40)                 # 6 W failed, 7 W holds
+        self.assertIn(ctl.idx, ctl.floor_failures)
+        game = Game(4.5, scene=1.5)
+        run(ctl, game, 600.0, 30)
+        self.assertEqual(ctl.tdp, 6.0)
+        self.assertNotIn(ctl.idx, ctl.floor_failures)
