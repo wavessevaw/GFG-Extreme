@@ -103,7 +103,7 @@ Heroic, Lutris, EmuDeck and other Flatpak apps: **Settings → System**, enable 
 
 The Home screen, shrunk into the corner of your game. A brand-red **FPS** ring with the real frame rate under it, a **TDP** ring, **battery** time in Detailed, and — with Frame OS on — the **Response / Frames / Energy** rings, coloured exactly like on Home. The ring that matches what Frame OS is doing right now is bright; the others dim.
 
-Numbers do not flicker: each ring shows a **20-second average** and refreshes every 20 s, so a glance tells you how the game really runs, not how the last frame went.
+Rings refresh **once a second** from recent renderer telemetry. Identical images are reused, and rounded panels, ring geometry and glyphs are cached. Missing or stale FPS is shown as unavailable. The Vulkan layer skips a busy HUD copy rather than waiting for it during presentation.
 
 Turn it on in **Settings → In-game overlay** and pick **Rings** or **Text**, then Minimal, Standard or Detailed and a corner. Rings are drawn by GFG's own small Vulkan layer after the frame generator; they need one game restart after you first pick them, and until then (or in Flatpak apps and HDR games) you get the classic text line:
 

@@ -761,7 +761,7 @@ function HudPage({ back, s, profile, refresh }) {
     h("div", { className: "list", style: { marginTop: 0 } }, h(Toggle, { on: hud.enabled, title: "Show overlay in game", sub: "FPS, TDP and Frame OS payoff \u2014 as rings or a text line.", onChange: (v) => set({ enabled: v }) })),
     h("div", { className: "sec" }, "STYLE"),
     h(Seg, { value: style, options: [["rings", "Rings"], ["text", "Text"]], onChange: (v) => set({ style: v }) }),
-    style === "rings" ? h(Note, { quiet: true }, "Rings show 20-second averages and refresh every 20 s. They need one game restart after you first pick them; until then the text line is shown.") : null,
+    style === "rings" ? h(Note, { quiet: true }, "Rings refresh once a second from recent telemetry. Missing or stale FPS is shown as unavailable. They need one game restart after you first pick them; until then the text line is shown.") : null,
     h("div", { className: "sec" }, "DETAIL"),
     h(Seg, { value: hud.preset, options: [["minimal", "Minimal"], ["standard", "Standard"], ["detailed", "Detailed"]], onChange: (v) => set({ preset: v }) }),
     h("div", { className: "sec" }, "POSITION"),
