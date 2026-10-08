@@ -39,48 +39,12 @@ and keeps adjusting while you play. Your Deck never burns a watt it doesn't need
 
 ## Why GFG Extreme
 
-<table>
-<tr>
-<td width="33%" valign="top">
-
-### 🎯 Smooth, not stuttery
-Up to **90 FPS on OLED** and 60 on LCD, even when the game renders 30. Generated frames fill the gap, and GFG picks the ratio that holds for *this* game, *this* scene.
-
-</td>
-<td width="33%" valign="top">
-
-### 🔋 Power only where it pays
-Instead of running flat out at the stock 15 W, GFG holds the **lowest TDP the game tolerates** — in Battery mode 9–11 W — and spends more only when a scene truly needs it. Cooler, quieter, longer sessions.
-
-</td>
-<td width="33%" valign="top">
-
-### 🧠 Set it once
-Press **Run**. No TDP sliders, FPS caps or frame-generation settings to babysit. GFG remembers every game and starts from what worked last time.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-### 🛡️ Picture first
-Every change is checked against the renderer's own frame data and **rolled back if it doesn't hold**. GFG never trades smoothness for watts behind your back.
-
-</td>
-<td valign="top">
-
-### ⚡ Real frames when it matters
-**Frame OS** reads your controls: turn the camera or start a fight and it raises the *real* frame rate on the spot; pause, and it saves power.
-
-</td>
-<td valign="top">
-
-### 📊 Proof, not promises
-Frame OS **measures its own benefit in your game** with in-game A/B checks, and switches off whatever doesn't pay off there.
-
-</td>
-</tr>
-</table>
+- **🎯 Smooth, not stuttery.** Up to **90 FPS on OLED** and 60 on LCD, even when the game renders 30. Generated frames fill the gap, and GFG picks the ratio that holds for *this* game, *this* scene.
+- **🔋 Power only where it pays.** Instead of running flat out at the stock 15 W, GFG holds the **lowest TDP the game tolerates** — in Battery mode 9–11 W — and spends more only when a scene truly needs it. Cooler, quieter, longer sessions.
+- **🧠 Set it once.** Press **Run**. No TDP sliders, FPS caps or frame-generation settings to babysit. GFG remembers every game and starts from what worked last time.
+- **🛡️ Picture first.** Every change is checked against the renderer's own frame data and **rolled back if it doesn't hold**. GFG never trades smoothness for watts behind your back.
+- **⚡ Real frames when it matters.** **Frame OS** reads your controls: turn the camera or start a fight and it raises the *real* frame rate on the spot; pause, and it saves power.
+- **📊 Proof, not promises.** Frame OS **measures its own benefit in your game** with in-game A/B checks, and switches off whatever doesn't pay off there.
 
 Works with Steam games and, through Flatpak support, with Heroic, Lutris and emulators. Your saved settings are never touched: **Stop** puts everything back.
 
@@ -96,7 +60,7 @@ Full notes: [Releases](https://github.com/wavessevaw/GFG-Extreme/releases).
 
 ## What it does
 
-<img src="docs/img/home-adapting-oled.png" width="250" align="right">
+<p align="center"><img src="docs/img/home-adapting-oled.png" width="250"></p>
 
 **30 real frames, 90 on screen, 9 watts.** On a Steam Deck OLED the Governor might run a game at 30 rendered frames, generate the rest up to 90, and hold the APU at 9 W. If a scene gets heavier, it adds watts or generated frames within about two seconds. While the game holds, it tries one watt less every 45 seconds.
 
@@ -107,8 +71,6 @@ Full notes: [Releases](https://github.com/wavessevaw/GFG-Extreme/releases).
 - **Steps aside for Steam's menu.** While the Steam menu covers the game, measuring pauses, so a menu never looks like a slow scene.
 - **Tells you what you saved.** After a session Home shows the modes you used, the energy saved in Wh from the measured draw, and about how many minutes of battery that is.
 - **Leaves your settings alone.** Your saved profile is never modified; Stop puts everything back. No overclocking, never above your Deck's power ceiling, and if another tool keeps changing TDP, GFG stops fighting it. If Steam's TDP helper does not answer in time, your own limit stays.
-
-<br clear="right">
 
 ## Three modes
 
@@ -135,13 +97,11 @@ Home gets a **Frame OS card** with three rings — **Response**, **Frames** and 
 
 ### It checks itself in your game
 
-<img src="docs/img/hud-rings-ab.png" width="560" align="right">
+<p align="center"><img src="docs/img/hud-rings-ab.png" width="560"></p>
 
 Estimates are not proof. In Act, every so often Frame OS switches **one** of its effects off for a few seconds and compares the same moment before, during and after (A-B-A), so heat or a heavier scene cannot fake the result. The moment decides the test: calm play checks **Response**, a fight checks **Frames**, a pause checks **Energy** from the measured APU draw.
 
 After three comparisons a ring shows the **measured** number. The card says *Measured in game*, the overlay shows `A/B` while a check runs, and Diagnostics lists every result with its 95 % range. Checks are short and rare, never count toward the session numbers and never add watts; one switch turns them off.
-
-<br clear="right">
 
 ### It learns every game
 
@@ -149,7 +109,7 @@ What the checks measured carries over to the next session of the same game, so i
 
 ## In-game rings
 
-<img src="docs/img/page-hud.png" width="230" align="right">
+<p align="center"><img src="docs/img/page-hud.png" width="230"></p>
 
 The Home screen, shrunk into the corner of your game: a brand-red **FPS** ring with the real frame rate under it, a **TDP** ring, **battery** time in Detailed, and — with Frame OS on — the **Response / Frames / Energy** rings, coloured exactly like on Home. The ring that matches what Frame OS is doing right now is bright; the others dim.
 
@@ -159,19 +119,15 @@ With Frame OS Act, a badge says what is happening: **CALM**, **REST**, **VERIFYI
 - Refreshes **once a second**; unchanged pictures are reused, and the layer never waits for the overlay during presentation.
 - Drawn by GFG's own small Vulkan layer after the frame generator. It needs one game restart after you first pick it; until then, in Flatpak apps and in HDR games you get the classic text line:
 
-<br clear="right">
-
 `90 FPS  x3  (30)  sc100  TDP 9W  APU 8W  2h32  easy` — frames on screen, multiplier, real frames, render scale, TDP limit and measured APU draw, battery time left, how hard GFG is working, plus the Frame OS decision (`FOS boost 45`).
 
 <img src="docs/img/hud-rings-detailed.png" width="820">
 
 ## After you play
 
-<img src="docs/img/home-last-session.png" width="270" align="right">
+<p align="center"><img src="docs/img/home-last-session.png" width="270"></p>
 
 When the game closes, Home sums the session up in rings: **average FPS**, **average real frames** and **average TDP**, and — if Frame OS ran — its **Response / Frames / Energy** payoff. Below them: how long you played, the time in each mode (and in each Frame OS state), and the energy saved against your limit — in Wh from the measured draw and as minutes of battery. **Details** keeps your recent sessions.
-
-<br clear="right">
 
 ## Quick start
 
@@ -190,12 +146,10 @@ Heroic, Lutris, EmuDeck and other Flatpak apps: **Settings → System**, enable 
 
 ## Something not working?
 
-<img src="docs/img/page-setup.png" width="270" align="right">
+<p align="center"><img src="docs/img/page-setup.png" width="270"></p>
 
 1. **Settings → Diagnostics → Check setup.** One tap checks the engine, the launcher, the overlay, the diagnostics log and TDP access, and says what to fix for each failed item.
 2. **Record a log.** Settings → Diagnostics → **Record log**, play for a minute, **Stop**. A zip lands on the Steam Deck desktop with a plain-language `summary.txt` on top. With Frame OS on, the log also says whether the game loaded the layer and breaks its measurements down per decision. [Open an issue](https://github.com/wavessevaw/GFG-Extreme/issues) and attach it.
-
-<br clear="right">
 
 ## Status
 
