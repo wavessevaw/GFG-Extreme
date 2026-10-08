@@ -29,8 +29,11 @@ jobs:
         id: version
         run: |
           version="$(python3 -c 'import json; print(json.load(open("package.json"))["version"].split("governor.")[-1])')"
-          # 0.x are Governor pre-releases (v0.0.N-governor); 1.0.0 and later are official releases (vX.Y.Z).
-          if [[ "$version" =~ ^0\. || "$version" == *-* ]]; then
+          # Frame OS 1.2.0 is a public experimental build until validated on real Steam Decks.
+          # Keep its canonical v1.2.0 tag but never mark it Latest/stable automatically.
+          if [[ "$version" == "1.2.0" ]]; then
+            tag="v${version}"; stable=false
+          elif [[ "$version" =~ ^0\. || "$version" == *-* ]]; then
             tag="v${version}-governor"; stable=false
           else
             tag="v${version}"; stable=true
@@ -91,7 +94,7 @@ jobs:
           git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
           VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" scripts/build_release.sh "${{ steps.version.outputs.version }}" payloads out
 
-      - name: Publish pre-release
+      - name: Publish release
         if: steps.version.outputs.exists == 'false'
         run: |
           sha="$(cut -d' ' -f1 out/SHA256SUMS.txt)"
