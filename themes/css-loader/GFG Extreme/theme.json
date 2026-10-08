@@ -1,37 +1,110 @@
 {
   "manifest_version": 8,
   "name": "GFG Extreme",
-  "version": "v1.0",
+  "version": "v1.1",
   "author": "GFG Extreme",
   "target": "System-Wide",
-  "description": "The GFG Extreme look for the whole Deck UI: near-black, graphite surfaces and one red accent.",
+  "description": "The GFG Extreme look for the whole Deck UI: near-black, graphite panels, one red accent, red focus frames, the last game as a vertical card on Home.",
   "inject": {
-    "shared.css": ["SP", "QuickAccess", "MainMenu"]
+    "shared.css": [
+      "SP",
+      "QuickAccess",
+      "MainMenu"
+    ]
   },
   "patches": {
     "Accent": {
       "default": "GFG Red",
       "type": "dropdown",
       "values": {
-        "GFG Red": { "accent-red.css": ["SP", "QuickAccess", "MainMenu"] },
-        "Ember": { "accent-ember.css": ["SP", "QuickAccess", "MainMenu"] },
-        "Crimson": { "accent-crimson.css": ["SP", "QuickAccess", "MainMenu"] }
+        "GFG Red": {
+          "accent-red.css": [
+            "SP",
+            "QuickAccess",
+            "MainMenu"
+          ]
+        },
+        "Ember": {
+          "accent-ember.css": [
+            "SP",
+            "QuickAccess",
+            "MainMenu"
+          ]
+        },
+        "Crimson": {
+          "accent-crimson.css": [
+            "SP",
+            "QuickAccess",
+            "MainMenu"
+          ]
+        }
       }
     },
     "Background": {
       "default": "Black",
       "type": "dropdown",
       "values": {
-        "Black": { "bg-black.css": ["SP", "QuickAccess", "MainMenu"] },
-        "Graphite": { "bg-graphite.css": ["SP", "QuickAccess", "MainMenu"] }
+        "Black": {
+          "bg-black.css": [
+            "SP",
+            "QuickAccess",
+            "MainMenu"
+          ]
+        },
+        "Graphite": {
+          "bg-graphite.css": [
+            "SP",
+            "QuickAccess",
+            "MainMenu"
+          ]
+        }
       }
     },
     "Red focus glow": {
       "default": "Yes",
       "type": "checkbox",
       "values": {
-        "Yes": { "focus-glow.css": ["SP", "QuickAccess", "MainMenu"] },
+        "Yes": {
+          "focus-glow.css": [
+            "SP",
+            "QuickAccess",
+            "MainMenu"
+          ]
+        },
         "No": {}
+      }
+    },
+    "Home: last game as a vertical card": {
+      "default": "Yes",
+      "type": "checkbox",
+      "values": {
+        "Yes": {
+          "home-vertical.css": [
+            "SP"
+          ]
+        },
+        "No": {}
+      }
+    },
+    "Status icons": {
+      "default": "Accent",
+      "type": "dropdown",
+      "values": {
+        "Accent": {
+          "status-accent.css": [
+            "SP",
+            "QuickAccess",
+            "MainMenu"
+          ]
+        },
+        "Calm": {
+          "status-calm.css": [
+            "SP",
+            "QuickAccess",
+            "MainMenu"
+          ]
+        },
+        "Steam": {}
       }
     }
   }

@@ -40,3 +40,55 @@
   --gpCornerMedium: 10px;
   --gpCornerLarge: 14px;
 }
+
+/* Backgrounds Steam paints itself (not through the variables above).  Selectors as used by the
+ * maintained Obsidian theme (EMERALD0874/Steam-Deck-Themes); CSS Loader translates these class
+ * names to the running client's. */
+.gamepadui_BasicHome_3LYP1.gamepadui_OpaqueBackground_b084m,
+.gamepadhome_TabbedContent_cE1Sa,
+.gamepadlibrary_GamepadLibrary_ZBBhe,
+.allcollections_Collection_3IWn-,
+.gamepadpagedsettings_PagedSettingDialog_ContentColumn_3JPle,
+.gamepadpage_GamepadPage_2FqpD.gamepadpage_DialogBackground_2msTK,
+.downloads_DownloadsPage_1bq4x,
+.downloadgraph_GraphAndStats_3KDkL,
+.gamepadsearch_GamepadSearch_P_AlE,
+.gamepadtabbedpage_TabContents_WDa0_,
+.quickaccessmenu_QuickAccessMenu_V0cr-,
+.quickaccessmenu_Tab_1S76C,
+.quickaccessmenu_Title_34nl5,
+.header_Header_1E_SL.header_InQuickAccess_2mRo5,
+.lockscreen_Container_3rFFU,
+.audio_VolumePopin_2iUUM {
+  background: var(--gfg-bg);
+}
+.basicappdetailssectionstyler_AppDetailsRoot_3fp5y,
+.loadingthrobber_Container_3sa1N {
+  background: var(--gfg-bg) !important;
+}
+/* side panels one step lighter, like the GFG cards */
+.mainmenu_Menu_23IDi,
+.gamepadpagedsettings_PagedSettingsDialog_PageListColumn_2EZ3o,
+.quickaccessmenu_Menu_1gJzx::before {
+  background: var(--gfg-s1) !important;
+}
+.quickaccessmenu_Tab_1S76C.quickaccessmenu_Selected_2QHMu {
+  background-color: var(--gfg-s2);
+}
+.gamepadslider_SliderTrack_Mq25N {
+  background: var(--gfg-s3);
+}
+/* the home's fade into the page follows the GFG background, without Steam's blue tint */
+.gamepadhomerecentgames_RecentGamesBackgroundFadeGradient_1ksIq {
+  background: linear-gradient(180deg, transparent 55%, var(--gfg-bg) 100%);
+}
+/* no blue glow under the hovered game */
+.gpfocuswithin ~ .basicgamecarousel_CarouselCapsuleBackgroundGlow_1H3Kf,
+:hover ~ .basicgamecarousel_CarouselCapsuleBackgroundGlow_1H3Kf {
+  opacity: 0;
+}
+/* rounder game art */
+.libraryassetimage_Image_24_Au,
+.appportrait_LibraryItemBox_WYgDg {
+  border-radius: 10px;
+}

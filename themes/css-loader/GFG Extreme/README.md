@@ -10,7 +10,11 @@ The GFG Extreme look for the whole Steam Deck interface: near-black backgrounds,
 ## Options
 - **Accent**: GFG Red (default), Ember or Crimson.
 - **Background**: Black (as in GFG) or Graphite (a little lighter).
-- **Red focus glow**: a red edge around the focused control.
+- **Red focus glow**: a red frame with a soft glow around the focused control and the selected game.
+- **Home: last game as a vertical card** (on by default): the most recent game becomes a large vertical card like the rest of the row. Steam only loads the wide header art for that card, so it is cropped to portrait from its centre.
+- **Status icons**: Accent (default, the battery charge in the accent colour), Calm (grey icons, white battery) or Steam.
 
 ## How it works
-The theme re-points the colour variables Steam's gamepad UI is built on (`--gpSystem*`, `--gpColor-*`, `--gpBackground-*`). It uses no hashed class names, so a Steam client update does not break it. Anything Steam draws with hard-coded colours keeps its own look.
+- Colours come from the variables Steam's gamepad UI is built on (`--gpSystem*`, `--gpColor-*`, `--gpBackground-*`).
+- The backgrounds Steam paints itself, the home layout and the status icons use Steam class names in the form CSS Loader translates to the running client. The selectors for backgrounds follow the maintained [Obsidian](https://github.com/EMERALD0874/Steam-Deck-Themes) theme.
+- Anything a client update renames keeps Steam's own look until the theme is updated. Nothing breaks.

@@ -1,0 +1,7 @@
+/* Status bar, calm style: grey line icons, white battery; the accent only on counters. */
+.header_Header_1E_SL svg {
+  color: var(--gfg-text2);
+}
+.header_Header_1E_SL [class*="Battery" i] {
+  color: var(--gfg-text);
+}

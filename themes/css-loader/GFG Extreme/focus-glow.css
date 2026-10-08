@@ -2,3 +2,10 @@
 .gpfocus, .gpfocuswithin:focus-within {
   box-shadow: 0 0 0 2px var(--gfg-accent), 0 0 14px color-mix(in srgb, var(--gfg-accent) 35%, transparent) !important;
 }
+/* game art: a red frame with a soft glow instead of Steam's growing white outline */
+.BasicUI .appportrait_LibraryItemBox_WYgDg.Focusable:focus {
+  outline: none;
+  animation: none;
+  border-radius: 10px;
+  box-shadow: 0 0 0 3px var(--gfg-accent), 0 0 22px color-mix(in srgb, var(--gfg-accent) 40%, transparent);
+}

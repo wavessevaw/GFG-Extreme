@@ -1,0 +1,15 @@
+/* Home: the most recent game as a large vertical card, like the rest of the row (design choice B).
+ * Steam only loads the wide header art for this card, so it is cropped to portrait from its
+ * centre.  Sizes are tuned against the stock carousel; a client update may need a touch-up. */
+.appportrait_InRecentGames_biTV-.appportrait_FeaturedCapsule_xp7A- {
+  aspect-ratio: 2 / 3;
+  width: auto !important;
+  height: 100% !important;
+}
+.appportrait_InRecentGames_biTV-.appportrait_FeaturedCapsule_xp7A- > .libraryassetimage_LandscapeImage_ZsU8n,
+.appportrait_InRecentGames_biTV-.appportrait_FeaturedCapsule_xp7A- > .libraryassetimage_LandscapeImage_ZsU8n > img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover;
+  object-position: center;
+}
