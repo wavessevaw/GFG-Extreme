@@ -192,6 +192,7 @@ class GovernorService:
         self._injection: Optional[Dict[str, Any]] = None
         self._injection_seq = 0
         self._injection_hold_until = 0.0
+        self._injection_starvation_yields = 0  # per session; Act circuit breaker
         self._menu_since: Optional[float] = None
         self._request: Optional[Request] = None
         self._request_counter = getattr(self, "_request_counter", 0)
@@ -865,6 +866,11 @@ class GovernorService:
         if mode == "act" and not self._frame_os_act_unlocked():
             return {"success": False, "error": "Frame OS Act is locked until Deck validation; developer opt-in required"}
         self._settings.setdefault("profiles", {}).setdefault(profile, {})["frame_os"] = mode
+        # Explicit re-arm is required after a session was protected from repeated
+        # output starvation; switching back to Act represents that explicit choice.
+        if profile == self._active_profile and mode == "act":
+            self._injection_starvation_yields = 0
+            self._injection_hold_until = 0.0
         self._save_settings()
         try:
             self._sync_frame_os_marker()
@@ -1069,6 +1075,8 @@ class GovernorService:
         value["session_history"] = (self._settings.get("session_history") or [])[: self.SESSION_HISTORY]
         value["frame_os"] = {"mode": self._frame_os_mode(profile or value.get("profile", "")),
                              "act_unlocked": self._frame_os_act_unlocked(),
+                             "starvation_yields": self._injection_starvation_yields,
+                             "output_starvation_lockout": self._injection_starvation_yields >= 2,
                              "layer_installed": bool(self.frame_os_layer_dir and frame_os_layer.is_staged(self.frame_os_layer_dir)),
                              "layer_error": self.frame_os_layer_error,
                              **{k: v for k, v in self.frame_os.last.items() if k != "input"}}
@@ -1265,6 +1273,7 @@ class GovernorService:
             req, self.observer, self._clock(), budget=True,  # Quality too since 1.0.6: reject in 8 s, not 25
             min_samples=self.MIN_SAMPLES, min_span_s=self.MIN_SAMPLE_SPAN_SECONDS,
             timeout_s=self.CONFIRM_TIMEOUT_SECONDS, early_span_s=self.EARLY_DELIVERED_SPAN_SECONDS,
+            fast_mismatch=self._budget is None,  # only Quality; Battery uses its own point guard
         )
 
     async def _fail_request(self, profile: str, reason: str) -> None:
@@ -1997,7 +2006,8 @@ class GovernorService:
         live = bool(((self.frame_os.last or {}).get("telemetry") or {}).get("live"))
         # only while the pacer is really in the game: without it the renderer would take 45 real
         acting = (self._frame_os_mode(profile) == "act" and self._request is None and bool(self._point_deltas)
-                  and self._clock() >= self._injection_hold_until)
+                  and self._clock() >= self._injection_hold_until
+                  and self._injection_starvation_yields < 2)
         if acting and self._budget is not None:
             # Safety: heat or a starved output hands the point back to the Governor's own judgement.
             hot = (self._status.get("diagnosis") or {}).get("thermal") == "hot"
@@ -2010,6 +2020,11 @@ class GovernorService:
                 if self._injection is not None:
                     self._event("frame-os-injection-yielded", "hot" if hot else "output-starved",
                                 profile=profile, output=output)
+                    if starved and not hot:
+                        self._injection_starvation_yields += 1
+                        if self._injection_starvation_yields >= 2:
+                            self._event("frame-os-injection-locked-out", "repeated-output-starvation",
+                                        profile=profile, output=output)
                     self._injection_hold_until = self._clock() + self.INJECTION_HOLD_S  # no flapping
         cadences = self.frame_os.injection if acting and live else None
         wanted = None
