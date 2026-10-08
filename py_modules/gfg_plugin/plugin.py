@@ -804,9 +804,16 @@ class Plugin:
             self, profile_name: str, enabled: bool
     ) -> Dict[str, Any]:
         """Enable or disable Governor for one profile."""
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             self.governor_service.set_enabled, profile_name, enabled
         )
+        if result.get("success") and not enabled:
+            # The Gamescope panel rate is global, not an overlay owned by the
+            # game. Restore at STOP even if there is no runnable game anymore.
+            await self.governor_service.reconcile_savings_refresh(profile_name, force_off=True)
+            if self.governor_service._savings_refresh_lease is not None:
+                result["refresh_restore_pending"] = True
+        return result
 
     async def set_governor_frame_os(self, profile_name: str, mode: str) -> Dict[str, Any]:
         """GFG Frame OS development switch: off / observe / shadow / act (applies from next launch)."""
@@ -830,7 +837,13 @@ class Plugin:
 
     async def set_governor_savings_effort(self, profile_name: str, level: str) -> Dict[str, Any]:
         """Battery savings effort; independent of the impossible hours target."""
-        return await asyncio.to_thread(self.governor_service.set_savings_effort, profile_name, level)
+        result = await asyncio.to_thread(self.governor_service.set_savings_effort, profile_name, level)
+        if result.get("success"):
+            # UI changes must not wait for a running game to leave a stuck 60 Hz.
+            await self.governor_service.reconcile_savings_refresh(profile_name)
+            if self.governor_service._savings_refresh_lease is not None and level != "hard":
+                result["refresh_restore_pending"] = True
+        return result
 
     async def set_governor_playtime(self, hours: float = 0.0) -> Dict[str, Any]:
         """Legacy RPC intentionally rejects obsolete hours-based targets."""
@@ -838,7 +851,12 @@ class Plugin:
 
     async def set_governor_mode(self, profile_name: str, mode: str) -> Dict[str, Any]:
         """Battery (lowest TDP first) or Quality (fewest generated frames first)."""
-        return await asyncio.to_thread(self.governor_service.set_mode, profile_name, mode)
+        result = await asyncio.to_thread(self.governor_service.set_mode, profile_name, mode)
+        if result.get("success"):
+            await self.governor_service.reconcile_savings_refresh(profile_name)
+            if self.governor_service._savings_refresh_lease is not None and mode != "budget":
+                result["refresh_restore_pending"] = True
+        return result
 
     async def get_governor_game_model_target(self, profile_name: str) -> Dict[str, Any]:
         """Settings -> Diagnostics: which game "Reset what GFG learned" would reset (None: unknown)."""
