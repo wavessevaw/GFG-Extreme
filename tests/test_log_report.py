@@ -101,6 +101,19 @@ class ReportTests(unittest.TestCase):
         self.assertIn("recorded with: GFG Extreme 1.0.0", render(rep))
         self.assertTrue(rep["findings"][0].startswith("Recorded with 1.0.0; this report is from"))
 
+    def test_frequent_not_power_bound_holds_are_reported(self):
+        # review 1.1.x: the guard holding because the draw was far under the cap was invisible in logs.
+        hold = lambda d: {"event": "budget-guard-not-power-bound", "reason": "guard-not-power-bound:real-p5-short",
+                          "draw_w": d, "cap_w": 10.0, "verdict": "real-p5-short"}
+        rep = analyze(bundle({"timeline.jsonl": timeline(self.rows()),
+                              "governor-events.jsonl": timeline([hold(4.0), hold(5.0), hold(6.0)])}))
+        self.assertEqual(rep["not_power_bound_holds"], {"count": 3, "draw_w_median": 5.0, "caps_w": [10.0]})
+        self.assertIn("The guard held 3 times without adding watts", "\n".join(rep["findings"]))
+        self.assertIn("median draw 5.0 W at 10 W", "\n".join(rep["findings"]))
+        rare = analyze(bundle({"timeline.jsonl": timeline(self.rows()), "governor-events.jsonl": timeline([hold(4.0)])}))
+        self.assertEqual(rare["not_power_bound_holds"]["count"], 1)
+        self.assertFalse(any("without adding watts" in f for f in rare["findings"]), "a single hold is not a finding")
+
     def test_current_version_log_has_no_version_note(self):
         from gfg_plugin.log_report import CURRENT_VERSION
         rep = analyze(bundle({"timeline.jsonl": timeline(self.rows()),
@@ -110,3 +123,67 @@ class ReportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FrameOsReportTests(unittest.TestCase):
+    def rows(self, layer):
+        return [{"t": float(i), "state": "LOCKED", "target": 90,
+                 "frame_os": {"mode": "observe", "layer_installed": True, "level": "calm", "layer": layer}}
+                for i in range(10)]
+
+    def test_answering_layer_is_summarised(self):
+        layer = {"live": True, "frames": 900, "freshness_ms": 21.5, "present_interval_p50_ms": 33.3,
+                 "present_interval_p95_ms": 34.0, "swapchain_recreations": 1, "present_hold_ms": 20.4,
+                 "engine": "DXVK"}
+        rep = analyze(bundle({"timeline.jsonl": timeline(self.rows(layer)),
+                              "game-processes.json": json.dumps([{"pid": 1, "frame_os_layer_loaded": True}])}))
+        fo = rep["frame_os"]
+        self.assertEqual((fo["frames"], fo["freshness_ms"], fo["loaded_in_game"]), (900, 21.5, True))
+        self.assertIn("Frame OS (observe): the layer reported 900 frames", "\n".join(rep["findings"]))
+        self.assertIn("engine DXVK", "\n".join(rep["findings"]))
+        self.assertEqual(fo["present_hold_ms"], 20.4)
+
+    def test_stale_telemetry_does_not_answer(self):
+        layer = {"live": False, "frames": 900, "freshness_ms": 21.5}
+        rep = analyze(bundle({"timeline.jsonl": timeline(self.rows(layer)),
+                              "game-processes.json": json.dumps([{"pid": 1, "frame_os_layer_loaded": True}])}))
+        self.assertEqual((rep["frame_os"]["answering_share"], rep["frame_os"]["frames"]), (0, 0))
+        self.assertIn("never reported live frames", "\n".join(rep["findings"]))
+
+    def test_layer_not_loaded_is_called_out(self):
+        rep = analyze(bundle({"timeline.jsonl": timeline(self.rows({})),
+                              "game-processes.json": json.dumps([{"pid": 1, "comm": "Game.exe",
+                                                                  "frame_os_layer_loaded": False,
+                                                                  "env": {"GFG_FRAME_OS_SHM": "/dev/shm/gfg-frame-os"}}])}))
+        self.assertIn("Game.exe did not load the Frame OS layer", "\n".join(rep["findings"]))
+        self.assertIn("32-bit game?", "\n".join(rep["findings"]))
+
+    def test_no_frame_os_rows_no_summary(self):
+        rep = analyze(bundle({"timeline.jsonl": timeline([{"t": 0.0, "state": "LOCKED"}])}))
+        self.assertIsNone(rep["frame_os"])
+
+
+class FrameOsLateSwitchTests(unittest.TestCase):
+    def test_game_started_before_frame_os_was_on(self):
+        rows = [{"t": float(i), "state": "LOCKED", "frame_os": {"mode": "observe", "layer_installed": True, "layer": {}}}
+                for i in range(5)]
+        procs = [{"pid": 1, "comm": "game.exe", "frame_os_layer_loaded": False, "env": {"DISABLE_GFG_FRAME_OS": "1"}}]
+        rep = analyze(bundle({"timeline.jsonl": timeline(rows), "game-processes.json": json.dumps(procs)}))
+        self.assertIn("restart the game", "\n".join(rep["findings"]))
+        self.assertNotIn("32-bit", "\n".join(rep["findings"]))
+
+
+class FrameOsByLevelTests(unittest.TestCase):
+    def test_boost_and_calm_are_reported_separately(self):
+        def row(i, level, interval, fresh, acting):
+            return {"t": float(i), "state": "LOCKED", "output": 90, "tdp": 12,
+                    "frame_os": {"mode": "act", "layer_installed": True, "level": level, "acting": acting,
+                                 "layer": {"live": True, "frames": 100 + i, "present_interval_p50_ms": interval,
+                                           "freshness_ms": fresh, "present_hold_ms": fresh - 1}}}
+        rows = [row(i, "calm", 33.3, 25.0, True) for i in range(5)] + [row(i, "boost", 33.3, 25.0, True) for i in range(5, 10)]
+        rep = analyze(bundle({"timeline.jsonl": timeline(rows)}))
+        by = rep["frame_os"]["by_level"]
+        self.assertEqual((by["calm"]["samples"], by["boost"]["real_fps"]), (5, 30.0))
+        joined = "\n".join(rep["findings"])
+        self.assertIn("Frame OS by decision", joined)
+        self.assertIn("boost did not raise the real frame rate", joined)

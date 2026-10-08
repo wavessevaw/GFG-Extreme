@@ -31,6 +31,7 @@ PROBE_ENV_KEYS = (
     "MANGOHUD_CONFIGFILE", "VK_INSTANCE_LAYERS", "VK_IMPLICIT_LAYER_PATH", "VK_ADD_IMPLICIT_LAYER_PATH",
     "VK_LAYER_PATH", "VK_LOADER_LAYERS_ENABLE", "VK_LOADER_LAYERS_DISABLE", "GAMESCOPE_WAYLAND_DISPLAY",
     "PRESSURE_VESSEL_RUNTIME", "STEAM_COMPAT_APP_ID", "SteamAppId",
+    "GFG_FRAME_OS", "DISABLE_GFG_FRAME_OS", "GFG_FRAME_OS_SHM",
 )
 
 
@@ -101,6 +102,29 @@ def compact_status(status: Dict[str, Any]) -> Dict[str, Any]:
         "budget": {k: (status.get("budget") or {}).get(k) for k in (
             "phase", "probe", "flavor", "verifying", "thermal", "thermal_deferred", "current_max_multiplier",
             "known_failures", "warm_started", "floor_w", "heat_limited")} if status.get("budget") else None,
+        "frame_os": compact_frame_os(status.get("frame_os")),
+    }
+
+
+def compact_frame_os(frame_os: Any) -> Any:
+    """Frame OS (development): mode, whether the layer answers, its timing telemetry and the decision."""
+    if not isinstance(frame_os, dict) or frame_os.get("mode", "off") == "off":
+        return None
+    tel = frame_os.get("telemetry") or {}
+    decision = frame_os.get("decision") or {}
+    return {
+        "mode": frame_os.get("mode"), "layer_installed": frame_os.get("layer_installed"),
+        "layer_error": frame_os.get("layer_error"), "enabled": frame_os.get("enabled"),
+        "acting": frame_os.get("acting"), "published_real_hz": frame_os.get("published_real_hz"),
+        "acknowledged": frame_os.get("acknowledged"), "scene_change": frame_os.get("scene_change"),
+        "error": frame_os.get("error"),
+        "level": decision.get("level"), "real_hz": decision.get("real_hz"), "tdp_w": decision.get("tdp_w"),
+        "decision_reason": decision.get("reason"),
+        "input": frame_os.get("input_sensor"),
+        "layer": {k: tel.get(k) for k in (
+            "live", "writer_pid", "engine", "passthrough", "frames", "hits", "misses", "cost_p50_ms", "cost_q_ms",
+            "avg_delay_ms", "freshness_ms", "present_hold_ms", "acquire_block_ms", "present_interval_p50_ms",
+            "present_interval_p95_ms", "applied_generation", "swapchain_recreations")} if tel else None,
     }
 
 
@@ -167,8 +191,10 @@ def probe_game_processes(proc_root: Path = Path("/proc"), limit: int = 8) -> Lis
             "pid": int(proc.name), "comm": comm,
             "env": {k: env[k] for k in PROBE_ENV_KEYS if k in env},
             "mangohud_loaded": any("libMangoHud" in lib for lib in libs),
+            "frame_os_layer_loaded": any("libVkLayer_gfg_pacer" in lib for lib in libs),
             "layer_libraries": [lib for lib in libs if "vulkan" in lib.lower() or "MangoHud" in lib
-                                or "mako" in lib.lower() or "gamescope" in lib.lower()][:40],
+                                or "mako" in lib.lower() or "gamescope" in lib.lower()
+                                or "gfg_pacer" in lib][:40],
         })
         if len(found) >= limit:
             break
@@ -458,7 +484,7 @@ class SessionRecorder:
             "decky_plugins": sorted(p.name for p in (self.user_home / "homebrew" / "plugins").glob("*"))
             if (self.user_home / "homebrew" / "plugins").is_dir() else [],
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme 1.1.0 (engine 4.0.0-gfg.4)",
+            "plugin_version": "GFG Extreme 1.2.0 (engine 4.0.0-gfg.4)",
         }
 
     def _write_bundle(self) -> Path:

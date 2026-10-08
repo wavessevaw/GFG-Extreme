@@ -24,6 +24,7 @@ export const css = `
 .gfg .effort{display:flex;justify-content:space-between;align-items:center;width:100%;margin-top:12px;font-size:11px;font-weight:700;letter-spacing:.14em;color:var(--tx3)}
 .gfg .effort .lv{font-size:12px;letter-spacing:.12em;color:var(--tx2)}
 .gfg .effort .lv.hard,.gfg .effort .lv.nightmare{color:var(--red)}
+.gfg .effort .lv .why{font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--tx3);text-transform:none}
 .gfg .power{width:100%;margin-top:12px}
 .gfg .power .r{display:flex;justify-content:space-between;font-size:11px;color:var(--tx2);margin-bottom:6px;font-weight:600}
 .gfg .bar{height:6px;background:var(--s3);border-radius:6px;overflow:hidden}.gfg .bar>div{height:100%;background:var(--red);border-radius:6px}
@@ -56,6 +57,17 @@ export const css = `
 .gfg .note.quiet{background:var(--s2);border-color:var(--line);color:var(--tx2)}
 .gfg .kv{display:grid;grid-template-columns:auto 1fr;gap:7px 12px;font-size:12.5px;padding:2px 2px}
 .gfg .kv span{color:var(--tx2)}.gfg .kv b{font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
+.gfg .fos{margin-top:12px;padding:12px 12px 14px}
+.gfg .fos-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:10.5px;letter-spacing:.16em;color:var(--tx3);font-weight:700}
+.gfg .pill{font-size:10px;font-weight:800;letter-spacing:.12em;padding:3px 8px;border-radius:999px;background:var(--s3);color:var(--tx2)}
+.gfg .pill.boost{background:rgba(47,210,122,.16);color:#2fd27a}.gfg .pill.rest{background:#2a2f3a;color:#cfd6e4}
+.gfg .pill.would{background:transparent;border:1px dashed var(--tx3);color:var(--tx2)}
+.gfg .rings{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.gfg .mini{display:flex;flex-direction:column;align-items:center;gap:7px}
+.gfg .mring{position:relative}.gfg .mring svg{position:absolute;inset:0;transform:rotate(-90deg)}
+.gfg .mnum{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.gfg .mnum.dim{color:var(--tx3)}
+.gfg .mlab{font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--tx2)}
 .gfg .cols{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
 .gfg .col{background:var(--s2);border:1px solid var(--line);border-radius:12px;padding:10px}
 .gfg .col h4{margin:0 0 6px;font-size:10px;letter-spacing:.16em;color:var(--tx3)}

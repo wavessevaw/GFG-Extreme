@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from .governor_telemetry import TelemetryObserver
 
-CURRENT_VERSION = "1.1.0"  # kept in step by scripts/bump_version.py
+CURRENT_VERSION = "1.2.0"  # kept in step by scripts/bump_version.py
 
 
 def _percentile(values: List[float], pct: float) -> Optional[float]:
@@ -136,11 +136,106 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
                 and after["tdp_w"] > before["tdp_w"]):
             failed_power[before["tdp_w"]] += 1
     report["failed_power_probes"] = {f"{w:g} W": n for w, n in sorted(failed_power.items())}
+    not_bound = [e for e in events if e.get("event") == "budget-guard-not-power-bound"]
+    draws = [e["draw_w"] for e in not_bound if isinstance(e.get("draw_w"), (int, float))]
+    report["not_power_bound_holds"] = {
+        "count": len(not_bound),
+        "draw_w_median": round(statistics.median(draws), 1) if draws else None,
+        "caps_w": sorted({e["cap_w"] for e in not_bound if isinstance(e.get("cap_w"), (int, float))}),
+    }
     report["rejected_points"] = sorted({str(e.get("point")) for e in events if e.get("event") == "operating-point-rejected"})
     report["failed_checks"] = [c for c in self_test if not c.get("ok")]
     report["overlay_burst_before_exit"] = overlay_burst_before_exit(_jsonl(_read(bundle, "activity.jsonl")))
+    report["frame_os"] = frame_os_summary(samples, _read(bundle, "game-processes.json"))
+    if report["frame_os"]:
+        report["frame_os"]["by_level"] = frame_os_by_level(samples)
+        report["frame_os"]["injection"] = dict(Counter(
+            f"{e.get('event')}:{e.get('reason')}" for e in events if str(e.get("event", "")).startswith("frame-os-injection")))
     report["findings"] = findings(report, names)
     return report
+
+
+def frame_os_by_level(samples: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Per decision (rest / calm / boost): what the layer measured and what the player got.
+
+    Answers the Act question directly: does boost deliver more real frames and lower freshness,
+    and does output smoothness hold while the cadence moves?"""
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for r in samples:
+        fo = r.get("frame_os")
+        if not isinstance(fo, dict) or not fo.get("level"):
+            continue
+        layer = fo.get("layer") or {}
+        if not layer.get("live"):
+            continue
+        groups.setdefault(str(fo["level"]), []).append({**layer, "_output": r.get("output"), "_tdp": r.get("tdp"),
+                                                        "_acting": fo.get("acting")})
+
+    def med(rows: List[Dict[str, Any]], key: str) -> Optional[float]:
+        values = [x[key] for x in rows if isinstance(x.get(key), (int, float)) and x[key] > 0]
+        return round(statistics.median(values), 2) if values else None
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for level, rows in sorted(groups.items()):
+        interval = med(rows, "present_interval_p50_ms")
+        outputs = [x["_output"] for x in rows if isinstance(x.get("_output"), (int, float))]
+        out[level] = {
+            "samples": len(rows),
+            "acting_share": round(sum(1 for x in rows if x.get("_acting")) / len(rows), 2),
+            "real_fps": round(1000.0 / interval, 1) if interval else None,
+            "freshness_ms": med(rows, "freshness_ms"),
+            "present_hold_ms": med(rows, "present_hold_ms"),
+            "interval_p95_ms": med(rows, "present_interval_p95_ms"),
+            "output_p5": _percentile(outputs, 5) if outputs else None,
+            "tdp_w": med(rows, "_tdp"),
+        }
+    return out
+
+
+def frame_os_summary(samples: List[Dict[str, Any]], processes_json: str) -> Optional[Dict[str, Any]]:
+    """Frame OS (development): did the layer load and answer, and what it measured."""
+    rows = [r["frame_os"] for r in samples if isinstance(r.get("frame_os"), dict)]
+    if not rows:
+        return None
+    layer = [r.get("layer") or {} for r in rows]
+    # a sample answers only when the telemetry is live (its writer runs and presented within 1 s)
+    answering = [x for x in layer if x.get("live") and (x.get("frames") or 0) > 0]
+
+    def med(key: str) -> Optional[float]:
+        values = [x[key] for x in answering if isinstance(x.get(key), (int, float)) and x[key] > 0]
+        return round(statistics.median(values), 2) if values else None
+
+    try:
+        processes = json.loads(processes_json or "[]")
+    except ValueError:
+        processes = []
+    loaded = [p.get("frame_os_layer_loaded") for p in processes if isinstance(p, dict)]
+    not_loaded = [p for p in processes if isinstance(p, dict) and p.get("frame_os_layer_loaded") is False]
+    return {
+        "modes": dict(Counter(str(r.get("mode")) for r in rows)),
+        "layer_installed": any(r.get("layer_installed") for r in rows),
+        "layer_errors": sorted({str(r["layer_error"]) for r in rows if r.get("layer_error")}),
+        "answering_share": round(len(answering) / len(rows), 2),
+        "frames": max((x.get("frames") or 0 for x in answering), default=0),
+        "freshness_ms": med("freshness_ms"),
+        "present_interval_p50_ms": med("present_interval_p50_ms"),
+        "present_interval_p95_ms": med("present_interval_p95_ms"),
+        "cost_p50_ms": med("cost_p50_ms"),
+        "present_hold_ms": med("present_hold_ms"),
+        "acquire_block_ms": med("acquire_block_ms"),
+        "engines": sorted({str(x["engine"]) for x in layer if x.get("engine")}),
+        "passthrough": any(x.get("passthrough") for x in layer),
+        "swapchain_recreations": max((x.get("swapchain_recreations") or 0 for x in layer), default=0),
+        "levels": dict(Counter(str(r.get("level")) for r in rows if r.get("level"))),
+        "input_sources": dict(Counter(str((r.get("input") or {}).get("source")) for r in rows if r.get("input"))),
+        "input_gamepads": max(((r.get("input") or {}).get("gamepads") or 0 for r in rows), default=0),
+        "input_events": max(((r.get("input") or {}).get("events") or 0 for r in rows), default=0),
+        "loaded_in_game": (any(loaded) if loaded else None),
+        "not_loaded_processes": sorted({str(p.get("comm") or p.get("pid")) for p in not_loaded}),
+        # The launcher exports the control-file path only when Frame OS was on at game start.
+        "started_without_frame_os": bool(not_loaded) and all(
+            "GFG_FRAME_OS_SHM" not in (p.get("env") or {}) for p in not_loaded),
+    }
 
 
 def overlay_burst_before_exit(activity: List[Dict[str, Any]], window_s: float = 30.0) -> Optional[int]:
@@ -200,6 +295,12 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
         out.append("Lower-power probes failed repeatedly at the same level ("
                    + ", ".join(f"{w} x{n}" for w, n in repeated.items())
                    + "); each failure is a short FPS dip.")
+    held = report.get("not_power_bound_holds") or {}
+    if held.get("count", 0) >= 3:
+        caps = ", ".join(f"{w:g} W" for w in held.get("caps_w") or []) or "?"
+        out.append(f"The guard held {held['count']} times without adding watts because the APU drew well under "
+                   f"the cap (median draw {held.get('draw_w_median')} W at {caps}): the shortfall was not power "
+                   "(CPU, streaming or hitches).")
     if report.get("rejected_points"):
         out.append("Operating points the renderer did not confirm or that failed their trial: "
                    + ", ".join(report["rejected_points"]) + ".")
@@ -224,6 +325,51 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
                    "(MangoHud re-reads its config on every change).")
     if not any(n.startswith("overlay/") for n in names):
         out.append("No overlay files were captured: the in-game overlay was never published (Settings → In-game overlay).")
+    fo = report.get("frame_os")
+    if fo:
+        if fo["layer_errors"]:
+            out.append("Frame OS: the layer could not be installed: " + "; ".join(fo["layer_errors"]) + ".")
+        elif fo["loaded_in_game"] is False and fo.get("started_without_frame_os"):
+            out.append("Frame OS was switched on after the game had started (or was off at launch): it loads "
+                       "only at game start. Switch it on, then restart the game.")
+        elif fo["loaded_in_game"] is False:
+            who = ", ".join(fo.get("not_loaded_processes") or []) or "the game process"
+            out.append(f"Frame OS was on, but {who} did not load the Frame OS layer "
+                       "(not loaded: 32-bit game? The layer is 64-bit only).")
+        elif fo["answering_share"] == 0:
+            out.append("Frame OS was on, but the layer never reported live frames (it did not load, it "
+                       "could not open the control file, or another process owned it).")
+        else:
+            if fo.get("passthrough"):
+                out.append("Frame OS: the layer hit an internal error and switched to pass-through.")
+            out.append(f"Frame OS ({', '.join(fo['modes'])}): the layer reported {fo['frames']} frames; "
+                       f"freshness {fo['freshness_ms']} ms, present interval {fo['present_interval_p50_ms']} / "
+                       f"{fo['present_interval_p95_ms']} ms (p50 / p95), present hold "
+                       f"{fo.get('present_hold_ms')} ms" + (f", engine {', '.join(fo['engines'])}" if fo.get("engines") else "")
+                       + ".")
+        if fo.get("injection"):
+            out.append(f"Frame OS Act executor events: {fo['injection']}.")
+        by_level = fo.get("by_level") or {}
+        if by_level:
+            parts = []
+            for level in ("boost", "calm", "rest"):
+                row = by_level.get(level)
+                if row:
+                    parts.append(f"{level}: {row['samples']} s, {row['real_fps']} real, freshness "
+                                 f"{row['freshness_ms']} ms, output p5 {row['output_p5']}"
+                                 + (" (acting)" if row["acting_share"] >= 0.5 else ""))
+            out.append("Frame OS by decision — " + "; ".join(parts) + ".")
+            boost, calm = by_level.get("boost"), by_level.get("calm")
+            if (boost and calm and boost["acting_share"] >= 0.5 and boost.get("real_fps") and calm.get("real_fps")
+                    and boost["real_fps"] < calm["real_fps"] + 5):
+                out.append("Frame OS Act: boost did not raise the real frame rate (the renderer or the GPU held it).")
+        if fo.get("input_sources"):
+            if not fo.get("input_events"):
+                out.append(f"Frame OS input sensor saw no gamepad input (sources {fo['input_sources']}, "
+                           f"{fo.get('input_gamepads')} gamepads open): real-frame decisions stayed at rest.")
+            else:
+                out.append(f"Frame OS input sensor: {fo['input_events']} gamepad events from "
+                           f"{fo.get('input_gamepads')} gamepads; decisions {fo.get('levels')}.")
     if not out:
         out.append("Nothing unusual found.")
     return out

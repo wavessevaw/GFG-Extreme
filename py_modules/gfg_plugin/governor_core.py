@@ -317,35 +317,53 @@ def raw_effort(
     point: Optional[Dict[str, Any]], real_median: Optional[float], exhausted: bool = False,
     tdp_w: Optional[float] = None,
 ) -> Optional[str]:
-    """Instantaneous effort level, before any smoothing.
+    """Instantaneous effort level, before any smoothing (see ``effort_assessment``)."""
+    return effort_assessment(point, real_median, exhausted, tdp_w)[0]
+
+
+def effort_assessment(
+    point: Optional[Dict[str, Any]], real_median: Optional[float], exhausted: bool = False,
+    tdp_w: Optional[float] = None, thermal: Optional[str] = None,
+) -> tuple[Optional[str], Optional[str]]:
+    """Instantaneous effort level and a short reason for it (review 1.1.x: a bare "HARD" left the
+    player guessing why).
 
     Budget mode (``tdp_w`` given) rates the watts the game needs: easy up to 11 W,
     medium 12-15 W, hard above 15 W or x4; nightmare when even that does not hold.
     Otherwise (quality mode): easy native or up to x1.5; medium above x1.5 and
     below x3; hard x3 or reduced render scale; nightmare target not reachable,
-    very low real FPS, or x3 *and* reduced scale.
+    very low real FPS, or x3 *and* reduced scale.  ``thermal`` only colours the reason of a
+    medium rating ("low thermal margin"); it never changes the level.
     """
     if exhausted:
-        return "nightmare"
+        return "nightmare", "target not reachable"
     if point is None:
-        return None
-    if tdp_w is not None:
-        if real_median is not None and real_median < EffortEstimator.NIGHTMARE_REAL_FPS:
-            return "nightmare"
-        if float(point.get("multiplier", 1) or 1) >= 4 or tdp_w > 15.0 + 1e-6:
-            return "hard"
-        return "easy" if tdp_w <= 11.0 + 1e-6 else "medium"
+        return None, None
     mult = float(point.get("multiplier", 1) or 1)
     scale = int(point.get("render_scale_pct", 100) or 100)
+    hot = thermal in ("hot", "heating")
     if real_median is not None and real_median < EffortEstimator.NIGHTMARE_REAL_FPS:
-        return "nightmare"
+        return "nightmare", "very low real FPS"
+    if tdp_w is not None:
+        if mult >= 4:
+            return "hard", "deeper than x3"
+        if tdp_w > 15.0 + 1e-6:
+            return "hard", "TDP above 15 W"
+        if tdp_w <= 11.0 + 1e-6:
+            return "easy", "11 W or less"
+        return "medium", "low thermal margin" if hot else "TDP 12-15 W"
     if mult >= 3 and scale < 100:
-        return "nightmare"
-    if mult >= 3 or scale < 100:
-        return "hard"
+        return "nightmare", "x3 and render scale"
+    if mult > 3:
+        return "hard", "deeper than x3"
+    if mult >= 3:
+        return "hard", "x3 required"
+    if scale < 100:
+        return "hard", "render scale"
     if mult > 1.5:
-        return "medium"
-    return "easy"  # native or up to x1.5: generation fills a minority of frames
+        return "medium", "low thermal margin" if hot else f"x{mult:g} required"
+    # native or up to x1.5: generation fills a minority of frames
+    return "easy", "native" if mult <= 1 else "x1.5 or less"
 
 
 class EffortEstimator:
@@ -369,14 +387,25 @@ class EffortEstimator:
 
     def reset(self) -> None:
         self.level: Optional[str] = None
+        self.reason: Optional[str] = None
+        self._reasons: Dict[str, str] = {}  # latest reason seen per raw level
         self._candidate: Optional[str] = None
         self._since = 0.0
         self._changed = 0.0
 
-    def update(self, now: float, raw: Optional[str]) -> Optional[str]:
+    def update(self, now: float, raw: Optional[str], reason: Optional[str] = None) -> Optional[str]:
         if raw is None:
             self._candidate = None  # evidence paused; keep what was published
             return self.level
+        if reason:
+            self._reasons[raw] = reason
+        level = self._step(now, raw)
+        if level is not None:
+            # A single step on the way to ``raw``: its own last reason, else what drives the move.
+            self.reason = self._reasons.get(level) or self._reasons.get(raw)
+        return level
+
+    def _step(self, now: float, raw: str) -> Optional[str]:
         if raw != self._candidate:
             self._candidate, self._since = raw, now
         held = now - self._since
@@ -399,7 +428,8 @@ class EffortEstimator:
         return self.level
 
     def status(self) -> Dict[str, Any]:
-        return {"level": self.level, "assessing": self.level is None}
+        return {"level": self.level, "assessing": self.level is None,
+                "reason": self.reason if self.level is not None else None}
 
 
 class CostModel:
@@ -866,6 +896,7 @@ class BudgetController:
         self.fast_at: Optional[float] = None
         self.held: list[tuple[float, float]] = []   # (time, tdp) of levels that held
         self.last_reason = "budget-start"
+        self.not_power_bound_holds = 0
         self.warm_started = False
         # Ceiling of the renderer's current generated-frame resources; updated every step, so it
         # rises again after a swapchain recreation.
@@ -878,6 +909,9 @@ class BudgetController:
         self.verifying: Optional[str] = None  # point inferred from delivered FPS, not yet verified
         # Point index -> (highest TDP a lower-power probe failed at, when, how many times in a row).
         self.floor_failures: Dict[int, tuple[float, float, int]] = {}
+        # (point key, TDP or None = cleared, repeats): drained by the service into game memory so a
+        # rebuilt controller (mode switch, reload) keeps the remaining back-off (review 1.1.x).
+        self.new_floor_failures: list[tuple[str, Optional[float], int]] = []
         self._now = now
         # Host thermal verdict (ok / heating / hot / unknown), set by the service each step.  While
         # the APU heats up, probes towards more real frames (more watts, more heat) wait; probes
@@ -1077,6 +1111,22 @@ class BudgetController:
         previous = self.floor_failures.get(self.idx)
         count = previous[2] + 1 if previous and abs(previous[0] - self.tdp) < 0.05 else 1
         self.floor_failures[self.idx] = (float(self.tdp), now, count)
+        self.new_floor_failures.append((self.point.key, float(self.tdp), count))
+
+    def load_floor_failures(self, failures: Dict[str, Any], now: float) -> None:
+        """Lower-power failures from game memory: point key -> (tdp, age_s, repeats).
+
+        Anchored at ``now - age`` like ``load_failures``, so the back-off keeps running instead of
+        restarting; a point this controller does not have is ignored.
+        """
+        for key, value in failures.items():
+            try:
+                tdp, age, count = value
+            except (TypeError, ValueError):
+                continue
+            idx = next((i for i, p in enumerate(self.points) if p.key == key), None)
+            if idx is not None:
+                self.floor_failures[idx] = (float(tdp), now - float(age), max(1, int(count)))
 
     @property
     def effective_w(self) -> Optional[float]:
@@ -1133,6 +1183,7 @@ class BudgetController:
             known = self.floor_failures.get(self.idx)
             if known is not None and self.tdp <= known[0] + 0.05:
                 del self.floor_failures[self.idx]  # the level holds now: the scene got lighter
+                self.new_floor_failures.append((self.point.key, None, 0))
         if self.phase == "probe":
             # The scene got lighter: keep going the same way until it fails.
             self.reprobe_interval = self.REPROBE_S
@@ -1300,6 +1351,7 @@ class BudgetController:
         # higher limit; field log: the guard climbed to 15 W while the APU drew 5-11 W.
         if self._draw_says_not_power_bound(verdict):
             self.last_reason = f"guard-not-power-bound:{verdict.reason}"
+            self.not_power_bound_holds += 1  # the service logs each hold (review 1.1.x)
             return "hold"
         # Inside the ideal 9-11 W a watt is cheaper than real FPS below 30.
         if self.tdp_control and self.tdp is not None and self.tdp < self.ideal_max_w - 1e-6:

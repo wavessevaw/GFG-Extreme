@@ -66,6 +66,9 @@ from .constants import (
     VKBASALT_LAYER_NAME_64,
     WAYLAND_DISPLAY_ENV,
 )
+from .frame_os.layer_install import HUD_MANIFEST as RING_HUD_MANIFEST_FILENAME
+from .frame_os.layer_install import MANIFEST as FRAME_OS_MANIFEST_FILENAME
+from .frame_os.layer_install import target_dir as frame_os_layer_target_dir
 from .governor_overlay import overlay_path as governor_overlay_path
 from .profile_storage import (
     ProfileMetadata,
@@ -77,13 +80,15 @@ from .profile_storage import (
 )
 
 
-WRAPPER_FORMAT_VERSION = 80
+WRAPPER_FORMAT_VERSION = 83
 WRAPPER_FORMAT_MARKER = f"# mako-wrapper-format: {WRAPPER_FORMAT_VERSION}"
 HOST_COMPATIBILITY_MARKER = "# mako-host-compatibility: aarch64-passthrough-v1"
 DIAGNOSTICS_DEFAULT_MARKER = (
     "# governor diagnostics: enabled only by runtime marker"
 )
 LEGACY_EXTREME_PFG_LAYER_NAME = "VK_LAYER_MAKO_EXTREME_predictive"
+FRAME_OS_LAYER_NAME = "VK_LAYER_GFG_pacer"
+RING_HUD_LAYER_NAME = "VK_LAYER_GFG_hud"
 
 REQUIRED_WRAPPER_EXPORTS = (
     f"export {PRESENT_ACQUIRE_TIMEOUT_ENV}=",
@@ -161,6 +166,7 @@ class WrapperGenerationContext:
     vkbasalt_manifest_filename_32: str
     armada_device_env: Path
     armada_game_launch: Path
+    frame_os_layer_dir: Optional[Path] = None
 
 
 def has_active_in(config: ConfigurationData) -> bool:
@@ -733,6 +739,7 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         context.user_vulkan_layer_dir / "steamoverlay_i386.json"
     ))
     user_vulkan_layer_dir = shlex.quote(str(context.user_vulkan_layer_dir))
+    frame_os_layer_dir = context.frame_os_layer_dir or frame_os_layer_target_dir(context.local_share_dir)
     inherited_managed_layer_removal_lines: list[str] = []
     for layer_name in (
         MAKO_LAYER_NAME,
@@ -740,6 +747,8 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         GAMESCOPE_WSI_LAYER_NAME_64,
         VKBASALT_LAYER_NAME_64,
         LEGACY_EXTREME_PFG_LAYER_NAME,
+        FRAME_OS_LAYER_NAME,
+        RING_HUD_LAYER_NAME,
     ):
         inherited_managed_layer_removal_lines.extend((
             (
@@ -761,6 +770,35 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         f'mako_governor_diagnostics_marker={shlex.quote(str(context.runtime_state_dir / "governor-diagnostics.enabled"))}',
         f'if [ -f "$mako_governor_diagnostics_marker" ]; then export {PRESENT_DIAGNOSTICS_ENV}="${{{PRESENT_DIAGNOSTICS_ENV}:-1}}"; else export {PRESENT_DIAGNOSTICS_ENV}="${{{PRESENT_DIAGNOSTICS_ENV}:-0}}"; fi',
         'unset mako_governor_diagnostics_marker',
+        # GFG Frame OS (development): the gfg-pacer layer loads only when the Governor left this
+        # marker and the layer is installed; the layer itself stays pass-through until the
+        # control file it is pointed at says otherwise. It never joins through its implicit
+        # gate: implicit order follows directory listing order, so the layer is named first in
+        # the explicit list below (above the renderer) or not at all.
+        f'gfg_frame_os_marker={shlex.quote(str(context.runtime_state_dir / "frame-os.enabled"))}',
+        "gfg_frame_os=0",
+        'if [ -f "$gfg_frame_os_marker" ] && [ -r '
+        f'{shlex.quote(str(frame_os_layer_dir / FRAME_OS_MANIFEST_FILENAME))} ]; then',
+        "    gfg_frame_os=1",
+        '    export GFG_FRAME_OS_SHM="${GFG_FRAME_OS_SHM:-/dev/shm/gfg-frame-os}"',
+        "fi",
+        "unset GFG_FRAME_OS",
+        # The layer's developer test mode (it acts without the Governor) never reaches a game.
+        "unset GFG_FRAME_OS_ENABLE GFG_FRAME_OS_MODE GFG_FRAME_OS_REAL_HZ GFG_FRAME_OS_TICK_SHAPING GFG_FRAME_OS_PACING",
+        "export DISABLE_GFG_FRAME_OS=1",
+        'unset gfg_frame_os_marker',
+        # Ring HUD: the GFG HUD layer copies the Governor's ring bitmap into every shown frame.
+        f'gfg_hud_marker={shlex.quote(str(context.runtime_state_dir / "hud-rings.enabled"))}',
+        "gfg_hud=0",
+        'if [ -f "$gfg_hud_marker" ] && [ -r '
+        f'{shlex.quote(str(frame_os_layer_dir / RING_HUD_MANIFEST_FILENAME))} ]; then',
+        "    gfg_hud=1",
+        '    export GFG_HUD_FILE="${GFG_HUD_FILE:-/dev/shm/gfg-hud.raw}"',
+        '    export GFG_HUD_EXTENT_FILE="${GFG_HUD_EXTENT_FILE:-/dev/shm/gfg-hud.extent}"',
+        "fi",
+        "unset GFG_HUD",
+        "export DISABLE_GFG_HUD=1",
+        'unset gfg_hud_marker',
         "mako_renderer_enabled=0",
         'if [ "${mako_renderer_required:-0}" = 1 ] && '
         f'[ "${{{MAKO_LAYER_DISABLE_ENV}:-0}}" != 1 ]; then',
@@ -936,6 +974,27 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         f"        mako_managed_instance_layers={MAKO_LAYER_NAME}",
         "    fi",
         "fi",
+        # Frame OS: the pacer must see the game's real frames, so it goes above the renderer.
+        # The renderer then also needs the explicit list (its implicit gate is cleared below).
+        # Flatpak sandboxes do not get the layer until it is staged there.
+        'if [ "$gfg_frame_os" = 1 ] && [ "$mako_flatpak_runtime" != 1 ]; then',
+        '    if [ "$mako_renderer_enabled" = 1 ] && [ -z "$mako_managed_instance_layers" ]; then',
+        f"        mako_managed_instance_layers={MAKO_LAYER_NAME}",
+        "    fi",
+        f'    mako_managed_instance_layers="{FRAME_OS_LAYER_NAME}${{mako_managed_instance_layers:+:$mako_managed_instance_layers}}"',
+        f'    mako_implicit_layer_path="$mako_implicit_layer_path:"{shlex.quote(str(frame_os_layer_dir))}',
+        "fi",
+        "unset gfg_frame_os",
+        # Ring HUD: after the renderer, so it is drawn on generated frames too.
+        'if [ "$gfg_hud" = 1 ] && [ "$mako_flatpak_runtime" != 1 ]; then',
+        '    if [ "$mako_renderer_enabled" = 1 ] && [ -z "$mako_managed_instance_layers" ]; then',
+        f"        mako_managed_instance_layers={MAKO_LAYER_NAME}",
+        "    fi",
+        f'    mako_managed_instance_layers="${{mako_managed_instance_layers:+$mako_managed_instance_layers:}}{RING_HUD_LAYER_NAME}"',
+        f'    case ":$mako_implicit_layer_path:" in *":"{shlex.quote(str(frame_os_layer_dir))}":"*) ;; '
+        f'*) mako_implicit_layer_path="$mako_implicit_layer_path:"{shlex.quote(str(frame_os_layer_dir))} ;; esac',
+        "fi",
+        "unset gfg_hud",
         # Clear retired PFG environment from old launch-option experiments.
         "unset MAKO_EXTREME_PFG",
         "unset DISABLE_MAKO_EXTREME_PFG",

@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.1.0).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.2.0).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -32,12 +32,17 @@ from .constants import PRESENT_DIAGNOSTICS_FALLBACK_LOG, PRESENT_DIAGNOSTICS_LOG
 from .governor_core import (
     multiplier_tolerance,
     BudgetController, EffortEstimator, OperatingPoint, OperatingPointPlanner, PowerSearch, TrialLadder,
-    raw_effort, window_verdict,
+    effort_assessment, window_verdict,
 )
 from .governor_battery import BatteryEstimator, read_battery
 from .steamos_tdp import SteamOSManagerTdp
-from .game_model import GameModelStore, context_key
+from .game_model import GameModelStore, context_key, floor_key, game_prefix
 from .session_stats import SessionStats
+from .frame_os.control_channel import DEFAULT_PATH as DEFAULT_SHM, ControlChannel
+from . import hud_rings
+from .frame_os import layer_install as frame_os_layer
+from .frame_os.runner import FrameOsRunner
+from .package_paths import PLUGIN_ROOT
 from .host_sensors import HostSensors, diagnose
 from .governor_hud import HudWriter, normalize as hud_normalize, output_fps as hud_output_fps
 from .governor_overlay import (
@@ -45,6 +50,7 @@ from .governor_overlay import (
     OverlayStore,
     PointNotApplicable,
     base_deltas,
+    injection_deltas,
     point_deltas,
 )
 from .governor_device import detect_model, target_for
@@ -54,7 +60,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -127,6 +133,23 @@ class GovernorService:
         self.settings_path = self.configuration.config_dir / "gfg-governor.json"
         self.events_path = self.configuration.runtime_state_dir / "governor-events.jsonl"
         self.diagnostics_marker_path = self.configuration.runtime_state_dir / "governor-diagnostics.enabled"
+        # GFG Frame OS (development, off by default): per-profile mode, launch marker, 10 Hz runner.
+        self.frame_os_marker_path = self.configuration.runtime_state_dir / "frame-os.enabled"
+        self.frame_os = FrameOsRunner(ControlChannel(Path(os.environ.get("GFG_FRAME_OS_SHM") or DEFAULT_SHM)))
+        self.frame_os_layer_source = frame_os_layer.bundled_dir(PLUGIN_ROOT)
+        share = getattr(self.configuration, "local_share_dir", None)
+        self.frame_os_layer_dir: Optional[Path] = frame_os_layer.target_dir(share) if share else None
+        self.frame_os_layer_error: Optional[str] = None
+        # Ring HUD (GFG HUD layer): bitmap + the size the layer reports, both in /dev/shm.
+        self.ring_hud_path = Path(os.environ.get("GFG_HUD_FILE") or hud_rings.DEFAULT_PATH)
+        self.ring_hud_extent = Path(os.environ.get("GFG_HUD_EXTENT_FILE") or hud_rings.DEFAULT_EXTENT)
+        self.ring_hud_marker_path = self.configuration.runtime_state_dir / "hud-rings.enabled"
+        self._ring_hud_acc: Dict[str, list] = {}
+        self._ring_hud_levels: Dict[str, int] = {}
+        self._ring_hud_due = 0.0
+        self._ring_hud_seq = 0
+        self.ring_hud_layer_error: Optional[str] = None
+        self.frame_os_registry_dir: Optional[Path] = getattr(self.configuration, "user_vulkan_layer_dir", None)
         self._settings = self._load_settings()
         builder = getattr(self.configuration, "build_governor_overlay_text", None)
         self.overlay: Optional[OverlayStore] = (
@@ -165,10 +188,18 @@ class GovernorService:
         self._exhausted = False
         self._point_external: Optional[bool] = None
         self._point_deltas: Dict[str, Any] = {}
+        # Frame OS Act: the adaptive overlay written on top of the live point (None: not injecting)
+        self._injection: Optional[Dict[str, Any]] = None
+        self._injection_seq = 0
+        self._injection_hold_until = 0.0
+        self._menu_since: Optional[float] = None
         self._request: Optional[Request] = None
         self._request_counter = getattr(self, "_request_counter", 0)
         self._ladder: Optional[TrialLadder] = None
         self._budget: Optional[BudgetController] = None
+        # The live controller's game-model keys, fixed when it was built: failures drained after a
+        # mode switch or game exit still go to the mode/game they were found in.
+        self._budget_keys: Optional[tuple] = None
         self._applied_tdp: Optional[float] = None
         self._external_at: Optional[float] = None
         self._reclaims = 0
@@ -261,6 +292,55 @@ class GovernorService:
         self._poke()
         return {"success": True, "error": None, "profile": profile, "mode": mode}
 
+    def game_model_target(self, profile: str) -> Optional[Dict[str, Any]]:
+        """Which game "Reset what GFG learned" would reset for ``profile``, or None.
+
+        The game running under this profile, else the profile's last session, by Steam AppID.
+        Without an AppID only what was stored under the profile itself (games launched without
+        one), and only when there is something: never a silent reset of nothing.
+        """
+        profile = str(profile or "").strip()
+        if not profile:
+            return None
+        app_id = ""
+        if profile == self._active_profile:
+            app_id = self._game_app_id()
+        last = self._settings.get("last_session") or {}
+        if not app_id and isinstance(last, dict) and last.get("profile") == profile:
+            app_id = str(last.get("app_id") or "")
+        prefix = game_prefix(profile, app_id)
+        if not prefix.startswith("app:"):
+            if not self.game_models.count_game(prefix):
+                return None
+            app_id = ""
+        return {"profile": profile, "app_id": app_id, "game": prefix}
+
+    def forget_game_model(self, profile: str) -> Dict[str, Any]:
+        """Forget what was learned for the profile's game (every target and mode): warm starts,
+        failed points and failed lower levels (review 1.1.x: a stale memory had no reset).
+
+        The game is ``game_model_target``'s, keyed exactly as it was stored.  Runs on the event
+        loop (plugin RPC), like every other game-model write, so it never races the Governor loop.
+        """
+        profile = str(profile or "").strip()
+        if not profile:
+            return {"success": False, "error": "Profile is required"}
+        target = self.game_model_target(profile)
+        if target is None:
+            return {"success": False, "error": "no-game-identified", "profile": profile, "game": None}
+        prefix = target["game"]
+        forgotten = self.game_models.forget_game(prefix)
+        budget = self._budget
+        if budget is not None and profile == self._active_profile:
+            # The live controller forgets too, or the next drain would write it all back.
+            budget.known_failures.clear()
+            budget.new_failures.clear()
+            budget.floor_failures.clear()
+            budget.new_floor_failures.clear()
+        self._journal("game-model-forgotten", profile=profile, game=prefix, entries=forgotten)
+        return {"success": True, "error": None, "profile": profile, "game": prefix,
+                "app_id": target["app_id"], "forgotten": forgotten}
+
     def _update_sensors(self) -> None:
         """Host sensors + a one-line diagnosis. Never allowed to break the control loop."""
         try:
@@ -308,29 +388,38 @@ class GovernorService:
         telemetry = status.get("telemetry") or {}
         telemetry = telemetry.get("summary") or telemetry  # service stores {"snapshot", "summary"}
         stable = self._delivering_target(telemetry)
+        thermal = (status.get("diagnosis") or {}).get("thermal")
+        reason: Optional[str] = None
         if not status.get("enabled") or status.get("state") not in ("LOCKED", "OPTIMIZE_POWER", "GUARD", "OBSERVE_ONLY"):
             if self._exhausted and status.get("enabled"):
                 # A game that already holds the target is not a nightmare just because
                 # no Governor point was accepted.
                 raw = stable or "nightmare"
+                reason = "holds the target on its own" if stable else "no setting held the target"
             else:
                 raw = None
         elif self._budget is not None:
             real = (telemetry.get("real") or {}).get("median")
             budget = self._budget
-            raw = raw_effort(self._point, real, budget.exhausted,
-                             tdp_w=budget.effective_w if budget.tdp_control else None)
+            raw, reason = effort_assessment(self._point, real, budget.exhausted,
+                                            tdp_w=budget.effective_w if budget.tdp_control else None,
+                                            thermal=thermal)
         else:
             real = (telemetry.get("real") or {}).get("median")
-            raw = raw_effort(self._point, real, self._exhausted and not stable)
-        self._effort.update(self._clock(), raw)
+            raw, reason = effort_assessment(self._point, real, self._exhausted and not stable, thermal=thermal)
+        self._effort.update(self._clock(), raw, reason)
 
     def hud_settings(self, profile: str) -> Dict[str, Any]:
         raw = self._profile_settings(profile).get("hud") or {}
         preset, position = hud_normalize(raw.get("preset"), raw.get("position"))
-        return {"enabled": bool(raw.get("enabled", False)), "preset": preset, "position": position}
+        style = raw.get("style") if raw.get("style") in self.HUD_STYLES else "rings"
+        return {"enabled": bool(raw.get("enabled", False)), "preset": preset, "position": position, "style": style}
 
-    def set_hud(self, profile: str, enabled: Any = None, preset: Any = None, position: Any = None) -> Dict[str, Any]:
+    HUD_STYLES = ("rings", "text")
+    RING_HUD_PERIOD_S = 20.0
+
+    def set_hud(self, profile: str, enabled: Any = None, preset: Any = None, position: Any = None,
+                style: Any = None) -> Dict[str, Any]:
         profile = str(profile or "").strip()
         if not profile:
             return {"success": False, "error": "Profile is required"}
@@ -341,8 +430,15 @@ class GovernorService:
             preset if preset is not None else current["preset"],
             position if position is not None else current["position"],
         )
+        if style in self.HUD_STYLES:
+            current["style"] = style
         self._settings.setdefault("profiles", {}).setdefault(profile, {})["hud"] = current
         self._save_settings()
+        self._ring_hud_due = 0.0           # redraw at once with the new look
+        try:
+            self._sync_frame_os_marker()   # stages the HUD layer and its launch marker
+        except OSError:
+            pass
         self._sync_hud(profile)
         self._poke()
         # MangoHud is loaded at launch with a hidden config and re-reads it: live.
@@ -356,17 +452,93 @@ class GovernorService:
             # HudWriter); an older pending config is replaced, never flushed first.
             if settings["enabled"]:
                 status = self.get_status(profile)
-                # MangoHud re-reads a changed config, so the FPS source follows the telemetry.
-                self.hud.activate(settings["preset"], settings["position"],
-                                  generated_fps=hud_output_fps(status) is not None)
-                # get_status, not _status: power/effort/active point are only merged in there.
-                self.hud.write_status(status, settings["preset"])
+                rings = settings["style"] == "rings" and self._ring_hud_live()
+                if rings:
+                    # the GFG HUD layer draws the rings; MangoHud stays loaded but hidden
+                    self.hud.deactivate()
+                    self._publish_ring_hud(status, settings)
+                else:
+                    self._clear_ring_hud()
+                    # MangoHud re-reads a changed config, so the FPS source follows the telemetry.
+                    self.hud.activate(settings["preset"], settings["position"],
+                                      generated_fps=hud_output_fps(status) is not None)
+                    # get_status, not _status: power/effort/active point are only merged in there.
+                    self.hud.write_status(status, settings["preset"])
             elif self._hud_preload_wanted():
+                self._clear_ring_hud()
                 self.hud.deactivate()
             else:
+                self._clear_ring_hud()
                 self.hud.remove()
         except OSError as error:
             self.log.debug("Governor HUD sync failed: %s", error)
+
+    def _ring_hud_live(self) -> bool:
+        """The GFG HUD layer draws in this game: since the launch it wrote the swapchain size with
+        the HUD flag set ("W H 1").  Otherwise (old launch, layer missing, Flatpak, an HDR or
+        unsupported swapchain it passes through: "W H 0") the text line stays as the fallback."""
+        try:
+            written = self.ring_hud_extent.stat().st_mtime
+            parts = self.ring_hud_extent.read_text().split()
+        except OSError:
+            return False
+        if len(parts) >= 3 and parts[2] == "0":
+            return False
+        launch = self._launch if isinstance(self._launch, dict) else {}
+        key = launch.get("launch_key") if launch.get("running") else None
+        started = key[2] if isinstance(key, (list, tuple)) and len(key) > 2 else None   # wall-clock launch time
+        return isinstance(started, (int, float)) and written >= float(started) - 5.0
+
+    def _sample_ring_hud(self, status: Dict[str, Any]) -> None:
+        tel = status.get("telemetry") or {}
+        summary = tel.get("summary") or tel
+        power = status.get("power") or {}
+        for key, value in (("fps", (summary.get("output") or {}).get("median")),
+                           ("real", (summary.get("real") or {}).get("median")),
+                           ("tdp", power.get("observed_tdp_w") if power.get("observed_tdp_w") is not None
+                            else power.get("current_tdp_w"))):
+            if isinstance(value, (int, float)) and value > 0:
+                acc = self._ring_hud_acc.setdefault(key, [0.0, 0])
+                acc[0] += float(value)
+                acc[1] += 1
+        level = ((status.get("frame_os") or {}).get("decision") or {}).get("level")
+        if level:
+            self._ring_hud_levels[level] = self._ring_hud_levels.get(level, 0) + 1
+
+    def _publish_ring_hud(self, status: Dict[str, Any], settings: Dict[str, Any]) -> None:
+        """Averages over 20 s, drawn once per 20 s (a calm HUD, and cheap)."""
+        self._sample_ring_hud(status)
+        now = self._clock()
+        if now < self._ring_hud_due:
+            return
+        self._ring_hud_due = now + self.RING_HUD_PERIOD_S
+        avg = {k: v[0] / v[1] for k, v in self._ring_hud_acc.items() if v[1]}
+        power = status.get("power") or {}
+        battery = status.get("battery") or {}
+        fo = status.get("frame_os") or {}
+        benefit = fo.get("benefit") or {}
+        data: Dict[str, Any] = {
+            "fps": avg.get("fps"), "real": avg.get("real"), "tdp": avg.get("tdp"),
+            "target": status.get("target_output_fps") or (status.get("device") or {}).get("target"),
+            "limit": power.get("initial_tdp_w") or power.get("maximum_tdp_w") or 15,
+            "battery_min": battery.get("minutes_left"), "battery_pct": battery.get("percent"),
+        }
+        if fo.get("enabled") and fo.get("mode", "off") != "off" and benefit.get("ready"):
+            data["frame_os"] = {
+                "level": max(self._ring_hud_levels, key=self._ring_hud_levels.get) if self._ring_hud_levels else None,
+                "estimate": benefit.get("estimate"), "response": benefit.get("response_pct"),
+                "frames": benefit.get("frames_pct"), "energy": benefit.get("energy_pct")}
+        self._ring_hud_acc, self._ring_hud_levels = {}, {}
+        self._ring_hud_seq += 1
+        hud_rings.write_overlay(data, preset=settings["preset"], position=settings["position"],
+                                seq=self._ring_hud_seq, path=self.ring_hud_path, extent_path=self.ring_hud_extent)
+
+    def _clear_ring_hud(self) -> None:
+        if self._ring_hud_seq and self._ring_hud_due != -1.0:
+            self._ring_hud_seq += 1
+            hud_rings.write_overlay(None, preset="standard", position="top-left", seq=self._ring_hud_seq,
+                                    path=self.ring_hud_path, extent_path=self.ring_hud_extent)
+            self._ring_hud_due = -1.0       # cleared; the next publish draws at once
 
     def _hud_preload_wanted(self) -> bool:
         """Keep a hidden MangoHud in new launches only for Governor/HUD users.
@@ -614,6 +786,108 @@ class GovernorService:
             result["overlay_error"] = overlay_error
         return result
 
+    FRAME_OS_MODES = ("off", "observe", "shadow", "act")
+    FRAME_OS_ACT_ENV = "GFG_FRAME_OS_EXPERIMENTAL_ACT"
+
+    def _frame_os_act_unlocked(self) -> bool:
+        """Act changes Vulkan frame timing and power: require an explicit opt-in (setting or env)."""
+        return os.environ.get(self.FRAME_OS_ACT_ENV) == "1" or bool(self._settings.get("frame_os_act_unlocked"))
+
+    INJECTION_HOLD_S = 60.0
+
+    def set_frame_os_act_unlock(self, enabled: bool) -> Dict[str, Any]:
+        self._settings["frame_os_act_unlocked"] = bool(enabled)
+        if not enabled:
+            # locking means "back to measuring": a later unlock must not silently re-arm Act
+            for value in (self._settings.get("profiles") or {}).values():
+                if isinstance(value, dict) and value.get("frame_os") == "act":
+                    value["frame_os"] = "observe"
+        self._save_settings()
+        try:
+            self._sync_frame_os_marker()   # a locked Act profile stops loading the layer
+        except OSError as error:
+            return {"success": False, "error": f"marker: {error}"}
+        self._poke()
+        return {"success": True, "error": None, "act_unlocked": self._frame_os_act_unlocked()}
+
+    def _frame_os_mode(self, profile: str) -> str:
+        mode = str(self._profile_settings(profile).get("frame_os", "off"))
+        if mode == "act" and not self._frame_os_act_unlocked():
+            # Also protects profiles saved by an older build; a new UI alone is not a safety gate.
+            return "off"
+        return mode if mode in self.FRAME_OS_MODES else "off"
+
+    def set_frame_os(self, profile: str, mode: str) -> Dict[str, Any]:
+        """Development switch for GFG Frame OS.  observe/shadow never change frames; act does."""
+        profile = str(profile or "").strip()
+        if not profile or mode not in self.FRAME_OS_MODES:
+            return {"success": False, "error": "profile and a mode of off/observe/shadow/act are required"}
+        if mode == "act" and not self._frame_os_act_unlocked():
+            return {"success": False, "error": "Frame OS Act is locked until Deck validation; developer opt-in required"}
+        self._settings.setdefault("profiles", {}).setdefault(profile, {})["frame_os"] = mode
+        self._save_settings()
+        try:
+            self._sync_frame_os_marker()
+        except OSError as error:
+            return {"success": False, "error": f"marker: {error}"}
+        self._poke()
+        return {"success": True, "error": None, "profile": profile, "mode": mode, "relaunch_required": True}
+
+    def _sync_frame_os_marker(self) -> None:
+        """The launcher loads the gfg-pacer layer only while some profile uses Frame OS."""
+        profiles = self._settings.get("profiles", {})
+        wanted = isinstance(profiles, dict) and any(
+            self._frame_os_mode(profile) != "off" for profile in profiles)
+        if wanted:
+            # The launcher loads the layer only when it is staged; a build without it stays inert.
+            if self.frame_os_layer_dir is not None:
+                staged = frame_os_layer.stage(self.frame_os_layer_source, self.frame_os_layer_dir, self.log,
+                                              registry_dir=self.frame_os_registry_dir)
+                self.frame_os_layer_error = staged["error"]
+            self.frame_os_marker_path.parent.mkdir(parents=True, exist_ok=True)
+            self.frame_os_marker_path.write_text("enabled\n", encoding="utf-8")
+        else:
+            try:
+                self.frame_os_marker_path.unlink()
+            except FileNotFoundError:
+                pass
+        # Ring HUD: the launcher adds the GFG HUD layer while some profile shows the rings.
+        rings = isinstance(profiles, dict) and any(
+            self.hud_settings(profile)["enabled"] and self.hud_settings(profile)["style"] == "rings"
+            for profile in profiles)
+        if rings and self.frame_os_layer_dir is not None:
+            staged = frame_os_layer.stage(self.frame_os_layer_source, self.frame_os_layer_dir, self.log,
+                                          registry_dir=self.frame_os_registry_dir, layer_key="hud")
+            self.ring_hud_layer_error = staged["error"]
+            self.ring_hud_marker_path.parent.mkdir(parents=True, exist_ok=True)
+            self.ring_hud_marker_path.write_text("enabled\n", encoding="utf-8")
+        else:
+            try:
+                self.ring_hud_marker_path.unlink()
+            except FileNotFoundError:
+                pass
+
+    def _configure_frame_os(self, profile: str) -> None:
+        budget = self._budget
+        mode = self._frame_os_mode(profile) if profile else "off"
+        live = bool(budget is not None and self._point is not None and self._status.get("enabled"))
+        if mode == "off" or not live:
+            self.frame_os.configure(enabled=False, mode="observe", output_hz=0, calm_real_hz=0,
+                                    max_multiplier=1, calm_w=None)
+            return
+        point = budget.point
+        self.frame_os.focused = getattr(self.observer, "game_focused", None)
+        try:
+            self.frame_os.draw_w = self.power.status().get("draw_w")
+        except Exception:
+            self.frame_os.draw_w = (self._status.get("power_feedback") or {}).get("draw_w")
+        self.frame_os.configure(
+            enabled=True, mode=mode, output_hz=float(point.target_output_fps),
+            calm_real_hz=float(point.base_target_fps),
+            max_multiplier=float(self.observer.current_max_multiplier or 3.0),
+            calm_w=budget.tdp if budget.tdp_control else None,
+        )
+
     def set_scale_ready(self, profile: str, scale_ready: bool) -> Dict[str, Any]:
         profile = str(profile or "").strip()
         if not profile:
@@ -678,6 +952,11 @@ class GovernorService:
         if callable(reopen):
             reopen()
         await asyncio.to_thread(self.power.discover)
+        try:
+            await asyncio.to_thread(self._sync_frame_os_marker)
+        except OSError as error:
+            self.log.debug("Frame OS marker not written: %s", error)
+        self.frame_os.start()
         self._wake = asyncio.Event()
         self._wake_loop = asyncio.get_running_loop()
         self._task = asyncio.create_task(self._loop())
@@ -710,6 +989,7 @@ class GovernorService:
             except Exception as error:
                 self.log.debug("Governor loop ended with error: %s", error)
         self._task = None
+        await self.frame_os.stop()
         # Restore overlays to Saved (verified, lease dropped) before power ownership is released.
         names = list(dict.fromkeys([*self._saved_profile_names(), *self._settings.get("profiles", {})]))
         for profile in names:
@@ -739,6 +1019,11 @@ class GovernorService:
         value["session"] = self.session_stats.summary()
         value["last_session"] = self._settings.get("last_session")
         value["session_history"] = (self._settings.get("session_history") or [])[: self.SESSION_HISTORY]
+        value["frame_os"] = {"mode": self._frame_os_mode(profile or value.get("profile", "")),
+                             "act_unlocked": self._frame_os_act_unlocked(),
+                             "layer_installed": bool(self.frame_os_layer_dir and frame_os_layer.is_staged(self.frame_os_layer_dir)),
+                             "layer_error": self.frame_os_layer_error,
+                             **{k: v for k, v in self.frame_os.last.items() if k != "input"}}
         value["power"] = self.power.status()
         value["power_search"] = self.search.status.to_dict()
         value["request"] = self._request.to_dict() if self._request else None
@@ -751,13 +1036,24 @@ class GovernorService:
             value["restore_pending"] = dict(self._restore_pending)
         return value
 
+    def _display_probe(self) -> Dict[str, Any]:
+        """Active display + the internal panel's actual refresh rate when Gamescope reports it."""
+        result = self.display.get_active_display_info()
+        reader = getattr(self.display, "read_current_refresh_hz", None)
+        if isinstance(result, dict) and result.get("success") and not result.get("external") and callable(reader):
+            try:
+                result = {**result, "current_refresh_hz": reader()}
+            except Exception as error:
+                self.log.debug("Governor refresh-rate probe unavailable: %s", error)
+        return result
+
     async def _display_info(self) -> Dict[str, Any]:
         now = time.monotonic()
         if now - self._last_display_poll < self.DISPLAY_REFRESH_SECONDS and self._last_display:
             return self._last_display
         self._last_display_poll = now
         try:
-            result = await asyncio.to_thread(self.display.get_active_display_info)
+            result = await asyncio.to_thread(self._display_probe)
             if isinstance(result, dict) and result.get("success"):
                 self._last_display = result
         except Exception as error:
@@ -779,9 +1075,14 @@ class GovernorService:
         self._point_mode = ""
         self._point_external = None
         self._point_deltas = {}
+        self._injection = None
+        self.frame_os.executor_active = False
         self._request = None
         self._ladder = None
+        # Failures the controller found since its last drain would be lost with it.
+        self._store_failures(self._budget)
         self._budget = None
+        self._budget_keys = None
         self._applied_tdp = None
         self._over_cap_windows = 0
         self._draw_samples = []
@@ -893,6 +1194,8 @@ class GovernorService:
             return False
         self._request_counter += 1
         self._record = record
+        self._injection = None  # this write replaced any Act overlay
+        self.frame_os.executor_active = False
         self._ladder.mark_attempt() if self._ladder else None
         self._request = Request(
             request_id=self._request_counter, point=point, deltas=full, previous_deltas=previous,
@@ -977,7 +1280,7 @@ class GovernorService:
         if not stale:
             return
         base = self._base_for(profile, saved)
-        desired = {**base, **self._point_deltas}
+        desired = {**base, **(self._injection or self._point_deltas)}
         key = self._point["key"] if self._point else "base"
         try:
             record = await asyncio.to_thread(self._ensure_overlay_sync, profile, desired, key)
@@ -998,6 +1301,9 @@ class GovernorService:
         """One time-weighted sample for the player's session summary (fresh telemetry only)."""
         if self.session_stats.started is None or not self._status.get("enabled"):
             return
+        if getattr(self.observer, "game_focused", None) is False:
+            self.session_stats.last = self._clock()  # Steam's menu: not part of the averages
+            return
         tel = self._status.get("telemetry") or {}
         snap, summary = tel.get("snapshot") or {}, tel.get("summary") or {}
         if not snap.get("available") or (1e9 if snap.get("sample_age_ms") is None else snap["sample_age_ms"]) > self.MAX_SAMPLE_AGE_MS:
@@ -1017,7 +1323,25 @@ class GovernorService:
             temp_c=(self._status.get("sensors") or {}).get("temp_c"),
             stuttering=diagnosis.get("smoothness") == "stuttering",
             hot=diagnosis.get("thermal") in ("hot", "heating"),
+            mode=self._mode(self._session_profile or str(self._status.get("profile") or "")),
+            battery_w=self._battery_discharge_w(),
+            frame_os=self._frame_os_level(),
+            benefit=(self.frame_os.last or {}).get("benefit") if self._frame_os_level() else None,
         )
+
+    def _frame_os_level(self) -> Optional[str]:
+        last = self.frame_os.last or {}
+        if not last.get("enabled") or not (last.get("telemetry") or {}).get("live"):
+            return None
+        level = (last.get("decision") or {}).get("level")
+        return f"{level}" if last.get("acting") else (f"{level}?" if level else None)
+
+    def _battery_discharge_w(self) -> Optional[float]:
+        battery = self._status.get("battery") or {}
+        power = battery.get("power_uw")
+        if not battery.get("discharging") or not isinstance(power, (int, float)) or power <= 500_000:
+            return None  # on the charger (or noise): no battery time to gain
+        return float(power) / 1_000_000.0
 
     def _finish_session(self) -> None:
         """Store the summary under the profile the game was played with (audit 1.0.7: a profile
@@ -1026,9 +1350,10 @@ class GovernorService:
         result = self.session_stats.finish()
         if result is None:
             return
-        result.update({"ended": time.time(), "profile": profile or "",
-                       "mode": self._mode(profile) if profile else "",
-                       "app_id": self._session_app_id})
+        # The mode comes from the per-mode seconds ("mixed" after a switch); the current mode only
+        # when none was sampled.
+        result.setdefault("mode", self._mode(profile) if profile else "")
+        result.update({"ended": time.time(), "profile": profile or "", "app_id": self._session_app_id})
         self._settings["last_session"] = result
         history = [h for h in self._settings.get("session_history") or [] if isinstance(h, dict)]
         self._settings["session_history"] = ([result] + history)[: self.SESSION_HISTORY]
@@ -1093,6 +1418,10 @@ class GovernorService:
         await asyncio.to_thread(self._update_sensors)
         self._sample_session()
         profile = self._status.get("profile") or ""
+        try:
+            self._configure_frame_os(profile)
+        except Exception as error:  # development feature: never disturb the Governor
+            self.log.debug("Frame OS configure failed: %s", error)
         if profile:
             await asyncio.to_thread(self._sync_hud, profile)
 
@@ -1140,7 +1469,8 @@ class GovernorService:
         external = bool(display.get("external", False))
         if self._device is None:
             self._device = await asyncio.to_thread(detect_model)
-        policy = target_for(self._device["model"], external=external, valid_rates=display.get("valid_rates"))
+        policy = target_for(self._device["model"], external=external, valid_rates=display.get("valid_rates"),
+                            current_hz=display.get("current_refresh_hz"))
         target = int(policy["target"])
         self._status.update({
             "target_output_fps": target,
@@ -1149,6 +1479,7 @@ class GovernorService:
                 "external": external,
                 "internal": bool(display.get("internal", not external)),
                 "valid_rates": display.get("valid_rates", []),
+                "current_refresh_hz": display.get("current_refresh_hz"),
             },
             "telemetry": {"snapshot": snapshot, "summary": summary},
         })
@@ -1157,8 +1488,12 @@ class GovernorService:
         launch = await self._launch_info(profile)
         launch_key = launch.get("launch_key") if launch.get("running") else None
         generation = snapshot.get("session_generation")
+        # The panel's refresh rate changed the target: a controller built for the old one is stale.
+        controller = self._budget or self._ladder
+        target_changed = controller is not None and int(getattr(controller, "target_output_fps", target)) != target
         changed = (
-            (self._generation_seen is not None and generation != self._generation_seen)
+            target_changed
+            or (self._generation_seen is not None and generation != self._generation_seen)
             or (self._launch_key is not None and launch_key is not None and launch_key != self._launch_key)
             or (self._point_external is not None and external != self._point_external)
         )
@@ -1172,12 +1507,30 @@ class GovernorService:
                 self._status.update({"state": "PLAN", "reason": "governor-mode-changed"})
                 return
         if changed and (self._point or self._request or self._ladder or self._budget):
-            reason = "display-mode-changed" if (
+            reason = "display-mode-changed" if target_changed or (
                 self._point_external is not None and external != self._point_external
             ) else "new-game-session"
             await self._release_point(profile, reason)
             self._status.update({"state": "PLAN", "reason": reason})
             return
+
+        # Steam's menu / quick access covers the game: the renderer suspends frame generation, so
+        # the output drops for reasons that have nothing to do with the point.  Measure nothing,
+        # change nothing, and drop what was sampled meanwhile once the game is back.
+        if getattr(self.observer, "game_focused", None) is False:
+            if self._menu_since is None:
+                self._menu_since = self._clock()
+            self._status.update({"state": "PAUSED", "reason": "steam-menu-open"})
+            return
+        if self._menu_since is not None:
+            away = self._clock() - self._menu_since
+            self._menu_since = None
+            seq = self.observer.sample_seq
+            self._evaluation_after_seq = max(self._evaluation_after_seq, seq)
+            self._tdp_set_seq = max(self._tdp_set_seq, seq)
+            self._injection_seq = max(self._injection_seq, seq)
+            if self._request is not None:
+                self._request.created += away        # the confirmation timeout does not run in the menu
 
         # Pending application: evaluated before the freshness gate so a silent
         # renderer cannot leave an unconfirmed overlay in place forever.
@@ -1259,6 +1612,9 @@ class GovernorService:
             else:
                 telemetry_reason = "telemetry-stale"
             self._status.update({"state": "PAUSED", "reason": telemetry_reason})
+            if self._injection is not None:
+                # the game is gone or frozen: never leave the Act overlay for the next launch
+                await self._drop_injection(profile, "telemetry-stale")
             return
         if summary.get("samples", 0) < self.MIN_SAMPLES or summary.get("sample_span_s", 0.0) < self.MIN_SAMPLE_SPAN_SECONDS:
             self._status.update({"state": "PROBE", "reason": "collecting-fresh-evidence"})
@@ -1436,8 +1792,11 @@ class GovernorService:
             )
             self._budget = budget
             budget.scale_capable = self._budget_can_scale(capability)
-            key = self._game_key(profile, target)
+            key, floor = self._game_key(profile, target), self._floor_key(profile, target)
+            self._budget_keys = (key, floor)
             budget.load_failures(self.game_models.failures(key), now)
+            # review 1.1.x: a rebuilt controller keeps the remaining back-off of failed lower levels.
+            budget.load_floor_failures(self.game_models.floor_failures(floor), now)
             remembered = self.game_models.get(key)
             if remembered and budget.warm_start(remembered["point"], remembered.get("tdp_w"), now):
                 self._event("budget-warm-start", "remembered-from-last-session", profile=profile,
@@ -1483,8 +1842,13 @@ class GovernorService:
         # 2. The point is live: apply this level's watts.
         if not await self._apply_budget_tdp(profile):
             return
+        # Frame OS Act owns the real cadence while it injects: the Governor holds this point and its
+        # watts (the energy broker moves them) and does not judge windows the pacer shapes on purpose.
+        if await self._sync_injection(profile):
+            self._status.update({"state": "LOCKED", "reason": "frame-os-act-holds-point"})
+            return
         self._remember_if_held(profile, target, budget, point, now)
-        self._store_failures(profile, target, budget)
+        self._store_failures(budget)
 
         # The draw sensor is an instantaneous / ~1 s value: sample it every
         # iteration and judge the window by its median, not its last reading.
@@ -1506,6 +1870,7 @@ class GovernorService:
                             before={"tdp_w": before}, after={"point": budget.point.key, "tdp_w": budget.tdp,
                                                             "phase": budget.phase})
                 self._draw_samples = []
+                self._store_failures(budget)  # a mode switch may drop this controller next
                 self._status.update({"state": self._budget_state(), "reason": budget.last_reason})
                 await self._apply_budget_tdp(profile)
                 return
@@ -1519,8 +1884,17 @@ class GovernorService:
         self._evaluation_after_seq = self.observer.sample_seq
         feedback = self._power_feedback(profile, budget)
         before = (budget.point.key, budget.tdp, budget.phase)
+        reason_before, holds_before = budget.last_reason, getattr(budget, "not_power_bound_holds", 0)
         action = budget.observe(now, verdict, (fresh.get("real") or {}).get("median"))
+        self._store_failures(budget)  # now, not after the next TDP write: a release may come first
         after = (budget.point.key, budget.tdp, budget.phase)
+        if str(budget.last_reason).startswith("guard-not-power-bound") and (
+                budget.last_reason != reason_before or getattr(budget, "not_power_bound_holds", 0) != holds_before):
+            # review 1.1.x: the guard spent nothing because the APU drew well under the cap; without
+            # this event a log showed only a missed window and no reaction.
+            self._event("budget-guard-not-power-bound", budget.last_reason, profile=profile,
+                        draw_w=feedback.get("draw_w"), cap_w=budget.tdp, verdict=verdict.reason,
+                        count=getattr(budget, "not_power_bound_holds", 0))
         if action == "move" or before != after:
             self._event("budget-step", budget.last_reason, profile=profile, verdict=verdict.to_dict(),
                         before={"point": before[0], "tdp_w": before[1], "phase": before[2]},
@@ -1531,6 +1905,68 @@ class GovernorService:
         self._status.update({"state": self._budget_state(), "reason": budget.last_reason,
                              "last_verdict": verdict.to_dict(), "power_feedback": feedback})
         await self._apply_budget_tdp(profile)
+
+    async def _sync_injection(self, profile: str) -> bool:
+        """Write (or take back) the Act adaptive overlay; True while Act injects on this point."""
+        live = bool(((self.frame_os.last or {}).get("telemetry") or {}).get("live"))
+        # only while the pacer is really in the game: without it the renderer would take 45 real
+        acting = (self._frame_os_mode(profile) == "act" and self._request is None and bool(self._point_deltas)
+                  and self._clock() >= self._injection_hold_until)
+        if acting and self._budget is not None:
+            # Safety: heat or a starved output hands the point back to the Governor's own judgement.
+            hot = (self._status.get("diagnosis") or {}).get("thermal") == "hot"
+            output = (self.observer.summary(self.FAST_CHECK_SECONDS, after_seq=self._injection_seq)
+                      .get("output") or {}).get("median")
+            starved = (isinstance(output, (int, float)) and output < 0.8 * float(self._budget.point.target_output_fps)
+                       and getattr(self.observer, "game_focused", None) is not False)   # Steam's menu stops FG
+            if hot or starved:
+                acting = False
+                if self._injection is not None:
+                    self._event("frame-os-injection-yielded", "hot" if hot else "output-starved",
+                                profile=profile, output=output)
+                    self._injection_hold_until = self._clock() + self.INJECTION_HOLD_S  # no flapping
+        cadences = self.frame_os.injection if acting and live else None
+        wanted = None
+        if cadences is not None and self._budget is not None:
+            boost, rest = cadences
+            wanted = injection_deltas(self._point_deltas, float(self._budget.point.target_output_fps), boost, rest)
+        if wanted == self._injection:
+            self.frame_os.executor_active = wanted is not None
+            return wanted is not None
+        saved = await asyncio.to_thread(self._saved_profile_config, profile)
+        if saved is None:
+            return False
+        desired = {**self._base_for(profile, saved), **(wanted or self._point_deltas)}
+        key = self._point["key"] if self._point else "base"
+        try:
+            record = await asyncio.to_thread(self._ensure_overlay_sync, profile, desired, key)
+        except (OSError, ValueError) as error:
+            self._event("frame-os-injection-failed", "overlay-write-failed", profile=profile, error=str(error))
+            return False
+        if record is not None:
+            self._record = record
+        self._event("frame-os-injection", "start" if wanted else "stop", profile=profile, point=key,
+                    base_fps_cap=(wanted or {}).get("base_fps_cap"),
+                    adaptive_max_multiplier=(wanted or {}).get("adaptive_max_multiplier"))
+        self._injection = wanted
+        self.frame_os.executor_active = wanted is not None
+        self._injection_seq = self.observer.sample_seq
+        # windows measured under injection say nothing about the plain point
+        self._evaluation_after_seq = self.observer.sample_seq
+        return wanted is not None
+
+    async def _drop_injection(self, profile: str, reason: str) -> None:
+        saved = await asyncio.to_thread(self._saved_profile_config, profile)
+        if saved is not None:
+            key = self._point["key"] if self._point else "base"
+            try:
+                await asyncio.to_thread(self._ensure_overlay_sync, profile,
+                                        {**self._base_for(profile, saved), **self._point_deltas}, key)
+            except (OSError, ValueError):
+                pass
+        self._event("frame-os-injection", "stop", profile=profile, cause=reason)
+        self._injection = None
+        self.frame_os.executor_active = False
 
     def _power_feedback(self, profile: str, budget: BudgetController) -> Dict[str, Any]:
         """Compare the measured APU draw with the cap we wrote."""
@@ -1556,10 +1992,15 @@ class GovernorService:
 
     HOLD_BEFORE_REMEMBER_S = 90.0
 
-    def _game_key(self, profile: str, target: int) -> str:
+    def _game_app_id(self) -> str:
         launch = self._launch if isinstance(self._launch, dict) else {}
-        app_id = launch.get("app_id", "") if launch.get("running") else ""
-        return context_key(profile, target, self._mode(profile), app_id)
+        return launch.get("app_id", "") if launch.get("running") else ""
+
+    def _game_key(self, profile: str, target: int) -> str:
+        return context_key(profile, target, self._mode(profile), self._game_app_id())
+
+    def _floor_key(self, profile: str, target: int) -> str:
+        return floor_key(profile, target, self._game_app_id())
 
     # Not evidence about the point itself: a new game session, or a log line that lost its numbers.
     TRANSIENT_FAILURES = frozenset({"telemetry-session-changed", "trial-evidence-incomplete"})
@@ -1585,13 +2026,23 @@ class GovernorService:
         for key, (_tdp, age) in failures.items():
             self._ladder.reject(key, "remembered-failure", until=now + self.game_models.FAILURE_TTL_S - age)
 
-    def _store_failures(self, profile: str, target: int, budget: Any) -> None:
+    def _store_failures(self, budget: Any) -> None:
+        if budget is None or self._budget_keys is None:
+            return
+        key, floor = self._budget_keys
         while budget.new_failures:
             point_key, tdp = budget.new_failures.pop(0)
             try:
-                self.game_models.record_failure(self._game_key(profile, target), point_key, tdp)
+                self.game_models.record_failure(key, point_key, tdp)
             except Exception as error:  # best-effort, like remembering held points
                 self.log.debug("Game model failure not stored: %s", error)
+        floors = getattr(budget, "new_floor_failures", None) or []
+        while floors:
+            point_key, tdp, count = floors.pop(0)
+            try:
+                self.game_models.record_floor_failure(floor, point_key, tdp, count)
+            except Exception as error:
+                self.log.debug("Game model floor failure not stored: %s", error)
 
     def _remember_if_held(self, profile: str, target: int, budget: Any, point: Any, now: float) -> None:
         """Store the point/TDP once it has held, so the next session can start there."""
@@ -1602,6 +2053,11 @@ class GovernorService:
             or (budget.tdp_control and budget.tdp != self._applied_tdp)
         ):
             return
+        # review 1.1.x: a state that held while heat held quality back is not what the game needs
+        # when cool; remembering it would warm-start the next session from a throttled state.
+        thermal = (self._status.get("diagnosis") or {}).get("thermal")
+        if getattr(budget, "heat_limited", False) or thermal in ("hot", "heating"):
+            return
         try:
             self.game_models.record(self._game_key(profile, target), point.key,
                                     budget.tdp if budget.tdp_control else None)
@@ -1610,19 +2066,24 @@ class GovernorService:
 
     async def _apply_budget_tdp(self, profile: str) -> bool:
         budget = self._budget
-        if (
-            budget is None or not budget.tdp_control or budget.tdp is None
-            or not self.power.state.owned or budget.tdp == self._applied_tdp
-        ):
+        if budget is None or not budget.tdp_control or budget.tdp is None or not self.power.state.owned:
             return True
-        result = await asyncio.to_thread(self.power.set_tdp_w, budget.tdp)
+        # Frame OS (act mode) adds the watts of a funded boost / removes them in rest.
+        offset = self.frame_os.tdp_offset_w
+        # Without an offset the controller's own value goes out as is (emergency watts included).
+        target = budget.tdp if not offset else round(
+            min(max(budget.normal_max_w, budget.tdp), max(budget.min_w, budget.tdp + offset)), 1)
+        if target == self._applied_tdp:
+            return True
+        result = await asyncio.to_thread(self.power.set_tdp_w, target)
         if not result.get("success"):
             self._status.update({"state": "PAUSED", "reason": "tdp-write-failed"})
             return False
-        self._applied_tdp = budget.tdp
+        self._applied_tdp = target
         self._evaluation_after_seq = self.observer.sample_seq
         self._tdp_set_seq = self.observer.sample_seq
-        self._event("tdp-set", budget.last_reason, watts=budget.tdp, profile=profile)
+        self._event("tdp-set", budget.last_reason, watts=target, profile=profile,
+                    **({"frame_os_offset_w": target - budget.tdp} if target != budget.tdp else {}))
         return True
 
     async def _release_point_keep_ladder(self, profile: str) -> bool:

@@ -170,6 +170,9 @@ class TelemetryObserver:
         # It is a property of the current swapchain/resources, not of the device: the renderer
         # raises it on a natural swapchain recreation, so a later report can lift the ceiling.
         self._generated_capacity: Optional[int] = None
+        # Gamescope focus as the renderer reports it: True in the game, False while Steam's UI
+        # (menu, quick access) covers it, None before the first report.
+        self.game_focused: Optional[bool] = None
 
     def _note_capacity(self, value: Any) -> None:
         try:
@@ -239,6 +242,7 @@ class TelemetryObserver:
         self._last_application = {}
         self._session_generation += 1
         self._generated_capacity = None
+        self.game_focused = None
 
     @staticmethod
     def parse_fields(line: str) -> Optional[Dict[str, str]]:
@@ -254,6 +258,8 @@ class TelemetryObserver:
         self._event_seq += 1
         operation = str(fields.get("operation") or "")
         self._last_fields = dict(fields)
+        if operation == "gamescope-focus" and fields.get("state"):
+            self.game_focused = fields.get("state") == "game"
         if operation == "runtime-state-applied" and fields.get("frame_generation_resources_available") == "0":
             self._note_capacity(0)  # no frame-generation resources at all: native only
         elif operation == "runtime-state-applied" and "generated_frame_capacity" in fields:

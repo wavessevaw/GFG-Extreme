@@ -34,6 +34,58 @@ class PrivilegedPowerTests(unittest.TestCase):
         finally:
             helper.close()
 
+    def test_silent_helper_times_out_instead_of_blocking(self):
+        # review 1.1.x: os.read without a timeout blocked the Governor loop on a stuck helper.
+        req_r, req_w = os.pipe()
+        rep_r, rep_w = os.pipe()
+        pid = os.fork()
+        if pid == 0:  # a helper that reads requests and never answers
+            try:
+                os.close(req_w); os.close(rep_r)
+                while os.read(req_r, 4096):
+                    pass
+            finally:
+                os._exit(0)
+        os.close(req_r)
+        writer = privileged_power.PrivilegedCapWriter(req_w, rep_r, pid)
+        writer.REPLY_TIMEOUT_S = 0.2
+        import time
+        started = time.monotonic()
+        with self.assertRaisesRegex(OSError, "did not answer"):
+            writer.write(Path("/sys/devices/x/hwmon/hwmon0/power1_cap"), 5_000_000)
+        self.assertLess(time.monotonic() - started, 2.0)
+        with self.assertRaises(privileged_power.HelperTimeout):  # distinct: the write may still land
+            writer.write(Path("/sys/devices/x/hwmon/hwmon0/power1_cap"), 5_000_000)
+        os.write(rep_w, b"ok\n")                 # a late reply to the timed-out request ...
+        with self.assertRaisesRegex(OSError, "did not answer"):
+            writer.write(Path("/sys/devices/x/hwmon/hwmon0/power1_cap"), 5_000_000)  # ... is not taken for this one
+        os.close(rep_w)
+        writer.close()                           # EOF ends the helper: reaped
+        with self.assertRaises(ChildProcessError):
+            os.waitpid(pid, os.WNOHANG)
+
+    def test_close_kills_a_helper_that_does_not_exit(self):
+        import signal
+        import time
+        req_r, req_w = os.pipe()
+        rep_r, rep_w = os.pipe()
+        pid = os.fork()
+        if pid == 0:  # stuck: ignores EOF on its pipe
+            try:
+                signal.signal(signal.SIGTERM, signal.SIG_IGN)
+                while True:
+                    time.sleep(1)
+            finally:
+                os._exit(0)
+        os.close(req_r); os.close(rep_w)
+        writer = privileged_power.PrivilegedCapWriter(req_w, rep_r, pid)
+        writer.CLOSE_TIMEOUT_S = 0.2
+        started = time.monotonic()
+        writer.close()
+        self.assertLess(time.monotonic() - started, 3.0, "bounded, not a blocking waitpid")
+        with self.assertRaises(ChildProcessError):
+            os.waitpid(pid, os.WNOHANG)
+
     def test_not_in_decky_or_not_root_never_drops(self):
         saved = os.environ.pop("DECKY_PLUGIN_DIR", None)
         try:

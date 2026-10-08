@@ -808,6 +808,14 @@ class Plugin:
             self.governor_service.set_enabled, profile_name, enabled
         )
 
+    async def set_governor_frame_os(self, profile_name: str, mode: str) -> Dict[str, Any]:
+        """GFG Frame OS development switch: off / observe / shadow / act (applies from next launch)."""
+        return await asyncio.to_thread(self.governor_service.set_frame_os, profile_name, mode)
+
+    async def set_governor_frame_os_act_unlock(self, enabled: bool = False) -> Dict[str, Any]:
+        """Frame OS Act opt-in (persisted; Act changes frame timing and power)."""
+        return await asyncio.to_thread(self.governor_service.set_frame_os_act_unlock, bool(enabled))
+
     async def set_governor_scale_ready(
             self, profile_name: str, scale_ready: bool
     ) -> Dict[str, Any]:
@@ -820,12 +828,24 @@ class Plugin:
         """Battery (lowest TDP first) or Quality (fewest generated frames first)."""
         return await asyncio.to_thread(self.governor_service.set_mode, profile_name, mode)
 
+    async def get_governor_game_model_target(self, profile_name: str) -> Dict[str, Any]:
+        """Settings -> Diagnostics: which game "Reset what GFG learned" would reset (None: unknown)."""
+        return {"success": True, "target": self.governor_service.game_model_target(profile_name)}
+
+    async def forget_governor_game_model(self, profile_name: str) -> Dict[str, Any]:
+        """Settings -> Diagnostics: forget what the Governor learned for this profile's game.
+
+        On the event loop, not a worker thread: the Governor loop writes the same store there.
+        """
+        return self.governor_service.forget_game_model(profile_name)
+
     async def set_governor_hud(
-            self, profile_name: str, enabled: Any = None, preset: Any = None, position: Any = None
+            self, profile_name: str, enabled: Any = None, preset: Any = None, position: Any = None,
+            style: Any = None,
     ) -> Dict[str, Any]:
-        """Configure the in-game HUD (MangoHud layer + Governor status line)."""
+        """Configure the in-game HUD: rings (GFG HUD layer) or the text line (MangoHud)."""
         return await asyncio.to_thread(
-            self.governor_service.set_hud, profile_name, enabled, preset, position
+            self.governor_service.set_hud, profile_name, enabled, preset, position, style
         )
 
     async def get_pipeline_inspector(self, profile_name: str = "") -> Dict[str, Any]:
@@ -1449,7 +1469,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Extreme 1.1.0 started")
+        decky.logger.info("GFG Extreme 1.2.0 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""

@@ -14,7 +14,11 @@ const rpc = {
   setGovernor: safeCallable("set_governor_enabled"),
   setHud: safeCallable("set_governor_hud"),
   setScaleReady: safeCallable("set_governor_scale_ready"),
+  setFrameOs: safeCallable("set_governor_frame_os"),
+  setFrameOsActUnlock: safeCallable("set_governor_frame_os_act_unlock"),
   setMode: safeCallable("set_governor_mode"),
+  forgetModel: safeCallable("forget_governor_game_model"),
+  modelTarget: safeCallable("get_governor_game_model_target"),
   profiles: safeCallable("get_profiles"),
   setProfile: safeCallable("set_current_profile"),
   profileConfig: safeCallable("get_profile_config"),
@@ -48,15 +52,20 @@ const rpc = {
 const num = (v, d = 1) => (v == null || isNaN(v) ? "–" : Number(v).toFixed(d).replace(/\.0$/, ""));
 const MODE_NAME = { oled: "Steam Deck OLED", lcd: "Steam Deck LCD", dock: "Dock", external: "Dock", unknown: "Display" };
 const fmtMult = (m) => { const q = Math.round(Number(m) * 4) / 4; return "×" + (Number.isInteger(q) ? q : String(q)); };
+const MODE_LABEL = { budget: "Battery", balanced: "Balanced", quality: "Quality" };
+// review 1.1.x: a session switched between modes reads "Battery 18m · Balanced 13m", not just its last mode.
+const frameOsMinutes = (m) => Object.entries(m || {}).map(([k, v]) => k + " " + num(v, 0) + "m").join(" · ");
+const sessionModes = (x) => (x && x.mode === "mixed" && x.modes ? Object.entries(x.modes).map(([m, v]) => (MODE_LABEL[m] || m) + " " + num(v, 0) + "m").join(" · ") : (MODE_LABEL[x && x.mode] || "–"));
 const POINT_LABEL = (p) => (p ? (p.multiplier > 1 ? fmtMult(p.multiplier) : "Native") + (p.render_scale_pct < 100 ? " · " + p.render_scale_pct + "%" : "") : "–");
 
 const PAUSED_TEXT = {
+  "steam-menu-open": "Steam menu is open: frame generation is paused there. Measuring resumes when you return to the game.",
   "overlay-restore-failed": "Could not restore settings — retrying.",
   "game-not-running": "Start the game with the GFG launch command.",
   "diagnostics-active-no-events": "Waiting for the game to draw frames (loading, intro or menu). If it stays like this in gameplay, relaunch the game once.",
   "diagnostics-events-no-fps-samples": "Waiting for the game to draw frames (loading screen or menu). GFG starts on its own as soon as frames arrive.",
   "telemetry-stale": "FPS from the engine stopped arriving.",
-  "external-tdp-change": "TDP was changed outside GFG. In Battery mode GFG takes it back after 30 s (at most 3 times).",
+  "external-tdp-change": "TDP was changed outside GFG. In Battery and Balanced modes GFG takes it back after 30 s (at most 3 times).",
   "tdp-write-failed": "Could not write TDP.",
 };
 
@@ -84,6 +93,7 @@ function describe(s) {
   const cap = (s.capability && s.capability.reason) || "";
   if (!s.enabled) return { head: "Ready", body: "Press Run — GFG will pick the target for this screen and manage the engine.", tone: "idle" };
   if (cap === "relaunch-required-for-governor-overlay" || s.reason === "relaunch-required-for-governor-overlay") return { head: "Restart the game once", body: "This game was started without the GFG launch command, or before this GFG version. Relaunch it once; after that GFG can be turned on while the game runs.", tone: "warn" };
+  if (s.state === "PAUSED" && s.reason === "steam-menu-open") return { head: "Steam menu open", body: PAUSED_TEXT[s.reason], tone: "idle" };
   if (s.state === "PAUSED") return { head: "Paused", body: PAUSED_TEXT[s.reason] || "Waiting (" + (s.reason || "unknown") + "). Your saved profile is untouched.", tone: "warn" };
   if (s.state === "OBSERVE_ONLY" && s.reason === "tdp-control-not-writable") return { head: "No TDP access", body: "GFG manages frame generation, but cannot change TDP: the plugin has no write access to the power caps.", tone: "warn" };
   if (s.state === "OBSERVE_ONLY") return { head: "Observing", body: "Another backend owns the pipeline. GFG only watches.", tone: "idle" };
@@ -203,6 +213,57 @@ function Ring({ value, max, label, sub }) {
     h("div", { className: "num" }, h("div", { className: "big" }, label), h("div", { className: "sub" }, sub)));
 }
 
+// Frame OS benefit rings: colour by effectiveness, red when Frame OS made it worse.
+const ringHue = (v, max) => (v < 0 ? 0 : 25 + 115 * Math.min(1, Math.abs(v) / max));
+function MiniRing({ value, max, text, label, live, estimate, fixed }) {
+  const r = 26, w = 4, size = 2 * (r + w), c = 2 * Math.PI * r;
+  const has = value != null;
+  const f = has ? Math.min(1, Math.abs(value) / max) : 0;
+  const color = fixed || (estimate ? "#5c5c66" : "hsl(" + ringHue(value || 0, max) + " 80% 52% / " + (live ? 1 : 0.38) + ")");
+  const glow = live && has && !estimate && !fixed;
+  return h("div", { className: "mini" + (glow ? " live" : "") },
+    h("div", { className: "mring", style: { width: size, height: size } },
+      h("svg", { viewBox: "0 0 " + size + " " + size, width: size, height: size },
+        h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#26262d", strokeWidth: w }),
+        // Halo as a wider faint arc inside the SVG: a CSS drop-shadow is clipped to a square in Steam's browser.
+        glow ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeOpacity: 0.22, strokeWidth: w + 4, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null,
+        has ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeWidth: w, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null),
+      h("div", { className: "mnum" + (estimate || !has ? " dim" : "") }, has ? text : "—")),
+    h("div", { className: "mlab" }, label));
+}
+
+function FrameOsCard({ fo }) {
+  const b = fo.benefit;
+  if (!fo.enabled || !b) return null;
+  const est = !!b.estimate;
+  const level = (fo.decision || {}).level;
+  const pct = (v, sign) => (v == null ? "" : (sign && v > 0 ? sign : v < 0 && !sign ? "−" : "") + Math.abs(Math.round(v)) + "%");
+  const resp = b.response_pct, frames = b.frames_pct, energy = b.energy_pct;
+  return h("div", { className: "card fos" },
+    h("div", { className: "fos-head" }, h("span", null, "FRAME OS"),
+      h("span", { className: "pill " + (est ? "would" : level || "") }, est ? "ESTIMATE" : (level || "").toUpperCase())),
+    h("div", { className: "rings" },
+      h(MiniRing, { value: resp, max: 50, text: resp == null ? "" : (resp >= 0 ? "−" : "+") + Math.abs(Math.round(resp)) + "%", label: "Response", live: level !== "rest", estimate: est }),
+      h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "−") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est }),
+      h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), label: "Energy", live: level === "rest", estimate: est })));
+}
+
+// Last session as rings: averages for the whole game session, benefit rings when Frame OS ran.
+function SessionRings({ ls, target }) {
+  const b = ls.frame_os_benefit;
+  const signed = (v, good) => (v == null ? "" : (v >= 0 ? good : good === "+" ? "−" : "+") + Math.abs(Math.round(v)) + "%");
+  const limit = ls.reference_w || 15;
+  return h("div", null,
+    h("div", { className: "rings" },
+      h(MiniRing, { value: ls.avg_output_fps, max: target, text: num(ls.avg_output_fps, 0), label: "FPS avg", fixed: "#fb0d00" }),
+      h(MiniRing, { value: ls.avg_real_fps, max: ls.avg_output_fps || target, text: num(ls.avg_real_fps, 0), label: "Real avg", fixed: "#f5f5f7" }),
+      h(MiniRing, { value: ls.avg_tdp_w, max: limit, text: ls.avg_tdp_w != null ? num(ls.avg_tdp_w, 0) + "W" : "", label: "TDP avg", fixed: "#f5f5f7" })),
+    b ? h("div", { className: "rings", style: { marginTop: 10 } },
+      h(MiniRing, { value: b.response, max: 50, text: signed(b.response, "−"), label: "Response", live: true, estimate: b.estimate }),
+      h(MiniRing, { value: b.frames, max: 50, text: signed(b.frames, "+"), label: "Frames", live: true, estimate: b.estimate }),
+      h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "−" : "") + Math.abs(Math.round(b.energy)) + "%", label: "Energy", live: true, estimate: b.estimate })) : null);
+}
+
 function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
   const [busy, setBusy] = useState(false);
   const missing = inst && inst.installed === false;
@@ -224,6 +285,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
   const showLive = s.enabled && out != null;
   const tdp = pw.observed_tdp_w != null ? pw.observed_tdp_w : pw.current_tdp_w;
   const eff = s.effort && s.effort.level;
+  const effWhy = eff && s.effort.reason;
   const mins = s.battery && s.battery.minutes_left;
   const cap0 = (s.capability && s.capability.reason) || "";
   const needsLaunch = s.enabled && (cap0 === "relaunch-required-for-governor-overlay" || s.reason === "relaunch-required-for-governor-overlay" || s.reason === "game-not-running" || s.reason === "diagnostics-active-no-events");
@@ -253,10 +315,11 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
         h("div", { className: "stat hot" }, h("div", { className: "v" }, mult ? fmtMult(mult) : POINT_LABEL(s.active_point)), h("div", { className: "l" }, "GFG")), h("div", { className: "a" }, "→"),
         h("div", { className: "stat" }, h("div", { className: "v" }, num(out, 0)), h("div", { className: "l" }, "OUTPUT"))) : null,
       s.enabled ? h("div", { className: "effort" }, h("span", null, "GFG EFFORT"),
-        h("b", { className: eff ? "lv " + eff : "lv" }, eff ? eff.toUpperCase() : "ASSESSING…")) : null,
+        h("b", { className: eff ? "lv " + eff : "lv" }, eff ? eff.toUpperCase() : "ASSESSING…", effWhy ? h("span", { className: "why" }, " · " + effWhy) : null)) : null,
       tdp != null ? h("div", { className: "power" }, h("div", { className: "r" }, h("span", null, "TDP NOW"), h("span", null, num(tdp, 0) + " W" + (left ? "  ·  " + left + " left" : ""))),
         pw.owned && pw.initial_tdp_w && pw.initial_tdp_w - tdp >= 1 ? h("div", { className: "r" }, h("span", null, "SAVING"), h("span", null, num(pw.initial_tdp_w - tdp, 0) + " W under your " + num(pw.initial_tdp_w, 0) + " W limit")) : null,
         h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, (tdp / (pw.initial_tdp_w || pw.maximum_tdp_w || 15)) * 100) + "%" } }))) : null),
+    s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os }) : null,
     h(Focusable, { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? undefined : toggle },
       h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 18 }), busy ? "WORKING…" : missing ? "INSTALL ENGINE" : s.enabled ? "STOP" : "RUN"),
     h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : missing ? "The GFG engine is not installed yet. One tap installs it." : "Target " + target + " FPS · " + (dev.reason || "picked automatically for this screen")),
@@ -265,11 +328,14 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
     h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
     health ? h("div", { className: "hint" }, health) : null,
     !s.session && s.last_session ? h("div", { className: "card" }, h("div", { className: "sec" }, "LAST SESSION"),
-      h("div", { className: "kv" },
+      h(SessionRings, { ls: s.last_session, target }),
+      h("div", { className: "kv", style: { marginTop: 12 } },
         h("span", null, "Played"), h("b", null, num(s.last_session.minutes, 0) + " min"),
-        h("span", null, "Frames on screen"), h("b", null, num(s.last_session.avg_output_fps, 0) + " FPS avg (" + num(s.last_session.avg_real_fps, 0) + " real)"),
-        h("span", null, "Power"), h("b", null, s.last_session.avg_tdp_w != null ? num(s.last_session.avg_tdp_w, 1) + " W avg" + (s.last_session.reference_w ? " · limit " + num(s.last_session.reference_w, 0) + " W" : "") : "–"),
-        s.last_session.saved_w ? h("span", null, "Saved") : null, s.last_session.saved_w ? h("b", null, "~" + num(s.last_session.saved_w, 1) + " W on average") : null,
+        s.last_session.mode === "mixed" ? h("span", null, "Modes") : null, s.last_session.mode === "mixed" ? h("b", null, sessionModes(s.last_session)) : null,
+        s.last_session.frame_os ? h("span", null, "Frame OS") : null, s.last_session.frame_os ? h("b", null, frameOsMinutes(s.last_session.frame_os)) : null,
+        s.last_session.reference_w ? h("span", null, "Your limit") : null, s.last_session.reference_w ? h("b", null, num(s.last_session.reference_w, 0) + " W") : null,
+        s.last_session.saved_w > 0 ? h("span", null, "Saved") : null, s.last_session.saved_w > 0 ? h("b", null, "~" + num(s.last_session.saved_w, 1) + " W under your limit on average") : null,
+        s.last_session.saved_wh > 0 ? h("span", null, "Energy saved") : null, s.last_session.saved_wh > 0 ? h("b", null, "~" + num(s.last_session.saved_wh, 1) + " Wh measured" + (s.last_session.battery_minutes_gained > 0 ? " · ~" + s.last_session.battery_minutes_gained + " min more battery" : "")) : null,
         s.last_session.max_temp_c ? h("span", null, "Hottest") : null, s.last_session.max_temp_c ? h("b", null, num(s.last_session.max_temp_c, 0) + " °C" + (s.last_session.hot_pct ? " · warm " + s.last_session.hot_pct + "% of the time" : "")) : null,
         s.last_session.stutter_pct ? h("span", null, "Stutter") : null, s.last_session.stutter_pct ? h("b", null, s.last_session.stutter_pct + "% of the time") : null)) : null,
     needsLaunch ? h("div", null, h("div", { className: "sec" }, "START THE GAME WITH THIS LAUNCH OPTION"), h(LaunchCopy, { launch })) : null,
@@ -325,7 +391,7 @@ function GovernorPage({ s, back, profile, refresh }) {
     (s.session_history || []).length ? h("div", { className: "sec" }, "RECENT SESSIONS") : null,
     (s.session_history || []).length ? h("div", { className: "card" }, h("div", { className: "kv" },
       ...(s.session_history || []).slice(0, 5).flatMap((x, i) => [
-        h("span", { key: "k" + i }, num(x.minutes, 0) + " min · " + ({ budget: "Battery", balanced: "Balanced", quality: "Quality" }[x.mode] || "–")),
+        h("span", { key: "k" + i }, num(x.minutes, 0) + " min · " + sessionModes(x)),
         h("b", { key: "v" + i }, num(x.avg_output_fps, 0) + " FPS · " + (x.avg_tdp_w != null ? num(x.avg_tdp_w, 1) + " W" : "–") + (x.max_temp_c ? " · " + num(x.max_temp_c, 0) + " °C" : ""))]))) : null,
     (s.limitations || []).length ? h("div", { className: "sec" }, "LIMITS") : null,
     ...(s.limitations || []).map((t, i) => h(Note, { key: i, quiet: true }, t)));
@@ -349,15 +415,19 @@ function ScalingPage({ s, back, profile, refresh }) {
   const ready = !!s.scale_ready;
   return h(Page, { title: "Scaling", onBack: back },
     h("div", { className: "list", style: { marginTop: 0 } },
-      h(Toggle, { on: ready, title: "Scale-ready launch", sub: "Provision the Scaling Engine at launch so Governor can lower render scale live without relaunching. Applies from the next game start.", onChange: async (v) => { await rpc.setScaleReady(profile, v); refresh(); } })),
+      h(Toggle, { on: ready, title: "Scale-ready launch", sub: "Provision the Scaling Engine at launch so Governor can lower render scale live without relaunching. Applies from the next game start.", onChange: async (v) => { try { await rpc.setScaleReady(profile, v); } catch (e) {} refresh(); } })),
     h(Note, { quiet: true }, "Governor only uses 90% or 80% render scale, and only after FG alone is not enough."));
 }
 
 function HudPage({ back, s, profile, refresh }) {
   const hud = s.hud || { enabled: false, preset: "standard", position: "top-right" };
-  const set = async (c) => { await rpc.setHud(profile, c.enabled, c.preset, c.position); refresh(); };
+  const set = async (c) => { try { await rpc.setHud(profile, c.enabled, c.preset, c.position, c.style); } catch (e) {} refresh(); };
+  const style = hud.style || "rings";
   return h(Page, { title: "In-game overlay", onBack: back },
-    h("div", { className: "list", style: { marginTop: 0 } }, h(Toggle, { on: hud.enabled, title: "Show overlay in game", sub: "FPS, frametime, multiplier, scale and TDP.", onChange: (v) => set({ enabled: v }) })),
+    h("div", { className: "list", style: { marginTop: 0 } }, h(Toggle, { on: hud.enabled, title: "Show overlay in game", sub: "FPS, TDP and Frame OS payoff — as rings or a text line.", onChange: (v) => set({ enabled: v }) })),
+    h("div", { className: "sec" }, "STYLE"),
+    h(Seg, { value: style, options: [["rings", "Rings"], ["text", "Text"]], onChange: (v) => set({ style: v }) }),
+    style === "rings" ? h(Note, { quiet: true }, "Rings show 20-second averages and refresh every 20 s. They need one game restart after you first pick them; until then the text line is shown.") : null,
     h("div", { className: "sec" }, "DETAIL"),
     h(Seg, { value: hud.preset, options: [["minimal", "Minimal"], ["standard", "Standard"], ["detailed", "Detailed"]], onChange: (v) => set({ preset: v }) }),
     h("div", { className: "sec" }, "POSITION"),
@@ -458,10 +528,78 @@ function AdvancedPage({ back, s, insp, launch, go, profile }) {
     h("div", { className: "sec" }, "RECORD A LOG"),
     h(LogRecorder, { profile }),
     h("div", { className: "list" }, h(Row, { icon: "cog", title: "Journal", sub: "Undo recent changes", onClick: () => go("journal") })),
+    h(ForgetModel, { profile }),
+    h(FrameOsPanel, { s, profile }),
     h("div", { className: "sec" }, "INSPECTOR"),
     h("div", { className: "cols" }, col("SAVED", sv), col("EFFECTIVE", ef), col("GOVERNOR", s && s.active_point ? { point: POINT_LABEL(s.active_point) } : {}, true), col("ACTUAL", ac)));
 }
 
+
+// review 1.1.x: a stale memory (new driver, game patch) could only be outlived, never reset.  Two taps,
+// and the game is named before the reset (a shared profile used to reset its last game silently).
+const steamName = (id) => { try { const o = id && window.appStore && window.appStore.GetAppOverviewByAppID(Number(id)); return (o && o.display_name) || ""; } catch (e) { return ""; } };
+const gameLabel = (g) => (g.name || steamName(g.app_id) || (g.app_id ? "Steam app " + g.app_id : "games on profile " + g.profile));
+function ForgetModel({ profile }) {
+  const [step, setStep] = useState("idle"); // idle -> confirm -> done
+  const [msg, setMsg] = useState("");
+  const [target, setTarget] = useState(undefined); // undefined: loading, null: no game identified
+  useEffect(() => { let on = true; setTarget(undefined); rpc.modelTarget(profile || "").then((r) => { if (on) setTarget((r && r.target) || null); }).catch(() => { if (on) setTarget(null); }); return () => { on = false; }; }, [profile, step === "done"]);
+  const forget = async () => {
+    setStep("busy");
+    try { const r = await rpc.forgetModel(profile || ""); setMsg(r && r.success ? (r.forgotten ? "Forgotten. The next start searches from scratch." : "Nothing was learned for this game yet.") : r && r.error === "no-game-identified" ? "GFG cannot tell which game to reset. Play the game under this profile once, then try again." : "Could not reset: " + ((r && r.error) || "unknown error")); } catch (e) { setMsg("Could not reset."); }
+    setStep("done");
+  };
+  const name = target ? gameLabel(target) : "";
+  return h("div", null,
+    h("div", { className: "list" }, step === "confirm" && target
+      ? h(Row, { icon: "stop", title: "Tap again to forget", sub: "Watts, points and failures it remembered for " + name, onClick: forget })
+      : h(Row, { icon: "cog", title: "Reset what GFG learned for " + (target ? name : "this game"),
+        sub: step === "busy" ? "Working…" : target === undefined ? "Checking…" : target ? "Starts the next search from scratch" : "No game identified yet: play one under this profile first",
+        onClick: step === "busy" || !target ? undefined : () => { setMsg(""); setStep("confirm"); } })),
+    step === "confirm" && target ? h(Note, { quiet: true }, "This cannot be undone. Your saved profile is not touched.") : null,
+    step === "done" && msg ? h(Note, { quiet: true }, msg) : null);
+}
+
+// GFG Frame OS (development): observe/shadow only measure; act changes frame timing and watts.
+function FrameOsPanel({ s, profile }) {
+  const fo = (s && s.frame_os) || {};
+  const [mode, setMode] = useState(fo.mode || "off");
+  useEffect(() => { if (fo.mode) setMode(fo.mode); }, [fo.mode]);
+  const t = fo.telemetry || {};
+  const d = fo.decision || {};
+  const [unlock, setUnlock] = useState("idle"); // idle -> confirm -> busy
+  const [unlocked, setUnlocked] = useState(!!fo.act_unlocked);
+  useEffect(() => { setUnlocked(!!fo.act_unlocked); }, [fo.act_unlocked]);
+  const toggleAct = async (enabled) => {
+    setUnlock("busy");
+    try { const r = await rpc.setFrameOsActUnlock(enabled); if (r && r.success) setUnlocked(!!r.act_unlocked); } catch (e) {}
+    if (!enabled && mode === "act") setMode("observe");
+    setUnlock("idle");
+  };
+  return h("div", null,
+    h("div", { className: "sec" }, "FRAME OS (EXPERIMENTAL)"),
+    h(Seg, { value: mode, options: [["off", "Off"], ["observe", "Observe"], ["shadow", "Shadow"]].concat(unlocked ? [["act", "Act"]] : []),
+             onChange: async (v) => { const prev = mode; setMode(v); let ok = false; try { const r = await rpc.setFrameOs(profile, v); ok = !!(r && r.success); } catch (e) {} if (!ok) setMode(prev); } }),
+    h("div", { className: "list" }, unlocked
+      ? h(Row, { icon: "stop", title: "Lock Act", sub: "Back to measuring only", onClick: unlock === "busy" ? undefined : () => toggleAct(false) })
+      : unlock === "confirm"
+        ? h(Row, { icon: "stop", title: "Tap again to unlock Act", sub: "Act changes frame timing and power in the game", onClick: () => toggleAct(true) })
+        : h(Row, { icon: "cog", title: "Unlock Act (experimental)", sub: "More real frames in action, savings in pauses", onClick: unlock === "busy" ? undefined : () => setUnlock("confirm") })),
+    h(Note, { quiet: true }, unlocked
+      ? "Observe and Shadow only measure. Act changes frame timing and power. Applies from the next game start."
+      : "Frame OS is diagnostic only until Deck validation. Applies from the next game start."),
+    mode !== "off" && fo.enabled && fo.telemetry && !fo.telemetry.live && fo.layer_installed !== false
+      ? h(Note, null, "Frame OS is not active in this game yet: it loads at game start. Restart the game.")
+      : null,
+    mode !== "off" && fo.layer_installed === false
+      ? h(Note, null, fo.layer_error ? "Frame OS layer not installed: " + fo.layer_error + "." : "Frame OS layer not installed yet.")
+      : null,
+    fo.enabled ? h("div", { className: "card" }, h("div", { className: "kv" },
+      h("span", null, "Decision"), h("b", null, (d.level || "–") + (fo.acting ? "" : " (would)") + " · " + num(d.real_hz, 0) + " real"),
+      h("span", null, "Freshness"), h("b", null, t.freshness_ms != null ? num(t.freshness_ms, 1) + " ms" : "–"),
+      h("span", null, "Present interval"), h("b", null, t.present_interval_p50_ms != null ? num(t.present_interval_p50_ms, 1) + " / " + num(t.present_interval_p95_ms, 1) + " ms" : "–"),
+      h("span", null, "Layer"), h("b", null, t.frames ? (fo.acknowledged ? "in sync" : "updating") + " · " + t.frames + " frames" : "not loaded"))) : null);
+}
 
 // Generic schema-driven editor: every profile setting stays reachable, validated server-side.
 function AllSettingsPage({ back, cfg, patch }) {

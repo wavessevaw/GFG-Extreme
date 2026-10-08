@@ -78,6 +78,20 @@ class GovernorServiceTests(unittest.TestCase):
             tel = {"real": {"median": 14}, "output": {"median": 40, "p5": 30}}
             self.assertIsNone(svc._delivering_target(tel))
 
+    def test_effort_status_carries_a_reason(self):
+        # review 1.1.x: status effort.reason says why the rating is what it is.
+        with tempfile.TemporaryDirectory() as temp:
+            svc = self.make_service(Path(temp))
+            clock = {"t": 0.0}
+            svc.observer.time_fn = lambda: clock["t"]
+            svc._status.update({"enabled": True, "state": "LOCKED", "diagnosis": {"thermal": "ok"},
+                                "telemetry": {"snapshot": {}, "summary": {"real": {"median": 30}, "output": {"median": 90}}}})
+            svc._point = {"key": "30x3", "multiplier": 3, "render_scale_pct": 100}
+            while clock["t"] <= svc._effort.INITIAL_DWELL:
+                svc._update_effort()
+                clock["t"] += 1.0
+            self.assertEqual(svc.get_status()["effort"], {"level": "hard", "assessing": False, "reason": "x3 required"})
+
     def test_hud_and_effort_read_service_telemetry_shape(self):
         from gfg_plugin.governor_hud import status_line
         summary = {"real": {"median": 45}, "output": {"median": 90}, "latest": {"effective_multiplier": 2.0}}

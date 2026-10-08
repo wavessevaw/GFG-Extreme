@@ -9,6 +9,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -125,6 +126,32 @@ class RuntimeBase(unittest.TestCase):
     def tearDown(self):
         self.assertEqual(sha(self.cfg.config_file_path), self.saved_hash, "Saved config was modified")
 
+    def test_ring_hud_falls_back_to_text_until_the_layer_reports(self):
+        import time as _t
+        from gfg_plugin import hud_rings
+        self.svc.ring_hud_path = self.cfg.config_dir / "hud.raw"
+        self.svc.ring_hud_extent = self.cfg.config_dir / "hud.extent"
+        self.svc.set_hud("game", True, "standard", "top-left")
+        self.assertTrue(self.svc.ring_hud_marker_path.exists(), "the launcher adds the HUD layer")
+        self.step()
+        self.assertFalse(self.svc.ring_hud_path.exists(), "no layer report yet: text line, no bitmap")
+        self.svc._launch = {"running": True, "launch_key": [1, 2, _t.time() - 30]}
+        self.svc.ring_hud_extent.write_text("1280 800 0\n")   # HDR / unsupported swapchain: passed through
+        self.svc._sync_hud("game")
+        self.assertFalse(self.svc.ring_hud_path.exists(), "layer draws nothing here: keep the text line")
+        self.svc.ring_hud_extent.write_text("1280 800 1\n")
+        self.svc._sync_hud("game")
+        raw = self.svc.ring_hud_path.read_bytes()
+        magic, version, w, h, corner, margin, seq, _ = hud_rings.HEADER.unpack_from(raw)
+        self.assertEqual((magic, version, corner), (hud_rings.MAGIC, 1, 0))
+        self.assertEqual(len(raw), hud_rings.HEADER.size + w * h * 4)
+        self.svc._sync_hud("game")                 # within 20 s: not redrawn
+        self.assertEqual(hud_rings.HEADER.unpack_from(self.svc.ring_hud_path.read_bytes())[6], seq)
+        self.svc.set_hud("game", True, None, None, "text")
+        self.svc._sync_hud("game")
+        self.assertEqual(hud_rings.HEADER.unpack_from(self.svc.ring_hud_path.read_bytes())[2], 0, "rings cleared")
+        self.assertFalse(self.svc.ring_hud_marker_path.exists())
+
     def test_hud_set_publishes_and_removes_active_config(self):
         from gfg_plugin.governor_hud import active_config_path, status_path
         active = active_config_path(self.cfg.config_dir)
@@ -136,7 +163,8 @@ class RuntimeBase(unittest.TestCase):
         text = active.read_text()
         self.assertIn("position=top-right", text)
         self.assertIn("exec=cat " + str(status_path(self.cfg.config_dir)), text)
-        self.assertEqual(self.svc.get_status("game")["hud"], {"enabled": True, "preset": "detailed", "position": "top-right"})
+        self.assertEqual(self.svc.get_status("game")["hud"],
+                         {"enabled": True, "preset": "detailed", "position": "top-right", "style": "rings"})
         self.step()
         self.assertIn("sc100", status_path(self.cfg.config_dir).read_text())
         self.svc.set_hud("game", False)
@@ -646,6 +674,23 @@ class ReleaseTests(RuntimeBase):
         self.assertEqual(st["reason"], "new-game-session")
         self.assertIsNone(st["active_point"])
 
+    def test_panel_refresh_rate_caps_the_target_and_invalidates_point(self):
+        self.display.read_current_refresh_hz = lambda: None          # not readable: nothing changes
+        self.apply_45x2()
+        self.assertEqual(self.svc.get_status()["target_output_fps"], 90)
+        self.display.read_current_refresh_hz = lambda: 90
+        self.svc._last_display_poll = -1e9
+        st = self.step()
+        self.assertEqual(st["target_output_fps"], 90)
+        self.assertIsNotNone(st["active_point"])
+        self.display.read_current_refresh_hz = lambda: 60          # the player set the panel to 60 Hz
+        self.svc._last_display_poll = -1e9
+        st = self.step()
+        self.assertEqual(st["target_output_fps"], 60)
+        self.assertEqual(st["device"]["target_reason"], "panel-running-60hz")
+        self.assertEqual(st["reason"], "display-mode-changed")
+        self.assertIsNone(st["active_point"])
+
     def test_dock_switch_invalidates_point(self):
         self.apply_45x2()
         self.display.external = True
@@ -1024,6 +1069,170 @@ class BudgetRuntimeTests(RuntimeBase):
             self.step(0.1)
         self.assertEqual(self.svc.power.writes[-1], tdp)
 
+    # -- review 1.1.x backlog
+    def test_mode_switch_keeps_the_floor_back_off(self):
+        self.inspector.info["app_id"] = "292030"
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.windows(2, 30, 90)                 # 10 W holds -> 9 W
+        self.windows(1, 25, 75)                 # 9 W fails -> back to 10 W
+        self.step(0.1)                          # drained into game memory
+        stored = self.svc.game_models.floor_failures(self.svc._floor_key("game", 90))
+        self.assertEqual(stored["30x3"][0], 9.0)
+        self.assertEqual(stored["30x3"][2], 1)
+        self.assertTrue(self.svc.set_mode("game", "balanced")["success"])
+        self.step()
+        self.feed(20, 45, 90)
+        self.step()
+        b = self.svc._budget
+        self.assertIsNotNone(b)
+        self.assertEqual(b.flavor, "balanced")
+        idx = next(i for i, p in enumerate(b.points) if p.key == "30x3")
+        tdp, when, count = b.floor_failures[idx]
+        self.assertEqual((tdp, count), (9.0, 1))
+        self.assertLessEqual(when, self.t["now"], "the original back-off keeps running")
+
+    def test_hot_states_are_not_remembered(self):
+        svc = self.svc
+        svc._applied_tdp = 9.0
+        point = types.SimpleNamespace(key="30x3", degraded=False)
+        budget = types.SimpleNamespace(phase="locked", recover=None, cap_ignored=False, exhausted=False,
+                                       verifying=None, locked_since=0.0, tdp_control=True, tdp=9.0,
+                                       heat_limited=True)
+        key = svc._game_key("game", 90)
+        svc._remember_if_held("game", 90, budget, point, 1000.0)
+        self.assertIsNone(svc.game_models.get(key), "heat held quality back: not what the game needs")
+        budget.heat_limited = False
+        svc._status["diagnosis"] = {"thermal": "heating"}
+        svc._remember_if_held("game", 90, budget, point, 1000.0)
+        self.assertIsNone(svc.game_models.get(key))
+        svc._status["diagnosis"] = {"thermal": "ok"}
+        svc._remember_if_held("game", 90, budget, point, 1000.0)
+        self.assertEqual(svc.game_models.get(key)["point"], "30x3")
+
+    def test_guard_hold_without_power_shortage_is_logged(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        b = self.svc._budget
+        b.phase, b.probe, b.locked_since = "locked", None, self.t["now"]
+        self.svc.power.values["draw_w"] = 4.0   # far under the 10 W cap: not power-bound
+        self.windows(2, 27, 81)
+        self.assertTrue(b.last_reason.startswith("guard-not-power-bound"))
+        events = [json.loads(l) for l in Path(self.svc.events_path).read_text().splitlines()]
+        held = [e for e in events if e.get("event") == "budget-guard-not-power-bound"]
+        self.assertEqual(len(held), 1)
+        self.assertEqual((held[0]["draw_w"], held[0]["cap_w"]), (4.0, 10.0))
+        self.assertTrue(held[0]["verdict"])
+        self.windows(2, 27, 81)                 # in the guard every window holds again, same reason
+        events = [json.loads(l) for l in Path(self.svc.events_path).read_text().splitlines()]
+        held = [e for e in events if e.get("event") == "budget-guard-not-power-bound"]
+        self.assertEqual(len(held), b.not_power_bound_holds)
+        self.assertEqual(held[-1]["count"], 3)
+
+    def test_mixed_mode_session_is_filed_as_mixed(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        for _ in range(40):
+            self.feed(2, 30, 90)
+            self.step(1.0)
+        self.svc.set_mode("game", "balanced")
+        for _ in range(40):
+            self.feed(2, 45, 90)
+            self.step(1.0)
+        self.inspector.info["running"] = False
+        self.svc._launch_polled = -1e9
+        last = self.step(6.0)["last_session"]
+        self.assertEqual(last["mode"], "mixed")
+        self.assertEqual(set(last["modes"]), {"budget", "balanced"})
+
+    def test_forget_game_model_resets_this_game_only(self):
+        svc = self.svc
+        svc._settings["last_session"] = {"profile": "game", "app_id": "292030"}
+        from gfg_plugin.game_model import context_key, floor_key
+        mine = context_key("game", 90, "budget", "292030")
+        other = context_key("other", 90, "budget", "570")
+        svc.game_models.record(mine, "30x3", 9.0)
+        svc.game_models.record(context_key("game", 60, "balanced", "292030"), "30x2", 12.0)
+        svc.game_models.record_floor_failure(floor_key("game", 90, "292030"), "30x3", 8.0)
+        svc.game_models.record(other, "45x2", 11.0)
+        r = svc.forget_game_model("game")
+        self.assertTrue(r["success"])
+        self.assertEqual((r["game"], r["forgotten"]), ("app:292030", 3))
+        self.assertIsNone(svc.game_models.get(mine))
+        self.assertIsNotNone(svc.game_models.get(other))
+        self.assertFalse(svc.forget_game_model("")["success"])
+
+    def test_forget_game_model_names_the_game_or_refuses(self):
+        svc = self.svc
+        from gfg_plugin.game_model import context_key
+        svc._settings.pop("last_session", None)
+        self.assertIsNone(svc.game_model_target("Default"))
+        r = svc.forget_game_model("Default")
+        self.assertEqual((r["success"], r["error"]), (False, "no-game-identified"), "never a silent success")
+        # The shared Default profile: the last game played under it, named by AppID before the reset.
+        svc._settings["last_session"] = {"profile": "Default", "app_id": "570"}
+        self.assertEqual(svc.game_model_target("Default"), {"profile": "Default", "app_id": "570", "game": "app:570"})
+        self.assertIsNone(svc.game_model_target("other"), "another profile's last game is not this one's")
+        # No AppID: only what was stored under the profile itself, and only when there is something.
+        svc.game_models.record(context_key("other", 90, "budget"), "30x3", 9.0)
+        self.assertEqual(svc.game_model_target("other"), {"profile": "other", "app_id": "", "game": "other"})
+        self.assertEqual(svc.forget_game_model("other")["forgotten"], 1)
+        self.assertIsNone(svc.game_model_target("other"))
+
+    def test_forget_game_model_runs_on_the_event_loop(self):
+        import asyncio
+        from unittest import mock
+        from gfg_plugin import plugin as plugin_module
+        fake = mock.Mock()
+        fake.governor_service.forget_game_model.return_value = {"success": True}
+        with mock.patch.object(asyncio, "to_thread", side_effect=AssertionError("worker thread")):
+            r = asyncio.run(plugin_module.Plugin.forget_governor_game_model(fake, "game"))
+        self.assertEqual(r, {"success": True})
+        fake.governor_service.forget_game_model.assert_called_once_with("game")
+
+    def test_queued_failures_survive_a_mode_switch_and_game_exit(self):
+        from gfg_plugin.game_model import context_key, floor_key
+        self.inspector.info["app_id"] = "292030"
+        for leave in ("mode", "relaunch"):
+            self.svc.game_models.forget_game("app:292030")
+            self.svc.set_mode("game", "budget")
+            self.inspector.info["running"] = True
+            self.svc._launch_polled = -1e9
+            self.feed(20, 45, 90)
+            self.step()
+            b = self.svc._budget
+            self.assertIsNotNone(b, leave)
+            b.new_failures.append(("33x2.75", 10.0))             # queued, not yet drained
+            b.new_floor_failures.append(("30x3", 8.0, 1))
+            if leave == "mode":
+                self.svc.set_mode("game", "quality")
+            else:                                                 # the game exits, the next one starts
+                self.inspector.info["launch_key"] = [7, 7, 7]
+                self.svc._launch_polled = -1e9
+            self.step()
+            self.assertIsNone(self.svc._budget, leave)
+            self.assertIn("33x2.75", self.svc.game_models.failures(context_key("game", 90, "budget", "292030")),
+                          f"{leave}: stored under the mode it failed in")
+            self.assertIn("30x3", self.svc.game_models.floor_failures(floor_key("game", 90, "292030")), leave)
+
+    def test_forget_game_model_clears_the_live_controller(self):
+        self.inspector.info["app_id"] = "292030"
+        self.feed(20, 45, 90)
+        self.step()
+        b = self.svc._budget
+        b.known_failures["33x2.75"] = (10.0, 0.0)
+        b.floor_failures[b.idx] = (9.0, 0.0, 2)
+        self.svc._active_profile = "game"
+        r = self.svc.forget_game_model("game")
+        self.assertEqual(r["game"], "app:292030")
+        self.assertEqual((b.known_failures, b.floor_failures), ({}, {}))
+
     def test_mode_switch_to_quality_releases_budget_point(self):
         self.feed(20, 45, 90)
         self.step()
@@ -1085,3 +1294,174 @@ class PointStateResetTests(RuntimeBase):
         self.assertTrue(asyncio.run(self.svc._rediscover_power()))
         power.state.available = False
         self.assertFalse(asyncio.run(self.svc._rediscover_power()), "at most every 30 s")
+
+
+class FrameOsIntegrationTests(BudgetRuntimeTests):
+    """Development feature: off by default, marker for the launcher, TDP offset only in act mode."""
+
+    def test_off_by_default_and_marker_follows_the_mode(self):
+        self.assertEqual(self.svc._frame_os_mode("game"), "off")
+        self.assertFalse(self.svc.frame_os_marker_path.exists())
+        self.assertTrue(self.svc.set_frame_os("game", "observe")["success"])
+        self.assertTrue(self.svc.frame_os_marker_path.exists())
+        self.assertFalse(self.svc.set_frame_os("game", "turbo")["success"])
+        self.svc.set_frame_os("game", "off")
+        self.assertFalse(self.svc.frame_os_marker_path.exists())
+
+    def test_turning_frame_os_on_stages_the_bundled_layer(self):
+        from gfg_plugin.frame_os import layer_install
+        base = self.svc.frame_os_marker_path.parent
+        self.svc.frame_os_layer_source = base / "bundle"
+        self.svc.frame_os_layer_dir = base / "staged"
+        self.svc.set_frame_os("game", "observe")             # a build without the layer
+        frame_os = self.svc.get_status("game")["frame_os"]
+        self.assertFalse(frame_os["layer_installed"])
+        self.assertIn("does not include", frame_os["layer_error"])
+        self.svc.frame_os_layer_source.mkdir(parents=True)
+        (self.svc.frame_os_layer_source / layer_install.LIBRARY).write_bytes(b"ELF")
+        (self.svc.frame_os_layer_source / layer_install.MANIFEST).write_text('{"layer": {"name": "VK_LAYER_GFG_pacer"}}')
+        self.svc.frame_os_registry_dir = base / "registry"
+        self.svc.set_frame_os("game", "shadow")
+        frame_os = self.svc.get_status("game")["frame_os"]
+        self.assertTrue(frame_os["layer_installed"])
+        self.assertIsNone(frame_os["layer_error"])
+        self.assertTrue((base / "registry" / layer_install.REGISTERED_MANIFEST).is_file())
+
+    def test_runner_follows_the_live_budget_point(self):
+        self.svc.set_frame_os("game", "observe")
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        runner = self.svc.frame_os
+        self.assertTrue(runner.enabled)
+        self.assertEqual((runner.policy.output_hz, runner.policy.calm_real_hz), (90.0, 30.0))
+        self.assertEqual(runner.tdp_offset_w, 0.0, "observe never moves watts")
+        self.assertEqual(self.svc.get_status("game")["frame_os"]["mode"], "observe")
+
+    def test_act_requires_explicit_developer_unlock(self):
+        with patch.dict(os.environ, {"GFG_FRAME_OS_EXPERIMENTAL_ACT": "0"}):
+            refused = self.svc.set_frame_os("game", "act")
+            self.assertFalse(refused["success"])
+            self.assertEqual(self.svc._frame_os_mode("game"), "off")
+            self.assertFalse(self.svc.frame_os_marker_path.exists())
+            self.assertFalse(self.svc.get_status("game")["frame_os"]["act_unlocked"])
+
+            # A prior build could have persisted Act; never implicitly apply it.
+            self.svc._settings.setdefault("profiles", {}).setdefault("game", {})["frame_os"] = "act"
+            self.assertEqual(self.svc._frame_os_mode("game"), "off")
+            self.svc._sync_frame_os_marker()
+            self.assertFalse(self.svc.frame_os_marker_path.exists())
+
+    def test_act_unlock_setting_persists_without_env(self):
+        with patch.dict(os.environ, {"GFG_FRAME_OS_EXPERIMENTAL_ACT": "0"}):
+            self.assertFalse(self.svc.set_frame_os("game", "act")["success"])
+            self.assertTrue(self.svc.set_frame_os_act_unlock(True)["act_unlocked"])
+            self.assertTrue(self.svc.set_frame_os("game", "act")["success"])
+            self.assertTrue(self.svc.frame_os_marker_path.exists())
+            self.assertFalse(self.svc.set_frame_os_act_unlock(False)["act_unlocked"])
+            self.assertEqual(self.svc._frame_os_mode("game"), "observe", "locking means back to measuring")
+            self.svc.set_frame_os_act_unlock(True)
+            self.assertEqual(self.svc._frame_os_mode("game"), "observe", "unlocking never re-arms Act silently")
+
+    def _act_live_point(self):
+        self.svc.set_frame_os_act_unlock(True)
+        self.assertTrue(self.svc.set_frame_os("game", "act")["success"])
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertEqual(self.svc._point["key"], "30x3")
+
+    def test_act_injects_adaptive_overlay_only_while_the_pacer_is_live(self):
+        self._act_live_point()
+        self.assertIsNone(self.svc._injection, "no pacer telemetry yet: the renderer keeps the fixed ratio")
+        self.svc.frame_os.last = {"telemetry": {"live": True}}
+        self.feed(16, 30, 90)
+        st = self.step()
+        prof = self.overlay_profile()
+        self.assertEqual((prof["adaptive"], prof["base_fps_cap"], prof["target_fps"]), (True, 45, 90))
+        self.assertEqual(prof["adaptive_max_multiplier"], 3, "default capacity x3: rest stays at 30 real")
+        self.assertFalse(prof["adaptive_stable_cadence"])
+        self.assertEqual((st["state"], st["reason"]), ("LOCKED", "frame-os-act-holds-point"))
+        writes = list(self.svc.power.writes)
+        self.windows(3, 22, 90)              # rest cadence: never judged as a failing point
+        self.assertEqual(self.svc._point["key"], "30x3")
+        self.assertEqual(self.svc.power.writes[-1], writes[-1])
+        # Act off: the next step takes the adaptive overlay back to the plain point
+        self.svc.set_frame_os("game", "observe")
+        self.feed(16, 30, 90)
+        self.step()
+        prof = self.overlay_profile()
+        self.assertEqual((prof["adaptive"], prof["base_fps_cap"], prof["multiplier"]), (False, 30, 3))
+        self.assertIsNone(self.svc._injection)
+
+    def test_emergency_watts_are_written_without_frame_os(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        budget = self.svc._budget
+        budget.tdp = budget.normal_max_w + 3.0          # guard-emergency-power above the normal cap
+        self.svc._applied_tdp = None
+        asyncio.run(self.svc._apply_budget_tdp("game"))
+        self.assertEqual(self.svc.power.writes[-1], budget.normal_max_w + 3.0)
+
+    def test_stale_telemetry_takes_the_act_overlay_back(self):
+        self._act_live_point()
+        self.svc.frame_os.last = {"telemetry": {"live": True}}
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNotNone(self.svc._injection)
+        asyncio.run(self.svc._drop_injection("game", "telemetry-stale"))
+        self.assertIsNone(self.svc._injection)
+        self.assertFalse(self.svc.frame_os.executor_active)
+        self.assertFalse(self.overlay_profile()["adaptive"])
+
+    def test_act_yields_to_the_governor_when_output_starves(self):
+        self._act_live_point()
+        self.svc.frame_os.last = {"telemetry": {"live": True}}
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNotNone(self.svc._injection)
+        self.assertTrue(self.svc.frame_os.executor_active)
+        self.feed(20, 20, 60)                     # output far below target
+        self.step()
+        self.assertIsNone(self.svc._injection)
+        self.assertFalse(self.svc.frame_os.executor_active)
+        self.assertFalse(self.overlay_profile()["adaptive"])
+        self.feed(16, 30, 90)                     # recovered, but the yield holds injection off
+        self.step()
+        self.assertIsNone(self.svc._injection, "no flapping right after a yield")
+
+    def test_steam_menu_pauses_measuring_and_drops_its_samples(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        writes = list(self.svc.power.writes)
+        self.svc.observer.game_focused = False
+        self.feed(20, 30, 30)                     # generation suspended under the menu
+        st = self.step()
+        self.assertEqual((st["state"], st["reason"]), ("PAUSED", "steam-menu-open"))
+        self.assertEqual(self.svc.power.writes, writes, "nothing changes while the menu is open")
+        self.svc.observer.game_focused = True
+        self.step()
+        self.assertGreaterEqual(self.svc._evaluation_after_seq, self.svc.observer.sample_seq,
+                                "menu samples are never judged")
+        self.assertEqual(self.svc._point["key"], "30x3")
+
+    def test_act_offset_is_applied_on_top_of_the_budget_cap(self):
+        with patch.dict(os.environ, {"GFG_FRAME_OS_EXPERIMENTAL_ACT": "1"}):
+            self.assertTrue(self.svc.set_frame_os("game", "act")["success"])
+            self.assertTrue(self.svc.get_status("game")["frame_os"]["act_unlocked"])
+            self.feed(20, 45, 90)
+            self.step()
+            self.feed(16, 30, 90)
+            self.step()
+            runner = self.svc.frame_os
+            runner.last = {"decision": {"tdp_w": runner.policy.broker.calm_w + 4.0}}
+            runner.executor_active = True
+            self.svc._applied_tdp = None
+            asyncio.run(self.svc._apply_budget_tdp("game"))
+            self.assertEqual(self.svc.power.writes[-1], min(self.svc._budget.normal_max_w, self.svc._budget.tdp + 4.0))

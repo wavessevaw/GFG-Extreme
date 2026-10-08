@@ -34,6 +34,15 @@ class DeviceTargetTests(unittest.TestCase):
         self.assertEqual(target_for("unknown", external=False, valid_rates=[40, 60])["target"], 60)
         self.assertEqual(target_for("unknown", external=False)["target"], 60)
 
+    def test_target_capped_at_the_panels_actual_refresh_rate(self):
+        self.assertEqual(target_for("oled", external=False, current_hz=60),
+                         {"target": 60, "mode": "oled", "reason": "panel-running-60hz"})
+        self.assertEqual(target_for("oled", external=False, current_hz=90)["target"], 90)
+        self.assertEqual(target_for("oled", external=False, current_hz=None)["target"], 90, "unreadable: unchanged")
+        self.assertEqual(target_for("oled", external=False, current_hz=0)["target"], 90)
+        self.assertEqual(target_for("lcd", external=False, current_hz=60)["target"], 60)
+        self.assertEqual(target_for("oled", external=True, current_hz=50)["target"], 60, "the dock keeps its own contract")
+
     def test_candidates_follow_target_and_never_offer_x4_x5(self):
         for target, keys in (
             (90, ["native90", "72x1.25", "60x1.5", "51x1.75", "45x2", "40x2.25", "36x2.5", "45x2-s90", "45x2-s80", "33x2.75", "30x3", "30x3-s90", "30x3-s80"]),

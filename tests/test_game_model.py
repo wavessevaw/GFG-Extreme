@@ -2,7 +2,7 @@ import sys, tempfile, unittest
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "py_modules"))
-from gfg_plugin.game_model import GameModelStore, context_key, MAX_AGE_S  # noqa: E402
+from gfg_plugin.game_model import GameModelStore, context_key, floor_key, game_prefix, MAX_AGE_S  # noqa: E402
 from gfg_plugin.governor_core import BudgetController  # noqa: E402
 sys.path.insert(0, str(ROOT / "tests"))
 from test_governor_budget import Game, run  # noqa: E402
@@ -14,7 +14,7 @@ class StoreTests(unittest.TestCase):
             now = {"t": 1000.0}
             path = Path(t) / "models.json"
             store = GameModelStore(path, clock=lambda: now["t"])
-            key = context_key("Elden Ring", 90, "budget")
+            key = context_key("Sample Game", 90, "budget")
             self.assertIsNone(store.get(key))
             self.assertTrue(store.record(key, "45x2", 9.0))
             self.assertFalse(store.record(key, "45x2", 9.0), "rate-limited")
@@ -90,6 +90,80 @@ class FailureTtlAcrossReloadTests(unittest.TestCase):
             GameModelStore(path, clock=lambda: wall["t"]).record_failure(key, "33x2.75", 10.0)
             wall["t"] += GameModelStore.FAILURE_TTL_S + 1
             self.assertEqual(GameModelStore(path, clock=lambda: wall["t"]).failures(key), {})
+
+
+class FloorMemoryTests(unittest.TestCase):
+    """review 1.1.x: a rebuilt controller (mode switch, reload) repeated a just-failed lower level."""
+
+    def test_floor_key_is_shared_by_modes_and_forget_covers_every_target(self):
+        self.assertEqual(floor_key("mako", 90, "292030"), "app:292030|90")
+        self.assertEqual(floor_key("mako", 60), "mako|60")
+        self.assertEqual(game_prefix("mako", "292030"), "app:292030")
+
+    def test_reload_keeps_the_remaining_back_off(self):
+        with tempfile.TemporaryDirectory() as t:
+            wall = {"t": 50_000.0}
+            path = Path(t) / "m.json"
+            key = floor_key("mako", 90, "292030")
+            first = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
+            first.tdp = 9.0
+            first._note_floor_failure(0.0)
+            first._note_floor_failure(1.0)                   # second failure at 9 W: back-off 240 s
+            store = GameModelStore(path, clock=lambda: wall["t"])
+            for point, tdp, count in first.new_floor_failures:
+                store.record_floor_failure(key, point, tdp, count)
+            wall["t"] += 100
+            failures = GameModelStore(path, clock=lambda: wall["t"]).floor_failures(key)   # plugin reload
+            self.assertEqual(failures, {"30x3": (9.0, 100.0, 2)})
+            c = BudgetController(target_output_fps=90, now=7.0, min_tdp_w=3, max_tdp_w=20)
+            c.load_floor_failures(failures, 7.0)
+            self.assertEqual(c.point.key, "30x3")
+            self.assertTrue(c._floor_blocked(9.0, 7.0), "not anchored at the reload: 140 s are left")
+            self.assertTrue(c._floor_blocked(9.0, 7.0 + 139))
+            self.assertFalse(c._floor_blocked(9.0, 7.0 + 141), "expired at the original 240 s")
+            c.tdp = 10.0
+            self.assertFalse(c._can_lower(), "the 9 W probe is not repeated by the new controller")
+
+    def test_expiry_clear_and_bounds(self):
+        with tempfile.TemporaryDirectory() as t:
+            wall = {"t": 50_000.0}
+            path = Path(t) / "m.json"
+            store = GameModelStore(path, clock=lambda: wall["t"])
+            key = floor_key("mako", 90)
+            self.assertTrue(store.record_floor_failure(key, "30x3", 9.0, 5))
+            self.assertFalse(store.record_floor_failure(key, "45x2", 50.0, 1), "absurd TDP")
+            wall["t"] += GameModelStore.FLOOR_BACKOFF_MAX_S - 1
+            self.assertIn("30x3", GameModelStore(path, clock=lambda: wall["t"]).floor_failures(key))
+            wall["t"] += 2
+            self.assertEqual(store.floor_failures(key), {}, "never longer than FLOOR_BACKOFF_MAX_S")
+            store.record_floor_failure(key, "30x3", 8.0, 1)
+            self.assertTrue(store.record_floor_failure(key, "30x3", None))   # the level held: cleared
+            self.assertEqual(GameModelStore(path, clock=lambda: wall["t"]).floor_failures(key), {})
+
+    def test_a_level_that_holds_queues_a_clear(self):
+        c = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
+        c.tdp = 9.0
+        c._note_floor_failure(0.0)
+        c.phase, c.probe, c.last_good, c.good = "probe", "down", (c.idx, 10.0), 1
+        c._healthy(10.0)
+        self.assertEqual(c.new_floor_failures[-1], ("30x3", None, 0))
+
+    def test_forget_game_drops_every_mode_and_target_of_that_game_only(self):
+        with tempfile.TemporaryDirectory() as t:
+            path = Path(t) / "m.json"
+            store = GameModelStore(path)
+            for key in (context_key("mako", 90, "budget", "1"), context_key("mako", 60, "balanced", "1"),
+                        context_key("mako", 90, "budget", "12"), context_key("mako", 90, "budget")):
+                store.record(key, "30x3", 9.0)
+            store.record_floor_failure(floor_key("mako", 90, "1"), "30x3", 9.0)
+            self.assertEqual(store.forget_game(game_prefix("mako", "1")), 3)
+            again = GameModelStore(path)
+            self.assertIsNone(again.get(context_key("mako", 90, "budget", "1")))
+            self.assertIsNone(again.get(context_key("mako", 60, "balanced", "1")))
+            self.assertEqual(again.floor_failures(floor_key("mako", 90, "1")), {})
+            self.assertIsNotNone(again.get(context_key("mako", 90, "budget", "12")), "app:12 is another game")
+            self.assertIsNotNone(again.get(context_key("mako", 90, "budget")))
+            self.assertEqual(again.forget_game(game_prefix("mako", "1")), 0)
 
 
 class WarmStartTests(unittest.TestCase):

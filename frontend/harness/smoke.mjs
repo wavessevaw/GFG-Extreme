@@ -23,18 +23,30 @@ const cases = [
   ["budget-memory", ["Details"], ["Verifying", "×3 — the engine chose it", "Engine allows", "up to ×3", "Recently failed", "×2.75 at ≤10 W"]],
   ["home-loading", [], ["Waiting for the game to draw frames"]],
   ["home-testing", [], ["Testing ×2.75", "a few seconds"]],
-  ["home-last-session", [], ["LAST SESSION", "42 min", "90 FPS avg (30 real)", "10.6 W avg · limit 15 W", "~4.4 W on average", "83 °C · warm 12% of the time", "Stutter", "3% of the time"]],
+  ["home-last-session", [], ["LAST SESSION", "42 min", "FPS avg", "Real avg", "TDP avg", "11W", "Your limit", "15 W", "~4.4 W under your limit on average", "83 °C · warm 12% of the time", "Stutter", "3% of the time"]],
   ["home-cooling", [], ["Cooling · 8 W", "only tries lower watts"]],
   ["home-cooling", ["Details"], ["Heat", "on hold until the APU cools", "Lower resolution", "Scale-ready launch"]],
   ["home-history", ["Details"], ["RECENT SESSIONS", "29 min · Battery", "90 FPS · 10.7 W · 77 °C", "12 min · Quality", "88 FPS · 19.4 W"]],
   ["home-saving", [], ["SAVING", "6 W under your 15 W limit"]],
+  ["home-effort-reason", [], ["GFG EFFORT", "HARD", "x3 required"]],
+  ["home-frame-os-act", [], ["FRAME OS", "BOOST", "−47%", "+50%", "9%", "Response", "Frames", "Energy"]],
+  ["home-frame-os-rest", [], ["FRAME OS", "REST", "−6%"]],
+  ["home-frame-os-observe", [], ["FRAME OS", "ESTIMATE", "−44%", "+50%", "11%"]],
+  ["home-frame-os-early", [], ["FRAME OS", "Response", "—"]],
+  ["frame-os-no-layer", ["Settings", "Diagnostics"], ["FRAME OS (EXPERIMENTAL)", "Frame OS layer not installed: this build does not include the Frame OS layer."]],
+  ["home-last-session-mixed", [], ["LAST SESSION", "Modes", "Battery 18m · Balanced 13m", "Energy saved", "~2.3 Wh measured · ~14 min more battery", "Frame OS", "calm 20m · boost 6m · rest 4m", "Response", "−41%", "+12%", "9%"]],
+  ["home-last-session-mixed", ["Details"], ["RECENT SESSIONS", "31 min · Battery 18m · Balanced 13m"]],
+  ["home-idle-oled", ["Settings", "Diagnostics"], ["Reset what GFG learned for Sample Game", "Starts the next search from scratch"]],
+  ["home-idle-oled", ["Settings", "Diagnostics", "Reset what GFG learned for Sample Game"], ["Tap again to forget", "remembered for Sample Game", "This cannot be undone"]],
+  ["home-paused-external-tdp", [], ["changed outside GFG", "In Battery and Balanced modes GFG takes it back"]],
+  ["home-no-model-game", ["Settings", "Diagnostics"], ["Reset what GFG learned for this game", "No game identified yet"]],
   ["home-cap-ignored", [], ["TDP limit overridden", "17.4 W", "another tool"]],
   ["home-quality-oled", ["Details"], ["×1 to ×3, steps of 0.25", "never above your own"]],
   ["home-quality-oled", [], ["fewest generated frames first"]],
   ["home-locked-oled", ["Settings", "Frame generation backend"], ["BACKEND", "GFG", "OptiScaler"]],
   ["home-locked-oled", ["Settings", "Scaling"], ["Scale-ready launch"]],
-  ["home-locked-oled", ["Settings", "In-game overlay"], ["Show overlay in game", "Minimal", "Detailed", "Top right"]],
-  ["home-locked-oled", ["Settings", "Profile"], ["Elden Ring", "NEW PROFILE"]],
+  ["home-locked-oled", ["Settings", "In-game overlay"], ["Show overlay in game", "STYLE", "Rings", "Text", "20-second averages", "Minimal", "Detailed", "Top right"]],
+  ["home-locked-oled", ["Settings", "Profile"], ["Sample Game", "NEW PROFILE"]],
   ["home-locked-oled", ["Settings", "System"], ["ENGINE", "Installed", "Runtime 24.08", "Heroic"]],
   ["home-locked-oled", ["Settings", "All settings"], ["scaling_factor", "allow_fp16"]],
   ["home-locked-oled", ["Settings", "Diagnostics", "Journal"], ["Journal"]],
@@ -43,7 +55,7 @@ const cases = [
   ["home-paused-relaunch", [], ["Something wrong? Record a log"]],
   ["home-idle-oled", ["Settings"], ["GFG Extreme 1.0.0"]],
   ["home-idle-oled", ["Settings", "Launch command"], ["Copy launch command", "Launch Options"]],
-  ["home-idle-oled", ["Settings", "Diagnostics"], ["RECORD A LOG", "Record log"]],
+  ["home-idle-oled", ["Settings", "Diagnostics"], ["RECORD A LOG", "Record log", "FRAME OS (EXPERIMENTAL)", "Observe"]],
 ];
 const browser = await launch();
 let failed = 0;
@@ -81,6 +93,57 @@ for (const [state, nav, expected] of cases) {
   if (saved.length !== 1 || saved[0].dll !== "xyz") { failed++; console.error(`FAIL text field lost on Back: ${JSON.stringify(saved)}`); }
   await page.close();
   cases.push(["text-field-back"]);
+}
+// A session above the user's limit (or from an older plugin) never shows a negative saving.
+{
+  const page = await openPage(browser, STATES["home-last-session-above-limit"]);
+  const text = await page.evaluate(() => document.body.innerText);
+  if (!text.includes("LAST SESSION")) { failed++; console.error(`FAIL above-limit session not shown`); }
+  for (const bad of ["-2.1", "Energy saved", "under your limit on average"]) if (text.includes(bad)) { failed++; console.error(`FAIL above-limit session shows "${bad}"`); }
+  await page.close();
+  cases.push(["last-session-above-limit"]);
+}
+// Frame OS safety: Act is absent unless the backend explicitly unlocks it;
+// refused Observe/Shadow changes must still roll back to Off.
+{
+  const page = await openPage(browser, STATES["frame-os-refused"], ["Settings", "Diagnostics"]);
+  if (await page.getByText("Act", { exact: true }).count()) {
+    failed++; console.error("FAIL Frame OS Act visible without developer unlock");
+  }
+  await page.getByText("Shadow", { exact: true }).first().click();
+  await page.waitForTimeout(150);
+  const on = await page.evaluate(() => [...document.querySelectorAll(".segb.on")].map((e) => e.textContent));
+  if (!on.includes("Off") || on.includes("Shadow")) { failed++; console.error(`FAIL frame os mode not rolled back: ${JSON.stringify(on)}`); }
+  await page.close();
+  cases.push(["frame-os-safety-rollback"]);
+}
+// Act unlock: the first tap only asks, the second unlocks and shows Act.
+{
+  const page = await openPage(browser, STATES["frame-os-refused"], ["Settings", "Diagnostics", "Unlock Act (experimental)"]);
+  const asked = await page.evaluate(() => (window.__actUnlocks || []).length);
+  await page.getByText("Tap again to unlock Act", { exact: true }).first().click();
+  await page.waitForTimeout(150);
+  const calls = await page.evaluate(() => window.__actUnlocks || []);
+  if (asked !== 0) { failed++; console.error("FAIL act unlocked without confirmation"); }
+  if (JSON.stringify(calls) !== "[true]") { failed++; console.error(`FAIL act unlock calls: ${JSON.stringify(calls)}`); }
+  if (!(await page.getByText("Act", { exact: true }).count())) { failed++; console.error("FAIL Act not offered after unlock"); }
+  if (!(await page.getByText("Lock Act", { exact: true }).count())) { failed++; console.error("FAIL no Lock Act after unlock"); }
+  await page.close();
+  cases.push(["frame-os-act-unlock"]);
+}
+// Reset what GFG learned: the first tap only asks, the second one forgets.
+{
+  const page = await openPage(browser, STATES["home-idle-oled"], ["Settings", "Diagnostics", "Reset what GFG learned for Sample Game"]);
+  const asked = await page.evaluate(() => (window.__forgets || []).length);
+  await page.getByText("Tap again to forget", { exact: true }).first().click();
+  await page.waitForTimeout(150);
+  const forgets = await page.evaluate(() => window.__forgets || []);
+  const text = await page.evaluate(() => document.body.innerText);
+  if (asked !== 0) { failed++; console.error(`FAIL forget model ran without confirmation`); }
+  if (forgets.length !== 1) { failed++; console.error(`FAIL forget model calls: ${JSON.stringify(forgets)}`); }
+  if (!text.includes("Forgotten. The next start searches from scratch.")) { failed++; console.error(`FAIL forget model result not shown`); }
+  await page.close();
+  cases.push(["forget-model-confirm"]);
 }
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);
