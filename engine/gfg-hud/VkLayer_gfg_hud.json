@@ -1,0 +1,21 @@
+{
+    "file_format_version": "1.2.1",
+    "layer": {
+        "name": "VK_LAYER_GFG_hud",
+        "type": "GLOBAL",
+        "library_path": "./libVkLayer_gfg_hud.so",
+        "library_arch": "64",
+        "api_version": "1.4.0",
+        "implementation_version": "1",
+        "description": "GFG HUD: copies a pre-rendered overlay bitmap into presented swapchain images",
+        "functions": {
+            "vkNegotiateLoaderLayerInterfaceVersion": "vkNegotiateLoaderLayerInterfaceVersion"
+        },
+        "enable_environment": {
+            "GFG_HUD": "1"
+        },
+        "disable_environment": {
+            "DISABLE_GFG_HUD": "1"
+        }
+    }
+}
