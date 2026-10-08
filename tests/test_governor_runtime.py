@@ -1440,28 +1440,43 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self._act_live_point()
         self.assertEqual(self.svc._fo_memory_key[0], "app:4242")
         self.assertEqual(self.svc._settings["frame_os_games"]["app:4242"]["sessions"], 1)
-        # this session measures boosts that bring nothing: the GPU cannot feed them here
-        self.svc.frame_os.proof.pairs["frames"].extend([1.0, 0.5, 1.5, 0.0])
+
+        def session(launch, pairs):
+            self.inspector.info["launch_key"] = launch
+            for real in (45, 30, 30):
+                self.feed(16, real, 90)
+                self.step()
+            self.svc.frame_os.proof.pairs["frames"].extend(pairs)
+            self.feed(16, 30, 90)
+            self.step()
+
+        # two sessions measure boosts that bring nothing: the GPU cannot feed them here
+        self.svc.frame_os.proof.pairs["frames"].extend([1.0, 0.5, 1.5, 0.0, 0.8])
         self.feed(16, 30, 90)
         self.step()
         record = self.svc._settings["frame_os_games"]["app:4242"]
-        self.assertEqual(record["pairs"]["frames"], [1.0, 0.5, 1.5, 0.0])
-        self.assertEqual(record["off"], {"boost": 1})
-        self.assertTrue(self.svc.frame_os.game_disabled["boost"], "switched off mid-session")
-        self.assertEqual(self.svc.get_status("game")["frame_os"]["game"]["verdicts"]["frames"], "useless")
-        # the pairs are stored once, not again on the next steps
+        self.assertEqual(record["pairs"]["frames"], [1.0, 0.5, 1.5, 0.0, 0.8])
+        self.assertEqual(record["off"], {}, "never switched off mid-session")
         self.feed(16, 30, 90)
         self.step()
-        self.assertEqual(len(self.svc._settings["frame_os_games"]["app:4242"]["pairs"]["frames"]), 4)
-        # next launch of the same game: boost stays off, the rings start measured
-        self.inspector.info["launch_key"] = [1, 3, 3]
-        for real in (45, 30, 30):
-            self.feed(16, real, 90)
-            self.step()
+        self.assertEqual(len(self.svc._settings["frame_os_games"]["app:4242"]["pairs"]["frames"]), 5,
+                         "stored once, not again on the next steps")
+        session([1, 3, 3], [0.2, 1.1, 0.9, 0.4])
+        self.assertFalse(self.svc.frame_os.game_disabled["boost"])
+        # a game exit (probe: not running) is no new memory session
+        self.inspector.info.update(running=False)
+        self.feed(16, 30, 90)
+        self.step()
         self.assertEqual(self.svc._settings["frame_os_games"]["app:4242"]["sessions"], 2)
+        self.inspector.info.update(running=True)
+        # third launch: two sessions of evidence decide at its start
+        session([1, 4, 4], [])
+        self.assertEqual(self.svc._settings["frame_os_games"]["app:4242"]["sessions"], 3)
+        self.assertEqual(self.svc._settings["frame_os_games"]["app:4242"]["off"], {"boost": 3})
         self.assertTrue(self.svc.frame_os.game_disabled["boost"])
         self.assertFalse(self.svc.frame_os.policy.boost_allowed)
-        self.assertEqual(self.svc.frame_os.proof.summary()["frames"]["n"], 4)
+        self.assertEqual(self.svc.get_status("game")["frame_os"]["game"]["verdicts"]["frames"], "useless")
+        self.assertEqual(self.svc.frame_os.proof.summary()["frames"]["n"], 9, "earlier pairs counted once")
         # "Reset what GFG learned" forgets it too
         self.assertTrue(self.svc.forget_game_model("game")["success"])
         self.assertNotIn("app:4242", self.svc._settings["frame_os_games"])
@@ -1581,6 +1596,34 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.assertIsNone(self.svc._injection, "starved Act must roll back despite stale Steam focus")
         self.assertFalse(self.svc.frame_os.executor_active)
 
+    def test_a_long_steam_menu_never_locks_act_out(self):
+        # review 1.3.0: focus is reported once; a menu open past 5 s was judged as a starved point
+        self._act_live_point()
+        self.svc.frame_os.last = {"telemetry": {"live": True}}
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNotNone(self.svc._injection)
+        for visit in range(3):
+            self.svc.observer.game_focused = False
+            self.svc.observer.game_focused_at = self.t["now"] - 20.0     # opened 20 s ago
+            self.feed(20, 30, 30)                                         # generation suspended
+            st = self.step()
+            self.assertEqual((st["state"], st["reason"]), ("PAUSED", "steam-menu-open"))
+            self.svc.observer.game_focused = True
+            self.svc.observer.game_focused_at = self.t["now"]
+            self.feed(16, 30, 90)
+            self.step()
+        self.assertEqual(self.svc._injection_starvation_yields, 0)
+        self.assertIsNotNone(self.svc._injection, "Act still injects after three long menus")
+
+    def test_a_menu_event_without_its_return_expires(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.svc.observer.game_focused = False
+        self.svc.observer.game_focused_at = self.t["now"] - (self.svc.MENU_MAX_S + 1)
+        self.feed(20, 30, 30)
+        self.assertNotEqual(self.step()["reason"], "steam-menu-open", "never paused forever")
+
     def test_steam_menu_pauses_measuring_and_drops_its_samples(self):
         self.feed(20, 45, 90)
         self.step()
@@ -1685,16 +1728,22 @@ class RingRefreshTests(unittest.TestCase):
         self.assertEqual(len(self.writes), 2)
 
     def test_stale_and_nonfinite_fps_are_not_displayed(self):
+        # field report 1.3: one late sample flipped the number to "—" and back (flicker); the last
+        # good value is held for HUD_HOLD_S, never longer
         self.publish()
         self.status["telemetry"]["snapshot"]["sample_age_ms"] = 3000
         self.now += 1
         self.publish()
-        self.assertIsNone(self.writes[-1][0]["fps"])
-        self.status["telemetry"]["snapshot"]["sample_age_ms"] = 10
+        self.assertEqual(self.writes[-1][0]["fps"], 90, "a late sample keeps the picture steady")
         self.status["telemetry"]["snapshot"]["latest"]["output_fps"] = float("nan")
+        self.status["telemetry"]["snapshot"]["sample_age_ms"] = 10
+        self.now += self.svc.HUD_HOLD_S + 1
+        self.publish()
+        self.assertIsNone(self.writes[-1][0]["fps"], "stale beyond the hold, or not a number: unavailable")
+        self.status["telemetry"]["snapshot"]["latest"]["output_fps"] = 88
         self.now += 1
         self.publish()
-        self.assertIsNone(self.writes[-1][0]["fps"])
+        self.assertEqual(self.writes[-1][0]["fps"], 88)
 
     def test_failed_publish_is_retried_without_committing_sequence(self):
         self.fail = True
@@ -1753,6 +1802,32 @@ class RingRefreshTests(unittest.TestCase):
         self.now += 1.0
         self.publish()
         self.assertFalse(self.writes[-1][0]["frame_os"]["verified_boost"])
+
+    def test_a_probe_glitch_does_not_swap_rings_for_text(self):
+        live = [True]
+        self.svc._ring_hud_live = lambda: live[0]
+        self.assertTrue(self.svc._ring_hud_live_steady())
+        live[0] = False                   # the launch probe said "not running" once
+        self.now += 1
+        self.assertTrue(self.svc._ring_hud_live_steady())
+        self.now += self.svc.HUD_HOLD_S + 1
+        self.assertFalse(self.svc._ring_hud_live_steady(), "a real exit still falls back")
+
+    def test_frame_os_rings_survive_a_missed_telemetry_beat(self):
+        self.settings["preset"] = "standard"
+        self.svc.frame_os = types.SimpleNamespace(executor_active=False, policy=None)
+        self.status["frame_os"] = {"enabled": True, "mode": "observe", "decision": {"level": "calm"},
+                                   "telemetry": {"live": True},
+                                   "benefit": {"ready": True, "response_pct": 40.0, "frames_pct": 10.0}}
+        self.publish()
+        self.assertIn("frame_os", self.writes[-1][0])
+        self.status["frame_os"]["telemetry"]["live"] = False
+        self.now += 1
+        self.publish()
+        self.assertIn("frame_os", self.writes[-1][0], "no resize for one missed beat")
+        self.now += self.svc.HUD_HOLD_S + 1
+        self.publish()
+        self.assertNotIn("frame_os", self.writes[-1][0], "a dead Frame OS goes after the hold")
 
     def test_dead_frame_os_does_not_show_old_benefit_rings(self):
         self.status["frame_os"] = {"enabled": True, "telemetry": {"live": False},

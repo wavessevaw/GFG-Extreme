@@ -15,6 +15,7 @@ static double urand(void) { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17;
 static double nrand(double mean, double sd) { double u = urand() + 1e-12, v = urand(); return mean + sd * sqrt(-2 * log(u)) * cos(6.283185307179586 * v); }
 
 typedef struct { double latency_ms; double miss_rate; double fps; } sim_result;
+static int g_predictive = 1;   /* simulate(): planner under test */
 
 /* A game loop: starts a frame when allowed, is ready after `cost`, presents; the next frame can
  * start once the present has been released (one frame in flight).  Latency = input sampled at
@@ -26,6 +27,7 @@ static sim_result simulate(int shaping, double cost_mean, double cost_sd, double
     gfg_policy_defaults(&p);
     p.real_target_hz = hz;
     p.tick_shaping = shaping;
+    p.predictive = g_predictive;
     gfg_sched_init(&s, &p);
     rng = 88172645463325252ull;
     int64_t now = 1000000000;
@@ -144,6 +146,65 @@ static void test_long_idle_catch_up(void)
     CHECK(d >= 0 && d < period, "delay after idle %lld", (long long)d);
 }
 
+/* A scene that keeps changing weight: cost ramps 12 -> 24 ms and back every 240 frames (8 s at
+ * 30 real), plus noise.  Predictive planning must miss less while the scene gets heavier and give
+ * the reserve back sooner while it gets lighter. */
+static sim_result simulate_ramp(int predictive, int frames)
+{
+    gfg_policy p;
+    gfg_sched s;
+    gfg_policy_defaults(&p);
+    p.real_target_hz = 30;
+    p.predictive = predictive;
+    gfg_sched_init(&s, &p);
+    rng = 88172645463325252ull;
+    int64_t now = 1000000000;
+    double lat_sum = 0;
+    int counted = 0;
+    for (int i = 0; i < frames; i++) {
+        int64_t wait = gfg_sched_frame_start(&s, now);
+        int64_t start = now + wait;
+        double phase = (double)(i % 240) / 240.0;
+        double mean = 12.0 + 12.0 * (phase < 0.5 ? phase * 2 : (1 - phase) * 2);
+        double cost = nrand(mean, 0.8);
+        if (cost < 1) cost = 1;
+        int64_t ready = start + (int64_t)(cost * 1e6);
+        int64_t release = gfg_sched_present(&s, ready);
+        if (i >= 100) { lat_sum += (release - start) / 1e6; counted++; }
+        now = release;
+    }
+    const gfg_stats *st = gfg_sched_stats(&s);
+    sim_result r = { lat_sum / counted, (double)st->misses / (double)st->frames, 0 };
+    r.fps = frames / ((now - 1000000000) / 1e9);
+    return r;
+}
+
+static void test_predictive_planning_follows_the_scene(void)
+{
+    sim_result old = simulate_ramp(0, 4800);
+    sim_result pred = simulate_ramp(1, 4800);
+    printf("changing scene: latency %.1f -> %.1f ms, misses %.1f%% -> %.1f%%, fps %.2f -> %.2f\n",
+           old.latency_ms, pred.latency_ms, old.miss_rate * 100, pred.miss_rate * 100, old.fps, pred.fps);
+    CHECK(pred.miss_rate <= old.miss_rate, "predictive missed more %.3f vs %.3f", pred.miss_rate, old.miss_rate);
+    CHECK(pred.latency_ms < old.latency_ms - 0.3, "predictive gained only %.2f ms", old.latency_ms - pred.latency_ms);
+    CHECK(pred.fps > old.fps - 0.3, "fps %.2f vs %.2f", pred.fps, old.fps);
+}
+
+/* Plain jitter is no trend: on a steady or spiky scene the predictive planner must do exactly as
+ * well as the plain quantile (review: a fixed dead band reacted to noise). */
+static void test_predictive_ignores_noise(void)
+{
+    for (int k = 0; k < 2; k++) {
+        double sd = k ? 3 : 1.5, spikes = k ? 0.03 : 0;
+        g_predictive = 0;
+        sim_result plain = simulate(1, k ? 18 : 20, sd, 30, 3000, spikes);
+        g_predictive = 1;
+        sim_result pred = simulate(1, k ? 18 : 20, sd, 30, 3000, spikes);
+        CHECK(pred.miss_rate <= plain.miss_rate + 0.002, "noise: misses %.4f vs %.4f", pred.miss_rate, plain.miss_rate);
+        CHECK(pred.latency_ms <= plain.latency_ms + 0.1, "noise: latency %.2f vs %.2f", pred.latency_ms, plain.latency_ms);
+    }
+}
+
 int main(void)
 {
     test_tick_shaping_removes_queueing_latency();
@@ -153,6 +214,8 @@ int main(void)
     test_no_grid_is_pass_through();
     test_policy_change_reanchors();
     test_long_idle_catch_up();
+    test_predictive_planning_follows_the_scene();
+    test_predictive_ignores_noise();
     if (failures) {
         printf("%d failure(s)\n", failures);
         return 1;

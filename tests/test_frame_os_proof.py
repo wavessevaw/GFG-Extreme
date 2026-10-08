@@ -177,6 +177,33 @@ class RunnerProofTests(unittest.TestCase):
         self.assertAlmostEqual(status["benefit"]["frames_pct"], 50.0, delta=1.0)
         self.assertTrue(status["benefit"]["measured"]["frames"])
 
+    def test_no_boost_back_off_before_the_executor_is_in_place(self):
+        # review 1.3.0: without the executor the pacer runs calm, so every boost looked ineffective
+        r, channel, reader = self.make()
+        r.executor_active = False
+        r.policy.broker.bank_j = 1e9
+        r.policy.broker.max_bank_s = 1e9
+        for i in range(100):
+            t = i / 10
+            reader.state.feed(EVENT.pack(int(t), int((t % 1) * 1e6), EV_ABS, ABS_RX, 32000 if i % 2 else 31000))
+            r.tick(t)
+        self.assertFalse(any("boost-ineffective" in h for h in r.policy.history))
+
+    def test_a_hold_calm_window_clears_a_pending_boost_proof(self):
+        r, _channel, reader = self.make()
+        r.policy.broker.bank_j = 1e9
+        r.policy.broker.max_bank_s = 1e9
+        held = 0
+        for i in range(2000):
+            t = i / 10
+            reader.state.feed(EVENT.pack(int(t), int((t % 1) * 1e6), EV_ABS, ABS_RX, 32000 if i % 2 else 31000))
+            r.policy._boost_since = t - 2.0       # a proof pending from just before the window
+            status = r.tick(t)
+            if status["ab_control"] == "hold-calm":
+                held += 1
+                self.assertIsNone(r.policy._boost_since)
+        self.assertGreater(held, 0)
+
     def test_off_switch_keeps_model_estimates(self):
         r, channel, _reader = self.make()
         r.proof.enabled = False

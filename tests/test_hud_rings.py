@@ -113,3 +113,21 @@ class RingHudTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AtlasCoverageTests(unittest.TestCase):
+    def test_every_printed_character_has_a_glyph(self):
+        # field bug: "BOOST 45R x2" rendered as "BOOST 45R 2" (no lowercase x in the atlas)
+        atlas = hud_rings._atlas()
+        glyphs = set(atlas["lab@1.0"]["glyphs"]) & set(atlas["val@1.0"]["glyphs"])
+        variants = [SAMPLE, {**SAMPLE, "battery_min": 45},
+                    {**SAMPLE, "frame_os": {**SAMPLE["frame_os"], "actual_ratio": 2.5}},
+                    {**SAMPLE, "frame_os": {**SAMPLE["frame_os"], "ab": True}},
+                    {**SAMPLE, "frame_os": {**SAMPLE["frame_os"], "level": "rest"}},
+                    {**SAMPLE, "frame_os": {**SAMPLE["frame_os"], "verified_boost": False}}]
+        for data in variants:
+            for preset in ("minimal", "standard", "detailed"):
+                for item in hud_rings.items_for(data, preset):
+                    for text in (item.get("text"), item.get("sub"), item.get("label")):
+                        missing = set(text or "") - glyphs
+                        self.assertFalse(missing, f"{text!r} needs glyphs {missing}")

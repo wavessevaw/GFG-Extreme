@@ -130,7 +130,11 @@ class FrameOsRunner:
         """Watts to add to the Governor's cap for the current level (act mode only)."""
         if not (self.enabled and self.mode == "act" and self.executor_active and self.policy and self.policy.broker):
             return 0.0
-        decision = self.last.get("decision") or {}
+        return self._offset_for(self.last.get("decision") or {})
+
+    def _offset_for(self, decision: Dict[str, Any]) -> float:
+        if not (self.enabled and self.mode == "act" and self.executor_active and self.policy and self.policy.broker):
+            return 0.0
         tdp = decision.get("tdp_w")
         return round(float(tdp) - self.policy.broker.calm_w, 1) if tdp is not None else 0.0
 
@@ -166,8 +170,12 @@ class FrameOsRunner:
             broker = self.policy.broker
             decision = Decision("calm", self.policy.calm_real_hz, self.policy.output_hz,
                                 broker.calm_w if broker is not None else None, "ab-control")
-        if acting and telemetry.get("live") and control != "hold-calm":
-            # a held boost is not an ineffective one: never let a control window back boosts off
+        if control == "hold-calm":
+            # a held boost is not an ineffective one: never let a control window (or the calm
+            # cadence it leaves in the pacer's interval ring) back boosts off
+            self.policy._boost_since = None
+        elif acting and self.executor_active and telemetry.get("live"):
+            # without the executor the pacer gets the calm cadence: no boost can be delivered yet
             interval = telemetry.get("present_interval_p50_ms")
             self.policy.note_delivered(now, 1000.0 / interval if interval else None)
         real_hz = decision.real_hz if acting and self.executor_active else self.policy.calm_real_hz
@@ -183,7 +191,8 @@ class FrameOsRunner:
         else:
             if not self.channel.heartbeat():
                 self._published = None  # retry the full policy on the next tick
-        self.last = {
+        # built in full, then published once: worker threads read ``last`` (review 1.3.0)
+        last = {
             "enabled": True, "mode": self.mode, "input": inp, "scene_change": cut,
             "decision": decision.to_dict(), "acting": acting, "published_real_hz": real_hz,
             "generation": self.generation, "telemetry": telemetry,
@@ -197,12 +206,13 @@ class FrameOsRunner:
         self.benefit.add(now, acting=acting, level=decision.level, telemetry=telemetry,
                          output_hz=self.policy.output_hz, calm_real_hz=self.policy.calm_real_hz,
                          boost_real_hz=self.policy.boost_real_hz, calm_w=calm_w,
-                         tdp_w=(calm_w + self.tdp_offset_w) if acting and calm_w else decision.tdp_w,
+                         tdp_w=(calm_w + self._offset_for(last["decision"])) if acting and calm_w else decision.tdp_w,
                          counted=control is None)
         proof = self.proof.summary()
-        self.last["proof"] = proof
-        self.last["benefit"] = apply_proof(self.benefit.summary(), proof)
-        return self.last
+        last["proof"] = proof
+        last["benefit"] = apply_proof(self.benefit.summary(), proof)
+        self.last = last
+        return last
 
     def _sensor_status(self, inp: Dict[str, Any]) -> Dict[str, Any]:
         status = dict(self.reader.status()) if hasattr(self.reader, "status") else {}

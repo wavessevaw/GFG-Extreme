@@ -32,6 +32,7 @@ WAKE_IDLE_S = 0.2
 # one real frame earlier than the plain threshold, so the first fast frames are already real.
 ONSET_CAMERA = 0.25
 ONSET_RATE = 2.0
+HISTORY_KEEP = 200
 
 
 @dataclass
@@ -122,6 +123,10 @@ class InjectionPolicy:
     _cam_prev: Optional[float] = None
     _cam_prev_t: Optional[float] = None
 
+    def _note(self, entry: str) -> None:
+        self.history.append(entry)
+        del self.history[:-HISTORY_KEEP]       # a whole session of camera-onset boosts stays bounded
+
     def note_delivered(self, now: float, real_fps: Optional[float]) -> None:
         """Measured real cadence while acting.  A boost the GPU cannot deliver is a waste of the
         energy bank: stop boosting for a while instead of paying watts for nothing."""
@@ -136,7 +141,7 @@ class InjectionPolicy:
         elif now - self._boost_since >= BOOST_PROOF_S:
             self._boost_blocked_until = now + BOOST_BACKOFF_S
             self._boost_since = None
-            self.history.append(f"{now:.1f}:boost-ineffective")
+            self._note(f"{now:.1f}:boost-ineffective")
 
     @property
     def boost_real_hz(self) -> float:
@@ -193,7 +198,7 @@ class InjectionPolicy:
             if level == "boost" and self.broker.bank_j <= 0.0:
                 level, reason = "calm", "energy-bank-empty"
         if level != self.level:
-            self.history.append(f"{now:.1f}:{self.level}->{level}:{reason}")
+            self._note(f"{now:.1f}:{self.level}->{level}:{reason}")
         self.level, self._reason = level, reason
         real = {"boost": self.boost_real_hz, "rest": self.rest_real_hz}.get(level, self.calm_real_hz)
         tdp = self.broker.tdp_for(level, cadence_drop=self.rest_real_hz < self.calm_real_hz) \

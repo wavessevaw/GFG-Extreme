@@ -16,10 +16,13 @@
  *   vkGetDeviceQueue(2)    queue -> family (command pool per (device, family))
  *   vkDestroySwapchainKHR / vkDestroyDevice: wait for the layer's fences, free its objects
  *
- * Overlay pixels are converted once per overlay change into a per-swapchain host-visible,
- * coherent staging buffer (no rewrite while a copy from it may still run: all image fences are
- * waited first).  Each image's command buffer is re-recorded only when that conversion changed
- * and only after its fence signalled.
+ * Overlay pixels are converted once per overlay change into host memory.  Every swapchain image
+ * has SLOTS_PER_IMAGE independent slots (command buffer, fence, semaphore and its own
+ * host-visible staging buffer); a present uses a slot whose previous submit has finished, copies
+ * the current conversion into that slot's staging buffer if it is older and re-records it.  So an
+ * overlay update never waits for other images' copies, and a slot still in flight never costs a
+ * frame its HUD (field report 1.3: the HUD flickered once a second and under GPU load when a busy
+ * fence made the frame skip the overlay).
  *
  * Failure policy: anything that goes wrong for a swapchain turns that swapchain into plain
  * pass-through for the rest of its life.  The app's present is always forwarded, and with the
@@ -40,7 +43,9 @@
 #include "overlay.h"
 
 #define LAYER_EXPORT __attribute__((visibility("default")))
-#define FENCE_WAIT_NS 0ull              /* never stall a game frame for HUD work; retry next present */
+#define FENCE_WAIT_NS 0ull              /* free-slot probe: never stall a game frame */
+#define SLOT_WAIT_NS 2000000ull         /* both slots of an image in flight (rare): wait at most 2 ms */
+#define SLOTS_PER_IMAGE 2
 #define DESTROY_WAIT_NS 5000000000ull   /* teardown: then leak rather than free in-use objects */
 #define MAX_QUEUES 64
 #define MAX_POOLS 16
@@ -81,6 +86,12 @@ typedef struct hud_slot {          /* per swapchain image */
     VkSemaphore sem;               /* signalled by the HUD submit, waited by the present */
     int submitted;                 /* fence pending (not yet waited + reset) */
     uint64_t recorded;             /* sc->build recorded into cmd; 0 = none */
+    uint64_t submit_seq;           /* order of submits: the older busy slot is waited first */
+    VkBuffer buf;                  /* this slot's staging copy of the converted overlay */
+    VkDeviceMemory mem;
+    uint8_t *map;
+    VkDeviceSize cap;
+    uint64_t staged;               /* sc->build copied into buf; 0 = none */
 } hud_slot;
 
 typedef struct hud_swapchain {
@@ -91,11 +102,10 @@ typedef struct hud_swapchain {
     VkExtent2D extent;
     uint32_t image_count;
     VkImage *images;
-    hud_slot *slots;
-    VkBuffer buf;                  /* staging: converted overlay */
-    VkDeviceMemory mem;
-    uint8_t *map;
-    VkDeviceSize cap;
+    hud_slot *slots;               /* image_count * SLOTS_PER_IMAGE */
+    uint8_t *host;                 /* converted overlay (host memory) */
+    size_t host_cap, host_size;
+    uint64_t submit_seq;
     int have_gen;
     uint64_t ov_gen;               /* source generation converted */
     uint64_t build;                /* bumped per conversion (slots re-record) */
@@ -270,7 +280,7 @@ static VkResult slot_wait(dev_data *d, hud_slot *s, uint64_t timeout)
 
 static VkResult sc_wait_all(dev_data *d, hud_swapchain *sc, uint64_t timeout)
 {
-    for (uint32_t i = 0; i < sc->image_count; i++) {
+    for (uint32_t i = 0; i < sc->image_count * SLOTS_PER_IMAGE; i++) {
         VkResult r = slot_wait(d, &sc->slots[i], timeout);
         if (r != VK_SUCCESS)
             return r;
@@ -278,18 +288,19 @@ static VkResult sc_wait_all(dev_data *d, hud_swapchain *sc, uint64_t timeout)
     return VK_SUCCESS;
 }
 
-static void free_staging(dev_data *d, hud_swapchain *sc)
+static void free_staging(dev_data *d, hud_slot *s)
 {
-    if (sc->map)
-        d->UnmapMemory(d->device, sc->mem);
-    if (sc->buf)
-        d->DestroyBuffer(d->device, sc->buf, NULL);
-    if (sc->mem)
-        d->FreeMemory(d->device, sc->mem, NULL);
-    sc->map = NULL;
-    sc->buf = VK_NULL_HANDLE;
-    sc->mem = VK_NULL_HANDLE;
-    sc->cap = 0;
+    if (s->map)
+        d->UnmapMemory(d->device, s->mem);
+    if (s->buf)
+        d->DestroyBuffer(d->device, s->buf, NULL);
+    if (s->mem)
+        d->FreeMemory(d->device, s->mem, NULL);
+    s->map = NULL;
+    s->buf = VK_NULL_HANDLE;
+    s->mem = VK_NULL_HANDLE;
+    s->cap = 0;
+    s->staged = 0;
 }
 
 /* Free everything the layer made for sc and sc itself.  idle: no submit of it can still run
@@ -297,7 +308,7 @@ static void free_staging(dev_data *d, hud_swapchain *sc)
 static void sc_free(dev_data *d, hud_swapchain *sc, int idle)
 {
     if (idle && d->hud_ok) {
-        for (uint32_t i = 0; sc->slots && i < sc->image_count; i++) {
+        for (uint32_t i = 0; sc->slots && i < sc->image_count * SLOTS_PER_IMAGE; i++) {
             hud_slot *s = &sc->slots[i];
             if (s->cmd) {
                 for (uint32_t p = 0; p < d->npools; p++)
@@ -308,8 +319,8 @@ static void sc_free(dev_data *d, hud_swapchain *sc, int idle)
                 d->DestroyFence(d->device, s->fence, NULL);
             if (s->sem)
                 d->DestroySemaphore(d->device, s->sem, NULL);
+            free_staging(d, s);
         }
-        free_staging(d, sc);
     }
     if (debug_on())
         fprintf(stderr, "[gfg-hud] swapchain 0x%llx released (hud frames %llu)\n",
@@ -318,6 +329,7 @@ static void sc_free(dev_data *d, hud_swapchain *sc, int idle)
     free(sc->images);
     free(sc->rows);
     free(sc->regions);
+    free(sc->host);
     free(sc);
 }
 
@@ -329,7 +341,7 @@ static int memory_type(const dev_data *d, uint32_t bits, VkMemoryPropertyFlags w
     return -1;
 }
 
-static VkResult ensure_staging(dev_data *d, hud_swapchain *sc, VkDeviceSize size)
+static VkResult ensure_staging(dev_data *d, hud_slot *sc, VkDeviceSize size)
 {
     VkResult r;
     VkMemoryRequirements req;
@@ -362,17 +374,16 @@ static VkResult ensure_staging(dev_data *d, hud_swapchain *sc, VkDeviceSize size
     return VK_SUCCESS;
 }
 
-/* Bring sc's staging buffer and regions to source generation gen.  VK_TIMEOUT: a previous copy
- * still runs, keep the old conversion this frame. */
+/* Bring sc's host conversion and regions to source generation gen.  No GPU waits: slots pick the
+ * new conversion up when they are next used. */
 static VkResult sc_update(dev_data *d, hud_swapchain *sc, uint64_t gen)
 {
     gfg_hud_source *src = source();
     VkResult r = VK_SUCCESS;
     uint32_t x, y, n = 0;
+    (void)d;
     if (sc->have_gen && sc->ov_gen == gen)
         return VK_SUCCESS;
-    if ((r = sc_wait_all(d, sc, FENCE_WAIT_NS)) != VK_SUCCESS)
-        return r;
     pthread_mutex_lock(&src->lock);
     const gfg_hud_header *h = &src->hdr;
     if (src->valid && gfg_hud_place(sc->extent.width, sc->extent.height, h->width, h->height, h->corner, h->margin,
@@ -389,10 +400,20 @@ static VkResult sc_update(dev_data *d, hud_swapchain *sc, uint64_t gen)
             else
                 sc->region_cap = h->height;
         }
-        if (r == VK_SUCCESS)
-            r = ensure_staging(d, sc, gfg_hud_pixel_bytes(h));
-        if (r == VK_SUCCESS)
-            n = gfg_hud_build(h, src->pixels, sc->kind, sc->extent.width, sc->extent.height, sc->map, sc->rows);
+        size_t bytes = gfg_hud_pixel_bytes(h);
+        if (r == VK_SUCCESS && bytes > sc->host_cap) {
+            uint8_t *host = realloc(sc->host, bytes);
+            if (host) {
+                sc->host = host;
+                sc->host_cap = bytes;
+            } else {
+                r = VK_ERROR_OUT_OF_HOST_MEMORY;
+            }
+        }
+        if (r == VK_SUCCESS) {
+            n = gfg_hud_build(h, src->pixels, sc->kind, sc->extent.width, sc->extent.height, sc->host, sc->rows);
+            sc->host_size = bytes;
+        }
     }
     pthread_mutex_unlock(&src->lock);
     if (r != VK_SUCCESS)
@@ -465,6 +486,34 @@ static VkResult slot_ready(dev_data *d, hud_slot *s, uint32_t family)
     return VK_SUCCESS;
 }
 
+/* A slot of image idx whose previous submit has finished (made usable on family).  Both in
+ * flight: wait at most SLOT_WAIT_NS for the older one.  NULL with *res = VK_TIMEOUT: none free. */
+static hud_slot *pick_slot(dev_data *d, hud_swapchain *sc, uint32_t idx, uint32_t family, VkResult *res)
+{
+    hud_slot *a = &sc->slots[idx * SLOTS_PER_IMAGE], *older = NULL;
+    for (uint32_t j = 0; j < SLOTS_PER_IMAGE; j++) {
+        hud_slot *s = &a[j];
+        VkResult r = slot_wait(d, s, FENCE_WAIT_NS);
+        if (r == VK_SUCCESS) {
+            *res = slot_ready(d, s, family);
+            return *res == VK_SUCCESS ? s : NULL;
+        }
+        if (r != VK_TIMEOUT) {
+            *res = r;
+            return NULL;
+        }
+        if (!older || s->submit_seq < older->submit_seq)
+            older = s;
+    }
+    VkResult r = slot_wait(d, older, SLOT_WAIT_NS);
+    if (r != VK_SUCCESS) {
+        *res = r;
+        return NULL;
+    }
+    *res = slot_ready(d, older, family);
+    return *res == VK_SUCCESS ? older : NULL;
+}
+
 static VkResult record(dev_data *d, hud_swapchain *sc, uint32_t idx, hud_slot *s)
 {
     VkResult r;
@@ -486,7 +535,7 @@ static VkResult record(dev_data *d, hud_swapchain *sc, uint32_t idx, hud_slot *s
     /* first scope: the app's semaphore waits at TRANSFER (dependency chain) */
     d->CmdPipelineBarrier(s->cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL,
                           1, &b);
-    d->CmdCopyBufferToImage(s->cmd, sc->buf, sc->images[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, sc->nregions,
+    d->CmdCopyBufferToImage(s->cmd, s->buf, sc->images[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, sc->nregions,
                             sc->regions);
     b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     b.dstAccessMask = 0;
@@ -543,11 +592,21 @@ static VKAPI_ATTR VkResult VKAPI_CALL layer_QueuePresentKHR(VkQueue queue, const
         }
         if (!sc->nregions)
             continue;
-        hud_slot *s = &sc->slots[idx];
-        if ((r = slot_ready(d, s, family)) != VK_SUCCESS) {
+        hud_slot *s = pick_slot(d, sc, idx, family, &r);
+        if (!s) {
             if (r != VK_TIMEOUT)
                 sc_fail(sc, "command buffer / sync objects", r);
+            else if (debug_on())
+                fprintf(stderr, "[gfg-hud] image %u: both slots in flight, frame without HUD\n", idx);
             continue;
+        }
+        if (s->staged != sc->build) {
+            if ((r = ensure_staging(d, s, sc->host_size)) != VK_SUCCESS) {
+                sc_fail(sc, "staging buffer", r);
+                continue;
+            }
+            memcpy(s->map, sc->host, sc->host_size);
+            s->staged = sc->build;
         }
         if (s->recorded != sc->build && (r = record(d, sc, idx, s)) != VK_SUCCESS) {
             sc_fail(sc, "recording", r);
@@ -577,12 +636,14 @@ static VKAPI_ATTR VkResult VKAPI_CALL layer_QueuePresentKHR(VkQueue queue, const
         return d->QueuePresentKHR(queue, info);
     }
     slots[0]->submitted = 1;
+    slots[0]->submit_seq = ++scs[0]->submit_seq;
     scs[0]->hud_frames++;
     /* One submit carries every image; each further image's fence rides an empty submit right
      * behind it (signals once all earlier work on the queue finished). */
     for (uint32_t i = 1; i < n; i++) {
         if ((r = d->QueueSubmit(queue, 0, NULL, slots[i]->fence)) == VK_SUCCESS) {
             slots[i]->submitted = 1;
+            slots[i]->submit_seq = ++scs[i]->submit_seq;
         } else {
             d->QueueWaitIdle(queue);   /* the copy is done; its fence just never signals */
             sc_fail(scs[i], "fence submit", r);
@@ -615,7 +676,7 @@ static hud_swapchain *sc_new(dev_data *d, VkSwapchainKHR handle, const VkSwapcha
     sc->kind = kind;
     sc->extent = ci->imageExtent;
     if (d->GetSwapchainImagesKHR(d->device, handle, &count, NULL) != VK_SUCCESS || !count ||
-        !(sc->images = calloc(count, sizeof(VkImage))) || !(sc->slots = calloc(count, sizeof(hud_slot)))) {
+        !(sc->images = calloc(count, sizeof(VkImage))) || !(sc->slots = calloc((size_t)count * SLOTS_PER_IMAGE, sizeof(hud_slot)))) {
         sc_free(d, sc, 1);
         return NULL;
     }

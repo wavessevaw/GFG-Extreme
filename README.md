@@ -6,14 +6,13 @@
 
 # GFG Extreme
 
-### Frame generation that manages itself on Steam Deck.
+### 90 FPS. Less power. Zero fiddling.
 
-Press **Run**. GFG picks the frame rate for your screen, chooses how many frames to generate,<br>
-and sets the TDP as low as the game allows — then keeps adjusting while you play.<br>
-**Frame OS** (experimental) gives you more real frames when you act and saves power when you don't —<br>
-and since 1.3 it **measures its own benefit in your game** and remembers what works there.
+**Play anything on your Steam Deck as smooth as its screen allows** — up to 90 FPS on OLED, 60 on LCD.<br>
+GFG Extreme generates the frames your game can't, holds the **lowest power that keeps the picture smooth**,<br>
+and keeps adjusting while you play. Your Deck never burns a watt it doesn't need.
 
-[**Download the latest release**](https://github.com/wavessevaw/GFG-Extreme/releases) · [Quick start](#quick-start) · [Frame OS](#frame-os-experimental) · [Something not working?](#something-not-working)
+[**Download the latest release**](https://github.com/wavessevaw/GFG-Extreme/releases/latest) · [Quick start](#quick-start) · [Frame OS](#frame-os-experimental) · [In-game rings](#in-game-rings) · [Something not working?](#something-not-working)
 
 ![release](https://img.shields.io/github/v/release/wavessevaw/GFG-Extreme?style=flat-square&color=fb0d00&label=release)
 ![platform](https://img.shields.io/badge/Steam%20Deck-OLED%20%C2%B7%20LCD%20%C2%B7%20Dock-111?style=flat-square)
@@ -22,17 +21,46 @@ and since 1.3 it **measures its own benefit in your game** and remembers what wo
 
 <br>
 
-<img src="docs/img/home-adapting-oled.png" width="270">&nbsp;&nbsp;
-<img src="docs/img/home-frame-os.png" width="270">&nbsp;&nbsp;
-<img src="docs/img/page-details.png" width="270">
+<img src="docs/img/home-frame-os.png" width="260">&nbsp;&nbsp;
+<img src="docs/img/page-frame-os.png" width="260">&nbsp;&nbsp;
+<img src="docs/img/home-last-session.png" width="260">
 
-<sub>Home while playing · Home with Frame OS acting · Details. Rendered from the real interface with sample data.</sub>
+<sub>Home with Frame OS measured in game · Frame OS: A/B results and what it learned about this game · Last session in rings. Rendered from the real interface with sample data.</sub>
+
+<br><br>
+
+<img src="docs/img/hud-rings-standard.png" width="820">
+
+<sub>The in-game rings: the actual bitmap GFG draws into the game, on an illustrative scene.</sub>
 
 </div>
 
 ---
 
+## Why GFG Extreme
+
+- **🎯 Smooth, not stuttery.** Up to **90 FPS on OLED** and 60 on LCD, even when the game renders 30. Generated frames fill the gap, and GFG picks the ratio that holds for *this* game, *this* scene.
+- **🔋 Power only where it pays.** Instead of running flat out at the stock 15 W, GFG holds the **lowest TDP the game tolerates** — in Battery mode 9–11 W — and spends more only when a scene truly needs it. Cooler, quieter, longer sessions.
+- **🧠 Set it once.** Press **Run**. No TDP sliders, FPS caps or frame-generation settings to babysit. GFG remembers every game and starts from what worked last time.
+- **🛡️ Picture first.** Every change is checked against the renderer's own frame data and **rolled back if it doesn't hold**. GFG never trades smoothness for watts behind your back.
+- **⚡ Real frames when it matters.** **Frame OS** reads your controls: turn the camera or start a fight and it raises the *real* frame rate on the spot; pause, and it saves power.
+- **📊 Proof, not promises.** Frame OS **measures its own benefit in your game** with in-game A/B checks, and switches off whatever doesn't pay off there.
+
+Works with Steam games and, through Flatpak support, with Heroic, Lutris and emulators. Your saved settings are never touched: **Stop** puts everything back.
+
+## New in 1.3
+
+- **Frame OS checks itself.** In Act it now and then switches one of its effects off for a few seconds and compares the same moment with and without it. After three comparisons its rings show **measured** numbers from your game instead of estimates.
+- **Frame OS remembers every game.** Results carry over to the next session; an effect that does not help in a game — say, a boost the GPU cannot feed — is switched off there automatically and re-tried every few sessions.
+- **Faster boosts.** A boost starts on the *onset* of a camera swing, about one real frame earlier.
+- **Sharper overlay.** The in-game BOOST badge now reads correctly (`BOOST 45R x2`), and an `A/B` badge shows while a check runs.
+- **1.3.1 — a rock-steady HUD and Predictive Presentation.** The in-game rings are drawn on every frame with no flicker, and the pacer plans each frame from the scene's cost trend, so a scene getting heavier no longer costs missed frames. Per-game switch-offs now need solid evidence from several sessions, and a Steam menu left open is never mistaken for a struggling game.
+
+Full notes: [Releases](https://github.com/wavessevaw/GFG-Extreme/releases).
+
 ## What it does
+
+<p align="center"><img src="docs/img/home-adapting-oled.png" width="250"></p>
 
 **30 real frames, 90 on screen, 9 watts.** On a Steam Deck OLED the Governor might run a game at 30 rendered frames, generate the rest up to 90, and hold the APU at 9 W. If a scene gets heavier, it adds watts or generated frames within about two seconds. While the game holds, it tries one watt less every 45 seconds.
 
@@ -54,37 +82,58 @@ and since 1.3 it **measures its own benefit in your game** and remembers what wo
 
 ## Frame OS (experimental)
 
-<img src="docs/img/page-frame-os.png" width="300" align="right">
+A small Vulkan layer that sits above the frame generator. It watches every real frame the game renders and what you do on the controls, and moves the real frame rate to match the moment. Find it in **Settings → Diagnostics → Frame OS**; it loads at the next game start.
 
-A small Vulkan layer that sits above the frame generator. It watches every real frame the game renders and what you do on the controls, and moves the real frame rate to match. Find it in **Settings → Diagnostics → Frame OS**; it loads at the next game start.
+### What it does
 
-- **Observe** and **Shadow** only measure. The in-game overlay shows what Frame OS would do (`FOS boost? 45`).
+- **Observe** and **Shadow** only measure and show what Frame OS *would* do.
 - **Act** (tap *Unlock Act*, then tap again to confirm) changes the game's frame timing and power:
-  - **Turning the camera or fighting:** more real frames — ×3 becomes ×2, 45 real frames at 90 Hz — when the GPU can deliver them.
+  - **Turning the camera or fighting:** more real frames — ×3 becomes ×2, 45 real frames at 90 Hz — when the GPU can deliver them. The boost starts on the onset of a camera swing.
   - **Pauses, menus, AFK:** lower TDP, and ×4 where the renderer can generate it.
-  - **Just in time:** real frames are paced so they wait much less inside the frame generator before you see them. Measured on a Deck: about 25 ms down to about 13 ms.
-  - **Learns** when a boost does not help in a game and stops paying for it.
+  - **Just in time:** real frames are paced so they wait much less inside the frame generator before you see them (measured on a Deck: about 25 ms down to about 13 ms). The pacer plans each frame from the scene's cost *trend*, so a scene getting heavier does not cost missed frames.
   - **Rests** the moment the Steam menu covers the game, and hands control back to the Governor when the APU gets hot or the output falls short.
 
-Home gets a **Frame OS card** with three rings — **Response**, **Frames** and **Energy** — showing this session's benefit in percent, coloured from red (worse) through orange and yellow to green (a lot). In Observe and Shadow they are grey estimates. In Act, Frame OS **checks itself in your game**: every so often it switches one effect off for a few seconds and compares the same moment with and without it (A/B). Once a ring has three comparisons it shows the measured number instead of the estimate — the card says *Measured in game*, and the overlay shows `A/B` while a check runs. You can turn the check off in Diagnostics. Frame OS also **remembers each game**: what the A/B check measured carries over to the next session, and an effect that does not help in that game — say, a boost the GPU cannot feed — is switched off there automatically (and re-tried every few sessions). Boosts now start on the *onset* of a camera swing, not halfway through it. The same rings sit in the in-game overlay, next to FPS and TDP.
+Home gets a **Frame OS card** with three rings — **Response**, **Frames** and **Energy** — coloured from red (worse) through orange and yellow to green (a lot).
 
-<br clear="right">
+### It checks itself in your game
 
-<img src="docs/img/hud-rings-standard.png" width="620">
+<p align="center"><img src="docs/img/hud-rings-ab.png" width="560"></p>
+
+Estimates are not proof. In Act, every so often Frame OS switches **one** of its effects off for a few seconds and compares the same moment before, during and after (A-B-A), so heat or a heavier scene cannot fake the result. The moment decides the test: calm play checks **Response**, a fight checks **Frames**, a pause checks **Energy** from the measured APU draw.
+
+After three comparisons a ring shows the **measured** number. The card says *Measured in game*, the overlay shows `A/B` while a check runs, and Diagnostics lists every result with its 95 % range. Checks are short and rare, never count toward the session numbers and never add watts; one switch turns them off.
+
+### It learns every game
+
+What the checks measured carries over to the next session of the same game, so its rings start measured and the checks get rarer. When an effect **hurts** in a game — or a boost brings **no real frames** because the GPU is already at its limit — Frame OS switches it off **for that game** and says so on Home and in Diagnostics (*This game*). Every eight sessions it gives a switched-off effect a fresh try, in case a patch or new settings changed the game. **Reset what GFG learned** clears it.
+
+## In-game rings
+
+<p align="center"><img src="docs/img/page-hud.png" width="230"></p>
+
+The Home screen, shrunk into the corner of your game: a brand-red **FPS** ring with the real frame rate under it, a **TDP** ring, **battery** time in Detailed, and — with Frame OS on — the **Response / Frames / Energy** rings, coloured exactly like on Home. The ring that matches what Frame OS is doing right now is bright; the others dim.
+
+With Frame OS Act, a badge says what is happening: **CALM**, **REST**, **VERIFYING**, **BOOST 45R x2** (only once fresh frame data shows the extra real frames) or **A/B** during a check.
+
+- On by default in the **bottom-left corner**; **Settings → In-game overlay** picks Rings or Text, Minimal / Standard / Detailed and the corner.
+- Refreshes **once a second**; unchanged pictures are reused, and the layer never waits for the overlay during presentation.
+- Drawn by GFG's own small Vulkan layer after the frame generator. It needs one game restart after you first pick it; until then, in Flatpak apps and in HDR games you get the classic text line:
+
+`90 FPS  x3  (30)  sc100  TDP 9W  APU 8W  2h32  easy` — frames on screen, multiplier, real frames, render scale, TDP limit and measured APU draw, battery time left, how hard GFG is working, plus the Frame OS decision (`FOS boost 45`).
+
+<img src="docs/img/hud-rings-detailed.png" width="820">
 
 ## After you play
 
-<img src="docs/img/home-last-session.png" width="270" align="right">
+<p align="center"><img src="docs/img/home-last-session.png" width="270"></p>
 
-When the game closes, Home sums the whole session up in rings: **average FPS**, **average real frames** and **average TDP**, and — if Frame OS ran — its **Response / Frames / Energy** payoff for the session. Below them: how long you played, the time in each mode (and in each Frame OS state), and the energy saved against your limit — in Wh from the measured draw and as minutes of battery.
-
-<br clear="right">
+When the game closes, Home sums the session up in rings: **average FPS**, **average real frames** and **average TDP**, and — if Frame OS ran — its **Response / Frames / Energy** payoff. Below them: how long you played, the time in each mode (and in each Frame OS state), and the energy saved against your limit — in Wh from the measured draw and as minutes of battery. **Details** keeps your recent sessions.
 
 ## Quick start
 
 You need [Decky Loader](https://decky.xyz/) and [Lossless Scaling](https://store.steampowered.com/app/993090/Lossless_Scaling/) from Steam (the default public version).
 
-1. Download `GFG-Extreme-v1_3_0.zip` (or newer) from [Releases](https://github.com/wavessevaw/GFG-Extreme/releases) and install it in Decky (*Install from zip*). Accept the root access request — it is used only to set TDP.
+1. Download the newest `GFG-Extreme-v*.zip` from [Releases](https://github.com/wavessevaw/GFG-Extreme/releases/latest) and install it in Decky (*Install from zip*). Accept the root access request — it is used only to set TDP.
 2. Open GFG Extreme and tap **Install engine**.
 3. In Steam, open the game's **Properties → Launch Options** and paste:
    ```text
@@ -93,34 +142,14 @@ You need [Decky Loader](https://decky.xyz/) and [Lossless Scaling](https://store
    (GFG shows the command with a **Copy** button when a game is not attached yet.)
 4. Start the game and press **Run**.
 
-Heroic, Lutris, EmuDeck and other Flatpak apps: **Settings → System**, enable GFG for the app.
-
-## The in-game overlay
-
-<img src="docs/img/hud-rings-detailed.png" width="620">
-
-<img src="docs/img/page-hud.png" width="230" align="right">
-
-The Home screen, shrunk into the corner of your game. A brand-red **FPS** ring with the real frame rate under it, a **TDP** ring, **battery** time in Detailed, and — with Frame OS on — the **Response / Frames / Energy** rings, coloured exactly like on Home. The ring that matches what Frame OS is doing right now is bright; the others dim.
-
-When experimental Frame OS Act is enabled, Standard and Detailed Rings also show **CALM**, **VERIFYING**, or **BOOST 45R x2** using live FPS and a pacer acknowledgement. **BOOST** requires measured real-frame improvement and an active executor. This badge does not establish input-to-photon latency or battery savings.
-
-Rings refresh **once a second** from recent renderer telemetry. Identical images are reused, and rounded panels, ring geometry and glyphs are cached. Missing or stale FPS is shown as unavailable. The Vulkan layer skips a busy HUD copy rather than waiting for it during presentation.
-
-**Rings are enabled by default in the bottom-left corner** on new installs and profiles that have never set an overlay preference. Existing explicit Off and other positions are preserved. Change the style, detail and position in **Settings → In-game overlay**. Rings are drawn by GFG's own small Vulkan layer after the frame generator; they need one game restart after you first pick them, and until then (or in Flatpak apps and HDR games) you get the classic text line:
-
-<br clear="right">
-
-`90 FPS  x3  (30)  sc100  TDP 9W  APU 8W  2h32  easy` — frames on screen, multiplier, real frames, render scale, TDP limit and measured APU draw, battery time left, how hard GFG is working, plus the Frame OS decision (`FOS boost 45`).
+Heroic, Lutris, EmuDeck and other Flatpak apps: **Settings → System**, enable GFG for the app. Updating: install the new zip over the old one; settings, profiles and what GFG learned are kept. Restart a running game so the new layers load.
 
 ## Something not working?
 
-<img src="docs/img/page-setup.png" width="270" align="right">
+<p align="center"><img src="docs/img/page-setup.png" width="270"></p>
 
 1. **Settings → Diagnostics → Check setup.** One tap checks the engine, the launcher, the overlay, the diagnostics log and TDP access, and says what to fix for each failed item.
 2. **Record a log.** Settings → Diagnostics → **Record log**, play for a minute, **Stop**. A zip lands on the Steam Deck desktop with a plain-language `summary.txt` on top. With Frame OS on, the log also says whether the game loaded the layer and breaks its measurements down per decision. [Open an issue](https://github.com/wavessevaw/GFG-Extreme/issues) and attach it.
-
-<br clear="right">
 
 ## Status
 

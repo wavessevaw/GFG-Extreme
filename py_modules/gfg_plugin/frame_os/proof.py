@@ -44,10 +44,14 @@ class Test:
     settle_s: float
 
 
+# Settle times cover the pacer's 64-frame interval ring (a cadence change shows in its median
+# after ~32 frames: ~1.1 s at 30 real) and the 1 Hz power reading.  Review 1.3.0: 0.7 s let the
+# first control samples still read the boost cadence and understated the frames gain.
 TESTS = {
     "calm": Test("response", "calm", "no-shaping", 4.0, 1.0),
-    "boost": Test("frames", "boost", "hold-calm", 2.5, 0.7),
-    "rest": Test("energy", "rest", "hold-calm", 5.0, 1.5),
+    "boost": Test("frames", "boost", "hold-calm", 2.5, 1.3),
+    # rests come from Steam's menu: the whole A-B-A must fit a short visit (~11 s)
+    "rest": Test("energy", "rest", "hold-calm", 3.0, 1.0),
 }
 METRICS = ("response", "frames", "energy")
 
@@ -197,14 +201,20 @@ class ProofMeter:
             self.next_at = None                  # the gap starts when Act runs again
 
 
-def stats(values: List[float]) -> Dict[str, Any]:
+# T quantiles (99 %, two-sided) for 1..9 degrees of freedom; 2.6 beyond: switching an effect off
+# needs stronger evidence than showing a number.
+_T99 = (63.66, 9.92, 5.84, 4.60, 4.03, 3.71, 3.50, 3.36, 3.25)
+
+
+def stats(values: List[float], confidence: float = 0.95) -> Dict[str, Any]:
     n = len(values)
     if n == 0:
         return {"n": 0, "mean": None, "low": None, "high": None, "measured": False}
     mean = sum(values) / n
+    table, beyond = (_T99, 2.6) if confidence >= 0.99 else (_T95, 2.0)
     if n > 1:
         sd = math.sqrt(sum((v - mean) ** 2 for v in values) / (n - 1))
-        half = (_T95[n - 2] if n - 1 <= len(_T95) else 2.0) * sd / math.sqrt(n)
+        half = (table[n - 2] if n - 1 <= len(table) else beyond) * sd / math.sqrt(n)
     else:
         half = None
     return {"n": n, "mean": round(mean, 1),

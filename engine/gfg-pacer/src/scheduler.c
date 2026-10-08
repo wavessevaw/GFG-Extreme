@@ -6,6 +6,10 @@
 
 #define NS_PER_MS 1000000.0
 #define MIN_COST_SAMPLES 8
+#define RECENT_COSTS 32
+#define FAST_ALPHA 0.25
+#define SLOW_ALPHA 0.03
+#define TREND_DEADBAND_MS 0.3   /* floor; the band also scales with the cost spread */
 
 void gfg_policy_defaults(gfg_policy *p)
 {
@@ -18,6 +22,7 @@ void gfg_policy_defaults(gfg_policy *p)
     p->max_margin_ms = 8.0;
     p->max_wait_ms = 11.0;   /* one 90 Hz refresh */
     p->cost_quantile = 0.95;
+    p->predictive = 1;
 }
 
 static int64_t period_for(const gfg_policy *p)
@@ -58,13 +63,20 @@ static int cmp_double(const void *a, const void *b)
     return (x > y) - (x < y);
 }
 
-double gfg_sched_cost_quantile(const gfg_sched *s, double q)
+/* Quantile of the newest `last` costs (all when last >= count). */
+static double quantile_last(const gfg_sched *s, double q, int last)
 {
     double sorted[GFG_COST_WINDOW];
     int n = s->cost_count, i, j;
     if (n <= 0)
         return 0.0;
-    memcpy(sorted, s->costs_ms, sizeof(double) * (size_t)n);
+    if (last > 0 && last < n) {
+        for (i = 0; i < last; i++)
+            sorted[i] = s->costs_ms[(s->cost_head - 1 - i + GFG_COST_WINDOW) % GFG_COST_WINDOW];
+        n = last;
+    } else {
+        memcpy(sorted, s->costs_ms, sizeof(double) * (size_t)n);
+    }
     /* insertion sort: n <= 64, called once per frame */
     for (i = 1; i < n; i++) {
         double v = sorted[i];
@@ -77,10 +89,46 @@ double gfg_sched_cost_quantile(const gfg_sched *s, double q)
     return sorted[i];
 }
 
+double gfg_sched_cost_quantile(const gfg_sched *s, double q)
+{
+    return quantile_last(s, q, 0);
+}
+
+/* The frame cost to plan the next start with (ms). */
+static double planned_cost(const gfg_sched *s)
+{
+    const gfg_policy *p = &s->policy;
+    double all = gfg_sched_cost_quantile(s, p->cost_quantile);
+    if (!p->predictive || s->cost_count < 2 * MIN_COST_SAMPLES)
+        return all;
+    double trend = s->cost_fast_ms - s->cost_slow_ms;
+    double recent = quantile_last(s, p->cost_quantile, RECENT_COSTS);
+    /* Ordinary frame-to-frame noise moves the fast average too: only a trend clearly beyond the
+     * recent spread (p90 - p50) is a scene changing weight (review: a fixed 0.3 ms band flipped
+     * the plan every frame at 1.5 ms jitter). */
+    double spread = recent - quantile_last(s, 0.5, RECENT_COSTS);
+    double band = 0.5 * spread > TREND_DEADBAND_MS ? 0.5 * spread : TREND_DEADBAND_MS;
+    if (trend > band) {
+        double ahead = recent + trend;            /* the scene is getting heavier: plan ahead */
+        return ahead > all ? ahead : all;
+    }
+    if (trend < -band) {
+        /* lighter: the old heavy frames no longer say anything about the next one */
+        return recent > s->cost_fast_ms ? recent : s->cost_fast_ms;
+    }
+    return all;
+}
+
 static void record_cost(gfg_sched *s, double cost_ms)
 {
     if (!(cost_ms >= 0.0) || !isfinite(cost_ms))
         return;
+    if (s->cost_count == 0) {
+        s->cost_fast_ms = s->cost_slow_ms = cost_ms;
+    } else {
+        s->cost_fast_ms += FAST_ALPHA * (cost_ms - s->cost_fast_ms);
+        s->cost_slow_ms += SLOW_ALPHA * (cost_ms - s->cost_slow_ms);
+    }
     s->costs_ms[s->cost_head] = cost_ms;
     s->cost_head = (s->cost_head + 1) % GFG_COST_WINDOW;
     if (s->cost_count < GFG_COST_WINDOW)
@@ -92,7 +140,7 @@ int64_t gfg_sched_frame_start(gfg_sched *s, int64_t now_ns)
     const gfg_policy *p = &s->policy;
     int64_t delay = 0;
     if (s->period_ns > 0 && p->tick_shaping && s->next_slot_ns > 0 && s->cost_count >= MIN_COST_SAMPLES) {
-        double cost_q = gfg_sched_cost_quantile(s, p->cost_quantile);
+        double cost_q = planned_cost(s);
         int64_t cost_ns = (int64_t)llround(cost_q * NS_PER_MS);
         int64_t plan_ns = (int64_t)llround((cost_q + s->margin_ms) * NS_PER_MS);
         int64_t slot = s->next_slot_ns;

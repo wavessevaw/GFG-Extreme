@@ -194,8 +194,8 @@ pairs cancel slow drift (heat, a scene getting heavier). The moment decides the 
 | Level at the start | Control window | Metric | Window (settle) |
 |---|---|---|---|
 | calm  | tick shaping off, same cadence and pacing (`tick_shaping=0` in the policy) | frame age at present (`freshness_ms`) | 4 s (1 s) |
-| boost | boost held at the calm cadence and cap | real cadence (present interval p50) | 2.5 s (0.7 s) |
-| rest  | rest held at calm | measured APU draw | 5 s (1.5 s) |
+| boost | boost held at the calm cadence and cap | real cadence (present interval p50) | 2.5 s (1.3 s: the 64-frame interval ring) |
+| rest  | rest held at calm | measured APU draw | 3 s (1 s; the A-B-A fits an ~11 s menu visit) |
 
 A window whose level changes, whose pacer telemetry is not live, or that lacks samples for 60 % of
 its length is dropped (`aborted`), never filled in. A metric is **measured** from 3 pairs; the
@@ -211,12 +211,28 @@ no watts. Off switch: Diagnostics → *A/B check in Act* (`frame_os_ab`).
 pairs of every Act session in a game (the last 40 per metric) and a verdict per effect —
 *helps* (95 % interval above zero), *hurts* (below zero), *useless* (boost gains under 5 % with
 the interval's top under 10 %: the GPU cannot feed more real frames here) or *unclear*. An effect
-that hurts, or a useless boost, is switched off **for that game** at once and in later sessions:
-no tick shaping, no boost (energy stays in the bank) or no rest. Every 8 sessions a switched-off
+that hurts (99 % interval's top under -2 %), or a useless boost (mean under 5 %, 99 % top under
+7.5 %), is switched off **for that game**: no tick shaping, no boost (energy stays in the bank) or
+no rest. The decision is taken **once per session, at its start**, and only on at least 8 pairs
+from at least 2 sessions: re-testing after every pair switched harmless effects off by chance
+(simulated: a 0 % effect in 15-44 % of games with 3 pairs and a per-pair re-check; now 0 %, a real
++8 % boost 2 %). Every 8 sessions a switched-off
 effect gets a fresh trial (its old pairs are dropped so they cannot outvote the re-check). Earlier
 sessions' pairs seed the A/B meter, so a known game's rings start measured and its control
 windows are rare from the start. *Reset what GFG learned* forgets the memory together with the
 Governor's game model.
+
+**Steam menu** (`governor_service._menu_covering`): the renderer reports focus only when it
+changes. A menu counts as covering past the event's 5 s freshness while the renderer shows no
+generation (output ~ real frames) and the output is below target, for at most 120 s; generated
+frames on screen mean the game is back even if the focus-restored event was missed. Act rests for
+the whole visit, and a starved output under the menu takes the overlay back without counting
+toward the session lockout.
+
+**Predictive Presentation** (`scheduler.c`): the tick-shaping plan follows the cost trend (fast -
+slow EWMA) beyond a band scaled to the recent spread (p90 - p50 of 32 frames): rising costs are
+planned one trend ahead, falling costs release the reserve from the recent frames. Plain jitter
+plans exactly like the quantile; a scene cycling 12-24 ms: misses 0.5 % -> 0 %.
 
 **Predictive boost** (`policy.py`): a camera swing is announced by the stick before it is fast.
 A right-stick deflection of at least 0.25 rising at 2.0 per second or faster starts the boost on

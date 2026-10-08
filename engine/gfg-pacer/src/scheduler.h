@@ -12,6 +12,13 @@
  * The scheduler learns the game's frame cost (start -> ready) and adapts its safety margin from
  * hits and misses.  It never changes game speed: it only moves the start of work inside the slot
  * the frame was going to be shown in anyway, and it never waits longer than max_wait_ns.
+ *
+ * Predictive Presentation: a quantile over the last 64 frames reacts late both ways.  When a
+ * scene gets heavier, the plan still uses the lighter past and frames miss their slot; when it
+ * gets lighter, two seconds of old heavy frames keep the reserve (and the latency) high.  With
+ * `predictive`, the plan follows the cost trend (fast EWMA - slow EWMA): rising costs are
+ * extrapolated one trend ahead on top of the recent quantile, falling costs release the reserve
+ * from the recent frames only, never below the fast average.
  */
 #ifndef GFG_SCHEDULER_H
 #define GFG_SCHEDULER_H
@@ -33,6 +40,7 @@ typedef struct gfg_policy {
     double max_margin_ms;
     double max_wait_ms;      /* never wait longer than this in one call (<= one refresh) */
     double cost_quantile;    /* frame-cost quantile used for planning, e.g. 0.9 */
+    int predictive;          /* 1: plan with the cost trend (Predictive Presentation), see below */
 } gfg_policy;
 
 typedef struct gfg_stats {
@@ -55,6 +63,8 @@ typedef struct gfg_sched {
     int cost_count;
     int cost_head;
     double margin_ms;
+    double cost_fast_ms;     /* EWMA, reacts within a few frames */
+    double cost_slow_ms;     /* EWMA, the scene's level over ~1 s */
     gfg_stats stats;
 } gfg_sched;
 
