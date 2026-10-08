@@ -71,14 +71,25 @@ class FrameOsRunner:
             self.channel.reset()
             self._published = None
             self.benefit.reset()            # the rings are per game session
+            self.policy = None              # no bank/backoff from the previous session
+            self.scene = SceneChangeDetector()
+            self.last = {}
+            if self.reader is not None:
+                self.reader.close()
+                self.reader = None
         same = (self.policy is not None and self.policy.output_hz == output_hz
                 and self.policy.calm_real_hz == calm_real_hz and self.policy.max_multiplier == max_multiplier)
         if not same:
             broker = EnergyBroker(calm_w=float(calm_w)) if calm_w else None
             self.policy = InjectionPolicy(output_hz=output_hz, calm_real_hz=calm_real_hz,
                                           max_multiplier=max_multiplier, broker=broker)
-        elif self.policy.broker is not None and calm_w:
-            self.policy.broker.calm_w = float(calm_w)   # the Governor moved the calm cap
+        elif calm_w:
+            if self.policy.broker is None:
+                self.policy.broker = EnergyBroker(calm_w=float(calm_w))
+            else:
+                self.policy.broker.calm_w = float(calm_w)   # the Governor moved the calm cap
+        else:
+            self.policy.broker = None  # power ownership was released
 
     @property
     def injection(self) -> Optional[tuple]:
@@ -126,17 +137,19 @@ class FrameOsRunner:
         if wanted != self._published:
             # Tick shaping must be able to move a frame start through most of a real-frame slot:
             # at 30 real a one-refresh cap (11 ms) leaves two thirds of the queueing in place.
-            self.channel.write_policy(enabled=True, real_hz=real_hz, mode=self.mode,
+            published = self.channel.write_policy(enabled=True, real_hz=real_hz, mode=self.mode,
                                       tick_shaping=True, pacing=True, generation=self._bump(),
                                       max_wait_ms=round(0.8 * 1000.0 / real_hz, 2) if real_hz > 0 else 0.0)
-            self._published = wanted
+            self._published = wanted if published else None
         else:
-            self.channel.heartbeat()
+            if not self.channel.heartbeat():
+                self._published = None  # retry the full policy on the next tick
         self.last = {
             "enabled": True, "mode": self.mode, "input": inp, "scene_change": cut,
             "decision": decision.to_dict(), "acting": acting, "published_real_hz": real_hz,
             "generation": self.generation, "telemetry": telemetry,
-            "acknowledged": bool(telemetry.get("live")) and telemetry.get("applied_generation") == self.generation,
+            "acknowledged": self._published is not None and bool(telemetry.get("live"))
+                            and telemetry.get("applied_generation") == self.generation,
             "input_sensor": self._sensor_status(inp),
         }
         broker = self.policy.broker
@@ -198,3 +211,8 @@ class FrameOsRunner:
                 pass
             self.reader = None
         self._published = None
+        self.enabled = False
+        self.policy = None
+        self.last = {"enabled": False}
+        if hasattr(self.channel, "close"):
+            self.channel.close()

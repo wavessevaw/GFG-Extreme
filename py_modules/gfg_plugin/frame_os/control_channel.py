@@ -56,12 +56,15 @@ class ControlChannel:
             return True
         if not self._fresh:
             return self.reset()
+        fd = None
         try:
             fd = os.open(str(self.path), os.O_RDWR | os.O_CREAT, 0o600)
             if os.fstat(fd).st_size < SIZE:
                 os.ftruncate(fd, SIZE)
             mapped = mmap.mmap(fd, SIZE)
         except OSError:
+            if fd is not None:
+                os.close(fd)
             return False
         magic, version, size, _pid = HEADER.unpack_from(mapped, 0)
         if (magic, version, size) != (MAGIC, VERSION, SIZE):

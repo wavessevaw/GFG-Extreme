@@ -57,6 +57,8 @@ class InputState:
         if etype == STATUS_TYPE:
             self.devices = code + max(0, value)     # evdev pads + Deck hidraw nodes
             self.hidraw = max(0, value)
+            if self.devices == 0:
+                self.clear_activity()
             return
         self.events += 1
         if etype == EV_ABS and code in (ABS_RX, ABS_RY, ABS_X, ABS_Y):
@@ -79,15 +81,26 @@ class InputState:
             self._presses.append(t)
             self._last_input = t
 
+    def clear_activity(self) -> None:
+        """Forget held axes and old input when the input source disappears."""
+        self.right = [0.0, 0.0]
+        self.left = [0.0, 0.0]
+        self._camera = self._camera_at = 0.0
+        self._last_input = None
+        self._presses.clear()
+
     def snapshot(self, now: float) -> Dict[str, float]:
         while self._presses and now - self._presses[0] > ACTION_WINDOW_S:
             self._presses.popleft()
         held = (self.right[0] ** 2 + self.right[1] ** 2) ** 0.5 > STICK_DEADZONE
+        active = held or max(abs(self.left[0]), abs(self.left[1])) > STICK_DEADZONE
+        if active:
+            self._last_input = now  # evdev reports changes, not a steady held stick
         camera = self._camera if held else self._decay(now)
         return {
             "camera": round(camera, 3),
             "action": round(min(1.0, len(self._presses) / (ACTION_WINDOW_S * 4.0)), 3),  # 4 presses/s = 1.0
-            "idle_s": round(now - self._last_input, 2) if self._last_input is not None else float("inf"),
+            "idle_s": round(max(0.0, now - self._last_input), 2) if self._last_input is not None else float("inf"),
         }
 
     def feed(self, data: bytes) -> int:
@@ -122,15 +135,19 @@ class EvdevReader:
 
     def poll(self) -> int:
         consumed = 0
-        for fd in self._fds:
+        for fd in list(self._fds):
             while True:
                 try:
                     data = os.read(fd, EVENT.size * 64)
                 except BlockingIOError:
                     break
+                except InterruptedError:
+                    continue
                 except OSError:
+                    self._drop(fd)
                     break
                 if not data:
+                    self._drop(fd)
                     break
                 data = self._rest.pop(fd, b"") + data     # a pipe read can end mid-record
                 whole = len(data) - len(data) % EVENT.size
@@ -138,6 +155,18 @@ class EvdevReader:
                     self._rest[fd] = data[whole:]
                 consumed += self.state.feed(data[:whole])
         return consumed
+
+    def _drop(self, fd: int) -> None:
+        self._fds.remove(fd)
+        self._rest.pop(fd, None)
+        if self._owned:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        self.state.clear_activity()
+        if not self._fds:
+            self.state.devices = self.state.hidraw = 0
 
     def status(self) -> Dict[str, object]:
         devices = self.state.devices
