@@ -943,6 +943,25 @@ class BudgetRuntimeTests(RuntimeBase):
         self.step(0.1)
         self.assertGreater(budget.tdp, baseline, "two independent low-FPS batches justify watts")
 
+    def test_game_change_discards_fast_fps_and_act_evidence(self):
+        # Even if the new game selects the same 30x3 operating point, its
+        # renderer samples and Act grace window belong to a different session.
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertEqual(self.svc._point["key"], "30x3")
+        self.svc._fast_point_key = "30x3"
+        self.svc._fast_last_sample_seq = 999999
+        self.svc._injection_started_at = self.t["now"] - 50
+        self.inspector.info["launch_key"] = [9, 9, 9]
+        self.svc._launch_polled = -1e9
+        state = self.step()
+        self.assertEqual(state["reason"], "new-game-session")
+        self.assertIsNone(self.svc._fast_point_key)
+        self.assertLess(self.svc._fast_last_sample_seq, 999999)
+        self.assertIsNone(self.svc._injection_started_at)
+
     def test_host_heat_reaches_the_budget_controller(self):
         self.svc.sensors.sample = lambda force=False: {"temp_c": 84.0, "thermal_headroom_c": 6.0}
         self.feed(20, 45, 90)
