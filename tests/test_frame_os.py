@@ -55,7 +55,8 @@ class InjectionTests(unittest.TestCase):
 
     def test_idle_rests_and_input_wakes(self):
         p = InjectionPolicy(output_hz=90, calm_real_hz=30)
-        self.assertEqual(p.tick(0, {"idle_s": 25.0}).level, "rest")
+        self.assertEqual(p.tick(0, {"idle_s": 25.0}).level, "calm", "gamepad silence is not proof of AFK")
+        self.assertEqual(p.tick(0, {"idle_s": 25.0, "idle_verified": True}).level, "rest")
         self.assertEqual(p.tick(1, {"idle_s": 0.0, "camera": 0.0}).level, "calm")
 
     def test_scene_change_buys_a_short_burst(self):
@@ -368,7 +369,7 @@ class ActExecutorTests(unittest.TestCase):
         self.assertEqual(InjectionPolicy(output_hz=90, calm_real_hz=30, max_multiplier=3).rest_real_hz, 30)
         self.assertEqual(InjectionPolicy(output_hz=60, calm_real_hz=30, max_multiplier=4).rest_real_hz, 30)  # 15 < 20
         p = InjectionPolicy(output_hz=90, calm_real_hz=30, max_multiplier=4)
-        d = p.tick(100.0, {"camera": 0, "action": 0, "idle_s": 30.0})
+        d = p.tick(100.0, {"camera": 0, "action": 0, "idle_s": 30.0, "idle_verified": True})
         self.assertEqual((d.level, d.real_hz), ("rest", 22.5))
 
     def test_injection_deltas(self):
@@ -516,9 +517,9 @@ class BenefitTests(unittest.TestCase):
         m = BenefitMeter()
         kw = dict(acting=False, level="calm", output_hz=90, calm_real_hz=30, boost_real_hz=45, calm_w=13.0,
                   tdp_w=13.0, telemetry={"live": True, "freshness_ms": 25.0, "present_interval_p50_ms": 33.3})
-        self.feed(m, 30, **kw)
+        self.feed(m, 1, **kw)
         self.assertIsNone(m.summary()["response_pct"])
-        self.feed(m, 40, **kw)
+        self.feed(m, 3, **kw)
         s = m.summary()
         self.assertTrue(s["estimate"])
         self.assertAlmostEqual(s["frames_pct"], 50.0)
