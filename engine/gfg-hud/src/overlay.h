@@ -101,7 +101,9 @@ void gfg_hud_source_free(gfg_hud_source *s);
  * Returns s->gen.  Takes s->lock. */
 uint64_t gfg_hud_source_poll(gfg_hud_source *s, int64_t now_ns);
 
-/* Write "<w> <h>\n" to path atomically (temp file in the same directory + rename).  0 / -1. */
-int gfg_hud_write_extent(const char *path, uint32_t w, uint32_t h);
+/* Write "<w> <h> <hud>\n" to path atomically (temp file in the same directory + rename); hud is 1
+ * when this swapchain carries the overlay, 0 when it is passed through (the plugin then keeps its
+ * text HUD).  0 / -1. */
+int gfg_hud_write_extent(const char *path, uint32_t w, uint32_t h, int hud);
 
 #endif

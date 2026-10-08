@@ -102,7 +102,7 @@ static void publish(uint32_t magic, uint32_t w, uint32_t h, uint32_t corner, uin
     free(b);
 }
 
-static void check_extent(uint32_t w, uint32_t h)
+static void check_extent(uint32_t w, uint32_t h, int hud)
 {
     char buf[64] = {0}, want[64];
     if (getenv("EXPECT_NO_LAYER")) {
@@ -113,8 +113,8 @@ static void check_extent(uint32_t w, uint32_t h)
     ssize_t n = fd >= 0 ? read(fd, buf, sizeof(buf) - 1) : -1;
     if (fd >= 0)
         close(fd);
-    snprintf(want, sizeof(want), "%u %u\n", w, h);
-    CHECK(n > 0 && !strcmp(buf, want), "extent file says %ux%u ('%.*s')", w, h, n > 0 ? (int)n - 1 : 0, buf);
+    snprintf(want, sizeof(want), "%u %u %d\n", w, h, hud);
+    CHECK(n > 0 && !strcmp(buf, want), "extent file says %ux%u hud %d ('%.*s')", w, h, hud, n > 0 ? (int)n - 1 : 0, buf);
 }
 
 static void app_init(app *a, int queue2)
@@ -164,7 +164,7 @@ static void chain_create(app *a, chain *c, VkFormat format, uint32_t w, uint32_t
     };
     c->ci = ci;
     VKCHECK(vkCreateSwapchainKHR(a->dev, &c->ci, NULL, &c->swapchain));
-    check_extent(w, h);
+    check_extent(w, h, format != VK_FORMAT_R16G16B16A16_SFLOAT);   /* FP16: passed through */
 }
 
 /* What a game does on resize. */
@@ -176,7 +176,7 @@ static void chain_recreate(app *a, chain *c, uint32_t w, uint32_t h)
     c->ci.imageExtent.height = h;
     VKCHECK(vkCreateSwapchainKHR(a->dev, &c->ci, NULL, &c->swapchain));
     vkDestroySwapchainKHR(a->dev, old, NULL);
-    check_extent(w, h);
+    check_extent(w, h, c->ci.imageFormat != VK_FORMAT_R16G16B16A16_SFLOAT);
 }
 
 static void chain_destroy(app *a, chain *c)

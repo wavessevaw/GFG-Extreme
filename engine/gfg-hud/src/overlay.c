@@ -251,14 +251,14 @@ uint64_t gfg_hud_source_poll(gfg_hud_source *s, int64_t now_ns)
     return gen;
 }
 
-int gfg_hud_write_extent(const char *path, uint32_t w, uint32_t h)
+int gfg_hud_write_extent(const char *path, uint32_t w, uint32_t h, int hud)
 {
     static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
     char tmp[600], text[32];
     int len, fd, ok;
     if (!path || !*path)
         return -1;
-    len = snprintf(text, sizeof(text), "%u %u\n", w, h);
+    len = snprintf(text, sizeof(text), "%u %u %d\n", w, h, hud ? 1 : 0);
     if (snprintf(tmp, sizeof(tmp), "%s.%d.tmp", path, (int)getpid()) >= (int)sizeof(tmp))
         return -1;
     pthread_mutex_lock(&lock);

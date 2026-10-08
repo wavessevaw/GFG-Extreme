@@ -105,7 +105,7 @@ The Home screen, shrunk into the corner of your game. A brand-red **FPS** ring w
 
 Numbers do not flicker: each ring shows a **20-second average** and refreshes every 20 s, so a glance tells you how the game really runs, not how the last frame went.
 
-Turn it on in **Settings → In-game overlay** and pick **Rings** or **Text**, then Minimal, Standard or Detailed and a corner. Rings are drawn by GFG's own small Vulkan layer after the frame generator; they need one game restart after you first pick them, and until then (or in Flatpak apps) you get the classic text line:
+Turn it on in **Settings → In-game overlay** and pick **Rings** or **Text**, then Minimal, Standard or Detailed and a corner. Rings are drawn by GFG's own small Vulkan layer after the frame generator; they need one game restart after you first pick them, and until then (or in Flatpak apps and HDR games) you get the classic text line:
 
 <br clear="right">
 

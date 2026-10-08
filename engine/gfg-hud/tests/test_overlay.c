@@ -210,16 +210,16 @@ static void test_extent(void)
 {
     char path[320], buf[64] = {0}, tmp[340];
     snprintf(path, sizeof(path), "%s/extent", dir);
-    CHECK(gfg_hud_write_extent(path, 1280, 800) == 0, "extent written");
-    CHECK(gfg_hud_write_extent(path, 1920, 1080) == 0, "extent rewritten");
+    CHECK(gfg_hud_write_extent(path, 1280, 800, 0) == 0, "extent written");
+    CHECK(gfg_hud_write_extent(path, 1920, 1080, 1) == 0, "extent rewritten");
     int fd = open(path, O_RDONLY);
     ssize_t n = fd >= 0 ? read(fd, buf, sizeof(buf) - 1) : -1;
     if (fd >= 0)
         close(fd);
-    CHECK(n == 10 && !strcmp(buf, "1920 1080\n"), "extent file '%s'", buf);
+    CHECK(n == 12 && !strcmp(buf, "1920 1080 1\n"), "extent file '%s'", buf);
     snprintf(tmp, sizeof(tmp), "%s.%d.tmp", path, (int)getpid());
     CHECK(access(tmp, F_OK) != 0, "no temp file left");
-    CHECK(gfg_hud_write_extent("/nonexistent-dir/x", 1, 1) != 0, "unwritable path: error, no crash");
+    CHECK(gfg_hud_write_extent("/nonexistent-dir/x", 1, 1, 1) != 0, "unwritable path: error, no crash");
     unlink(path);
 }
 

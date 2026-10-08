@@ -5,7 +5,7 @@
  * pre-rendered overlay bitmap (overlay.h) into each presented swapchain image with copies only:
  * no shaders, no blending, no render passes.
  *
- *   vkCreateSwapchainKHR   writes "<w> <h>\n" to the extent file; adds TRANSFER_DST to the image
+ *   vkCreateSwapchainKHR   writes "<w> <h> <hud>\n" to the extent file; adds TRANSFER_DST to the image
  *                          usage when the surface supports it (else the swapchain is no-HUD);
  *                          records format / extent / images
  *   vkQueuePresentKHR      for each HUD swapchain in the present: per image a reusable command
@@ -596,11 +596,11 @@ static VKAPI_ATTR VkResult VKAPI_CALL layer_QueuePresentKHR(VkQueue queue, const
     return d->QueuePresentKHR(queue, &pi);
 }
 
-static void write_extent(uint32_t w, uint32_t h)
+static void write_extent(uint32_t w, uint32_t h, int hud)
 {
     const char *p = getenv("GFG_HUD_EXTENT_FILE");
     p = p && *p ? p : GFG_HUD_DEFAULT_EXTENT;
-    if (gfg_hud_write_extent(p, w, h) != 0 && debug_on())
+    if (gfg_hud_write_extent(p, w, h, hud) != 0 && debug_on())
         fprintf(stderr, "[gfg-hud] cannot write extent file %s\n", p);
 }
 
@@ -664,7 +664,6 @@ static VKAPI_ATTR VkResult VKAPI_CALL layer_CreateSwapchainKHR(VkDevice device, 
     }
     if (r != VK_SUCCESS)
         return r;
-    write_extent(ci->imageExtent.width, ci->imageExtent.height);
     if (!why) {
         hud_swapchain *sc = sc_new(d, *out, ci, kind);
         if (sc) {
@@ -676,6 +675,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL layer_CreateSwapchainKHR(VkDevice device, 
             why = "swapchain images";
         }
     }
+    write_extent(ci->imageExtent.width, ci->imageExtent.height, !why);
     if (debug_on())
         fprintf(stderr, "[gfg-hud] swapchain 0x%llx %ux%u format %d: hud %s%s\n", (unsigned long long)(uintptr_t)*out,
                 ci->imageExtent.width, ci->imageExtent.height, (int)ci->imageFormat, why ? "no: " : "yes",

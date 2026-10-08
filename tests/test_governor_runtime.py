@@ -136,7 +136,10 @@ class RuntimeBase(unittest.TestCase):
         self.step()
         self.assertFalse(self.svc.ring_hud_path.exists(), "no layer report yet: text line, no bitmap")
         self.svc._launch = {"running": True, "launch_key": [1, 2, _t.time() - 30]}
-        self.svc.ring_hud_extent.write_text("1280 800\n")
+        self.svc.ring_hud_extent.write_text("1280 800 0\n")   # HDR / unsupported swapchain: passed through
+        self.svc._sync_hud("game")
+        self.assertFalse(self.svc.ring_hud_path.exists(), "layer draws nothing here: keep the text line")
+        self.svc.ring_hud_extent.write_text("1280 800 1\n")
         self.svc._sync_hud("game")
         raw = self.svc.ring_hud_path.read_bytes()
         magic, version, w, h, corner, margin, seq, _ = hud_rings.HEADER.unpack_from(raw)

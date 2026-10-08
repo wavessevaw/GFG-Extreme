@@ -474,11 +474,15 @@ class GovernorService:
             self.log.debug("Governor HUD sync failed: %s", error)
 
     def _ring_hud_live(self) -> bool:
-        """The GFG HUD layer runs in this game: it wrote the swapchain size since the launch.
-        Otherwise (old launch, layer missing, Flatpak) the text line stays as the fallback."""
+        """The GFG HUD layer draws in this game: since the launch it wrote the swapchain size with
+        the HUD flag set ("W H 1").  Otherwise (old launch, layer missing, Flatpak, an HDR or
+        unsupported swapchain it passes through: "W H 0") the text line stays as the fallback."""
         try:
             written = self.ring_hud_extent.stat().st_mtime
+            parts = self.ring_hud_extent.read_text().split()
         except OSError:
+            return False
+        if len(parts) >= 3 and parts[2] == "0":
             return False
         launch = self._launch if isinstance(self._launch, dict) else {}
         key = launch.get("launch_key") if launch.get("running") else None
