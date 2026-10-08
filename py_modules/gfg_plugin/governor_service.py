@@ -462,7 +462,7 @@ class GovernorService:
                 draw = self.power.status().get("draw_w")
             except Exception:
                 draw = None
-            cap_binding = (budget.playtime_cap_w is not None
+            cap_binding = (budget.savings_cap_w is not None
                            and budget.tdp is not None
                            and budget.tdp >= budget.normal_max_w - 0.1)
             if cap_binding and self.savings.observe(
