@@ -1322,6 +1322,7 @@ class GovernorService:
             mode=self._mode(self._session_profile or str(self._status.get("profile") or "")),
             battery_w=self._battery_discharge_w(),
             frame_os=self._frame_os_level(),
+            benefit=(self.frame_os.last or {}).get("benefit") if self._frame_os_level() else None,
         )
 
     def _frame_os_level(self) -> Optional[str]:

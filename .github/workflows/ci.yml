@@ -24,6 +24,8 @@ jobs:
         run: |
           VULKAN_DEPS="$RUNNER_TEMP/vk" engine/gfg-pacer/tests/setup_vulkan_deps.sh
           make -C engine/gfg-pacer VULKAN_DEPS="$RUNNER_TEMP/vk" test layer abi integration ordering
+      - name: HUD layer tests (overlay file, pixel conversion, layer on the mock Vulkan driver)
+        run: make -C engine/gfg-hud VULKAN_DEPS="$RUNNER_TEMP/vk" test layer abi integration
 
       - name: Frontend build is committed and current
         run: |

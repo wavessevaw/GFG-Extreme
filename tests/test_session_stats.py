@@ -126,3 +126,20 @@ class FrameOsSessionTests(unittest.TestCase):
                 t += 1.0
                 st.add(t, output=90, real=30, tdp=10, draw=9, reference_w=15, frame_os=level)
         self.assertEqual(st.summary()["frame_os"], {"calm": 2.0, "rest": 1.0, "boost": 0.5})
+
+    def test_frame_os_benefit_is_kept_for_the_session_summary(self):
+        st = SessionStats()
+        st.start("k", 0.0)
+        early = {"ready": False, "response_pct": 99.0}
+        late = {"ready": True, "estimate": False, "response_pct": 41.0, "frames_pct": 12.0, "energy_pct": 8.0}
+        for t in range(1, 61):
+            st.add(float(t), output=90, real=30, tdp=10, draw=9, reference_w=15, frame_os="calm",
+                   benefit=early if t < 30 else late)
+        st.add(61.0, output=90, real=30, tdp=10, draw=9, reference_w=15, frame_os=None, benefit=None)
+        self.assertEqual(st.summary()["frame_os_benefit"],
+                         {"response": 41.0, "frames": 12.0, "energy": 8.0, "estimate": False})
+        plain = SessionStats()
+        plain.start("k", 0.0)
+        for t in range(1, 61):
+            plain.add(float(t), output=90, real=30, tdp=10, draw=9, reference_w=15)
+        self.assertNotIn("frame_os_benefit", plain.summary())

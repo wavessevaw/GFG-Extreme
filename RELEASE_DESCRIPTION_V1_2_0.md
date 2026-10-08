@@ -19,7 +19,7 @@ Until now GFG picked a setting and held it. Frame OS goes a level deeper: a smal
 - Remembers what it learned when you switch between Battery and Balanced; a per-game reset sits in Diagnostics
 - Pauses its measurements while Steam's menu is open, so a menu no longer looks like a failing setting
 - Follows a lower screen refresh rate (an OLED at 60 Hz targets 60)
-- Last session shows the modes you played in and the energy saved, measured from real power draw
+- **Last session in rings:** when the game closes, Home shows the session's average FPS, real frames and TDP, plus the Frame OS payoff, with the modes you played in and the energy saved, measured from real power draw
 - Effort shows its reason, e.g. `HARD · x3 required`
 - Bug fixes and improvements
 

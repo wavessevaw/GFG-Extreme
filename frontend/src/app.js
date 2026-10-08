@@ -215,14 +215,15 @@ function Ring({ value, max, label, sub }) {
 
 // Frame OS benefit rings: colour by effectiveness, red when Frame OS made it worse.
 const ringHue = (v, max) => (v < 0 ? 0 : 25 + 115 * Math.min(1, Math.abs(v) / max));
-function MiniRing({ value, max, text, label, live, estimate }) {
+function MiniRing({ value, max, text, label, live, estimate, fixed }) {
   const r = 26, w = 4, size = 2 * (r + w), c = 2 * Math.PI * r;
   const has = value != null;
   const f = has ? Math.min(1, Math.abs(value) / max) : 0;
-  const color = estimate ? "#5c5c66" : "hsl(" + ringHue(value || 0, max) + " 80% 52% / " + (live ? 1 : 0.38) + ")";
-  return h("div", { className: "mini" + (live && has && !estimate ? " live" : "") },
+  const color = fixed || (estimate ? "#5c5c66" : "hsl(" + ringHue(value || 0, max) + " 80% 52% / " + (live ? 1 : 0.38) + ")");
+  const glow = live && has && !estimate && !fixed;
+  return h("div", { className: "mini" + (glow ? " live" : "") },
     h("div", { className: "mring", style: { width: size, height: size } },
-      h("svg", { viewBox: "0 0 " + size + " " + size, width: size, height: size, style: live && has && !estimate ? { filter: "drop-shadow(0 0 5px " + color.replace("/ 1)", "/ .45)") + ")" } : null },
+      h("svg", { viewBox: "0 0 " + size + " " + size, width: size, height: size, style: glow ? { filter: "drop-shadow(0 0 5px " + color.replace("/ 1)", "/ .45)") + ")" } : null },
         h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#26262d", strokeWidth: w }),
         has ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeWidth: w, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null),
       h("div", { className: "mnum" + (estimate || !has ? " dim" : "") }, has ? text : "—")),
@@ -243,6 +244,22 @@ function FrameOsCard({ fo }) {
       h(MiniRing, { value: resp, max: 50, text: resp == null ? "" : (resp >= 0 ? "−" : "+") + Math.abs(Math.round(resp)) + "%", label: "Response", live: level !== "rest", estimate: est }),
       h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "−") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est }),
       h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), label: "Energy", live: level === "rest", estimate: est })));
+}
+
+// Last session as rings: averages for the whole game session, benefit rings when Frame OS ran.
+function SessionRings({ ls, target }) {
+  const b = ls.frame_os_benefit;
+  const signed = (v, good) => (v == null ? "" : (v >= 0 ? good : good === "+" ? "−" : "+") + Math.abs(Math.round(v)) + "%");
+  const limit = ls.reference_w || 15;
+  return h("div", null,
+    h("div", { className: "rings" },
+      h(MiniRing, { value: ls.avg_output_fps, max: target, text: num(ls.avg_output_fps, 0), label: "FPS avg", fixed: "#fb0d00" }),
+      h(MiniRing, { value: ls.avg_real_fps, max: ls.avg_output_fps || target, text: num(ls.avg_real_fps, 0), label: "Real avg", fixed: "#f5f5f7" }),
+      h(MiniRing, { value: ls.avg_tdp_w, max: limit, text: ls.avg_tdp_w != null ? num(ls.avg_tdp_w, 0) + "W" : "", label: "TDP avg", fixed: "#f5f5f7" })),
+    b ? h("div", { className: "rings", style: { marginTop: 10 } },
+      h(MiniRing, { value: b.response, max: 50, text: signed(b.response, "−"), label: "Response", live: true, estimate: b.estimate }),
+      h(MiniRing, { value: b.frames, max: 50, text: signed(b.frames, "+"), label: "Frames", live: true, estimate: b.estimate }),
+      h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "−" : "") + Math.abs(Math.round(b.energy)) + "%", label: "Energy", live: true, estimate: b.estimate })) : null);
 }
 
 function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
@@ -309,12 +326,12 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
     h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
     health ? h("div", { className: "hint" }, health) : null,
     !s.session && s.last_session ? h("div", { className: "card" }, h("div", { className: "sec" }, "LAST SESSION"),
-      h("div", { className: "kv" },
+      h(SessionRings, { ls: s.last_session, target }),
+      h("div", { className: "kv", style: { marginTop: 12 } },
         h("span", null, "Played"), h("b", null, num(s.last_session.minutes, 0) + " min"),
         s.last_session.mode === "mixed" ? h("span", null, "Modes") : null, s.last_session.mode === "mixed" ? h("b", null, sessionModes(s.last_session)) : null,
         s.last_session.frame_os ? h("span", null, "Frame OS") : null, s.last_session.frame_os ? h("b", null, frameOsMinutes(s.last_session.frame_os)) : null,
-        h("span", null, "Frames on screen"), h("b", null, num(s.last_session.avg_output_fps, 0) + " FPS avg (" + num(s.last_session.avg_real_fps, 0) + " real)"),
-        h("span", null, "Power"), h("b", null, s.last_session.avg_tdp_w != null ? num(s.last_session.avg_tdp_w, 1) + " W avg" + (s.last_session.reference_w ? " · limit " + num(s.last_session.reference_w, 0) + " W" : "") : "–"),
+        s.last_session.reference_w ? h("span", null, "Your limit") : null, s.last_session.reference_w ? h("b", null, num(s.last_session.reference_w, 0) + " W") : null,
         s.last_session.saved_w > 0 ? h("span", null, "Saved") : null, s.last_session.saved_w > 0 ? h("b", null, "~" + num(s.last_session.saved_w, 1) + " W under your limit on average") : null,
         s.last_session.saved_wh > 0 ? h("span", null, "Energy saved") : null, s.last_session.saved_wh > 0 ? h("b", null, "~" + num(s.last_session.saved_wh, 1) + " Wh measured" + (s.last_session.battery_minutes_gained > 0 ? " · ~" + s.last_session.battery_minutes_gained + " min more battery" : "")) : null,
         s.last_session.max_temp_c ? h("span", null, "Hottest") : null, s.last_session.max_temp_c ? h("b", null, num(s.last_session.max_temp_c, 0) + " °C" + (s.last_session.hot_pct ? " · warm " + s.last_session.hot_pct + "% of the time" : "")) : null,
@@ -405,7 +422,7 @@ function HudPage({ back, s, profile, refresh }) {
   const set = async (c) => { try { await rpc.setHud(profile, c.enabled, c.preset, c.position, c.style); } catch (e) {} refresh(); };
   const style = hud.style || "rings";
   return h(Page, { title: "In-game overlay", onBack: back },
-    h("div", { className: "list", style: { marginTop: 0 } }, h(Toggle, { on: hud.enabled, title: "Show overlay in game", sub: "FPS, frametime, multiplier, scale and TDP.", onChange: (v) => set({ enabled: v }) })),
+    h("div", { className: "list", style: { marginTop: 0 } }, h(Toggle, { on: hud.enabled, title: "Show overlay in game", sub: "FPS, TDP and Frame OS payoff — as rings or a text line.", onChange: (v) => set({ enabled: v }) })),
     h("div", { className: "sec" }, "STYLE"),
     h(Seg, { value: style, options: [["rings", "Rings"], ["text", "Text"]], onChange: (v) => set({ style: v }) }),
     style === "rings" ? h(Note, { quiet: true }, "Rings show 20-second averages and refresh every 20 s. They need one game restart after you first pick them; until then the text line is shown.") : null,

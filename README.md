@@ -76,7 +76,7 @@ Home gets a **Frame OS card** with three rings — **Response**, **Frames** and 
 
 <img src="docs/img/home-last-session.png" width="270" align="right">
 
-Home keeps a short report of the last session: how long you played, the time in each mode (and in each Frame OS state), average frames and power, and the energy saved against your limit — in Wh from the measured draw and as minutes of battery.
+When the game closes, Home sums the whole session up in rings: **average FPS**, **average real frames** and **average TDP**, and — if Frame OS ran — its **Response / Frames / Energy** payoff for the session. Below them: how long you played, the time in each mode (and in each Frame OS state), and the energy saved against your limit — in Wh from the measured draw and as minutes of battery.
 
 <br clear="right">
 
@@ -99,11 +99,15 @@ Heroic, Lutris, EmuDeck and other Flatpak apps: **Settings → System**, enable 
 
 <img src="docs/img/hud-rings-detailed.png" width="620">
 
+<img src="docs/img/page-hud.png" width="230" align="right">
+
 The Home screen, shrunk into the corner of your game. A brand-red **FPS** ring with the real frame rate under it, a **TDP** ring, **battery** time in Detailed, and — with Frame OS on — the **Response / Frames / Energy** rings, coloured exactly like on Home. The ring that matches what Frame OS is doing right now is bright; the others dim.
 
 Numbers do not flicker: each ring shows a **20-second average** and refreshes every 20 s, so a glance tells you how the game really runs, not how the last frame went.
 
 Turn it on in **Settings → In-game overlay** and pick **Rings** or **Text**, then Minimal, Standard or Detailed and a corner. Rings are drawn by GFG's own small Vulkan layer after the frame generator; they need one game restart after you first pick them, and until then (or in Flatpak apps) you get the classic text line:
+
+<br clear="right">
 
 `90 FPS  x3  (30)  sc100  TDP 9W  APU 8W  2h32  easy` — frames on screen, multiplier, real frames, render scale, TDP limit and measured APU draw, battery time left, how hard GFG is working, plus the Frame OS decision (`FOS boost 45`).
 

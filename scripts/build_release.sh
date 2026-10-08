@@ -20,6 +20,13 @@ mkdir -p "$work/GFG-Extreme/bin/gfg-frame-os"
 install -m 644 "$pacer/build/libVkLayer_gfg_pacer.so" "$pacer/build/VkLayer_gfg_pacer.json" \
   "$work/GFG-Extreme/bin/gfg-frame-os/"
 rm -rf "$pacer/build"
+# HUD layer (64-bit): copies the plugin's pre-rendered overlay into presented frames; shipped
+# next to the pacer files.
+hud="$work/GFG-Extreme/engine/gfg-hud"
+make -s -C "$hud" layer abi VULKAN_HEADERS="$VULKAN_HEADERS"
+install -m 644 "$hud/build/libVkLayer_gfg_hud.so" "$hud/build/VkLayer_gfg_hud.json" \
+  "$work/GFG-Extreme/bin/gfg-frame-os/"
+rm -rf "$hud/build"
 if [[ "$version" =~ ^0\. ]]; then
   name="GFG-Extreme-Governor-v${version//./_}.zip"   # 0.x Governor pre-releases
 else
