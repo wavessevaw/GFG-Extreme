@@ -321,6 +321,14 @@ class BottleneckAwareLadderTests(RuntimeBase):
 
 
 class TrialFlowTests(RuntimeBase):
+    def test_expired_steam_menu_focus_does_not_freeze_governor(self):
+        self.feed(12, 30, 90)
+        self.svc.observer.game_focused = False
+        self.svc.observer.game_focused_at = self.svc._clock() - 8.0
+        st = self.step()
+        self.assertNotEqual(st.get("reason"), "steam-menu-open")
+        self.assertIsNone(self.svc._menu_since)
+
     def test_ladder_rejects_unhealthy_point_rolls_back_then_confirms_next(self):
         self.prime_not_matching()
         st = self.step()
@@ -759,6 +767,25 @@ class OverlayHousekeepingTests(RuntimeBase):
 
 class LiveAttachTests(RuntimeBase):
     """v0.0.8: the Governor attaches to a game that is already running."""
+
+    def test_hud_only_default_rings_keep_live_fps_and_target(self):
+        """Default overlay cannot depend on the power Governor being enabled."""
+        from gfg_plugin import hud_rings
+        self.assertFalse(self.svc._profile_enabled("game"))
+        self.assertTrue(self.svc.hud_settings("game")["enabled"])
+        self.feed(12, 30, 90)
+        st = self.step()
+        self.assertFalse(st["enabled"], "passive telemetry must not enable Governor")
+        self.assertEqual(st["telemetry"]["snapshot"]["latest"]["output_fps"], 90)
+        self.assertEqual(st["target_output_fps"], 90, "OLED ring uses display refresh")
+        self.assertTrue(self.svc._launch.get("running"), "HUD-only still probes the active game")
+        self.assertFalse(self.svc.power.state.owned)
+        with patch.object(hud_rings, "write_overlay", return_value=True) as writer:
+            self.svc._ring_hud_due = 0
+            self.svc._ring_hud_key = None
+            self.assertTrue(self.svc._publish_ring_hud(st, self.svc.hud_settings("game")))
+        picture = writer.call_args.args[0]
+        self.assertEqual((picture["fps"], picture["real"], picture["target"]), (90, 30, 90))
 
     def setUp(self):
         super().setUp()
