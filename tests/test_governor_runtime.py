@@ -1728,16 +1728,22 @@ class RingRefreshTests(unittest.TestCase):
         self.assertEqual(len(self.writes), 2)
 
     def test_stale_and_nonfinite_fps_are_not_displayed(self):
+        # field report 1.3: one late sample flipped the number to "—" and back (flicker); the last
+        # good value is held for HUD_HOLD_S, never longer
         self.publish()
         self.status["telemetry"]["snapshot"]["sample_age_ms"] = 3000
         self.now += 1
         self.publish()
-        self.assertIsNone(self.writes[-1][0]["fps"])
-        self.status["telemetry"]["snapshot"]["sample_age_ms"] = 10
+        self.assertEqual(self.writes[-1][0]["fps"], 90, "a late sample keeps the picture steady")
         self.status["telemetry"]["snapshot"]["latest"]["output_fps"] = float("nan")
+        self.status["telemetry"]["snapshot"]["sample_age_ms"] = 10
+        self.now += self.svc.HUD_HOLD_S + 1
+        self.publish()
+        self.assertIsNone(self.writes[-1][0]["fps"], "stale beyond the hold, or not a number: unavailable")
+        self.status["telemetry"]["snapshot"]["latest"]["output_fps"] = 88
         self.now += 1
         self.publish()
-        self.assertIsNone(self.writes[-1][0]["fps"])
+        self.assertEqual(self.writes[-1][0]["fps"], 88)
 
     def test_failed_publish_is_retried_without_committing_sequence(self):
         self.fail = True
@@ -1796,6 +1802,32 @@ class RingRefreshTests(unittest.TestCase):
         self.now += 1.0
         self.publish()
         self.assertFalse(self.writes[-1][0]["frame_os"]["verified_boost"])
+
+    def test_a_probe_glitch_does_not_swap_rings_for_text(self):
+        live = [True]
+        self.svc._ring_hud_live = lambda: live[0]
+        self.assertTrue(self.svc._ring_hud_live_steady())
+        live[0] = False                   # the launch probe said "not running" once
+        self.now += 1
+        self.assertTrue(self.svc._ring_hud_live_steady())
+        self.now += self.svc.HUD_HOLD_S + 1
+        self.assertFalse(self.svc._ring_hud_live_steady(), "a real exit still falls back")
+
+    def test_frame_os_rings_survive_a_missed_telemetry_beat(self):
+        self.settings["preset"] = "standard"
+        self.svc.frame_os = types.SimpleNamespace(executor_active=False, policy=None)
+        self.status["frame_os"] = {"enabled": True, "mode": "observe", "decision": {"level": "calm"},
+                                   "telemetry": {"live": True},
+                                   "benefit": {"ready": True, "response_pct": 40.0, "frames_pct": 10.0}}
+        self.publish()
+        self.assertIn("frame_os", self.writes[-1][0])
+        self.status["frame_os"]["telemetry"]["live"] = False
+        self.now += 1
+        self.publish()
+        self.assertIn("frame_os", self.writes[-1][0], "no resize for one missed beat")
+        self.now += self.svc.HUD_HOLD_S + 1
+        self.publish()
+        self.assertNotIn("frame_os", self.writes[-1][0], "a dead Frame OS goes after the hold")
 
     def test_dead_frame_os_does_not_show_old_benefit_rings(self):
         self.status["frame_os"] = {"enabled": True, "telemetry": {"live": False},

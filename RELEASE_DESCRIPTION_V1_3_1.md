@@ -1,4 +1,9 @@
-## GFG Extreme 1.3.1: smarter timing, steadier Frame OS
+## GFG Extreme 1.3.1: a rock-steady HUD, smarter timing, steadier Frame OS
+
+### The in-game rings stop flickering
+- **On every frame, always.** The HUD layer used to skip the overlay on a frame whenever the GPU had not finished the previous copy yet — once a second on every overlay update, and more often under load. Each image now has two independent slots with their own staging copy, so a free one is always there; an overlay update never waits for the GPU, and the game is never stalled for it.
+- **No more blinking numbers.** One late renderer sample no longer turns FPS into "—" and back; the last good values are held for a few seconds. The Frame OS rings no longer vanish for a missed telemetry beat, and a one-second probe glitch no longer swaps the rings for the text line.
+- **Calmer badges.** CALM / VERIFYING / REST stay at least two seconds instead of flipping every refresh. A verified BOOST still appears and disappears exactly with its evidence.
 
 ### Predictive Presentation
 The Frame OS pacer now plans each frame from the **trend** of the scene's cost, not just its recent history. When a scene gets heavier, the plan moves ahead of it instead of missing frames; when it gets lighter, the reserve is given back at once instead of two seconds later. In a scene that keeps changing weight, missed frame slots dropped from 0.5 % to zero in our simulation; on steady scenes it plans exactly as before.

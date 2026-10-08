@@ -154,6 +154,11 @@ class GovernorService:
         self._ring_hud_lock = threading.Lock()
         self._ring_hud_due = 0.0
         self._ring_hud_seq = 0
+        # steadiness (field report 1.3: the HUD flickered): last good values, held briefly
+        self._hud_values: Optional[tuple] = None      # (time, fps, real)
+        self._hud_fos: Optional[tuple] = None         # (time, frame_os dict)
+        self._hud_tag: Optional[tuple] = None         # (time shown, level, delivered)
+        self._rings_live_at: Optional[float] = None   # last time the layer was known to draw
         self.ring_hud_layer_error: Optional[str] = None
         self.frame_os_registry_dir: Optional[Path] = getattr(self.configuration, "user_vulkan_layer_dir", None)
         self._settings = self._load_settings()
@@ -453,6 +458,12 @@ class GovernorService:
 
     HUD_STYLES = ("rings", "text")
     RING_HUD_PERIOD_S = 1.0
+    HUD_HOLD_S = 5.0          # a missing sample/telemetry for this long keeps the last picture
+    HUD_TAG_MIN_S = 2.0       # a status badge stays at least this long (no flipping every second)
+    _hud_values: Optional[tuple] = None
+    _hud_fos: Optional[tuple] = None
+    _hud_tag: Optional[tuple] = None
+    _rings_live_at: Optional[float] = None
 
     def set_hud(self, profile: str, enabled: Any = None, preset: Any = None, position: Any = None,
                 style: Any = None) -> Dict[str, Any]:
@@ -488,7 +499,7 @@ class GovernorService:
             # HudWriter); an older pending config is replaced, never flushed first.
             if settings["enabled"]:
                 status = self.get_status(profile)
-                rings = settings["style"] == "rings" and self._ring_hud_live()
+                rings = settings["style"] == "rings" and self._ring_hud_live_steady()
                 if rings and self._publish_ring_hud(status, settings):
                     # Hide the fallback only after publishing a usable ring HUD.
                     self.hud.deactivate()
@@ -507,6 +518,15 @@ class GovernorService:
                 self.hud.remove()
         except OSError as error:
             self.log.debug("Governor HUD sync failed: %s", error)
+
+    def _ring_hud_live_steady(self) -> bool:
+        """The layer draws; a probe that briefly says "not running" (or a failed probe) does not
+        swap the rings for the text line and back (field report 1.3: flicker)."""
+        now = self._clock()
+        if self._ring_hud_live():
+            self._rings_live_at = now
+            return True
+        return self._rings_live_at is not None and now - self._rings_live_at <= self.HUD_HOLD_S
 
     def _ring_hud_live(self) -> bool:
         """The GFG HUD layer draws in this game: since the launch it wrote the swapchain size with
@@ -550,11 +570,16 @@ class GovernorService:
         battery = status.get("battery") or {}
         fo = status.get("frame_os") or {}
         benefit = fo.get("benefit") or {}
+        # Renderer samples arrive about once a second: one late sample must not blank the numbers
+        # (they flipped between a value and "—").  Hold the last good ones for HUD_HOLD_S.
+        if fresh and number(fps) is not None:
+            self._hud_values = (now, number(fps), number(real))
+        held = self._hud_values if (self._hud_values and now - self._hud_values[0] <= self.HUD_HOLD_S) else None
         data: Dict[str, Any] = {
             # HUD is independent from Governor: turning off power optimization
             # must not blank out live FPS from the same renderer.
-            "fps": number(fps) if fresh else None,
-            "real": number(real) if fresh else None,
+            "fps": held[1] if held else None,
+            "real": held[2] if held else None,
             "tdp": number(power.get("observed_tdp_w") if power.get("observed_tdp_w") is not None
                           else power.get("current_tdp_w")),
             "target": number(status.get("target_output_fps") or (status.get("device") or {}).get("target")),
@@ -574,8 +599,8 @@ class GovernorService:
             active = bool(fo.get("mode") == "act" and self.frame_os.executor_active
                           and fo.get("acknowledged"))
             calm = self.frame_os.policy.calm_real_hz if self.frame_os.policy else None
-            measured_real = number(real) if fresh else None
-            measured_out = number(fps) if fresh else None
+            measured_real = data["real"]
+            measured_out = data["fps"]
             target = data.get("target")
             delivered = bool(active and level == "boost" and measured_real is not None
                              and isinstance(calm, (int, float)) and calm > 0
@@ -584,12 +609,25 @@ class GovernorService:
                              and measured_out >= 0.85 * target)
             ratio = (round(measured_out / measured_real, 1)
                      if measured_real and measured_out else None)
+            # A neutral badge (CALM / VERIFYING / REST) stays at least HUD_TAG_MIN_S: boosts start
+            # and stop within a second.  A verified BOOST is never held or delayed: it shows and
+            # goes with its evidence.
+            shown = self._hud_tag
+            if (shown and not delivered and not shown[2] and shown[1] != level
+                    and now - shown[0] < self.HUD_TAG_MIN_S):
+                level = shown[1]
+            elif not shown or (shown[1], shown[2]) != (level, delivered):
+                self._hud_tag = (now, level, delivered)
             data["frame_os"] = {
                 "level": level, "estimate": benefit.get("estimate"), "verified_boost": delivered,
                 "active": active, "actual_real": measured_real, "actual_ratio": ratio,
                 "ab": bool(fo.get("ab_control")), "measured": benefit.get("measured") or {},
                 "response": percent("response_pct"), "frames": percent("frames_pct"),
                 "energy": percent("energy_pct")}
+            self._hud_fos = (now, data["frame_os"])
+        elif self._hud_fos and now - self._hud_fos[0] <= self.HUD_HOLD_S and fo.get("enabled"):
+            # the pacer's telemetry missed a beat: keep the Frame OS rings instead of resizing
+            data["frame_os"] = self._hud_fos[1]
         scale = hud_rings.overlay_scale(self.ring_hud_extent)
         key = (hud_rings.visual_key(data, settings["preset"], settings["position"], scale),
                tuple((self._launch or {}).get("launch_key") or ()))

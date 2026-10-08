@@ -6,12 +6,11 @@
 
 # GFG Extreme
 
-### Frame generation that manages itself on Steam Deck.
+### 90 FPS. Less power. Zero fiddling.
 
-Press **Run**. GFG picks the frame rate for your screen, chooses how many frames to generate,<br>
-and sets the TDP as low as the game allows — then keeps adjusting while you play.<br>
-**Frame OS** gives you more real frames when you act and saves power when you don't —<br>
-and **measures in your own game** whether it really does.
+**Play anything on your Steam Deck as smooth as its screen allows** — up to 90 FPS on OLED, 60 on LCD.<br>
+GFG Extreme generates the frames your game can't, holds the **lowest power that keeps the picture smooth**,<br>
+and keeps adjusting while you play. Your Deck never burns a watt it doesn't need.
 
 [**Download the latest release**](https://github.com/wavessevaw/GFG-Extreme/releases/latest) · [Quick start](#quick-start) · [Frame OS](#frame-os-experimental) · [In-game rings](#in-game-rings) · [Something not working?](#something-not-working)
 
@@ -38,13 +37,60 @@ and **measures in your own game** whether it really does.
 
 ---
 
+## Why GFG Extreme
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+### 🎯 Smooth, not stuttery
+Up to **90 FPS on OLED** and 60 on LCD, even when the game renders 30. Generated frames fill the gap, and GFG picks the ratio that holds for *this* game, *this* scene.
+
+</td>
+<td width="33%" valign="top">
+
+### 🔋 Power only where it pays
+Instead of running flat out at the stock 15 W, GFG holds the **lowest TDP the game tolerates** — in Battery mode 9–11 W — and spends more only when a scene truly needs it. Cooler, quieter, longer sessions.
+
+</td>
+<td width="33%" valign="top">
+
+### 🧠 Set it once
+Press **Run**. No TDP sliders, FPS caps or frame-generation settings to babysit. GFG remembers every game and starts from what worked last time.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🛡️ Picture first
+Every change is checked against the renderer's own frame data and **rolled back if it doesn't hold**. GFG never trades smoothness for watts behind your back.
+
+</td>
+<td valign="top">
+
+### ⚡ Real frames when it matters
+**Frame OS** reads your controls: turn the camera or start a fight and it raises the *real* frame rate on the spot; pause, and it saves power.
+
+</td>
+<td valign="top">
+
+### 📊 Proof, not promises
+Frame OS **measures its own benefit in your game** with in-game A/B checks, and switches off whatever doesn't pay off there.
+
+</td>
+</tr>
+</table>
+
+Works with Steam games and, through Flatpak support, with Heroic, Lutris and emulators. Your saved settings are never touched: **Stop** puts everything back.
+
 ## New in 1.3
 
 - **Frame OS checks itself.** In Act it now and then switches one of its effects off for a few seconds and compares the same moment with and without it. After three comparisons its rings show **measured** numbers from your game instead of estimates.
 - **Frame OS remembers every game.** Results carry over to the next session; an effect that does not help in a game — say, a boost the GPU cannot feed — is switched off there automatically and re-tried every few sessions.
 - **Faster boosts.** A boost starts on the *onset* of a camera swing, about one real frame earlier.
 - **Sharper overlay.** The in-game BOOST badge now reads correctly (`BOOST 45R x2`), and an `A/B` badge shows while a check runs.
-- **1.3.1 — Predictive Presentation.** The pacer plans each frame from the scene's cost trend, so a scene getting heavier no longer costs missed frames. Per-game switch-offs now need solid evidence from several sessions, and a Steam menu left open is never mistaken for a struggling game.
+- **1.3.1 — a rock-steady HUD and Predictive Presentation.** The in-game rings are drawn on every frame with no flicker, and the pacer plans each frame from the scene's cost trend, so a scene getting heavier no longer costs missed frames. Per-game switch-offs now need solid evidence from several sessions, and a Steam menu left open is never mistaken for a struggling game.
 
 Full notes: [Releases](https://github.com/wavessevaw/GFG-Extreme/releases).
 
