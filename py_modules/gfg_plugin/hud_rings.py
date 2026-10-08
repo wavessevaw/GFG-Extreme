@@ -177,7 +177,7 @@ def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
     real = data.get("real")
     items.append({"kind": "ring", "size": 52, "w": 4.5, "frac": (fps or 0) / target, "rgb": BRAND,
                   "text": str(round(fps)) if fps is not None else "—", "style": "fps",
-                  "sub": f"{round(real)} REAL" if real is not None else None, "label": "OUT FPS"})
+                  "sub": f"{round(real)} REAL" if real is not None else None, "label": f"FPS/{round(target)}"})
     tdp, limit = data.get("tdp"), data.get("limit") or 15
     items.append({"kind": "ring", "size": 46, "w": 4, "frac": (tdp or 0) / limit, "rgb": WHITE,
                   "text": f"{round(tdp)}W" if tdp is not None else "—", "style": "val", "label": "TDP CAP"})
