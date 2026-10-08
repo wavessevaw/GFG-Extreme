@@ -54,6 +54,7 @@ const MODE_NAME = { oled: "Steam Deck OLED", lcd: "Steam Deck LCD", dock: "Dock"
 const fmtMult = (m) => { const q = Math.round(Number(m) * 4) / 4; return "×" + (Number.isInteger(q) ? q : String(q)); };
 const MODE_LABEL = { budget: "Battery", balanced: "Balanced", quality: "Quality" };
 // review 1.1.x: a session switched between modes reads "Battery 18m · Balanced 13m", not just its last mode.
+const frameOsMinutes = (m) => Object.entries(m || {}).map(([k, v]) => k + " " + num(v, 0) + "m").join(" · ");
 const sessionModes = (x) => (x && x.mode === "mixed" && x.modes ? Object.entries(x.modes).map(([m, v]) => (MODE_LABEL[m] || m) + " " + num(v, 0) + "m").join(" · ") : (MODE_LABEL[x && x.mode] || "–"));
 const POINT_LABEL = (p) => (p ? (p.multiplier > 1 ? fmtMult(p.multiplier) : "Native") + (p.render_scale_pct < 100 ? " · " + p.render_scale_pct + "%" : "") : "–");
 
@@ -276,6 +277,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
       h("div", { className: "kv" },
         h("span", null, "Played"), h("b", null, num(s.last_session.minutes, 0) + " min"),
         s.last_session.mode === "mixed" ? h("span", null, "Modes") : null, s.last_session.mode === "mixed" ? h("b", null, sessionModes(s.last_session)) : null,
+        s.last_session.frame_os ? h("span", null, "Frame OS") : null, s.last_session.frame_os ? h("b", null, frameOsMinutes(s.last_session.frame_os)) : null,
         h("span", null, "Frames on screen"), h("b", null, num(s.last_session.avg_output_fps, 0) + " FPS avg (" + num(s.last_session.avg_real_fps, 0) + " real)"),
         h("span", null, "Power"), h("b", null, s.last_session.avg_tdp_w != null ? num(s.last_session.avg_tdp_w, 1) + " W avg" + (s.last_session.reference_w ? " · limit " + num(s.last_session.reference_w, 0) + " W" : "") : "–"),
         s.last_session.saved_w > 0 ? h("span", null, "Saved") : null, s.last_session.saved_w > 0 ? h("b", null, "~" + num(s.last_session.saved_w, 1) + " W under your limit on average") : null,

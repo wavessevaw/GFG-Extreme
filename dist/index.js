@@ -170,6 +170,7 @@ var fmtMult = (m) => {
   return "\xD7" + (Number.isInteger(q) ? q : String(q));
 };
 var MODE_LABEL = { budget: "Battery", balanced: "Balanced", quality: "Quality" };
+var frameOsMinutes = (m) => Object.entries(m || {}).map(([k, v]) => k + " " + num(v, 0) + "m").join(" \xB7 ");
 var sessionModes = (x) => x && x.mode === "mixed" && x.modes ? Object.entries(x.modes).map(([m, v]) => (MODE_LABEL[m] || m) + " " + num(v, 0) + "m").join(" \xB7 ") : MODE_LABEL[x && x.mode] || "\u2013";
 var POINT_LABEL = (p) => p ? (p.multiplier > 1 ? fmtMult(p.multiplier) : "Native") + (p.render_scale_pct < 100 ? " \xB7 " + p.render_scale_pct + "%" : "") : "\u2013";
 var PAUSED_TEXT = {
@@ -502,6 +503,8 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
         h("b", null, num(s.last_session.minutes, 0) + " min"),
         s.last_session.mode === "mixed" ? h("span", null, "Modes") : null,
         s.last_session.mode === "mixed" ? h("b", null, sessionModes(s.last_session)) : null,
+        s.last_session.frame_os ? h("span", null, "Frame OS") : null,
+        s.last_session.frame_os ? h("b", null, frameOsMinutes(s.last_session.frame_os)) : null,
         h("span", null, "Frames on screen"),
         h("b", null, num(s.last_session.avg_output_fps, 0) + " FPS avg (" + num(s.last_session.avg_real_fps, 0) + " real)"),
         h("span", null, "Power"),

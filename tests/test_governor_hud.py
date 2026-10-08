@@ -155,3 +155,15 @@ class HudTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FrameOsHudTests(unittest.TestCase):
+    def test_frame_os_word(self):
+        fo = {"enabled": True, "acting": True, "telemetry": {"live": True}, "decision": {"level": "boost", "real_hz": 45.0}}
+        self.assertEqual(hud.frame_os_word(fo), "FOS boost 45")
+        self.assertEqual(hud.frame_os_word({**fo, "acting": False}), "FOS boost? 45")
+        self.assertEqual(hud.frame_os_word({**fo, "telemetry": {"live": False}}), "")
+        self.assertEqual(hud.frame_os_word({"enabled": False}), "")
+        line = hud.status_line({"enabled": True, "power": {"observed_tdp_w": 9.0}, "frame_os": fo})
+        self.assertTrue(line.endswith("FOS boost 45"))
+        self.assertNotIn("FOS", hud.status_line({"enabled": True, "frame_os": fo}, "minimal"))

@@ -30,7 +30,7 @@ const cases = [
   ["home-saving", [], ["SAVING", "6 W under your 15 W limit"]],
   ["home-effort-reason", [], ["GFG EFFORT", "HARD", "x3 required"]],
   ["frame-os-no-layer", ["Settings", "Diagnostics"], ["FRAME OS (EXPERIMENTAL)", "Frame OS layer not installed: this build does not include the Frame OS layer."]],
-  ["home-last-session-mixed", [], ["LAST SESSION", "Modes", "Battery 18m · Balanced 13m", "Energy saved", "~2.3 Wh measured · ~14 min more battery"]],
+  ["home-last-session-mixed", [], ["LAST SESSION", "Modes", "Battery 18m · Balanced 13m", "Energy saved", "~2.3 Wh measured · ~14 min more battery", "Frame OS", "calm 20m · boost 6m · rest 4m"]],
   ["home-last-session-mixed", ["Details"], ["RECENT SESSIONS", "31 min · Battery 18m · Balanced 13m"]],
   ["home-idle-oled", ["Settings", "Diagnostics"], ["Reset what GFG learned for Sample Game", "Starts the next search from scratch"]],
   ["home-idle-oled", ["Settings", "Diagnostics", "Reset what GFG learned for Sample Game"], ["Tap again to forget", "remembered for Sample Game", "This cannot be undone"]],

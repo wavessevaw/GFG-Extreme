@@ -1196,7 +1196,15 @@ class GovernorService:
             hot=diagnosis.get("thermal") in ("hot", "heating"),
             mode=self._mode(self._session_profile or str(self._status.get("profile") or "")),
             battery_w=self._battery_discharge_w(),
+            frame_os=self._frame_os_level(),
         )
+
+    def _frame_os_level(self) -> Optional[str]:
+        last = self.frame_os.last or {}
+        if not last.get("enabled") or not (last.get("telemetry") or {}).get("live"):
+            return None
+        level = (last.get("decision") or {}).get("level")
+        return f"{level}" if last.get("acting") else (f"{level}?" if level else None)
 
     def _battery_discharge_w(self) -> Optional[float]:
         battery = self._status.get("battery") or {}

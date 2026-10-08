@@ -30,6 +30,7 @@ class SessionStats:
         self.stutter_s = 0.0
         self.hot_s = 0.0
         self.mode_s: Dict[str, float] = {}
+        self.frame_os_s: Dict[str, float] = {}
 
     def start(self, key: Any, now: float) -> None:
         self.key = tuple(key) if isinstance(key, (list, tuple)) else key
@@ -39,7 +40,7 @@ class SessionStats:
     def add(self, now: float, *, output: Optional[float], real: Optional[float], tdp: Optional[float],
             draw: Optional[float], reference_w: Optional[float], temp_c: Optional[float] = None,
             stuttering: bool = False, hot: bool = False, mode: Optional[str] = None,
-            battery_w: Optional[float] = None) -> None:
+            battery_w: Optional[float] = None, frame_os: Optional[str] = None) -> None:
         if self.started is None or self.last is None:
             return
         dt = min(MAX_STEP_S, max(0.0, now - self.last))
@@ -49,6 +50,8 @@ class SessionStats:
         self.seconds += dt
         if mode:  # review 1.1.x: the mode at the exit alone misfiled mixed sessions
             self.mode_s[str(mode)] = self.mode_s.get(str(mode), 0.0) + dt
+        if frame_os:  # Frame OS decision (boost / calm / rest) while its layer answered
+            self.frame_os_s[str(frame_os)] = self.frame_os_s.get(str(frame_os), 0.0) + dt
         for name, value in (("output", output), ("real", real), ("tdp", tdp), ("draw", draw), ("battery", battery_w)):
             if isinstance(value, (int, float)) and value > 0:
                 self._sums[name] = self._sums.get(name, 0.0) + float(value) * dt
@@ -98,6 +101,8 @@ class SessionStats:
         if used:
             result["modes"] = {m: round(t / 60.0, 1) for m, t in sorted(used.items(), key=lambda kv: -kv[1])}
             result["mode"] = next(iter(used)) if len(used) == 1 else "mixed"
+        if self.frame_os_s:
+            result["frame_os"] = {k: round(v / 60.0, 1) for k, v in sorted(self.frame_os_s.items(), key=lambda kv: -kv[1])}
         if saved_wh and battery and battery > 0:
             result["battery_minutes_gained"] = int(round(saved_wh / battery * 60.0))
         return result

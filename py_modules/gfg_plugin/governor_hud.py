@@ -60,6 +60,19 @@ def output_fps(status: Dict[str, Any]) -> Optional[float]:
     return (tel.get("output") or {}).get("median")
 
 
+def frame_os_word(frame_os: Any) -> str:
+    """``FOS boost 45`` while Frame OS acts; ``FOS boost? 45`` when it only measures (would)."""
+    if not isinstance(frame_os, dict) or not frame_os.get("enabled"):
+        return ""
+    if not (frame_os.get("telemetry") or {}).get("live"):
+        return ""
+    decision = frame_os.get("decision") or {}
+    level, real = decision.get("level"), decision.get("real_hz")
+    if not level or not isinstance(real, (int, float)):
+        return ""
+    return f"FOS {level}{'' if frame_os.get('acting') else '?'} {int(real)}"
+
+
 def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
     """Compact: ``90 FPS x2 (45) sc100 9W 2h05 med`` (two spaces between fields).
 
@@ -104,6 +117,9 @@ def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
         parts.append(_EFFORT_SHORT[effort])
     if (status.get("diagnosis") or {}).get("thermal") == "hot":
         parts.append("HOT")
+    fos = frame_os_word(status.get("frame_os"))
+    if fos:
+        parts.append(fos)
     if preset == "detailed":
         parts.append(_STATE_WORD.get(str(status.get("state")), "on"))
     return "  ".join(parts)

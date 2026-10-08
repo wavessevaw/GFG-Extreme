@@ -113,3 +113,16 @@ class SessionStatsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FrameOsSessionTests(unittest.TestCase):
+    def test_frame_os_minutes_per_decision(self):
+        from gfg_plugin.session_stats import SessionStats
+        st = SessionStats()
+        st.start("k", 0.0)
+        t = 0.0
+        for level, n in (("calm", 120), ("boost", 30), ("rest", 60), (None, 30)):
+            for _ in range(n):
+                t += 1.0
+                st.add(t, output=90, real=30, tdp=10, draw=9, reference_w=15, frame_os=level)
+        self.assertEqual(st.summary()["frame_os"], {"calm": 2.0, "rest": 1.0, "boost": 0.5})
