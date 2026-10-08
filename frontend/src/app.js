@@ -515,7 +515,7 @@ function FrameOsPanel({ s, profile }) {
   const toggleAct = async (enabled) => {
     setUnlock("busy");
     try { const r = await rpc.setFrameOsActUnlock(enabled); if (r && r.success) setUnlocked(!!r.act_unlocked); } catch (e) {}
-    if (!enabled && mode === "act") setMode("off");
+    if (!enabled && mode === "act") setMode("observe");
     setUnlock("idle");
   };
   return h("div", null,

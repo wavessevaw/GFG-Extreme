@@ -946,7 +946,7 @@ function FrameOsPanel({ s, profile }) {
       if (r && r.success) setUnlocked(!!r.act_unlocked);
     } catch (e) {
     }
-    if (!enabled && mode === "act") setMode("off");
+    if (!enabled && mode === "act") setMode("observe");
     setUnlock("idle");
   };
   return h(
