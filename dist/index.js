@@ -446,8 +446,15 @@ function FrameOsCard({ fo }) {
       h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "\u2212") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est }),
       h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), label: "Energy", live: level === "rest", estimate: est })
     ),
-    fo.mode === "act" ? h("div", { className: "abline" }, proofLine(fo.proof, b.measured)) : null
+    fo.mode === "act" ? h("div", { className: "abline" }, proofLine(fo.proof, b.measured)) : null,
+    fo.mode === "act" && learnedLine(fo.game) ? h("div", { className: "abline" }, learnedLine(fo.game)) : null
   );
+}
+var EFFECT_TEXT = { boost: "Boost off here: no real-frame gain measured", shaping: "Frame timing off here: it did not help", rest: "Rest off here: it did not save power" };
+function learnedLine(game) {
+  if (!game || !game.disabled) return null;
+  const off = Object.keys(EFFECT_TEXT).filter((k) => game.disabled[k]);
+  return off.length ? off.map((k) => EFFECT_TEXT[k]).join(" \xB7 ") : null;
 }
 function proofLine(proof, measured) {
   if (!proof || proof.enabled === false) return "A/B check off \xB7 rings are model estimates";
@@ -1087,6 +1094,17 @@ function FrameOsPanel({ s, profile }) {
         }
       }
     })) : null,
+    fo.game && mode === "act" ? h("div", { className: "card" }, h("div", { className: "sec", style: { marginTop: 0 } }, "THIS GAME"), h(
+      "div",
+      { className: "kv" },
+      h("span", null, "Sessions with Act"),
+      h("b", null, String(fo.game.sessions || 0)),
+      ...[["response", "Frame timing"], ["frames", "Boost"], ["energy", "Rest"]].flatMap(([k, name]) => {
+        const v = (fo.game.verdicts || {})[k] || "unclear";
+        const word = { helps: "helps", hurts: "hurts \xB7 off", useless: "no gain \xB7 off", unclear: "learning" }[v];
+        return [h("span", { key: k + "gl" }, name), h("b", { key: k + "gv" }, word + ((fo.game[k] || {}).n ? " (" + fo.game[k].n + " A/B)" : ""))];
+      })
+    )) : null,
     fo.enabled && fo.proof && mode === "act" ? h("div", { className: "card" }, h(
       "div",
       { className: "kv" },

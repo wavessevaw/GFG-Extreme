@@ -19,6 +19,7 @@ from .control_channel import ControlChannel
 from . import input_relay
 from .input_sensor import EvdevReader, InputState
 from .policy import Decision, EnergyBroker, InjectionPolicy
+from .memory import EFFECTS
 from .proof import ProofMeter
 from .scene import SceneChangeDetector
 
@@ -61,6 +62,8 @@ class FrameOsRunner:
         # A/B proof: rare short control windows turn the benefit estimates into measurements.
         self.proof = ProofMeter()
         self.ab_control: Optional[str] = None
+        # per game (Frame OS memory): Act effects the A/B proof ruled out in this game
+        self.game_disabled: Dict[str, bool] = {"shaping": False, "boost": False, "rest": False}
 
     # ---------------------------------------------------------- Governor side (1 Hz)
     def configure(self, *, enabled: bool, mode: str, output_hz: float, calm_real_hz: float,
@@ -89,6 +92,7 @@ class FrameOsRunner:
             broker = EnergyBroker(calm_w=float(calm_w)) if calm_w else None
             self.policy = InjectionPolicy(output_hz=output_hz, calm_real_hz=calm_real_hz,
                                           max_multiplier=max_multiplier, broker=broker)
+            self._apply_game_flags()
         elif calm_w:
             if self.policy.broker is None:
                 self.policy.broker = EnergyBroker(calm_w=float(calm_w))
@@ -96,6 +100,23 @@ class FrameOsRunner:
                 self.policy.broker.calm_w = float(calm_w)   # the Governor moved the calm cap
         else:
             self.policy.broker = None  # power ownership was released
+
+    def apply_memory(self, disabled: Dict[str, bool], prior: Dict[str, Any]) -> None:
+        """This game's memory: effects off here, and the A/B pairs earlier sessions measured."""
+        self.game_disabled = {effect: bool((disabled or {}).get(effect)) for effect in self.game_disabled}
+        self.proof.load(prior or {}, skip={m for m, e in EFFECTS.items() if self.game_disabled[e]})
+        self._apply_game_flags()
+
+    def set_disabled(self, disabled: Dict[str, bool]) -> None:
+        """Effects newly ruled out mid-session: switch them off, keep this session's pairs."""
+        self.game_disabled = {effect: bool((disabled or {}).get(effect)) for effect in self.game_disabled}
+        self.proof.skip = {m for m, e in EFFECTS.items() if self.game_disabled[e]}
+        self._apply_game_flags()
+
+    def _apply_game_flags(self) -> None:
+        if self.policy is not None:
+            self.policy.boost_allowed = not self.game_disabled["boost"]
+            self.policy.rest_allowed = not self.game_disabled["rest"]
 
     @property
     def injection(self) -> Optional[tuple]:
@@ -150,7 +171,7 @@ class FrameOsRunner:
             interval = telemetry.get("present_interval_p50_ms")
             self.policy.note_delivered(now, 1000.0 / interval if interval else None)
         real_hz = decision.real_hz if acting and self.executor_active else self.policy.calm_real_hz
-        shaping = control != "no-shaping"
+        shaping = control != "no-shaping" and not self.game_disabled["shaping"]
         wanted = (self.mode, round(real_hz, 3), shaping)
         if wanted != self._published:
             # Tick shaping must be able to move a frame start through most of a real-frame slot:
@@ -169,6 +190,7 @@ class FrameOsRunner:
             "acknowledged": self._published is not None and bool(telemetry.get("live"))
                             and telemetry.get("applied_generation") == self.generation,
             "input_sensor": self._sensor_status(inp), "ab_control": control,
+            "game_disabled": dict(self.game_disabled),
         }
         broker = self.policy.broker
         calm_w = broker.calm_w if broker is not None else None

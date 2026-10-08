@@ -92,6 +92,8 @@ class ProofMeter:
 
     def __init__(self) -> None:
         self.enabled = True
+        self.prior: Dict[str, List[float]] = {m: [] for m in METRICS}   # this game's earlier sessions
+        self.skip: set = set()          # metrics whose effect is off for this game: nothing to test
         self.reset()
 
     def reset(self) -> None:
@@ -152,6 +154,8 @@ class ProofMeter:
             return None
         if self.phase == "wait" and self.next_at is not None and now >= self.next_at:
             test = TESTS.get(level or "")
+            if test is not None and test.metric in self.skip:
+                test = None
             # the level must already hold for a full window: the "before" window is all one moment
             if test is not None and self._since is not None and now - self._since >= 0.5:
                 self.test, self.phase, self.window = test, "before", Window(now, test)
@@ -163,13 +167,22 @@ class ProofMeter:
                                "testing": self.test.metric if self.phase != "wait" and self.test else None,
                                "aborted": self.aborted}
         for metric in METRICS:
-            out[metric] = stats(self.pairs[metric])
+            out[metric] = stats(self.prior[metric] + self.pairs[metric])
+            out[metric]["session_n"] = len(self.pairs[metric])
         return out
+
+    def load(self, prior: Dict[str, List[float]], skip: Optional[set] = None) -> None:
+        """What earlier sessions measured in this game (the rings start measured) and the metrics
+        not to test because their effect is off here."""
+        self.prior = {m: [float(v) for v in prior.get(m) or []] for m in METRICS}
+        self.skip = set(skip or ())
 
     # ------------------------------------------------------------------ internals
     def _finish(self, now: float) -> None:
-        settled = all(len(self.pairs[m]) >= SETTLED_PAIRS for m in METRICS
-                      if any(t.metric == m for t in TESTS.values()))
+        # the moment just tested decides the gap: a settled calm-play metric gets rare even when
+        # rests (pauses) are too rare to ever settle the energy metric
+        metric = self.test.metric if self.test else None
+        settled = metric is not None and len(self.prior[metric]) + len(self.pairs[metric]) >= SETTLED_PAIRS
         self.phase, self.test, self.window = "wait", None, None
         self.before = self.control_mean = None
         self.next_at = now + (SETTLED_GAP_S if settled else GAP_S)

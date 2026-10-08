@@ -74,8 +74,13 @@ class ProofMeterTests(unittest.TestCase):
     def test_tests_get_rarer_once_everything_is_measured(self):
         m = proof.ProofMeter()
         m.pairs = {k: [10.0] * proof.SETTLED_PAIRS for k in proof.METRICS}
+        m.test = proof.TESTS["calm"]
         m._finish(100.0)
         self.assertEqual(m.next_at, 100.0 + proof.SETTLED_GAP_S)
+        m.pairs["response"] = []
+        m.test = proof.TESTS["calm"]
+        m._finish(200.0)
+        self.assertEqual(m.next_at, 200.0 + proof.GAP_S)
 
     def test_stats(self):
         self.assertEqual(proof.stats([])["measured"], False)

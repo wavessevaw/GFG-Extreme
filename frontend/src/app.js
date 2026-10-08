@@ -248,7 +248,16 @@ function FrameOsCard({ fo }) {
       h(MiniRing, { value: resp, max: 50, text: resp == null ? "" : (resp >= 0 ? "−" : "+") + Math.abs(Math.round(resp)) + "%", label: "Response", live: level !== "rest", estimate: est }),
       h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "−") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est }),
       h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), label: "Energy", live: level === "rest", estimate: est })),
-    fo.mode === "act" ? h("div", { className: "abline" }, proofLine(fo.proof, b.measured)) : null);
+    fo.mode === "act" ? h("div", { className: "abline" }, proofLine(fo.proof, b.measured)) : null,
+    fo.mode === "act" && learnedLine(fo.game) ? h("div", { className: "abline" }, learnedLine(fo.game)) : null);
+}
+
+// What Frame OS learned in this game and switched off because of it.
+const EFFECT_TEXT = { boost: "Boost off here: no real-frame gain measured", shaping: "Frame timing off here: it did not help", rest: "Rest off here: it did not save power" };
+function learnedLine(game) {
+  if (!game || !game.disabled) return null;
+  const off = Object.keys(EFFECT_TEXT).filter((k) => game.disabled[k]);
+  return off.length ? off.map((k) => EFFECT_TEXT[k]).join(" · ") : null;
 }
 
 // One line under the rings: which numbers the in-game A/B check has measured so far.
@@ -610,6 +619,13 @@ function FrameOsPanel({ s, profile }) {
     unlocked ? h("div", { className: "list" }, h(Toggle, { on: fo.ab !== false, title: "A/B check in Act",
       sub: "Now and then a few seconds without one Act effect, to measure what Act really gives",
       onChange: async (v) => { try { await rpc.setFrameOsAb(v); } catch (e) {} } })) : null,
+    fo.game && mode === "act" ? h("div", { className: "card" }, h("div", { className: "sec", style: { marginTop: 0 } }, "THIS GAME"), h("div", { className: "kv" },
+      h("span", null, "Sessions with Act"), h("b", null, String(fo.game.sessions || 0)),
+      ...[["response", "Frame timing"], ["frames", "Boost"], ["energy", "Rest"]].flatMap(([k, name]) => {
+        const v = (fo.game.verdicts || {})[k] || "unclear";
+        const word = { helps: "helps", hurts: "hurts · off", useless: "no gain · off", unclear: "learning" }[v];
+        return [h("span", { key: k + "gl" }, name), h("b", { key: k + "gv" }, word + ((fo.game[k] || {}).n ? " (" + fo.game[k].n + " A/B)" : ""))];
+      }))) : null,
     fo.enabled && fo.proof && mode === "act" ? h("div", { className: "card" }, h("div", { className: "kv" },
       ...["response", "frames", "energy"].flatMap((k) => {
         const r = fo.proof[k] || {};

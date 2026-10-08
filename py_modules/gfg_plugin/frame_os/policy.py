@@ -27,6 +27,11 @@ REST_IDLE_S = 20.0          # no input this long: pause menu, cutscene, AFK
 BOOST_PROOF_S = 3.0         # a boost that has not raised the measured real cadence by then ...
 BOOST_BACKOFF_S = 120.0     # ... is not paid for again this long (the GPU cannot feed it here)
 WAKE_IDLE_S = 0.2
+# Predictive boost: a camera swing is announced by the stick before it is fast.  A deflection
+# rising this quickly (intensity per second) from this level starts the boost on the onset, about
+# one real frame earlier than the plain threshold, so the first fast frames are already real.
+ONSET_CAMERA = 0.25
+ONSET_RATE = 2.0
 
 
 @dataclass
@@ -111,6 +116,11 @@ class InjectionPolicy:
     history: List[str] = field(default_factory=list)
     _boost_since: Optional[float] = None
     _boost_blocked_until: float = -1e9
+    # per game (Frame OS memory): effects the A/B proof ruled out in this game
+    boost_allowed: bool = True
+    rest_allowed: bool = True
+    _cam_prev: Optional[float] = None
+    _cam_prev_t: Optional[float] = None
 
     def note_delivered(self, now: float, real_fps: Optional[float]) -> None:
         """Measured real cadence while acting.  A boost the GPU cannot deliver is a waste of the
@@ -147,8 +157,14 @@ class InjectionPolicy:
         camera, action = float(inp.get("camera", 0.0)), float(inp.get("action", 0.0))
         idle = float(inp.get("idle_s", float("inf")))
         trigger = None
+        rising = 0.0
+        if self._cam_prev is not None and self._cam_prev_t is not None and now > self._cam_prev_t:
+            rising = (camera - self._cam_prev) / (now - self._cam_prev_t)
+        self._cam_prev, self._cam_prev_t = camera, now
         if camera >= BOOST_CAMERA:
             trigger = "camera"
+        elif camera >= ONSET_CAMERA and rising >= ONSET_RATE:
+            trigger = "camera-onset"
         elif action >= BOOST_ACTION:
             trigger = "action"
         if trigger:
@@ -157,12 +173,14 @@ class InjectionPolicy:
             self._boost_until = max(self._boost_until, now + SCENE_BOOST_S)
             trigger = trigger or "scene-change"
 
-        if focused is False:
+        if focused is False and self.rest_allowed:
             level, reason = "rest", "steam-ui"      # Steam's menu covers the game: rest at once
-        elif idle >= REST_IDLE_S and idle != float("inf") and inp.get("idle_verified") is True:
+        elif idle >= REST_IDLE_S and self.rest_allowed and idle != float("inf") and inp.get("idle_verified") is True:
             # Gamepad silence cannot prove the player is idle in a keyboard/mouse game.
             # Require a future sensor with whole-session input coverage, not raw evdev silence.
             level, reason = "rest", "idle-verified"
+        elif now < self._boost_until and not self.boost_allowed:
+            level, reason = "calm", "boost-off-for-game"     # measured useless or harmful here
         elif now < self._boost_until and now < self._boost_blocked_until:
             level, reason = "calm", "boost-ineffective"
         elif now < self._boost_until and self.boost_real_hz > self.calm_real_hz:
