@@ -1354,7 +1354,7 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         st = self.step()
         prof = self.overlay_profile()
         self.assertEqual((prof["adaptive"], prof["base_fps_cap"], prof["target_fps"]), (True, 45, 90))
-        self.assertEqual(prof["adaptive_max_multiplier"], 4, "rest runs x4 at 22.5 real")
+        self.assertEqual(prof["adaptive_max_multiplier"], 3, "default capacity x3: rest stays at 30 real")
         self.assertFalse(prof["adaptive_stable_cadence"])
         self.assertEqual((st["state"], st["reason"]), ("LOCKED", "frame-os-act-holds-point"))
         writes = list(self.svc.power.writes)

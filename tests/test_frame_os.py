@@ -363,9 +363,11 @@ class RunnerTests(unittest.TestCase):
 class ActExecutorTests(unittest.TestCase):
     def test_rest_cadence_is_x4_at_90_and_calm_when_too_low(self):
         from gfg_plugin.frame_os.policy import InjectionPolicy
-        self.assertEqual(InjectionPolicy(output_hz=90, calm_real_hz=30).rest_real_hz, 22.5)
-        self.assertEqual(InjectionPolicy(output_hz=60, calm_real_hz=30).rest_real_hz, 30)   # 15 < 20
-        p = InjectionPolicy(output_hz=90, calm_real_hz=30)
+        self.assertEqual(InjectionPolicy(output_hz=90, calm_real_hz=30, max_multiplier=4).rest_real_hz, 22.5)
+        # field log: a renderer with capacity x3 cannot rest at x4 (output fell to 60)
+        self.assertEqual(InjectionPolicy(output_hz=90, calm_real_hz=30, max_multiplier=3).rest_real_hz, 30)
+        self.assertEqual(InjectionPolicy(output_hz=60, calm_real_hz=30, max_multiplier=4).rest_real_hz, 30)  # 15 < 20
+        p = InjectionPolicy(output_hz=90, calm_real_hz=30, max_multiplier=4)
         d = p.tick(100.0, {"camera": 0, "action": 0, "idle_s": 30.0})
         self.assertEqual((d.level, d.real_hz), ("rest", 22.5))
 
@@ -386,7 +388,7 @@ class ActExecutorTests(unittest.TestCase):
 class SteamUiRestTests(unittest.TestCase):
     def test_steam_ui_rests_at_once(self):
         from gfg_plugin.frame_os.policy import InjectionPolicy
-        p = InjectionPolicy(output_hz=90, calm_real_hz=30)
+        p = InjectionPolicy(output_hz=90, calm_real_hz=30, max_multiplier=4)
         d = p.tick(10.0, {"camera": 0.9, "action": 0, "idle_s": 0.0}, focused=False)
         self.assertEqual((d.level, d.reason, d.real_hz), ("rest", "steam-ui", 22.5))
         self.assertEqual(p.tick(10.1, {"camera": 0.9, "action": 0, "idle_s": 0.0}, focused=True).level, "boost")
@@ -471,3 +473,14 @@ class ReviewFixTests(unittest.TestCase):
         obs.game_focused = False
         obs._reset_session()
         self.assertIsNone(obs.game_focused)
+
+
+class RestPowerTests(unittest.TestCase):
+    def test_rest_without_a_cadence_drop_keeps_more_watts(self):
+        from gfg_plugin.frame_os.policy import EnergyBroker, InjectionPolicy
+        x4 = InjectionPolicy(output_hz=90, calm_real_hz=30, max_multiplier=4, broker=EnergyBroker(calm_w=13.0))
+        x3 = InjectionPolicy(output_hz=90, calm_real_hz=30, max_multiplier=3, broker=EnergyBroker(calm_w=13.0))
+        idle = {"camera": 0, "action": 0, "idle_s": 30.0}
+        self.assertEqual(x4.tick(1.0, idle).tdp_w, 13.0 * 0.6)
+        d = x3.tick(1.0, idle)
+        self.assertEqual((d.real_hz, d.tdp_w), (30, 13.0 * 0.85))

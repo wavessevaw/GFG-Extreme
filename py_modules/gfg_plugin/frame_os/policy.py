@@ -89,11 +89,13 @@ class EnergyBroker:
     def can_boost(self) -> bool:
         return self.bank_j >= self.boost_extra_w * 0.5     # at least half a second of boost
 
-    def tdp_for(self, level: str) -> float:
+    def tdp_for(self, level: str, cadence_drop: bool = True) -> float:
         if level == "boost":
             return self.calm_w + self.boost_extra_w
         if level == "rest":
-            return max(self.floor_w, self.calm_w * 0.6)
+            # with fewer real frames (x4) the GPU needs much less; at the calm cadence only a
+            # little headroom can go, or the output drops in the pause
+            return max(self.floor_w, self.calm_w * (0.6 if cadence_drop else 0.85))
         return self.calm_w
 
 
@@ -134,8 +136,11 @@ class InjectionPolicy:
     def rest_real_hz(self) -> float:
         """Idle (menus, cutscenes, AFK): x4 saves energy on a scene that barely moves; the
         renderer fills the output.  Never below 20 real, never above calm."""
-        rest = self.output_hz / 4.0
-        return rest if 20.0 <= rest < self.calm_real_hz else self.calm_real_hz
+        # deepest ratio the renderer can generate right now (field log: capacity x3 refused x4 and
+        # the output dropped to 60)
+        deepest = max(1.0, min(4.0, float(int(self.max_multiplier + 1e-6))))
+        rest = self.output_hz / deepest
+        return rest if 20.0 <= rest < self.calm_real_hz - 1e-6 else self.calm_real_hz
 
     def tick(self, now: float, inp: Dict[str, float], scene_change: bool = False,
              draw_w: Optional[float] = None, focused: Optional[bool] = None) -> Decision:
@@ -171,5 +176,6 @@ class InjectionPolicy:
             self.history.append(f"{now:.1f}:{self.level}->{level}:{reason}")
         self.level, self._reason = level, reason
         real = {"boost": self.boost_real_hz, "rest": self.rest_real_hz}.get(level, self.calm_real_hz)
-        tdp = self.broker.tdp_for(level) if self.broker is not None else None
+        tdp = self.broker.tdp_for(level, cadence_drop=self.rest_real_hz < self.calm_real_hz) \
+            if self.broker is not None else None
         return Decision(level, real, self.output_hz, tdp, reason)
