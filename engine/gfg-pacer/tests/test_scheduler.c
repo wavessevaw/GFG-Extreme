@@ -15,6 +15,7 @@ static double urand(void) { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17;
 static double nrand(double mean, double sd) { double u = urand() + 1e-12, v = urand(); return mean + sd * sqrt(-2 * log(u)) * cos(6.283185307179586 * v); }
 
 typedef struct { double latency_ms; double miss_rate; double fps; } sim_result;
+static int g_predictive = 1;   /* simulate(): planner under test */
 
 /* A game loop: starts a frame when allowed, is ready after `cost`, presents; the next frame can
  * start once the present has been released (one frame in flight).  Latency = input sampled at
@@ -26,6 +27,7 @@ static sim_result simulate(int shaping, double cost_mean, double cost_sd, double
     gfg_policy_defaults(&p);
     p.real_target_hz = hz;
     p.tick_shaping = shaping;
+    p.predictive = g_predictive;
     gfg_sched_init(&s, &p);
     rng = 88172645463325252ull;
     int64_t now = 1000000000;
@@ -188,6 +190,21 @@ static void test_predictive_planning_follows_the_scene(void)
     CHECK(pred.fps > old.fps - 0.3, "fps %.2f vs %.2f", pred.fps, old.fps);
 }
 
+/* Plain jitter is no trend: on a steady or spiky scene the predictive planner must do exactly as
+ * well as the plain quantile (review: a fixed dead band reacted to noise). */
+static void test_predictive_ignores_noise(void)
+{
+    for (int k = 0; k < 2; k++) {
+        double sd = k ? 3 : 1.5, spikes = k ? 0.03 : 0;
+        g_predictive = 0;
+        sim_result plain = simulate(1, k ? 18 : 20, sd, 30, 3000, spikes);
+        g_predictive = 1;
+        sim_result pred = simulate(1, k ? 18 : 20, sd, 30, 3000, spikes);
+        CHECK(pred.miss_rate <= plain.miss_rate + 0.002, "noise: misses %.4f vs %.4f", pred.miss_rate, plain.miss_rate);
+        CHECK(pred.latency_ms <= plain.latency_ms + 0.1, "noise: latency %.2f vs %.2f", pred.latency_ms, plain.latency_ms);
+    }
+}
+
 int main(void)
 {
     test_tick_shaping_removes_queueing_latency();
@@ -198,6 +215,7 @@ int main(void)
     test_policy_change_reanchors();
     test_long_idle_catch_up();
     test_predictive_planning_follows_the_scene();
+    test_predictive_ignores_noise();
     if (failures) {
         printf("%d failure(s)\n", failures);
         return 1;

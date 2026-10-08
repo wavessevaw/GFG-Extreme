@@ -6,10 +6,10 @@
 
 #define NS_PER_MS 1000000.0
 #define MIN_COST_SAMPLES 8
-#define RECENT_COSTS 16
+#define RECENT_COSTS 32
 #define FAST_ALPHA 0.25
 #define SLOW_ALPHA 0.03
-#define TREND_DEADBAND_MS 0.3
+#define TREND_DEADBAND_MS 0.3   /* floor; the band also scales with the cost spread */
 
 void gfg_policy_defaults(gfg_policy *p)
 {
@@ -103,11 +103,16 @@ static double planned_cost(const gfg_sched *s)
         return all;
     double trend = s->cost_fast_ms - s->cost_slow_ms;
     double recent = quantile_last(s, p->cost_quantile, RECENT_COSTS);
-    if (trend > TREND_DEADBAND_MS) {
+    /* Ordinary frame-to-frame noise moves the fast average too: only a trend clearly beyond the
+     * recent spread (p90 - p50) is a scene changing weight (review: a fixed 0.3 ms band flipped
+     * the plan every frame at 1.5 ms jitter). */
+    double spread = recent - quantile_last(s, 0.5, RECENT_COSTS);
+    double band = 0.5 * spread > TREND_DEADBAND_MS ? 0.5 * spread : TREND_DEADBAND_MS;
+    if (trend > band) {
         double ahead = recent + trend;            /* the scene is getting heavier: plan ahead */
         return ahead > all ? ahead : all;
     }
-    if (trend < -TREND_DEADBAND_MS) {
+    if (trend < -band) {
         /* lighter: the old heavy frames no longer say anything about the next one */
         return recent > s->cost_fast_ms ? recent : s->cost_fast_ms;
     }

@@ -23,18 +23,45 @@ class VerdictTests(unittest.TestCase):
 
 
 class GameMemoryTests(unittest.TestCase):
-    def test_harmful_effect_is_switched_off_and_rechecked_later(self):
+    def test_harmful_effect_is_switched_off_at_a_session_start_and_rechecked_later(self):
         m = memory.GameMemory()
         m.start_session()
-        self.assertEqual(m.add_pairs({"response": [-8.0, -10.0, -9.0]}), {"shaping": "hurts"})
-        self.assertTrue(m.disabled()["shaping"])
-        self.assertEqual(m.add_pairs({"response": [-9.0]}), {}, "already off: reported once")
-        record = m.to_record()
-        again = memory.GameMemory(record)
+        self.assertEqual(m.add_pairs({"response": [-8.0, -10.0, -9.0, -9.5, -8.5]}), {})
+        self.assertFalse(m.disabled()["shaping"], "never mid-session, never from one session")
+        m = memory.GameMemory(m.to_record())
+        self.assertFalse(m.start_session()["shaping"], "one session of evidence is not enough")
+        m.add_pairs({"response": [-9.0, -10.5, -8.0, -9.2]})
+        again = memory.GameMemory(m.to_record())
+        self.assertTrue(again.start_session()["shaping"])
+        self.assertEqual(again.ruled_out, {"shaping": "hurts"})
         for _ in range(memory.RECHECK_SESSIONS - 1):
             self.assertTrue(again.start_session()["shaping"])
         self.assertFalse(again.start_session()["shaping"], "re-checked after a while")
         self.assertEqual(again.pairs["response"], [], "old evidence does not outvote the re-check")
+
+    def test_harmless_and_small_real_effects_are_rarely_switched_off(self):
+        # review 1.3.0: a 0 % effect was switched off in 15-44 % of games, a real +8 % boost in 17 %
+        import random
+        rnd = random.Random(7)
+        def off_rate(metric, mean, sd, sessions=30, per_session=4, games=200):
+            off = 0
+            for _ in range(games):
+                m = memory.GameMemory()
+                for _ in range(sessions):
+                    if m.start_session()[memory.EFFECTS[metric]]:
+                        off += 1
+                        break
+                    m.add_pairs({metric: [rnd.gauss(mean, sd) for _ in range(per_session)]})
+            return off / games
+        self.assertLess(off_rate("response", 0.0, 5.0), 0.05)
+        self.assertLess(off_rate("frames", 8.0, 6.0), 0.05)
+        self.assertGreater(off_rate("frames", 1.0, 3.0), 0.9, "a boost with no gain is still caught")
+        self.assertGreater(off_rate("response", -10.0, 4.0), 0.9, "a clear harm is still caught")
+
+    def test_records_from_1_3_0_load(self):
+        m = memory.GameMemory({"pairs": {"frames": [1.0] * 10}, "sessions": 4, "off": {}})
+        self.assertEqual(m.pair_sessions["frames"], 1)
+        self.assertFalse(m.start_session()["boost"], "one (unknown) session: wait for a second")
 
     def test_record_survives_bad_json_and_keeps_recent_pairs(self):
         m = memory.GameMemory({"pairs": {"frames": list(range(100)) + ["x"]}, "sessions": "3", "off": {"bogus": 1}})

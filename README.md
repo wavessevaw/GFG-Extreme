@@ -44,6 +44,7 @@ and **measures in your own game** whether it really does.
 - **Frame OS remembers every game.** Results carry over to the next session; an effect that does not help in a game — say, a boost the GPU cannot feed — is switched off there automatically and re-tried every few sessions.
 - **Faster boosts.** A boost starts on the *onset* of a camera swing, about one real frame earlier.
 - **Sharper overlay.** The in-game BOOST badge now reads correctly (`BOOST 45R x2`), and an `A/B` badge shows while a check runs.
+- **1.3.1 — Predictive Presentation.** The pacer plans each frame from the scene's cost trend, so a scene getting heavier no longer costs missed frames. Per-game switch-offs now need solid evidence from several sessions, and a Steam menu left open is never mistaken for a struggling game.
 
 Full notes: [Releases](https://github.com/wavessevaw/GFG-Extreme/releases).
 

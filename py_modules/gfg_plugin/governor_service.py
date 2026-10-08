@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.3.0).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.3.1).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -62,7 +62,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -267,12 +267,32 @@ class GovernorService:
             pass
         return {"schema": 1, "profiles": {}}
 
+    _settings_lock = threading.Lock()
+
     def _save_settings(self) -> None:
-        self.settings_path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self.settings_path.with_suffix(".tmp")
-        temp.write_text(json.dumps(self._settings, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        os.chmod(temp, 0o600)
-        temp.replace(self.settings_path)
+        """Atomic, and safe from both the event loop (Frame OS memory) and RPC worker threads
+        (review 1.3.0: a shared temp name could interleave two writes into invalid JSON, which
+        reloads as defaults)."""
+        with self._settings_lock:
+            self.settings_path.parent.mkdir(parents=True, exist_ok=True)
+            for attempt in range(3):
+                try:
+                    text = json.dumps(self._settings, indent=2, sort_keys=True) + "\n"
+                    break
+                except RuntimeError:      # a dict changed size under another thread: take it again
+                    if attempt == 2:
+                        raise
+            temp = self.settings_path.with_name(f".{self.settings_path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+            try:
+                temp.write_text(text, encoding="utf-8")
+                os.chmod(temp, 0o600)
+                temp.replace(self.settings_path)
+            except OSError:
+                try:
+                    temp.unlink()
+                except OSError:
+                    pass
+                raise
 
     def _profile_settings(self, profile: str) -> Dict[str, Any]:
         value = self._settings.get("profiles", {}).get(profile, {})
@@ -946,6 +966,36 @@ class GovernorService:
             return None
         return focus
 
+    MENU_MAX_S = 120.0
+
+    def _menu_covering(self) -> bool:
+        """Steam's menu covers the game.  The renderer reports focus only when it changes, so a
+        menu left open stays "covering" past the 5 s freshness of the event, until the output is
+        visibly back at target (the game shows again: the focus-restored event was missed) or for
+        at most MENU_MAX_S.  Review 1.3.0: expiring after 5 s let menu samples (generation
+        suspended) be judged as a starved point and lock Act out for the session."""
+        focus = getattr(self.observer, "game_focused", None)
+        if focus is not False:
+            return False
+        at = getattr(self.observer, "game_focused_at", None)
+        age = None if at is None else self.observer.time_fn() - at
+        if age is not None and age <= 5.0:
+            return True
+        if age is None or age > self.MENU_MAX_S:
+            return False
+        budget = self._budget
+        target = float(budget.point.target_output_fps) if budget is not None else float(
+            self._status.get("target_output_fps") or 0)
+        summary = self.observer.summary(self.FAST_CHECK_SECONDS)
+        output = (summary.get("output") or {}).get("median")
+        real = (summary.get("real") or {}).get("median")
+        back = isinstance(output, (int, float)) and target > 0 and output >= 0.85 * target
+        # Under the menu the renderer suspends generation (output ~ real frames); generated frames
+        # on screen mean the game shows, even when the point is starved (field case 1.2.3).
+        generating = (isinstance(output, (int, float)) and isinstance(real, (int, float)) and real > 0
+                      and output >= 1.4 * real)
+        return not (back or generating)
+
     def _configure_frame_os(self, profile: str) -> None:
         budget = self._budget
         mode = self._frame_os_mode(profile) if profile else "off"
@@ -955,7 +1005,8 @@ class GovernorService:
                                     max_multiplier=1, calm_w=None)
             return
         point = budget.point
-        self.frame_os.focused = self._trusted_game_focus()
+        # rest for as long as Steam's menu really covers the game (the event is sent only once)
+        self.frame_os.focused = False if self._menu_covering() else self._trusted_game_focus()
         self.frame_os.proof.enabled = self._frame_os_ab()
         try:
             self.frame_os.draw_w = self.power.status().get("draw_w")
@@ -978,16 +1029,25 @@ class GovernorService:
     def _sync_frame_os_memory(self, profile: str) -> None:
         """Load this game's Frame OS memory once per game session, then store new A/B pairs as they
         arrive (rare: one control window per 20-90 s) and switch off effects they rule out."""
-        prefix = game_prefix(profile, self._game_app_id())
-        key = (prefix, tuple((self._launch or {}).get("launch_key") or ()))
-        if key != self._fo_memory_key:
+        launch = self._launch if isinstance(self._launch, dict) else {}
+        launch_key = tuple(launch.get("launch_key") or ()) if launch.get("running") else ()
+        prefix = self._fo_memory_key[0] if self._fo_memory_key else game_prefix(profile, self._game_app_id())
+        # Review 1.3.0: only a real new launch starts a memory session; a probe that briefly says
+        # "not running" (every game exit, a failed probe) must not re-load or count a session.
+        if launch_key and launch_key != (self._fo_memory_key or (None, None))[1]:
+            prefix = game_prefix(profile, self._game_app_id())
+            key = (prefix, launch_key)
             memory = GameMemory(self._frame_os_games().get(prefix))
             disabled = memory.start_session()
             self._fo_memory, self._fo_memory_key = memory, key
-            self._fo_saved = {m: len(self.frame_os.proof.pairs[m]) for m in FRAME_OS_METRICS}
+            # this session's pairs are new: what the meter holds belongs to the game before
+            self.frame_os.proof.pairs = {m: [] for m in FRAME_OS_METRICS}
+            self._fo_saved = {m: 0 for m in FRAME_OS_METRICS}
             self.frame_os.apply_memory(disabled, seed_pairs(memory))
             self._frame_os_games()[prefix] = memory.to_record()
             self._save_settings_quietly()
+            for effect, why in memory.ruled_out.items():
+                self._journal("frame-os-effect-off", profile=profile, game=prefix, effect=effect, verdict=why)
             return
         memory = self._fo_memory
         if memory is None:
@@ -1003,13 +1063,9 @@ class GovernorService:
             self._fo_saved[metric] = len(pairs)
         if not fresh:
             return
-        ruled_out = memory.add_pairs(fresh)
+        memory.add_pairs(fresh)
         self._frame_os_games()[prefix] = memory.to_record()
         self._save_settings_quietly()
-        if ruled_out:
-            self.frame_os.set_disabled(memory.disabled())
-            for effect, why in ruled_out.items():
-                self._journal("frame-os-effect-off", profile=profile, game=prefix, effect=effect, verdict=why)
 
     def _save_settings_quietly(self) -> None:
         try:
@@ -1435,7 +1491,7 @@ class GovernorService:
         """One time-weighted sample for the player's session summary (fresh telemetry only)."""
         if self.session_stats.started is None or not self._status.get("enabled"):
             return
-        if getattr(self.observer, "game_focused", None) is False:
+        if self._menu_covering():
             self.session_stats.last = self._clock()  # Steam's menu: not part of the averages
             return
         tel = self._status.get("telemetry") or {}
@@ -1695,7 +1751,7 @@ class GovernorService:
         # Steam's menu / quick access covers the game: the renderer suspends frame generation, so
         # the output drops for reasons that have nothing to do with the point.  Measure nothing,
         # change nothing, and drop what was sampled meanwhile once the game is back.
-        if self._trusted_game_focus() is False:
+        if self._menu_covering():
             if self._menu_since is None:
                 self._menu_since = self._clock()
             self._status.update({"state": "PAUSED", "reason": "steam-menu-open"})
@@ -2097,14 +2153,16 @@ class GovernorService:
             hot = (self._status.get("diagnosis") or {}).get("thermal") == "hot"
             output = (self.observer.summary(self.FAST_CHECK_SECONDS, after_seq=self._injection_seq)
                       .get("output") or {}).get("median")
-            starved = (isinstance(output, (int, float)) and output < 0.8 * float(self._budget.point.target_output_fps)
-                       and self._trusted_game_focus() is not False)   # only a fresh Steam menu event suppresses starvation
+            starved = isinstance(output, (int, float)) and output < 0.8 * float(self._budget.point.target_output_fps)
+            # A starved output under a Steam menu (generation suspended) still takes the overlay
+            # back, but it is no evidence against Act: it never counts toward the session lockout.
+            menu = self._menu_covering()
             if hot or starved:
                 acting = False
                 if self._injection is not None:
                     self._event("frame-os-injection-yielded", "hot" if hot else "output-starved",
                                 profile=profile, output=output)
-                    if starved and not hot:
+                    if starved and not hot and not menu:
                         self._injection_starvation_yields += 1
                         if self._injection_starvation_yields >= 2:
                             self._event("frame-os-injection-locked-out", "repeated-output-starvation",
