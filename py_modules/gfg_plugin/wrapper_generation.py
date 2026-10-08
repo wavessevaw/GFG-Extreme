@@ -79,7 +79,7 @@ from .profile_storage import (
 )
 
 
-WRAPPER_FORMAT_VERSION = 81
+WRAPPER_FORMAT_VERSION = 82
 WRAPPER_FORMAT_MARKER = f"# mako-wrapper-format: {WRAPPER_FORMAT_VERSION}"
 HOST_COMPATIBILITY_MARKER = "# mako-host-compatibility: aarch64-passthrough-v1"
 DIAGNOSTICS_DEFAULT_MARKER = (
@@ -780,6 +780,8 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         '    export GFG_FRAME_OS_SHM="${GFG_FRAME_OS_SHM:-/dev/shm/gfg-frame-os}"',
         "fi",
         "unset GFG_FRAME_OS",
+        # The layer's developer test mode (it acts without the Governor) never reaches a game.
+        "unset GFG_FRAME_OS_ENABLE GFG_FRAME_OS_MODE GFG_FRAME_OS_REAL_HZ GFG_FRAME_OS_TICK_SHAPING GFG_FRAME_OS_PACING",
         "export DISABLE_GFG_FRAME_OS=1",
         'unset gfg_frame_os_marker',
         "mako_renderer_enabled=0",

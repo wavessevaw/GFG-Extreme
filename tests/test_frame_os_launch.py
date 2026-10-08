@@ -56,9 +56,11 @@ class FrameOsLaunchOrderTests(unittest.TestCase):
             *layer_environment_lines(self.ctx),
             'printf "IL=%s\\nIMPLICIT=%s\\nGFG=%s\\nDISABLE=%s\\nENABLE_MAKO=%s\\nSHM=%s\\n" '
             '"${VK_INSTANCE_LAYERS-}" "${VK_IMPLICIT_LAYER_PATH-}" "${GFG_FRAME_OS-unset}" '
-            '"${DISABLE_GFG_FRAME_OS-}" "${ENABLE_MAKO-unset}" "${GFG_FRAME_OS_SHM-}"',
+            '"${DISABLE_GFG_FRAME_OS-}" "${ENABLE_MAKO-unset}" "${GFG_FRAME_OS_SHM-}"; '
+            'printf "TESTMODE=%s\\n" "${GFG_FRAME_OS_ENABLE-unset}${GFG_FRAME_OS_MODE-unset}"',
         ])
-        env = {"PATH": os.environ["PATH"], "HOME": str(self.root), "GFG_FRAME_OS": "1"}
+        env = {"PATH": os.environ["PATH"], "HOME": str(self.root), "GFG_FRAME_OS": "1",
+               "GFG_FRAME_OS_ENABLE": "1", "GFG_FRAME_OS_MODE": "act"}
         if inherited:
             env["VK_INSTANCE_LAYERS"] = inherited
         out = subprocess.run(["bash", "-c", script], env=env, check=True, capture_output=True, text=True).stdout
@@ -72,6 +74,7 @@ class FrameOsLaunchOrderTests(unittest.TestCase):
         self.assertEqual(env["GFG"], "unset")          # never through the implicit gate
         self.assertEqual(env["ENABLE_MAKO"], "unset")  # nor the renderer
         self.assertEqual(env["SHM"], "/dev/shm/gfg-frame-os")
+        self.assertEqual(env["TESTMODE"], "unsetunset")   # the layer's test mode never reaches a game
 
     def test_inherited_copy_is_removed(self):
         self._install()
