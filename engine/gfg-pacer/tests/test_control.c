@@ -151,6 +151,25 @@ static void test_file_policy(void)
     gfg_ctl_mark_passthrough(t + 502 * MS);
     CHECK(m->telemetry.passthrough == 1 && m->telemetry.frames == 43, "passthrough flagged");
 
+    /* A crashed Governor can leave a permanently odd policy seq. Even if the
+     * last acknowledged policy was Act, it must expire without fresh writes. */
+    p = policy(45);
+    put(m, &p, t);
+    t += 100 * MS;
+    gfg_ctl_poll(t, &st);
+    CHECK(st.enabled && st.mode == GFG_MODE_ACT, "fresh Act before odd seqlock");
+    m->policy_seq |= 1u;
+    t += 100 * MS;
+    gfg_ctl_poll(t, &st);
+    CHECK(st.enabled, "transient odd seqlock may retain last good policy");
+    t += GFG_CTL_HEARTBEAT_NS + 100 * MS;
+    gfg_ctl_poll(t, &st);
+    CHECK(!st.enabled, "stuck odd seqlock must fail closed after heartbeat window");
+    put(m, &p, t);
+    t += 100 * MS;
+    gfg_ctl_poll(t, &st);
+    CHECK(st.enabled && st.mode == GFG_MODE_ACT, "fresh policy resumes after recovery");
+
     /* heartbeat: a policy the Governor stopped rewriting is not trusted */
     p = policy(60);
     put(m, &p, t);
