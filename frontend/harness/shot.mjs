@@ -31,6 +31,16 @@ async function shot(name, state, nav = [], from = null, to = null, extra = {}) {
 await shot("home-idle-oled", st("home-idle-oled"));
 await shot("home-adapting-oled", st("readme-home"));
 await shot("home-balanced-oled", st("home-balanced"));
+// Extreme: the wolf in the main ring (classic layout), and its Details section.
+{
+  const page = await openPage(browser, st("home-extreme"));
+  for (let i = 0; i < 2; i++) { await page.locator(".herotap").first().click(); await page.waitForTimeout(80); }
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+  await page.screenshot({ path: out + "home-extreme.png", fullPage: true });
+  await page.close();
+  console.log(out + "home-extreme.png");
+}
+await shot("details-extreme", st("home-extreme"), ["Details"], "EXTREME", "POWER");
 const oled = { device: STATES["home-idle-oled"].device, target_output_fps: 90 };
 await shot("home-last-session", st("home-last-session-mixed", oled));
 await shot("page-details", st("readme-home"), ["Details"]);

@@ -1182,7 +1182,7 @@ function GovernorPage({ s, back, profile, refresh }) {
       h("b", null, s.extreme.ceiling ? num(s.extreme.ceiling.ceiling_w, 0) + " W \xB7 " + (s.extreme.ceiling.source === "your-limit" ? "your own limit" : s.extreme.ceiling.source === "hardware" ? "this Deck's maximum" : "stock limit") : "\u2013"),
       h("span", null, "Render scale"),
       h("b", null, s.extreme.applied && s.extreme.applied.render_pct != null ? s.extreme.applied.render_pct + "%" + (s.extreme.applied.source ? " \xB7 " + s.extreme.applied.source.join("\xD7") + " \u2192 " + (s.extreme.applied.output || []).join("\xD7") : "") : "\u2013"),
-      h("span", null, "Testing"),
+      h("span", null, "Requested"),
       h("b", null, s.extreme.requested && s.extreme.requested.render_pct != null ? s.extreme.requested.render_pct + "%" + (s.extreme.requested.sharpness != null ? " \xB7 sharpen " + sharpText(s.extreme.requested.sharpness) : "") : "\u2013"),
       h("span", null, "Sharpening"),
       h("b", null, s.extreme.applied && s.extreme.applied.sharpness != null ? sharpText(s.extreme.applied.sharpness) + " (engine confirmed)" : "not confirmed by the engine yet"),

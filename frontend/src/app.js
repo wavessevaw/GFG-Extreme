@@ -699,7 +699,7 @@ function GovernorPage({ s, back, profile, refresh }) {
       h("span", null, "State"), h("b", null, X_STATE[s.extreme.state] || s.extreme.state),
       h("span", null, "Power limit"), h("b", null, s.extreme.ceiling ? num(s.extreme.ceiling.ceiling_w, 0) + " W · " + (s.extreme.ceiling.source === "your-limit" ? "your own limit" : s.extreme.ceiling.source === "hardware" ? "this Deck's maximum" : "stock limit") : "–"),
       h("span", null, "Render scale"), h("b", null, s.extreme.applied && s.extreme.applied.render_pct != null ? s.extreme.applied.render_pct + "%" + (s.extreme.applied.source ? " · " + s.extreme.applied.source.join("×") + " → " + (s.extreme.applied.output || []).join("×") : "") : "–"),
-      h("span", null, "Testing"), h("b", null, s.extreme.requested && s.extreme.requested.render_pct != null ? s.extreme.requested.render_pct + "%" + (s.extreme.requested.sharpness != null ? " · sharpen " + sharpText(s.extreme.requested.sharpness) : "") : "–"),
+      h("span", null, "Requested"), h("b", null, s.extreme.requested && s.extreme.requested.render_pct != null ? s.extreme.requested.render_pct + "%" + (s.extreme.requested.sharpness != null ? " · sharpen " + sharpText(s.extreme.requested.sharpness) : "") : "–"),
       h("span", null, "Sharpening"), h("b", null, s.extreme.applied && s.extreme.applied.sharpness != null ? sharpText(s.extreme.applied.sharpness) + " (engine confirmed)" : "not confirmed by the engine yet"),
       h("span", null, "Gain vs Balanced"), h("b", null, "not measured (needs an A-B-A check)"))) : null,
     b ? h("div", { className: "sec" }, mode === "extreme" ? "POWER" : "BATTERY") : null,
