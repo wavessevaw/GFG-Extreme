@@ -753,6 +753,7 @@ class GovernorService:
                                     max_multiplier=1, calm_w=None)
             return
         point = budget.point
+        self.frame_os.focused = getattr(self.observer, "game_focused", None)
         try:
             self.frame_os.draw_w = self.power.status().get("draw_w")
         except Exception:
@@ -1764,7 +1765,8 @@ class GovernorService:
             # Safety: heat or a starved output hands the point back to the Governor's own judgement.
             hot = (self._status.get("diagnosis") or {}).get("thermal") == "hot"
             output = (self.observer.summary(self.FAST_CHECK_SECONDS).get("output") or {}).get("median")
-            starved = isinstance(output, (int, float)) and output < 0.8 * float(self._budget.point.target_output_fps)
+            starved = (isinstance(output, (int, float)) and output < 0.8 * float(self._budget.point.target_output_fps)
+                       and getattr(self.observer, "game_focused", None) is not False)   # Steam's menu stops FG
             if hot or starved:
                 acting = False
                 if self._injection is not None:

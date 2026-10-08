@@ -375,3 +375,24 @@ class ActExecutorTests(unittest.TestCase):
         self.assertEqual(injection_deltas(fixed, 90, 80, 22.5)["base_fps_cap"], 45)           # <= output / 2
         x2 = injection_deltas({**fixed, "multiplier": 2, "base_fps_cap": 45}, 90, 60, 45)
         self.assertIsNone(x2, "45x2: boost cap would equal calm")
+
+
+class SteamUiRestTests(unittest.TestCase):
+    def test_steam_ui_rests_at_once(self):
+        from gfg_plugin.frame_os.policy import InjectionPolicy
+        p = InjectionPolicy(output_hz=90, calm_real_hz=30)
+        d = p.tick(10.0, {"camera": 0.9, "action": 0, "idle_s": 0.0}, focused=False)
+        self.assertEqual((d.level, d.reason, d.real_hz), ("rest", "steam-ui", 22.5))
+        self.assertEqual(p.tick(10.1, {"camera": 0.9, "action": 0, "idle_s": 0.0}, focused=True).level, "boost")
+
+    def test_observer_tracks_gamescope_focus(self):
+        import tempfile
+        from pathlib import Path
+        from gfg_plugin.governor_telemetry import TelemetryObserver
+        obs = TelemetryObserver(Path(tempfile.gettempdir()) / "none.log")
+        self.assertIsNone(obs.game_focused)
+        h = "I MAKO Renderer: present diagnostics: operation=gamescope-focus context=1 state="
+        obs.consume_line(h + "steam-ui return_sequence=1 resumed=0 generation_suspended=1", now=1.0)
+        self.assertFalse(obs.game_focused)
+        obs.consume_line(h + "game return_sequence=1 resumed=1 generation_suspended=0", now=2.0)
+        self.assertTrue(obs.game_focused)

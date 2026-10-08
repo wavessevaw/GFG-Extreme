@@ -51,6 +51,7 @@ class FrameOsRunner:
         self.last: Dict[str, Any] = {}
         self._task: Optional[asyncio.Task] = None
         self.draw_w: Optional[float] = None
+        self.focused: Optional[bool] = None   # Gamescope focus from the renderer (Governor sets it)
 
     # ---------------------------------------------------------- Governor side (1 Hz)
     def configure(self, *, enabled: bool, mode: str, output_hz: float, calm_real_hz: float,
@@ -109,7 +110,7 @@ class FrameOsRunner:
         telemetry = self.channel.read_telemetry() or {}
         cost = telemetry.get("cost_p50_ms") or None
         cut = self.scene.tick(now, cost)
-        decision = self.policy.tick(now, inp, scene_change=cut, draw_w=self.draw_w)
+        decision = self.policy.tick(now, inp, scene_change=cut, draw_w=self.draw_w, focused=self.focused)
         acting = self.mode == "act"
         real_hz = decision.real_hz if acting else self.policy.calm_real_hz
         wanted = (self.mode, round(real_hz, 3))

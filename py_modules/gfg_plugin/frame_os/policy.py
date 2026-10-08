@@ -118,7 +118,7 @@ class InjectionPolicy:
         return rest if 20.0 <= rest < self.calm_real_hz else self.calm_real_hz
 
     def tick(self, now: float, inp: Dict[str, float], scene_change: bool = False,
-             draw_w: Optional[float] = None) -> Decision:
+             draw_w: Optional[float] = None, focused: Optional[bool] = None) -> Decision:
         camera, action = float(inp.get("camera", 0.0)), float(inp.get("action", 0.0))
         idle = float(inp.get("idle_s", float("inf")))
         trigger = None
@@ -132,7 +132,9 @@ class InjectionPolicy:
             self._boost_until = max(self._boost_until, now + SCENE_BOOST_S)
             trigger = trigger or "scene-change"
 
-        if idle >= REST_IDLE_S:
+        if focused is False:
+            level, reason = "rest", "steam-ui"      # Steam's menu covers the game: rest at once
+        elif idle >= REST_IDLE_S:
             level, reason = "rest", "idle"
         elif now < self._boost_until and self.boost_real_hz > self.calm_real_hz:
             affordable = self.broker is None or self.broker.can_boost() or self.level == "boost"
