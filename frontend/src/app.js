@@ -18,6 +18,7 @@ const rpc = {
   setFrameOsActUnlock: safeCallable("set_governor_frame_os_act_unlock"),
   setFrameOsAb: safeCallable("set_governor_frame_os_ab"),
   setMode: safeCallable("set_governor_mode"),
+  setPlaytime: safeCallable("set_governor_playtime"),
   forgetModel: safeCallable("forget_governor_game_model"),
   modelTarget: safeCallable("get_governor_game_model_target"),
   profiles: safeCallable("get_profiles"),
@@ -286,6 +287,31 @@ function SessionRings({ ls, target }) {
       h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "−" : "") + Math.abs(Math.round(b.energy)) + "%", label: "Energy", live: true, estimate: b.estimate })) : null);
 }
 
+// Playtime target: "the battery must last N hours" -> an APU power ceiling the Governor plays inside.
+const hm = (min) => (min == null ? "–" : Math.floor(min / 60) + "h" + String(min % 60).padStart(2, "0"));
+function playtimeText(pt) {
+  if (!pt.active) return "Pick how long you want to play on this charge. GFG holds the power that gets you there and keeps the game smooth inside it.";
+  if (pt.mode_supported === false) return "Works in Battery and Balanced mode.";
+  switch (pt.state) {
+    case "holding": return "Holding the APU at " + num(pt.cap_w, 1) + " W so the battery lasts — " + hm(pt.remaining_min) + " to go.";
+    case "on-track": return "No limit needed: at this pace the battery lasts about " + hm(pt.forecast_min) + ".";
+    case "tight": return "Even the lowest power won't last that long: about " + hm(pt.reachable_min) + " is possible. Running as frugally as the game allows.";
+    case "charging": return "Charging — the target applies again on battery.";
+    case "reached": return "Target reached.";
+    case "no-battery": return "No battery reading on this device.";
+    default: return "Waiting for a game.";
+  }
+}
+function PlaytimeCard({ pt, refresh }) {
+  const [busy, setBusy] = useState(false);
+  const value = pt.active ? String(pt.target_h) : "0";
+  const set = async (v) => { setBusy(true); try { await rpc.setPlaytime(Number(v)); } catch (e) {} setBusy(false); refresh && refresh(); };
+  return h("div", null,
+    h("div", { className: "sec" }, "PLAYTIME TARGET"),
+    h(Seg, { value, options: [["0", "Off"], ["2", "2h"], ["3", "3h"], ["4", "4h"], ["5", "5h"]], onChange: busy ? () => {} : set }),
+    h(Note, { quiet: true }, playtimeText(pt)));
+}
+
 function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
   const [busy, setBusy] = useState(false);
   const missing = inst && inst.installed === false;
@@ -348,6 +374,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
     h("div", { className: "sec" }, "MODE"),
     h(Seg, { value: s.mode || "budget", options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"]], onChange: async (v) => { try { await rpc.setMode(profile, v); } catch (e) {} refresh(); } }),
     h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
+    h(PlaytimeCard, { pt: s.playtime || {}, refresh }),
     health ? h("div", { className: "hint" }, health) : null,
     !s.session && s.last_session ? h("div", { className: "card" }, h("div", { className: "sec" }, "LAST SESSION"),
       h(SessionRings, { ls: s.last_session, target }),

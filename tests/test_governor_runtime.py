@@ -896,6 +896,31 @@ class BudgetRuntimeTests(RuntimeBase):
             st = self.step(0.1)
         return st
 
+    def test_playtime_target_caps_the_watts_and_survives_a_restart(self):
+        self.svc.battery_reader = lambda: {"available": True, "discharging": True, "percent": 60,
+                                           "energy_uwh": 40e6, "power_uw": 14e6}
+        self.svc.power.values["draw_w"] = 9.0          # rest of the Deck: 5 W
+        result = self.svc.set_playtime_target(3.0)
+        self.assertTrue(result["success"])
+        self.feed(20, 45, 90)
+        st = self.step()
+        self.feed(16, 30, 90)
+        for _ in range(40):
+            st = self.step(1.0)
+        pt = st["playtime"]
+        self.assertEqual(pt["state"], "holding")
+        # 40 Wh * 0.95 / 3 h = 12.7 W for the whole Deck, minus 5 W: ~7.5 W for the APU
+        self.assertLessEqual(max(self.svc.power.writes), max(pt["cap_w"], self.svc._budget.min_w))
+        self.assertEqual(st["budget"]["limits_w"]["normal"], pt["cap_w"])
+        self.assertEqual(self.svc._settings["playtime"]["target_h"], 3.0)
+        # off again: the normal ceiling is back
+        self.svc.set_playtime_target(None)
+        st = self.step(1.0)
+        self.assertFalse(st["playtime"]["active"])
+        self.assertEqual(st["budget"]["limits_w"]["normal"], 15.0)
+        self.assertNotIn("playtime", self.svc._settings)
+        self.assertFalse(self.svc.set_playtime_target(40)["success"])
+
     def test_starts_at_10_watts_and_30x3_then_lowers_power(self):
         self.feed(20, 45, 90)
         st = self.step()
@@ -1616,13 +1641,30 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.assertEqual(self.svc._injection_starvation_yields, 0)
         self.assertIsNotNone(self.svc._injection, "Act still injects after three long menus")
 
-    def test_a_menu_event_without_its_return_expires(self):
+    def test_a_menu_open_for_minutes_still_never_locks_act_out(self):
+        # review of 1.3.1: past MENU_MAX_S a really open menu was judged as a starved point
+        self._act_live_point()
+        self.svc.frame_os.last = {"telemetry": {"live": True}}
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNotNone(self.svc._injection)
+        self.svc.observer.game_focused = False
+        self.svc.observer.game_focused_at = self.t["now"] - (self.svc.MENU_MAX_S + 60)   # open 3 min
+        for _ in range(4):
+            self.feed(20, 30, 30)                                  # generation suspended
+            st = self.step(2.0)
+            self.assertEqual((st["state"], st["reason"]), ("PAUSED", "steam-menu-open"))
+        self.assertEqual(self.svc._injection_starvation_yields, 0)
+
+    def test_a_missed_focus_restored_event_recovers_when_generation_resumes(self):
         self.feed(20, 45, 90)
         self.step()
+        self.feed(16, 30, 90)
+        self.step()
         self.svc.observer.game_focused = False
-        self.svc.observer.game_focused_at = self.t["now"] - (self.svc.MENU_MAX_S + 1)
-        self.feed(20, 30, 30)
-        self.assertNotEqual(self.step()["reason"], "steam-menu-open", "never paused forever")
+        self.svc.observer.game_focused_at = self.t["now"] - (self.svc.MENU_MAX_S + 60)
+        self.feed(20, 30, 90)                                       # generated frames on screen
+        self.assertNotEqual(self.step()["reason"], "steam-menu-open", "the game shows: never paused forever")
 
     def test_steam_menu_pauses_measuring_and_drops_its_samples(self):
         self.feed(20, 45, 90)

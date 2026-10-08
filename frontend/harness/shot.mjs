@@ -44,4 +44,6 @@ await shot("page-frame-os", { ...fosBase, frame_os: { ...frameOs, ...fo, acknowl
   ["Settings", "Diagnostics"], "FRAME OS (EXPERIMENTAL)", "INSPECTOR");
 if (STATES["home-frame-os-act"]) await shot("home-frame-os", st("home-frame-os-act"));
 else console.error("home-frame-os-act not in lib.mjs yet: home-frame-os.png not rendered");
+// Playtime target card (Home, cropped from its heading to the next list)
+await shot("home-playtime", st("home-playtime"), [], "MODE", "Details");
 await browser.close();

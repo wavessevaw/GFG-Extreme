@@ -131,3 +131,21 @@ class AtlasCoverageTests(unittest.TestCase):
                     for text in (item.get("text"), item.get("sub"), item.get("label")):
                         missing = set(text or "") - glyphs
                         self.assertFalse(missing, f"{text!r} needs glyphs {missing}")
+
+
+class PlaytimeGoalTests(unittest.TestCase):
+    def test_goal_shows_on_the_battery_ring(self):
+        d = {"fps": 90, "real": 30, "target": 90, "tdp": 7, "limit": 15, "battery_min": 185, "battery_pct": 64,
+             "goal_min": 171}
+        labels = [i.get("label") for i in hud_rings.items_for(d, "standard")]
+        self.assertEqual(labels, ["FPS", "TDP", "GOAL 2h51"])
+        ring = hud_rings.items_for(d, "standard")[-1]
+        r, g, _b = ring["rgb"]
+        self.assertGreater(g, r, "the battery outlasts the goal: green")
+        ring = hud_rings.items_for({**d, "battery_min": 150}, "standard")[-1]
+        r, g, _b = ring["rgb"]
+        self.assertGreater(r, g, "short of the goal: orange")
+        self.assertEqual([i.get("label") for i in hud_rings.items_for(d, "minimal")], ["FPS", "TDP"])
+        no_goal = {k: v for k, v in d.items() if k != "goal_min"}
+        self.assertEqual([i.get("label") for i in hud_rings.items_for(no_goal, "standard")], ["FPS", "TDP"])
+        hud_rings.render(d, "detailed", 1.0)

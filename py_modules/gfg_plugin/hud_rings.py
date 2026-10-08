@@ -181,13 +181,18 @@ def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
     tdp, limit = data.get("tdp"), data.get("limit") or 15
     items.append({"kind": "ring", "size": 46, "w": 4, "frac": (tdp or 0) / limit, "rgb": WHITE,
                   "text": f"{round(tdp)}W" if tdp else "—", "style": "val", "label": "TDP"})
-    if preset == "detailed" and data.get("battery_min") is not None:
+    goal = data.get("goal_min")       # playtime target: time still to go
+    if data.get("battery_min") is not None and (preset == "detailed" or (goal is not None and preset != "minimal")):
         mins = int(data["battery_min"])
         low = mins < 20
+        # with a playtime target the ring turns green while the battery outlasts it, orange if not
+        rgb = effect_color(5, 30) if low else WHITE
+        if goal is not None:
+            rgb = effect_color(30, 30) if mins >= int(goal) else effect_color(5, 30)
         items.append({"kind": "ring", "size": 46, "w": 4, "frac": (data.get("battery_pct") or 0) / 100.0,
-                      "rgb": effect_color(5, 30) if low else WHITE,
+                      "rgb": rgb,
                       "text": f"{mins // 60}h{mins % 60:02d}" if mins >= 60 else f"{mins}M", "style": "val",
-                      "label": "BATTERY"})
+                      "label": (f"GOAL {int(goal) // 60}h{int(goal) % 60:02d}" if goal is not None else "BATTERY")})
     fos = data.get("frame_os")
     if preset != "minimal" and fos:
         items.append({"kind": "sep"})

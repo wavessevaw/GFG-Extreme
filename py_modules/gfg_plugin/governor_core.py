@@ -934,6 +934,32 @@ class BudgetController:
         self.thermal = "unknown"
         self.thermal_deferred = False
         self._heat_until = -1e9
+        self.playtime_cap_w: Optional[float] = None
+        self._ceilings: Optional[tuple] = None
+
+    def set_playtime_cap(self, cap_w: Optional[float]) -> bool:
+        """A playtime target's power ceiling (``playtime.PlaytimePlanner``), or None to lift it.
+
+        Lowers every ceiling the search, the guard and emergency watts use; the guard then keeps
+        the game smooth by trading generated-frame ratio for watts, as at the normal ceiling.
+        Returns True when the current TDP had to come down to the new ceiling."""
+        base = getattr(self, "_ceilings", None)
+        if base is None:
+            base = self._ceilings = (self.normal_max_w, self.emergency_max_w, self.ideal_max_w)
+        if cap_w is None:
+            self.normal_max_w, self.emergency_max_w, self.ideal_max_w = base
+            self.playtime_cap_w = None
+            return False
+        cap = max(self.min_w, float(cap_w))
+        self.playtime_cap_w = cap
+        self.normal_max_w = min(base[0], cap)
+        self.emergency_max_w = min(base[1], cap)
+        self.ideal_max_w = min(base[2], cap)
+        if self.tdp_control and self.tdp is not None and self.tdp > self.normal_max_w + 1e-6:
+            self.tdp = round(self.normal_max_w, 1)
+            self.last_reason = "playtime-target"
+            return True
+        return False
 
     def warm_start(self, point_key: str, tdp_w: Optional[float], now: float) -> bool:
         """Start from a remembered point/TDP that held in an earlier session instead of searching.

@@ -12,7 +12,7 @@
 GFG Extreme generates the frames your game can't, holds the **lowest power that keeps the picture smooth**,<br>
 and keeps adjusting while you play. Your Deck never burns a watt it doesn't need.
 
-[**Download the latest release**](https://github.com/wavessevaw/GFG-Extreme/releases/latest) · [Quick start](#quick-start) · [Frame OS](#frame-os-experimental) · [In-game rings](#in-game-rings) · [Something not working?](#something-not-working)
+[**Download the latest release**](https://github.com/wavessevaw/GFG-Extreme/releases/latest) · [Quick start](#quick-start) · [Frame OS](#frame-os-experimental) · [Playtime target](#playtime-target) · [In-game rings](#in-game-rings) · [Something not working?](#something-not-working)
 
 ![release](https://img.shields.io/github/v/release/wavessevaw/GFG-Extreme?style=flat-square&color=fb0d00&label=release)
 ![platform](https://img.shields.io/badge/Steam%20Deck-OLED%20%C2%B7%20LCD%20%C2%B7%20Dock-111?style=flat-square)
@@ -42,19 +42,17 @@ and keeps adjusting while you play. Your Deck never burns a watt it doesn't need
 - **🎯 Smooth, not stuttery.** Up to **90 FPS on OLED** and 60 on LCD, even when the game renders 30. Generated frames fill the gap, and GFG picks the ratio that holds for *this* game, *this* scene.
 - **🔋 Power only where it pays.** Instead of running flat out at the stock 15 W, GFG holds the **lowest TDP the game tolerates** — in Battery mode 9–11 W — and spends more only when a scene truly needs it. Cooler, quieter, longer sessions.
 - **🧠 Set it once.** Press **Run**. No TDP sliders, FPS caps or frame-generation settings to babysit. GFG remembers every game and starts from what worked last time.
+- **⏱️ Play as long as you need.** Tell GFG how long you want to play — 3 hours, say — and it holds exactly the power that gets you there, keeping the game smooth inside it.
 - **🛡️ Picture first.** Every change is checked against the renderer's own frame data and **rolled back if it doesn't hold**. GFG never trades smoothness for watts behind your back.
 - **⚡ Real frames when it matters.** **Frame OS** reads your controls: turn the camera or start a fight and it raises the *real* frame rate on the spot; pause, and it saves power.
 - **📊 Proof, not promises.** Frame OS **measures its own benefit in your game** with in-game A/B checks, and switches off whatever doesn't pay off there.
 
 Works with Steam games and, through Flatpak support, with Heroic, Lutris and emulators. Your saved settings are never touched: **Stop** puts everything back.
 
-## New in 1.3
+## New in 1.4
 
-- **Frame OS checks itself.** In Act it now and then switches one of its effects off for a few seconds and compares the same moment with and without it. After three comparisons its rings show **measured** numbers from your game instead of estimates.
-- **Frame OS remembers every game.** Results carry over to the next session; an effect that does not help in a game — say, a boost the GPU cannot feed — is switched off there automatically and re-tried every few sessions.
-- **Faster boosts.** A boost starts on the *onset* of a camera swing, about one real frame earlier.
-- **Sharper overlay.** The in-game BOOST badge now reads correctly (`BOOST 45R x2`), and an `A/B` badge shows while a check runs.
-- **1.3.1 — a rock-steady HUD and Predictive Presentation.** The in-game rings are drawn on every frame with no flicker, and the pacer plans each frame from the scene's cost trend, so a scene getting heavier no longer costs missed frames. Per-game switch-offs now need solid evidence from several sessions, and a Steam menu left open is never mistaken for a struggling game.
+- **Playtime target.** Pick how long this charge has to last — 2, 3, 4 or 5 hours — and GFG works out the power the APU may use: what is left in the battery, divided by the time to go, minus what the screen and the rest of the Deck draw. The Governor keeps the game smooth *inside* that budget by generating a little more instead of spending watts. Home says whether you are on track, and the battery ring in the game shows the goal.
+- **Since 1.3:** Frame OS checks itself in your game with A/B comparisons and remembers what works in every game; the pacer plans frames from the scene's cost trend; the in-game rings are drawn on every frame without flicker.
 
 Full notes: [Releases](https://github.com/wavessevaw/GFG-Extreme/releases).
 
@@ -107,6 +105,21 @@ After three comparisons a ring shows the **measured** number. The card says *Mea
 
 What the checks measured carries over to the next session of the same game, so its rings start measured and the checks get rarer. When an effect **hurts** in a game — or a boost brings **no real frames** because the GPU is already at its limit — Frame OS switches it off **for that game** and says so on Home and in Diagnostics (*This game*). Every eight sessions it gives a switched-off effect a fresh try, in case a patch or new settings changed the game. **Reset what GFG learned** clears it.
 
+## Playtime target
+
+<p align="center"><img src="docs/img/home-playtime.png" width="300"></p>
+
+"I want to play for three hours." Pick **2h, 3h, 4h or 5h** on Home and GFG turns it into a power budget:
+
+- It reads the energy left in the battery and divides it by the time to go — that is what the whole Deck may draw on average.
+- It measures what the screen, memory and fan take (battery drain minus the APU's own draw) and gives the APU the rest.
+- The Governor plays inside that ceiling: when a scene gets heavier it generates a little more rather than spending watts it does not have.
+- Home says where you stand — *holding 7.5 W, 2h41 to go*, *no limit needed*, or, if even the lowest power cannot last that long, how long it can. In the game, the battery ring shows the goal and turns green while the battery outlasts it.
+
+Works in Battery and Balanced mode; on the charger the target waits.
+
+<p align="center"><img src="docs/img/hud-rings-goal.png" width="820"></p>
+
 ## In-game rings
 
 <p align="center"><img src="docs/img/page-hud.png" width="230"></p>
@@ -116,7 +129,7 @@ The Home screen, shrunk into the corner of your game: a brand-red **FPS** ring w
 With Frame OS Act, a badge says what is happening: **CALM**, **REST**, **VERIFYING**, **BOOST 45R x2** (only once fresh frame data shows the extra real frames) or **A/B** during a check.
 
 - On by default in the **bottom-left corner**; **Settings → In-game overlay** picks Rings or Text, Minimal / Standard / Detailed and the corner.
-- Refreshes **once a second**; unchanged pictures are reused, and the layer never waits for the overlay during presentation.
+- Refreshes **once a second**; unchanged pictures are reused. A frame waits for the overlay only when both of its image's copy slots are still busy, and then for at most 2 ms.
 - Drawn by GFG's own small Vulkan layer after the frame generator. It needs one game restart after you first pick it; until then, in Flatpak apps and in HDR games you get the classic text line:
 
 `90 FPS  x3  (30)  sc100  TDP 9W  APU 8W  2h32  easy` — frames on screen, multiplier, real frames, render scale, TDP limit and measured APU draw, battery time left, how hard GFG is working, plus the Frame OS decision (`FOS boost 45`).
@@ -153,7 +166,7 @@ Heroic, Lutris, EmuDeck and other Flatpak apps: **Settings → System**, enable 
 
 ## Status
 
-**Stable (1.3).** Frame OS is experimental and off unless you turn it on. Every release is covered by an automated test suite (Python backend, the generated launcher run in bash, the interface rendered in a headless browser) and checked on a real Steam Deck. Logs from more games and setups are very welcome. Known limitations: [docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md).
+**Stable (1.4).** Frame OS is experimental and off unless you turn it on. Every release is covered by an automated test suite (Python backend, the generated launcher run in bash, the interface rendered in a headless browser) and checked on a real Steam Deck. Logs from more games and setups are very welcome. Known limitations: [docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md).
 
 <details>
 <summary><b>Everything else it can do</b></summary>
