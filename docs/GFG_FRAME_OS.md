@@ -1,6 +1,6 @@
 # GFG Frame OS — architecture (working draft)
 
-Status: in development on a branch, not shipped. Nothing here is enabled in a release.
+Status: shipped as an experimental feature in 1.2.0 (off by default; Act behind an unlock).
 
 ## 1. The shift
 

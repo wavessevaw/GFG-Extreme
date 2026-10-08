@@ -9,9 +9,10 @@
 ### Frame generation that manages itself on Steam Deck.
 
 Press **Run**. GFG picks the frame rate for your screen, chooses how many frames to generate,<br>
-and sets the TDP as low as the game allows — then keeps adjusting while you play.
+and sets the TDP as low as the game allows — then keeps adjusting while you play.<br>
+New in 1.2: **Frame OS** (experimental) gives you more real frames when you act and saves power when you don't.
 
-[**Download the latest release**](https://github.com/wavessevaw/GFG-Extreme/releases) · [Quick start](#quick-start) · [Something not working?](#something-not-working)
+[**Download the latest release**](https://github.com/wavessevaw/GFG-Extreme/releases) · [Quick start](#quick-start) · [Frame OS](#frame-os-experimental) · [Something not working?](#something-not-working)
 
 ![release](https://img.shields.io/github/v/release/wavessevaw/GFG-Extreme?style=flat-square&color=fb0d00&label=release)
 ![platform](https://img.shields.io/badge/Steam%20Deck-OLED%20%C2%B7%20LCD%20%C2%B7%20Dock-111?style=flat-square)
@@ -21,10 +22,10 @@ and sets the TDP as low as the game allows — then keeps adjusting while you pl
 <br>
 
 <img src="docs/img/home-adapting-oled.png" width="270">&nbsp;&nbsp;
-<img src="docs/img/page-details.png" width="270">&nbsp;&nbsp;
-<img src="docs/img/page-setup.png" width="270">
+<img src="docs/img/home-frame-os.png" width="270">&nbsp;&nbsp;
+<img src="docs/img/page-details.png" width="270">
 
-<sub>Home while playing · Details · Check setup. Rendered from the real interface with sample data.</sub>
+<sub>Home while playing · Home with Frame OS acting · Details. Rendered from the real interface with sample data.</sub>
 
 </div>
 
@@ -34,11 +35,13 @@ and sets the TDP as low as the game allows — then keeps adjusting while you pl
 
 **30 real frames, 90 on screen, 9 watts.** On a Steam Deck OLED the Governor might run a game at 30 rendered frames, generate the rest up to 90, and hold the APU at 9 W. If a scene gets heavier, it adds watts or generated frames within about two seconds. While the game holds, it tries one watt less every 45 seconds.
 
-- **Knows your screen.** OLED → 90 FPS, LCD → 60 FPS, dock or external display → 60 FPS.
+- **Knows your screen.** OLED → 90 FPS, LCD → 60 FPS, dock or external display → 60 FPS. Set the built-in screen to a lower refresh rate (an OLED at 60 Hz) and the target follows it.
 - **Checks every change.** Each setting is confirmed on the renderer's own frame data and rolled back if it does not hold.
-- **Remembers your games.** The next session starts from what worked last time instead of searching again.
-- **Sees the machine.** Temperature, GPU and CPU load, frame-time spikes and battery draw. Home tells you in one line what limits the game.
-- **Leaves your settings alone.** Your saved profile is never modified; Stop puts everything back. No overclocking, never above your Deck's power ceiling, and if another tool keeps changing TDP, GFG stops fighting it.
+- **Remembers your games.** The next session starts from what worked last time instead of searching again, and the lowest TDP that held is kept when you switch between Battery and Balanced. **Settings → Diagnostics → Reset what GFG learned** makes one game start fresh.
+- **Sees the machine.** Temperature, GPU and CPU load, frame-time spikes and battery draw. Home tells you in one line what limits the game, and the effort label says why GFG is working hard.
+- **Steps aside for Steam's menu.** While the Steam menu covers the game, measuring pauses, so a menu never looks like a slow scene.
+- **Tells you what you saved.** After a session Home shows the modes you used, the energy saved in Wh from the measured draw, and about how many minutes of battery that is.
+- **Leaves your settings alone.** Your saved profile is never modified; Stop puts everything back. No overclocking, never above your Deck's power ceiling, and if another tool keeps changing TDP, GFG stops fighting it. If Steam's TDP helper does not answer in time, your own limit stays.
 
 ## Three modes
 
@@ -48,11 +51,39 @@ and sets the TDP as low as the game allows — then keeps adjusting while you pl
 | **Balanced** | 30 or more | starts at 12 W, never above the normal range | you want a steadier picture |
 | **Quality** | as many as possible | lowered after quality is set | you are plugged in |
 
+## Frame OS (experimental)
+
+<img src="docs/img/page-frame-os.png" width="300" align="right">
+
+A small Vulkan layer that sits above the frame generator. It watches every real frame the game renders and what you do on the controls, and moves the real frame rate to match. Find it in **Settings → Diagnostics → Frame OS**; it loads at the next game start.
+
+- **Observe** and **Shadow** only measure. The in-game overlay shows what Frame OS would do (`FOS boost? 45`).
+- **Act** (tap *Unlock Act*, then tap again to confirm) changes the game's frame timing and power:
+  - **Turning the camera or fighting:** more real frames — ×3 becomes ×2, 45 real frames at 90 Hz — when the GPU can deliver them.
+  - **Pauses, menus, AFK:** lower TDP, and ×4 where the renderer can generate it.
+  - **Just in time:** real frames are paced so they wait much less inside the frame generator before you see them. Measured on a Deck: about 25 ms down to about 13 ms.
+  - **Learns** when a boost does not help in a game and stops paying for it.
+  - **Rests** the moment the Steam menu covers the game, and hands control back to the Governor when the APU gets hot or the output falls short.
+
+Home gets a **Frame OS card** with three rings — **Response**, **Frames** and **Energy** — showing this session's benefit in percent, coloured from red (worse) through orange and yellow to green (a lot). In Observe and Shadow they are grey estimates marked `~`. The overlay shows the live decision, for example `FOS boost 45`.
+
+<br clear="right">
+
+<img src="docs/img/hud-ingame-frame-os.png" width="620">
+
+## After you play
+
+<img src="docs/img/home-last-session.png" width="270" align="right">
+
+Home keeps a short report of the last session: how long you played, the time in each mode (and in each Frame OS state), average frames and power, and the energy saved against your limit — in Wh from the measured draw and as minutes of battery.
+
+<br clear="right">
+
 ## Quick start
 
 You need [Decky Loader](https://decky.xyz/) and [Lossless Scaling](https://store.steampowered.com/app/993090/Lossless_Scaling/) from Steam (the default public version).
 
-1. Download `GFG-Extreme-v1_0_0.zip` (or newer) from [Releases](https://github.com/wavessevaw/GFG-Extreme/releases) and install it in Decky (*Install from zip*). Accept the root access request — it is used only to set TDP.
+1. Download `GFG-Extreme-v1_2_0.zip` (or newer) from [Releases](https://github.com/wavessevaw/GFG-Extreme/releases) and install it in Decky (*Install from zip*). Accept the root access request — it is used only to set TDP.
 2. Open GFG Extreme and tap **Install engine**.
 3. In Steam, open the game's **Properties → Launch Options** and paste:
    ```text
@@ -67,16 +98,20 @@ Heroic, Lutris, EmuDeck and other Flatpak apps: **Settings → System**, enable 
 
 <img src="docs/img/hud-ingame-standard.png" width="620">
 
-`90 FPS  x3  (30)  sc100  TDP 9W  APU 8W  2h32  easy` — frames on screen, multiplier, real frames, render scale, TDP limit and measured APU draw, battery time left, how hard GFG is working. Turn it on in **Settings → In-game overlay**; Minimal, Standard or Detailed.
+`90 FPS  x3  (30)  sc100  TDP 9W  APU 8W  2h32  easy` — frames on screen, multiplier, real frames, render scale, TDP limit and measured APU draw, battery time left, how hard GFG is working. With Frame OS on, its decision and real frame rate follow, for example `FOS boost 45` or `FOS calm 30` (with a `?` while it only measures). Turn it on in **Settings → In-game overlay**; Minimal, Standard or Detailed.
 
 ## Something not working?
 
+<img src="docs/img/page-setup.png" width="270" align="right">
+
 1. **Settings → Diagnostics → Check setup.** One tap checks the engine, the launcher, the overlay, the diagnostics log and TDP access, and says what to fix for each failed item.
-2. **Record a log.** Settings → Diagnostics → **Record log**, play for a minute, **Stop**. A zip lands on the Steam Deck desktop with a plain-language `summary.txt` on top. [Open an issue](https://github.com/wavessevaw/GFG-Extreme/issues) and attach it.
+2. **Record a log.** Settings → Diagnostics → **Record log**, play for a minute, **Stop**. A zip lands on the Steam Deck desktop with a plain-language `summary.txt` on top. With Frame OS on, the log also says whether the game loaded the layer and breaks its measurements down per decision. [Open an issue](https://github.com/wavessevaw/GFG-Extreme/issues) and attach it.
+
+<br clear="right">
 
 ## Status
 
-**Stable (1.0.x).** Every release is covered by an automated test suite (Python backend, the generated launcher run in bash, the interface rendered in a headless browser) and checked on a real Steam Deck. Logs from more games and setups are very welcome. Known limitations: [docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md).
+**Stable (1.2).** Frame OS is experimental and off unless you turn it on. Every release is covered by an automated test suite (Python backend, the generated launcher run in bash, the interface rendered in a headless browser) and checked on a real Steam Deck. Logs from more games and setups are very welcome. Known limitations: [docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md).
 
 <details>
 <summary><b>Everything else it can do</b></summary>
@@ -100,7 +135,7 @@ npm run screenshots   # re-render docs/img from the real interface
 python3 tools/gfg_log_report.py <log.zip>   # read a recorded log on a PC
 ```
 
-Docs: [Governor architecture](docs/GFG_GOVERNOR_ARCHITECTURE.md) · [Telemetry](docs/GFG_TELEMETRY_CAPABILITIES.md) · [Interface](docs/GFG_UI_REDESIGN.md). Every merge to `main` with a new version publishes a release automatically (0.x as pre-releases, 1.0.0 and later as official releases).
+Docs: [Governor architecture](docs/GFG_GOVERNOR_ARCHITECTURE.md) · [Telemetry](docs/GFG_TELEMETRY_CAPABILITIES.md) · [Interface](docs/GFG_UI_REDESIGN.md) · [Frame OS](docs/GFG_FRAME_OS.md). Every merge to `main` with a new version publishes a release automatically (0.x as pre-releases, 1.0.0 and later as official releases).
 
 </details>
 

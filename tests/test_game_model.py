@@ -14,7 +14,7 @@ class StoreTests(unittest.TestCase):
             now = {"t": 1000.0}
             path = Path(t) / "models.json"
             store = GameModelStore(path, clock=lambda: now["t"])
-            key = context_key("Elden Ring", 90, "budget")
+            key = context_key("Sample Game", 90, "budget")
             self.assertIsNone(store.get(key))
             self.assertTrue(store.record(key, "45x2", 9.0))
             self.assertFalse(store.record(key, "45x2", 9.0), "rate-limited")

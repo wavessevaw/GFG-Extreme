@@ -6,6 +6,8 @@ const rows = {
   minimal: "<b>90</b> FPS  <i>x3  (30)</i>",
   standard: "<b>90</b> FPS  <i>x3  (30)  sc100  TDP 9W  APU 8W  2h32  easy</i>",
   detailed: "<b>90</b> FPS  <i>x3  (30)  sc100  TDP 9W  APU 8W  2h32  easy  locked</i>",
+  // Frame OS Act boosting in a fight: 45 real frames at 90 Hz.
+  "frame-os": "<b>90</b> FPS  <i>x2  (45)  sc100  TDP 12W  APU 11W  2h05  med  FOS boost 45</i>",
 };
 const box = (k) => `<div class=h>${rows[k]}</div>`;
 const html = (k) => `<html><body style="margin:0;width:1280px;height:800px;background:radial-gradient(90% 80% at 60% 30%,#2a3a52,#10141c 70%);font-family:Inter,sans-serif;position:relative;overflow:hidden">
