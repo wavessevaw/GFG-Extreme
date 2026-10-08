@@ -517,8 +517,10 @@ class GovernorService:
         fo = status.get("frame_os") or {}
         benefit = fo.get("benefit") or {}
         data: Dict[str, Any] = {
-            "fps": number(fps) if fresh and status.get("enabled") else None,
-            "real": number(real) if fresh and status.get("enabled") else None,
+            # HUD is independent from Governor: turning off power optimization
+            # must not blank out live FPS from the same renderer.
+            "fps": number(fps) if fresh else None,
+            "real": number(real) if fresh else None,
             "tdp": number(power.get("observed_tdp_w") if power.get("observed_tdp_w") is not None
                           else power.get("current_tdp_w")),
             "target": number(status.get("target_output_fps") or (status.get("device") or {}).get("target")),
@@ -1450,6 +1452,39 @@ class GovernorService:
         if profile:
             await asyncio.to_thread(self._sync_hud, profile)
 
+    async def _sample_passive_hud(self, profile: str) -> None:
+        """Keep the 1 Hz overlay accurate without claiming TDP or changing renderer settings."""
+        if not self.hud_settings(profile)["enabled"]:
+            return
+        await asyncio.to_thread(self.observer.poll)
+        snapshot = self.observer.snapshot()
+        self._status["telemetry"] = {
+            "snapshot": snapshot,
+            "summary": self.observer.summary(self.WINDOW_SECONDS),
+        }
+        # The ring layer reports size for an actual game session. This probe is
+        # normally done by Governor, but a HUD-only user needs it too.
+        await self._launch_info(profile)
+        display = await self._display_info()
+        external = bool(display.get("external", False))
+        if self._device is None:
+            self._device = await asyncio.to_thread(detect_model)
+        policy = target_for(
+            self._device["model"], external=external,
+            valid_rates=display.get("valid_rates"),
+            current_hz=display.get("current_refresh_hz"),
+        )
+        self._status.update({
+            "target_output_fps": int(policy["target"]),
+            "device": {**self._device, "mode": policy["mode"], "target_reason": policy["reason"]},
+            "display": {
+                "external": external,
+                "internal": bool(display.get("internal", not external)),
+                "valid_rates": display.get("valid_rates", []),
+                "current_refresh_hz": display.get("current_refresh_hz"),
+            },
+        })
+
     async def _iteration_core(self) -> None:
         await asyncio.to_thread(self._standby_overlays_sync)
         profile, response = await asyncio.to_thread(self.configuration.get_current_profile_snapshot)
@@ -1477,6 +1512,10 @@ class GovernorService:
         if not enabled:
             if self.power.state.owned or self._status.get("state") != "DISABLED" or self._point or self._request:
                 await self._release(profile, "governor-disabled")
+            # 1.2.2 ships with Rings on by default. The HUD is independent of
+            # Governor power control: continue reading passive renderer FPS even
+            # when optimization has been explicitly disabled.
+            await self._sample_passive_hud(profile)
             return
         if config.get("fg_backend", FG_BACKEND_GFG) != FG_BACKEND_GFG:
             if self._point or self._request or self.power.state.owned:
@@ -1542,7 +1581,7 @@ class GovernorService:
         # Steam's menu / quick access covers the game: the renderer suspends frame generation, so
         # the output drops for reasons that have nothing to do with the point.  Measure nothing,
         # change nothing, and drop what was sampled meanwhile once the game is back.
-        if getattr(self.observer, "game_focused", None) is False:
+        if self._trusted_game_focus() is False:
             if self._menu_since is None:
                 self._menu_since = self._clock()
             self._status.update({"state": "PAUSED", "reason": "steam-menu-open"})
