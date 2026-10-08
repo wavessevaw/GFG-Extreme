@@ -1515,6 +1515,17 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.assertIsNone(self.svc._injection)
         self.assertTrue(self.svc.get_status("game")["enabled"])
 
+    def test_act_starvation_lockout_does_not_leak_into_new_game(self):
+        self._act_live_point()
+        self.svc._injection_starvation_yields = 2
+        self.svc._injection_hold_until = self.t["now"] + 999.0
+        self.inspector.info["launch_key"] = [9, 9, 9]
+        self.svc._launch_polled = -1e9
+        st = self.step()
+        self.assertEqual(st["reason"], "new-game-session")
+        self.assertEqual(self.svc._injection_starvation_yields, 0)
+        self.assertEqual(self.svc._injection_hold_until, 0.0)
+
     def test_stale_menu_event_does_not_disable_motionboost_starvation_guard(self):
         self._act_live_point()
         self.svc.frame_os.last = {"telemetry": {"live": True}}
