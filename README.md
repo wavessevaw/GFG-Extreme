@@ -10,7 +10,8 @@
 
 Press **Run**. GFG picks the frame rate for your screen, chooses how many frames to generate,<br>
 and sets the TDP as low as the game allows — then keeps adjusting while you play.<br>
-New in 1.2: **Frame OS** (experimental) gives you more real frames when you act and saves power when you don't.
+New in 1.2: **Frame OS** (experimental) gives you more real frames when you act and saves power when you don't,<br>
+and the in-game overlay turns into **rings**.
 
 [**Download the latest release**](https://github.com/wavessevaw/GFG-Extreme/releases) · [Quick start](#quick-start) · [Frame OS](#frame-os-experimental) · [Something not working?](#something-not-working)
 
@@ -65,11 +66,11 @@ A small Vulkan layer that sits above the frame generator. It watches every real 
   - **Learns** when a boost does not help in a game and stops paying for it.
   - **Rests** the moment the Steam menu covers the game, and hands control back to the Governor when the APU gets hot or the output falls short.
 
-Home gets a **Frame OS card** with three rings — **Response**, **Frames** and **Energy** — showing this session's benefit in percent, coloured from red (worse) through orange and yellow to green (a lot). In Observe and Shadow they are grey estimates marked `~`. The overlay shows the live decision, for example `FOS boost 45`.
+Home gets a **Frame OS card** with three rings — **Response**, **Frames** and **Energy** — showing this session's benefit in percent, coloured from red (worse) through orange and yellow to green (a lot). In Observe and Shadow they are grey estimates. The same rings sit in the in-game overlay, next to FPS and TDP.
 
 <br clear="right">
 
-<img src="docs/img/hud-ingame-frame-os.png" width="620">
+<img src="docs/img/hud-rings-standard.png" width="620">
 
 ## After you play
 
@@ -96,9 +97,15 @@ Heroic, Lutris, EmuDeck and other Flatpak apps: **Settings → System**, enable 
 
 ## The in-game overlay
 
-<img src="docs/img/hud-ingame-standard.png" width="620">
+<img src="docs/img/hud-rings-detailed.png" width="620">
 
-`90 FPS  x3  (30)  sc100  TDP 9W  APU 8W  2h32  easy` — frames on screen, multiplier, real frames, render scale, TDP limit and measured APU draw, battery time left, how hard GFG is working. With Frame OS on, its decision and real frame rate follow, for example `FOS boost 45` or `FOS calm 30` (with a `?` while it only measures). Turn it on in **Settings → In-game overlay**; Minimal, Standard or Detailed.
+The Home screen, shrunk into the corner of your game. A brand-red **FPS** ring with the real frame rate under it, a **TDP** ring, **battery** time in Detailed, and — with Frame OS on — the **Response / Frames / Energy** rings, coloured exactly like on Home. The ring that matches what Frame OS is doing right now is bright; the others dim.
+
+Numbers do not flicker: each ring shows a **20-second average** and refreshes every 20 s, so a glance tells you how the game really runs, not how the last frame went.
+
+Turn it on in **Settings → In-game overlay** and pick **Rings** or **Text**, then Minimal, Standard or Detailed and a corner. Rings are drawn by GFG's own small Vulkan layer after the frame generator; they need one game restart after you first pick them, and until then (or in Flatpak apps) you get the classic text line:
+
+`90 FPS  x3  (30)  sc100  TDP 9W  APU 8W  2h32  easy` — frames on screen, multiplier, real frames, render scale, TDP limit and measured APU draw, battery time left, how hard GFG is working, plus the Frame OS decision (`FOS boost 45`).
 
 ## Something not working?
 

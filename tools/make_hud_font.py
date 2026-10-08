@@ -20,7 +20,7 @@ CHARS = "0123456789%+-~.:/ ABCDEFGHIJKLMNOPQRSTUVWXYZh−—"
 STYLES = {
     "fps": ("Inter-ExtraBold.otf", 16.0, -0.02),
     "val": ("Inter-ExtraBold.otf", 12.0, -0.02),
-    "ben": ("Inter-ExtraBold.otf", 11.0, -0.02),
+    "ben": ("Inter-ExtraBold.otf", 10.0, -0.03),
     "sub": ("Inter-Bold.otf", 7.5, 0.06),
     "lab": ("Inter-Bold.otf", 8.5, 0.12),
 }
