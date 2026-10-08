@@ -101,6 +101,9 @@ class InputState:
             "camera": round(camera, 3),
             "action": round(min(1.0, len(self._presses) / (ACTION_WINDOW_S * 4.0)), 3),  # 4 presses/s = 1.0
             "idle_s": round(max(0.0, now - self._last_input), 2) if self._last_input is not None else float("inf"),
+            # evdev covers gamepad input only. Keyboard/mouse activity is invisible and
+            # silence cannot safely be treated as AFK or used to reduce the game's TDP.
+            "idle_verified": False,
         }
 
     def feed(self, data: bytes) -> int:
