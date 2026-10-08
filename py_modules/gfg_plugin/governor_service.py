@@ -1982,7 +1982,7 @@ class GovernorService:
             output = (self.observer.summary(self.FAST_CHECK_SECONDS, after_seq=self._injection_seq)
                       .get("output") or {}).get("median")
             starved = (isinstance(output, (int, float)) and output < 0.8 * float(self._budget.point.target_output_fps)
-                       and getattr(self.observer, "game_focused", None) is not False)   # Steam's menu stops FG
+                       and self._trusted_game_focus() is not False)   # only a fresh Steam menu event suppresses starvation
             if hot or starved:
                 acting = False
                 if self._injection is not None:
