@@ -53,12 +53,17 @@ class StoreTests(unittest.TestCase):
                         "confirmations": 1, "failed": {
                             "broken": ["invalid", 900],
                             "nan": [float("nan"), 900],
+                            "overflow": [10 ** 400, 900],
                             "33x2.75": [10.0, 950.0],
                         },
                     },
                     "invalid|90|budget": {
                         "point": "30x3", "tdp_w": 10.0,
                         "updated": float("nan"), "confirmations": 1,
+                    },
+                    "overflow|90|budget": {
+                        "point": "30x3", "tdp_w": 10.0,
+                        "updated": 10 ** 400, "confirmations": 1,
                     },
                 },
                 "floors": {floor: {
@@ -71,6 +76,7 @@ class StoreTests(unittest.TestCase):
             store = GameModelStore(path, clock=lambda: 1000.0)
             self.assertEqual(store.get(good)["point"], "30x3")
             self.assertIsNone(store.get("invalid|90|budget"))
+            self.assertIsNone(store.get("overflow|90|budget"))
             self.assertEqual(store.failures(good), {"33x2.75": (10.0, 50.0)})
             self.assertEqual(store.floor_failures(floor), {"30x3": (9.0, 50.0, 2)})
             # A single malformed cache field cannot break normal writes.
