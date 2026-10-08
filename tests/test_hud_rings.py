@@ -11,11 +11,11 @@ SAMPLE = {"fps": 90, "real": 45, "target": 90, "tdp": 15, "limit": 15, "battery_
 class RingHudTests(unittest.TestCase):
     def test_presets_choose_their_rings(self):
         labels = lambda p: [i.get("label") or i.get("text") or i["kind"] for i in hud_rings.items_for(SAMPLE, p)]
-        self.assertEqual(labels("minimal"), ["OUT FPS", "TDP CAP"])
-        self.assertEqual(labels("standard"), ["OUT FPS", "TDP CAP", "sep", "AGE EST", "REAL GAIN", "CAP CUT", "BOOST 45R x2"])
-        self.assertEqual(labels("detailed"), ["OUT FPS", "TDP CAP", "BATTERY", "sep", "AGE EST", "REAL GAIN", "CAP CUT", "BOOST 45R x2"])
+        self.assertEqual(labels("minimal"), ["FPS/90", "TDP CAP"])
+        self.assertEqual(labels("standard"), ["FPS/90", "TDP CAP", "sep", "AGE EST", "REAL GAIN", "CAP CUT", "BOOST 45R x2"])
+        self.assertEqual(labels("detailed"), ["FPS/90", "TDP CAP", "BATTERY", "sep", "AGE EST", "REAL GAIN", "CAP CUT", "BOOST 45R x2"])
         self.assertEqual([i.get("label") for i in hud_rings.items_for({**SAMPLE, "frame_os": None}, "standard")],
-                         ["OUT FPS", "TDP CAP"])
+                         ["FPS/90", "TDP CAP"])
 
 
     def test_requested_boost_never_claims_it_was_delivered(self):
