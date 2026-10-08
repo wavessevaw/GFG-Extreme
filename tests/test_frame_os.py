@@ -484,3 +484,51 @@ class RestPowerTests(unittest.TestCase):
         self.assertEqual(x4.tick(1.0, idle).tdp_w, 13.0 * 0.6)
         d = x3.tick(1.0, idle)
         self.assertEqual((d.real_hz, d.tdp_w), (30, 13.0 * 0.85))
+
+
+class BenefitTests(unittest.TestCase):
+    def feed(self, meter, seconds, **kw):
+        t = getattr(meter, "_t", 0.0)
+        for _ in range(int(seconds * 10)):
+            t += 0.1
+            meter.add(t, **kw)
+        meter._t = t
+
+    def test_act_rings_from_measurements(self):
+        from gfg_plugin.frame_os.benefit import BenefitMeter
+        m = BenefitMeter()
+        base = dict(acting=True, output_hz=90, calm_real_hz=30, boost_real_hz=45, calm_w=13.0)
+        self.feed(m, 50, level="calm", tdp_w=13.0,
+                  telemetry={"live": True, "freshness_ms": 13.0, "present_interval_p50_ms": 33.3}, **base)
+        self.feed(m, 10, level="boost", tdp_w=17.0,
+                  telemetry={"live": True, "freshness_ms": 13.0, "present_interval_p50_ms": 22.2}, **base)
+        self.feed(m, 30, level="rest", tdp_w=7.8,
+                  telemetry={"live": True, "freshness_ms": 13.0, "present_interval_p50_ms": 33.3}, **base)
+        s = m.summary()
+        self.assertTrue(s["ready"])
+        self.assertFalse(s["estimate"])
+        self.assertAlmostEqual(s["response_pct"], 48.0, delta=1.0)    # 25.2 ms baseline -> 13 ms
+        self.assertAlmostEqual(s["frames_pct"], 50.0, delta=1.0)
+        self.assertAlmostEqual(s["energy_pct"], 100 * (30 * 5.2 - 10 * 4.0) / (90 * 13.0), delta=0.5)
+
+    def test_observe_estimates_and_not_ready_early(self):
+        from gfg_plugin.frame_os.benefit import BenefitMeter
+        m = BenefitMeter()
+        kw = dict(acting=False, level="calm", output_hz=90, calm_real_hz=30, boost_real_hz=45, calm_w=13.0,
+                  tdp_w=13.0, telemetry={"live": True, "freshness_ms": 25.0, "present_interval_p50_ms": 33.3})
+        self.feed(m, 30, **kw)
+        self.assertIsNone(m.summary()["response_pct"])
+        self.feed(m, 40, **kw)
+        s = m.summary()
+        self.assertTrue(s["estimate"])
+        self.assertAlmostEqual(s["frames_pct"], 50.0)
+        self.assertGreater(s["response_pct"], 0)
+
+    def test_spending_more_than_saving_is_negative(self):
+        from gfg_plugin.frame_os.benefit import BenefitMeter
+        m = BenefitMeter()
+        self.feed(m, 70, acting=True, level="boost", output_hz=90, calm_real_hz=30, boost_real_hz=45,
+                  calm_w=13.0, tdp_w=17.0, telemetry={"live": True, "freshness_ms": 13.0, "present_interval_p50_ms": 33.3})
+        s = m.summary()
+        self.assertLess(s["energy_pct"], 0)
+        self.assertAlmostEqual(s["frames_pct"], 0.0, delta=1.0)

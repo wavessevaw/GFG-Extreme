@@ -90,6 +90,17 @@ var css = `
 .gfg .note.quiet{background:var(--s2);border-color:var(--line);color:var(--tx2)}
 .gfg .kv{display:grid;grid-template-columns:auto 1fr;gap:7px 12px;font-size:12.5px;padding:2px 2px}
 .gfg .kv span{color:var(--tx2)}.gfg .kv b{font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
+.gfg .fos{margin-top:12px;padding:12px 12px 14px}
+.gfg .fos-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:10.5px;letter-spacing:.16em;color:var(--tx3);font-weight:700}
+.gfg .pill{font-size:10px;font-weight:800;letter-spacing:.12em;padding:3px 8px;border-radius:999px;background:var(--s3);color:var(--tx2)}
+.gfg .pill.boost{background:rgba(47,210,122,.16);color:#2fd27a}.gfg .pill.rest{background:#2a2f3a;color:#cfd6e4}
+.gfg .pill.would{background:transparent;border:1px dashed var(--tx3);color:var(--tx2)}
+.gfg .rings{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.gfg .mini{display:flex;flex-direction:column;align-items:center;gap:7px}
+.gfg .mring{position:relative}.gfg .mring svg{position:absolute;inset:0;transform:rotate(-90deg)}
+.gfg .mnum{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.gfg .mnum.dim{color:var(--tx3)}
+.gfg .mlab{font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--tx2)}
 .gfg .cols{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
 .gfg .col{background:var(--s2);border:1px solid var(--line);border-radius:12px;padding:10px}
 .gfg .col h4{margin:0 0 6px;font-size:10px;letter-spacing:.16em;color:var(--tx3)}
@@ -382,6 +393,54 @@ function Ring({ value, max, label, sub }) {
     h("div", { className: "num" }, h("div", { className: "big" }, label), h("div", { className: "sub" }, sub))
   );
 }
+var ringHue = (v, max) => v < 0 ? 0 : 25 + 115 * Math.min(1, Math.abs(v) / max);
+function MiniRing({ value, max, text, label, live, estimate }) {
+  const r = 26, w = 4, size = 2 * (r + w), c = 2 * Math.PI * r;
+  const has = value != null;
+  const f = has ? Math.min(1, Math.abs(value) / max) : 0;
+  const color = estimate ? "#5c5c66" : "hsl(" + ringHue(value || 0, max) + " 80% 52% / " + (live ? 1 : 0.38) + ")";
+  return h(
+    "div",
+    { className: "mini" + (live && has && !estimate ? " live" : "") },
+    h(
+      "div",
+      { className: "mring", style: { width: size, height: size } },
+      h(
+        "svg",
+        { viewBox: "0 0 " + size + " " + size, width: size, height: size, style: live && has && !estimate ? { filter: "drop-shadow(0 0 5px " + color.replace("/ 1)", "/ .45)") + ")" } : null },
+        h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#26262d", strokeWidth: w }),
+        has ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeWidth: w, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null
+      ),
+      h("div", { className: "mnum" + (estimate || !has ? " dim" : "") }, has ? text : "\u2014")
+    ),
+    h("div", { className: "mlab" }, label)
+  );
+}
+function FrameOsCard({ fo }) {
+  const b = fo.benefit;
+  if (!fo.enabled || !b) return null;
+  const est = !!b.estimate;
+  const level = (fo.decision || {}).level;
+  const pct = (v, sign) => v == null ? "" : (sign && v > 0 ? sign : v < 0 && !sign ? "\u2212" : "") + Math.abs(Math.round(v)) + "%";
+  const resp = b.response_pct, frames = b.frames_pct, energy = b.energy_pct;
+  return h(
+    "div",
+    { className: "card fos" },
+    h(
+      "div",
+      { className: "fos-head" },
+      h("span", null, "FRAME OS"),
+      h("span", { className: "pill " + (est ? "would" : level || "") }, est ? "ESTIMATE" : (level || "").toUpperCase())
+    ),
+    h(
+      "div",
+      { className: "rings" },
+      h(MiniRing, { value: resp, max: 50, text: resp == null ? "" : (resp >= 0 ? "\u2212" : "+") + Math.abs(Math.round(resp)) + "%", label: "Response", live: level !== "rest", estimate: est }),
+      h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "\u2212") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est }),
+      h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), label: "Energy", live: level === "rest", estimate: est })
+    )
+  );
+}
 function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
   const [busy, setBusy] = useState(false);
   const missing = inst && inst.installed === false;
@@ -477,6 +536,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
         h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, tdp / (pw.initial_tdp_w || pw.maximum_tdp_w || 15) * 100) + "%" } }))
       ) : null
     ),
+    s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os }) : null,
     h(
       Focusable,
       { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? void 0 : toggle },

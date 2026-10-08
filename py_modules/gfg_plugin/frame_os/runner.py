@@ -14,6 +14,7 @@ import asyncio
 import time
 from typing import Any, Callable, Dict, Optional
 
+from .benefit import BenefitMeter
 from .control_channel import ControlChannel
 from . import input_relay
 from .input_sensor import EvdevReader, InputState
@@ -55,6 +56,7 @@ class FrameOsRunner:
         # The Governor's executor (adaptive overlay) is in place: only then may Act move the real
         # cadence and the watts; otherwise act paces at the point's own cadence.
         self.executor_active = False
+        self.benefit = BenefitMeter()
 
     # ---------------------------------------------------------- Governor side (1 Hz)
     def configure(self, *, enabled: bool, mode: str, output_hz: float, calm_real_hz: float,
@@ -68,6 +70,7 @@ class FrameOsRunner:
             # Fresh file per enable: the previous session's telemetry must not read as this one's.
             self.channel.reset()
             self._published = None
+            self.benefit.reset()            # the rings are per game session
         same = (self.policy is not None and self.policy.output_hz == output_hz
                 and self.policy.calm_real_hz == calm_real_hz and self.policy.max_multiplier == max_multiplier)
         if not same:
@@ -136,6 +139,13 @@ class FrameOsRunner:
             "acknowledged": bool(telemetry.get("live")) and telemetry.get("applied_generation") == self.generation,
             "input_sensor": self._sensor_status(inp),
         }
+        broker = self.policy.broker
+        calm_w = broker.calm_w if broker is not None else None
+        self.benefit.add(now, acting=acting, level=decision.level, telemetry=telemetry,
+                         output_hz=self.policy.output_hz, calm_real_hz=self.policy.calm_real_hz,
+                         boost_real_hz=self.policy.boost_real_hz, calm_w=calm_w,
+                         tdp_w=(calm_w + self.tdp_offset_w) if acting and calm_w else decision.tdp_w)
+        self.last["benefit"] = self.benefit.summary()
         return self.last
 
     def _sensor_status(self, inp: Dict[str, Any]) -> Dict[str, Any]:

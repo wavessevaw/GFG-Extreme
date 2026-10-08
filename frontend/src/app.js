@@ -213,6 +213,38 @@ function Ring({ value, max, label, sub }) {
     h("div", { className: "num" }, h("div", { className: "big" }, label), h("div", { className: "sub" }, sub)));
 }
 
+// Frame OS benefit rings: colour by effectiveness, red when Frame OS made it worse.
+const ringHue = (v, max) => (v < 0 ? 0 : 25 + 115 * Math.min(1, Math.abs(v) / max));
+function MiniRing({ value, max, text, label, live, estimate }) {
+  const r = 26, w = 4, size = 2 * (r + w), c = 2 * Math.PI * r;
+  const has = value != null;
+  const f = has ? Math.min(1, Math.abs(value) / max) : 0;
+  const color = estimate ? "#5c5c66" : "hsl(" + ringHue(value || 0, max) + " 80% 52% / " + (live ? 1 : 0.38) + ")";
+  return h("div", { className: "mini" + (live && has && !estimate ? " live" : "") },
+    h("div", { className: "mring", style: { width: size, height: size } },
+      h("svg", { viewBox: "0 0 " + size + " " + size, width: size, height: size, style: live && has && !estimate ? { filter: "drop-shadow(0 0 5px " + color.replace("/ 1)", "/ .45)") + ")" } : null },
+        h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#26262d", strokeWidth: w }),
+        has ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeWidth: w, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null),
+      h("div", { className: "mnum" + (estimate || !has ? " dim" : "") }, has ? text : "—")),
+    h("div", { className: "mlab" }, label));
+}
+
+function FrameOsCard({ fo }) {
+  const b = fo.benefit;
+  if (!fo.enabled || !b) return null;
+  const est = !!b.estimate;
+  const level = (fo.decision || {}).level;
+  const pct = (v, sign) => (v == null ? "" : (sign && v > 0 ? sign : v < 0 && !sign ? "−" : "") + Math.abs(Math.round(v)) + "%");
+  const resp = b.response_pct, frames = b.frames_pct, energy = b.energy_pct;
+  return h("div", { className: "card fos" },
+    h("div", { className: "fos-head" }, h("span", null, "FRAME OS"),
+      h("span", { className: "pill " + (est ? "would" : level || "") }, est ? "ESTIMATE" : (level || "").toUpperCase())),
+    h("div", { className: "rings" },
+      h(MiniRing, { value: resp, max: 50, text: resp == null ? "" : (resp >= 0 ? "−" : "+") + Math.abs(Math.round(resp)) + "%", label: "Response", live: level !== "rest", estimate: est }),
+      h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "−") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est }),
+      h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), label: "Energy", live: level === "rest", estimate: est })));
+}
+
 function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
   const [busy, setBusy] = useState(false);
   const missing = inst && inst.installed === false;
@@ -268,6 +300,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
       tdp != null ? h("div", { className: "power" }, h("div", { className: "r" }, h("span", null, "TDP NOW"), h("span", null, num(tdp, 0) + " W" + (left ? "  ·  " + left + " left" : ""))),
         pw.owned && pw.initial_tdp_w && pw.initial_tdp_w - tdp >= 1 ? h("div", { className: "r" }, h("span", null, "SAVING"), h("span", null, num(pw.initial_tdp_w - tdp, 0) + " W under your " + num(pw.initial_tdp_w, 0) + " W limit")) : null,
         h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, (tdp / (pw.initial_tdp_w || pw.maximum_tdp_w || 15)) * 100) + "%" } }))) : null),
+    s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os }) : null,
     h(Focusable, { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? undefined : toggle },
       h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 18 }), busy ? "WORKING…" : missing ? "INSTALL ENGINE" : s.enabled ? "STOP" : "RUN"),
     h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : missing ? "The GFG engine is not installed yet. One tap installs it." : "Target " + target + " FPS · " + (dev.reason || "picked automatically for this screen")),
