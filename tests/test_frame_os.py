@@ -525,6 +525,39 @@ class BenefitTests(unittest.TestCase):
         self.assertAlmostEqual(s["frames_pct"], 50.0)
         self.assertGreater(s["response_pct"], 0)
 
+    def test_live_frames_and_energy_are_not_blank_for_an_entire_minute(self):
+        from gfg_plugin.frame_os.benefit import BenefitMeter
+        m = BenefitMeter()
+        self.feed(m, 3, acting=True, level="calm", output_hz=90, calm_real_hz=30,
+                  boost_real_hz=45, calm_w=12.0, tdp_w=12.0,
+                  telemetry={"live": True, "freshness_ms": 15.0, "present_interval_p50_ms": 33.3})
+        summary = m.summary()
+        self.assertTrue(summary["ready"])
+        self.assertEqual(summary["frames_pct"], 0.0)
+        self.assertEqual(summary["energy_pct"], 0.0)
+        self.assertEqual(summary["energy_basis"], "tdp-cap-delta")
+
+    def test_single_short_boost_can_update_frames_ring(self):
+        from gfg_plugin.frame_os.benefit import BenefitMeter
+        m = BenefitMeter()
+        base = {"acting": True, "output_hz": 90, "calm_real_hz": 30, "boost_real_hz": 45,
+                "calm_w": 12.0, "tdp_w": 12.0}
+        self.feed(m, 3, level="calm",
+                  telemetry={"live": True, "freshness_ms": 15.0, "present_interval_p50_ms": 33.3},
+                  **base)
+        self.feed(m, 1, level="boost",
+                  telemetry={"live": True, "freshness_ms": 13.0, "present_interval_p50_ms": 22.2},
+                  **base)
+        self.assertGreater(m.summary()["frames_pct"], 40.0)
+
+    def test_missing_power_does_not_invent_energy_savings(self):
+        from gfg_plugin.frame_os.benefit import BenefitMeter
+        m = BenefitMeter()
+        self.feed(m, 3, acting=True, level="calm", output_hz=90, calm_real_hz=30,
+                  boost_real_hz=45, calm_w=None, tdp_w=None,
+                  telemetry={"live": True, "freshness_ms": 15.0, "present_interval_p50_ms": 33.3})
+        self.assertIsNone(m.summary()["energy_pct"])
+
     def test_spending_more_than_saving_is_negative(self):
         from gfg_plugin.frame_os.benefit import BenefitMeter
         m = BenefitMeter()
