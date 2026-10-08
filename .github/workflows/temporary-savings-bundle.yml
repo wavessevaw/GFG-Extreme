@@ -1,0 +1,41 @@
+name: Generate Savings UI Bundle (temporary branch workflow)
+on:
+  push:
+    branches:
+      - fix/battery-savings-effort-v143
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: savings-bundle-fix-143
+  cancel-in-progress: false
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/battery-savings-effort-v143
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Compile checked-in Decky bundle
+        run: |
+          npm ci
+          npm run build
+      - name: Commit generated bundle to this branch only
+        run: |
+          git add dist/index.js
+          if git diff --cached --quiet; then
+            echo "Bundle already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "build(ui): refresh checked-in bundle for savings effort"
+          git push origin HEAD:fix/battery-savings-effort-v143
