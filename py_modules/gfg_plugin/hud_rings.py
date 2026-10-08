@@ -177,10 +177,10 @@ def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
     real = data.get("real")
     items.append({"kind": "ring", "size": 52, "w": 4.5, "frac": (fps or 0) / target, "rgb": BRAND,
                   "text": str(round(fps)) if fps is not None else "—", "style": "fps",
-                  "sub": f"{round(real)} REAL" if real is not None else None, "label": "FPS"})
+                  "sub": f"{round(real)} REAL" if real is not None else None, "label": "OUT FPS"})
     tdp, limit = data.get("tdp"), data.get("limit") or 15
     items.append({"kind": "ring", "size": 46, "w": 4, "frac": (tdp or 0) / limit, "rgb": WHITE,
-                  "text": f"{round(tdp)}W" if tdp else "—", "style": "val", "label": "TDP"})
+                  "text": f"{round(tdp)}W" if tdp is not None else "—", "style": "val", "label": "TDP CAP"})
     if preset == "detailed" and data.get("battery_min") is not None:
         mins = int(data["battery_min"])
         low = mins < 20
@@ -192,9 +192,11 @@ def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
     if preset != "minimal" and fos:
         items.append({"kind": "sep"})
         est, level = bool(fos.get("estimate")), fos.get("level")
-        for key, full, sign, label, live in (("response", 50, "-", "RESP", level != "rest"),
-                                             ("frames", 50, "+", "FRAMES", level == "boost"),
-                                             ("energy", 30, "", "ENERGY", level == "rest")):
+        # The percentages have *different denominators*; do not label them as
+        # input latency or battery energy savings. All are session aggregates.
+        for key, full, sign, label, live in (("response", 50, "-", "AGE EST", level != "rest"),
+                                             ("frames", 50, "+", "REAL GAIN", level == "boost"),
+                                             ("energy", 30, "", "CAP CUT", level == "rest")):
             v = fos.get(key)
             items.append({"kind": "ring", "size": 40, "w": 3.5,
                           "frac": abs(v) / full if v is not None else 0,
@@ -204,7 +206,11 @@ def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
                           "label": label})
         # A visible status in Standard as well as Detailed. "BOOST" is earned:
         # a requested policy is not the same as an acknowledged real-cadence gain.
-        if fos.get("active") and level in ("boost", "rest", "calm"):
+        if fos.get("mode") in ("observe", "shadow"):
+            items.append({"kind": "tag", "text": fos["mode"].upper() + " EST", "rgb": GREY})
+        elif fos.get("mode") == "act" and not fos.get("active"):
+            items.append({"kind": "tag", "text": "ACT WAIT", "rgb": GREY})
+        elif fos.get("active") and level in ("boost", "rest", "calm"):
             if level == "boost" and fos.get("verified_boost"):
                 real = fos.get("actual_real")
                 ratio = fos.get("actual_ratio")
