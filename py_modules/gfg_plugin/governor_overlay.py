@@ -61,6 +61,8 @@ LIVE_FIELDS = frozenset({
     "frame_generation_enabled",
     "scaling_factor",
     "scaling_method",
+    # Extreme (1.6): the scaler's sharpening travels with its render scale (one logical point).
+    "scaling_sharpness",
 })
 # Budget mode uses x1 .. x3.75 normally and x4 as a last resort; x5 is never chosen.
 MAX_AUTO_MULTIPLIER = 4.0
@@ -121,8 +123,12 @@ def point_deltas(
     *,
     scale_capable: bool,
     scale_ready: bool,
+    sharpness: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """Map an Operating Point to live overlay fields (never Saved)."""
+    """Map an Operating Point to live overlay fields (never Saved).
+
+    ``sharpness`` (Extreme) goes with a scaled point only; full resolution keeps Saved's value.
+    """
     multiplier = float(point["multiplier"])
     if not (1.0 <= multiplier <= MAX_AUTO_MULTIPLIER):
         raise PointNotApplicable("multiplier-not-allowed-automatically")
@@ -171,6 +177,10 @@ def point_deltas(
             raise PointNotApplicable("scaling-factor-limit")
         deltas["scaling_factor"] = factor
         deltas["scaling_method"] = method
+        if sharpness is not None:
+            if not (isinstance(sharpness, (int, float)) and math.isfinite(sharpness) and 0.0 <= sharpness <= 1.0):
+                raise PointNotApplicable("sharpness-out-of-range")
+            deltas["scaling_sharpness"] = round(float(sharpness), 2)
     elif saved.get("scaling_enabled") or scale_ready:
         # Back to the user's own (or the provisioned 1.0x) scaling.
         deltas["scaling_factor"] = float(saved.get("scaling_factor", 1.0) or 1.0) if saved.get("scaling_enabled") else 1.0

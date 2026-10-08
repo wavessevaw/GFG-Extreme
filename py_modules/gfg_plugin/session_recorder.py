@@ -105,6 +105,19 @@ def compact_status(status: Dict[str, Any]) -> Dict[str, Any]:
         "frame_os": compact_frame_os(status.get("frame_os")),
         "power_split": {k: (status.get("power_split") or {}).get(k) for k in (
             "phase", "reason", "level", "cap_khz", "ab", "pairs", "gain_pct")} if status.get("power_split") else None,
+        "extreme": compact_extreme(status.get("extreme")),
+    }
+
+
+def compact_extreme(extreme: Any) -> Any:
+    """Extreme (1.6): state, ceiling, requested vs renderer-confirmed scale/sharpening, capabilities."""
+    if not isinstance(extreme, dict) or not extreme.get("enabled"):
+        return None
+    return {
+        "state": extreme.get("state"), "ceiling": extreme.get("ceiling"), "tdp_w": extreme.get("tdp_w"),
+        "requested": extreme.get("requested"), "applied": extreme.get("applied"),
+        "sharpness_offset": extreme.get("sharpness_offset"),
+        "boosters": {b.get("id"): b.get("state") for b in extreme.get("boosters") or [] if isinstance(b, dict)},
     }
 
 

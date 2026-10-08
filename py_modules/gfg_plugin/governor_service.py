@@ -46,6 +46,7 @@ from .frame_os.memory import GameMemory, seed_pairs
 from .frame_os.proof import METRICS as FRAME_OS_METRICS
 from .package_paths import PLUGIN_ROOT
 from .host_sensors import HostSensors, diagnose
+from . import extreme as extreme_policy
 from .cpu_freq import CpuFreqActuator
 from .power_split import PowerSplit, Sample as SplitSample, SplitMemory, levels_khz
 from .governor_hud import HudWriter, normalize as hud_normalize, output_fps as hud_output_fps
@@ -96,7 +97,9 @@ class GovernorService:
     CEILING_REJECT_TTL_S = 600.0
     # Budget mode (default): lowest TDP first, then fewer generated frames.
     DEFAULT_MODE = "budget"
-    MODES = ("budget", "balanced", "quality")
+    MODES = ("budget", "balanced", "quality", "extreme")
+    BUDGET_MODES = ("budget", "balanced", "extreme")   # run by the BudgetController
+    FLAVORS = {"budget": "battery", "balanced": "balanced", "extreme": "extreme"}
     BUDGET_WINDOW_SECONDS = 8.0
     BUDGET_MIN_SPAN_SECONDS = 6.0
     BUDGET_MIN_SAMPLES = 5
@@ -140,6 +143,11 @@ class GovernorService:
         self._split_memory: Optional[SplitMemory] = None
         self._split_key: Optional[tuple] = None
         self._split_ready: Optional[tuple] = None
+        # Extreme (1.6): the power ceiling in force and the render scale the renderer confirmed
+        self._extreme_ceiling: Optional[Dict[str, Any]] = None
+        self._extreme_ack: Optional[Dict[str, Any]] = None      # {"pct", "sharpness", "evidence"}
+        self._extreme_scale_failures = 0
+        self._extreme_scale_blocked: Optional[str] = None
         self.search = PowerSearch()
         self.settings_path = self.configuration.config_dir / "gfg-governor.json"
         self.events_path = self.configuration.runtime_state_dir / "governor-events.jsonl"
@@ -332,12 +340,21 @@ class GovernorService:
             return {"success": False, "error": "Profile is required"}
         if mode not in self.MODES:
             return {"success": False, "error": f"Unknown mode: {mode}"}
+        was = self._mode(profile)
         self._settings.setdefault("profiles", {}).setdefault(profile, {})["mode"] = mode
         self._save_settings()
+        overlay_error = None
+        if "extreme" in (mode, was) and mode != was:
+            # Extreme renders below full resolution when that buys real frames: the Scaling Engine
+            # is provisioned from the next launch on (process-static), like a scale-ready launch.
+            overlay_error = self._ensure_base_overlay_sync(profile)
+            self._extreme_act_switch(profile, entering=mode == "extreme")
+            self._save_settings()
         if profile == self._active_profile:
             self._forced_mode_change = True
         self._poke()
-        return {"success": True, "error": None, "profile": profile, "mode": mode}
+        return {"success": True, "error": None, "profile": profile, "mode": mode,
+                **({"overlay_error": overlay_error} if overlay_error else {})}
 
     def game_model_target(self, profile: str) -> Optional[Dict[str, Any]]:
         """Which game "Reset what GFG learned" would reset for ``profile``, or None.
@@ -704,7 +721,9 @@ class GovernorService:
             self.log.debug("Governor HUD presence sync failed: %s", error)
 
     def _scale_ready(self, profile: str) -> bool:
-        return bool(self._profile_settings(profile).get("scale_ready", False))
+        """Scale-ready launch: the player's switch, or Extreme (which upscales for real frames)."""
+        settings = self._profile_settings(profile)
+        return bool(settings.get("scale_ready", False)) or settings.get("mode") == "extreme"
 
     def _poke(self) -> None:
         """Wake an idle loop right away (callable from worker threads)."""
@@ -1246,6 +1265,205 @@ class GovernorService:
                                        "control": self.cpu.status(),
                                        "game_off": bool(self._split_memory and self._split_memory.disabled())}
 
+    # ------------------------------------------------------------------ Extreme (1.6)
+    # Battery/Balanced suggest Extreme when the ceiling leaves at least this much power unused.
+    EXTREME_OFFER_HEADROOM_W = 1.5
+
+    def _extreme_offset(self, profile: str) -> float:
+        return extreme_policy.clamp_offset(self._profile_settings(profile).get("extreme_sharpness_offset", 0.0))
+
+    def set_extreme_sharpness(self, profile: str, offset: Any) -> Dict[str, Any]:
+        """The player's sharpening correction on top of Extreme's table (GFG settings, never Saved)."""
+        profile = str(profile or "").strip()
+        if not profile:
+            return {"success": False, "error": "Profile is required"}
+        value = extreme_policy.clamp_offset(offset)
+        self._settings.setdefault("profiles", {}).setdefault(profile, {})["extreme_sharpness_offset"] = value
+        self._save_settings()
+        self._poke()
+        return {"success": True, "error": None, "profile": profile, "offset": value}
+
+    def _extreme_act_consent(self) -> Optional[bool]:
+        value = self._settings.get("extreme_act_consent")
+        return value if isinstance(value, bool) else None
+
+    def set_extreme_act_consent(self, allow: bool) -> Dict[str, Any]:
+        """The first Extreme switch asks once whether Frame OS Act may join (the existing opt-in)."""
+        self._settings["extreme_act_consent"] = bool(allow)
+        if allow:
+            self._settings["frame_os_act_unlocked"] = True
+        self._save_settings()
+        return {"success": True, "error": None, "consent": bool(allow),
+                "act_unlocked": self._frame_os_act_unlocked()}
+
+    def _extreme_act_switch(self, profile: str, entering: bool) -> None:
+        """Act follows Extreme for players who allowed it; leaving gives the old Frame OS mode back."""
+        settings = self._settings.setdefault("profiles", {}).setdefault(profile, {})
+        if entering:
+            if self._extreme_act_consent() and self._frame_os_act_unlocked() and settings.get("frame_os") != "act":
+                settings["extreme_prev_frame_os"] = str(settings.get("frame_os", "off"))
+                settings["frame_os"] = "act"
+        elif "extreme_prev_frame_os" in settings:
+            previous = settings.pop("extreme_prev_frame_os")
+            if settings.get("frame_os") == "act":   # the player did not change it meanwhile
+                settings["frame_os"] = previous if previous in self.FRAME_OS_MODES else "off"
+        try:
+            self._sync_frame_os_marker()
+        except OSError as error:
+            self.log.debug("Frame OS marker not updated: %s", error)
+
+    def _extreme_scale_gate(self, profile: str, req: Request) -> str:
+        """ok / wait / failed: a new render scale counts only once the renderer shows it."""
+        budget = self._budget
+        if budget is None or budget.flavor != "extreme":
+            return "ok"
+        pct = int(req.point.render_scale_pct)
+        sharpness = req.deltas.get("scaling_sharpness")
+        last = self._extreme_ack
+        if pct == (last or {}).get("pct", 100):
+            # Same scale as before (or full resolution at launch scale): nothing new to show.
+            self._extreme_ack = {**(last or {"pct": 100, "evidence": None, "mark": req.event_mark}),
+                                 "sharpness": sharpness,
+                                 **({"mark": req.event_mark} if sharpness != (last or {}).get("sharpness") else {})}
+            return "ok"
+        record = extreme_policy.scale_acknowledged(self.observer.scaling_after(req.event_mark), pct)
+        if record is None:
+            if self._clock() - req.created <= extreme_policy.SCALE_ACK_TIMEOUT_S:
+                return "wait"
+            self._extreme_scale_failures += 1
+            if self._extreme_scale_failures >= extreme_policy.MAX_SCALE_ACK_FAILURES:
+                self._extreme_scale_blocked = "renderer-did-not-confirm-render-scale"
+            self._event("extreme-scale-not-acknowledged", "timeout", profile=profile, point=req.point.key,
+                        failures=self._extreme_scale_failures)
+            return "failed"
+        self._extreme_scale_failures = 0
+        self._extreme_ack = {"pct": pct, "sharpness": sharpness, "mark": req.event_mark,
+                             "evidence": {k: record.get(k) for k in ("kind", "source", "output")}}
+        self._event("extreme-scale-acknowledged", record.get("kind") or "", profile=profile, point=req.point.key,
+                     render_pct=pct, source=record.get("source"), output=record.get("output"))
+        return "ok"
+
+    async def _refresh_extreme_sharpness(self, profile: str, saved: Optional[Dict[str, Any]]) -> None:
+        """A changed sharpening correction goes live on the scaled point (no new trial: same scale)."""
+        if (saved is None or self._request is not None or self._point is None
+                or "scaling_sharpness" not in self._point_deltas):
+            return
+        pct = int(self._point.get("render_scale_pct", 100))
+        want, _ = extreme_policy.sharpness_for(pct, saved, self._extreme_offset(profile))
+        if want is None or want == self._point_deltas.get("scaling_sharpness"):
+            return
+        self._point_deltas = {**self._point_deltas, "scaling_sharpness": want}
+        if self._injection is not None:
+            self._injection = {**self._injection, "scaling_sharpness": want}
+        desired = {**self._base_for(profile, saved), **(self._injection or self._point_deltas)}
+        mark = self.observer.event_seq
+        try:
+            record = await asyncio.to_thread(self._ensure_overlay_sync, profile, desired, self._point["key"])
+        except (OSError, ValueError) as error:
+            self._event("extreme-sharpness-failed", "overlay-write-failed", profile=profile, error=str(error))
+            return
+        if record is not None:
+            self._record = record
+        if self._extreme_ack is not None:
+            self._extreme_ack = {**self._extreme_ack, "sharpness": want, "mark": mark}
+        self._event("extreme-sharpness-set", "player-correction", profile=profile, sharpness=want)
+
+    def _sync_extreme(self, profile: str, saved: Optional[Dict[str, Any]]) -> None:
+        """Extreme's status snapshot (cached for the UI; nothing here touches the system)."""
+        mode = self._mode(profile) if profile else ""
+        budget = self._budget
+        launch_key = self._launch_key
+        if launch_key != getattr(self, "_extreme_launch", None):
+            self._extreme_launch = launch_key  # a new game session: a fresh chance for the scaler
+            self._extreme_scale_failures, self._extreme_scale_blocked = 0, None
+        launch = self._launch or {}
+        running = bool(launch.get("running"))
+        capability = self._capability(profile, launch) if running else {}
+        if mode != "extreme":
+            self._status["extreme"] = {"enabled": False, "state": "OFF"}
+            self._status["extreme_offer"] = self._extreme_offer(profile, mode, budget, running)
+            return
+        self._status.pop("extreme_offer", None)
+        saved = saved or {}
+        if extreme_policy.user_scaling(saved):
+            self._extreme_scale_blocked = "profile-scaling"
+        elif self._extreme_scale_blocked == "profile-scaling":
+            self._extreme_scale_blocked = None
+        wsi_blocked = (self._status.get("overlay") or {}).get("scale_ready_ignored")
+        ack = self._extreme_ack or {}
+        point = budget.point if budget is not None and budget.flavor == "extreme" else None
+        applied_pct = ack.get("pct") if point is not None else None
+        sharpness_ack = extreme_policy.sharpness_acknowledged(
+            self.observer.scaling_after(int(ack.get("mark") or 0)), ack.get("sharpness")) if ack else None
+        _, sharpness_reason = extreme_policy.sharpness_for(int(applied_pct or 100), saved, 0.0)
+        requested_pct = point.render_scale_pct if point is not None else None
+        verifying = bool(self._request is not None and budget is not None and budget.flavor == "extreme"
+                         and int(self._request.point.render_scale_pct) != int(ack.get("pct", 100))
+                         and self._status.get("reason") == "awaiting-render-scale-acknowledgement")
+        split = {**(self._status.get("power_split") or {}), "setting": self._power_split_enabled()}
+        cpu = self.cpu.status()
+        split["available"] = bool(cpu.get("available") and cpu.get("writable"))
+        fo = self.frame_os.last or {}
+        act_enabled = self._frame_os_mode(profile) == "act"
+        facts = {
+            "running": running,
+            "scale_pct": int(applied_pct) if applied_pct is not None else None,
+            "scale_ack": bool(ack.get("evidence")) or applied_pct == 100,
+            "sharpness": ack.get("sharpness"),
+            "sharpness_ack": sharpness_ack,
+            "sharpness_reason": sharpness_reason,
+            "scale_provisioned": bool(capability.get("scale_capable")),
+            "scale_blocked": self._extreme_scale_blocked or (f"scale-ready-blocked:{wsi_blocked}" if wsi_blocked else None),
+            "cpu_bound": (self._status.get("diagnosis") or {}).get("bottleneck") == "cpu",
+            "split": split,
+            "act": {"consent": self._extreme_act_consent(), "enabled": act_enabled,
+                    "pacer_live": bool((fo.get("telemetry") or {}).get("live")),
+                    "injecting": self._injection is not None},
+            "warm_started": bool(budget is not None and budget.warm_started),
+        }
+        state = extreme_policy.session_state(
+            enabled=True, running=running, overlay_active=bool(capability.get("overlay_active", running)),
+            paused=self._status.get("state") == "PAUSED", request=self._request is not None,
+            verifying_scale=verifying, phase=budget.phase if budget is not None else None,
+            restart_required=False)
+        ceiling = self._extreme_ceiling or self._extreme_power_ceiling()
+        self._status["extreme"] = {
+            "enabled": True,
+            "state": state,
+            "reason": self._status.get("reason"),
+            "ceiling": ceiling,
+            "tdp_w": budget.tdp if budget is not None else None,
+            "requested": {"render_pct": requested_pct,
+                          "sharpness": (self._request.deltas.get("scaling_sharpness") if self._request
+                                        else self._point_deltas.get("scaling_sharpness"))} if point is not None else None,
+            "applied": ({"render_pct": int(applied_pct),
+                         "sharpness": ack.get("sharpness") if sharpness_ack else None,
+                         "sharpness_confirmed": sharpness_ack,
+                         "source": (ack.get("evidence") or {}).get("source"),
+                         "output": (ack.get("evidence") or {}).get("output")}
+                        if applied_pct is not None and self._point is not None else None),
+            "sharpness_offset": self._extreme_offset(profile),
+            "act_consent": self._extreme_act_consent(),
+            "boosters": extreme_policy.booster_states(facts),
+            "gain": extreme_policy.gain_unavailable(),
+        }
+
+    def _extreme_offer(self, profile: str, mode: str, budget: Optional[BudgetController],
+                       running: bool) -> Optional[Dict[str, Any]]:
+        """Battery/Balanced: power the ceiling would still give to frames, without a promised number."""
+        if mode not in ("budget", "balanced") or not running or budget is None or not budget.tdp_control:
+            return None
+        if budget.phase != "locked" or budget.tdp is None or budget.heat_limited:
+            return None
+        if (self._status.get("diagnosis") or {}).get("bottleneck") == "cpu":
+            return None
+        ceiling = self._extreme_power_ceiling()
+        headroom = round(ceiling["ceiling_w"] - float(budget.tdp), 1)
+        if headroom < self.EXTREME_OFFER_HEADROOM_W:
+            return None
+        return {"headroom_w": headroom, "ceiling_w": ceiling["ceiling_w"], "tdp_w": budget.tdp,
+                "real_target": budget.point.base_target_fps}
+
     def _save_settings_quietly(self) -> None:
         try:
             self._save_settings()
@@ -1402,6 +1620,7 @@ class GovernorService:
                              "layer_error": self.frame_os_layer_error,
                              **{k: v for k, v in self.frame_os.last.items() if k != "input"}}
         value["power_split"] = {**(self._status.get("power_split") or {}), "setting": self._power_split_enabled()}
+        value["extreme"] = self._status.get("extreme") or {"enabled": False, "state": "OFF"}
         value["power"] = self.power.status()
         value["power_search"] = self.search.status.to_dict()
         value["request"] = self._request.to_dict() if self._request else None
@@ -1453,6 +1672,7 @@ class GovernorService:
         self.search = PowerSearch()
 
     def _clear_point_state(self) -> None:
+        self._extreme_ack = None  # the overlay goes back to the launch scale
         self._point = None
         self._point_mode = ""
         self._point_external = None
@@ -1561,10 +1781,14 @@ class GovernorService:
         capability: Dict[str, Any],
     ) -> bool:
         base = self._base_for(profile, saved)
+        sharpness = None
+        if self._mode(profile) == "extreme":
+            sharpness, _ = extreme_policy.sharpness_for(point.render_scale_pct, saved, self._extreme_offset(profile))
         deltas = point_deltas(
             point.to_dict(), saved,
             scale_capable=bool(capability.get("scale_capable")),
             scale_ready=self._scale_ready(profile),
+            sharpness=sharpness,
         )
         full = {**base, **deltas}
         previous = {**base, **self._point_deltas} if self._point_deltas else dict(base)
@@ -1810,6 +2034,13 @@ class GovernorService:
             self.log.warning("Power split step failed: %s", error)
             await asyncio.to_thread(self.cpu.restore)
         try:
+            saved = (await asyncio.to_thread(self._saved_profile_config, profile)
+                     if profile and self._mode(profile) == "extreme" else None)
+            await self._refresh_extreme_sharpness(profile, saved)
+            self._sync_extreme(profile, saved)
+        except Exception as error:  # status only: never disturb the Governor
+            self.log.warning("Extreme step failed: %s", error)
+        try:
             self._configure_frame_os(profile)
         except Exception as error:  # development feature: never disturb the Governor
             self.log.debug("Frame OS configure failed: %s", error)
@@ -1973,7 +2204,7 @@ class GovernorService:
         # resources have returned for a short, stable interval. In particular,
         # do this *before* checking an outstanding request's timeout, so the
         # switch cannot blacklist a good point for ten minutes.
-        if self._mode(profile) in ("budget", "balanced"):
+        if self._mode(profile) in self.BUDGET_MODES:
             current_capacity = self.observer.current_max_multiplier
             if current_capacity is not None and current_capacity <= 1.0 + 1e-6:
                 # A second zero-slot report during an incomplete recovery
@@ -2043,6 +2274,13 @@ class GovernorService:
                 self._event("operating-point-confirmed", req.confirmation_mode, profile=profile,
                             point=req.point.key, revision=req.revision, request_id=req.request_id)
             if self._budget is not None:
+                gate = self._extreme_scale_gate(profile, req)
+                if gate == "wait":
+                    self._status.update({"state": "APPLY", "reason": "awaiting-render-scale-acknowledgement"})
+                    return
+                if gate == "failed":
+                    await self._fail_request(profile, "render-scale-not-acknowledged")
+                    return
                 # Budget mode judges the point on its own windows after confirmation.
                 await self._accept_request(profile, req, "renderer-confirmed")
                 return
@@ -2115,7 +2353,7 @@ class GovernorService:
             self._status.update({"state": "PROBE", "reason": "collecting-fresh-evidence"})
             return
 
-        if self._mode(profile) in ("budget", "balanced"):
+        if self._mode(profile) in self.BUDGET_MODES:
             await self._budget_step(profile, external, target)
             return
 
@@ -2249,9 +2487,6 @@ class GovernorService:
             if not claimed.get("owned"):
                 return None
             self._applied_tdp = None  # caps were restored meanwhile: write the target again
-            setter = getattr(power, "set_ceiling_w", None)
-            if callable(setter):
-                setter(BudgetController.EMERGENCY_CEILING_W)
             self._event("power-claimed", "budget-mode", profile=profile)
         else:
             status = await asyncio.to_thread(power.verify_ownership)
@@ -2260,10 +2495,33 @@ class GovernorService:
                 self._event("tdp-external-change", "budget-mode", profile=profile)
                 return None
         values = power.status()
-        return {"min": values.get("minimum_tdp_w"), "max": values.get("maximum_tdp_w")}
+        top = values.get("maximum_tdp_w")
+        # The actuator clamps every write (Governor, Act boost, recovery) to this ceiling.
+        if self._mode(profile) == "extreme":
+            ceiling = self._extreme_power_ceiling()
+            if ceiling != self._extreme_ceiling:
+                self._event("extreme-power-ceiling", ceiling["source"], profile=profile, **ceiling)
+            self._extreme_ceiling = ceiling
+            top = min(float(top), ceiling["ceiling_w"]) if isinstance(top, (int, float)) else ceiling["ceiling_w"]
+        else:
+            self._extreme_ceiling = None
+        setter = getattr(power, "set_ceiling_w", None)
+        if callable(setter):
+            setter(self._extreme_ceiling["ceiling_w"] if self._extreme_ceiling
+                   else BudgetController.EMERGENCY_CEILING_W)
+        return {"min": values.get("minimum_tdp_w"), "max": top}
+
+    def _extreme_power_ceiling(self) -> Dict[str, Any]:
+        """min(15 W, the player's own limit when GFG took the caps, the hardware maximum)."""
+        state = self.power.state
+        user = getattr(state, "initial_slow_uw", None)
+        hardware = getattr(state, "slow_max_uw", None)
+        return extreme_policy.power_ceiling(user / 1e6 if user else None, hardware / 1e6 if hardware else None)
 
     def _budget_can_scale(self, capability: Dict[str, Any]) -> bool:
         cpu_bound = (self._status.get("diagnosis") or {}).get("bottleneck") == "cpu"
+        if self._budget is not None and self._budget.flavor == "extreme" and self._extreme_scale_blocked:
+            return False  # the profile scales on its own, or the renderer did not confirm a scale
         return bool(capability.get("scale_capable")) and not cpu_bound
 
     async def _budget_step(self, profile: str, external: bool, target: int) -> None:
@@ -2283,7 +2541,7 @@ class GovernorService:
                 target_output_fps=target, now=now,
                 min_tdp_w=(limits or {}).get("min"), max_tdp_w=(limits or {}).get("max"),
                 tdp_control=limits is not None,
-                flavor="balanced" if self._mode(profile) == "balanced" else "battery",
+                flavor=self.FLAVORS.get(self._mode(profile), "battery"),
             )
             self._budget = budget
             budget.scale_capable = self._budget_can_scale(capability)
@@ -2308,6 +2566,8 @@ class GovernorService:
             budget.tdp_control = False
             self._event("tdp-control-yielded", "external-tdp-change", profile=profile)
 
+        if budget.flavor == "extreme" and self._extreme_ceiling is not None:
+            budget.limit_power(self._extreme_ceiling["ceiling_w"])  # e.g. the player lowered it in QAM
         # Render-scale rungs need the Scaling Engine provisioned at launch and a GPU-bound game.
         budget.scale_capable = self._budget_can_scale(capability)
         # Current resources, re-read every step: a swapchain recreation can raise it again.
@@ -2552,7 +2812,11 @@ class GovernorService:
         return launch.get("app_id", "") if launch.get("running") else ""
 
     def _game_key(self, profile: str, target: int) -> str:
-        return context_key(profile, target, self._mode(profile), self._game_app_id())
+        mode = self._mode(profile)
+        if mode == "extreme" and self._extreme_ceiling:
+            # a point learnt at 15 W says nothing about the same game at the player's 12 W
+            mode = f"extreme-{self._extreme_ceiling['ceiling_w']:g}w"
+        return context_key(profile, target, mode, self._game_app_id())
 
     def _floor_key(self, profile: str, target: int) -> str:
         return floor_key(profile, target, self._game_app_id())

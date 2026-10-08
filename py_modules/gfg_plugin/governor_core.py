@@ -707,6 +707,31 @@ RENDER_SCALE_STEPS = (90, 80)   # live Scaling Engine factors the overlay allows
 SCALE_ANCHOR_REAL_FPS = 30
 
 
+EXTREME_REAL_FLOOR_FPS = 30   # Extreme: never below 30 real, like Balanced
+EXTREME_START_REAL_FPS = 45   # and starts at x2 at 90 Hz, at the full normal budget
+
+
+def extreme_points(target_output_fps: int) -> tuple[OperatingPoint, ...]:
+    """Extreme ladder: more real frames is better, resolution is the currency.
+
+    Every normal point (30 real .. native) comes at 80 %, 90 % and full render scale, ordered by
+    (real cadence, scale): ``30x3 < 36x2.5@80 < 36x2.5@90 < 36x2.5 < 45x2@80 ...``.  The upgrade
+    path (idx + 1) therefore buys more real frames with a lower render resolution first and wins the
+    resolution back on the next step; the guard (idx - 1) gives up resolution before real frames.
+    Scaled rungs are only usable with the Scaling Engine provisioned at launch (``_usable``);
+    without it the ladder is the plain one.  Index 0 is the last-resort point, never used here.
+    """
+    base = budget_points(target_output_fps, EXTREME_REAL_FLOOR_FPS)
+    emergency, normal = base[0], base[1:]
+    rungs = []
+    for p in normal:
+        for pct in sorted(RENDER_SCALE_STEPS):
+            rungs.append(OperatingPoint(f"{p.key}@{pct}", p.target_output_fps, p.base_target_fps, p.multiplier, pct))
+        rungs.append(p)
+    rungs.sort(key=lambda p: (p.base_target_fps, p.render_scale_pct))
+    return (emergency,) + tuple(rungs)
+
+
 def with_render_scale(points: tuple[OperatingPoint, ...]) -> tuple[OperatingPoint, ...]:
     """Battery/Balanced ladder with render-scale rungs.
 
@@ -854,11 +879,15 @@ class BudgetController:
         min_tdp_w: Optional[float] = None, max_tdp_w: Optional[float] = None,
         tdp_control: bool = True, flavor: str = "battery",
     ) -> None:
-        self.flavor = "balanced" if flavor == "balanced" else "battery"
+        self.flavor = flavor if flavor in ("balanced", "extreme") else "battery"
         balanced = self.flavor == "balanced"
+        extreme = self.flavor == "extreme"
         self.target_output_fps = int(target_output_fps)
-        self.points = with_render_scale(
-            budget_points(self.target_output_fps, BALANCED_REAL_FLOOR_FPS if balanced else REAL_FLOOR_FPS))
+        if extreme:
+            self.points = extreme_points(self.target_output_fps)
+        else:
+            self.points = with_render_scale(
+                budget_points(self.target_output_fps, BALANCED_REAL_FLOOR_FPS if balanced else REAL_FLOOR_FPS))
         # Set by the service every step: the game was launched with the Scaling Engine provisioned
         # (scale-ready launch or the profile's own scaling) and is not CPU-bound.
         self.scale_capable = False
@@ -868,7 +897,8 @@ class BudgetController:
         self.min_w = max(self.MIN_TDP_W, hw_min)
         self.normal_max_w = min(self.NORMAL_CEILING_W, hw_max)
         self.emergency_max_w = min(self.EMERGENCY_CEILING_W, hw_max)
-        start_real = BALANCED_START_REAL_FPS if balanced else START_REAL_FPS
+        start_real = (EXTREME_START_REAL_FPS if extreme else
+                      BALANCED_START_REAL_FPS if balanced else START_REAL_FPS)
         # Start on an integer ratio: on a Deck they confirmed in ~10 s, while fractional points often
         # ran into the 25 s timeout.  Ties go to the deeper (safer) point.  Fractional ratios stay
         # available for the probes upwards.  (90 Hz: 30x3 / 45x2 as before; 60 Hz Balanced: 30x2.)
@@ -879,8 +909,13 @@ class BudgetController:
         self.comfort_idx = self.idx  # deeper than ~30 real only to defend the budget
         self.ideal_max_w = min(BALANCED_IDEAL_MAX_W if balanced else self.IDEAL_MAX_W, self.normal_max_w)
         start_w = BALANCED_START_TDP_W if balanced else self.START_TDP_W
+        if extreme:
+            # Every watt of the ceiling goes into frames: no search for lower watts.  The ceiling
+            # comes from the service: min(15 W, the player's own lower limit) (extreme.power_ceiling).
+            self.ideal_max_w = self.normal_max_w
+            start_w = self.normal_max_w
         self.tdp = min(max(start_w, self.min_w), self.normal_max_w) if self.tdp_control else None
-        if balanced:
+        if balanced or extreme:
             # No last-resort ratio and no watts beyond the Deck's normal range: Balanced trades
             # some battery for a real-frame floor of 30 and a ceiling it never crosses.
             self.emergency_max_w = self.normal_max_w
@@ -970,6 +1005,17 @@ class BudgetController:
         self.warm_started = True
         self._lock(now, "warm-start")
         return True
+
+    def limit_power(self, ceiling_w: float) -> None:
+        """Extreme: the power ceiling moved (the player changed their own limit): follow it down."""
+        ceiling = max(self.min_w, float(ceiling_w))
+        if abs(ceiling - self.normal_max_w) < 1e-6:
+            return
+        self.normal_max_w = self.emergency_max_w = self.ideal_max_w = ceiling
+        if self.tdp is not None:
+            self.tdp = ceiling  # Extreme plays the whole budget
+        if self.last_good is not None and self.last_good[1] is not None:
+            self.last_good = (self.last_good[0], min(self.last_good[1], ceiling))
 
     # ------------------------------------------------------------- targets
     @property
@@ -1303,7 +1349,7 @@ class BudgetController:
             self.reprobe_interval = self.REPROBE_S
             self.phase = "search_down" if was == "down" else "upgrade"
         if self.phase in ("settle", "search_down"):
-            if self._can_lower():
+            if self._can_lower() and self.flavor != "extreme":
                 self.phase = "search_down"
                 self.probe = "down"
                 return self._move("testing-lower-power", tdp=self.tdp - 1.0)
@@ -1369,7 +1415,7 @@ class BudgetController:
             self.thermal_deferred = False
             self.probe = "up"
             return self._move("testing-fewer-generated-frames", idx=self.idx + 1)
-        return self._lock(now, "minimum-power-found")
+        return self._lock(now, "most-real-frames-found" if self.flavor == "extreme" else "minimum-power-found")
 
     def _owed_quality(self) -> bool:
         """Quality was given up to defend watts or a heavy scene and may be won back."""
@@ -1384,6 +1430,15 @@ class BudgetController:
         # Watts first: try -1 W with the current point.  Upward probes only win
         # back quality that the guard gave up; spare headroom goes to watts.
         kinds = ["down", "up"] if self.next_probe == "down" else ["up", "down"]
+        if self.flavor == "extreme":
+            # Extreme: spare headroom buys real frames, never fewer watts.
+            if self.heat_limited:
+                return self._lock(now, f"thermal-quality-held:{self._heat_word()}")
+            if self._upgrade_allowed(self.idx + 1, now):
+                self.phase, self.probe = "probe", "up"
+                self.thermal_deferred = False
+                return self._move("reprobe-more-real-frames", idx=self.idx + 1)
+            return self._lock(now, "most-real-frames-found")
         if self.heat_limited:
             kinds = ["down"]  # more real frames would mean more heat
         for kind in kinds:
@@ -1502,7 +1557,7 @@ class BudgetController:
             return self._move(f"guard-deeper-multiplier:{verdict.reason}", idx=deeper)
         if self.tdp_control and self.tdp is not None and self.tdp < self.normal_max_w - 1e-6:
             return self._move(f"guard-more-power:{verdict.reason}", tdp=min(self.normal_max_w, self.tdp + step))
-        if self.idx == 1 and self._usable(0, now) and self.flavor != "balanced":
+        if self.idx == 1 and self._usable(0, now) and self.flavor == "battery":
             return self._move(f"guard-emergency-x4:{verdict.reason}", idx=0)
         # Above the normal budget only while the real stream keeps missing the
         # cap of the deepest point there is: that, not an FPS number, is what

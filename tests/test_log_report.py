@@ -37,6 +37,19 @@ class ReportTests(unittest.TestCase):
         text = render(rep)
         self.assertIn("GFG Extreme log summary", text)
 
+    def test_extreme_reports_its_ceiling_and_confirmed_scales(self):
+        ext = {"enabled": True, "state": "ACTIVE", "ceiling": {"ceiling_w": 15.0, "source": "stock-limit"},
+               "applied": {"render_pct": 80}}
+        rows = self.rows(10, tdp=15.0, extreme=ext) + self.rows(5, tdp=15.0, extreme={**ext, "applied": None})
+        rep = analyze(bundle({"timeline.jsonl": timeline(rows), "diagnostics-x.log": (FIXED + "\n") * 30,
+                              "self_test.json": "[]"}))
+        self.assertEqual(rep["extreme"]["ceiling_w"], 15.0)
+        self.assertEqual(rep["extreme"]["confirmed_scales"], {"80": 10})
+        line = next(f for f in rep["findings"] if f.startswith("Extreme:"))
+        self.assertIn("ceiling 15.0 W", line)
+        self.assertIn("80%", line)
+        self.assertNotIn("ABOVE", line)
+
     def test_missing_diagnostics_and_failed_checks_are_called_out(self):
         rep = analyze(bundle({"timeline.jsonl": timeline(self.rows(state="PAUSED", reason="diagnostics-active-no-events",
                                                                     snapshot={"available": False}, output=None)),
