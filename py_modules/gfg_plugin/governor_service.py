@@ -1962,9 +1962,15 @@ class GovernorService:
         await asyncio.to_thread(self._standby_overlays_sync)
         profile, response = await asyncio.to_thread(self.configuration.get_current_profile_snapshot)
         config = response.get("config") if isinstance(response, dict) else None
-        # Safety-critical: unwind Battery Hard's global Gamescope modeset
-        # BEFORE any renderer/backend/overlay/paused-state early return.
-        await self.reconcile_savings_refresh(profile or "", force_off=not bool(profile and isinstance(config, dict)))
+        # Safety-critical: unwind the *global* panel lease BEFORE any early
+        # return. Never start a new Hard modeset until the GFG backend is live.
+        lease = self._savings_refresh_lease
+        invalid = not (profile and isinstance(config, dict) and
+                       self._profile_enabled(profile) and
+                       config.get("fg_backend", FG_BACKEND_GFG) == FG_BACKEND_GFG)
+        if lease is not None and (invalid or self._savings_refresh_target(profile) is None
+                                  or lease.get("profile") != profile):
+            await self.reconcile_savings_refresh(profile or "", force_off=invalid)
         if not profile or not isinstance(config, dict):
             self._status.update({"state": "PAUSED", "reason": "profile-unavailable", "profile": profile or ""})
             return
