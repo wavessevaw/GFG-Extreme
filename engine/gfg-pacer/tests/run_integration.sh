@@ -42,6 +42,10 @@ run "shadow (phase B)" yes GFG_FRAME_OS=1 GFG_FRAME_OS_ENABLE=1 GFG_FRAME_OS_REA
 
 run "DXVK-like: interleaved acquires on two swapchains" yes GFG_FRAME_OS=1 GFG_FRAME_OS_ENABLE=1 \
     GFG_FRAME_OS_MODE=observe GFG_FRAME_OS_SHM="$SHM_BASE-dxvk" -- dxvk 40
+run "two instances: frame-generation helper (mako-engine) created first, game (DXVK) presents" yes GFG_FRAME_OS=1 \
+    GFG_FRAME_OS_ENABLE=1 GFG_FRAME_OS_MODE=observe GFG_FRAME_OS_SHM="$SHM_BASE-helper1" -- helper_first 40
+run "two instances: game (DXVK) first, helper (mako-engine) created while presenting" yes GFG_FRAME_OS=1 \
+    GFG_FRAME_OS_ENABLE=1 GFG_FRAME_OS_MODE=observe GFG_FRAME_OS_SHM="$SHM_BASE-helper2" -- helper_last 40
 run "governor policy file (generation ack, swapchain recreation, heartbeat)" yes GFG_FRAME_OS=1 GFG_FRAME_OS_SHM="$SHM_BASE-file" -- file 120
 run "loaded, not enabled" yes GFG_FRAME_OS=1 GFG_FRAME_OS_SHM="$SHM_BASE-off" -- off 120
 run "version-1/2 policy files are foreign" yes GFG_FRAME_OS=1 GFG_FRAME_OS_SHM="$SHM_BASE-ver" -- badver 120

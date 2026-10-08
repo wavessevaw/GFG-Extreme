@@ -186,6 +186,9 @@ def frame_os_summary(samples: List[Dict[str, Any]], processes_json: str) -> Opti
         "passthrough": any(x.get("passthrough") for x in layer),
         "swapchain_recreations": max((x.get("swapchain_recreations") or 0 for x in layer), default=0),
         "levels": dict(Counter(str(r.get("level")) for r in rows if r.get("level"))),
+        "input_sources": dict(Counter(str((r.get("input") or {}).get("source")) for r in rows if r.get("input"))),
+        "input_gamepads": max(((r.get("input") or {}).get("gamepads") or 0 for r in rows), default=0),
+        "input_events": max(((r.get("input") or {}).get("events") or 0 for r in rows), default=0),
         "loaded_in_game": (any(loaded) if loaded else None),
         "not_loaded_processes": sorted({str(p.get("comm") or p.get("pid")) for p in not_loaded}),
         # The launcher exports the control-file path only when Frame OS was on at game start.
@@ -303,6 +306,13 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
                        f"{fo['present_interval_p95_ms']} ms (p50 / p95), present hold "
                        f"{fo.get('present_hold_ms')} ms" + (f", engine {', '.join(fo['engines'])}" if fo.get("engines") else "")
                        + ".")
+        if fo.get("input_sources"):
+            if not fo.get("input_events"):
+                out.append(f"Frame OS input sensor saw no gamepad input (sources {fo['input_sources']}, "
+                           f"{fo.get('input_gamepads')} gamepads open): real-frame decisions stayed at rest.")
+            else:
+                out.append(f"Frame OS input sensor: {fo['input_events']} gamepad events from "
+                           f"{fo.get('input_gamepads')} gamepads; decisions {fo.get('levels')}.")
     if not out:
         out.append("Nothing unusual found.")
     return out

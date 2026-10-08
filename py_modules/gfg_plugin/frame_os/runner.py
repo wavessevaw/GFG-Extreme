@@ -15,22 +15,33 @@ import time
 from typing import Any, Callable, Dict, Optional
 
 from .control_channel import ControlChannel
-from .input_sensor import EvdevReader, InputState, gamepad_nodes
+from . import input_relay
+from .input_sensor import EvdevReader, InputState
 from .policy import EnergyBroker, InjectionPolicy
 from .scene import SceneChangeDetector
 
 MODES = ("observe", "shadow", "act")
 
 
+def default_reader() -> EvdevReader:
+    """The root relay's pipe when the plugin has one (shared, never closed here), else direct nodes."""
+    fd = input_relay.relay_fd()
+    if fd is not None:
+        return EvdevReader(fds=[fd], owned=False, source="relay")
+    return EvdevReader(fds=input_relay.direct_fds(), source="direct")
+
+
 class FrameOsRunner:
     TICK_S = 0.1
+    READER_RETRY_S = 5.0
 
     def __init__(self, channel: Optional[ControlChannel] = None, clock: Callable[[], float] = time.monotonic,
                  reader_factory: Optional[Callable[[], Any]] = None) -> None:
         self.channel = channel or ControlChannel()
         self.clock = clock
-        self._reader_factory = reader_factory or (lambda: EvdevReader(gamepad_nodes()))
+        self._reader_factory = reader_factory or default_reader
         self.reader: Any = None
+        self._reader_at = 0.0
         self.mode = "observe"
         self.enabled = False
         self.policy: Optional[InjectionPolicy] = None
@@ -80,8 +91,11 @@ class FrameOsRunner:
                 self._published = None
             self.last = {"enabled": False}
             return self.last
-        if self.reader is None:
-            self.reader = self._reader_factory()
+        if self.reader is None or (not self.reader.available and now - self._reader_at > self.READER_RETRY_S):
+            if self.reader is not None:
+                self.reader.close()
+            self.reader = self._reader_factory()   # retried: Steam's virtual pad appears with the game
+            self._reader_at = now
         state: InputState = self.reader.state
         self.reader.poll()
         inp = state.snapshot(time.time() if self.reader.available else now)
@@ -106,8 +120,16 @@ class FrameOsRunner:
             "decision": decision.to_dict(), "acting": acting, "published_real_hz": real_hz,
             "generation": self.generation, "telemetry": telemetry,
             "acknowledged": bool(telemetry.get("live")) and telemetry.get("applied_generation") == self.generation,
+            "input_sensor": self._sensor_status(inp),
         }
         return self.last
+
+    def _sensor_status(self, inp: Dict[str, Any]) -> Dict[str, Any]:
+        status = dict(self.reader.status()) if hasattr(self.reader, "status") else {}
+        idle = inp.get("idle_s")
+        status.update(camera=inp.get("camera"), action=inp.get("action"),
+                      idle_s=idle if isinstance(idle, (int, float)) and idle != float("inf") else None)
+        return status
 
     def _bump(self) -> int:
         self.generation = (self.generation + 1) & 0xFFFFFFFF

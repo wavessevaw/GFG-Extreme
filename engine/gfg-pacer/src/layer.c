@@ -21,8 +21,13 @@
  * the whole process to pass-through for good.
  *
  * Dispatch: one record per VkInstance / VkDevice keyed by the loader dispatch key (the first
- * pointer of a dispatchable handle; a VkQueue shares its VkDevice's key).  One mutex per device
- * guards its scheduler; sleeps happen outside it.
+ * pointer of a dispatchable handle; a VkQueue shares its VkDevice's key, a VkPhysicalDevice its
+ * VkInstance's).  One mutex per device guards its scheduler; sleeps happen outside it.
+ *
+ * Engine name: kept per instance and copied to each device at vkCreateDevice.  Telemetry carries
+ * the engine of the device that publishes (the presenting one): a process can hold several
+ * instances, e.g. a frame-generation layer's own internal instance ("mako-engine") next to the
+ * game's (DXVK).  A device that never created a swapchain can never own the telemetry.
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -50,6 +55,7 @@ typedef struct inst_data {
     void *key;
     PFN_vkGetInstanceProcAddr gipa;
     PFN_vkDestroyInstance destroy_instance;
+    char engine[GFG_CTL_ENGINE_LEN];   /* VkApplicationInfo.pEngineName, NUL-padded */
 } inst_data;
 
 typedef struct dev_data {
@@ -62,6 +68,7 @@ typedef struct dev_data {
     PFN_vkAcquireNextImage2KHR acquire2;
     PFN_vkQueuePresentKHR present;
     PFN_vkCreateSwapchainKHR create_swapchain;
+    char engine[GFG_CTL_ENGINE_LEN];   /* of the instance the device was created from */
     pthread_mutex_t lock;          /* guards everything below */
     int enabled;                   /* layer enabled at the last hook: metrics belong to this period */
     int sched_active;              /* scheduler initialised (act/shadow) */
@@ -85,7 +92,6 @@ static inst_data *g_instances;
 static dev_data *g_devices;
 static int g_passthrough;          /* sticky; atomic access */
 static int g_debug = -1;
-static char g_engine[GFG_CTL_ENGINE_LEN];   /* under g_map_lock */
 /* The one (device, swapchain) of this process that publishes; another takes over after
  * GFG_CTL_TAKEOVER_NS without a present from it. */
 static pthread_mutex_t g_owner_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -334,10 +340,13 @@ static int present_gate(dev_data *d, const VkPresentInfoKHR *info, int64_t *fwd_
     return 1;
 }
 
-/* This (device, swapchain) publishes for the process. */
+/* This (device, swapchain) publishes for the process.  Only a device that created a swapchain
+ * can own: a helper instance's device (no swapchain) never takes over. */
 static int owns_telemetry(const dev_data *d, VkSwapchainKHR sc, int64_t now)
 {
     int mine;
+    if (!sc || !__atomic_load_n(&d->swapchains_created, __ATOMIC_RELAXED))
+        return 0;
     pthread_mutex_lock(&g_owner_lock);
     mine = (g_owner_dev == d && g_owner_sc == sc) || now - g_owner_ns > GFG_CTL_TAKEOVER_NS;
     if (mine) {
@@ -393,10 +402,8 @@ static void present_done(dev_data *d, const VkPresentInfoKHR *info, int64_t fwd)
         t.margin_ms = s->margin_ms;
         t.avg_delay_ms = s->avg_delay_ms;
     }
+    memcpy(t.engine, d->engine, sizeof(t.engine));   /* the publishing device's own instance */
     pthread_mutex_unlock(&d->lock);
-    pthread_mutex_lock(&g_map_lock);
-    memcpy(t.engine, g_engine, sizeof(t.engine));
-    pthread_mutex_unlock(&g_map_lock);
     gfg_ctl_publish(&t);
 }
 
@@ -490,16 +497,14 @@ static VKAPI_ATTR VkResult VKAPI_CALL layer_CreateInstance(const VkInstanceCreat
     i->key = dispatch_key(*out);
     i->gipa = gipa;
     i->destroy_instance = destroy;
+    if (ci->pApplicationInfo && ci->pApplicationInfo->pEngineName)
+        strncpy(i->engine, ci->pApplicationInfo->pEngineName, sizeof(i->engine) - 1);
     pthread_mutex_lock(&g_map_lock);
-    if (ci->pApplicationInfo && ci->pApplicationInfo->pEngineName) {
-        memset(g_engine, 0, sizeof(g_engine));
-        strncpy(g_engine, ci->pApplicationInfo->pEngineName, sizeof(g_engine) - 1);
-    }
     i->next = g_instances;
     g_instances = i;
     pthread_mutex_unlock(&g_map_lock);
     if (debug_on())
-        fprintf(stderr, "[gfg-pacer] instance created\n");
+        fprintf(stderr, "[gfg-pacer] instance created (engine '%s')\n", i->engine);
     return VK_SUCCESS;
 }
 
@@ -557,11 +562,18 @@ static VKAPI_ATTR VkResult VKAPI_CALL layer_CreateDevice(VkPhysicalDevice phys, 
     d->present = (PFN_vkQueuePresentKHR)gdpa(*out, "vkQueuePresentKHR");
     d->create_swapchain = (PFN_vkCreateSwapchainKHR)gdpa(*out, "vkCreateSwapchainKHR");
     pthread_mutex_lock(&g_map_lock);
+    /* a physical device shares its instance's dispatch key */
+    for (inst_data *i = g_instances; i; i = i->next)
+        if (i->key == dispatch_key(phys)) {
+            memcpy(d->engine, i->engine, sizeof(d->engine));
+            break;
+        }
     d->next = g_devices;
     g_devices = d;
     pthread_mutex_unlock(&g_map_lock);
     if (debug_on())
-        fprintf(stderr, "[gfg-pacer] device created (swapchain hooks: %s)\n", d->present ? "yes" : "no");
+        fprintf(stderr, "[gfg-pacer] device created (swapchain hooks: %s) engine '%s'\n", d->present ? "yes" : "no",
+                d->engine);
     return VK_SUCCESS;
 }
 
@@ -580,6 +592,13 @@ static VKAPI_ATTR void VKAPI_CALL layer_DestroyDevice(VkDevice device, const VkA
     pthread_mutex_unlock(&g_map_lock);
     if (!d)
         return;
+    pthread_mutex_lock(&g_owner_lock);   /* a later device at the same address must not inherit */
+    if (g_owner_dev == d) {
+        g_owner_dev = NULL;
+        g_owner_sc = VK_NULL_HANDLE;
+        g_owner_ns = 0;
+    }
+    pthread_mutex_unlock(&g_owner_lock);
     d->destroy_device(device, alloc);
     pthread_mutex_destroy(&d->lock);
     free(d);

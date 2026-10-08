@@ -70,7 +70,9 @@ Rules that keep stale or foreign data out:
 - **Timing** — frame start = return of the acquire that produced the presented
   (swapchain, image), so DXVK/vkd3d presenter threads that acquire ahead are measured per image;
   freshness runs to the return of the forwarded present, so it includes a frame generator's hold
-  below (`present_hold_ms`). `engine` is `VkApplicationInfo.pEngineName` (DXVK, vkd3d, ...).
+  below (`present_hold_ms`). `engine` is `VkApplicationInfo.pEngineName` (DXVK, vkd3d, ...)
+  of the instance whose device presents: a frame generator's own internal instance (e.g.
+  `mako-engine`, no swapchain) never owns the telemetry.
 - **32-bit games** do not load the layer (64-bit manifest only); the log report says so when the
   probed game process shows the layer not loaded.
 

@@ -11,6 +11,10 @@
  *                         be written
  *   test_layer dxvk   N   DXVK/vkd3d-like: two swapchains, each image presented 6 ms after its own
  *                         acquire, acquires interleaved (env-enabled observe mode)
+ *   test_layer helper_first N / helper_last N
+ *                         two instances in one process: a frame-generation layer's internal one
+ *                         (engine "mako-engine", device, no swapchain) created before / after the
+ *                         game's ("DXVK", presents): telemetry engine must be the game's
  *
  * The mock ICD presents instantly, so any pacing measured here comes from the layer. */
 #define _GNU_SOURCE
@@ -48,6 +52,13 @@ static char path[512];
 static gfg_ctl_shm *g_gov;
 static gfg_ctl_policy g_gov_policy;
 static int g_two_swapchains;
+static const char *g_engine_name = "gfg-test-engine-long-name";
+
+/* A frame-generation layer's own instance + device inside the game process: never presents. */
+typedef struct helper {
+    VkInstance inst;
+    VkDevice dev;
+} helper;
 
 static double now_s(void)
 {
@@ -98,7 +109,7 @@ static void app_init(app *a)
         exit(1);
     }
     VkApplicationInfo ai = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "gfg-pacer-test",
-                             .pEngineName = "gfg-test-engine-long-name",
+                             .pEngineName = g_engine_name,
                              .apiVersion = VK_API_VERSION_1_3 };
     VkInstanceCreateInfo ici = { .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &ai,
                                  .enabledExtensionCount = 2, .ppEnabledExtensionNames = iext };
@@ -169,6 +180,35 @@ static void app_destroy(app *a)
     if (a->surface2)
         vkDestroySurfaceKHR(a->inst, a->surface2, NULL);
     vkDestroyInstance(a->inst, NULL);
+}
+
+static void helper_init(helper *h)
+{
+    const char *dext[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };   /* hooks exposed, but no swapchain */
+    VkApplicationInfo ai = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "mako",
+                             .pEngineName = "mako-engine", .apiVersion = VK_API_VERSION_1_3 };
+    VkInstanceCreateInfo ici = { .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &ai };
+    VKCHECK(vkCreateInstance(&ici, NULL, &h->inst));
+    uint32_t n = 1;
+    VkPhysicalDevice phys;
+    VkResult r = vkEnumeratePhysicalDevices(h->inst, &n, &phys);
+    if ((r != VK_SUCCESS && r != VK_INCOMPLETE) || n == 0) {
+        printf("FAIL: no physical device (helper)\n");
+        exit(1);
+    }
+    float prio = 1.0f;
+    VkDeviceQueueCreateInfo qci = { .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueFamilyIndex = 0,
+                                    .queueCount = 1, .pQueuePriorities = &prio };
+    VkDeviceCreateInfo dci = { .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .queueCreateInfoCount = 1,
+                               .pQueueCreateInfos = &qci, .enabledExtensionCount = 1, .ppEnabledExtensionNames = dext };
+    VKCHECK(vkCreateDevice(phys, &dci, NULL, &h->dev));
+    printf("helper instance/device created (engine mako-engine, no swapchain)\n");
+}
+
+static void helper_destroy(helper *h)
+{
+    vkDestroyDevice(h->dev, NULL);
+    vkDestroyInstance(h->inst, NULL);
 }
 
 /* n frames of acquire -> (no work) -> present; returns elapsed seconds. */
@@ -417,6 +457,32 @@ int main(int argc, char **argv)
         CHECK(t.cost_p50_ms > 5.0 && t.cost_p50_ms < 12.0, "cost p50 %.3f ms from each image's own acquire",
               t.cost_p50_ms);
         CHECK(t.freshness_ms > 5.0 && t.freshness_ms < 12.0, "freshness %.3f ms", t.freshness_ms);
+        if (m)
+            munmap(m, sizeof(*m));
+        app_destroy(&a);
+    } else if (!strcmp(mode, "helper_first") || !strcmp(mode, "helper_last")) {
+        int first = !strcmp(mode, "helper_first");
+        helper h;
+        g_engine_name = "DXVK";
+        if (first)
+            helper_init(&h);
+        app_init(&a);
+        run_frames(&a, n);
+        if (!first)
+            helper_init(&h);   /* the frame generator's instance arrives while the game presents */
+        run_frames(&a, n);
+        gfg_ctl_shm *m = map_file(0, 0, 0);
+        CHECK(m != NULL, "layer created %s", path);
+        gfg_ctl_telemetry t = telemetry(m);
+        CHECK(!strcmp(t.engine, "DXVK"), "%s: engine '%s' is the presenting game's", mode, t.engine);
+        CHECK(t.frames == (uint64_t)(2 * n), "helper instance left the game's metrics alone (%llu/%d frames)",
+              (unsigned long long)t.frames, 2 * n);
+        CHECK(t.swapchain_recreations == 0, "no recreations (%u)", t.swapchain_recreations);
+        helper_destroy(&h);    /* per-instance/device data of the helper released; game keeps publishing */
+        run_frames(&a, n);
+        t = telemetry(m);
+        CHECK(!strcmp(t.engine, "DXVK") && t.frames == (uint64_t)(3 * n), "after helper destroyed: engine '%s', %llu frames",
+              t.engine, (unsigned long long)t.frames);
         if (m)
             munmap(m, sizeof(*m));
         app_destroy(&a);

@@ -21,6 +21,7 @@ from typing import Deque, Dict, Iterable, List, Optional, Tuple
 # struct input_event on 64-bit Linux: timeval (2 x long), u16 type, u16 code, s32 value
 EVENT = struct.Struct("llHHi")
 EV_KEY, EV_ABS = 0x01, 0x03
+STATUS_TYPE = 0x7FFF                 # relay pseudo record: code = open gamepads (input_relay.py)
 ABS_RX, ABS_RY = 0x03, 0x04          # right stick on Steam Deck / XInput layouts
 ABS_X, ABS_Y = 0x00, 0x01            # left stick
 STICK_DEADZONE = 0.12
@@ -39,6 +40,8 @@ class InputState:
         self._camera_at = 0.0
         self._last_input = None  # type: Optional[float]
         self._presses: Deque[float] = deque()
+        self.devices: Optional[int] = None   # gamepads the relay has open (None: unknown)
+        self.events = 0
 
     def _norm(self, value: int) -> float:
         span = (self.abs_max - self.abs_min) / 2.0 or 1.0
@@ -50,6 +53,10 @@ class InputState:
         return self._camera * max(0.0, 1.0 - dt / CAMERA_DECAY_S)
 
     def event(self, t: float, etype: int, code: int, value: int) -> None:
+        if etype == STATUS_TYPE:
+            self.devices = code
+            return
+        self.events += 1
         if etype == EV_ABS and code in (ABS_RX, ABS_RY, ABS_X, ABS_Y):
             v = self._norm(value)
             stick = self.right if code in (ABS_RX, ABS_RY) else self.left
@@ -91,21 +98,16 @@ class InputState:
         return n
 
 
-def gamepad_nodes(by_id: Path = Path("/dev/input/by-id")) -> List[Path]:
-    """Event nodes of gamepads (the Deck's built-in controller and USB/Bluetooth pads)."""
-    try:
-        names = sorted(by_id.iterdir())
-    except OSError:
-        return []
-    return [p for p in names if p.name.endswith("-event-joystick")]
-
-
 class EvdevReader:
-    """Non-blocking reader over a set of event nodes.  Never grabs the device."""
+    """Non-blocking reader over event nodes (or the root relay's pipe).  Never grabs a device."""
 
-    def __init__(self, nodes: Iterable[Path], state: Optional[InputState] = None) -> None:
+    def __init__(self, nodes: Iterable[Path] = (), state: Optional[InputState] = None,
+                 fds: Optional[Iterable[int]] = None, owned: bool = True, source: str = "direct") -> None:
         self.state = state or InputState()
-        self._fds: List[int] = []
+        self.source = source
+        self._owned = owned
+        self._fds: List[int] = list(fds or [])
+        self._rest: Dict[int, bytes] = {}
         for node in nodes:
             try:
                 self._fds.append(os.open(str(node), os.O_RDONLY | os.O_NONBLOCK))
@@ -128,13 +130,25 @@ class EvdevReader:
                     break
                 if not data:
                     break
-                consumed += self.state.feed(data)
+                data = self._rest.pop(fd, b"") + data     # a pipe read can end mid-record
+                whole = len(data) - len(data) % EVENT.size
+                if whole < len(data):
+                    self._rest[fd] = data[whole:]
+                consumed += self.state.feed(data[:whole])
         return consumed
 
+    def status(self) -> Dict[str, object]:
+        devices = self.state.devices
+        if devices is None and self.source == "direct":
+            devices = len(self._fds)
+        return {"source": self.source if self._fds else "none", "gamepads": devices,
+                "events": self.state.events}
+
     def close(self) -> None:
-        for fd in self._fds:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+        if self._owned:
+            for fd in self._fds:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
         self._fds = []
