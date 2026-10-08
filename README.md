@@ -23,9 +23,9 @@ and keeps adjusting while you play. Your Deck never burns a watt it doesn't need
 
 <img src="docs/img/home-frame-os.png" width="260">&nbsp;&nbsp;
 <img src="docs/img/page-frame-os.png" width="260">&nbsp;&nbsp;
-<img src="docs/img/home-last-session.png" width="260">
+<img src="docs/img/home-savings-hard.svg" width="260">
 
-<sub>Home with Frame OS measured in game · Frame OS: A/B results and what it learned about this game · Last session in rings. Rendered from the real interface with sample data.</sub>
+<sub>Home with Frame OS measured in game · Frame OS: A/B results and what it learned about this game · Illustrative new Battery Savings Effort card (Hard).</sub>
 
 <br><br>
 
