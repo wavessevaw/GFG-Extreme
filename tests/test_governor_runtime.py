@@ -1642,6 +1642,38 @@ class RingRefreshTests(unittest.TestCase):
         self.publish()
         self.assertEqual(len(self.writes), 2)
 
+    def test_motionboost_badge_requires_executor_pacer_ack_and_measured_frames(self):
+        self.settings["preset"] = "standard"
+        self.svc.frame_os = types.SimpleNamespace(
+            executor_active=True, policy=types.SimpleNamespace(calm_real_hz=30.0))
+        self.status["frame_os"] = {
+            "enabled": True, "mode": "act", "acknowledged": True,
+            "decision": {"level": "boost"}, "telemetry": {"live": True},
+            "benefit": {"ready": True, "frames_pct": 50.0, "response_pct": None, "energy_pct": 0.0},
+        }
+        self.publish()
+        data = self.writes[-1][0]["frame_os"]
+        self.assertTrue(data["verified_boost"])
+        self.assertEqual((data["actual_real"], data["actual_ratio"]), (45, 2.0))
+        self.status["frame_os"]["acknowledged"] = False
+        self.now += 1.0
+        self.publish()
+        self.assertFalse(self.writes[-1][0]["frame_os"]["verified_boost"])
+        self.status["frame_os"]["acknowledged"] = True
+        self.status["telemetry"]["snapshot"]["latest"]["real_fps"] = 30
+        self.now += 1.0
+        self.publish()
+        self.assertFalse(self.writes[-1][0]["frame_os"]["verified_boost"])
+        self.svc.frame_os.executor_active = False
+        self.now += 1.0
+        self.publish()
+        self.assertFalse(self.writes[-1][0]["frame_os"]["active"])
+        self.svc.frame_os.executor_active = True
+        self.status["telemetry"]["snapshot"]["sample_age_ms"] = 3000
+        self.now += 1.0
+        self.publish()
+        self.assertFalse(self.writes[-1][0]["frame_os"]["verified_boost"])
+
     def test_dead_frame_os_does_not_show_old_benefit_rings(self):
         self.status["frame_os"] = {"enabled": True, "telemetry": {"live": False},
                                    "benefit": {"ready": True, "response_pct": 50}}
