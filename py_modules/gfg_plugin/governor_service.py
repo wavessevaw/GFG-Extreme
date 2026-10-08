@@ -884,6 +884,14 @@ class GovernorService:
             except FileNotFoundError:
                 pass
 
+    def _trusted_game_focus(self) -> Optional[bool]:
+        """Treat a missing Steam focus-restored event as unknown, never permanent REST."""
+        focus = getattr(self.observer, "game_focused", None)
+        focus_at = getattr(self.observer, "game_focused_at", None)
+        if focus is False and (focus_at is None or self._clock() - focus_at > 5.0):
+            return None
+        return focus
+
     def _configure_frame_os(self, profile: str) -> None:
         budget = self._budget
         mode = self._frame_os_mode(profile) if profile else "off"
@@ -893,13 +901,7 @@ class GovernorService:
                                     max_multiplier=1, calm_w=None)
             return
         point = budget.point
-        # A focus-lost event without its matching focus-restored event must not hold
-        # Frame OS in REST forever. A Steam overlay signal is only trusted briefly.
-        focus = getattr(self.observer, "game_focused", None)
-        focus_at = getattr(self.observer, "game_focused_at", None)
-        if focus is False and (focus_at is None or self._clock() - focus_at > 5.0):
-            focus = None
-        self.frame_os.focused = focus
+        self.frame_os.focused = self._trusted_game_focus()
         try:
             self.frame_os.draw_w = self.power.status().get("draw_w")
         except Exception:
