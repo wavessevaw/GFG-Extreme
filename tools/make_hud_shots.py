@@ -27,9 +27,6 @@ SHOTS = {
                   "battery_pct": 72,
                   "frame_os": {**FOS, "level": "rest", "response": 45, "frames": 3, "energy": 14}},
                  "top-right", "detailed"),
-    # A playtime target: 3 h asked, 2h51 to go, the battery outlasts it.
-    "goal": ({"fps": 90, "real": 30, "target": 90, "tdp": 7, "limit": 15, "battery_min": 185, "battery_pct": 64,
-              "goal_min": 171}, "bottom-left", "standard"),
     # An in-game A/B check running: Act's effect is briefly off, the tag says so.
     "ab": ({"fps": 90, "real": 30, "target": 90, "tdp": 12, "limit": 15,
             "frame_os": {**FOS, "level": "calm", "response": 46, "frames": 48, "energy": 8, "ab": True}},

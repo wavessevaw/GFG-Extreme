@@ -916,6 +916,10 @@ class BudgetController:
         # Ceiling of the renderer's current generated-frame resources; updated every step, so it
         # rises again after a swapchain recreation.
         self.current_max_multiplier: Optional[float] = None
+        # Temporary swapchain/resource reductions are not FPS failures. Remember
+        # the former viable point only while resource capacity prevents using it.
+        self._capacity_resume_idx: Optional[int] = None
+        self._capacity_recovered_at: Optional[float] = None
         # Point key -> (highest TDP it failed to hold at, when).  Loaded from game memory so a new
         # controller (mode switch, reload) does not repeat a probe that just failed; expires like
         # an in-session rejection, because a lighter scene may hold it later.
@@ -934,44 +938,6 @@ class BudgetController:
         self.thermal = "unknown"
         self.thermal_deferred = False
         self._heat_until = -1e9
-        self.playtime_cap_w: Optional[float] = None
-        self._ceilings: Optional[tuple] = None
-        self._proven_w: Optional[float] = None    # lowest TDP this game has held its point at
-
-    @property
-    def proven_w(self) -> float:
-        """The lowest power this game has *shown* it stays playable at: a level it held its point
-        at (this session or remembered), else the controller's start level.  The playtime ceiling
-        never goes below it, so a target never starves a game just to find out (review of 1.4.2:
-        the floor was learned only after the game had collapsed once)."""
-        if self._proven_w is not None:
-            return max(self.min_w, self._proven_w)
-        start = BALANCED_START_TDP_W if self.flavor == "balanced" else self.START_TDP_W
-        return max(self.min_w, min(start, self.normal_max_w if self._ceilings is None else self._ceilings[0]))
-
-    def set_playtime_cap(self, cap_w: Optional[float]) -> bool:
-        """A playtime target's power ceiling (``playtime.PlaytimePlanner``), or None to lift it.
-
-        Lowers every ceiling the search, the guard and emergency watts use; the guard then keeps
-        the game smooth by trading generated-frame ratio for watts, as at the normal ceiling.
-        Returns True when the current TDP had to come down to the new ceiling."""
-        base = getattr(self, "_ceilings", None)
-        if base is None:
-            base = self._ceilings = (self.normal_max_w, self.emergency_max_w, self.ideal_max_w)
-        if cap_w is None:
-            self.normal_max_w, self.emergency_max_w, self.ideal_max_w = base
-            self.playtime_cap_w = None
-            return False
-        cap = max(self.min_w, float(cap_w))
-        self.playtime_cap_w = cap
-        self.normal_max_w = min(base[0], cap)
-        self.emergency_max_w = min(base[1], cap)
-        self.ideal_max_w = min(base[2], cap)
-        if self.tdp_control and self.tdp is not None and self.tdp > self.normal_max_w + 1e-6:
-            self.tdp = round(self.normal_max_w, 1)
-            self.last_reason = "playtime-target"
-            return True
-        return False
 
     def warm_start(self, point_key: str, tdp_w: Optional[float], now: float) -> bool:
         """Start from a remembered point/TDP that held in an earlier session instead of searching.
@@ -981,17 +947,27 @@ class BudgetController:
         remembered state does not hold today, the guard escalates exactly as in a fresh search.
         """
         index = next((i for i, p in enumerate(self.points) if p.key == point_key and i > 0), None)
-        if index is not None and self.points[index].render_scale_pct != 100 and not self.scale_capable:
-            index = None  # remembered at a lower resolution, but this launch cannot scale
+        if index is not None and not self._usable(index, now):
+            index = None  # the present swapchain cannot run this remembered ratio
         if index is None or self.phase != "settle":
             return False
+        candidate_w = (round(min(max(float(tdp_w), self.min_w), self.normal_max_w), 1)
+                       if self.tdp_control and tdp_w is not None else self.tdp)
+        # A remembered operating point is not proof that it *still* holds.
+        # The controller loads recent game failures before attempting this
+        # warm start. Do not reapply a known-failing point at an equal or
+        # lower cap after a plugin restart or a profile/mode round-trip.
+        failure = self.known_failures.get(point_key)
+        if failure is not None and now - failure[1] < self.FAILURE_TTL_S:
+            failed_w = failure[0]
+            if candidate_w is None or float(candidate_w) <= failed_w + 0.05:
+                self.last_reason = "warm-start-blocked-by-recent-failure"
+                return False
         self.idx = index
-        if self.tdp_control and tdp_w is not None:
-            self.tdp = round(min(max(float(tdp_w), self.min_w), self.normal_max_w), 1)
+        if self.tdp_control and candidate_w is not None:
+            self.tdp = candidate_w
         self.good = self.bad = 0
         self.warm_started = True
-        if self.tdp is not None:
-            self._proven_w = float(self.tdp)       # remembered from an earlier session
         self._lock(now, "warm-start")
         return True
 
@@ -1011,6 +987,84 @@ class BudgetController:
             return False
         at = self.rejected.get(self.points[i].key)
         return at is None or now - at >= self.REJECT_TTL_S
+
+    CAPACITY_RECOVERY_CONFIRM_S = 2.0
+
+    def adapt_to_capacity(self, now: float) -> str:
+        """Adapt to transient FG resource changes without rejecting a renderer point.
+
+        A swapchain can temporarily report fewer generated-frame slots. This
+        is a *resource constraint*, not a failed FPS/TDP trial: it must not
+        increment request_failures, persist failures, or start rejection TTLs.
+        The service restores Saved and pauses instead when no slots exist at
+        all (max_multiplier == 1); this method handles viable FG fallbacks.
+        """
+        limit = self.current_max_multiplier
+        if limit is None:
+            self._capacity_recovered_at = None
+            return "hold"
+        if self._capacity_resume_idx is not None:
+            resume = self._capacity_resume_idx
+            if self.idx == resume:
+                self._capacity_resume_idx = None
+                self._capacity_recovered_at = None
+                return "hold"
+            # Availability alone is not evidence that an actually failed
+            # operating point will now hold. Respect genuine game/TDP failures
+            # recorded by the regular controller.
+            if self._upgrade_allowed(resume, now):
+                if self._capacity_recovered_at is None:
+                    self._capacity_recovered_at = now
+                if now - self._capacity_recovered_at >= self.CAPACITY_RECOVERY_CONFIRM_S:
+                    self._capacity_resume_idx = None
+                    self._capacity_recovered_at = None
+                    self._move("renderer-capacity-recovered", idx=resume)
+                    self._reset_after_capacity_switch()
+                    return "move"
+            else:
+                # Reported capacity bounced back down (or the remembered
+                # point has a genuine TTL rejection). Keep the safe fallback.
+                self._capacity_recovered_at = None
+
+        if self.point.multiplier <= limit + 1e-6:
+            return "hold"
+
+        # Nearest supported point in the quality ladder. Prefer a normal,
+        # full-resolution ratio, and never choose Balanced's last-resort point.
+        viable = [i for i in range(1, len(self.points))
+                  if self._usable(i, now) and self.points[i].render_scale_pct == 100]
+        if not viable:
+            viable = [i for i in range(1, len(self.points)) if self._usable(i, now)]
+        if not viable:
+            # The service pauses when no FG resources are available. Do not
+            # falsely exhaust the controller if there is no viable rung.
+            self.last_reason = "renderer-capacity-no-viable-point"
+            return "hold"
+        previous = self.idx
+        if self._capacity_resume_idx is None:
+            self._capacity_resume_idx = previous
+        self._capacity_recovered_at = None
+        # A larger index means fewer generated frames and more real frames.
+        # Prefer the closest feasible quality, rather than a distant native
+        # or emergency point, so the usual evidence windows can judge it.
+        chosen = min(viable, key=lambda i: (abs(i - previous), i))
+        self._move("renderer-capacity-fallback", idx=chosen)
+        self._reset_after_capacity_switch()
+        return "move"
+
+    def _reset_after_capacity_switch(self) -> None:
+        """Fresh renderer confirmation is required after a resource transition."""
+        self.phase = "settle"
+        self.probe = None
+        self.last_good = None
+        self.prev = None
+        self.good = self.bad = 0
+        self.verifying = None
+        self.recover = None
+        self.quality_debt = None
+        self.starved_checks = 0
+        self.short_since = self.stall_since = self.stall_step_at = None
+        self.exhausted = False
 
     def _move(self, reason: str, *, idx: Optional[int] = None, tdp: Optional[float] = None) -> str:
         self.prev = (self.idx, self.tdp)
@@ -1061,7 +1115,6 @@ class BudgetController:
         if self.tdp_control and self.tdp is not None and self._binding(self.draw_w):
             self.held = [(t, w) for t, w in self.held if now - t < self.WORK_MEMORY_S]
             self.held.append((now, float(self.tdp)))
-            self._proven_w = min(self._proven_w or float(self.tdp), float(self.tdp))
 
     def _work_tdp(self, now: float) -> Optional[float]:
         """The last level the game held at a binding cap: where it goes back after a menu or a pause."""
@@ -1081,6 +1134,10 @@ class BudgetController:
             self.starved_checks = 0
             return "hold"
         if not isinstance(real_median, (int, float)) or not math.isfinite(float(real_median)):
+            # A missing renderer sample breaks the chain of consecutive
+            # starvation checks. Never carry one bad observation across a
+            # loading screen, telemetry outage or resumed Steam overlay.
+            self.starved_checks = 0
             return "hold"
         base = float(self.point.base_target_fps)
         short = float(real_median) < base * HOLD_REAL_RATIO
@@ -1228,8 +1285,6 @@ class BudgetController:
         if self.good < self.HEALTHY_WINDOWS:
             return "hold"
         self.last_good = (self.idx, self.tdp)
-        if self.tdp is not None:     # the point held here: playable at this power (proven_w)
-            self._proven_w = min(self._proven_w if self._proven_w is not None else float(self.tdp), float(self.tdp))
         self.verifying = None
         self._remember_held(now)
         self.exhausted = False
@@ -1555,6 +1610,10 @@ class BudgetController:
             "flavor": self.flavor,
             "verifying": self.verifying,
             "current_max_multiplier": self.current_max_multiplier,
+            "capacity_resume_point": (
+                self.points[self._capacity_resume_idx].key
+                if self._capacity_resume_idx is not None else None
+            ),
             "thermal": self.thermal,
             "scale_capable": self.scale_capable,
             "thermal_deferred": self.thermal_deferred,

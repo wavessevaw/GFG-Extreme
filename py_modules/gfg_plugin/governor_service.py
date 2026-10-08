@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.4.3).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.3.1).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -32,13 +32,12 @@ from .constants import PRESENT_DIAGNOSTICS_FALLBACK_LOG, PRESENT_DIAGNOSTICS_LOG
 from .governor_core import (
     multiplier_tolerance,
     BudgetController, EffortEstimator, OperatingPoint, OperatingPointPlanner, PowerSearch, TrialLadder,
-    effort_assessment, window_verdict, REAL_FLOOR_FPS, BALANCED_REAL_FLOOR_FPS,
+    effort_assessment, window_verdict,
 )
 from .governor_battery import BatteryEstimator, read_battery
 from .steamos_tdp import SteamOSManagerTdp
 from .game_model import GameModelStore, context_key, floor_key, game_prefix
 from .session_stats import SessionStats
-from .playtime import CHOICES_H as PLAYTIME_CHOICES_H, PlaytimePlanner
 from .frame_os.control_channel import DEFAULT_PATH as DEFAULT_SHM, ControlChannel
 from . import hud_rings
 from .frame_os import layer_install as frame_os_layer
@@ -63,7 +62,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.4.3"
+VERSION = "1.3.1"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -170,10 +169,6 @@ class GovernorService:
         self.hud = HudWriter(self.configuration.config_dir)
         self._battery = BatteryEstimator()
         self.battery_reader = read_battery
-        # Playtime target: "last N hours" as an APU power ceiling (Battery / Balanced)
-        self.playtime = PlaytimePlanner()
-        saved_playtime = self._settings.get("playtime") if isinstance(self._settings.get("playtime"), dict) else {}
-        self.playtime.restore(saved_playtime.get("target_h"), saved_playtime.get("deadline"), time.time())
         self._io_lock = threading.RLock()
         self._forced_release: set[str] = set()
         self._restore_pending: Dict[str, str] = {}
@@ -206,10 +201,15 @@ class GovernorService:
         self._point_deltas: Dict[str, Any] = {}
         # Frame OS Act: the adaptive overlay written on top of the live point (None: not injecting)
         self._injection: Optional[Dict[str, Any]] = None
+        self._injection_started_at = None
         self._injection_seq = 0
         self._injection_hold_until = 0.0
         self._injection_starvation_yields = 0  # per session; Act circuit breaker
         self._menu_since: Optional[float] = None
+        # A zero-slot swapchain is observe-only until the renderer reports
+        # stable recovered resources. Never claim/release PPT at 1 Hz.
+        self._capacity_paused = False
+        self._capacity_restore_at: Optional[float] = None
         self._request: Optional[Request] = None
         self._request_counter = getattr(self, "_request_counter", 0)
         self._ladder: Optional[TrialLadder] = None
@@ -224,6 +224,7 @@ class GovernorService:
         self._draw_samples: List[float] = []
         self._tdp_set_seq = 0
         self._fast_point_key: Optional[str] = None
+        self._fast_last_sample_seq = 0  # never count a cached FPS window as another check
         self._rollback_deltas: Optional[Dict[str, Any]] = None
         self._rollback_at = 0.0
         self._generation_seen: Optional[int] = None
@@ -409,96 +410,6 @@ class GovernorService:
             self._status["battery"] = self._battery.update(self.battery_reader())
         except Exception as error:  # sysfs quirks must never break the loop
             self.log.debug("Governor battery read failed: %s", error)
-        self._update_playtime()
-
-    PLAYABLE_HOLD_S = 6.0
-    PLAYABLE_STEP_W = 1.0
-    _playable_game: Optional[str] = None
-    _unplayable_since: Optional[float] = None
-
-    def _playable_guard(self, budget: Optional[BudgetController], max_w: float) -> None:
-        """Playable first (field report 1.4.0: a 6 W ceiling left a heavy game at 10 real frames
-        shown as 30).  While the playtime ceiling is what limits the game and its real frames sit
-        below the mode's floor for PLAYABLE_HOLD_S, the ceiling goes up a watt and the level is
-        remembered for this game: the target then reports what is realistic instead."""
-        profile = self._active_profile or ""
-        game = game_prefix(profile, self._game_app_id()) if profile else None
-        if game != self._playable_game:
-            self._playable_game, self._unplayable_since = game, None
-            known = ((self._settings.get("playable_w") or {}).get(game) if game else None)
-            # one step lower each new session: a patch or new settings may have made it lighter
-            self.playtime.playable_w = (max(budget.min_w if budget else 0.0, float(known) - 0.5)
-                                        if isinstance(known, (int, float)) else None)
-        cap = budget.playtime_cap_w if budget is not None else None
-        binding = (budget is not None and cap is not None and budget.tdp is not None
-                   and budget.tdp >= cap - 0.05 and not self._menu_covering())
-        if not binding:
-            self._unplayable_since = None
-            return
-        floor = BALANCED_REAL_FLOOR_FPS if budget.flavor == "balanced" else REAL_FLOOR_FPS
-        fast = self.observer.summary(5.0)
-        real = (fast.get("real") or {}).get("median")
-        if not (isinstance(real, (int, float)) and (fast.get("samples") or 0) >= 3 and real < 0.92 * floor):
-            self._unplayable_since = None
-            return
-        now = self._clock()
-        if self._unplayable_since is None:
-            self._unplayable_since = now
-            return
-        if now - self._unplayable_since < self.PLAYABLE_HOLD_S:
-            return
-        self._unplayable_since = None
-        watts = self.playtime.raise_playable(cap + self.PLAYABLE_STEP_W, max_w)
-        if game:
-            self._settings.setdefault("playable_w", {})[game] = watts
-            self._save_settings_quietly()
-        self._event("playtime-playable-floor", "real-below-floor", profile=profile, real=round(real, 1),
-                    floor=floor, watts=watts)
-
-    def _update_playtime(self) -> None:
-        """Recompute the playtime ceiling from the battery and the measured draw (every step)."""
-        budget = self._budget
-        try:
-            draw = self.power.status().get("draw_w")
-        except Exception:
-            draw = None
-        base = getattr(budget, "_ceilings", None) if budget is not None else None
-        max_w = (base[0] if base else budget.normal_max_w) if budget is not None else BudgetController.NORMAL_CEILING_W
-        min_w = budget.min_w if budget is not None else BudgetController.MIN_TDP_W
-        self._playable_guard(budget, max_w)
-        self.playtime.safe_w = budget.proven_w if budget is not None else None
-        state = self.playtime.update(time.time(), battery=self._status.get("battery") or {}, apu_draw_w=draw,
-                                     min_w=min_w, max_w=max_w)
-        applies = bool(budget is not None and budget.tdp_control)
-        self._status["playtime"] = {**state, "applies": applies,
-                                    "mode_supported": self._mode(self._active_profile or "") in ("budget", "balanced")}
-        if budget is not None:
-            # every step (also while a point request is pending): the ceiling follows at once; a
-            # lowered TDP goes out with the next budget write
-            self._sync_playtime_cap(budget, self._active_profile or "")
-        if state.get("state") == "reached" and self._settings.get("playtime"):
-            self._settings.pop("playtime", None)
-            self.playtime.set_target(None, time.time())
-            self._save_settings_quietly()
-
-    def set_playtime_target(self, hours: Optional[float]) -> Dict[str, Any]:
-        """Battery must last ``hours`` from now (None / 0: off)."""
-        try:
-            value = float(hours) if hours else None
-        except (TypeError, ValueError):
-            return {"success": False, "error": "invalid-hours"}
-        if value is not None and not 0.25 <= value <= 12:
-            return {"success": False, "error": "invalid-hours"}
-        now = time.time()
-        self.playtime.set_target(value, now)
-        if value is None:
-            self._settings.pop("playtime", None)
-        else:
-            self._settings["playtime"] = {"target_h": value, "deadline": self.playtime.deadline}
-        self._save_settings()
-        self._update_playtime()
-        self._poke()
-        return {"success": True, "error": None, "playtime": self._status.get("playtime")}
 
     def _delivering_target(self, telemetry: Dict[str, Any]) -> Optional[str]:
         """'easy'/'medium' when measured output already holds the target (stable game), else None."""
@@ -681,9 +592,6 @@ class GovernorService:
             "limit": number(power.get("initial_tdp_w") or power.get("maximum_tdp_w")) or 15,
             "battery_min": number(battery.get("minutes_left")), "battery_pct": number(battery.get("percent")),
         }
-        playtime = status.get("playtime") or {}
-        if playtime.get("active") and playtime.get("state") in ("holding", "on-track", "tight"):
-            data["goal_min"] = number(playtime.get("remaining_min"))
         # Display *delivered* MotionBoost, not a requested policy. A pacer ACK
         # alone is insufficient: the adaptive Render v4 overlay must also be in
         # place, and fresh renderer samples must show the real cadence increased
@@ -1005,10 +913,8 @@ class GovernorService:
         return os.environ.get(self.FRAME_OS_ACT_ENV) == "1" or bool(self._settings.get("frame_os_act_unlocked"))
 
     INJECTION_HOLD_S = 60.0
-    # Field log (1.3.0, a DX12 game): both Act starts "starved" 1.1 s after the overlay switch, on
-    # one or two samples the renderer took while it re-planned for the adaptive overlay (output ==
-    # real), while the 1 Hz output stayed at 90; two of those locked Act out.  A starvation verdict
-    # needs the switch to have settled and enough fresh samples.
+    # Do not interpret the transitional cadence right after an Act change as
+    # persistent frame starvation. Requires fresh, consecutive renderer samples.
     INJECTION_GRACE_S = 4.0
     INJECTION_MIN_SAMPLES = 3
     STARVATION_RUN = 3
@@ -1142,16 +1048,13 @@ class GovernorService:
             return False
         if age <= self.MENU_MAX_S:
             return True
-        # Past MENU_MAX_S the event alone proves nothing (review of 1.3.1: a menu really open for
-        # minutes was then judged as a starved point).  Keep covering while the evidence says
-        # generation is suspended: a frame-generating point (ratio > 1) showing output ~ real.  A
-        # native point (x1) cannot tell a menu from play, so there the event expires.
+        # Long-lived Steam menus still suspend generation. Expired focus
+        # timestamps alone do not prove anything in native (x1) mode.
         point = self._point or {}
         multiplier = point.get("multiplier") if isinstance(point, dict) else None
-        suspended = (isinstance(multiplier, (int, float)) and multiplier > 1.2
-                     and isinstance(output, (int, float)) and isinstance(real, (int, float)) and real > 0
-                     and output < 1.2 * real)
-        return suspended
+        return (isinstance(multiplier, (int, float)) and multiplier > 1.2
+                and isinstance(output, (int, float)) and isinstance(real, (int, float))
+                and real > 0 and output < 1.2 * real)
 
     def _configure_frame_os(self, profile: str) -> None:
         budget = self._budget
@@ -1422,6 +1325,7 @@ class GovernorService:
         self._point_external = None
         self._point_deltas = {}
         self._injection = None
+        self._injection_started_at = None
         self.frame_os.executor_active = False
         self._request = None
         self._ladder = None
@@ -1432,6 +1336,8 @@ class GovernorService:
         self._applied_tdp = None
         self._over_cap_windows = 0
         self._draw_samples = []
+        self._fast_point_key = None
+        self._fast_last_sample_seq = self.observer.sample_seq
         self._rollback_deltas = None
         self._synced_deltas = None
         self._evaluation_after_seq = self.observer.sample_seq
@@ -1923,6 +1829,66 @@ class GovernorService:
             if self._request is not None:
                 self._request.created += away        # the confirmation timeout does not run in the menu
 
+        # Resource availability is not a renderer/FPS trial. When Vulkan
+        # temporarily has no generated-frame slots (x1 only), release the
+        # Governor overlay and power exactly once; remain observe-only until
+        # resources have returned for a short, stable interval. In particular,
+        # do this *before* checking an outstanding request's timeout, so the
+        # switch cannot blacklist a good point for ten minutes.
+        if self._mode(profile) in ("budget", "balanced"):
+            current_capacity = self.observer.current_max_multiplier
+            if current_capacity is not None and current_capacity <= 1.0 + 1e-6:
+                # A second zero-slot report during an incomplete recovery
+                # cancels the recovery timer. A brief positive report must
+                # never be treated as two seconds of stable availability.
+                self._capacity_restore_at = None
+                if not self._capacity_paused:
+                    self._capacity_paused = True
+                    if self._point or self._request or self._budget or self.power.state.owned:
+                        await self._release_point(profile, "renderer-capacity-unavailable")
+                    self._event("renderer-capacity-paused", "no-generated-frame-slots",
+                                profile=profile, max_multiplier=current_capacity)
+                if profile in self._restore_pending:
+                    # A failed overlay restore leaves the old renderer settings
+                    # live. Never announce observe-only or silently resume a
+                    # recovered swapchain until Saved has actually been restored.
+                    self._status.update({"state": "PAUSED", "reason": "overlay-restore-failed"})
+                    return
+                self._status.update({"state": "OBSERVE_ONLY", "reason": "renderer-capacity-unavailable"})
+                return
+            if self._capacity_paused:
+                if profile in self._restore_pending:
+                    # _retry_restores() runs above on every iteration. Wait
+                    # for it to succeed before starting the capacity recovery
+                    # timer, so a failed write cannot become a stale FG lease.
+                    self._capacity_restore_at = None
+                    self._status.update({"state": "PAUSED", "reason": "overlay-restore-failed"})
+                    return
+                if current_capacity is None:
+                    self._status.update({"state": "OBSERVE_ONLY", "reason": "renderer-capacity-awaiting-report"})
+                    return
+                if self._capacity_restore_at is None:
+                    self._capacity_restore_at = self._clock()
+                if self._clock() - self._capacity_restore_at < BudgetController.CAPACITY_RECOVERY_CONFIRM_S:
+                    self._status.update({"state": "OBSERVE_ONLY", "reason": "renderer-capacity-recovering"})
+                    return
+                self._capacity_paused = False
+                self._capacity_restore_at = None
+                # Samples from the zero-resource window do not prove that a
+                # newly selected multiplier works. Confirmation remains fresh.
+                self._evaluation_after_seq = self.observer.sample_seq
+                self._event("renderer-capacity-restored", "generated-frame-slots-returned",
+                            profile=profile, max_multiplier=current_capacity)
+            req = self._request
+            if (req is not None and current_capacity is not None
+                    and float(req.point.multiplier) > current_capacity + 1e-6):
+                # Cancel and restore the base overlay, not the previous
+                # capacity-incompatible point. Do not call _fail_request:
+                # this was no trial failure and must not affect TTL/backoff.
+                await self._release_point(profile, "renderer-capacity-request-cancelled")
+                self._status.update({"state": "PLAN", "reason": "renderer-capacity-request-cancelled"})
+                return
+
         # Pending application: evaluated before the freshness gate so a silent
         # renderer cannot leave an unconfirmed overlay in place forever.
         req = self._request
@@ -2183,6 +2149,7 @@ class GovernorService:
             )
             self._budget = budget
             budget.scale_capable = self._budget_can_scale(capability)
+            budget.current_max_multiplier = self.observer.current_max_multiplier
             key, floor = self._game_key(profile, target), self._floor_key(profile, target)
             self._budget_keys = (key, floor)
             budget.load_failures(self.game_models.failures(key), now)
@@ -2207,11 +2174,18 @@ class GovernorService:
         budget.scale_capable = self._budget_can_scale(capability)
         # Current resources, re-read every step: a swapchain recreation can raise it again.
         budget.current_max_multiplier = self.observer.current_max_multiplier
-        self._sync_playtime_cap(budget, profile)
-        if (budget.current_max_multiplier is not None
-                and float(budget.point.multiplier) > budget.current_max_multiplier + 1e-6):
-            # The current target is beyond what the renderer can generate: fall back at once.
-            budget.request_failed(now, "renderer-generated-capacity")
+        old_point_key = budget.point.key
+        capacity_action = budget.adapt_to_capacity(now)
+        if capacity_action == "move":
+            self._event("budget-capacity-transition", budget.last_reason, profile=profile,
+                        before=old_point_key, after=budget.point.key,
+                        max_multiplier=budget.current_max_multiplier)
+            # A capacity transition cannot be judged with the previous point's
+            # cached real/output FPS window.
+            self._evaluation_after_seq = self.observer.sample_seq
+            self._tdp_set_seq = self.observer.sample_seq
+            self._fast_last_sample_seq = self.observer.sample_seq
+            self._draw_samples = []
         # 1. The operating point first.  Lowering TDP before the renderer has
         # taken the point would starve the game in its *old* mode for a few
         # seconds, which the player sees as a stutter at startup.
@@ -2252,8 +2226,15 @@ class GovernorService:
         # watts within seconds.  Lowering stays with the windows below.
         if self._fast_point_key != point.key:  # samples from another point say nothing
             self._fast_point_key, self._tdp_set_seq = point.key, self.observer.sample_seq
+            self._fast_last_sample_seq = self.observer.sample_seq
+            budget.starved_checks = 0
         recent = self.observer.summary(self.FAST_CHECK_SECONDS, after_seq=self._tdp_set_seq)
-        if recent.get("samples", 0) >= self.FAST_MIN_SAMPLES:
+        sample_seq = recent.get("last_sample_seq")
+        new_evidence = (recent.get("samples", 0) >= self.FAST_MIN_SAMPLES
+                        and isinstance(sample_seq, int)
+                        and sample_seq > self._fast_last_sample_seq)
+        if new_evidence:
+            self._fast_last_sample_seq = sample_seq
             draw_now = statistics.median(self._draw_samples[-3:]) if self._draw_samples else None
             before = budget.tdp
             if budget.fast_check(now, (recent.get("real") or {}).get("median"), draw_now) == "move":
@@ -2266,6 +2247,10 @@ class GovernorService:
                 self._status.update({"state": self._budget_state(), "reason": budget.last_reason})
                 await self._apply_budget_tdp(profile)
                 return
+        else:
+            # A controller called at 1 Hz can otherwise count the same FPS
+            # samples twice and boost watts without two independent checks.
+            budget.fast_check(now, None, None)
 
         # 3. Judge one fresh, non-overlapping window.
         fresh = self.observer.summary(self.BUDGET_WINDOW_SECONDS, after_seq=self._evaluation_after_seq)
@@ -2314,17 +2299,16 @@ class GovernorService:
             settled = (self._injection is None or self._injection_started_at is None
                        or (self._clock() - self._injection_started_at >= self.INJECTION_GRACE_S
                            and (fast.get("samples") or 0) >= self.INJECTION_MIN_SAMPLES))
-            # a drop must also last: a renderer re-plan is one or two samples, never three in a row
             floor = 0.8 * float(self._budget.point.target_output_fps)
-            recent = [s.output_fps for s in self.observer.samples_since(
-                self.observer.time_fn() - self.FAST_CHECK_SECONDS, after_seq=self._injection_seq)][-self.STARVATION_RUN:]
+            recent = [sample.output_fps for sample in self.observer.samples_since(
+                self.observer.time_fn() - self.FAST_CHECK_SECONDS,
+                after_seq=self._injection_seq)][-self.STARVATION_RUN:]
             lasting = (len(recent) >= self.STARVATION_RUN
                        and all(isinstance(v, (int, float)) and v < floor for v in recent))
-            starved = settled and lasting and isinstance(output, (int, float)) and output < floor
+            starved = (settled and lasting and isinstance(output, (int, float))
+                       and output < floor)
             # A starved output under a Steam menu (generation suspended) still takes the overlay
             # back, but it is no evidence against Act: it never counts toward the session lockout.
-            # Uncertain focus counts as menu here: a focus-lost event not yet followed by a
-            # focus-restored one (any age) never feeds the lockout; the overlay still yields.
             menu = self._menu_covering() or getattr(self.observer, "game_focused", None) is False
             if hot or starved:
                 acting = False
@@ -2379,6 +2363,7 @@ class GovernorService:
                 pass
         self._event("frame-os-injection", "stop", profile=profile, cause=reason)
         self._injection = None
+        self._injection_started_at = None
         self.frame_os.executor_active = False
 
     def _power_feedback(self, profile: str, budget: BudgetController) -> Dict[str, Any]:
@@ -2477,17 +2462,10 @@ class GovernorService:
         except Exception as error:  # remembering is best-effort and must never disturb the loop
             self.log.debug("Game model not stored: %s", error)
 
-    def _sync_playtime_cap(self, budget: BudgetController, profile: str) -> None:
-        """Playtime target: its power ceiling bounds the search, the guard and emergency watts."""
-        cap = (self._status.get("playtime") or {}).get("cap_w") if budget.tdp_control else None
-        if cap != budget.playtime_cap_w and budget.set_playtime_cap(cap):
-            self._event("playtime-ceiling", "tdp-lowered", profile=profile, watts=budget.tdp)
-
     async def _apply_budget_tdp(self, profile: str) -> bool:
         budget = self._budget
         if budget is None or not budget.tdp_control or budget.tdp is None or not self.power.state.owned:
             return True
-        self._sync_playtime_cap(budget, profile)   # no TDP write ever bypasses the ceiling
         # Frame OS (act mode) adds the watts of a funded boost / removes them in rest.
         offset = self.frame_os.tdp_offset_w
         # Without an offset the controller's own value goes out as is (emergency watts included).

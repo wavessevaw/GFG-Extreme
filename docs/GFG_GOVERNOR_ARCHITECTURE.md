@@ -44,30 +44,3 @@ On clean disable/unload Governor restores the original caps only when it still o
 ## Non-goals for Beta 1
 
 No ML/bandit/RL, no x4/x5 automation, no game-settings editing, no automatic OptiScaler configuration, no GPU clock control, no overclock/undervolt, and no hardware limit unlocking.
-
-## Playtime target (1.4)
-
-`playtime.PlaytimePlanner` turns "the battery must last N hours" into an APU ceiling every Governor
-step: `energy_Wh x 0.95 / hours_left - others_W`, where `others_W` (screen, memory, fan) is the
-smoothed battery discharge minus the APU's measured draw (4.5 W until measured). The ceiling moves
-in 0.5 W steps with 0.6 W hysteresis. `BudgetController.set_playtime_cap` lowers the normal,
-ideal and emergency ceilings to it (never below the Deck's minimum) and pulls the current TDP down;
-every TDP write passes through `_sync_playtime_cap`, so nothing bypasses it. Inside the ceiling the
-guard keeps the output by moving to deeper generated-frame ratios, as at the normal ceiling.
-States: `holding`, `on-track` (no limit needed), `tight` (cannot be met; `reachable_min`),
-`charging`, `reached`. The target and its wall-clock deadline persist in the settings.
-
-**Playable first (1.4.2).** Field report: a long target put a heavy game at 6 W, 10 real frames
-shown as 30. `_playable_guard` watches the real frames while the playtime ceiling is binding; below
-92 % of the mode's real floor (24 Battery / 30 Balanced) for 6 s it raises the ceiling by 1 W and
-stores the level per game (`playable_w`, settings). The planner never sets a ceiling below it; a
-target that would need less is `limited`, with the realistic `reachable_min`. A new session starts
-0.5 W lower to re-check. `PlaytimePlanner.options` offers targets from this game and this charge:
-1.15x / 1.3x / 1.5x the current pace and *Max* (the longest playable time), in 10-minute steps.
-
-**Proven before lowered (1.4.3).** 1.4.2 learned `playable_w` only after the ceiling had already
-starved the game once. Now the floor is also `BudgetController.proven_w`: the lowest TDP at which
-the game held its point (a healthy window, a binding held level, or the warm-start level from an
-earlier session), else the start level (10 W Battery, the Balanced start in Balanced). The planner
-uses `max(playable_w, proven_w)`, so the ceiling only follows the Governor's own search down to
-levels that kept the point; a target that would need less is `limited` until they are proven.

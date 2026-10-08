@@ -828,10 +828,6 @@ class Plugin:
             self.governor_service.set_scale_ready, profile_name, scale_ready
         )
 
-    async def set_governor_playtime(self, hours: float = 0.0) -> Dict[str, Any]:
-        """Playtime target: the battery must last ``hours`` from now (0: off)."""
-        return await asyncio.to_thread(self.governor_service.set_playtime_target, hours or None)
-
     async def set_governor_mode(self, profile_name: str, mode: str) -> Dict[str, Any]:
         """Battery (lowest TDP first) or Quality (fewest generated frames first)."""
         return await asyncio.to_thread(self.governor_service.set_mode, profile_name, mode)
@@ -893,7 +889,9 @@ class Plugin:
         result = await asyncio.to_thread(
             self.configuration_service.restore_config_journal_entry, entry_id
         )
-        if isinstance(entry, dict) and isinstance(entry.get("profile"), str):
+        if (isinstance(entry, dict) and isinstance(entry.get("profile"), str)
+                and isinstance(entry.get("changes"), dict)
+                and "target_fps" in entry["changes"]):
             self._schedule_refresh_from_config_response(
                 result, profile_name=entry["profile"]
             )
@@ -973,13 +971,20 @@ class Plugin:
                 "config": None,
             }
 
+        # Full-profile saves often carry an unchanged target_fps field. That
+        # is *not* a request to modeset Gamescope. Field-log 2026-10-08:
+        # the plugin repeatedly requested 60 Hz on an OLED running at 90 Hz.
+        _selected, _before = await asyncio.to_thread(
+            self.configuration_service.get_current_profile_snapshot)
+        _before_target = (_before.get("config") or {}).get("target_fps") if isinstance(_before, dict) else None
         result = await asyncio.to_thread(
             self.configuration_service.update_config_from_dict,
             candidate,
             "backend" if "fg_backend" in candidate else "ui",
             "change Frame Generation backend" if "fg_backend" in candidate else "replace current profile configuration",
         )
-        self._schedule_refresh_from_config_response(result)
+        if _before_target != (result.get("config") or {}).get("target_fps"):
+            self._schedule_refresh_from_config_response(result)
         return result
 
     async def get_profiles(self) -> ProfilesResponse:
@@ -1090,10 +1095,9 @@ class Plugin:
         )
         if result.get("success"):
             await self._restore_orphaned_dock_for_external_profile(profile_name)
-            profile = await asyncio.to_thread(
-                self.configuration_service.get_profile_config, profile_name
-            )
-            self._schedule_refresh_from_config_response(profile)
+            # Choosing a game profile must never silently move the *global*
+            # panel slider to that profile's last saved FPS. Explicit Target
+            # FPS edits still synchronize through update_profile_config_fields.
         return result
 
     async def sync_current_profile(self, app_id: str = "") -> ProfileResponse:
@@ -1104,10 +1108,8 @@ class Plugin:
         profile_name = result.get("profile_name")
         if result.get("success") and isinstance(profile_name, str):
             await self._restore_orphaned_dock_for_external_profile(profile_name)
-            profile = await asyncio.to_thread(
-                self.configuration_service.get_profile_config, profile_name
-            )
-            self._schedule_refresh_from_config_response(profile)
+            # Background game recognition is not explicit permission to change
+            # the 90/60 Hz internal panel modeset.
         return result
 
     async def update_profile_config(
@@ -1141,6 +1143,8 @@ class Plugin:
             return {
                 "success": False, "message": "", "error": str(error), "config": None
             }
+        _before = await asyncio.to_thread(self.configuration_service.get_profile_config, profile_name)
+        _before_target = (_before.get("config") or {}).get("target_fps") if isinstance(_before, dict) else None
         result = await asyncio.to_thread(
             self.configuration_service.update_profile_config,
             profile_name,
@@ -1148,9 +1152,10 @@ class Plugin:
             "backend" if "fg_backend" in candidate else "ui",
             "change Frame Generation backend" if "fg_backend" in candidate else "replace profile configuration",
         )
-        self._schedule_refresh_from_config_response(
-            result, profile_name=profile_name
-        )
+        if _before_target != (result.get("config") or {}).get("target_fps"):
+            self._schedule_refresh_from_config_response(
+                result, profile_name=profile_name
+            )
         return result
 
     async def update_profile_config_fields(
@@ -1477,7 +1482,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Extreme 1.4.3 started")
+        decky.logger.info("GFG Extreme 1.3.1 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""

@@ -896,71 +896,6 @@ class BudgetRuntimeTests(RuntimeBase):
             st = self.step(0.1)
         return st
 
-    def test_playtime_target_caps_the_watts_and_survives_a_restart(self):
-        self.svc.battery_reader = lambda: {"available": True, "discharging": True, "percent": 60,
-                                           "energy_uwh": 40e6, "power_uw": 14e6}
-        self.svc.power.values["draw_w"] = 9.0          # rest of the Deck: 5 W
-        result = self.svc.set_playtime_target(3.0)
-        self.assertTrue(result["success"])
-        self.feed(20, 45, 90)
-        st = self.step()
-        self.feed(16, 30, 90)
-        st = self.step(1.0)
-        # nothing proven yet: the ceiling stays at the start level, the game is never starved to find out
-        self.assertEqual(st["playtime"]["state"], "limited")
-        self.assertEqual(st["playtime"]["floor_by"], "proven")
-        self.assertGreaterEqual(self.svc._budget.playtime_cap_w, 10.0)
-        st = self.windows(10, 30, 90)      # the search proves lower levels hold
-        for _ in range(5):
-            st = self.step(1.0)
-        pt = st["playtime"]
-        self.assertEqual(pt["state"], "holding")
-        self.assertLess(self.svc._budget.proven_w, 10.0)
-        # 40 Wh * 0.95 / 3 h = 12.7 W for the whole Deck, minus 5 W: ~7.5 W for the APU
-        # the start write (before any proof) may be higher; the power in force is inside the ceiling
-        self.assertLessEqual(self.svc.power.writes[-1], max(pt["cap_w"], self.svc._budget.min_w))
-        self.assertEqual(st["budget"]["limits_w"]["normal"], pt["cap_w"])
-        self.assertEqual(self.svc._settings["playtime"]["target_h"], 3.0)
-        # off again: the normal ceiling is back
-        self.svc.set_playtime_target(None)
-        st = self.step(1.0)
-        self.assertFalse(st["playtime"]["active"])
-        self.assertEqual(st["budget"]["limits_w"]["normal"], 15.0)
-        self.assertNotIn("playtime", self.svc._settings)
-        self.assertFalse(self.svc.set_playtime_target(40)["success"])
-
-    def test_playtime_never_starves_a_heavy_game(self):
-        # field report 1.4.0: a long target put a heavy game at 6 W: 10 real frames shown as 30
-        self.svc.battery_reader = lambda: {"available": True, "discharging": True, "percent": 50,
-                                           "energy_uwh": 30e6, "power_uw": 14e6}
-        self.svc.power.values["draw_w"] = 9.0
-        self.svc.set_playtime_target(4.0)
-        self.feed(20, 45, 90)
-        self.step()
-        self.feed(16, 30, 90)
-        for _ in range(5):
-            st = self.step(1.0)
-        cap0 = self.svc._budget.playtime_cap_w
-        self.assertLessEqual(cap0, 10.0, "before any proof: the start level, never below")
-        for _ in range(12):                        # the game starves under that ceiling
-            self.feed(3, 10, 30, dt=0.4)
-            st = self.step(1.0)
-        self.assertGreater(self.svc._budget.playtime_cap_w, cap0, "the ceiling went up for playability")
-        playable = self.svc._settings["playable_w"]
-        self.assertTrue(playable and max(playable.values()) > cap0)
-        self.assertEqual(st["playtime"]["state"], "limited")
-        self.assertEqual(st["playtime"]["floor_by"], "playable")
-        self.assertIn("reachable_min", st["playtime"])
-        events = [e for e in (json.loads(l) for l in Path(self.svc.events_path).read_text().splitlines())
-                  if e.get("event") == "playtime-playable-floor"]
-        self.assertTrue(events)
-        # once playable, it stays put
-        level = self.svc._budget.playtime_cap_w
-        for _ in range(12):
-            self.feed(3, 30, 90, dt=0.4)
-            self.step(1.0)
-        self.assertEqual(self.svc._budget.playtime_cap_w, level)
-
     def test_starts_at_10_watts_and_30x3_then_lowers_power(self):
         self.feed(20, 45, 90)
         st = self.step()
@@ -979,6 +914,214 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual(self.svc.power.writes[-1], 9.0)
         self.assertEqual(st["budget"]["phase"], "search_down")
         self.assertEqual(st["state"], "OPTIMIZE_POWER")
+
+    def capacity_report(self, frames):
+        self.svc.observer.consume_line(
+            H + "operation=runtime-state-applied role=frame-generation "
+            + ("frame_generation_resources_available=0 generated_frame_capacity=0"
+               if frames == 0 else
+               f"frame_generation_resources_available=1 generated_frame_capacity={frames}"),
+            now=self.t["now"],
+        )
+
+    def test_zero_generated_slots_pause_without_repeated_power_claims(self):
+        # x3 was requested, but a swapchain transition has zero FG resources.
+        self.feed(20, 45, 90)
+        st = self.step()
+        self.assertEqual(st["request"]["point"], "30x3")
+        self.capacity_report(0)
+        st = self.step(0.1)
+        self.assertEqual((st["state"], st["reason"]),
+                         ("OBSERVE_ONLY", "renderer-capacity-unavailable"))
+        self.assertIsNone(self.svc._request)
+        self.assertIsNone(self.svc._budget)
+        self.assertFalse(self.svc.power.state.owned)
+        self.assertEqual(self.svc.power.writes, [])
+        self.assertEqual(self.svc.game_models.failures(self.svc._game_key("game", 90)), {})
+        header = self.header()
+        for _ in range(6):
+            st = self.step(0.1)
+            self.assertEqual(st["reason"], "renderer-capacity-unavailable")
+        self.assertEqual(self.header(), header, "no repeated overlay rewrites")
+        self.assertEqual(self.svc.power.writes, [], "no hidden cap chase")
+        self.assertFalse(self.svc.power.state.owned)
+
+        self.capacity_report(2)  # x3 becomes possible again
+        self.feed(20, 45, 90)
+        st = self.step(0.1)
+        self.assertEqual(st["reason"], "renderer-capacity-recovering")
+        st = self.step(0.1)
+        self.assertEqual(st["reason"], "renderer-capacity-recovering")
+        self.feed(5, 45, 90, dt=0.5)
+        st = self.step(0.1)
+        self.assertEqual(st["request"]["point"], "30x3")
+        self.assertEqual(self.svc._budget.request_failures, 0)
+        self.assertEqual(self.svc._budget.rejected, {})
+        self.feed(16, 30, 90)
+        st = self.step()
+        self.assertEqual(st["active_point"]["key"], "30x3")
+
+    def test_capacity_waits_for_successful_saved_overlay_restore(self):
+        """A failed restore must never be reported as safely observe-only."""
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertEqual(self.svc._point["key"], "30x3")
+        original_write = self.svc._write_overlay_sync
+        original_restore = self.svc._restore_overlay_sync
+
+        def fail_write(*args, **kwargs):
+            raise OSError("synthetic overlay storage failure")
+
+        try:
+            self.svc._write_overlay_sync = fail_write
+            self.svc._restore_overlay_sync = lambda *args, **kwargs: "synthetic restore failure"
+            self.capacity_report(0)
+            state = self.step(0.1)
+            self.assertEqual((state["state"], state["reason"]), ("PAUSED", "overlay-restore-failed"))
+            self.assertTrue(self.svc._capacity_paused)
+            self.assertIn("game", self.svc._restore_pending)
+            self.assertFalse(self.svc.power.state.owned, "TDP should be restored even if overlay failed")
+
+            # A positive capacity report must not start the recovery gate or
+            # send a fresh FG request while Saved overlay is not restored.
+            self.capacity_report(2)
+            self.feed(5, 45, 90, dt=0.5)
+            state = self.step(0.1)
+            self.assertEqual((state["state"], state["reason"]), ("PAUSED", "overlay-restore-failed"))
+            self.assertIsNone(self.svc._capacity_restore_at)
+            self.assertIsNone(self.svc._request)
+
+            self.svc._write_overlay_sync = original_write
+            self.svc._restore_overlay_sync = original_restore
+            state = self.step(0.1)
+            self.assertNotIn("game", self.svc._restore_pending)
+            self.assertEqual(state["reason"], "renderer-capacity-recovering")
+            self.assertIsNone(self.svc._request)
+            self.feed(5, 45, 90, dt=0.5)
+            state = self.step(0.1)
+            self.assertEqual(state["request"]["point"], "30x3")
+        finally:
+            self.svc._write_overlay_sync = original_write
+            self.svc._restore_overlay_sync = original_restore
+
+    def test_zero_slot_bounce_restarts_two_second_recovery_gate(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.capacity_report(0)
+        self.step(0.1)
+        self.assertTrue(self.svc._capacity_paused)
+        self.capacity_report(2)
+        self.feed(6, 45, 90, dt=0.5)
+        self.step(0.1)
+        self.assertIsNotNone(self.svc._capacity_restore_at)
+        self.capacity_report(0)  # no slots AGAIN, before the gate closes
+        st = self.step(0.1)
+        self.assertEqual(st["reason"], "renderer-capacity-unavailable")
+        self.assertIsNone(self.svc._capacity_restore_at)
+        self.capacity_report(2)
+        self.feed(4, 45, 90, dt=0.5)
+        st = self.step(0.1)
+        self.assertEqual(st["reason"], "renderer-capacity-recovering")
+        self.assertTrue(self.svc._capacity_paused)
+        self.feed(5, 45, 90, dt=0.5)
+        st = self.step(0.1)
+        self.assertEqual(st["request"]["point"], "30x3")
+
+    def test_live_x3_to_x2_to_x3_recovers_without_false_blacklist(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertEqual(self.svc._point["key"], "30x3")
+        budget = self.svc._budget
+
+        self.capacity_report(1)  # one generated slot: maximum x2
+        self.feed(12, 45, 90)
+        st = self.step(0.1)
+        self.assertEqual(st["request"]["point"], "45x2")
+        self.assertEqual(budget.point.key, "45x2")
+        self.assertEqual(budget.request_failures, 0)
+        self.assertFalse(budget.rejected)
+        self.feed(16, 45, 90)
+        st = self.step()
+        self.assertEqual(st["active_point"]["key"], "45x2")
+
+        self.capacity_report(2)
+        self.feed(5, 45, 90, dt=0.5)
+        self.step(0.1)  # first evidence of recovered x3 capacity
+        self.feed(5, 45, 90, dt=0.5)
+        st = self.step(0.1)
+        self.assertEqual(st["request"]["point"], "30x3")
+        self.assertEqual(budget.request_failures, 0)
+        self.assertFalse(budget.rejected)
+        self.feed(16, 30, 90)
+        st = self.step()
+        self.assertEqual(st["active_point"]["key"], "30x3")
+
+    def test_pending_request_cancelled_without_hard_failure_on_resource_change(self):
+        self.feed(20, 45, 90)
+        st = self.step()
+        self.assertEqual(st["request"]["point"], "30x3")
+        self.capacity_report(1)
+        st = self.step(0.1)
+        self.assertEqual(st["reason"], "renderer-capacity-request-cancelled")
+        self.assertIsNone(self.svc._request)
+        self.assertIsNone(self.svc._budget)
+        self.assertEqual(self.svc.game_models.failures(self.svc._game_key("game", 90)), {})
+        self.feed(20, 45, 90)
+        st = self.step(0.1)
+        self.assertEqual(st["request"]["point"], "45x2")
+        self.assertEqual(self.svc._budget.request_failures, 0)
+        self.assertEqual(self.svc._budget.rejected, {})
+
+    def test_fast_tdp_rescue_never_double_counts_a_cached_fps_window(self):
+        """One renderer sample batch is one check, not two just because the UI polls twice."""
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        budget = self.svc._budget
+        self.assertIsNotNone(budget)
+        self.assertEqual(self.svc._point["key"], "30x3")
+        self.step(0.1)  # initialize the new point's fresh-evidence cursor
+        baseline = budget.tdp
+        self.svc.power.values["draw_w"] = baseline
+        self.feed(4, 20, 60, dt=0.45)
+        self.step(0.1)
+        self.assertEqual(budget.starved_checks, 1)
+        self.assertEqual(budget.tdp, baseline)
+        # No new renderer sample here. Cached median cannot trigger a fast raise.
+        self.step(0.1)
+        self.assertEqual(budget.starved_checks, 0)
+        self.assertEqual(budget.tdp, baseline)
+        self.feed(4, 20, 60, dt=0.45)
+        self.step(0.1)
+        self.assertEqual(budget.starved_checks, 1)
+        self.assertEqual(budget.tdp, baseline)
+        self.feed(4, 20, 60, dt=0.45)
+        self.step(0.1)
+        self.assertGreater(budget.tdp, baseline, "two independent low-FPS batches justify watts")
+
+    def test_game_change_discards_fast_fps_and_act_evidence(self):
+        # Even if the new game selects the same 30x3 operating point, its
+        # renderer samples and Act grace window belong to a different session.
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertEqual(self.svc._point["key"], "30x3")
+        self.svc._fast_point_key = "30x3"
+        self.svc._fast_last_sample_seq = 999999
+        self.svc._injection_started_at = self.t["now"] - 50
+        self.inspector.info["launch_key"] = [9, 9, 9]
+        self.svc._launch_polled = -1e9
+        state = self.step()
+        self.assertEqual(state["reason"], "new-game-session")
+        self.assertIsNone(self.svc._fast_point_key)
+        self.assertLess(self.svc._fast_last_sample_seq, 999999)
+        self.assertIsNone(self.svc._injection_started_at)
 
     def test_host_heat_reaches_the_budget_controller(self):
         self.svc.sensors.sample = lambda force=False: {"temp_c": 84.0, "thermal_headroom_c": 6.0}
@@ -1608,22 +1751,24 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.step()
         self.assertIsNone(self.svc._injection, "no flapping right after a yield")
 
-    def test_the_renderer_replanning_right_after_act_starts_is_not_starvation(self):
-        # field log 1.3.0: output == real on one or two samples 1.1 s after the overlay switch
-        # (the renderer re-plans), twice in a session -> Act was locked out with output at 90
+    def test_renderer_replan_is_not_a_false_motionboost_starvation(self):
+        # The 8 October log captured two Act lockouts on a 1-2 sample
+        # reconfiguration where output briefly equaled real. Never lock out
+        # a feature before 4 s of settled evidence.
         self._act_live_point()
         self.svc.frame_os.last = {"telemetry": {"live": True}}
         self.feed(16, 30, 90)
         self.step()
         self.assertIsNotNone(self.svc._injection)
         for _ in range(2):
-            self.feed(2, 30, 30, dt=0.5)           # the switch: no generated frames for a moment
+            self.feed(2, 30, 30, dt=0.5)
             self.step(0.1)
-            self.assertIsNotNone(self.svc._injection, "a re-plan is not a starved output")
+            self.assertIsNotNone(self.svc._injection, "transient re-plan is not starvation")
             self.feed(16, 30, 90)
             self.step()
         self.assertEqual(self.svc._injection_starvation_yields, 0)
-        self.feed(20, 20, 60)                      # a real, sustained drop still yields
+        # A real, sustained outage must *still* release the overlay.
+        self.feed(20, 20, 60)
         self.step()
         self.assertIsNone(self.svc._injection)
         self.assertEqual(self.svc._injection_starvation_yields, 1)
@@ -1701,30 +1846,29 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.assertEqual(self.svc._injection_starvation_yields, 0)
         self.assertIsNotNone(self.svc._injection, "Act still injects after three long menus")
 
-    def test_a_menu_open_for_minutes_still_never_locks_act_out(self):
-        # review of 1.3.1: past MENU_MAX_S a really open menu was judged as a starved point
+    def test_long_steam_menu_does_not_poison_battery_or_act_memory(self):
         self._act_live_point()
         self.svc.frame_os.last = {"telemetry": {"live": True}}
         self.feed(16, 30, 90)
         self.step()
         self.assertIsNotNone(self.svc._injection)
         self.svc.observer.game_focused = False
-        self.svc.observer.game_focused_at = self.t["now"] - (self.svc.MENU_MAX_S + 60)   # open 3 min
+        self.svc.observer.game_focused_at = self.t["now"] - (self.svc.MENU_MAX_S + 60)
         for _ in range(4):
-            self.feed(20, 30, 30)                                  # generation suspended
+            self.feed(20, 30, 30)
             st = self.step(2.0)
             self.assertEqual((st["state"], st["reason"]), ("PAUSED", "steam-menu-open"))
         self.assertEqual(self.svc._injection_starvation_yields, 0)
 
-    def test_a_missed_focus_restored_event_recovers_when_generation_resumes(self):
+    def test_missed_focus_return_does_not_pause_forever(self):
         self.feed(20, 45, 90)
         self.step()
         self.feed(16, 30, 90)
         self.step()
         self.svc.observer.game_focused = False
         self.svc.observer.game_focused_at = self.t["now"] - (self.svc.MENU_MAX_S + 60)
-        self.feed(20, 30, 90)                                       # generated frames on screen
-        self.assertNotEqual(self.step()["reason"], "steam-menu-open", "the game shows: never paused forever")
+        self.feed(20, 30, 90)
+        self.assertNotEqual(self.step()["reason"], "steam-menu-open")
 
     def test_steam_menu_pauses_measuring_and_drops_its_samples(self):
         self.feed(20, 45, 90)

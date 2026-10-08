@@ -96,9 +96,6 @@ def compact_status(status: Dict[str, Any]) -> Dict[str, Any]:
         "effort": (status.get("effort") or {}).get("level"),
         "hud": status.get("hud"),
         "battery_min": (status.get("battery") or {}).get("minutes_left"),
-        "playtime": {k: (status.get("playtime") or {}).get(k) for k in (
-            "target_h", "state", "cap_w", "remaining_min", "others_w", "allowed_w", "reachable_min")}
-                    if (status.get("playtime") or {}).get("active") else None,
         "frametime": summary.get("frametime"),
         "sensors": status.get("sensors"),
         "diagnosis": status.get("diagnosis"),
@@ -489,7 +486,7 @@ class SessionRecorder:
             "decky_plugins": sorted(p.name for p in (self.user_home / "homebrew" / "plugins").glob("*"))
             if (self.user_home / "homebrew" / "plugins").is_dir() else [],
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme 1.4.3 (engine 4.0.0-gfg.4)",
+            "plugin_version": "GFG Extreme 1.3.1 (engine 4.0.0-gfg.4)",
         }
 
     def _write_bundle(self) -> Path:
