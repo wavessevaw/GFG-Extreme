@@ -551,7 +551,7 @@ class GovernorService:
             ratio = (round(measured_out / measured_real, 1)
                      if measured_real and measured_out else None)
             data["frame_os"] = {
-                "level": level, "estimate": benefit.get("estimate"), "verified_boost": delivered,
+                "mode": fo.get("mode"), "level": level, "estimate": benefit.get("estimate"), "verified_boost": delivered,
                 "active": active, "actual_real": measured_real, "actual_ratio": ratio,
                 "response": percent("response_pct"), "frames": percent("frames_pct"),
                 "energy": percent("energy_pct")}
