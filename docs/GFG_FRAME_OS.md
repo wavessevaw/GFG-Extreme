@@ -194,4 +194,8 @@ artefacts from the renderer's own diagnostics.
   26 ms at 30 real); a present hold never exceeds one real-frame period. Never changes game speed.
 - Rollout modes: `observe` (measure only), `shadow` (scheduler runs, never sleeps: would-be
   decisions), `act`. A profile moves to the next mode only after the previous one ran clean on a Deck.
+- **Act safety gate:** the normal UI and RPC must not offer active pacing before Deck validation.
+  Only an explicitly launched developer service with `GFG_FRAME_OS_EXPERIMENTAL_ACT=1` permits
+  `act`; saved `act` settings behave as off without this opt-in. The backend enforces the gate
+  independently of the UI.
 - Telemetry is local only.
