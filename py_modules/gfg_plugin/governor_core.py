@@ -916,6 +916,10 @@ class BudgetController:
         # Ceiling of the renderer's current generated-frame resources; updated every step, so it
         # rises again after a swapchain recreation.
         self.current_max_multiplier: Optional[float] = None
+        # Temporary swapchain/resource reductions are not FPS failures. Remember
+        # the former viable point only while resource capacity prevents using it.
+        self._capacity_resume_idx: Optional[int] = None
+        self._capacity_recovered_at: Optional[float] = None
         # Point key -> (highest TDP it failed to hold at, when).  Loaded from game memory so a new
         # controller (mode switch, reload) does not repeat a probe that just failed; expires like
         # an in-session rejection, because a lighter scene may hold it later.
@@ -943,8 +947,8 @@ class BudgetController:
         remembered state does not hold today, the guard escalates exactly as in a fresh search.
         """
         index = next((i for i, p in enumerate(self.points) if p.key == point_key and i > 0), None)
-        if index is not None and self.points[index].render_scale_pct != 100 and not self.scale_capable:
-            index = None  # remembered at a lower resolution, but this launch cannot scale
+        if index is not None and not self._usable(index, now):
+            index = None  # the present swapchain cannot run this remembered ratio
         if index is None or self.phase != "settle":
             return False
         candidate_w = (round(min(max(float(tdp_w), self.min_w), self.normal_max_w), 1)
@@ -983,6 +987,84 @@ class BudgetController:
             return False
         at = self.rejected.get(self.points[i].key)
         return at is None or now - at >= self.REJECT_TTL_S
+
+    CAPACITY_RECOVERY_CONFIRM_S = 2.0
+
+    def adapt_to_capacity(self, now: float) -> str:
+        """Adapt to transient FG resource changes without rejecting a renderer point.
+
+        A swapchain can temporarily report fewer generated-frame slots. This
+        is a *resource constraint*, not a failed FPS/TDP trial: it must not
+        increment request_failures, persist failures, or start rejection TTLs.
+        The service restores Saved and pauses instead when no slots exist at
+        all (max_multiplier == 1); this method handles viable FG fallbacks.
+        """
+        limit = self.current_max_multiplier
+        if limit is None:
+            self._capacity_recovered_at = None
+            return "hold"
+        if self._capacity_resume_idx is not None:
+            resume = self._capacity_resume_idx
+            if self.idx == resume:
+                self._capacity_resume_idx = None
+                self._capacity_recovered_at = None
+                return "hold"
+            # Availability alone is not evidence that an actually failed
+            # operating point will now hold. Respect genuine game/TDP failures
+            # recorded by the regular controller.
+            if self._upgrade_allowed(resume, now):
+                if self._capacity_recovered_at is None:
+                    self._capacity_recovered_at = now
+                if now - self._capacity_recovered_at >= self.CAPACITY_RECOVERY_CONFIRM_S:
+                    self._capacity_resume_idx = None
+                    self._capacity_recovered_at = None
+                    self._move("renderer-capacity-recovered", idx=resume)
+                    self._reset_after_capacity_switch()
+                    return "move"
+            else:
+                # Reported capacity bounced back down (or the remembered
+                # point has a genuine TTL rejection). Keep the safe fallback.
+                self._capacity_recovered_at = None
+
+        if self.point.multiplier <= limit + 1e-6:
+            return "hold"
+
+        # Nearest supported point in the quality ladder. Prefer a normal,
+        # full-resolution ratio, and never choose Balanced's last-resort point.
+        viable = [i for i in range(1, len(self.points))
+                  if self._usable(i, now) and self.points[i].render_scale_pct == 100]
+        if not viable:
+            viable = [i for i in range(1, len(self.points)) if self._usable(i, now)]
+        if not viable:
+            # The service pauses when no FG resources are available. Do not
+            # falsely exhaust the controller if there is no viable rung.
+            self.last_reason = "renderer-capacity-no-viable-point"
+            return "hold"
+        previous = self.idx
+        if self._capacity_resume_idx is None:
+            self._capacity_resume_idx = previous
+        self._capacity_recovered_at = None
+        # A larger index means fewer generated frames and more real frames.
+        # Prefer the closest feasible quality, rather than a distant native
+        # or emergency point, so the usual evidence windows can judge it.
+        chosen = min(viable, key=lambda i: (abs(i - previous), i))
+        self._move("renderer-capacity-fallback", idx=chosen)
+        self._reset_after_capacity_switch()
+        return "move"
+
+    def _reset_after_capacity_switch(self) -> None:
+        """Fresh renderer confirmation is required after a resource transition."""
+        self.phase = "settle"
+        self.probe = None
+        self.last_good = None
+        self.prev = None
+        self.good = self.bad = 0
+        self.verifying = None
+        self.recover = None
+        self.quality_debt = None
+        self.starved_checks = 0
+        self.short_since = self.stall_since = self.stall_step_at = None
+        self.exhausted = False
 
     def _move(self, reason: str, *, idx: Optional[int] = None, tdp: Optional[float] = None) -> str:
         self.prev = (self.idx, self.tdp)
@@ -1528,6 +1610,10 @@ class BudgetController:
             "flavor": self.flavor,
             "verifying": self.verifying,
             "current_max_multiplier": self.current_max_multiplier,
+            "capacity_resume_point": (
+                self.points[self._capacity_resume_idx].key
+                if self._capacity_resume_idx is not None else None
+            ),
             "thermal": self.thermal,
             "scale_capable": self.scale_capable,
             "thermal_deferred": self.thermal_deferred,

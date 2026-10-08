@@ -915,6 +915,122 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual(st["budget"]["phase"], "search_down")
         self.assertEqual(st["state"], "OPTIMIZE_POWER")
 
+    def capacity_report(self, frames):
+        self.svc.observer.consume_line(
+            H + "operation=runtime-state-applied role=frame-generation "
+            + ("frame_generation_resources_available=0 generated_frame_capacity=0"
+               if frames == 0 else
+               f"frame_generation_resources_available=1 generated_frame_capacity={frames}"),
+            now=self.t["now"],
+        )
+
+    def test_zero_generated_slots_pause_without_repeated_power_claims(self):
+        # x3 was requested, but a swapchain transition has zero FG resources.
+        self.feed(20, 45, 90)
+        st = self.step()
+        self.assertEqual(st["request"]["point"], "30x3")
+        self.capacity_report(0)
+        st = self.step(0.1)
+        self.assertEqual((st["state"], st["reason"]),
+                         ("OBSERVE_ONLY", "renderer-capacity-unavailable"))
+        self.assertIsNone(self.svc._request)
+        self.assertIsNone(self.svc._budget)
+        self.assertFalse(self.svc.power.state.owned)
+        self.assertEqual(self.svc.power.writes, [])
+        self.assertEqual(self.svc.game_models.failures(self.svc._game_key("game", 90)), {})
+        header = self.header()
+        for _ in range(6):
+            st = self.step(0.1)
+            self.assertEqual(st["reason"], "renderer-capacity-unavailable")
+        self.assertEqual(self.header(), header, "no repeated overlay rewrites")
+        self.assertEqual(self.svc.power.writes, [], "no hidden cap chase")
+        self.assertFalse(self.svc.power.state.owned)
+
+        self.capacity_report(2)  # x3 becomes possible again
+        self.feed(20, 45, 90)
+        st = self.step(0.1)
+        self.assertEqual(st["reason"], "renderer-capacity-recovering")
+        st = self.step(0.1)
+        self.assertEqual(st["reason"], "renderer-capacity-recovering")
+        self.feed(5, 45, 90, dt=0.5)
+        st = self.step(0.1)
+        self.assertEqual(st["request"]["point"], "30x3")
+        self.assertEqual(self.svc._budget.request_failures, 0)
+        self.assertEqual(self.svc._budget.rejected, {})
+        self.feed(16, 30, 90)
+        st = self.step()
+        self.assertEqual(st["active_point"]["key"], "30x3")
+
+    def test_zero_slot_bounce_restarts_two_second_recovery_gate(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.capacity_report(0)
+        self.step(0.1)
+        self.assertTrue(self.svc._capacity_paused)
+        self.capacity_report(2)
+        self.feed(6, 45, 90, dt=0.5)
+        self.step(0.1)
+        self.assertIsNotNone(self.svc._capacity_restore_at)
+        self.capacity_report(0)  # no slots AGAIN, before the gate closes
+        st = self.step(0.1)
+        self.assertEqual(st["reason"], "renderer-capacity-unavailable")
+        self.assertIsNone(self.svc._capacity_restore_at)
+        self.capacity_report(2)
+        self.feed(4, 45, 90, dt=0.5)
+        st = self.step(0.1)
+        self.assertEqual(st["reason"], "renderer-capacity-recovering")
+        self.assertTrue(self.svc._capacity_paused)
+        self.feed(5, 45, 90, dt=0.5)
+        st = self.step(0.1)
+        self.assertEqual(st["request"]["point"], "30x3")
+
+    def test_live_x3_to_x2_to_x3_recovers_without_false_blacklist(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertEqual(self.svc._point["key"], "30x3")
+        budget = self.svc._budget
+
+        self.capacity_report(1)  # one generated slot: maximum x2
+        self.feed(12, 45, 90)
+        st = self.step(0.1)
+        self.assertEqual(st["request"]["point"], "45x2")
+        self.assertEqual(budget.point.key, "45x2")
+        self.assertEqual(budget.request_failures, 0)
+        self.assertFalse(budget.rejected)
+        self.feed(16, 45, 90)
+        st = self.step()
+        self.assertEqual(st["active_point"]["key"], "45x2")
+
+        self.capacity_report(2)
+        self.feed(5, 45, 90, dt=0.5)
+        self.step(0.1)  # first evidence of recovered x3 capacity
+        self.feed(5, 45, 90, dt=0.5)
+        st = self.step(0.1)
+        self.assertEqual(st["request"]["point"], "30x3")
+        self.assertEqual(budget.request_failures, 0)
+        self.assertFalse(budget.rejected)
+        self.feed(16, 30, 90)
+        st = self.step()
+        self.assertEqual(st["active_point"]["key"], "30x3")
+
+    def test_pending_request_cancelled_without_hard_failure_on_resource_change(self):
+        self.feed(20, 45, 90)
+        st = self.step()
+        self.assertEqual(st["request"]["point"], "30x3")
+        self.capacity_report(1)
+        st = self.step(0.1)
+        self.assertEqual(st["reason"], "renderer-capacity-request-cancelled")
+        self.assertIsNone(self.svc._request)
+        self.assertIsNone(self.svc._budget)
+        self.assertEqual(self.svc.game_models.failures(self.svc._game_key("game", 90)), {})
+        self.feed(20, 45, 90)
+        st = self.step(0.1)
+        self.assertEqual(st["request"]["point"], "45x2")
+        self.assertEqual(self.svc._budget.request_failures, 0)
+        self.assertEqual(self.svc._budget.rejected, {})
+
     def test_fast_tdp_rescue_never_double_counts_a_cached_fps_window(self):
         """One renderer sample batch is one check, not two just because the UI polls twice."""
         self.feed(20, 45, 90)

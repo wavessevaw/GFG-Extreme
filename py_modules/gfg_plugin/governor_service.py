@@ -206,6 +206,10 @@ class GovernorService:
         self._injection_hold_until = 0.0
         self._injection_starvation_yields = 0  # per session; Act circuit breaker
         self._menu_since: Optional[float] = None
+        # A zero-slot swapchain is observe-only until the renderer reports
+        # stable recovered resources. Never claim/release PPT at 1 Hz.
+        self._capacity_paused = False
+        self._capacity_restore_at: Optional[float] = None
         self._request: Optional[Request] = None
         self._request_counter = getattr(self, "_request_counter", 0)
         self._ladder: Optional[TrialLadder] = None
@@ -1825,6 +1829,53 @@ class GovernorService:
             if self._request is not None:
                 self._request.created += away        # the confirmation timeout does not run in the menu
 
+        # Resource availability is not a renderer/FPS trial. When Vulkan
+        # temporarily has no generated-frame slots (x1 only), release the
+        # Governor overlay and power exactly once; remain observe-only until
+        # resources have returned for a short, stable interval. In particular,
+        # do this *before* checking an outstanding request's timeout, so the
+        # switch cannot blacklist a good point for ten minutes.
+        if self._mode(profile) in ("budget", "balanced"):
+            current_capacity = self.observer.current_max_multiplier
+            if current_capacity is not None and current_capacity <= 1.0 + 1e-6:
+                # A second zero-slot report during an incomplete recovery
+                # cancels the recovery timer. A brief positive report must
+                # never be treated as two seconds of stable availability.
+                self._capacity_restore_at = None
+                if not self._capacity_paused:
+                    self._capacity_paused = True
+                    if self._point or self._request or self._budget or self.power.state.owned:
+                        await self._release_point(profile, "renderer-capacity-unavailable")
+                    self._event("renderer-capacity-paused", "no-generated-frame-slots",
+                                profile=profile, max_multiplier=current_capacity)
+                self._status.update({"state": "OBSERVE_ONLY", "reason": "renderer-capacity-unavailable"})
+                return
+            if self._capacity_paused:
+                if current_capacity is None:
+                    self._status.update({"state": "OBSERVE_ONLY", "reason": "renderer-capacity-awaiting-report"})
+                    return
+                if self._capacity_restore_at is None:
+                    self._capacity_restore_at = self._clock()
+                if self._clock() - self._capacity_restore_at < BudgetController.CAPACITY_RECOVERY_CONFIRM_S:
+                    self._status.update({"state": "OBSERVE_ONLY", "reason": "renderer-capacity-recovering"})
+                    return
+                self._capacity_paused = False
+                self._capacity_restore_at = None
+                # Samples from the zero-resource window do not prove that a
+                # newly selected multiplier works. Confirmation remains fresh.
+                self._evaluation_after_seq = self.observer.sample_seq
+                self._event("renderer-capacity-restored", "generated-frame-slots-returned",
+                            profile=profile, max_multiplier=current_capacity)
+            req = self._request
+            if (req is not None and current_capacity is not None
+                    and float(req.point.multiplier) > current_capacity + 1e-6):
+                # Cancel and restore the base overlay, not the previous
+                # capacity-incompatible point. Do not call _fail_request:
+                # this was no trial failure and must not affect TTL/backoff.
+                await self._release_point(profile, "renderer-capacity-request-cancelled")
+                self._status.update({"state": "PLAN", "reason": "renderer-capacity-request-cancelled"})
+                return
+
         # Pending application: evaluated before the freshness gate so a silent
         # renderer cannot leave an unconfirmed overlay in place forever.
         req = self._request
@@ -2085,6 +2136,7 @@ class GovernorService:
             )
             self._budget = budget
             budget.scale_capable = self._budget_can_scale(capability)
+            budget.current_max_multiplier = self.observer.current_max_multiplier
             key, floor = self._game_key(profile, target), self._floor_key(profile, target)
             self._budget_keys = (key, floor)
             budget.load_failures(self.game_models.failures(key), now)
@@ -2109,10 +2161,18 @@ class GovernorService:
         budget.scale_capable = self._budget_can_scale(capability)
         # Current resources, re-read every step: a swapchain recreation can raise it again.
         budget.current_max_multiplier = self.observer.current_max_multiplier
-        if (budget.current_max_multiplier is not None
-                and float(budget.point.multiplier) > budget.current_max_multiplier + 1e-6):
-            # The current target is beyond what the renderer can generate: fall back at once.
-            budget.request_failed(now, "renderer-generated-capacity")
+        old_point_key = budget.point.key
+        capacity_action = budget.adapt_to_capacity(now)
+        if capacity_action == "move":
+            self._event("budget-capacity-transition", budget.last_reason, profile=profile,
+                        before=old_point_key, after=budget.point.key,
+                        max_multiplier=budget.current_max_multiplier)
+            # A capacity transition cannot be judged with the previous point's
+            # cached real/output FPS window.
+            self._evaluation_after_seq = self.observer.sample_seq
+            self._tdp_set_seq = self.observer.sample_seq
+            self._fast_last_sample_seq = self.observer.sample_seq
+            self._draw_samples = []
         # 1. The operating point first.  Lowering TDP before the renderer has
         # taken the point would starve the game in its *old* mode for a few
         # seconds, which the player sees as a stutter at startup.
