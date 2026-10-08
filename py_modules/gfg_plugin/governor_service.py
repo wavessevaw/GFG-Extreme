@@ -1838,9 +1838,12 @@ class GovernorService:
         if self._mode(profile) in ("budget", "balanced"):
             current_capacity = self.observer.current_max_multiplier
             if current_capacity is not None and current_capacity <= 1.0 + 1e-6:
+                # A second zero-slot report during an incomplete recovery
+                # cancels the recovery timer. A brief positive report must
+                # never be treated as two seconds of stable availability.
+                self._capacity_restore_at = None
                 if not self._capacity_paused:
                     self._capacity_paused = True
-                    self._capacity_restore_at = None
                     if self._point or self._request or self._budget or self.power.state.owned:
                         await self._release_point(profile, "renderer-capacity-unavailable")
                     self._event("renderer-capacity-paused", "no-generated-frame-slots",
