@@ -947,9 +947,21 @@ class BudgetController:
             index = None  # remembered at a lower resolution, but this launch cannot scale
         if index is None or self.phase != "settle":
             return False
+        candidate_w = (round(min(max(float(tdp_w), self.min_w), self.normal_max_w), 1)
+                       if self.tdp_control and tdp_w is not None else self.tdp)
+        # A remembered operating point is not proof that it *still* holds.
+        # The controller loads recent game failures before attempting this
+        # warm start. Do not reapply a known-failing point at an equal or
+        # lower cap after a plugin restart or a profile/mode round-trip.
+        failure = self.known_failures.get(point_key)
+        if failure is not None and now - failure[1] < self.FAILURE_TTL_S:
+            failed_w = failure[0]
+            if candidate_w is None or float(candidate_w) <= failed_w + 0.05:
+                self.last_reason = "warm-start-blocked-by-recent-failure"
+                return False
         self.idx = index
-        if self.tdp_control and tdp_w is not None:
-            self.tdp = round(min(max(float(tdp_w), self.min_w), self.normal_max_w), 1)
+        if self.tdp_control and candidate_w is not None:
+            self.tdp = candidate_w
         self.good = self.bad = 0
         self.warm_started = True
         self._lock(now, "warm-start")

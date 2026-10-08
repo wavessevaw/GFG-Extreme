@@ -9,6 +9,7 @@ one short dip, never a stuck setting.
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 import time
@@ -50,24 +51,59 @@ class GameModelStore:
     def _load(self) -> None:
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError, UnicodeError):
+            # A damaged cache must never stop the Governor from starting.
             return
         entries = raw.get("entries") if isinstance(raw, dict) else None
         if isinstance(entries, dict):
-            self._entries = {k: v for k, v in entries.items() if self._valid(v)}
+            for key, entry in entries.items():
+                if not self._valid(entry):
+                    continue
+                sanitized = dict(entry)
+                failures = entry.get("failed")
+                if isinstance(failures, dict):
+                    sanitized["failed"] = {
+                        point: list(value) for point, value in failures.items()
+                        if isinstance(point, str) and self._valid_failure(value)
+                    }
+                else:
+                    sanitized.pop("failed", None)
+                self._entries[key] = sanitized
         floors = raw.get("floors") if isinstance(raw, dict) else None
         if isinstance(floors, dict):
             self._floors = {k: {p: list(v) for p, v in f.items() if self._valid_floor(v)}
                             for k, f in floors.items() if isinstance(f, dict)}
 
     @staticmethod
+    def _finite_number(value: Any) -> bool:
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return False
+        try:
+            return math.isfinite(float(value))
+        except (OverflowError, ValueError):
+            # JSON may contain enormous ints or NaN/Infinity from a damaged
+            # file. They must not crash startup or poison future decisions.
+            return False
+
+    @staticmethod
     def _valid(entry: Any) -> bool:
         if not isinstance(entry, dict) or not isinstance(entry.get("point"), str):
             return False
         tdp = entry.get("tdp_w")
-        if tdp is not None and not (isinstance(tdp, (int, float)) and 0 < float(tdp) <= MAX_TDP_W):
+        if tdp is not None and not (GameModelStore._finite_number(tdp)
+                                    and 0 < tdp <= MAX_TDP_W):
             return False
-        return isinstance(entry.get("updated"), (int, float)) and isinstance(entry.get("confirmations", 0), int)
+        updated = entry.get("updated")
+        confirmations = entry.get("confirmations", 0)
+        return (GameModelStore._finite_number(updated) and updated >= 0
+                and isinstance(confirmations, int) and not isinstance(confirmations, bool)
+                and confirmations >= 0)
+
+    @staticmethod
+    def _valid_failure(value: Any) -> bool:
+        return (isinstance(value, list) and len(value) == 2
+                and all(GameModelStore._finite_number(x) for x in value)
+                and 0 < value[0] <= MAX_TDP_W and value[1] >= 0)
 
     def get(self, key: str) -> Optional[Dict[str, Any]]:
         entry = self._entries.get(key)
@@ -90,7 +126,14 @@ class GameModelStore:
         confirmations = (int(previous.get("confirmations", 0)) + 1) if same else 1
         entry = {"point": point, "tdp_w": tdp, "updated": now, "confirmations": min(confirmations, 1000)}
         if previous is not None and isinstance(previous.get("failed"), dict):
-            entry["failed"] = previous["failed"]
+            entry["failed"] = dict(previous["failed"])
+            # A verified, newly held point supersedes the failure of that same
+            # point. Otherwise a stale rejection would override fresh success
+            # after a plugin reload and prevent a valid warm start.
+            if tdp is not None:
+                # An uncapped/observe-only confirmation proves output cadence,
+                # not the wattage at which a previous cap failed.
+                entry["failed"].pop(point, None)
         self._entries[key] = entry
         self._last_write[key] = now
         if len(self._entries) > MAX_ENTRIES:
@@ -114,7 +157,7 @@ class GameModelStore:
         raw = entry.get("failed") if isinstance(entry.get("failed"), dict) else {}
         out: Dict[str, Tuple[float, float]] = {}
         for k, v in raw.items():
-            if isinstance(v, list) and len(v) == 2:
+            if self._valid_failure(v):
                 age = max(0.0, now - float(v[1]))
                 if age < self.FAILURE_TTL_S:
                     out[k] = (float(v[0]), age)
@@ -128,7 +171,7 @@ class GameModelStore:
                                                "confirmations": 0})
         failed = entry.setdefault("failed", {})
         old = failed.get(point)
-        worst = max(float(tdp_w), float(old[0])) if isinstance(old, list) and len(old) == 2 else float(tdp_w)
+        worst = max(float(tdp_w), float(old[0])) if self._valid_failure(old) else float(tdp_w)
         failed[point] = [round(worst, 1), self.clock()]
         if len(failed) > 32:
             for stale in sorted(failed, key=lambda k: failed[k][1])[: len(failed) - 32]:
@@ -140,8 +183,10 @@ class GameModelStore:
 
     @staticmethod
     def _valid_floor(v: Any) -> bool:
-        return (isinstance(v, list) and len(v) == 3 and all(isinstance(x, (int, float)) for x in v)
-                and 0 < float(v[0]) <= MAX_TDP_W and int(v[2]) >= 1)
+        return (isinstance(v, list) and len(v) == 3
+                and all(GameModelStore._finite_number(x) for x in v)
+                and 0 < v[0] <= MAX_TDP_W and v[1] >= 0
+                and isinstance(v[2], int) and v[2] >= 1)
 
     def floor_failures(self, key: str) -> Dict[str, Tuple[float, float, int]]:
         """Lower-power probes that failed for this game: point -> (TDP, age in seconds, repeats).
