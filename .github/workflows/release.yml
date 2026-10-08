@@ -29,11 +29,8 @@ jobs:
         id: version
         run: |
           version="$(python3 -c 'import json; print(json.load(open("package.json"))["version"].split("governor.")[-1])')"
-          # Frame OS 1.2.0 is a public experimental build until validated on real Steam Decks.
-          # Keep its canonical v1.2.0 tag but never mark it Latest/stable automatically.
-          if [[ "$version" == "1.2.0" ]]; then
-            tag="v${version}"; stable=false
-          elif [[ "$version" =~ ^0\. || "$version" == *-* ]]; then
+          # v1.0.0 and later are official; experimental features do not change release status.
+          if [[ "$version" =~ ^0\. || "$version" == *-* ]]; then
             tag="v${version}-governor"; stable=false
           else
             tag="v${version}"; stable=true
@@ -50,6 +47,14 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
             test -f "$notes" || { echo "::error::$notes is missing"; exit 1; }
           fi
+
+      - name: Promote published v1.2.0 to official Latest
+        if: steps.version.outputs.exists == 'true' && steps.version.outputs.version == '1.2.0' && steps.version.outputs.stable == 'true'
+        run: |
+          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v1.2.0" --jq '.id')"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            -F prerelease=false -f make_latest=true -f name="GFG Extreme 1.2.0" >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '{tag_name, name, prerelease, draft}'
 
       - uses: actions/setup-python@v5
         if: steps.version.outputs.exists == 'false'
