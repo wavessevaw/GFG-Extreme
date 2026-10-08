@@ -81,6 +81,64 @@ class RefreshLeaseTests(unittest.TestCase):
         self.sync()
         self.assertEqual(self.display.hz, 75)
 
+    def test_failed_gamescope_write_retries_not_mistaken_for_manual_slider(self):
+        self.svc.set_savings_effort("game", "hard")
+        calls = []
+        def transient(value):
+            calls.append(value)
+            if len(calls) == 1:
+                return {"success": False, "applied": False, "error": "Wayland timeout"}
+            self.display.hz = value
+            return {"success": True, "applied": True, "verified": True,
+                    "verified_refresh_hz": value}
+        self.display.sync_target_fps = transient
+        self.sync()
+        self.assertEqual(self.display.hz, 90)
+        self.assertFalse(self.svc._savings_refresh_lease["confirmed"])
+        self.assertIsNone(self.svc._savings_refresh_override)
+        # Simulate an interrupted write, followed by the normal backoff expiry.
+        self.svc._savings_refresh_retry_at = -1e9
+        self.sync()
+        self.assertEqual(self.display.hz, 60)
+        self.assertEqual(calls, [60, 60])
+        self.assertTrue(self.svc._savings_refresh_lease["confirmed"])
+        self.assertIsNone(self.svc._savings_refresh_override)
+        self.svc.set_savings_effort("game", "off")
+        self.sync()
+        self.assertEqual(self.display.hz, 90)
+
+    def test_pending_lease_cancelled_without_redundant_modeset(self):
+        self.svc.set_savings_effort("game", "hard")
+        self.display.sync_target_fps = lambda value: {"success": False, "applied": False,
+                                                       "error": "not-ready"}
+        self.sync()
+        self.assertFalse(self.svc._savings_refresh_lease["confirmed"])
+        self.svc.set_savings_effort("game", "off")
+        self.sync()
+        self.assertIsNone(self.svc._savings_refresh_lease)
+        self.assertEqual(self.display.hz, 90)
+        self.assertNotIn("savings_refresh_lease", self.svc._settings)
+
+    def test_missing_ack_after_actual_modeset_is_reconciled(self):
+        self.svc.set_savings_effort("game", "hard")
+        def no_ack(value):
+            self.display.hz = value
+            return {"success": False, "applied": False, "error": "ack timeout"}
+        self.display.sync_target_fps = no_ack
+        self.sync()
+        self.assertFalse(self.svc._savings_refresh_lease["confirmed"])
+        self.assertEqual(self.display.hz, 60)
+        self.sync()
+        self.assertTrue(self.svc._savings_refresh_lease["confirmed"])
+        self.svc.set_savings_effort("game", "off")
+        self.display.sync_target_fps = lambda value: (
+            setattr(self.display, "hz", value) or {
+                "success": True, "applied": True, "verified": True,
+                "verified_refresh_hz": value})
+        self.svc._savings_refresh_retry_at = -1e9
+        self.sync()
+        self.assertEqual(self.display.hz, 90)
+
     def test_docked_display_untouched_and_no_false_45_target(self):
         self.svc._device = {"model": "lcd", "product": "Jupiter"}
         self.display.external = True
