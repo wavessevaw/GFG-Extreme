@@ -38,7 +38,7 @@ from .governor_battery import BatteryEstimator, read_battery
 from .steamos_tdp import SteamOSManagerTdp
 from .game_model import GameModelStore, context_key, floor_key, game_prefix
 from .session_stats import SessionStats
-from .savings_effort import SavingsEffort, LEVELS as SAVINGS_LEVELS
+from .savings_effort import SavingsEffort, LEVELS as SAVINGS_LEVELS, hard_refresh_target
 from .frame_os.control_channel import DEFAULT_PATH as DEFAULT_SHM, ControlChannel
 from . import hud_rings
 from .frame_os import layer_install as frame_os_layer
@@ -179,6 +179,7 @@ class GovernorService:
             self._savings_refresh_lease = None
         self._savings_refresh_override = None
         self._savings_refresh_error = None
+        self._savings_refresh_retry_at = 0.0
         self._io_lock = threading.RLock()
         self._forced_release: set[str] = set()
         self._restore_pending: Dict[str, str] = {}
@@ -1320,6 +1321,8 @@ class GovernorService:
             except Exception as error:
                 self.log.debug("Governor loop ended with error: %s", error)
         self._task = None
+        if self._savings_refresh_lease is not None:
+            await self._sync_savings_refresh(self._active_profile or "", force_off=True)
         await self.frame_os.stop()
         # Restore overlays to Saved (verified, lease dropped) before power ownership is released.
         names = list(dict.fromkeys([*self._saved_profile_names(), *self._settings.get("profiles", {})]))
@@ -1370,6 +1373,99 @@ class GovernorService:
         if self._restore_pending:
             value["restore_pending"] = dict(self._restore_pending)
         return value
+
+
+    def _savings_refresh_target(self, profile: str) -> Optional[int]:
+        if (not profile or not self._profile_enabled(profile)
+                or self._mode(profile) != "budget"):
+            return None
+        return hard_refresh_target(self.savings_level(profile),
+                                   (self._device or {}).get("model", ""), external=False)
+
+    async def _sync_savings_refresh(self, profile: str, display: Optional[Dict[str, Any]] = None,
+                                    *, force_off: bool = False) -> Dict[str, Any]:
+        """Own the rate through a persisted lease; manual Steam slider always wins.
+
+        Only exact, verified Gamescope changes count. No writes on docked screens;
+        restore the original rate on leaving Hard, plugin disable or unload.
+        """
+        if display is None:
+            try:
+                display = await asyncio.to_thread(self._display_probe)
+            except Exception as error:
+                self._savings_refresh_error = f"display-probe-failed: {error}"
+                return {}
+        if not isinstance(display, dict) or not display.get("success") or display.get("external"):
+            return display or {}
+        reader = getattr(self.display, "read_current_refresh_hz", None)
+        writer = getattr(self.display, "sync_target_fps", None)
+        if not callable(reader) or not callable(writer):
+            self._savings_refresh_error = "Gamescope refresh control unavailable"
+            return display
+        try:
+            actual = await asyncio.to_thread(reader)
+        except Exception as error:
+            self._savings_refresh_error = f"refresh-read-failed: {error}"
+            return display
+        if not isinstance(actual, (int, float)) or not 20 <= actual <= 240:
+            self._savings_refresh_error = "Current screen Hz unavailable"
+            return display
+        actual = int(round(actual))
+        display = {**display, "current_refresh_hz": actual}
+        valid = [int(v) for v in (display.get("valid_rates") or []) if isinstance(v, (int, float))]
+        desired = None if force_off else self._savings_refresh_target(profile)
+        lease = self._savings_refresh_lease
+        if lease:
+            applied = int(lease.get("applied_hz") or 0)
+            original = int(lease.get("original_hz") or 0)
+            if actual != applied:
+                # The user moved the slider; don't fight it and don't restore later.
+                self._savings_refresh_lease = None
+                self._settings.pop("savings_refresh_lease", None)
+                if desired is not None:
+                    self._savings_refresh_override = profile
+                self._savings_refresh_error = None
+                self._save_settings_quietly()
+                return display
+            if desired == applied and lease.get("profile") == profile:
+                self._savings_refresh_error = None
+                return display
+            if original not in valid:
+                self._savings_refresh_error = "Original Hz not available; restore pending"
+                return display
+            target = original
+        else:
+            if desired is None or self._savings_refresh_override == profile or actual == desired:
+                return display
+            if desired not in valid:
+                self._savings_refresh_error = f"{desired} Hz is unavailable on this panel"
+                return display
+            target = desired
+            lease = {"profile": profile, "original_hz": actual, "applied_hz": desired}
+            # Persist before changing the display: a restart can still restore.
+            self._savings_refresh_lease = lease
+            self._settings["savings_refresh_lease"] = lease
+            self._save_settings_quietly()
+        if self._clock() < self._savings_refresh_retry_at:
+            return display
+        result = await asyncio.to_thread(writer, target)
+        if not (result.get("success") and result.get("applied")
+                and result.get("verified") and result.get("verified_refresh_hz") == target):
+            self._savings_refresh_error = str(result.get("error") or result.get("reason") or "refresh-not-verified")
+            self._savings_refresh_retry_at = self._clock() + 15.0
+            # Leave lease until next verified read: the write may have succeeded.
+            return display
+        if target == int(lease["original_hz"]):
+            self._savings_refresh_lease = None
+            self._settings.pop("savings_refresh_lease", None)
+            self._save_settings_quietly()
+        self._savings_refresh_error = None
+        self._last_display = {}
+        self._last_display_poll = 0.0
+        self._event("savings-refresh", "applied" if target != int(lease["original_hz"]) else "restored",
+                    profile=profile, hz=target)
+        display["current_refresh_hz"] = target
+        return display
 
     def _display_probe(self) -> Dict[str, Any]:
         """Active display + the internal panel's actual refresh rate when Gamescope reports it."""
@@ -1808,6 +1904,8 @@ class GovernorService:
                 await self._release(forced, "governor-disabled")
         if profile != self._active_profile:
             old = self._active_profile
+            if old and self._savings_refresh_lease is not None:
+                await self._sync_savings_refresh(old, force_off=True)
             if old:
                 await self._release(old, "profile-changed")
             else:
@@ -1819,6 +1917,8 @@ class GovernorService:
         enabled = self._profile_enabled(profile)
         self._status.update({"profile": profile, "enabled": enabled})
         if not enabled:
+            if self._savings_refresh_lease is not None:
+                await self._sync_savings_refresh(profile, force_off=True)
             if self.power.state.owned or self._status.get("state") != "DISABLED" or self._point or self._request:
                 await self._release(profile, "governor-disabled")
             # 1.2.2 ships with Rings on by default. The HUD is independent of
@@ -1842,6 +1942,7 @@ class GovernorService:
         external = bool(display.get("external", False))
         if self._device is None:
             self._device = await asyncio.to_thread(detect_model)
+        display = await self._sync_savings_refresh(profile, display)
         policy = target_for(self._device["model"], external=external, valid_rates=display.get("valid_rates"),
                             current_hz=display.get("current_refresh_hz"))
         target = int(policy["target"])
