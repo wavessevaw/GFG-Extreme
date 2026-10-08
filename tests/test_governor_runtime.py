@@ -9,6 +9,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1311,14 +1312,30 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.assertEqual(runner.tdp_offset_w, 0.0, "observe never moves watts")
         self.assertEqual(self.svc.get_status("game")["frame_os"]["mode"], "observe")
 
+    def test_act_requires_explicit_developer_unlock(self):
+        with patch.dict(os.environ, {"GFG_FRAME_OS_EXPERIMENTAL_ACT": "0"}):
+            refused = self.svc.set_frame_os("game", "act")
+            self.assertFalse(refused["success"])
+            self.assertEqual(self.svc._frame_os_mode("game"), "off")
+            self.assertFalse(self.svc.frame_os_marker_path.exists())
+            self.assertFalse(self.svc.get_status("game")["frame_os"]["act_unlocked"])
+
+            # A prior build could have persisted Act; never implicitly apply it.
+            self.svc._settings.setdefault("profiles", {}).setdefault("game", {})["frame_os"] = "act"
+            self.assertEqual(self.svc._frame_os_mode("game"), "off")
+            self.svc._sync_frame_os_marker()
+            self.assertFalse(self.svc.frame_os_marker_path.exists())
+
     def test_act_offset_is_applied_on_top_of_the_budget_cap(self):
-        self.svc.set_frame_os("game", "act")
-        self.feed(20, 45, 90)
-        self.step()
-        self.feed(16, 30, 90)
-        self.step()
-        runner = self.svc.frame_os
-        runner.last = {"decision": {"tdp_w": runner.policy.broker.calm_w + 4.0}}
-        self.svc._applied_tdp = None
-        asyncio.run(self.svc._apply_budget_tdp("game"))
-        self.assertEqual(self.svc.power.writes[-1], min(self.svc._budget.normal_max_w, self.svc._budget.tdp + 4.0))
+        with patch.dict(os.environ, {"GFG_FRAME_OS_EXPERIMENTAL_ACT": "1"}):
+            self.assertTrue(self.svc.set_frame_os("game", "act")["success"])
+            self.assertTrue(self.svc.get_status("game")["frame_os"]["act_unlocked"])
+            self.feed(20, 45, 90)
+            self.step()
+            self.feed(16, 30, 90)
+            self.step()
+            runner = self.svc.frame_os
+            runner.last = {"decision": {"tdp_w": runner.policy.broker.calm_w + 4.0}}
+            self.svc._applied_tdp = None
+            asyncio.run(self.svc._apply_budget_tdp("game"))
+            self.assertEqual(self.svc.power.writes[-1], min(self.svc._budget.normal_max_w, self.svc._budget.tdp + 4.0))
