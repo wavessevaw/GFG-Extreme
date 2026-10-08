@@ -324,7 +324,7 @@ class TrialFlowTests(RuntimeBase):
     def test_expired_steam_menu_focus_does_not_freeze_governor(self):
         self.feed(12, 30, 90)
         self.svc.observer.game_focused = False
-        self.svc.observer.game_focused_at = self.svc._clock() - 8.0
+        self.svc.observer.game_focused_at = self.t["now"] - 8.0
         st = self.step()
         self.assertNotEqual(st.get("reason"), "steam-menu-open")
         self.assertIsNone(self.svc._menu_since)
@@ -1495,6 +1495,7 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         writes = list(self.svc.power.writes)
         self.svc.observer.game_focused = False
         self.feed(20, 30, 30)                     # generation suspended under the menu
+        self.svc.observer.game_focused_at = self.t["now"]  # event and FPS share monotonic clock
         st = self.step()
         self.assertEqual((st["state"], st["reason"]), ("PAUSED", "steam-menu-open"))
         self.assertEqual(self.svc.power.writes, writes, "nothing changes while the menu is open")
