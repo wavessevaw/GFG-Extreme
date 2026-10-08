@@ -219,6 +219,7 @@ class GovernorService:
         self._draw_samples: List[float] = []
         self._tdp_set_seq = 0
         self._fast_point_key: Optional[str] = None
+        self._fast_last_sample_seq = 0  # never count a cached FPS window as another check
         self._rollback_deltas: Optional[Dict[str, Any]] = None
         self._rollback_at = 0.0
         self._generation_seen: Optional[int] = None
@@ -2148,8 +2149,15 @@ class GovernorService:
         # watts within seconds.  Lowering stays with the windows below.
         if self._fast_point_key != point.key:  # samples from another point say nothing
             self._fast_point_key, self._tdp_set_seq = point.key, self.observer.sample_seq
+            self._fast_last_sample_seq = self.observer.sample_seq
+            budget.starved_checks = 0
         recent = self.observer.summary(self.FAST_CHECK_SECONDS, after_seq=self._tdp_set_seq)
-        if recent.get("samples", 0) >= self.FAST_MIN_SAMPLES:
+        sample_seq = recent.get("last_sample_seq")
+        new_evidence = (recent.get("samples", 0) >= self.FAST_MIN_SAMPLES
+                        and isinstance(sample_seq, int)
+                        and sample_seq > self._fast_last_sample_seq)
+        if new_evidence:
+            self._fast_last_sample_seq = sample_seq
             draw_now = statistics.median(self._draw_samples[-3:]) if self._draw_samples else None
             before = budget.tdp
             if budget.fast_check(now, (recent.get("real") or {}).get("median"), draw_now) == "move":
@@ -2162,6 +2170,10 @@ class GovernorService:
                 self._status.update({"state": self._budget_state(), "reason": budget.last_reason})
                 await self._apply_budget_tdp(profile)
                 return
+        else:
+            # A controller called at 1 Hz can otherwise count the same FPS
+            # samples twice and boost watts without two independent checks.
+            budget.fast_check(now, None, None)
 
         # 3. Judge one fresh, non-overlapping window.
         fresh = self.observer.summary(self.BUDGET_WINDOW_SECONDS, after_seq=self._evaluation_after_seq)
