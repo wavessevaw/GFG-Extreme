@@ -1739,6 +1739,38 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.feed(16, 30, 90)
         self.step()
         self.assertEqual(self.svc._point["key"], "30x3")
+        self._settle_budget()
+
+    def _settle_budget(self):
+        """The Governor has found this point's watts (Act starts only after that, field log 1.5.0)."""
+        budget = self.svc._budget
+        budget.phase, budget.probe = "locked", None
+        budget.locked_since = self.t["now"] - 1000.0
+
+    def test_act_waits_for_the_governor_to_settle_its_watts_and_steps_aside_to_research(self):
+        self.svc.set_frame_os_act_unlock(True)
+        self.assertTrue(self.svc.set_frame_os("game", "act")["success"])
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.svc.frame_os.last = {"telemetry": {"live": True}}
+        st = self.windows(2, 30, 90)
+        self.assertIsNone(self.svc._injection, "still searching lower watts: Act waits")
+        self.assertNotEqual(st["reason"], "frame-os-act-holds-point")
+        self._settle_budget()
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNotNone(self.svc._injection, "watts settled: Act takes the point")
+        # ten minutes later Act steps aside so the Governor can try a lower level
+        self.svc._injection_started_at -= self.svc.ACT_RESEARCH_EVERY_S
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNone(self.svc._injection)
+        events = [json.loads(l) for l in Path(self.svc.events_path).read_text().splitlines()]
+        self.assertTrue(any(e.get("event") == "frame-os-injection-yielded" and e.get("reason") == "power-research"
+                            for e in events))
+        self.assertEqual(self.svc._injection_starvation_yields, 0, "a research pause is no starvation")
 
     def test_frame_os_remembers_ab_results_per_game(self):
         self.inspector.info.update(app_id="4242", launch_key=[1, 2, 2])
