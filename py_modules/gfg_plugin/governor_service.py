@@ -39,6 +39,7 @@ from .steamos_tdp import SteamOSManagerTdp
 from .game_model import GameModelStore, context_key, floor_key, game_prefix
 from .session_stats import SessionStats
 from .frame_os.control_channel import DEFAULT_PATH as DEFAULT_SHM, ControlChannel
+from . import hud_rings
 from .frame_os import layer_install as frame_os_layer
 from .frame_os.runner import FrameOsRunner
 from .package_paths import PLUGIN_ROOT
@@ -139,6 +140,15 @@ class GovernorService:
         share = getattr(self.configuration, "local_share_dir", None)
         self.frame_os_layer_dir: Optional[Path] = frame_os_layer.target_dir(share) if share else None
         self.frame_os_layer_error: Optional[str] = None
+        # Ring HUD (GFG HUD layer): bitmap + the size the layer reports, both in /dev/shm.
+        self.ring_hud_path = Path(os.environ.get("GFG_HUD_FILE") or hud_rings.DEFAULT_PATH)
+        self.ring_hud_extent = Path(os.environ.get("GFG_HUD_EXTENT_FILE") or hud_rings.DEFAULT_EXTENT)
+        self.ring_hud_marker_path = self.configuration.runtime_state_dir / "hud-rings.enabled"
+        self._ring_hud_acc: Dict[str, list] = {}
+        self._ring_hud_levels: Dict[str, int] = {}
+        self._ring_hud_due = 0.0
+        self._ring_hud_seq = 0
+        self.ring_hud_layer_error: Optional[str] = None
         self.frame_os_registry_dir: Optional[Path] = getattr(self.configuration, "user_vulkan_layer_dir", None)
         self._settings = self._load_settings()
         builder = getattr(self.configuration, "build_governor_overlay_text", None)
@@ -402,9 +412,14 @@ class GovernorService:
     def hud_settings(self, profile: str) -> Dict[str, Any]:
         raw = self._profile_settings(profile).get("hud") or {}
         preset, position = hud_normalize(raw.get("preset"), raw.get("position"))
-        return {"enabled": bool(raw.get("enabled", False)), "preset": preset, "position": position}
+        style = raw.get("style") if raw.get("style") in self.HUD_STYLES else "rings"
+        return {"enabled": bool(raw.get("enabled", False)), "preset": preset, "position": position, "style": style}
 
-    def set_hud(self, profile: str, enabled: Any = None, preset: Any = None, position: Any = None) -> Dict[str, Any]:
+    HUD_STYLES = ("rings", "text")
+    RING_HUD_PERIOD_S = 20.0
+
+    def set_hud(self, profile: str, enabled: Any = None, preset: Any = None, position: Any = None,
+                style: Any = None) -> Dict[str, Any]:
         profile = str(profile or "").strip()
         if not profile:
             return {"success": False, "error": "Profile is required"}
@@ -415,8 +430,15 @@ class GovernorService:
             preset if preset is not None else current["preset"],
             position if position is not None else current["position"],
         )
+        if style in self.HUD_STYLES:
+            current["style"] = style
         self._settings.setdefault("profiles", {}).setdefault(profile, {})["hud"] = current
         self._save_settings()
+        self._ring_hud_due = 0.0           # redraw at once with the new look
+        try:
+            self._sync_frame_os_marker()   # stages the HUD layer and its launch marker
+        except OSError:
+            pass
         self._sync_hud(profile)
         self._poke()
         # MangoHud is loaded at launch with a hidden config and re-reads it: live.
@@ -430,17 +452,89 @@ class GovernorService:
             # HudWriter); an older pending config is replaced, never flushed first.
             if settings["enabled"]:
                 status = self.get_status(profile)
-                # MangoHud re-reads a changed config, so the FPS source follows the telemetry.
-                self.hud.activate(settings["preset"], settings["position"],
-                                  generated_fps=hud_output_fps(status) is not None)
-                # get_status, not _status: power/effort/active point are only merged in there.
-                self.hud.write_status(status, settings["preset"])
+                rings = settings["style"] == "rings" and self._ring_hud_live()
+                if rings:
+                    # the GFG HUD layer draws the rings; MangoHud stays loaded but hidden
+                    self.hud.deactivate()
+                    self._publish_ring_hud(status, settings)
+                else:
+                    self._clear_ring_hud()
+                    # MangoHud re-reads a changed config, so the FPS source follows the telemetry.
+                    self.hud.activate(settings["preset"], settings["position"],
+                                      generated_fps=hud_output_fps(status) is not None)
+                    # get_status, not _status: power/effort/active point are only merged in there.
+                    self.hud.write_status(status, settings["preset"])
             elif self._hud_preload_wanted():
+                self._clear_ring_hud()
                 self.hud.deactivate()
             else:
+                self._clear_ring_hud()
                 self.hud.remove()
         except OSError as error:
             self.log.debug("Governor HUD sync failed: %s", error)
+
+    def _ring_hud_live(self) -> bool:
+        """The GFG HUD layer runs in this game: it wrote the swapchain size since the launch.
+        Otherwise (old launch, layer missing, Flatpak) the text line stays as the fallback."""
+        try:
+            written = self.ring_hud_extent.stat().st_mtime
+        except OSError:
+            return False
+        launch = self._launch if isinstance(self._launch, dict) else {}
+        key = launch.get("launch_key") if launch.get("running") else None
+        started = key[2] if isinstance(key, (list, tuple)) and len(key) > 2 else None   # wall-clock launch time
+        return isinstance(started, (int, float)) and written >= float(started) - 5.0
+
+    def _sample_ring_hud(self, status: Dict[str, Any]) -> None:
+        tel = status.get("telemetry") or {}
+        summary = tel.get("summary") or tel
+        power = status.get("power") or {}
+        for key, value in (("fps", (summary.get("output") or {}).get("median")),
+                           ("real", (summary.get("real") or {}).get("median")),
+                           ("tdp", power.get("observed_tdp_w") if power.get("observed_tdp_w") is not None
+                            else power.get("current_tdp_w"))):
+            if isinstance(value, (int, float)) and value > 0:
+                acc = self._ring_hud_acc.setdefault(key, [0.0, 0])
+                acc[0] += float(value)
+                acc[1] += 1
+        level = ((status.get("frame_os") or {}).get("decision") or {}).get("level")
+        if level:
+            self._ring_hud_levels[level] = self._ring_hud_levels.get(level, 0) + 1
+
+    def _publish_ring_hud(self, status: Dict[str, Any], settings: Dict[str, Any]) -> None:
+        """Averages over 20 s, drawn once per 20 s (a calm HUD, and cheap)."""
+        self._sample_ring_hud(status)
+        now = self._clock()
+        if now < self._ring_hud_due:
+            return
+        self._ring_hud_due = now + self.RING_HUD_PERIOD_S
+        avg = {k: v[0] / v[1] for k, v in self._ring_hud_acc.items() if v[1]}
+        power = status.get("power") or {}
+        battery = status.get("battery") or {}
+        fo = status.get("frame_os") or {}
+        benefit = fo.get("benefit") or {}
+        data: Dict[str, Any] = {
+            "fps": avg.get("fps"), "real": avg.get("real"), "tdp": avg.get("tdp"),
+            "target": status.get("target_output_fps") or (status.get("device") or {}).get("target"),
+            "limit": power.get("initial_tdp_w") or power.get("maximum_tdp_w") or 15,
+            "battery_min": battery.get("minutes_left"), "battery_pct": battery.get("percent"),
+        }
+        if fo.get("enabled") and fo.get("mode", "off") != "off" and benefit.get("ready"):
+            data["frame_os"] = {
+                "level": max(self._ring_hud_levels, key=self._ring_hud_levels.get) if self._ring_hud_levels else None,
+                "estimate": benefit.get("estimate"), "response": benefit.get("response_pct"),
+                "frames": benefit.get("frames_pct"), "energy": benefit.get("energy_pct")}
+        self._ring_hud_acc, self._ring_hud_levels = {}, {}
+        self._ring_hud_seq += 1
+        hud_rings.write_overlay(data, preset=settings["preset"], position=settings["position"],
+                                seq=self._ring_hud_seq, path=self.ring_hud_path, extent_path=self.ring_hud_extent)
+
+    def _clear_ring_hud(self) -> None:
+        if self._ring_hud_seq and self._ring_hud_due != -1.0:
+            self._ring_hud_seq += 1
+            hud_rings.write_overlay(None, preset="standard", position="top-left", seq=self._ring_hud_seq,
+                                    path=self.ring_hud_path, extent_path=self.ring_hud_extent)
+            self._ring_hud_due = -1.0       # cleared; the next publish draws at once
 
     def _hud_preload_wanted(self) -> bool:
         """Keep a hidden MangoHud in new launches only for Governor/HUD users.
@@ -751,6 +845,21 @@ class GovernorService:
         else:
             try:
                 self.frame_os_marker_path.unlink()
+            except FileNotFoundError:
+                pass
+        # Ring HUD: the launcher adds the GFG HUD layer while some profile shows the rings.
+        rings = isinstance(profiles, dict) and any(
+            self.hud_settings(profile)["enabled"] and self.hud_settings(profile)["style"] == "rings"
+            for profile in profiles)
+        if rings and self.frame_os_layer_dir is not None:
+            staged = frame_os_layer.stage(self.frame_os_layer_source, self.frame_os_layer_dir, self.log,
+                                          registry_dir=self.frame_os_registry_dir, layer_key="hud")
+            self.ring_hud_layer_error = staged["error"]
+            self.ring_hud_marker_path.parent.mkdir(parents=True, exist_ok=True)
+            self.ring_hud_marker_path.write_text("enabled\n", encoding="utf-8")
+        else:
+            try:
+                self.ring_hud_marker_path.unlink()
             except FileNotFoundError:
                 pass
 

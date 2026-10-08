@@ -840,11 +840,12 @@ class Plugin:
         return self.governor_service.forget_game_model(profile_name)
 
     async def set_governor_hud(
-            self, profile_name: str, enabled: Any = None, preset: Any = None, position: Any = None
+            self, profile_name: str, enabled: Any = None, preset: Any = None, position: Any = None,
+            style: Any = None,
     ) -> Dict[str, Any]:
-        """Configure the in-game HUD (MangoHud layer + Governor status line)."""
+        """Configure the in-game HUD: rings (GFG HUD layer) or the text line (MangoHud)."""
         return await asyncio.to_thread(
-            self.governor_service.set_hud, profile_name, enabled, preset, position
+            self.governor_service.set_hud, profile_name, enabled, preset, position, style
         )
 
     async def get_pipeline_inspector(self, profile_name: str = "") -> Dict[str, Any]:

@@ -104,3 +104,32 @@ class FrameOsLaunchOrderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RingHudLaunchTests(FrameOsLaunchOrderTests):
+    def _install_hud(self):
+        from gfg_plugin.frame_os.layer_install import HUD_MANIFEST
+        marker = self.root / "runtime-state" / "hud-rings.enabled"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("enabled\n")
+        self.layer_dir.mkdir(parents=True, exist_ok=True)
+        (self.layer_dir / HUD_MANIFEST).write_text("{}\n")
+
+    def test_hud_goes_after_the_renderer(self):
+        self._install_hud()
+        layers = self._launch_env()["IL"].split(":")
+        self.assertEqual(layers[:2], ["VK_LAYER_MAKO_render", "VK_LAYER_GFG_hud"])
+
+    def test_pacer_first_hud_after_renderer_and_one_layer_path(self):
+        self._install()
+        self._install_hud()
+        env = self._launch_env()
+        layers = env["IL"].split(":")
+        self.assertEqual(layers[:3], [FRAME_OS_LAYER_NAME, "VK_LAYER_MAKO_render", "VK_LAYER_GFG_hud"])
+        self.assertEqual(env["IMPLICIT"].split(":").count(str(self.layer_dir)), 1)
+
+    def test_no_hud_without_marker(self):
+        from gfg_plugin.frame_os.layer_install import HUD_MANIFEST
+        self.layer_dir.mkdir(parents=True, exist_ok=True)
+        (self.layer_dir / HUD_MANIFEST).write_text("{}\n")
+        self.assertNotIn("VK_LAYER_GFG_hud", self._launch_env(inherited="VK_LAYER_GFG_hud")["IL"])

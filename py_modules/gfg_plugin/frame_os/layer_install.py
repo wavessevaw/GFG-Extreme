@@ -25,6 +25,15 @@ FILES = (LIBRARY, MANIFEST)          # manifest last: the launcher keys on it
 REGISTERED_MANIFEST = "VkLayer_GFG_Extreme_frame_os.json"
 GATE_ENV = "GFG_FRAME_OS"
 DISABLE_ENV = "DISABLE_GFG_FRAME_OS"
+# The ring HUD layer ships beside the pacer (bin/gfg-frame-os) and is staged the same way.
+HUD_LIBRARY = "libVkLayer_gfg_hud.so"
+HUD_MANIFEST = "VkLayer_gfg_hud.json"
+HUD_FILES = (HUD_LIBRARY, HUD_MANIFEST)
+HUD_REGISTERED_MANIFEST = "VkLayer_GFG_Extreme_hud.json"
+LAYERS = {
+    "pacer": (FILES, REGISTERED_MANIFEST, GATE_ENV, DISABLE_ENV),
+    "hud": (HUD_FILES, HUD_REGISTERED_MANIFEST, "GFG_HUD", "DISABLE_GFG_HUD"),
+}
 
 
 def bundled_dir(plugin_root: Path) -> Path:
@@ -41,50 +50,54 @@ def _digest(path: Path) -> str:
         return hashlib.sha256(handle.read()).hexdigest()
 
 
-def registered_manifest_text(target_dir: Path, source_manifest: Path) -> str:
+def registered_manifest_text(target_dir: Path, source_manifest: Path, layer_key: str = "pacer") -> str:
+    files, _registered, gate, disable = LAYERS[layer_key]
     data = json.loads(source_manifest.read_text(encoding="utf-8"))
     layer = data["layer"]
-    layer["library_path"] = str(target_dir / LIBRARY)
+    layer["library_path"] = str(target_dir / files[0])
     layer["library_arch"] = "64"
-    layer["enable_environment"] = {GATE_ENV: "1"}
-    layer["disable_environment"] = {DISABLE_ENV: "1"}
+    layer["enable_environment"] = {gate: "1"}
+    layer["disable_environment"] = {disable: "1"}
     return json.dumps(data, indent=2) + "\n"
 
 
 def stage(source_dir: Path, target_dir: Path, logger: Any,
-          registry_dir: Optional[Path] = None) -> Dict[str, Any]:
+          registry_dir: Optional[Path] = None, layer_key: str = "pacer") -> Dict[str, Any]:
     """Copy the layer when it differs. Returns {"installed", "changed", "error"}."""
-    missing = [name for name in FILES if not (source_dir / name).is_file()]
+    files, registered, _gate, _disable = LAYERS[layer_key]
+    missing = [name for name in files if not (source_dir / name).is_file()]
     if missing:
-        return {"installed": is_staged(target_dir), "changed": False,
-                "error": "this build does not include the Frame OS layer"}
+        return {"installed": is_staged(target_dir, layer_key), "changed": False,
+                "error": "this build does not include the " + ("ring HUD" if layer_key == "hud" else "Frame OS")
+                         + " layer"}
     changed = False
     try:
-        for name in FILES:
+        for name in files:
             source, target = source_dir / name, target_dir / name
             if target.is_file() and not target.is_symlink() and _digest(target) == _digest(source):
                 continue
             copy_managed_file_atomically(source, target, 0o644, logger)
             changed = True
         if registry_dir is not None:
-            text = registered_manifest_text(target_dir, source_dir / MANIFEST)
-            changed = write_managed_text_atomically(registry_dir / REGISTERED_MANIFEST, text, 0o644, logger) or changed
+            text = registered_manifest_text(target_dir, source_dir / files[1], layer_key)
+            changed = write_managed_text_atomically(registry_dir / registered, text, 0o644, logger) or changed
     except (OSError, ValueError, KeyError, TypeError) as error:
-        return {"installed": is_staged(target_dir), "changed": changed, "error": str(error)}
+        return {"installed": is_staged(target_dir, layer_key), "changed": changed, "error": str(error)}
     return {"installed": True, "changed": changed, "error": None}
 
 
-def is_staged(target_dir: Path) -> bool:
-    return all((target_dir / name).is_file() for name in FILES)
+def is_staged(target_dir: Path, layer_key: str = "pacer") -> bool:
+    return all((target_dir / name).is_file() for name in LAYERS[layer_key][0])
 
 
 def remove(target_dir: Path, registry_dir: Optional[Path] = None) -> None:
     if registry_dir is not None:
-        try:
-            (registry_dir / REGISTERED_MANIFEST).unlink()
-        except FileNotFoundError:
-            pass
-    for name in reversed(FILES):                      # manifest first: the launcher stops using it
+        for _files, registered, _gate, _disable in LAYERS.values():
+            try:
+                (registry_dir / registered).unlink()
+            except FileNotFoundError:
+                pass
+    for name in (MANIFEST, HUD_MANIFEST, LIBRARY, HUD_LIBRARY):   # manifests first: the launcher stops
         try:
             (target_dir / name).unlink()
         except FileNotFoundError:

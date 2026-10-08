@@ -45,7 +45,7 @@ const cases = [
   ["home-quality-oled", [], ["fewest generated frames first"]],
   ["home-locked-oled", ["Settings", "Frame generation backend"], ["BACKEND", "GFG", "OptiScaler"]],
   ["home-locked-oled", ["Settings", "Scaling"], ["Scale-ready launch"]],
-  ["home-locked-oled", ["Settings", "In-game overlay"], ["Show overlay in game", "Minimal", "Detailed", "Top right"]],
+  ["home-locked-oled", ["Settings", "In-game overlay"], ["Show overlay in game", "STYLE", "Rings", "Text", "20-second averages", "Minimal", "Detailed", "Top right"]],
   ["home-locked-oled", ["Settings", "Profile"], ["Sample Game", "NEW PROFILE"]],
   ["home-locked-oled", ["Settings", "System"], ["ENGINE", "Installed", "Runtime 24.08", "Heroic"]],
   ["home-locked-oled", ["Settings", "All settings"], ["scaling_factor", "allow_fp16"]],

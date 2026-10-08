@@ -1,0 +1,61 @@
+import struct, tempfile, unittest
+from pathlib import Path
+from py_modules.gfg_plugin import hud_rings
+
+SAMPLE = {"fps": 90, "real": 45, "target": 90, "tdp": 15, "limit": 15, "battery_min": 125, "battery_pct": 72,
+          "frame_os": {"estimate": False, "level": "boost", "response": 47, "frames": 50, "energy": 9}}
+
+
+class RingHudTests(unittest.TestCase):
+    def test_presets_choose_their_rings(self):
+        labels = lambda p: [i.get("label") or i.get("text") or i["kind"] for i in hud_rings.items_for(SAMPLE, p)]
+        self.assertEqual(labels("minimal"), ["FPS", "TDP"])
+        self.assertEqual(labels("standard"), ["FPS", "TDP", "sep", "RESP", "FRAMES", "ENERGY"])
+        self.assertEqual(labels("detailed"), ["FPS", "TDP", "BATTERY", "sep", "RESP", "FRAMES", "ENERGY", "BOOST"])
+        self.assertEqual([i.get("label") for i in hud_rings.items_for({**SAMPLE, "frame_os": None}, "standard")],
+                         ["FPS", "TDP"])
+
+    def test_benefit_text_and_colour(self):
+        items = {i.get("label"): i for i in hud_rings.items_for(SAMPLE, "standard")}
+        self.assertEqual(items["RESP"]["text"], "−47%")
+        self.assertEqual(items["FRAMES"]["text"], "+50%")
+        self.assertEqual(items["ENERGY"]["opacity"], 0.45)            # not the live benefit in boost
+        r, g, _b = hud_rings.effect_color(50, 50)
+        self.assertGreater(g, r)                                        # full benefit is green
+        r, g, _b = hud_rings.effect_color(-5, 50)
+        self.assertGreater(r, g)                                        # worse is red
+        est = {i.get("label"): i for i in hud_rings.items_for(
+            {**SAMPLE, "frame_os": {**SAMPLE["frame_os"], "estimate": True}}, "standard")}
+        self.assertEqual(est["RESP"]["rgb"], hud_rings.GREY)
+
+    def test_render_is_opaque_panel_with_transparent_corners(self):
+        for scale in hud_rings.SCALES[:2]:
+            w, h, px = hud_rings.render(SAMPLE, "standard", scale)
+            self.assertEqual(len(px), w * h * 4)
+            self.assertEqual(px[3], 0)                                  # rounded corner skipped
+            mid = ((h // 2) * w + 2) * 4
+            self.assertEqual(px[mid + 3], 255)
+            self.assertTrue(all(a in (0, 255) for a in px[3::4]))      # the layer does no blending
+
+    def test_write_overlay_header_and_clear(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path, extent = Path(tmp) / "hud.raw", Path(tmp) / "hud.extent"
+            extent.write_text("1920 1200")
+            self.assertTrue(hud_rings.write_overlay(SAMPLE, preset="minimal", position="top-right", seq=7,
+                                                    path=path, extent_path=extent))
+            raw = path.read_bytes()
+            magic, version, w, h, corner, margin, seq, _ = struct.unpack("<8I", raw[:32])
+            self.assertEqual((magic, version, corner, margin, seq), (hud_rings.MAGIC, 1, 1, 18, 7))
+            self.assertEqual(len(raw), 32 + w * h * 4)
+            hud_rings.write_overlay(None, preset="minimal", position="top-left", seq=8, path=path,
+                                    extent_path=extent)
+            self.assertEqual(struct.unpack("<8I", path.read_bytes()[:32])[2:4], (0, 0))
+
+    def test_scale_follows_swapchain_height(self):
+        self.assertEqual(hud_rings.scale_for(800), 1.0)
+        self.assertEqual(hud_rings.scale_for(1200), 1.5)
+        self.assertEqual(hud_rings.scale_for(2160), 3.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

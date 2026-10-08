@@ -126,6 +126,29 @@ class RuntimeBase(unittest.TestCase):
     def tearDown(self):
         self.assertEqual(sha(self.cfg.config_file_path), self.saved_hash, "Saved config was modified")
 
+    def test_ring_hud_falls_back_to_text_until_the_layer_reports(self):
+        import time as _t
+        from gfg_plugin import hud_rings
+        self.svc.ring_hud_path = self.cfg.config_dir / "hud.raw"
+        self.svc.ring_hud_extent = self.cfg.config_dir / "hud.extent"
+        self.svc.set_hud("game", True, "standard", "top-left")
+        self.assertTrue(self.svc.ring_hud_marker_path.exists(), "the launcher adds the HUD layer")
+        self.step()
+        self.assertFalse(self.svc.ring_hud_path.exists(), "no layer report yet: text line, no bitmap")
+        self.svc._launch = {"running": True, "launch_key": [1, 2, _t.time() - 30]}
+        self.svc.ring_hud_extent.write_text("1280 800\n")
+        self.svc._sync_hud("game")
+        raw = self.svc.ring_hud_path.read_bytes()
+        magic, version, w, h, corner, margin, seq, _ = hud_rings.HEADER.unpack_from(raw)
+        self.assertEqual((magic, version, corner), (hud_rings.MAGIC, 1, 0))
+        self.assertEqual(len(raw), hud_rings.HEADER.size + w * h * 4)
+        self.svc._sync_hud("game")                 # within 20 s: not redrawn
+        self.assertEqual(hud_rings.HEADER.unpack_from(self.svc.ring_hud_path.read_bytes())[6], seq)
+        self.svc.set_hud("game", True, None, None, "text")
+        self.svc._sync_hud("game")
+        self.assertEqual(hud_rings.HEADER.unpack_from(self.svc.ring_hud_path.read_bytes())[2], 0, "rings cleared")
+        self.assertFalse(self.svc.ring_hud_marker_path.exists())
+
     def test_hud_set_publishes_and_removes_active_config(self):
         from gfg_plugin.governor_hud import active_config_path, status_path
         active = active_config_path(self.cfg.config_dir)
@@ -137,7 +160,8 @@ class RuntimeBase(unittest.TestCase):
         text = active.read_text()
         self.assertIn("position=top-right", text)
         self.assertIn("exec=cat " + str(status_path(self.cfg.config_dir)), text)
-        self.assertEqual(self.svc.get_status("game")["hud"], {"enabled": True, "preset": "detailed", "position": "top-right"})
+        self.assertEqual(self.svc.get_status("game")["hud"],
+                         {"enabled": True, "preset": "detailed", "position": "top-right", "style": "rings"})
         self.step()
         self.assertIn("sc100", status_path(self.cfg.config_dir).read_text())
         self.svc.set_hud("game", False)

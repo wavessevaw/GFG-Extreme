@@ -66,6 +66,7 @@ from .constants import (
     VKBASALT_LAYER_NAME_64,
     WAYLAND_DISPLAY_ENV,
 )
+from .frame_os.layer_install import HUD_MANIFEST as RING_HUD_MANIFEST_FILENAME
 from .frame_os.layer_install import MANIFEST as FRAME_OS_MANIFEST_FILENAME
 from .frame_os.layer_install import target_dir as frame_os_layer_target_dir
 from .governor_overlay import overlay_path as governor_overlay_path
@@ -79,7 +80,7 @@ from .profile_storage import (
 )
 
 
-WRAPPER_FORMAT_VERSION = 82
+WRAPPER_FORMAT_VERSION = 83
 WRAPPER_FORMAT_MARKER = f"# mako-wrapper-format: {WRAPPER_FORMAT_VERSION}"
 HOST_COMPATIBILITY_MARKER = "# mako-host-compatibility: aarch64-passthrough-v1"
 DIAGNOSTICS_DEFAULT_MARKER = (
@@ -87,6 +88,7 @@ DIAGNOSTICS_DEFAULT_MARKER = (
 )
 LEGACY_EXTREME_PFG_LAYER_NAME = "VK_LAYER_MAKO_EXTREME_predictive"
 FRAME_OS_LAYER_NAME = "VK_LAYER_GFG_pacer"
+RING_HUD_LAYER_NAME = "VK_LAYER_GFG_hud"
 
 REQUIRED_WRAPPER_EXPORTS = (
     f"export {PRESENT_ACQUIRE_TIMEOUT_ENV}=",
@@ -746,6 +748,7 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         VKBASALT_LAYER_NAME_64,
         LEGACY_EXTREME_PFG_LAYER_NAME,
         FRAME_OS_LAYER_NAME,
+        RING_HUD_LAYER_NAME,
     ):
         inherited_managed_layer_removal_lines.extend((
             (
@@ -784,6 +787,18 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         "unset GFG_FRAME_OS_ENABLE GFG_FRAME_OS_MODE GFG_FRAME_OS_REAL_HZ GFG_FRAME_OS_TICK_SHAPING GFG_FRAME_OS_PACING",
         "export DISABLE_GFG_FRAME_OS=1",
         'unset gfg_frame_os_marker',
+        # Ring HUD: the GFG HUD layer copies the Governor's ring bitmap into every shown frame.
+        f'gfg_hud_marker={shlex.quote(str(context.runtime_state_dir / "hud-rings.enabled"))}',
+        "gfg_hud=0",
+        'if [ -f "$gfg_hud_marker" ] && [ -r '
+        f'{shlex.quote(str(frame_os_layer_dir / RING_HUD_MANIFEST_FILENAME))} ]; then',
+        "    gfg_hud=1",
+        '    export GFG_HUD_FILE="${GFG_HUD_FILE:-/dev/shm/gfg-hud.raw}"',
+        '    export GFG_HUD_EXTENT_FILE="${GFG_HUD_EXTENT_FILE:-/dev/shm/gfg-hud.extent}"',
+        "fi",
+        "unset GFG_HUD",
+        "export DISABLE_GFG_HUD=1",
+        'unset gfg_hud_marker',
         "mako_renderer_enabled=0",
         'if [ "${mako_renderer_required:-0}" = 1 ] && '
         f'[ "${{{MAKO_LAYER_DISABLE_ENV}:-0}}" != 1 ]; then',
@@ -970,6 +985,16 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         f'    mako_implicit_layer_path="$mako_implicit_layer_path:"{shlex.quote(str(frame_os_layer_dir))}',
         "fi",
         "unset gfg_frame_os",
+        # Ring HUD: after the renderer, so it is drawn on generated frames too.
+        'if [ "$gfg_hud" = 1 ] && [ "$mako_flatpak_runtime" != 1 ]; then',
+        '    if [ "$mako_renderer_enabled" = 1 ] && [ -z "$mako_managed_instance_layers" ]; then',
+        f"        mako_managed_instance_layers={MAKO_LAYER_NAME}",
+        "    fi",
+        f'    mako_managed_instance_layers="${{mako_managed_instance_layers:+$mako_managed_instance_layers:}}{RING_HUD_LAYER_NAME}"',
+        f'    case ":$mako_implicit_layer_path:" in *":"{shlex.quote(str(frame_os_layer_dir))}":"*) ;; '
+        f'*) mako_implicit_layer_path="$mako_implicit_layer_path:"{shlex.quote(str(frame_os_layer_dir))} ;; esac',
+        "fi",
+        "unset gfg_hud",
         # Clear retired PFG environment from old launch-option experiments.
         "unset MAKO_EXTREME_PFG",
         "unset DISABLE_MAKO_EXTREME_PFG",
