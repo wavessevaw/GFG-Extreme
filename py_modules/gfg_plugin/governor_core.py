@@ -880,6 +880,9 @@ class BudgetController:
         self.ideal_max_w = min(BALANCED_IDEAL_MAX_W if balanced else self.IDEAL_MAX_W, self.normal_max_w)
         start_w = BALANCED_START_TDP_W if balanced else self.START_TDP_W
         self.tdp = min(max(start_w, self.min_w), self.normal_max_w) if self.tdp_control else None
+        # Playtime never demands less than the controller's starting/confirmed
+        # playable power. This is a safety floor, not a promise of 30 FPS.
+        self.playtime_safe_w = float(self.tdp) if self.tdp is not None else start_w
         if balanced:
             # No last-resort ratio and no watts beyond the Deck's normal range: Balanced trades
             # some battery for a real-frame floor of 30 and a ceiling it never crosses.
@@ -978,6 +981,8 @@ class BudgetController:
             self.tdp = round(min(max(float(tdp_w), self.min_w), self.normal_max_w), 1)
         self.good = self.bad = 0
         self.warm_started = True
+        if self.tdp is not None:
+            self.playtime_safe_w = max(self.playtime_safe_w, self.tdp)
         self._lock(now, "warm-start")
         return True
 
@@ -1047,6 +1052,7 @@ class BudgetController:
         if self.tdp_control and self.tdp is not None and self._binding(self.draw_w):
             self.held = [(t, w) for t, w in self.held if now - t < self.WORK_MEMORY_S]
             self.held.append((now, float(self.tdp)))
+            self.playtime_safe_w = max(self.playtime_safe_w, min(self.normal_max_w, float(self.tdp)))
 
     def _work_tdp(self, now: float) -> Optional[float]:
         """The last level the game held at a binding cap: where it goes back after a menu or a pause."""
@@ -1535,6 +1541,7 @@ class BudgetController:
             "exhausted": self.exhausted,
             "cap_ignored": self.cap_ignored,
             "warm_started": self.warm_started,
+            "playtime_safe_w": self.playtime_safe_w,
             "flavor": self.flavor,
             "verifying": self.verifying,
             "current_max_multiplier": self.current_max_multiplier,
