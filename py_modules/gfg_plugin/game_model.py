@@ -121,7 +121,10 @@ class GameModelStore:
             # A verified, newly held point supersedes the failure of that same
             # point. Otherwise a stale rejection would override fresh success
             # after a plugin reload and prevent a valid warm start.
-            entry["failed"].pop(point, None)
+            if tdp is not None:
+                # An uncapped/observe-only confirmation proves output cadence,
+                # not the wattage at which a previous cap failed.
+                entry["failed"].pop(point, None)
         self._entries[key] = entry
         self._last_write[key] = now
         if len(self._entries) > MAX_ENTRIES:
