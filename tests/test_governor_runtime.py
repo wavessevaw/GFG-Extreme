@@ -915,6 +915,53 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual(st["budget"]["phase"], "search_down")
         self.assertEqual(st["state"], "OPTIMIZE_POWER")
 
+    def test_fast_tdp_rescue_never_double_counts_a_cached_fps_window(self):
+        """One renderer sample batch is one check, not two just because the UI polls twice."""
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        budget = self.svc._budget
+        self.assertIsNotNone(budget)
+        self.assertEqual(self.svc._point["key"], "30x3")
+        self.step(0.1)  # initialize the new point's fresh-evidence cursor
+        baseline = budget.tdp
+        self.svc.power.values["draw_w"] = baseline
+        self.feed(4, 20, 60, dt=0.45)
+        self.step(0.1)
+        self.assertEqual(budget.starved_checks, 1)
+        self.assertEqual(budget.tdp, baseline)
+        # No new renderer sample here. Cached median cannot trigger a fast raise.
+        self.step(0.1)
+        self.assertEqual(budget.starved_checks, 0)
+        self.assertEqual(budget.tdp, baseline)
+        self.feed(4, 20, 60, dt=0.45)
+        self.step(0.1)
+        self.assertEqual(budget.starved_checks, 1)
+        self.assertEqual(budget.tdp, baseline)
+        self.feed(4, 20, 60, dt=0.45)
+        self.step(0.1)
+        self.assertGreater(budget.tdp, baseline, "two independent low-FPS batches justify watts")
+
+    def test_game_change_discards_fast_fps_and_act_evidence(self):
+        # Even if the new game selects the same 30x3 operating point, its
+        # renderer samples and Act grace window belong to a different session.
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertEqual(self.svc._point["key"], "30x3")
+        self.svc._fast_point_key = "30x3"
+        self.svc._fast_last_sample_seq = 999999
+        self.svc._injection_started_at = self.t["now"] - 50
+        self.inspector.info["launch_key"] = [9, 9, 9]
+        self.svc._launch_polled = -1e9
+        state = self.step()
+        self.assertEqual(state["reason"], "new-game-session")
+        self.assertIsNone(self.svc._fast_point_key)
+        self.assertLess(self.svc._fast_last_sample_seq, 999999)
+        self.assertIsNone(self.svc._injection_started_at)
+
     def test_host_heat_reaches_the_budget_controller(self):
         self.svc.sensors.sample = lambda force=False: {"temp_c": 84.0, "thermal_headroom_c": 6.0}
         self.feed(20, 45, 90)
@@ -1543,6 +1590,28 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.step()
         self.assertIsNone(self.svc._injection, "no flapping right after a yield")
 
+    def test_renderer_replan_is_not_a_false_motionboost_starvation(self):
+        # The 8 October log captured two Act lockouts on a 1-2 sample
+        # reconfiguration where output briefly equaled real. Never lock out
+        # a feature before 4 s of settled evidence.
+        self._act_live_point()
+        self.svc.frame_os.last = {"telemetry": {"live": True}}
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNotNone(self.svc._injection)
+        for _ in range(2):
+            self.feed(2, 30, 30, dt=0.5)
+            self.step(0.1)
+            self.assertIsNotNone(self.svc._injection, "transient re-plan is not starvation")
+            self.feed(16, 30, 90)
+            self.step()
+        self.assertEqual(self.svc._injection_starvation_yields, 0)
+        # A real, sustained outage must *still* release the overlay.
+        self.feed(20, 20, 60)
+        self.step()
+        self.assertIsNone(self.svc._injection)
+        self.assertEqual(self.svc._injection_starvation_yields, 1)
+
     def test_repeated_act_output_starvation_locks_out_injection_for_session(self):
         """A bad adaptive renderer must not cycle 16 times through 30-FPS drops."""
         self._act_live_point()
@@ -1616,13 +1685,29 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.assertEqual(self.svc._injection_starvation_yields, 0)
         self.assertIsNotNone(self.svc._injection, "Act still injects after three long menus")
 
-    def test_a_menu_event_without_its_return_expires(self):
+    def test_long_steam_menu_does_not_poison_battery_or_act_memory(self):
+        self._act_live_point()
+        self.svc.frame_os.last = {"telemetry": {"live": True}}
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNotNone(self.svc._injection)
+        self.svc.observer.game_focused = False
+        self.svc.observer.game_focused_at = self.t["now"] - (self.svc.MENU_MAX_S + 60)
+        for _ in range(4):
+            self.feed(20, 30, 30)
+            st = self.step(2.0)
+            self.assertEqual((st["state"], st["reason"]), ("PAUSED", "steam-menu-open"))
+        self.assertEqual(self.svc._injection_starvation_yields, 0)
+
+    def test_missed_focus_return_does_not_pause_forever(self):
         self.feed(20, 45, 90)
         self.step()
+        self.feed(16, 30, 90)
+        self.step()
         self.svc.observer.game_focused = False
-        self.svc.observer.game_focused_at = self.t["now"] - (self.svc.MENU_MAX_S + 1)
-        self.feed(20, 30, 30)
-        self.assertNotEqual(self.step()["reason"], "steam-menu-open", "never paused forever")
+        self.svc.observer.game_focused_at = self.t["now"] - (self.svc.MENU_MAX_S + 60)
+        self.feed(20, 30, 90)
+        self.assertNotEqual(self.step()["reason"], "steam-menu-open")
 
     def test_steam_menu_pauses_measuring_and_drops_its_samples(self):
         self.feed(20, 45, 90)

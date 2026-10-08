@@ -201,6 +201,7 @@ class GovernorService:
         self._point_deltas: Dict[str, Any] = {}
         # Frame OS Act: the adaptive overlay written on top of the live point (None: not injecting)
         self._injection: Optional[Dict[str, Any]] = None
+        self._injection_started_at = None
         self._injection_seq = 0
         self._injection_hold_until = 0.0
         self._injection_starvation_yields = 0  # per session; Act circuit breaker
@@ -219,6 +220,7 @@ class GovernorService:
         self._draw_samples: List[float] = []
         self._tdp_set_seq = 0
         self._fast_point_key: Optional[str] = None
+        self._fast_last_sample_seq = 0  # never count a cached FPS window as another check
         self._rollback_deltas: Optional[Dict[str, Any]] = None
         self._rollback_at = 0.0
         self._generation_seen: Optional[int] = None
@@ -907,6 +909,12 @@ class GovernorService:
         return os.environ.get(self.FRAME_OS_ACT_ENV) == "1" or bool(self._settings.get("frame_os_act_unlocked"))
 
     INJECTION_HOLD_S = 60.0
+    # Do not interpret the transitional cadence right after an Act change as
+    # persistent frame starvation. Requires fresh, consecutive renderer samples.
+    INJECTION_GRACE_S = 4.0
+    INJECTION_MIN_SAMPLES = 3
+    STARVATION_RUN = 3
+    _injection_started_at: Optional[float] = None
 
     def _frame_os_ab(self) -> bool:
         """A/B proof windows in Act (on unless the player turned them off)."""
@@ -1019,7 +1027,7 @@ class GovernorService:
         age = None if at is None else self.observer.time_fn() - at
         if age is not None and age <= 5.0:
             return True
-        if age is None or age > self.MENU_MAX_S:
+        if age is None:
             return False
         budget = self._budget
         target = float(budget.point.target_output_fps) if budget is not None else float(
@@ -1032,7 +1040,17 @@ class GovernorService:
         # on screen mean the game shows, even when the point is starved (field case 1.2.3).
         generating = (isinstance(output, (int, float)) and isinstance(real, (int, float)) and real > 0
                       and output >= 1.4 * real)
-        return not (back or generating)
+        if back or generating:
+            return False
+        if age <= self.MENU_MAX_S:
+            return True
+        # Long-lived Steam menus still suspend generation. Expired focus
+        # timestamps alone do not prove anything in native (x1) mode.
+        point = self._point or {}
+        multiplier = point.get("multiplier") if isinstance(point, dict) else None
+        return (isinstance(multiplier, (int, float)) and multiplier > 1.2
+                and isinstance(output, (int, float)) and isinstance(real, (int, float))
+                and real > 0 and output < 1.2 * real)
 
     def _configure_frame_os(self, profile: str) -> None:
         budget = self._budget
@@ -1303,6 +1321,7 @@ class GovernorService:
         self._point_external = None
         self._point_deltas = {}
         self._injection = None
+        self._injection_started_at = None
         self.frame_os.executor_active = False
         self._request = None
         self._ladder = None
@@ -1313,6 +1332,8 @@ class GovernorService:
         self._applied_tdp = None
         self._over_cap_windows = 0
         self._draw_samples = []
+        self._fast_point_key = None
+        self._fast_last_sample_seq = self.observer.sample_seq
         self._rollback_deltas = None
         self._synced_deltas = None
         self._evaluation_after_seq = self.observer.sample_seq
@@ -2132,8 +2153,15 @@ class GovernorService:
         # watts within seconds.  Lowering stays with the windows below.
         if self._fast_point_key != point.key:  # samples from another point say nothing
             self._fast_point_key, self._tdp_set_seq = point.key, self.observer.sample_seq
+            self._fast_last_sample_seq = self.observer.sample_seq
+            budget.starved_checks = 0
         recent = self.observer.summary(self.FAST_CHECK_SECONDS, after_seq=self._tdp_set_seq)
-        if recent.get("samples", 0) >= self.FAST_MIN_SAMPLES:
+        sample_seq = recent.get("last_sample_seq")
+        new_evidence = (recent.get("samples", 0) >= self.FAST_MIN_SAMPLES
+                        and isinstance(sample_seq, int)
+                        and sample_seq > self._fast_last_sample_seq)
+        if new_evidence:
+            self._fast_last_sample_seq = sample_seq
             draw_now = statistics.median(self._draw_samples[-3:]) if self._draw_samples else None
             before = budget.tdp
             if budget.fast_check(now, (recent.get("real") or {}).get("median"), draw_now) == "move":
@@ -2146,6 +2174,10 @@ class GovernorService:
                 self._status.update({"state": self._budget_state(), "reason": budget.last_reason})
                 await self._apply_budget_tdp(profile)
                 return
+        else:
+            # A controller called at 1 Hz can otherwise count the same FPS
+            # samples twice and boost watts without two independent checks.
+            budget.fast_check(now, None, None)
 
         # 3. Judge one fresh, non-overlapping window.
         fresh = self.observer.summary(self.BUDGET_WINDOW_SECONDS, after_seq=self._evaluation_after_seq)
@@ -2189,12 +2221,22 @@ class GovernorService:
         if acting and self._budget is not None:
             # Safety: heat or a starved output hands the point back to the Governor's own judgement.
             hot = (self._status.get("diagnosis") or {}).get("thermal") == "hot"
-            output = (self.observer.summary(self.FAST_CHECK_SECONDS, after_seq=self._injection_seq)
-                      .get("output") or {}).get("median")
-            starved = isinstance(output, (int, float)) and output < 0.8 * float(self._budget.point.target_output_fps)
+            fast = self.observer.summary(self.FAST_CHECK_SECONDS, after_seq=self._injection_seq)
+            output = (fast.get("output") or {}).get("median")
+            settled = (self._injection is None or self._injection_started_at is None
+                       or (self._clock() - self._injection_started_at >= self.INJECTION_GRACE_S
+                           and (fast.get("samples") or 0) >= self.INJECTION_MIN_SAMPLES))
+            floor = 0.8 * float(self._budget.point.target_output_fps)
+            recent = [sample.output_fps for sample in self.observer.samples_since(
+                self.observer.time_fn() - self.FAST_CHECK_SECONDS,
+                after_seq=self._injection_seq)][-self.STARVATION_RUN:]
+            lasting = (len(recent) >= self.STARVATION_RUN
+                       and all(isinstance(v, (int, float)) and v < floor for v in recent))
+            starved = (settled and lasting and isinstance(output, (int, float))
+                       and output < floor)
             # A starved output under a Steam menu (generation suspended) still takes the overlay
             # back, but it is no evidence against Act: it never counts toward the session lockout.
-            menu = self._menu_covering()
+            menu = self._menu_covering() or getattr(self.observer, "game_focused", None) is False
             if hot or starved:
                 acting = False
                 if self._injection is not None:
@@ -2232,6 +2274,7 @@ class GovernorService:
         self._injection = wanted
         self.frame_os.executor_active = wanted is not None
         self._injection_seq = self.observer.sample_seq
+        self._injection_started_at = self._clock() if wanted is not None else None
         # windows measured under injection say nothing about the plain point
         self._evaluation_after_seq = self.observer.sample_seq
         return wanted is not None
@@ -2247,6 +2290,7 @@ class GovernorService:
                 pass
         self._event("frame-os-injection", "stop", profile=profile, cause=reason)
         self._injection = None
+        self._injection_started_at = None
         self.frame_os.executor_active = False
 
     def _power_feedback(self, profile: str, budget: BudgetController) -> Dict[str, Any]:
