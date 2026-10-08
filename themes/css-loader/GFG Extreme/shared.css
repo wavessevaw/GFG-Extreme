@@ -1,0 +1,42 @@
+/* GFG Extreme for CSS Loader.
+ * Steam's gamepad UI colours everything through its own CSS variables (--gp*), so the theme works
+ * by re-pointing those: no hashed class names, nothing that breaks when Valve rebuilds the client.
+ * The accent and background come from the selected patches (accent-*.css, bg-*.css). */
+:root {
+  /* the GFG palette (frontend/src/theme.js) */
+  --gfg-text: #f5f5f7;
+  --gfg-text2: #a1a1ab;
+  --gfg-text3: #6b6b76;
+  --gfg-line: #2e2e36;
+
+  /* Steam's greys -> GFG surfaces and text */
+  --gpSystemLightestGrey: var(--gfg-text);
+  --gpSystemLighterGrey: #c9c9d1;
+  --gpSystemLightGrey: var(--gfg-text2);
+  --gpSystemGrey: var(--gfg-text3);
+  --gpSystemDarkGrey: var(--gfg-s3);
+  --gpSystemDarkerGrey: var(--gfg-s2);
+  --gpSystemDarkestGrey: var(--gfg-s1);
+
+  /* every blue accent (toggles, sliders, progress, selected tabs, links) -> the GFG accent */
+  --gpColor-Blue: var(--gfg-accent);
+  --gpColor-BlueHi: var(--gfg-accent-hi);
+  --gpColor-DustyBlue: var(--gfg-accent-dim);
+  --gpColor-ChalkyBlue: var(--gfg-accent-hi);
+
+  /* panels and backgrounds */
+  --gpBackground-Neutral: var(--gfg-bg);
+  --gpBackground-LightSofter: var(--gfg-s1);
+  --gpBackground-LightMedium: var(--gfg-s2);
+  --gpBackground-LightHarder: var(--gfg-s3);
+  --gpBackground-DarkSofter: var(--gfg-s1);
+  --gpBackground-DarkMedium: var(--gfg-bg);
+  --gpBackground-DarkHarder: #050506;
+  --gpBackground-ActiveInput: var(--gfg-s2);
+  --gpBackground-Gradient: linear-gradient(180deg, var(--gfg-s1) 0%, var(--gfg-bg) 100%);
+
+  /* rounder, like the GFG cards */
+  --gpCornerSmall: 6px;
+  --gpCornerMedium: 10px;
+  --gpCornerLarge: 14px;
+}

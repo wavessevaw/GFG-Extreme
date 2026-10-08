@@ -1,0 +1,4 @@
+/* the focused control: a red edge instead of Steam's white/blue highlight (gpfocus is not hashed) */
+.gpfocus, .gpfocuswithin:focus-within {
+  box-shadow: 0 0 0 2px var(--gfg-accent), 0 0 14px color-mix(in srgb, var(--gfg-accent) 35%, transparent) !important;
+}
