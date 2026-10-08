@@ -9,7 +9,7 @@
     "test:backend": "python3 scripts/check_generated_config.py && python3 -m unittest discover -s tests -p 'test_*.py'",
     "test:frontend": "node frontend/harness/smoke.mjs",
     "test": "npm run test:backend && npm run build && npm run test:frontend",
-    "screenshots": "node frontend/harness/shot.mjs && node frontend/harness/hud.mjs && python3 tools/make_hud_shots.py"
+    "screenshots": "node frontend/harness/shot.mjs && python3 tools/make_hud_shots.py"
   },
   "repository": {
     "type": "git",

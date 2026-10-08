@@ -14,17 +14,23 @@ sys.path.insert(0, str(ROOT))
 from py_modules.gfg_plugin import hud_rings  # noqa: E402
 
 W, H = 1280, 800
+FOS = {"mode": "act", "estimate": False, "active": True, "measured": {"response": True, "frames": True}}
 SHOTS = {
-    # Frame OS Act boosting in a fight: 45 real frames at 90 Hz.
+    # name: (data, corner, preset).  Frame OS Act boosting in a fight, delivered: 45 real at 90 Hz.
     "standard": ({"fps": 90, "real": 45, "target": 90, "tdp": 15, "limit": 15,
-                  "frame_os": {"estimate": False, "level": "boost", "response": 47, "frames": 50, "energy": 9}},
-                 "top-left"),
-    "minimal": ({"fps": 88, "real": 30, "target": 90, "tdp": 9, "limit": 15}, "top-left"),
+                  "frame_os": {**FOS, "level": "boost", "response": 47, "frames": 50, "energy": 9,
+                               "verified_boost": True, "actual_real": 45, "actual_ratio": 2.0}},
+                 "bottom-left", "standard"),
+    "minimal": ({"fps": 88, "real": 30, "target": 90, "tdp": 9, "limit": 15}, "bottom-left", "minimal"),
     # A pause: Frame OS rests and saves energy.
     "detailed": ({"fps": 90, "real": 30, "target": 90, "tdp": 11, "limit": 15, "battery_min": 125,
                   "battery_pct": 72,
-                  "frame_os": {"estimate": False, "level": "rest", "response": 45, "frames": 3, "energy": 14}},
-                 "top-right"),
+                  "frame_os": {**FOS, "level": "rest", "response": 45, "frames": 3, "energy": 14}},
+                 "top-right", "detailed"),
+    # An in-game A/B check running: Act's effect is briefly off, the tag says so.
+    "ab": ({"fps": 90, "real": 30, "target": 90, "tdp": 12, "limit": 15,
+            "frame_os": {**FOS, "level": "calm", "response": 46, "frames": 48, "energy": 8, "ab": True}},
+           "bottom-left", "standard"),
 }
 
 
@@ -41,14 +47,15 @@ def scene() -> Image.Image:
 
 
 def main() -> None:
-    for name, (data, position) in SHOTS.items():
-        w, h, px = hud_rings.render(data, name, 1.0)
+    for name, (data, position, preset) in SHOTS.items():
+        w, h, px = hud_rings.render(data, preset, 1.0)
         bgra = Image.frombytes("RGBA", (w, h), px)
         b, g, r, a = bgra.split()
         hud = Image.merge("RGBA", (r, g, b, a))
         img = scene()
         x = 12 if position.endswith("left") else W - 12 - w
-        img.paste(hud, (x, 12), hud)
+        y = 12 if position.startswith("top") else H - 12 - h
+        img.paste(hud, (x, y), hud)
         out = ROOT / "docs" / "img" / f"hud-rings-{name}.png"
         img.save(out, optimize=True)
         print("wrote", out)

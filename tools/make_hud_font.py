@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "py_modules" / "gfg_plugin" / "hud_font_data.py"
-CHARS = "0123456789%+-~.:/ ABCDEFGHIJKLMNOPQRSTUVWXYZh−—"
+CHARS = "0123456789%+-~.:/ ABCDEFGHIJKLMNOPQRSTUVWXYZhx×−—…"
 # style -> (font file, size in px at scale 1.0, letter spacing in em)
 STYLES = {
     "fps": ("Inter-ExtraBold.otf", 16.0, -0.02),
