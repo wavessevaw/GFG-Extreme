@@ -105,7 +105,7 @@ The Home screen, shrunk into the corner of your game. A brand-red **FPS** ring w
 
 Rings refresh **once a second** from recent renderer telemetry. Identical images are reused, and rounded panels, ring geometry and glyphs are cached. Missing or stale FPS is shown as unavailable. The Vulkan layer skips a busy HUD copy rather than waiting for it during presentation.
 
-Turn it on in **Settings → In-game overlay** and pick **Rings** or **Text**, then Minimal, Standard or Detailed and a corner. Rings are drawn by GFG's own small Vulkan layer after the frame generator; they need one game restart after you first pick them, and until then (or in Flatpak apps and HDR games) you get the classic text line:
+**Rings are enabled by default in the bottom-left corner** on new installs and profiles that have never set an overlay preference. Existing explicit Off and other positions are preserved. Change the style, detail and position in **Settings → In-game overlay**. Rings are drawn by GFG's own small Vulkan layer after the frame generator; they need one game restart after you first pick them, and until then (or in Flatpak apps and HDR games) you get the classic text line:
 
 <br clear="right">
 
