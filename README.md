@@ -84,7 +84,7 @@ When the game closes, Home sums the whole session up in rings: **average FPS**, 
 
 You need [Decky Loader](https://decky.xyz/) and [Lossless Scaling](https://store.steampowered.com/app/993090/Lossless_Scaling/) from Steam (the default public version).
 
-1. Download `GFG-Extreme-v1_2_3.zip` (or newer) from [Releases](https://github.com/wavessevaw/GFG-Extreme/releases) and install it in Decky (*Install from zip*). Accept the root access request — it is used only to set TDP.
+1. Download `GFG-Extreme-v1_2_4.zip` (or newer) from [Releases](https://github.com/wavessevaw/GFG-Extreme/releases) and install it in Decky (*Install from zip*). Accept the root access request — it is used only to set TDP.
 2. Open GFG Extreme and tap **Install engine**.
 3. In Steam, open the game's **Properties → Launch Options** and paste:
    ```text
