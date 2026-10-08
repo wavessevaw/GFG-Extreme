@@ -84,7 +84,7 @@
 
 Нужны [Decky Loader](https://decky.xyz/) и [Lossless Scaling](https://store.steampowered.com/app/993090/Lossless_Scaling/) из Steam (обычная публичная версия).
 
-1. Скачайте `GFG-Extreme-v1_2_3.zip` (или новее) со страницы [Releases](https://github.com/wavessevaw/GFG-Extreme/releases) и установите в Decky (*Install from zip*). Разрешите доступ root — он нужен только для установки TDP.
+1. Скачайте `GFG-Extreme-v1_2_4.zip` (или новее) со страницы [Releases](https://github.com/wavessevaw/GFG-Extreme/releases) и установите в Decky (*Install from zip*). Разрешите доступ root — он нужен только для установки TDP.
 2. Откройте GFG Extreme и нажмите **Install engine**.
 3. В Steam откройте у игры **Свойства → Параметры запуска** и вставьте:
    ```text
