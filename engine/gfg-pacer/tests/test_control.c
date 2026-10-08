@@ -6,6 +6,8 @@
 
 #include <fcntl.h>
 #include <math.h>
+#include <signal.h>
+#include <sys/wait.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -139,7 +141,7 @@ static void test_file_policy(void)
     CHECK(m->writer_pid == (uint32_t)getpid(), "writer pid %u after publish", m->writer_pid);
 
     /* another process publishes: its telemetry is not overwritten while it is fresh */
-    m->writer_pid = (uint32_t)getpid() + 1;
+    m->writer_pid = 2000000000u; /* known dead PID, not a coincidentally live neighbor */
     tel.frames = 43;
     tel.last_present_ns = t + 400 * MS;
     CHECK(gfg_ctl_publish(&tel) == 0 && m->telemetry.frames == 42, "fresh foreign telemetry kept");
@@ -169,6 +171,24 @@ static void test_file_policy(void)
     t += 100 * MS;
     gfg_ctl_poll(t, &st);
     CHECK(st.enabled && st.mode == GFG_MODE_ACT, "fresh policy resumes after recovery");
+
+    /* A live second Vulkan process may be idle > 500 ms but can resume writing.
+     * Never steal its ownership merely because its last present became stale. */
+    pid_t child = fork();
+    if (child == 0) {
+        for (;;) pause();
+    }
+    CHECK(child > 0, "fork live telemetry writer");
+    if (child > 0) {
+        m->writer_pid = (uint32_t)child;
+        tel.last_present_ns += 2000 * MS;
+        CHECK(gfg_ctl_publish(&tel) == 0 && m->writer_pid == (uint32_t)child,
+              "live process must retain ownership even when telemetry aged");
+        kill(child, SIGKILL);
+        waitpid(child, NULL, 0);
+        CHECK(gfg_ctl_publish(&tel) == 1 && m->writer_pid == (uint32_t)getpid(),
+              "dead owner can be replaced after telemetry timeout");
+    }
 
     /* heartbeat: a policy the Governor stopped rewriting is not trusted */
     p = policy(60);
