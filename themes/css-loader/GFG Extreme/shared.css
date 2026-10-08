@@ -1,0 +1,94 @@
+/* GFG Extreme for CSS Loader.
+ * Steam's gamepad UI colours everything through its own CSS variables (--gp*), so the theme works
+ * by re-pointing those: no hashed class names, nothing that breaks when Valve rebuilds the client.
+ * The accent and background come from the selected patches (accent-*.css, bg-*.css). */
+:root {
+  /* the GFG palette (frontend/src/theme.js) */
+  --gfg-text: #f5f5f7;
+  --gfg-text2: #a1a1ab;
+  --gfg-text3: #6b6b76;
+  --gfg-line: #2e2e36;
+
+  /* Steam's greys -> GFG surfaces and text */
+  --gpSystemLightestGrey: var(--gfg-text);
+  --gpSystemLighterGrey: #c9c9d1;
+  --gpSystemLightGrey: var(--gfg-text2);
+  --gpSystemGrey: var(--gfg-text3);
+  --gpSystemDarkGrey: var(--gfg-s3);
+  --gpSystemDarkerGrey: var(--gfg-s2);
+  --gpSystemDarkestGrey: var(--gfg-s1);
+
+  /* every blue accent (toggles, sliders, progress, selected tabs, links) -> the GFG accent */
+  --gpColor-Blue: var(--gfg-accent);
+  --gpColor-BlueHi: var(--gfg-accent-hi);
+  --gpColor-DustyBlue: var(--gfg-accent-dim);
+  --gpColor-ChalkyBlue: var(--gfg-accent-hi);
+
+  /* panels and backgrounds */
+  --gpBackground-Neutral: var(--gfg-bg);
+  --gpBackground-LightSofter: var(--gfg-s1);
+  --gpBackground-LightMedium: var(--gfg-s2);
+  --gpBackground-LightHarder: var(--gfg-s3);
+  --gpBackground-DarkSofter: var(--gfg-s1);
+  --gpBackground-DarkMedium: var(--gfg-bg);
+  --gpBackground-DarkHarder: #050506;
+  --gpBackground-ActiveInput: var(--gfg-s2);
+  --gpBackground-Gradient: linear-gradient(180deg, var(--gfg-s1) 0%, var(--gfg-bg) 100%);
+
+  /* rounder, like the GFG cards */
+  --gpCornerSmall: 6px;
+  --gpCornerMedium: 10px;
+  --gpCornerLarge: 14px;
+}
+
+/* Backgrounds Steam paints itself (not through the variables above).  Selectors as used by the
+ * maintained Obsidian theme (EMERALD0874/Steam-Deck-Themes); CSS Loader translates these class
+ * names to the running client's. */
+.gamepadui_BasicHome_3LYP1.gamepadui_OpaqueBackground_b084m,
+.gamepadhome_TabbedContent_cE1Sa,
+.gamepadlibrary_GamepadLibrary_ZBBhe,
+.allcollections_Collection_3IWn-,
+.gamepadpagedsettings_PagedSettingDialog_ContentColumn_3JPle,
+.gamepadpage_GamepadPage_2FqpD.gamepadpage_DialogBackground_2msTK,
+.downloads_DownloadsPage_1bq4x,
+.downloadgraph_GraphAndStats_3KDkL,
+.gamepadsearch_GamepadSearch_P_AlE,
+.gamepadtabbedpage_TabContents_WDa0_,
+.quickaccessmenu_QuickAccessMenu_V0cr-,
+.quickaccessmenu_Tab_1S76C,
+.quickaccessmenu_Title_34nl5,
+.header_Header_1E_SL.header_InQuickAccess_2mRo5,
+.lockscreen_Container_3rFFU,
+.audio_VolumePopin_2iUUM {
+  background: var(--gfg-bg);
+}
+.basicappdetailssectionstyler_AppDetailsRoot_3fp5y,
+.loadingthrobber_Container_3sa1N {
+  background: var(--gfg-bg) !important;
+}
+/* side panels one step lighter, like the GFG cards */
+.mainmenu_Menu_23IDi,
+.gamepadpagedsettings_PagedSettingsDialog_PageListColumn_2EZ3o,
+.quickaccessmenu_Menu_1gJzx::before {
+  background: var(--gfg-s1) !important;
+}
+.quickaccessmenu_Tab_1S76C.quickaccessmenu_Selected_2QHMu {
+  background-color: var(--gfg-s2);
+}
+.gamepadslider_SliderTrack_Mq25N {
+  background: var(--gfg-s3);
+}
+/* the home's fade into the page follows the GFG background, without Steam's blue tint */
+.gamepadhomerecentgames_RecentGamesBackgroundFadeGradient_1ksIq {
+  background: linear-gradient(180deg, transparent 55%, var(--gfg-bg) 100%);
+}
+/* no blue glow under the hovered game */
+.gpfocuswithin ~ .basicgamecarousel_CarouselCapsuleBackgroundGlow_1H3Kf,
+:hover ~ .basicgamecarousel_CarouselCapsuleBackgroundGlow_1H3Kf {
+  opacity: 0;
+}
+/* rounder game art */
+.libraryassetimage_Image_24_Au,
+.appportrait_LibraryItemBox_WYgDg {
+  border-radius: 10px;
+}

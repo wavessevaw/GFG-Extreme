@@ -264,3 +264,15 @@ first fast frames are already real. Slow drift does not trigger it.
   `act`; saved `act` settings behave as off without this opt-in. The backend enforces the gate
   independently of the UI.
 - Telemetry is local only.
+
+## Act and the Governor's power search (1.5.1)
+
+A field log on 1.5.0 showed Act taking the point straight after its trial. From then on the
+Governor never searched lower watts: 11 minutes at the 10 W start, and a whole session at the 13 W
+of a trial's fast raise. Act now starts only after the budget has settled, meaning locked with no
+probe for `ACT_SETTLE_S` (60 s). A successful lower probe re-locks and restarts that wait, so the
+search runs down to the level that holds first. While Act injects, it steps aside every
+`ACT_RESEARCH_EVERY_S` (10 min) for `ACT_RESEARCH_S` (2 min). The plain point runs during that
+pause, so the Governor can try one lower level and the smart power split can measure. These
+pauses never count as output starvation.
+

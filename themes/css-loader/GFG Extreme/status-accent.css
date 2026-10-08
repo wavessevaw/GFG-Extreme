@@ -1,0 +1,12 @@
+/* Status bar (approved "accent" style): calm grey line icons, the battery charge in the accent
+ * colour.  Steam's icon SVGs carry unhashed class names; anything not matched keeps Steam's look. */
+.header_Header_1E_SL svg {
+  color: var(--gfg-text2);
+}
+.header_Header_1E_SL [class*="Battery" i] [class*="Fill" i],
+.header_Header_1E_SL [class*="Battery" i] rect:last-of-type {
+  fill: var(--gfg-accent);
+}
+.header_Header_1E_SL [class*="Battery" i] {
+  color: var(--gfg-text);
+}

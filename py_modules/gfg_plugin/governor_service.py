@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.5.0).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.5.1).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -64,7 +64,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.5.0"
+VERSION = "1.5.1"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -930,6 +930,14 @@ class GovernorService:
         return os.environ.get(self.FRAME_OS_ACT_ENV) == "1" or bool(self._settings.get("frame_os_act_unlocked"))
 
     INJECTION_HOLD_S = 60.0
+    # Field log 1.5.0: Act took the point right after its trial and the Governor never searched
+    # lower watts again (11 min at the 10 W start, a whole session at a trial's 13 W fast raise).
+    # Act now starts only once the budget has settled (locked for ACT_SETTLE_S: a successful lower
+    # probe re-locks and restarts the wait), and steps aside every ACT_RESEARCH_EVERY_S for
+    # ACT_RESEARCH_S so the Governor can try a lower level with the plain point.
+    ACT_SETTLE_S = 60.0
+    ACT_RESEARCH_EVERY_S = 600.0
+    ACT_RESEARCH_S = 120.0
     # Do not interpret the transitional cadence right after an Act change as
     # persistent frame starvation. Requires fresh, consecutive renderer samples.
     INJECTION_GRACE_S = 4.0
@@ -2416,13 +2424,30 @@ class GovernorService:
                              "last_verdict": verdict.to_dict(), "power_feedback": feedback})
         await self._apply_budget_tdp(profile)
 
+    def _act_power_settled(self) -> bool:
+        """The budget found its watts for this point: locked, no probe, for ACT_SETTLE_S."""
+        budget = self._budget
+        if budget is None or not budget.tdp_control:
+            return True
+        return (budget.phase == "locked" and budget.probe is None
+                and self._clock() - float(getattr(budget, "locked_since", 0.0)) >= self.ACT_SETTLE_S)
+
     async def _sync_injection(self, profile: str) -> bool:
         """Write (or take back) the Act adaptive overlay; True while Act injects on this point."""
         live = bool(((self.frame_os.last or {}).get("telemetry") or {}).get("live"))
         # only while the pacer is really in the game: without it the renderer would take 45 real
         acting = (self._frame_os_mode(profile) == "act" and self._request is None and bool(self._point_deltas)
                   and self._clock() >= self._injection_hold_until
-                  and self._injection_starvation_yields < 2)
+                  and self._injection_starvation_yields < 2
+                  and (self._injection is not None or self._act_power_settled()))
+        if (acting and self._injection is not None and self._budget is not None and self._budget.tdp_control
+                and self._injection_started_at is not None
+                and self._clock() - self._injection_started_at >= self.ACT_RESEARCH_EVERY_S):
+            # step aside for a while: the Governor re-checks whether a lower level holds
+            acting = False
+            self._injection_hold_until = self._clock() + self.ACT_RESEARCH_S
+            self._event("frame-os-injection-yielded", "power-research", profile=profile,
+                        tdp_w=self._budget.tdp)
         if acting and self._budget is not None:
             # Safety: heat or a starved output hands the point back to the Governor's own judgement.
             hot = (self._status.get("diagnosis") or {}).get("thermal") == "hot"
