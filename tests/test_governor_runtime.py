@@ -1487,6 +1487,20 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.step()
         self.assertIsNone(self.svc._injection, "no flapping right after a yield")
 
+    def test_stale_menu_event_does_not_disable_motionboost_starvation_guard(self):
+        self._act_live_point()
+        self.svc.frame_os.last = {"telemetry": {"live": True}}
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNotNone(self.svc._injection)
+        # A missed focus-restored event must not suppress the 60/90 output guard.
+        self.svc.observer.game_focused = False
+        self.svc.observer.game_focused_at = self.t["now"] - 9.0
+        self.feed(20, 20, 60)
+        self.step()
+        self.assertIsNone(self.svc._injection, "starved Act must roll back despite stale Steam focus")
+        self.assertFalse(self.svc.frame_os.executor_active)
+
     def test_steam_menu_pauses_measuring_and_drops_its_samples(self):
         self.feed(20, 45, 90)
         self.step()
