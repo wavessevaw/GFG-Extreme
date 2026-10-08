@@ -896,6 +896,31 @@ class BudgetRuntimeTests(RuntimeBase):
             st = self.step(0.1)
         return st
 
+    def test_playtime_target_caps_the_watts_and_survives_a_restart(self):
+        self.svc.battery_reader = lambda: {"available": True, "discharging": True, "percent": 60,
+                                           "energy_uwh": 40e6, "power_uw": 14e6}
+        self.svc.power.values["draw_w"] = 9.0          # rest of the Deck: 5 W
+        result = self.svc.set_playtime_target(3.0)
+        self.assertTrue(result["success"])
+        self.feed(20, 45, 90)
+        st = self.step()
+        self.feed(16, 30, 90)
+        for _ in range(40):
+            st = self.step(1.0)
+        pt = st["playtime"]
+        self.assertEqual(pt["state"], "holding")
+        # 40 Wh * 0.95 / 3 h = 12.7 W for the whole Deck, minus 5 W: ~7.5 W for the APU
+        self.assertLessEqual(max(self.svc.power.writes), max(pt["cap_w"], self.svc._budget.min_w))
+        self.assertEqual(st["budget"]["limits_w"]["normal"], pt["cap_w"])
+        self.assertEqual(self.svc._settings["playtime"]["target_h"], 3.0)
+        # off again: the normal ceiling is back
+        self.svc.set_playtime_target(None)
+        st = self.step(1.0)
+        self.assertFalse(st["playtime"]["active"])
+        self.assertEqual(st["budget"]["limits_w"]["normal"], 15.0)
+        self.assertNotIn("playtime", self.svc._settings)
+        self.assertFalse(self.svc.set_playtime_target(40)["success"])
+
     def test_starts_at_10_watts_and_30x3_then_lowers_power(self):
         self.feed(20, 45, 90)
         st = self.step()

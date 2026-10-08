@@ -828,6 +828,10 @@ class Plugin:
             self.governor_service.set_scale_ready, profile_name, scale_ready
         )
 
+    async def set_governor_playtime(self, hours: float = 0.0) -> Dict[str, Any]:
+        """Playtime target: the battery must last ``hours`` from now (0: off)."""
+        return await asyncio.to_thread(self.governor_service.set_playtime_target, hours or None)
+
     async def set_governor_mode(self, profile_name: str, mode: str) -> Dict[str, Any]:
         """Battery (lowest TDP first) or Quality (fewest generated frames first)."""
         return await asyncio.to_thread(self.governor_service.set_mode, profile_name, mode)
@@ -1473,7 +1477,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Extreme 1.3.1 started")
+        decky.logger.info("GFG Extreme 1.4.0 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""

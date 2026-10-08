@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.3.1).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.4.0).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -38,6 +38,7 @@ from .governor_battery import BatteryEstimator, read_battery
 from .steamos_tdp import SteamOSManagerTdp
 from .game_model import GameModelStore, context_key, floor_key, game_prefix
 from .session_stats import SessionStats
+from .playtime import CHOICES_H as PLAYTIME_CHOICES_H, PlaytimePlanner
 from .frame_os.control_channel import DEFAULT_PATH as DEFAULT_SHM, ControlChannel
 from . import hud_rings
 from .frame_os import layer_install as frame_os_layer
@@ -62,7 +63,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.3.1"
+VERSION = "1.4.0"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -169,6 +170,10 @@ class GovernorService:
         self.hud = HudWriter(self.configuration.config_dir)
         self._battery = BatteryEstimator()
         self.battery_reader = read_battery
+        # Playtime target: "last N hours" as an APU power ceiling (Battery / Balanced)
+        self.playtime = PlaytimePlanner()
+        saved_playtime = self._settings.get("playtime") if isinstance(self._settings.get("playtime"), dict) else {}
+        self.playtime.restore(saved_playtime.get("target_h"), saved_playtime.get("deadline"), time.time())
         self._io_lock = threading.RLock()
         self._forced_release: set[str] = set()
         self._restore_pending: Dict[str, str] = {}
@@ -404,6 +409,50 @@ class GovernorService:
             self._status["battery"] = self._battery.update(self.battery_reader())
         except Exception as error:  # sysfs quirks must never break the loop
             self.log.debug("Governor battery read failed: %s", error)
+        self._update_playtime()
+
+    def _update_playtime(self) -> None:
+        """Recompute the playtime ceiling from the battery and the measured draw (every step)."""
+        budget = self._budget
+        try:
+            draw = self.power.status().get("draw_w")
+        except Exception:
+            draw = None
+        base = getattr(budget, "_ceilings", None) if budget is not None else None
+        max_w = (base[0] if base else budget.normal_max_w) if budget is not None else BudgetController.NORMAL_CEILING_W
+        min_w = budget.min_w if budget is not None else BudgetController.MIN_TDP_W
+        state = self.playtime.update(time.time(), battery=self._status.get("battery") or {}, apu_draw_w=draw,
+                                     min_w=min_w, max_w=max_w)
+        applies = bool(budget is not None and budget.tdp_control)
+        self._status["playtime"] = {**state, "applies": applies,
+                                    "mode_supported": self._mode(self._active_profile or "") in ("budget", "balanced")}
+        if budget is not None:
+            # every step (also while a point request is pending): the ceiling follows at once; a
+            # lowered TDP goes out with the next budget write
+            self._sync_playtime_cap(budget, self._active_profile or "")
+        if state.get("state") == "reached" and self._settings.get("playtime"):
+            self._settings.pop("playtime", None)
+            self.playtime.set_target(None, time.time())
+            self._save_settings_quietly()
+
+    def set_playtime_target(self, hours: Optional[float]) -> Dict[str, Any]:
+        """Battery must last ``hours`` from now (None / 0: off)."""
+        try:
+            value = float(hours) if hours else None
+        except (TypeError, ValueError):
+            return {"success": False, "error": "invalid-hours"}
+        if value is not None and not 0.25 <= value <= 12:
+            return {"success": False, "error": "invalid-hours"}
+        now = time.time()
+        self.playtime.set_target(value, now)
+        if value is None:
+            self._settings.pop("playtime", None)
+        else:
+            self._settings["playtime"] = {"target_h": value, "deadline": self.playtime.deadline}
+        self._save_settings()
+        self._update_playtime()
+        self._poke()
+        return {"success": True, "error": None, "playtime": self._status.get("playtime")}
 
     def _delivering_target(self, telemetry: Dict[str, Any]) -> Optional[str]:
         """'easy'/'medium' when measured output already holds the target (stable game), else None."""
@@ -586,6 +635,9 @@ class GovernorService:
             "limit": number(power.get("initial_tdp_w") or power.get("maximum_tdp_w")) or 15,
             "battery_min": number(battery.get("minutes_left")), "battery_pct": number(battery.get("percent")),
         }
+        playtime = status.get("playtime") or {}
+        if playtime.get("active") and playtime.get("state") in ("holding", "on-track", "tight"):
+            data["goal_min"] = number(playtime.get("remaining_min"))
         # Display *delivered* MotionBoost, not a requested policy. A pacer ACK
         # alone is insufficient: the adaptive Render v4 overlay must also be in
         # place, and fresh renderer samples must show the real cadence increased
@@ -2088,6 +2140,7 @@ class GovernorService:
         budget.scale_capable = self._budget_can_scale(capability)
         # Current resources, re-read every step: a swapchain recreation can raise it again.
         budget.current_max_multiplier = self.observer.current_max_multiplier
+        self._sync_playtime_cap(budget, profile)
         if (budget.current_max_multiplier is not None
                 and float(budget.point.multiplier) > budget.current_max_multiplier + 1e-6):
             # The current target is beyond what the renderer can generate: fall back at once.
@@ -2345,10 +2398,17 @@ class GovernorService:
         except Exception as error:  # remembering is best-effort and must never disturb the loop
             self.log.debug("Game model not stored: %s", error)
 
+    def _sync_playtime_cap(self, budget: BudgetController, profile: str) -> None:
+        """Playtime target: its power ceiling bounds the search, the guard and emergency watts."""
+        cap = (self._status.get("playtime") or {}).get("cap_w") if budget.tdp_control else None
+        if cap != budget.playtime_cap_w and budget.set_playtime_cap(cap):
+            self._event("playtime-ceiling", "tdp-lowered", profile=profile, watts=budget.tdp)
+
     async def _apply_budget_tdp(self, profile: str) -> bool:
         budget = self._budget
         if budget is None or not budget.tdp_control or budget.tdp is None or not self.power.state.owned:
             return True
+        self._sync_playtime_cap(budget, profile)   # no TDP write ever bypasses the ceiling
         # Frame OS (act mode) adds the watts of a funded boost / removes them in rest.
         offset = self.frame_os.tdp_offset_w
         # Without an offset the controller's own value goes out as is (emergency watts included).
