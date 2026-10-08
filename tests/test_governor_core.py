@@ -151,6 +151,35 @@ class GovernorPowerSearchTests(unittest.TestCase):
         self.assertLess(outcome["target_tdp_w"], 20)
 
 
+    def test_quality_rejects_60_output_when_real_30_cap_holds(self):
+        """A good real p5 alone must not lock Quality at 60/90 output."""
+        search = PowerSearch()
+        search.begin(current_tdp_w=15, min_tdp_w=3, ceiling_tdp_w=15)
+        kwargs = {"p5_fps": 30, "base_target_fps": 30, "health_ratio": 0.97,
+                  "output_fps": 60, "output_target_fps": 90}
+        self.assertEqual(search.evaluate(**kwargs)["action"], "wait")
+        self.assertEqual(search.evaluate(**kwargs)["action"], "hold")
+        self.assertEqual(search.status.reason, "point-not-healthy-at-ceiling")
+
+    def test_quality_90_output_remains_healthy_and_optimizes_watts(self):
+        search = PowerSearch()
+        search.begin(current_tdp_w=15, min_tdp_w=3, ceiling_tdp_w=15)
+        result = search.evaluate(p5_fps=30, base_target_fps=30, health_ratio=0.97,
+                                 output_fps=90, output_target_fps=90)
+        self.assertEqual(result["action"], "set")
+        self.assertLess(result["target_tdp_w"], 15)
+
+    def test_quality_waits_on_missing_output_instead_of_raising_power(self):
+        search = PowerSearch()
+        search.begin(current_tdp_w=15, min_tdp_w=3, ceiling_tdp_w=15)
+        for _ in range(3):
+            result = search.evaluate(p5_fps=30, base_target_fps=30, health_ratio=0.97,
+                                     output_fps=None, output_target_fps=90)
+            self.assertEqual(result["action"], "wait")
+        self.assertEqual(search.status.current_tdp_w, 15)
+        self.assertNotEqual(search.status.reason, "point-not-healthy-at-ceiling")
+
+
 class PredictiveLadderTests(unittest.TestCase):
     def test_native_capacity_skips_infeasible_points_without_rejecting(self):
         from gfg_plugin.governor_core import TrialLadder

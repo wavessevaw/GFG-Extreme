@@ -529,6 +529,8 @@ class PowerSearch:
         hard_pressure: int = 0,
         misses: int = 0,
         health_ratio: float = 1.05,
+        output_fps: Optional[float] = None,
+        output_target_fps: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Evaluate one fresh evidence window at the current power level.
 
@@ -545,7 +547,20 @@ class PowerSearch:
             return {"action": "wait", "state": s.to_dict()}
         target = max(1.0, float(base_target_fps))
         p5 = float(p5_fps)
-        healthy = p5 >= target * float(health_ratio) and int(hard_pressure) == 0 and int(misses) == 0
+        # A stable real-frame cap does not prove the output is reaching its
+        # display budget: 30 real x2 can sit at 60 output on a 90 Hz panel.
+        # Quality must reject that point, but never spend power on missing
+        # output evidence (loading / missing renderer diagnostics).
+        output_healthy = True
+        if output_target_fps is not None:
+            if (not isinstance(output_fps, (int, float)) or not math.isfinite(float(output_fps))
+                    or not isinstance(output_target_fps, (int, float))
+                    or not math.isfinite(float(output_target_fps)) or output_target_fps <= 0):
+                s.reason = "insufficient-fresh-output-evidence"
+                return {"action": "wait", "state": s.to_dict()}
+            output_healthy = float(output_fps) >= float(output_target_fps) * 0.94
+        healthy = (p5 >= target * float(health_ratio) and int(hard_pressure) == 0
+                   and int(misses) == 0 and output_healthy)
         if s.state != "optimizing":
             return self._watch_locked(healthy, p5 < target * 0.85)
 
@@ -1136,13 +1151,14 @@ class BudgetController:
         return self.tdp
 
     # ------------------------------------------------------------ evidence
-    def observe(self, now: float, verdict: WindowVerdict, real_median: Optional[float] = None) -> str:
+    def observe(self, now: float, verdict: WindowVerdict, real_median: Optional[float] = None,
+                output_median: Optional[float] = None) -> str:
         """Feed one fresh window.  Returns ``move`` when the targets changed.
 
-        ``real_median`` is kept for the caller's logs; the decision uses the
-        verdict, which measures the real stream against *this point's* cap.  An
-        absolute FPS threshold cannot work here: a deep point caps the real
-        cadence itself, so it would always look like a power shortage.
+        Guard decisions use the verdict plus measured real/output medians to
+        avoid confusing a capped cadence with a power shortage.  In particular,
+        Balanced must not leave a 30-real x2 stream at 60 output on a 90 Hz panel
+        merely because the APU has power headroom.
         """
         self._now = now
         if verdict.stall:
@@ -1158,7 +1174,7 @@ class BudgetController:
                 self.short_since = now
         if verdict.healthy:
             return self._healthy(now)
-        return self._unhealthy(now, verdict)
+        return self._unhealthy(now, verdict, real_median, output_median)
 
     def _healthy(self, now: float) -> str:
         self.bad = 0
@@ -1285,7 +1301,8 @@ class BudgetController:
             return self._lock(now, f"thermal-quality-held:{self._heat_word()}")
         return self._lock(now, "budget-point-holds")
 
-    def _unhealthy(self, now: float, verdict: WindowVerdict) -> str:
+    def _unhealthy(self, now: float, verdict: WindowVerdict,
+                   real_median: Optional[float], output_median: Optional[float]) -> str:
         self.good = 0
         if self.probe is not None and self.last_good is not None:
             failed = self.points[self.idx]
@@ -1316,11 +1333,11 @@ class BudgetController:
                 self.last_reason = f"hold-through-stall:{verdict.reason}"
                 return "hold"
             self.stall_step_at = now  # one budget step per STALL_ESCALATE_S at most
-            return self._escalate(now, verdict)
+            return self._escalate(now, verdict, real_median, output_median)
         self.bad += 1
         if self.phase == "locked" and not verdict.severe and self.bad < self.GUARD_WINDOWS:
             return "hold"
-        return self._escalate(now, verdict)
+        return self._escalate(now, verdict, real_median, output_median)
 
     def _deeper(self, now: float, floor: int = 1) -> Optional[int]:
         """Nearest usable deeper point (>= ``floor``), skipping rejected ones.
@@ -1333,7 +1350,8 @@ class BudgetController:
                 return i
         return None
 
-    def _escalate(self, now: float, verdict: WindowVerdict) -> str:
+    def _escalate(self, now: float, verdict: WindowVerdict,
+                  real_median: Optional[float], output_median: Optional[float]) -> str:
         self.bad = 0
         if self.phase != "guard" and self.recover is None:
             # Everything spent from here is a debt to give back when the scene allows.
@@ -1346,6 +1364,30 @@ class BudgetController:
         if deeper is not None:
             self.quality_debt = max(self.quality_debt or 0, self.idx)
             return self._move(f"guard-deeper-multiplier:{verdict.reason}", idx=deeper)
+        # Regression from a Steam Deck OLED log (2026-10-08): Balanced starts at 45x2,
+        # but a game producing only 30 real FPS delivers 60 output, not the 90 target.
+        # The APU draws 8 W under a 12 W cap, so buying more watts is futile.
+        # The old comfort_idx gate forbade a deeper ratio and the power guard then held
+        # 45x2 forever.  Use a feasible fixed-ratio rung *below* comfort_idx only
+        # when both real and output are short and the APU is demonstrably not
+        # power-bound.  Prefer full render scale and respect the Balanced 30-real
+        # floor and the current renderer capacity.  Ordinary hitches, menus and
+        # already-healthy output must not trigger this quality trade-off.
+        if (self.flavor == "balanced" and verdict.short and not verdict.stall
+                and self._draw_says_not_power_bound(verdict)
+                and isinstance(real_median, (int, float)) and math.isfinite(float(real_median))
+                and isinstance(output_median, (int, float)) and math.isfinite(float(output_median))
+                and float(output_median) < self.target_output_fps * HOLD_OUTPUT_RATIO):
+            feasible = next(
+                (i for i in range(self.idx - 1, 0, -1)
+                 if self._usable(i, now) and self.points[i].render_scale_pct == 100
+                 and float(self.points[i].multiplier).is_integer()
+                 and self.points[i].base_target_fps * HOLD_REAL_RATIO <= float(real_median)),
+                None,
+            )
+            if feasible is not None:
+                self.quality_debt = max(self.quality_debt or 0, self.idx)
+                return self._move(f"guard-output-recovery:not-power-bound:{verdict.reason}", idx=feasible)
         # Watts only help a game that uses the watts it has.  A window short of its cap with the
         # measured draw well below the cap (a hitch, streaming, a CPU spike) is not fixed by a
         # higher limit; field log: the guard climbed to 15 W while the APU drew 5-11 W.

@@ -489,6 +489,59 @@ class BalancedModeTests(unittest.TestCase):
         self.assertEqual(min(p for p in (c.point.base_target_fps,)), 30)
         self.assertTrue(c.exhausted)
 
+    def test_oled_balanced_fixed_x2_60_output_recovers_90_without_extra_watts(self):
+        """Deck log 2026-10-08: 30 real x2 = 60 output at 8 W / 12 W, goal 90."""
+        c = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20, flavor="balanced")
+        self.assertEqual(c.point.key, "45x2")
+        c.phase = "locked"
+        c.draw_w = 8.0
+        verdict = window_verdict(
+            {"real": {"p5": 30.0, "median": 30.0}, "output": {"median": 60.0}},
+            c.point,
+        )
+        self.assertTrue(verdict.short)
+        self.assertFalse(verdict.stall)
+        self.assertEqual(c.observe(8.0, verdict, 30.0, 60.0), "move")
+        self.assertEqual(c.point.key, "30x3")
+        self.assertEqual(c.tdp, 12.0, "unused APU headroom cannot repair a 30-FPS game cap")
+        self.assertIn("guard-output-recovery", c.last_reason)
+        self.assertEqual(c.quality_debt, c.comfort_idx)
+        self.assertGreaterEqual(c.point.base_target_fps, 30)
+
+    def test_balanced_keeps_quality_when_output_already_reaches_90(self):
+        """Real cadence alone is insufficient evidence: delivered output matters."""
+        c = BudgetController(target_output_fps=90, now=0.0, flavor="balanced")
+        c.phase, c.draw_w = "locked", 8.0
+        verdict = window_verdict(
+            {"real": {"p5": 30.0, "median": 30.0}, "output": {"median": 90.0}},
+            c.point,
+        )
+        self.assertEqual(c.observe(8.0, verdict, 30.0, 90.0), "hold")
+        self.assertEqual((c.point.key, c.tdp), ("45x2", 12.0))
+
+    def test_balanced_does_not_violate_30_real_floor_or_spend_unused_watts(self):
+        """At 26 real there is no legal x3 point that can reliably hold 90."""
+        c = BudgetController(target_output_fps=90, now=0.0, flavor="balanced")
+        c.phase, c.draw_w = "locked", 8.0
+        verdict = window_verdict(
+            {"real": {"p5": 26.0, "median": 26.0}, "output": {"median": 52.0}},
+            c.point,
+        )
+        self.assertEqual(c.observe(8.0, verdict, 26.0, 52.0), "hold")
+        self.assertEqual((c.point.key, c.tdp), ("45x2", 12.0))
+        self.assertIn("guard-not-power-bound", c.last_reason)
+
+    def test_balanced_60hz_does_not_attempt_sub_30_real_recovery(self):
+        """60-Hz panels start at the deepest regular Balanced point, 30x2."""
+        c = BudgetController(target_output_fps=60, now=0.0, flavor="balanced")
+        c.phase, c.draw_w = "locked", 8.0
+        verdict = window_verdict(
+            {"real": {"p5": 26.0, "median": 26.0}, "output": {"median": 52.0}},
+            c.point,
+        )
+        self.assertEqual(c.observe(8.0, verdict, 26.0, 52.0), "hold")
+        self.assertEqual(c.point.key, "30x2")
+
     def test_battery_flavour_is_unchanged(self):
         c = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25)
         self.assertEqual((c.point.base_target_fps, c.tdp, c.flavor), (30, 10.0, "battery"))
