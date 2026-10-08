@@ -1,0 +1,65 @@
+name: Restore v1.3.1 stable and withdraw 1.4.x
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/rollback-stable-v131.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: restore-v131-and-withdraw-14
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    if: github.repository == 'wavessevaw/GFG-Extreme'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Checkout the current stable branch and its tags
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Verify the saved recovery point
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin '+refs/tags/v1.3.1:refs/tags/v1.3.1'
+          test "$(git rev-parse 'refs/tags/v1.3.1^{commit}')" = "f8a86224f98907b9ec64c81c500783c6480c7c7a"
+          git ls-remote --heads origin archive/post-v131-battery-experiments-20261008 | grep -q .
+          echo "Recovery point pinned; post-1.3.1 source preserved in archival branch."
+      - name: Restore the exact v1.3.1 source tree with a normal commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          target="$(git rev-parse 'refs/tags/v1.3.1^{tree}')"
+          git read-tree --reset -u "refs/tags/v1.3.1^{tree}"
+          test "$(git write-tree)" = "$target"
+          git commit -m "rollback(stable): restore exact v1.3.1 sources; remove Playtime and Savings Effort"
+          # Normal fast-forward push. If another agent updated main, do NOT
+          # force it away: fail safely instead.
+          git push origin HEAD:main
+          echo "Default branch is now the v1.3.1 tree, on a new rollback commit."
+      - name: Withdraw only the four unapproved 1.4.x GitHub releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          for tag in v1.4.0 v1.4.1 v1.4.2 v1.4.3; do
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "Withdrawing $tag"
+              gh release delete "$tag" --cleanup-tag --yes
+            else
+              echo "$tag is already withdrawn"
+            fi
+          done
+          gh release edit v1.3.1 --latest
+          test "$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)" = "v1.3.1"
+          echo "Latest stable is v1.3.1; v1.4.0..v1.4.3 withdrawn."
