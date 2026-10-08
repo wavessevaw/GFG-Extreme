@@ -12,7 +12,7 @@
 GFG Extreme generates the frames your game can't, holds the **lowest power that keeps the picture smooth**,<br>
 and keeps adjusting while you play. Your Deck never burns a watt it doesn't need.
 
-[**Download the latest release**](https://github.com/wavessevaw/GFG-Extreme/releases/latest) · [Quick start](#quick-start) · [Frame OS](#frame-os-experimental) · [Playtime target](#playtime-target) · [In-game rings](#in-game-rings) · [Something not working?](#something-not-working)
+[**Download the latest release**](https://github.com/wavessevaw/GFG-Extreme/releases/latest) · [Quick start](#quick-start) · [Frame OS](#frame-os-experimental) · [Savings effort](#savings-effort) · [In-game rings](#in-game-rings) · [Something not working?](#something-not-working)
 
 ![release](https://img.shields.io/github/v/release/wavessevaw/GFG-Extreme?style=flat-square&color=fb0d00&label=release)
 ![platform](https://img.shields.io/badge/Steam%20Deck-OLED%20%C2%B7%20LCD%20%C2%B7%20Dock-111?style=flat-square)
@@ -42,7 +42,7 @@ and keeps adjusting while you play. Your Deck never burns a watt it doesn't need
 - **🎯 Smooth, not stuttery.** Up to **90 FPS on OLED** and 60 on LCD, even when the game renders 30. Generated frames fill the gap, and GFG picks the ratio that holds for *this* game, *this* scene.
 - **🔋 Power only where it pays.** Instead of running flat out at the stock 15 W, GFG holds the **lowest TDP the game tolerates** — in Battery mode 9–11 W — and spends more only when a scene truly needs it. Cooler, quieter, longer sessions.
 - **🧠 Set it once.** Press **Run**. No TDP sliders, FPS caps or frame-generation settings to babysit. GFG remembers every game and starts from what worked last time.
-- **⏱️ Play as long as you need.** Tell GFG how long you want to play — 3 hours, say — and it holds exactly the power that gets you there, keeping the game smooth inside it.
+- **🔋 Pick the effort, not fictional hours.** Battery mode offers **Off / Light / Medium / Hard**. Source FPS is the safety signal, and the power ceiling is relaxed when a heavy game becomes unplayable.
 - **🛡️ Picture first.** Every change is checked against the renderer's own frame data and **rolled back if it doesn't hold**. GFG never trades smoothness for watts behind your back.
 - **⚡ Real frames when it matters.** **Frame OS** reads your controls: turn the camera or start a fight and it raises the *real* frame rate on the spot; pause, and it saves power.
 - **📊 Proof, not promises.** Frame OS **measures its own benefit in your game** with in-game A/B checks, and switches off whatever doesn't pay off there.
@@ -51,7 +51,7 @@ Works with Steam games and, through Flatpak support, with Heroic, Lutris and emu
 
 ## New in 1.4
 
-- **Playtime target.** Pick how long this charge has to last — from times this game can really reach — and GFG works out the power the APU may use: what is left in the battery, divided by the time to go, minus what the screen and the rest of the Deck draw. The Governor keeps the game smooth *inside* that budget by generating a little more instead of spending watts. Home says whether you are on track, and the battery ring in the game shows the goal.
+- **Battery savings effort (1.4.3).** Fixed-hour promises are gone. **Off** uses normal Battery optimization, **Light** makes a gentle extra saving, **Medium** uses a tighter power budget, and **Hard** also requests OLED 60 Hz or LCD 45 Hz if supported. The previous rate is restored on leaving Hard, unless the player moved Steam's refresh slider.
 - **Since 1.3:** Frame OS checks itself in your game with A/B comparisons and remembers what works in every game; the pacer plans frames from the scene's cost trend; the in-game rings are drawn on every frame without flicker.
 
 Full notes: [Releases](https://github.com/wavessevaw/GFG-Extreme/releases).
@@ -105,21 +105,24 @@ After three comparisons a ring shows the **measured** number. The card says *Mea
 
 What the checks measured carries over to the next session of the same game, so its rings start measured and the checks get rarer. When an effect **hurts** in a game — or a boost brings **no real frames** because the GPU is already at its limit — Frame OS switches it off **for that game** and says so on Home and in Diagnostics (*This game*). Every eight sessions it gives a switched-off effect a fresh try, in case a patch or new settings changed the game. **Reset what GFG learned** clears it.
 
-## Playtime target
+## Savings effort
 
-<p align="center"><img src="docs/img/home-playtime.png" width="300"></p>
+Savings effort is an additional control shown **only when Battery mode is selected**. It does not appear in Balanced or Quality, and **it does not promise a number of battery hours**.
 
-"I want to play longer than this." Home shows how long this charge lasts at the current pace and offers longer times **this game can actually reach while staying playable** — up to *Max*. Pick one and GFG turns it into a power budget:
+| Effort | Battery power policy | Internal display |
+| --- | --- | --- |
+| **Off** | Normal Battery Governor, no extra cap | No display change |
+| **Light** | Soft 14 W APU ceiling; 10 W minimum for economy search | No display change |
+| **Medium** | Soft 12 W ceiling; 9 W minimum | No display change |
+| **Hard** | Soft 11 W ceiling; 9 W minimum, released as necessary to maintain real-frame playability | **OLED 60 Hz**, **LCD 45 Hz**, only when supported |
 
-- It reads the energy left in the battery and divides it by the time to go — that is what the whole Deck may draw on average.
-- It measures what the screen, memory and fan take (battery drain minus the APU's own draw) and gives the APU the rest.
-- The Governor plays inside that ceiling: when a scene gets heavier it generates a little more rather than spending watts it does not have.
-- **Playable first.** The ceiling never pushes a game below its real-frame floor (24 in Battery, 30 in Balanced). If it would, GFG raises it, remembers what this game needs to stay playable, and tells you the realistic time instead — 30 FPS on screen from 10 real frames is not a frame rate you can play.
-- Home says where you stand — *holding 7.5 W, 2h41 to go*, *no limit needed*, or, if even the lowest power cannot last that long, how long it can. In the game, the battery ring shows the goal and turns green while the battery outlasts it.
+The Governor still has its own guarded search, FPS confirmation, power ownership and rollback. Savings effort cannot make 10 real FPS acceptable by generating 30 output FPS. When confirmed real-frame evidence shows a sustained collapse under a binding savings cap, GFG raises its playable power floor and can lift that cap. The cap figures are policies, not an assertion that each game can achieve its FPS target at those watts.
 
-Works in Battery and Balanced mode; on the charger the target waits.
+Hard uses Gamescope's same refresh control as the Deck's target-FPS setting. It verifies that the exact display mode was applied, remembers the prior rate and restores it on exit. It never changes an external monitor. Manual changes to the Steam refresh slider take priority; a failed or unsupported switch is reported rather than silently pretending success.
 
-<p align="center"><img src="docs/img/hud-rings-goal.png" width="820"></p>
+![Battery savings effort card](docs/img/home-savings-hard.svg)
+
+<sub>Illustrative UI card, not measured gameplay performance.</sub>
 
 ## In-game rings
 
@@ -167,7 +170,7 @@ Heroic, Lutris, EmuDeck and other Flatpak apps: **Settings → System**, enable 
 
 ## Status
 
-**Stable (1.4).** Frame OS is experimental and off unless you turn it on. Every release is covered by an automated test suite (Python backend, the generated launcher run in bash, the interface rendered in a headless browser) and checked on a real Steam Deck. Logs from more games and setups are very welcome. Known limitations: [docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md).
+**Stable (1.4.3).** Frame OS is experimental and off unless you turn it on. Every release is covered by an automated test suite (Python backend, the generated launcher run in bash, the interface rendered in a headless browser) and checked on a real Steam Deck. Logs from more games and setups are very welcome. Known limitations: [docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md).
 
 <details>
 <summary><b>Everything else it can do</b></summary>
