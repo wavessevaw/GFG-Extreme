@@ -11,7 +11,22 @@ const dev = (mode, target) => ({ mode, target, reason: { oled: "Steam Deck OLED 
 const base = { version: "1.0.0", hud: { enabled: true, preset: "standard", position: "top-left" }, success: true, enabled: false, state: "DISABLED", telemetry: {}, power: {}, limitations: ["a game must be (re)launched after Governor is enabled to use the overlay and diagnostics"], ladder: { attempts: 2, max_attempts: 6 } };
 // Real backend shape: {snapshot, summary}.
 const tel = (real, out, m) => ({ snapshot: { available: true }, summary: { real: { median: real }, output: { median: out }, latest: { effective_multiplier: m }, frametime: { p95_ms: 24.5, p99_ms: 31.2, stutter_ratio: 0.01 } } });
+const xb = (over = {}) => ["upscale", "quiet", "split", "cooling", "act", "memory", "latency", "shield", "instant"].map((id) => ({ id, ...({
+  upscale: { state: "active", reason: "render-scale-confirmed", render_pct: 80, sharpness: 0.3 },
+  quiet: { state: "unavailable", reason: "no-supported-steam-job-api" }, split: { state: "active", reason: "gpu-bound-cpu-capped", cap_khz: 2400000 },
+  cooling: { state: "unavailable", reason: "no-verified-fan-api" }, act: { state: "waiting", reason: "waits-for-settled-watts" },
+  memory: { state: "unavailable", reason: "global-memory-tweaks-not-applied" }, latency: { state: "unavailable", reason: "latency-not-measured-on-hardware" },
+  shield: { state: "unavailable", reason: "not-validated-on-hardware" }, instant: { state: "active", reason: "remembered-point-verified-again" } }[id]), ...(over[id] || {}) }));
+const xstate = (over = {}) => ({ enabled: true, state: "ACTIVE", ceiling: { ceiling_w: 15, source: "stock-limit", user_w: 20 }, tdp_w: 15,
+  requested: { render_pct: 80, sharpness: 0.3 }, applied: { render_pct: 80, sharpness: 0.3, sharpness_confirmed: true, source: [1024, 640], output: [1280, 800] },
+  sharpness_offset: 0, act_consent: true, boosters: xb(over.boosters), gain: { kind: "unavailable", percent: null, reason: "aba-proof-not-in-this-version" }, ...over, ...(over.boosters ? { boosters: xb(over.boosters) } : {}) });
+const xhome = (extreme) => ({ ...base, enabled: true, state: "LOCKED", mode: "extreme", device: dev("oled", 90), target_output_fps: 90, telemetry: tel(54, 90, 1.67), active_point: { multiplier: 1.67, render_scale_pct: 80 }, active_point_mode: "applied", power: { owned: true, observed_tdp_w: extreme.tdp_w, initial_tdp_w: 20 }, effort: { level: "hard" }, battery: { minutes_left: 104 }, budget: { phase: "locked", point: "54x1.67@80", tdp_w: extreme.tdp_w, tdp_control: true, tier: "heavy", flavor: "extreme", scale_capable: true, limits_w: { min: 6, normal: extreme.tdp_w, emergency: extreme.tdp_w } }, extreme });
 export const STATES = {
+  "home-extreme": xhome(xstate()),
+  "home-extreme-verify": xhome(xstate({ state: "VERIFY", applied: { render_pct: 100 }, requested: { render_pct: 90, sharpness: 0.15 }, boosters: { upscale: { state: "waiting", reason: "awaiting-renderer-acknowledgement", render_pct: 90 } } })),
+  "home-extreme-restart": xhome(xstate({ tdp_w: 12, ceiling: { ceiling_w: 12, source: "your-limit", user_w: 12 }, applied: { render_pct: 100 }, requested: { render_pct: 100 }, boosters: { upscale: { state: "restart_required", reason: "scaler-not-provisioned-at-launch" }, act: { state: "restart_required", reason: "pacer-not-loaded-at-launch" } } })),
+  "home-extreme-consent": { ...base, enabled: true, state: "LOCKED", mode: "balanced", device: dev("oled", 90), target_output_fps: 90, telemetry: tel(45, 90, 2), active_point: { multiplier: 2, render_scale_pct: 100 }, extreme: { enabled: false, state: "OFF" } },
+  "home-extreme-offer": { ...base, enabled: true, state: "LOCKED", mode: "balanced", device: dev("oled", 90), target_output_fps: 90, telemetry: tel(30, 90, 3), active_point: { multiplier: 3, render_scale_pct: 100 }, power: { owned: true, observed_tdp_w: 11 }, budget: { phase: "locked", point: "30x3", tdp_w: 11, tdp_control: true, tier: "ideal", flavor: "balanced", limits_w: { min: 6, normal: 15, emergency: 15 } }, extreme: { enabled: false, state: "OFF" }, extreme_offer: { headroom_w: 4, ceiling_w: 15, tdp_w: 11, real_target: 30 } },
   "home-idle-oled": { ...base, device: dev("oled", 90), target_output_fps: 90 },
   "home-measuring": { ...base, enabled: true, state: "PROBE", device: dev("oled", 90), target_output_fps: 90, capability: {} },
   get "home-frame-os-learned"() { const s = JSON.parse(JSON.stringify(this["home-frame-os-act"])); Object.assign(s.frame_os.decision, { level: "calm", real_hz: 30 }); s.frame_os.benefit.frames_pct = 1; s.frame_os.game = { sessions: 6, verdicts: { response: "helps", frames: "useless", energy: "unclear" }, disabled: { boost: true, shaping: false, rest: false }, response: { n: 12 }, frames: { n: 5 }, energy: { n: 0 } }; return s; },
@@ -65,6 +80,9 @@ var callable = (n) => async (...a) => ({ get_governor_status: () => window.__sta
   get_launch_option: () => ({ launch_option: "/home/deck/.local/bin/gfg %command%" }),
   get_governor_game_model_target: (p) => ({ success: true, target: window.__state.__modelTarget !== undefined ? window.__state.__modelTarget : { profile: p, app_id: "292030", game: "app:292030" } }),
   set_governor_power_split: (enabled) => { (window.__splitSets = window.__splitSets || []).push(enabled); return { success: true, power_split: !!enabled }; },
+  set_governor_mode: (p, m) => { (window.__modes = window.__modes || []).push(m); return { success: true, mode: m }; },
+  set_governor_extreme_act_consent: (allow) => { (window.__consents = window.__consents || []).push(allow); return { success: true, consent: !!allow }; },
+  set_governor_extreme_sharpness: (p, v) => { (window.__sharp = window.__sharp || []).push(v); return { success: true, offset: v }; },
   set_governor_frame_os_ab: (enabled) => { (window.__abSets = window.__abSets || []).push(enabled); return { success: true, ab: !!enabled }; },
   set_governor_frame_os_act_unlock: (enabled) => { (window.__actUnlocks = window.__actUnlocks || []).push(enabled); return { success: true, act_unlocked: !!enabled }; },
   set_governor_frame_os: (p, m) => (window.__state.__frameOsFail ? { success: false, error: "marker: read-only" } : { success: true, mode: m }),

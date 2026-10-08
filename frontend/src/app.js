@@ -19,6 +19,8 @@ const rpc = {
   setFrameOsAb: safeCallable("set_governor_frame_os_ab"),
   setPowerSplit: safeCallable("set_governor_power_split"),
   setMode: safeCallable("set_governor_mode"),
+  setExtremeSharpness: safeCallable("set_governor_extreme_sharpness"),
+  setExtremeActConsent: safeCallable("set_governor_extreme_act_consent"),
   forgetModel: safeCallable("forget_governor_game_model"),
   modelTarget: safeCallable("get_governor_game_model_target"),
   profiles: safeCallable("get_profiles"),
@@ -54,7 +56,7 @@ const rpc = {
 const num = (v, d = 1) => (v == null || isNaN(v) ? "–" : Number(v).toFixed(d).replace(/\.0$/, ""));
 const MODE_NAME = { oled: "Steam Deck OLED", lcd: "Steam Deck LCD", dock: "Dock", external: "Dock", unknown: "Display" };
 const fmtMult = (m) => { const q = Math.round(Number(m) * 4) / 4; return "×" + (Number.isInteger(q) ? q : String(q)); };
-const MODE_LABEL = { budget: "Battery", balanced: "Balanced", quality: "Quality" };
+const MODE_LABEL = { budget: "Battery", balanced: "Balanced", quality: "Quality", extreme: "Extreme" };
 // review 1.1.x: a session switched between modes reads "Battery 18m · Balanced 13m", not just its last mode.
 const frameOsMinutes = (m) => Object.entries(m || {}).map(([k, v]) => k + " " + num(v, 0) + "m").join(" · ");
 const sessionModes = (x) => (x && x.mode === "mixed" && x.modes ? Object.entries(x.modes).map(([m, v]) => (MODE_LABEL[m] || m) + " " + num(v, 0) + "m").join(" · ") : (MODE_LABEL[x && x.mode] || "–"));
@@ -81,7 +83,67 @@ const MODE_TEXT = {
   balanced: "Balanced: starts at about 45 real FPS and 12 W, never goes below 30 real FPS and never above your Deck's normal power range. A bit more battery for a steadier picture.",
   budget: "Battery: lowest TDP first, 9–11 W ideal. Real FPS stays at 24 or more; a deeper ratio (down to 20 real) and the highest watts your Deck allows only as a last resort.",
   quality: "Quality: fewest generated frames first, then lowers TDP. Uses more battery.",
+  extreme: "Extreme: the most real frames at your Deck's stock limit — 15 W, or your own lower limit, never more, no overclock. Lowers render resolution to 90% / 80% with matched sharpening only when the engine confirms it. Uses more battery than Balanced.",
 };
+
+// ---------- Extreme (1.6)
+const XB_TITLE = { upscale: "Upscale + sharpen", quiet: "Quiet background", split: "Power → GPU", cooling: "Cooling ahead",
+  act: "Frame OS Act", memory: "Memory tuning", latency: "Low latency", shield: "Stutter shield", instant: "Instant start" };
+const XB_REASON = {
+  "game-not-running": "Waiting for the game",
+  "scaler-not-provisioned-at-launch": "Restart the game once to enable",
+  "cpu-bound-full-resolution": "CPU-bound: full resolution kept",
+  "awaiting-renderer-acknowledgement": "Checking on the engine's data",
+  "full-resolution-holds": "Full resolution holds",
+  "profile-scaling": "Your profile scales itself",
+  "renderer-did-not-confirm-render-scale": "Engine did not confirm it",
+  "no-supported-steam-job-api": "No safe Steam API yet",
+  "power-split-setting-off": "Off in Settings",
+  "cpu-clock-control-unavailable": "No CPU clock access",
+  "cpu-at-full-clock": "CPU at full clock",
+  "no-verified-fan-api": "Stock fan control stays",
+  declined: "You chose without Act",
+  "act-not-enabled": "Off",
+  "pacer-not-loaded-at-launch": "Restart the game once to enable",
+  "boosting-real-frames": "Boosting real frames",
+  "waits-for-settled-watts": "Starts once watts settle",
+  "global-memory-tweaks-not-applied": "Not applied: untested risk",
+  "latency-not-measured-on-hardware": "Not yet: unmeasured",
+  "not-validated-on-hardware": "Not yet: unvalidated",
+  "remembered-point-verified-again": "Remembered · re-checked",
+  "learning-this-game": "Learning this game",
+};
+const sharpText = (v) => (v == null ? "" : num(v, 2));
+function boosterDetail(b) {
+  if (b.id === "upscale" && b.state === "active") return b.render_pct + "% · " + (b.sharpness != null ? "sharpen " + sharpText(b.sharpness) : "sharpen unconfirmed");
+  if (b.id === "split" && b.state === "active" && b.cap_khz) return "CPU capped at " + num(b.cap_khz / 1e6, 1) + " GHz";
+  if (b.id === "upscale" && b.state === "waiting" && b.render_pct) return "Checking render " + b.render_pct + "%";
+  return XB_REASON[b.reason] || String(b.reason || "").replace(/-/g, " ");
+}
+// What Extreme has confirmed right now, in one line (never a requested value).
+function extremeLine(x) {
+  if (!x || !x.enabled) return "";
+  const c = x.ceiling || {};
+  const parts = [c.ceiling_w != null ? "Limit " + num(c.ceiling_w, 0) + " W" : "Extreme"];
+  const a = x.applied;
+  if (a && a.render_pct != null && a.render_pct < 100) parts.push("render " + a.render_pct + "%");
+  if (a && a.sharpness != null) parts.push("sharpen " + sharpText(a.sharpness));
+  return parts.filter(Boolean).join(" · ");
+}
+const X_STATE = {
+  OFF: "Off", DISCOVER: "Waiting for the game", BASELINE: "Measuring", APPLY: "Testing a point", VERIFY: "Checking render scale",
+  TUNE: "Tuning", ACTIVE: "Active", RESTART_REQUIRED: "Restart the game once", PAUSED: "Paused", FAILED: "Stopped",
+};
+function describeExtreme(s, d) {
+  const x = s.extreme || {};
+  if (!s.enabled || !x.enabled || d.tone === "warn" || s.state === "PAUSED") return d;
+  const c = x.ceiling || {};
+  const limit = c.ceiling_w != null ? num(c.ceiling_w, 0) + " W" : "15 W";
+  const why = c.source === "your-limit" ? "your own " + limit + " limit (never raised)" : limit + " stock limit";
+  if (x.state === "VERIFY") return { head: "Extreme · checking", body: "Render " + ((x.requested || {}).render_pct || "") + "% counts only once the engine shows the game really renders at it.", tone: "busy" };
+  if (x.state === "ACTIVE" || x.state === "TUNE") return { head: "Extreme · " + limit, body: "Every watt of the " + why + " goes into real frames. No overclock.", tone: "ok" };
+  return { head: "Extreme · " + (X_STATE[x.state] || "starting"), body: d.body || ("Uses the " + why + "."), tone: d.tone };
+}
 // The ceilings come from the device (a stock Deck stops at 15 W).
 const budgetRule = (b) => {
   const lim = (b && b.limits_w) || {};
@@ -183,8 +245,8 @@ const Toggle = ({ on, onChange, title, sub }) =>
   h(Focusable, { className: "row", onClick: () => onChange(!on) },
     h("div", { className: "t" }, h("b", null, title), sub ? h("span", { style: { whiteSpace: "normal" } }, sub) : null),
     h("div", { className: "tog" + (on ? " on" : "") }));
-const Seg = ({ value, options, onChange }) =>
-  h("div", { className: "seg" }, options.map(([v, l]) => h(Focusable, { key: v, className: "segb" + (v === value ? " on" : ""), onClick: () => onChange(v) }, l)));
+const Seg = ({ value, options, onChange, cls }) =>
+  h("div", { className: "seg" + (cls ? " " + cls : "") }, options.map(([v, l, c]) => h(Focusable, { key: v, className: "segb" + (c ? " " + c : "") + (v === value ? " on" : ""), onClick: () => onChange(v) }, l)));
 const Page = ({ title, onBack, children }) =>
   h("div", null, h("div", { className: "bar-top" }, h(Focusable, { className: "back", onClick: onBack }, "‹"), h("div", { className: "title" }, title)), children);
 const Note = ({ quiet, children }) => h("div", { className: "note" + (quiet ? " quiet" : "") }, children);
@@ -206,24 +268,28 @@ function useGovernor(profile) {
 }
 
 // ---------- Home
-function Ring({ value, max, label, sub, size = 176, stroke = 9, cls = "" }) {
+function Ring({ value, max, label, sub, size = 176, stroke = 9, cls = "", wolf }) {
   const r = (size - stroke) / 2 - 1, c = 2 * Math.PI * r, f = Math.max(0, Math.min(1, max ? value / max : 0));
   return h("div", { className: "ring " + cls, style: { width: size, height: size } },
     h("svg", { viewBox: "0 0 " + size + " " + size, width: size, height: size },
       h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#26262d", strokeWidth: stroke }),
+      wolf ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#fb0d00", strokeOpacity: 0.25, strokeWidth: stroke + 5, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f) }) : null,
       h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#fb0d00", strokeWidth: stroke, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } })),
-    h("div", { className: "num" }, h("div", { className: "big" }, label), sub ? h("div", { className: "sub" }, sub) : null));
+    // Extreme: the GFG wolf sits inside the main ring, the number under it.
+    h("div", { className: "num" + (wolf ? " wolf" : "") }, wolf ? h("img", { className: "wolfimg", src: LOGO, width: Math.round(size * 0.36), height: Math.round(size * 0.36) }) : null,
+      h("div", { className: "big" }, label), sub && !(wolf && size < 100) ? h("div", { className: "sub" }, sub) : null));
 }
 
 // Half-ring gauge: the output against the target, number inside the arc.
-function Arc({ value, max, label, sub }) {
+function Arc({ value, max, label, sub, wolf }) {
   const w = 190, r = 80, cx = w / 2, cy = 92, f = Math.max(0, Math.min(1, max ? value / max : 0));
   const len = Math.PI * r, d = "M " + (cx - r) + " " + cy + " A " + r + " " + r + " 0 0 1 " + (cx + r) + " " + cy;
   return h("div", { className: "arc" },
     h("svg", { viewBox: "0 0 " + w + " 100", width: w, height: 100 },
       h("path", { d, fill: "none", stroke: "#26262d", strokeWidth: 8, strokeLinecap: "round" }),
       h("path", { d, fill: "none", stroke: "#fb0d00", strokeWidth: 8, strokeLinecap: "round", strokeDasharray: len, strokeDashoffset: len * (1 - f), style: { transition: "stroke-dashoffset .6s" } })),
-    h("div", { className: "num" }, h("div", { className: "big" }, label), h("div", { className: "sub" }, sub)));
+    h("div", { className: "num" + (wolf ? " wolf" : "") }, wolf ? h("img", { className: "wolfimg", src: LOGO, width: 34, height: 34 }) : null,
+      h("div", { className: "big" }, label), h("div", { className: "sub" }, sub)));
 }
 
 // Hero layouts, switched by tapping the ring: big ring -> smaller ring -> ring beside the status -> half-ring.
@@ -242,14 +308,16 @@ function useHeroLayout() {
   });
   return [layout, next];
 }
-function HeroTop({ layout, onTap, value, max, label, sub, d }) {
+function HeroTop({ layout, onTap, value, max, label, sub, d, wolf }) {
+  const head = wolf ? h("div", { className: "h xh" }, d.head, h("span", { className: "xbadge" }, "▲ ON")) : h("div", { className: "h" }, d.head);
   const status = (cls) => h("div", { className: "status" + (cls ? " " + cls : "") },
-    cls ? h("div", { className: "k" }, sub) : null, h("div", { className: "h" }, d.head), d.body ? h("div", { className: "p" }, d.body) : null);
+    cls ? h("div", { className: "k" }, sub) : null, head, d.body ? h("div", { className: "p" }, d.body) : null);
   const tap = (child) => h(Focusable, { className: "herotap", onClick: onTap }, child);
-  if (layout === "side") return h("div", { className: "hero-side" }, tap(h(Ring, { value, max, label, size: 84, stroke: 6, cls: "side" })), status("left"));
-  if (layout === "compact") return h("div", { className: "hero-col" }, tap(h(Ring, { value, max, label, sub, size: 128, stroke: 7, cls: "compact" })), status());
-  if (layout === "arc") return h("div", { className: "hero-col" }, tap(h(Arc, { value, max, label, sub })), status());
-  return h("div", { className: "hero-col" }, tap(h(Ring, { value, max, label, sub })), status());
+  const x = wolf ? " x" : "";
+  if (layout === "side") return h("div", { className: "hero-side" }, tap(h(Ring, { value, max, label, size: 84, stroke: 6, cls: "side" + x, wolf })), status("left"));
+  if (layout === "compact") return h("div", { className: "hero-col" }, tap(h(Ring, { value, max, label, sub, size: 128, stroke: 7, cls: "compact" + x, wolf })), status());
+  if (layout === "arc") return h("div", { className: "hero-col" }, tap(h(Arc, { value, max, label, sub, wolf })), status());
+  return h("div", { className: "hero-col" }, tap(h(Ring, { value, max, label, sub, cls: x.trim(), wolf })), status());
 }
 
 // Frame OS benefit rings: colour by effectiveness, red when Frame OS made it worse.
@@ -324,10 +392,70 @@ function SessionRings({ ls, target }) {
       h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "−" : "") + Math.abs(Math.round(b.energy)) + "%", label: "Energy", live: true, estimate: b.estimate })) : null);
 }
 
+// Extreme: the nine directions with what each really does in this session.
+function ExtremeCard({ x, profile, refresh }) {
+  const list = x.boosters || [];
+  if (!list.length) return null;
+  const active = list.filter((b) => b.state === "active").length;
+  const up = list.find((b) => b.id === "upscale") || {};
+  const [off, setOff] = useState(x.sharpness_offset || 0);
+  useEffect(() => { setOff(x.sharpness_offset || 0); }, [x.sharpness_offset]);
+  const step = async (dv) => {
+    const v = Math.max(-0.3, Math.min(0.3, Math.round((off + dv) * 100) / 100));
+    setOff(v);
+    try { await rpc.setExtremeSharpness(profile, v); } catch (e) {}
+    refresh();
+  };
+  const dot = (st) => (st === "active" ? "" : st === "waiting" || st === "restart_required" || st === "ready" ? " wait" : " idle");
+  return h("div", { className: "card xcard" },
+    h("div", { className: "fos-head" }, h("span", null, "EXTREME BOOSTERS"), h("span", { className: "pill live" }, active + " / " + list.length + " ACTIVE")),
+    h("div", { className: "boost" }, list.map((b) => h("div", { key: b.id, className: "bt" + (b.state === "unavailable" || b.state === "off" ? " na" : "") },
+      h("i", { className: dot(b.state).trim() }), h("div", null, h("b", null, XB_TITLE[b.id] || b.id), h("span", null, boosterDetail(b)))))),
+    up.state !== "unavailable" ? h("div", { className: "xsharp" }, h("span", null, "Sharpening"),
+      h("div", { className: "step" },
+        h(Focusable, { className: "stepb", onClick: () => step(-0.05) }, "−"),
+        h("div", { className: "v" }, (off > 0 ? "+" : off < 0 ? "−" : "") + num(Math.abs(off), 2)),
+        h(Focusable, { className: "stepb", onClick: () => step(0.05) }, "+"))) : null,
+    h("div", { className: "abline" }, "Unavailable items stay off until they can be done safely and measured."));
+}
+
+// First switch to Extreme: Frame OS Act joins only with the player's yes (the existing opt-in).
+function ActConsent({ onAnswer }) {
+  return h("div", { className: "card promo xconsent" },
+    h("div", { className: "t" }, h("b", null, "Let Frame OS Act join Extreme?"),
+      h("span", null, "Act moves the real frame rate between calm and action scenes inside the same power limit. It changes frame timing; you can turn it off later in Settings → Diagnostics.")),
+    h("div", { className: "xbtns" },
+      h(Focusable, { className: "xbtn on", onClick: () => onAnswer(true) }, "Allow Act"),
+      h(Focusable, { className: "xbtn", onClick: () => onAnswer(false) }, "Without Act")));
+}
+
+// Battery/Balanced: power the game leaves unused that Extreme would put into real frames. No promised number.
+function ExtremeOffer({ o, onTry, onHide }) {
+  return h("div", { className: "card promo", style: { marginTop: 12 } },
+    h("span", { className: "xbadge" }, "▲"),
+    h("div", { className: "t" }, h("b", null, "Want more real frames?"),
+      h("span", null, "This game leaves " + num(o.headroom_w, 0) + " W of your " + num(o.ceiling_w, 0) + " W limit unused. Extreme puts it into real frames — no overclock; the result is measured in game, not promised."),
+      h("div", { className: "xbtns" }, h(Focusable, { className: "xbtn on", onClick: onTry }, "Try Extreme"), h(Focusable, { className: "xbtn", onClick: onHide }, "Not now"))));
+}
+
 function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch }) {
   const [busy, setBusy] = useState(false);
   const missing = inst && inst.installed === false;
-  const d = describe(s);
+  const xt = s.mode === "extreme";
+  const x = s.extreme || {};
+  const d = describeExtreme(s, describe(s));
+  const [asking, setAsking] = useState(false);
+  const [offerHidden, setOfferHidden] = useState(false);
+  const setMode = async (v) => {
+    if (v === "extreme" && x.act_consent == null && !asking) { setAsking(true); return; }
+    setAsking(false);
+    try { await rpc.setMode(profile, v); } catch (e) {}
+    refresh();
+  };
+  const answerAct = async (allow) => {
+    try { await rpc.setExtremeActConsent(allow); await rpc.setMode(profile, "extreme"); } catch (e) {}
+    setAsking(false); refresh();
+  };
   const dev = s.device || {};
   const tel0 = s.telemetry || {};
   const tel = tel0.summary || tel0; // backend sends {snapshot, summary}
@@ -368,23 +496,28 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
   return h("div", null,
     h("div", { className: "top" }, h("div", { className: "brand" }, h("img", { src: LOGO, width: 30, height: 30, style: { marginRight: 8, verticalAlign: "middle" } }), "GFG", h("b", null, "·"), "EXTREME"),
       h("div", { className: "chip" + (s.enabled ? " on" : "") }, h("i"), MODE_NAME[dev.mode] || "Display")),
-    h("div", { className: "card hero" },
-      h(HeroTop, { layout: heroLayout, onTap: nextHero, value: showLive ? out : 0, max: target, label: showLive ? num(out, 0) : String(target), sub: showLive ? "FPS OUTPUT" : "TARGET FPS", d }),
+    h("div", { className: "card hero" + (xt ? " xt" : "") },
+      h(HeroTop, { layout: heroLayout, onTap: nextHero, value: showLive ? out : 0, max: target, label: showLive ? num(out, 0) : String(target), sub: showLive ? "FPS OUTPUT" : "TARGET FPS", d, wolf: xt }),
       showLive ? h("div", { className: "flow" },
         h("div", { className: "stat" }, h("div", { className: "v" }, num(real, 0)), h("div", { className: "l" }, "REAL")), h("div", { className: "a" }, "→"),
         h("div", { className: "stat hot" }, h("div", { className: "v" }, mult ? fmtMult(mult) : POINT_LABEL(s.active_point)), h("div", { className: "l" }, "GFG")), h("div", { className: "a" }, "→"),
         h("div", { className: "stat" }, h("div", { className: "v" }, num(out, 0)), h("div", { className: "l" }, "OUTPUT"))) : null,
+      xt && s.enabled ? h("div", { className: "gain" }, h("span", { className: "gl" }, extremeLine(x)),
+        h("span", null, "Gain vs Balanced: not measured yet — shown only after a same-scene A-B-A check")) : null,
       s.enabled ? h("div", { className: "effort" }, h("span", null, "GFG EFFORT"),
         h("b", { className: eff ? "lv " + eff : "lv" }, eff ? eff.toUpperCase() : "ASSESSING…", effWhy ? h("span", { className: "why" }, " · " + effWhy) : null)) : null,
       tdp != null ? h("div", { className: "power" }, h("div", { className: "r" }, h("span", null, "TDP NOW"), h("span", null, num(tdp, 0) + " W" + (left ? "  ·  " + left + " left" : ""))),
-        pw.owned && pw.initial_tdp_w && pw.initial_tdp_w - tdp >= 1 ? h("div", { className: "r" }, h("span", null, "SAVING"), h("span", null, num(pw.initial_tdp_w - tdp, 0) + " W under your " + num(pw.initial_tdp_w, 0) + " W limit")) : null,
-        h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, (tdp / (pw.initial_tdp_w || pw.maximum_tdp_w || 15)) * 100) + "%" } }))) : null),
+        !xt && pw.owned && pw.initial_tdp_w && pw.initial_tdp_w - tdp >= 1 ? h("div", { className: "r" }, h("span", null, "SAVING"), h("span", null, num(pw.initial_tdp_w - tdp, 0) + " W under your " + num(pw.initial_tdp_w, 0) + " W limit")) : null,
+        h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, (tdp / ((xt && x.ceiling && x.ceiling.ceiling_w) || pw.initial_tdp_w || pw.maximum_tdp_w || 15)) * 100) + "%" } }))) : null),
+    xt && s.enabled ? h(ExtremeCard, { x, profile, refresh }) : null,
+    !xt && s.enabled && s.extreme_offer && !offerHidden ? h(ExtremeOffer, { o: s.extreme_offer, onTry: () => setMode("extreme"), onHide: () => setOfferHidden(true) }) : null,
     s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os }) : null,
     h(Focusable, { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? undefined : toggle },
       h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 18 }), busy ? "WORKING…" : missing ? "INSTALL ENGINE" : s.enabled ? "STOP" : "RUN"),
     h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : missing ? "The GFG engine is not installed yet. One tap installs it." : "Target " + target + " FPS · " + (dev.reason || "picked automatically for this screen")),
     h("div", { className: "sec" }, "MODE"),
-    h(Seg, { value: s.mode || "budget", options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"]], onChange: async (v) => { try { await rpc.setMode(profile, v); } catch (e) {} refresh(); } }),
+    h(Seg, { cls: "four", value: s.mode || "budget", options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"], ["extreme", "EXTREME", "x"]], onChange: setMode }),
+    asking ? h(ActConsent, { onAnswer: answerAct }) : null,
     h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
     health ? h("div", { className: "hint" }, health) : null,
     h("div", { style: { height: 12 } }),
@@ -561,7 +694,15 @@ function GovernorPage({ s, back, profile, refresh }) {
   const dev = s.device || {}, req = s.request, pt = s.active_point, lad = s.ladder || {}, b = s.budget;
   const mode = s.mode || "budget";
   return h(Page, { title: "Details", onBack: back },
-    b ? h("div", { className: "sec" }, "BATTERY") : null,
+    mode === "extreme" && s.extreme && s.extreme.enabled ? h("div", { className: "sec" }, "EXTREME") : null,
+    mode === "extreme" && s.extreme && s.extreme.enabled ? h("div", { className: "card" }, h("div", { className: "kv" },
+      h("span", null, "State"), h("b", null, X_STATE[s.extreme.state] || s.extreme.state),
+      h("span", null, "Power limit"), h("b", null, s.extreme.ceiling ? num(s.extreme.ceiling.ceiling_w, 0) + " W · " + (s.extreme.ceiling.source === "your-limit" ? "your own limit" : s.extreme.ceiling.source === "hardware" ? "this Deck's maximum" : "stock limit") : "–"),
+      h("span", null, "Render scale"), h("b", null, s.extreme.applied && s.extreme.applied.render_pct != null ? s.extreme.applied.render_pct + "%" + (s.extreme.applied.source ? " · " + s.extreme.applied.source.join("×") + " → " + (s.extreme.applied.output || []).join("×") : "") : "–"),
+      h("span", null, "Testing"), h("b", null, s.extreme.requested && s.extreme.requested.render_pct != null ? s.extreme.requested.render_pct + "%" + (s.extreme.requested.sharpness != null ? " · sharpen " + sharpText(s.extreme.requested.sharpness) : "") : "–"),
+      h("span", null, "Sharpening"), h("b", null, s.extreme.applied && s.extreme.applied.sharpness != null ? sharpText(s.extreme.applied.sharpness) + " (engine confirmed)" : "not confirmed by the engine yet"),
+      h("span", null, "Gain vs Balanced"), h("b", null, "not measured (needs an A-B-A check)"))) : null,
+    b ? h("div", { className: "sec" }, mode === "extreme" ? "POWER" : "BATTERY") : null,
     b ? h("div", { className: "card" }, h("div", { className: "kv" },
       h("span", null, "TDP target"), h("b", null, b.tdp_w != null ? num(b.tdp_w, 0) + " W" : "no TDP access"),
       h("span", null, "Budget"), h("b", null, { ideal: "Ideal (≤ 11 W)", heavy: "Heavy (12–15 W)", emergency: "Last resort", unknown: "–" }[b.tier] || "–"),
@@ -594,9 +735,9 @@ function GovernorPage({ s, back, profile, refresh }) {
       h("span", null, "Fan"), h("b", null, (s.sensors || {}).fan_rpm != null ? num(s.sensors.fan_rpm, 0) + " rpm" : "–"))),
     h("div", { className: "sec" }, "RULES"),
     h("div", { className: "card" }, h("div", { className: "kv" },
-      h("span", null, "Multipliers"), h("b", null, mode === "balanced" ? "×1 to ×3, never below 30 real FPS" : mode === "budget" ? "×1 to ×3.75, deeper only as a last resort" : "×1 to ×3, steps of 0.25"),
+      h("span", null, "Multipliers"), h("b", null, mode === "balanced" || mode === "extreme" ? "×1 to ×3, never below 30 real FPS" : mode === "budget" ? "×1 to ×3.75, deeper only as a last resort" : "×1 to ×3, steps of 0.25"),
       h("span", null, "Saved profile"), h("b", null, "never modified"),
-      h("span", null, "TDP"), h("b", null, mode === "balanced" ? "12–13 W start, never above the normal range" : mode === "budget" ? budgetRule(b) : "never above your own"),
+      h("span", null, "TDP"), h("b", null, mode === "extreme" ? "the whole limit: 15 W or your lower one, never above" : mode === "balanced" ? "12–13 W start, never above the normal range" : mode === "budget" ? budgetRule(b) : "never above your own"),
       mode !== "quality" ? h("span", null, "Reacts") : null,
       mode !== "quality" ? h("b", null, "up within ~2 s, down in 1 W steps") : null)),
     (s.session_history || []).length ? h("div", { className: "sec" }, "RECENT SESSIONS") : null,
