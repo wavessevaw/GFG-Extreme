@@ -1543,6 +1543,28 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.step()
         self.assertIsNone(self.svc._injection, "no flapping right after a yield")
 
+    def test_renderer_replan_is_not_a_false_motionboost_starvation(self):
+        # The 8 October log captured two Act lockouts on a 1-2 sample
+        # reconfiguration where output briefly equaled real. Never lock out
+        # a feature before 4 s of settled evidence.
+        self._act_live_point()
+        self.svc.frame_os.last = {"telemetry": {"live": True}}
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNotNone(self.svc._injection)
+        for _ in range(2):
+            self.feed(2, 30, 30, dt=0.5)
+            self.step(0.1)
+            self.assertIsNotNone(self.svc._injection, "transient re-plan is not starvation")
+            self.feed(16, 30, 90)
+            self.step()
+        self.assertEqual(self.svc._injection_starvation_yields, 0)
+        # A real, sustained outage must *still* release the overlay.
+        self.feed(20, 20, 60)
+        self.step()
+        self.assertIsNone(self.svc._injection)
+        self.assertEqual(self.svc._injection_starvation_yields, 1)
+
     def test_repeated_act_output_starvation_locks_out_injection_for_session(self):
         """A bad adaptive renderer must not cycle 16 times through 30-FPS drops."""
         self._act_live_point()
@@ -1616,13 +1638,29 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.assertEqual(self.svc._injection_starvation_yields, 0)
         self.assertIsNotNone(self.svc._injection, "Act still injects after three long menus")
 
-    def test_a_menu_event_without_its_return_expires(self):
+    def test_long_steam_menu_does_not_poison_battery_or_act_memory(self):
+        self._act_live_point()
+        self.svc.frame_os.last = {"telemetry": {"live": True}}
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNotNone(self.svc._injection)
+        self.svc.observer.game_focused = False
+        self.svc.observer.game_focused_at = self.t["now"] - (self.svc.MENU_MAX_S + 60)
+        for _ in range(4):
+            self.feed(20, 30, 30)
+            st = self.step(2.0)
+            self.assertEqual((st["state"], st["reason"]), ("PAUSED", "steam-menu-open"))
+        self.assertEqual(self.svc._injection_starvation_yields, 0)
+
+    def test_missed_focus_return_does_not_pause_forever(self):
         self.feed(20, 45, 90)
         self.step()
+        self.feed(16, 30, 90)
+        self.step()
         self.svc.observer.game_focused = False
-        self.svc.observer.game_focused_at = self.t["now"] - (self.svc.MENU_MAX_S + 1)
-        self.feed(20, 30, 30)
-        self.assertNotEqual(self.step()["reason"], "steam-menu-open", "never paused forever")
+        self.svc.observer.game_focused_at = self.t["now"] - (self.svc.MENU_MAX_S + 60)
+        self.feed(20, 30, 90)
+        self.assertNotEqual(self.step()["reason"], "steam-menu-open")
 
     def test_steam_menu_pauses_measuring_and_drops_its_samples(self):
         self.feed(20, 45, 90)
