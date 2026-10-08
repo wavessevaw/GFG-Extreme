@@ -94,6 +94,15 @@ jobs:
           git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
           VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" scripts/build_release.sh "${{ steps.version.outputs.version }}" payloads out
 
+      - name: Verify Frame OS and Rings HUD packaged in Decky zip
+        if: steps.version.outputs.exists == 'false' && steps.version.outputs.version == '1.2.0'
+        run: |
+          zip="out/GFG-Extreme-v1_2_0.zip"
+          test -s "$zip"
+          for payload in libVkLayer_gfg_pacer.so VkLayer_gfg_pacer.json libVkLayer_gfg_hud.so VkLayer_gfg_hud.json; do
+            unzip -Z1 "$zip" | grep -Fx "GFG-Extreme/bin/gfg-frame-os/$payload"
+          done
+
       - name: Publish release
         if: steps.version.outputs.exists == 'false'
         run: |
