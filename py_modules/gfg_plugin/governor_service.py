@@ -1970,7 +1970,8 @@ class GovernorService:
         feedback = self._power_feedback(profile, budget)
         before = (budget.point.key, budget.tdp, budget.phase)
         reason_before, holds_before = budget.last_reason, getattr(budget, "not_power_bound_holds", 0)
-        action = budget.observe(now, verdict, (fresh.get("real") or {}).get("median"))
+        action = budget.observe(now, verdict, (fresh.get("real") or {}).get("median"),
+                                (fresh.get("output") or {}).get("median"))
         self._store_failures(budget)  # now, not after the next TDP write: a release may come first
         after = (budget.point.key, budget.tdp, budget.phase)
         if str(budget.last_reason).startswith("guard-not-power-bound") and (
