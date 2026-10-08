@@ -201,6 +201,7 @@ class GovernorService:
         self._point_deltas: Dict[str, Any] = {}
         # Frame OS Act: the adaptive overlay written on top of the live point (None: not injecting)
         self._injection: Optional[Dict[str, Any]] = None
+        self._injection_started_at = None
         self._injection_seq = 0
         self._injection_hold_until = 0.0
         self._injection_starvation_yields = 0  # per session; Act circuit breaker
@@ -1320,6 +1321,7 @@ class GovernorService:
         self._point_external = None
         self._point_deltas = {}
         self._injection = None
+        self._injection_started_at = None
         self.frame_os.executor_active = False
         self._request = None
         self._ladder = None
@@ -1330,6 +1332,8 @@ class GovernorService:
         self._applied_tdp = None
         self._over_cap_windows = 0
         self._draw_samples = []
+        self._fast_point_key = None
+        self._fast_last_sample_seq = self.observer.sample_seq
         self._rollback_deltas = None
         self._synced_deltas = None
         self._evaluation_after_seq = self.observer.sample_seq
@@ -2286,6 +2290,7 @@ class GovernorService:
                 pass
         self._event("frame-os-injection", "stop", profile=profile, cause=reason)
         self._injection = None
+        self._injection_started_at = None
         self.frame_os.executor_active = False
 
     def _power_feedback(self, profile: str, budget: BudgetController) -> Dict[str, Any]:
