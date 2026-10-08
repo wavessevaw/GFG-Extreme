@@ -182,6 +182,7 @@ class GovernorService:
         self._injection: Optional[Dict[str, Any]] = None
         self._injection_seq = 0
         self._injection_hold_until = 0.0
+        self._menu_since: Optional[float] = None
         self._request: Optional[Request] = None
         self._request_counter = getattr(self, "_request_counter", 0)
         self._ladder: Optional[TrialLadder] = None
@@ -1187,6 +1188,9 @@ class GovernorService:
         """One time-weighted sample for the player's session summary (fresh telemetry only)."""
         if self.session_stats.started is None or not self._status.get("enabled"):
             return
+        if getattr(self.observer, "game_focused", None) is False:
+            self.session_stats.last = self._clock()  # Steam's menu: not part of the averages
+            return
         tel = self._status.get("telemetry") or {}
         snap, summary = tel.get("snapshot") or {}, tel.get("summary") or {}
         if not snap.get("available") or (1e9 if snap.get("sample_age_ms") is None else snap["sample_age_ms"]) > self.MAX_SAMPLE_AGE_MS:
@@ -1395,6 +1399,24 @@ class GovernorService:
             await self._release_point(profile, reason)
             self._status.update({"state": "PLAN", "reason": reason})
             return
+
+        # Steam's menu / quick access covers the game: the renderer suspends frame generation, so
+        # the output drops for reasons that have nothing to do with the point.  Measure nothing,
+        # change nothing, and drop what was sampled meanwhile once the game is back.
+        if getattr(self.observer, "game_focused", None) is False:
+            if self._menu_since is None:
+                self._menu_since = self._clock()
+            self._status.update({"state": "PAUSED", "reason": "steam-menu-open"})
+            return
+        if self._menu_since is not None:
+            away = self._clock() - self._menu_since
+            self._menu_since = None
+            seq = self.observer.sample_seq
+            self._evaluation_after_seq = max(self._evaluation_after_seq, seq)
+            self._tdp_set_seq = max(self._tdp_set_seq, seq)
+            self._injection_seq = max(self._injection_seq, seq)
+            if self._request is not None:
+                self._request.created += away        # the confirmation timeout does not run in the menu
 
         # Pending application: evaluated before the freshness gate so a silent
         # renderer cannot leave an unconfirmed overlay in place forever.

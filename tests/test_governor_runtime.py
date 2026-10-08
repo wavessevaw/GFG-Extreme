@@ -1407,6 +1407,23 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.step()
         self.assertIsNone(self.svc._injection, "no flapping right after a yield")
 
+    def test_steam_menu_pauses_measuring_and_drops_its_samples(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        writes = list(self.svc.power.writes)
+        self.svc.observer.game_focused = False
+        self.feed(20, 30, 30)                     # generation suspended under the menu
+        st = self.step()
+        self.assertEqual((st["state"], st["reason"]), ("PAUSED", "steam-menu-open"))
+        self.assertEqual(self.svc.power.writes, writes, "nothing changes while the menu is open")
+        self.svc.observer.game_focused = True
+        self.step()
+        self.assertGreaterEqual(self.svc._evaluation_after_seq, self.svc.observer.sample_seq,
+                                "menu samples are never judged")
+        self.assertEqual(self.svc._point["key"], "30x3")
+
     def test_act_offset_is_applied_on_top_of_the_budget_cap(self):
         with patch.dict(os.environ, {"GFG_FRAME_OS_EXPERIMENTAL_ACT": "1"}):
             self.assertTrue(self.svc.set_frame_os("game", "act")["success"])

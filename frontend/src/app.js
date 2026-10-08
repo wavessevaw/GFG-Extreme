@@ -59,6 +59,7 @@ const sessionModes = (x) => (x && x.mode === "mixed" && x.modes ? Object.entries
 const POINT_LABEL = (p) => (p ? (p.multiplier > 1 ? fmtMult(p.multiplier) : "Native") + (p.render_scale_pct < 100 ? " · " + p.render_scale_pct + "%" : "") : "–");
 
 const PAUSED_TEXT = {
+  "steam-menu-open": "Steam menu is open: frame generation is paused there. Measuring resumes when you return to the game.",
   "overlay-restore-failed": "Could not restore settings — retrying.",
   "game-not-running": "Start the game with the GFG launch command.",
   "diagnostics-active-no-events": "Waiting for the game to draw frames (loading, intro or menu). If it stays like this in gameplay, relaunch the game once.",
@@ -92,6 +93,7 @@ function describe(s) {
   const cap = (s.capability && s.capability.reason) || "";
   if (!s.enabled) return { head: "Ready", body: "Press Run — GFG will pick the target for this screen and manage the engine.", tone: "idle" };
   if (cap === "relaunch-required-for-governor-overlay" || s.reason === "relaunch-required-for-governor-overlay") return { head: "Restart the game once", body: "This game was started without the GFG launch command, or before this GFG version. Relaunch it once; after that GFG can be turned on while the game runs.", tone: "warn" };
+  if (s.state === "PAUSED" && s.reason === "steam-menu-open") return { head: "Steam menu open", body: PAUSED_TEXT[s.reason], tone: "idle" };
   if (s.state === "PAUSED") return { head: "Paused", body: PAUSED_TEXT[s.reason] || "Waiting (" + (s.reason || "unknown") + "). Your saved profile is untouched.", tone: "warn" };
   if (s.state === "OBSERVE_ONLY" && s.reason === "tdp-control-not-writable") return { head: "No TDP access", body: "GFG manages frame generation, but cannot change TDP: the plugin has no write access to the power caps.", tone: "warn" };
   if (s.state === "OBSERVE_ONLY") return { head: "Observing", body: "Another backend owns the pipeline. GFG only watches.", tone: "idle" };
