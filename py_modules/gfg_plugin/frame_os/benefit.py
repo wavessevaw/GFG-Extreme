@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-MIN_SECONDS = 60.0          # below this the rings show "—"
-MIN_BOOST_SECONDS = 5.0
+MIN_SECONDS = 2.0           # two seconds of live telemetry before the rings become meaningful
+MIN_BOOST_SECONDS = 0.5     # a brief real-frame burst must show up; bursts accumulate
 HOLD_OVERHEAD_MS = 3.0
 
 
@@ -92,6 +92,12 @@ class BenefitMeter:
             response = (round(100.0 * (self.baseline_ms - act) / self.baseline_ms, 1)
                         if act is not None and self.baseline_ms else None)
             calm, boost = _mean(self.real_calm) or self.calm_real_hz, _mean(self.real_boost)
-            frames = (round(100.0 * (boost - calm) / calm, 1)
-                      if calm and boost is not None and self.boost_s >= MIN_BOOST_SECONDS else None)
-        return {**out, "response_pct": response, "frames_pct": frames, "energy_pct": energy}
+            if calm and boost is not None and self.boost_s >= MIN_BOOST_SECONDS:
+                frames = round(100.0 * (boost - calm) / calm, 1)
+            elif calm and self.acting_s >= MIN_SECONDS and self.boost_s == 0:
+                # No boost yet is a measured 0%, not an indefinitely broken "—" ring.
+                frames = 0.0
+            else:
+                frames = None
+        return {**out, "response_pct": response, "frames_pct": frames, "energy_pct": energy,
+                "energy_basis": "tdp-cap-delta", "frames_basis": "pacer-real-present-interval"}

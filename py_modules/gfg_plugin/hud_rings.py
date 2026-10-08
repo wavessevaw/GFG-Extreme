@@ -4,7 +4,7 @@ Pure Python (the Deck's plugin Python has no imaging library): anti-aliased ring
 pixel, text from a pre-rendered Inter atlas (``hud_font_data``).  The result is composited on an
 opaque panel and written as BGRA with a 32-byte header for the GFG HUD Vulkan layer
 (engine/gfg-hud), which copies it into every presented frame.  Alpha 0 marks pixels outside the
-rounded panel; every other pixel is opaque.  Values are averages the caller refreshes every 20 s.
+rounded panel; every other pixel is opaque.  The caller refreshes at most once a second; geometry and glyph decoding are cached.
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import math
 import os
 import struct
 import zlib
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -57,20 +58,44 @@ def effect_color(value: float, full: float) -> Tuple[int, int, int]:
     return round(r * 255), round(g * 255), round(b * 255)
 
 
+@lru_cache(maxsize=8)
+def _panel(w: int, h: int, radius: float) -> bytes:
+    """Bounded cache of immutable rounded backgrounds, copied for each update."""
+    px = bytearray(w * h * 4)
+    color = bytes((PANEL[2], PANEL[1], PANEL[0], 255))
+    for y in range(h):
+        for x in range(w):
+            cx = min(max(x + 0.5, radius), w - radius)
+            cy = min(max(y + 0.5, radius), h - radius)
+            if (x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 <= radius * radius:
+                i = (y * w + x) * 4
+                px[i:i + 4] = color
+    return bytes(px)
+
+
+@lru_cache(maxsize=32)
+def _ring_geometry(size: float, width: float, cx: float, cy: float) -> tuple:
+    """Only pixels touching the ring; cx/cy are subpixel offsets, not panel positions."""
+    r, half = (size - width) / 2.0, width / 2.0
+    points = []
+    for y in range(math.floor(cy - size / 2) - 1, math.ceil(cy + size / 2) + 2):
+        for x in range(math.floor(cx - size / 2) - 1, math.ceil(cx + size / 2) + 2):
+            dx, dy = x + 0.5 - cx, y + 0.5 - cy
+            band = min(1.0, max(0.0, half + 0.5 - abs(math.hypot(dx, dy) - r)))
+            if band > 0:
+                points.append((x, y, dx, dy, band, math.atan2(dx, -dy) % (2 * math.pi)))
+    return tuple(points)
+
+
+@lru_cache(maxsize=512)
+def _glyph_alpha(encoded: str) -> bytes:
+    return base64.b64decode(encoded)
+
+
 class Canvas:
     def __init__(self, w: int, h: int, radius: float) -> None:
         self.w, self.h = w, h
-        self.px = bytearray(w * h * 4)
-        for y in range(h):
-            for x in range(w):
-                if self._inside(x, y, radius):
-                    i = (y * w + x) * 4
-                    self.px[i:i + 4] = bytes((PANEL[2], PANEL[1], PANEL[0], 255))
-
-    def _inside(self, x: int, y: int, r: float) -> bool:
-        cx = min(max(x + 0.5, r), self.w - r)
-        cy = min(max(y + 0.5, r), self.h - r)
-        return (x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 <= r * r
+        self.px = bytearray(_panel(w, h, radius))
 
     def blend(self, x: int, y: int, rgb: Tuple[int, int, int], a: float) -> None:
         if a <= 0 or not (0 <= x < self.w and 0 <= y < self.h):
@@ -90,22 +115,16 @@ class Canvas:
         half = width / 2.0
         frac = max(0.0, min(1.0, frac))
         end = frac * 2 * math.pi
-        caps = [] if frac <= 0 else [(cx, cy - r), (cx + r * math.sin(end), cy - r * math.cos(end))]
-        x0, x1 = int(cx - size / 2) - 1, int(cx + size / 2) + 2
-        y0, y1 = int(cy - size / 2) - 1, int(cy + size / 2) + 2
-        for y in range(y0, y1):
-            for x in range(x0, x1):
-                dx, dy = x + 0.5 - cx, y + 0.5 - cy
-                band = min(1.0, max(0.0, half + 0.5 - abs(math.hypot(dx, dy) - r)))
-                if band > 0:
-                    self.blend(x, y, TRACK[:3], band * TRACK[3])
-                if frac <= 0:
-                    continue
-                angle = math.atan2(dx, -dy) % (2 * math.pi)
-                arc = band * min(1.0, max(0.0, (end - angle) * r + 0.5)) if frac < 1 else band
-                for px, py in caps:
-                    arc = max(arc, min(1.0, max(0.0, half + 0.5 - math.hypot(x + 0.5 - px, y + 0.5 - py))))
-                self.blend(x, y, rgb, arc * opacity)
+        caps = [] if frac <= 0 else [(0.0, -r), (r * math.sin(end), -r * math.cos(end))]
+        ox, oy = math.floor(cx), math.floor(cy)
+        for x, y, dx, dy, band, angle in _ring_geometry(size, width, cx - ox, cy - oy):
+            self.blend(x + ox, y + oy, TRACK[:3], band * TRACK[3])
+            if frac <= 0:
+                continue
+            arc = band * min(1.0, max(0.0, (end - angle) * r + 0.5)) if frac < 1 else band
+            for px, py in caps:
+                arc = max(arc, min(1.0, max(0.0, half + 0.5 - math.hypot(dx - px, dy - py))))
+            self.blend(x + ox, y + oy, rgb, arc * opacity)
 
     def text_width(self, text: str, style: str) -> float:
         font = _atlas()[style]
@@ -118,7 +137,7 @@ class Canvas:
         x = cx - self.text_width(text, style) / 2.0
         for ch in text:
             g = font["glyphs"].get(ch, font["glyphs"][" "])
-            alpha = base64.b64decode(g["a"])
+            alpha = _glyph_alpha(g["a"])
             gx = round(x + g["x0"])
             for row in range(g["h"]):
                 for col in range(g["w"]):
@@ -157,8 +176,8 @@ def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
     fps, target = data.get("fps"), data.get("target") or 60
     real = data.get("real")
     items.append({"kind": "ring", "size": 52, "w": 4.5, "frac": (fps or 0) / target, "rgb": BRAND,
-                  "text": str(round(fps)) if fps else "—", "style": "fps",
-                  "sub": f"{round(real)} REAL" if real else None, "label": "FPS"})
+                  "text": str(round(fps)) if fps is not None else "—", "style": "fps",
+                  "sub": f"{round(real)} REAL" if real is not None else None, "label": "FPS"})
     tdp, limit = data.get("tdp"), data.get("limit") or 15
     items.append({"kind": "ring", "size": 46, "w": 4, "frac": (tdp or 0) / limit, "rgb": WHITE,
                   "text": f"{round(tdp)}W" if tdp else "—", "style": "val", "label": "TDP"})
@@ -233,15 +252,24 @@ def render(data: Dict[str, Any], preset: str = "standard", scale: float = 1.0) -
     return w, h, bytes(cv.px)
 
 
-def write_overlay(data: Optional[Dict[str, Any]], *, preset: str, position: str, seq: int,
-                  path: Path = DEFAULT_PATH, extent_path: Path = DEFAULT_EXTENT) -> bool:
-    """Render and publish atomically; ``data`` None clears the HUD (a 0x0 overlay)."""
-    scale = 1.0
+def overlay_scale(extent_path: Path = DEFAULT_EXTENT) -> float:
     try:
-        parts = extent_path.read_text().split()
-        scale = scale_for(int(parts[1]))
+        return scale_for(int(extent_path.read_text().split()[1]))
     except (OSError, ValueError, IndexError):
-        pass
+        return 1.0
+
+
+def visual_key(data: Dict[str, Any], preset: str, position: str, scale: float) -> tuple:
+    """Same visible items require neither rasterization nor a new Vulkan upload."""
+    return preset, position, scale, json.dumps(items_for(data, preset), sort_keys=True)
+
+
+def write_overlay(data: Optional[Dict[str, Any]], *, preset: str, position: str, seq: int,
+                  path: Path = DEFAULT_PATH, extent_path: Path = DEFAULT_EXTENT,
+                  scale: Optional[float] = None) -> bool:
+    """Render and publish atomically; ``data`` None clears the HUD (a 0x0 overlay)."""
+    if scale is None:
+        scale = overlay_scale(extent_path)
     if data is None:
         w, h, pixels = 0, 0, b""
     else:

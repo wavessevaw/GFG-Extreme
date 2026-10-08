@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.2.1).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.2.2).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -60,7 +60,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -144,8 +144,8 @@ class GovernorService:
         self.ring_hud_path = Path(os.environ.get("GFG_HUD_FILE") or hud_rings.DEFAULT_PATH)
         self.ring_hud_extent = Path(os.environ.get("GFG_HUD_EXTENT_FILE") or hud_rings.DEFAULT_EXTENT)
         self.ring_hud_marker_path = self.configuration.runtime_state_dir / "hud-rings.enabled"
-        self._ring_hud_acc: Dict[str, list] = {}
-        self._ring_hud_levels: Dict[str, int] = {}
+        self._ring_hud_key = None
+        self._ring_hud_lock = threading.Lock()
         self._ring_hud_due = 0.0
         self._ring_hud_seq = 0
         self.ring_hud_layer_error: Optional[str] = None
@@ -411,12 +411,14 @@ class GovernorService:
 
     def hud_settings(self, profile: str) -> Dict[str, Any]:
         raw = self._profile_settings(profile).get("hud") or {}
-        preset, position = hud_normalize(raw.get("preset"), raw.get("position"))
+        preset, position = hud_normalize(raw.get("preset"), raw.get("position", "bottom-left"))
         style = raw.get("style") if raw.get("style") in self.HUD_STYLES else "rings"
-        return {"enabled": bool(raw.get("enabled", False)), "preset": preset, "position": position, "style": style}
+        # A missing setting is a new install (or an older profile). Preserve an explicitly
+        # disabled HUD on upgrades, but show Rings bottom-left by default.
+        return {"enabled": bool(raw.get("enabled", True)), "preset": preset, "position": position, "style": style}
 
     HUD_STYLES = ("rings", "text")
-    RING_HUD_PERIOD_S = 20.0
+    RING_HUD_PERIOD_S = 1.0
 
     def set_hud(self, profile: str, enabled: Any = None, preset: Any = None, position: Any = None,
                 style: Any = None) -> Dict[str, Any]:
@@ -453,10 +455,9 @@ class GovernorService:
             if settings["enabled"]:
                 status = self.get_status(profile)
                 rings = settings["style"] == "rings" and self._ring_hud_live()
-                if rings:
-                    # the GFG HUD layer draws the rings; MangoHud stays loaded but hidden
+                if rings and self._publish_ring_hud(status, settings):
+                    # Hide the fallback only after publishing a usable ring HUD.
                     self.hud.deactivate()
-                    self._publish_ring_hud(status, settings)
                 else:
                     self._clear_ring_hud()
                     # MangoHud re-reads a changed config, so the FPS source follows the telemetry.
@@ -489,68 +490,86 @@ class GovernorService:
         started = key[2] if isinstance(key, (list, tuple)) and len(key) > 2 else None   # wall-clock launch time
         return isinstance(started, (int, float)) and written >= float(started) - 5.0
 
-    def _sample_ring_hud(self, status: Dict[str, Any]) -> None:
-        tel = status.get("telemetry") or {}
-        summary = tel.get("summary") or tel
-        power = status.get("power") or {}
-        for key, value in (("fps", (summary.get("output") or {}).get("median")),
-                           ("real", (summary.get("real") or {}).get("median")),
-                           ("tdp", power.get("observed_tdp_w") if power.get("observed_tdp_w") is not None
-                            else power.get("current_tdp_w"))):
-            if isinstance(value, (int, float)) and value > 0:
-                acc = self._ring_hud_acc.setdefault(key, [0.0, 0])
-                acc[0] += float(value)
-                acc[1] += 1
-        level = ((status.get("frame_os") or {}).get("decision") or {}).get("level")
-        if level:
-            self._ring_hud_levels[level] = self._ring_hud_levels.get(level, 0) + 1
+    def _publish_ring_hud(self, status: Dict[str, Any], settings: Dict[str, Any]) -> bool:
+        with self._ring_hud_lock:
+            return self._publish_ring_hud_locked(status, settings)
 
-    def _publish_ring_hud(self, status: Dict[str, Any], settings: Dict[str, Any]) -> None:
-        """Averages over 20 s, drawn once per 20 s (a calm HUD, and cheap)."""
-        self._sample_ring_hud(status)
+    def _publish_ring_hud_locked(self, status: Dict[str, Any], settings: Dict[str, Any]) -> bool:
+        """Refresh at 1 Hz, skip identical pictures, and never display stale FPS."""
         now = self._clock()
         if now < self._ring_hud_due:
-            return
-        self._ring_hud_due = now + self.RING_HUD_PERIOD_S
-        avg = {k: v[0] / v[1] for k, v in self._ring_hud_acc.items() if v[1]}
+            return self._ring_hud_key is not None
+        tel = status.get("telemetry") or {}
+        summary = tel.get("summary") or tel
+        snapshot = tel.get("snapshot")
+        latest = (snapshot or {}).get("latest") or {}
+        age = (snapshot or {}).get("sample_age_ms")
+        fresh = snapshot is None or (isinstance(age, (int, float)) and 0 <= age <= 2500)
+
+        def number(value):
+            return round(float(value)) if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0 else None
+
+        # Renderer samples already summarize an interval. Avoid another 12/20-second average.
+        fps = latest.get("output_fps") if snapshot is not None else (summary.get("output") or {}).get("median")
+        real = latest.get("real_fps") if snapshot is not None else (summary.get("real") or {}).get("median")
         power = status.get("power") or {}
         battery = status.get("battery") or {}
         fo = status.get("frame_os") or {}
         benefit = fo.get("benefit") or {}
         data: Dict[str, Any] = {
-            "fps": avg.get("fps"), "real": avg.get("real"), "tdp": avg.get("tdp"),
-            "target": status.get("target_output_fps") or (status.get("device") or {}).get("target"),
-            "limit": power.get("initial_tdp_w") or power.get("maximum_tdp_w") or 15,
-            "battery_min": battery.get("minutes_left"), "battery_pct": battery.get("percent"),
+            "fps": number(fps) if fresh and status.get("enabled") else None,
+            "real": number(real) if fresh and status.get("enabled") else None,
+            "tdp": number(power.get("observed_tdp_w") if power.get("observed_tdp_w") is not None
+                          else power.get("current_tdp_w")),
+            "target": number(status.get("target_output_fps") or (status.get("device") or {}).get("target")),
+            "limit": number(power.get("initial_tdp_w") or power.get("maximum_tdp_w")) or 15,
+            "battery_min": number(battery.get("minutes_left")), "battery_pct": number(battery.get("percent")),
         }
-        if fo.get("enabled") and fo.get("mode", "off") != "off" and benefit.get("ready"):
+        if fo.get("enabled") and (fo.get("telemetry") or {}).get("live") and benefit.get("ready"):
+            def percent(key):
+                value = benefit.get(key)
+                return round(value) if isinstance(value, (int, float)) and math.isfinite(value) else None
             data["frame_os"] = {
-                "level": max(self._ring_hud_levels, key=self._ring_hud_levels.get) if self._ring_hud_levels else None,
-                "estimate": benefit.get("estimate"), "response": benefit.get("response_pct"),
-                "frames": benefit.get("frames_pct"), "energy": benefit.get("energy_pct")}
-        self._ring_hud_acc, self._ring_hud_levels = {}, {}
-        self._ring_hud_seq += 1
-        hud_rings.write_overlay(data, preset=settings["preset"], position=settings["position"],
-                                seq=self._ring_hud_seq, path=self.ring_hud_path, extent_path=self.ring_hud_extent)
+                "level": (fo.get("decision") or {}).get("level"), "estimate": benefit.get("estimate"),
+                "response": percent("response_pct"), "frames": percent("frames_pct"), "energy": percent("energy_pct")}
+        scale = hud_rings.overlay_scale(self.ring_hud_extent)
+        key = (hud_rings.visual_key(data, settings["preset"], settings["position"], scale),
+               tuple((self._launch or {}).get("launch_key") or ()))
+        if key == self._ring_hud_key and self.ring_hud_path.is_file():
+            self._ring_hud_due = now + self.RING_HUD_PERIOD_S
+            return True
+        seq = self._ring_hud_seq + 1
+        if not hud_rings.write_overlay(data, preset=settings["preset"], position=settings["position"],
+                                       seq=seq, path=self.ring_hud_path, extent_path=self.ring_hud_extent, scale=scale):
+            self._ring_hud_key = None
+            self._ring_hud_due = 0.0   # retry next tick, not after a long stale display
+            return False
+        self._ring_hud_seq, self._ring_hud_key = seq, key
+        self._ring_hud_due = now + self.RING_HUD_PERIOD_S
+        return True
 
     def _clear_ring_hud(self) -> None:
-        if self._ring_hud_seq and self._ring_hud_due != -1.0:
-            self._ring_hud_seq += 1
-            hud_rings.write_overlay(None, preset="standard", position="top-left", seq=self._ring_hud_seq,
-                                    path=self.ring_hud_path, extent_path=self.ring_hud_extent)
-            self._ring_hud_due = -1.0       # cleared; the next publish draws at once
+        with self._ring_hud_lock:
+            self._ring_hud_key = None
+            if self._ring_hud_seq and self._ring_hud_due != -1.0:
+                seq = self._ring_hud_seq + 1
+                if hud_rings.write_overlay(None, preset="standard", position="top-left", seq=seq,
+                                            path=self.ring_hud_path, extent_path=self.ring_hud_extent):
+                    self._ring_hud_seq = seq
+                    self._ring_hud_due = -1.0   # next publish draws at once; failures retry
+
+    def _current_hud_profile(self) -> str:
+        """Only the selected Saved profile controls the global Vulkan HUD launch marker."""
+        try:
+            name, _snapshot = self.configuration.get_current_profile_snapshot()
+            return str(name or "")
+        except Exception:
+            return str(self._active_profile or "")
 
     def _hud_preload_wanted(self) -> bool:
-        """Keep a hidden MangoHud in new launches only for Governor/HUD users.
-
-        Everyone else gets no extra Vulkan layer; for them the HUD needs one
-        relaunch after it is first turned on.
-        """
-        profiles = self._settings.get("profiles", {})
-        return isinstance(profiles, dict) and any(
-            isinstance(v, dict) and (bool(v.get("enabled", False)) or bool((v.get("hud") or {}).get("enabled", False)))
-            for v in profiles.values()
-        )
+        """Load the HUD only for the selected profile, honoring an explicit opt-out."""
+        profile = self._current_hud_profile()
+        return bool(profile and (self._profile_enabled(profile) or self.hud_settings(profile)["enabled"]))
 
     def _sync_hud_presence(self) -> None:
         """Start/toggle path: hidden HUD config for Governor/HUD users, none otherwise.
@@ -578,10 +597,8 @@ class GovernorService:
                 pass
 
     def _is_idle(self) -> bool:
-        profiles = self._settings.get("profiles", {})
-        hud_on = isinstance(profiles, dict) and any(
-            isinstance(v, dict) and bool((v.get("hud") or {}).get("enabled", False)) for v in profiles.values()
-        )
+        profile = self._current_hud_profile()
+        hud_on = bool(profile and self.hud_settings(profile)["enabled"])
         return not (self._any_profile_enabled() or hud_on or self._restore_pending or self._forced_release
                     or self._point or self._request)
 
@@ -835,9 +852,9 @@ class GovernorService:
 
     def _sync_frame_os_marker(self) -> None:
         """The launcher loads the gfg-pacer layer only while some profile uses Frame OS."""
-        profiles = self._settings.get("profiles", {})
-        wanted = isinstance(profiles, dict) and any(
-            self._frame_os_mode(profile) != "off" for profile in profiles)
+        profiles = list(dict.fromkeys([*self._saved_profile_names(),
+                                          *self._settings.get("profiles", {})]))
+        wanted = any(self._frame_os_mode(profile) != "off" for profile in profiles)
         if wanted:
             # The launcher loads the layer only when it is staged; a build without it stays inert.
             if self.frame_os_layer_dir is not None:
@@ -852,9 +869,9 @@ class GovernorService:
             except FileNotFoundError:
                 pass
         # Ring HUD: the launcher adds the GFG HUD layer while some profile shows the rings.
-        rings = isinstance(profiles, dict) and any(
-            self.hud_settings(profile)["enabled"] and self.hud_settings(profile)["style"] == "rings"
-            for profile in profiles)
+        selected = self._current_hud_profile()
+        rings = bool(selected and self.hud_settings(selected)["enabled"]
+                     and self.hud_settings(selected)["style"] == "rings")
         if rings and self.frame_os_layer_dir is not None:
             staged = frame_os_layer.stage(self.frame_os_layer_source, self.frame_os_layer_dir, self.log,
                                           registry_dir=self.frame_os_registry_dir, layer_key="hud")
@@ -867,6 +884,14 @@ class GovernorService:
             except FileNotFoundError:
                 pass
 
+    def _trusted_game_focus(self) -> Optional[bool]:
+        """Treat a missing Steam focus-restored event as unknown, never permanent REST."""
+        focus = getattr(self.observer, "game_focused", None)
+        focus_at = getattr(self.observer, "game_focused_at", None)
+        if focus is False and (focus_at is None or self._clock() - focus_at > 5.0):
+            return None
+        return focus
+
     def _configure_frame_os(self, profile: str) -> None:
         budget = self._budget
         mode = self._frame_os_mode(profile) if profile else "off"
@@ -876,7 +901,7 @@ class GovernorService:
                                     max_multiplier=1, calm_w=None)
             return
         point = budget.point
-        self.frame_os.focused = getattr(self.observer, "game_focused", None)
+        self.frame_os.focused = self._trusted_game_focus()
         try:
             self.frame_os.draw_w = self.power.status().get("draw_w")
         except Exception:

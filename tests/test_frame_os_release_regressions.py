@@ -27,13 +27,14 @@ class InputRegressionTests(unittest.TestCase):
                 policy = InjectionPolicy(output_hz=90, calm_real_hz=30)
                 self.assertNotEqual(policy.tick(40.0, snapshot).level, "rest")
                 state.event(41.0, EV_ABS, axis, 0)
-                self.assertEqual(policy.tick(70.0, state.snapshot(70.0)).level, "rest")
+                self.assertEqual(policy.tick(70.0, state.snapshot(70.0)).level, "calm",
+                                 "gamepad idle alone cannot prove inactivity in a keyboard/mouse title")
 
     def test_no_devices_clears_held_activity(self):
         state = InputState()
         state.event(10.0, EV_ABS, ABS_RX, 30000)
         state.event(11.0, STATUS_TYPE, 0, 0)
-        self.assertEqual(state.snapshot(12.0), {"camera": 0.0, "action": 0.0, "idle_s": float("inf")})
+        self.assertEqual(state.snapshot(12.0), {"camera": 0.0, "action": 0.0, "idle_s": float("inf"), "idle_verified": False})
 
     def test_eof_removes_owned_fd_and_partial_record(self):
         read_fd, write_fd = os.pipe()

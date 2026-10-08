@@ -126,6 +126,23 @@ class RuntimeBase(unittest.TestCase):
     def tearDown(self):
         self.assertEqual(sha(self.cfg.config_file_path), self.saved_hash, "Saved config was modified")
 
+    def test_stale_focus_lost_cannot_pin_frame_os_in_rest(self):
+        self.svc.observer.game_focused = False
+        self.svc.observer.game_focused_at = self.t["now"] - 7.0
+        self.assertIsNone(self.svc._trusted_game_focus())
+        self.svc.observer.game_focused_at = self.t["now"] - 1.0
+        self.assertIs(self.svc._trusted_game_focus(), False)
+        self.svc.observer.game_focused = True
+        self.assertIs(self.svc._trusted_game_focus(), True)
+
+    def test_default_ring_marker_is_staged_without_prior_governor_settings(self):
+        # A ConfigService profile need not have any saved Governor or HUD preferences.
+        self.svc._settings = {"schema": 1, "profiles": {}}
+        self.assertEqual(self.svc.hud_settings("game")["position"], "bottom-left")
+        self.assertTrue(self.svc.hud_settings("game")["enabled"])
+        self.svc._sync_frame_os_marker()
+        self.assertTrue(self.svc.ring_hud_marker_path.exists())
+
     def test_ring_hud_falls_back_to_text_until_the_layer_reports(self):
         import time as _t
         from gfg_plugin import hud_rings
@@ -145,7 +162,7 @@ class RuntimeBase(unittest.TestCase):
         magic, version, w, h, corner, margin, seq, _ = hud_rings.HEADER.unpack_from(raw)
         self.assertEqual((magic, version, corner), (hud_rings.MAGIC, 1, 0))
         self.assertEqual(len(raw), hud_rings.HEADER.size + w * h * 4)
-        self.svc._sync_hud("game")                 # within 20 s: not redrawn
+        self.svc._sync_hud("game")                 # within 1 s: not redrawn
         self.assertEqual(hud_rings.HEADER.unpack_from(self.svc.ring_hud_path.read_bytes())[6], seq)
         self.svc.set_hud("game", True, None, None, "text")
         self.svc._sync_hud("game")
@@ -179,6 +196,8 @@ class RuntimeBase(unittest.TestCase):
         self.assertFalse(self.svc._is_idle())          # enabled in setUp
         self.svc.set_enabled("game", False)
         self.step()
+        self.assertFalse(self.svc._is_idle(), "new installs keep Rings enabled even with Governor off")
+        self.svc.set_hud("game", False)
         self.assertTrue(self.svc._is_idle())
         self.svc.set_hud("game", True)
         self.assertFalse(self.svc._is_idle())          # HUD status needs the loop
@@ -188,6 +207,7 @@ class RuntimeBase(unittest.TestCase):
     def test_loop_wakes_immediately_when_poked_while_idle(self):
         async def scenario():
             self.svc.set_enabled("game", False)
+            self.svc.set_hud("game", False)
             self.svc.IDLE_LOOP_SECONDS = 30.0
             calls = []
             original = self.svc._iteration
@@ -799,7 +819,13 @@ class LiveAttachTests(RuntimeBase):
     def test_hidden_hud_only_for_governor_or_hud_users(self):
         from gfg_plugin.governor_hud import active_config_path
         active = active_config_path(self.cfg.config_dir)
-        self.assertFalse(active.exists(), "no Governor, no HUD: MangoHud must not load in games")
+        self.assertEqual(self.svc.hud_settings("game"),
+                         {"enabled": True, "preset": "standard", "position": "bottom-left", "style": "rings"})
+        self.svc._sync_hud_presence()
+        self.assertIn("no_display=1", active.read_text(), "default HUD preloaded for first launch")
+        self.svc.set_hud("game", False)
+        self.svc.set_enabled("game", False)
+        self.assertFalse(active.exists(), "user-disabled HUD stays disabled")
         self.svc.set_enabled("game", True)
         self.assertIn("no_display=1", active.read_text())
         self.svc.set_enabled("game", False)
@@ -1465,3 +1491,117 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
             self.svc._applied_tdp = None
             asyncio.run(self.svc._apply_budget_tdp("game"))
             self.assertEqual(self.svc.power.writes[-1], min(self.svc._budget.normal_max_w, self.svc._budget.tdp + 4.0))
+
+
+class RingRefreshTests(unittest.TestCase):
+    """Use real publication logic and fake only the rasterizer/clock."""
+    def setUp(self):
+        from gfg_plugin import hud_rings
+        self.rings = hud_rings
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.svc = GovernorService.__new__(GovernorService)
+        self.svc.ring_hud_path = Path(self.temp.name) / "hud.raw"
+        self.svc.ring_hud_extent = Path(self.temp.name) / "hud.extent"
+        self.svc.ring_hud_extent.write_text("1280 800 1")
+        self.svc._ring_hud_lock = __import__("threading").Lock()
+        self.svc._ring_hud_key = None
+        self.svc._ring_hud_due = 0.0
+        self.svc._ring_hud_seq = 0
+        self.svc._launch = {"launch_key": [1, 2, 3]}
+        self.now = 100.0
+        self.svc._clock = lambda: self.now
+        self.settings = {"preset": "minimal", "position": "top-left"}
+        self.status = {"enabled": True, "target_output_fps": 90,
+                       "telemetry": {"snapshot": {"sample_age_ms": 100,
+                                     "latest": {"real_fps": 45, "output_fps": 90}},
+                                     "summary": {"output": {"median": 60}, "real": {"median": 30}}}}
+        self.writes = []
+        self.fail = False
+
+        def writer(data, **kwargs):
+            self.writes.append((data, kwargs))
+            if self.fail:
+                return False
+            self.svc.ring_hud_path.write_bytes(b"published")
+            return True
+
+        self.patch = patch.object(hud_rings, "write_overlay", side_effect=writer)
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+
+    def publish(self):
+        return self.svc._publish_ring_hud(self.status, self.settings)
+
+    def test_one_second_refresh_and_latest_fps(self):
+        self.assertTrue(self.publish())
+        self.assertEqual(self.writes[-1][0]["fps"], 90)
+        self.status["telemetry"]["snapshot"]["latest"]["output_fps"] = 70
+        self.now += 0.5
+        self.publish()
+        self.assertEqual(len(self.writes), 1)
+        self.now += 0.5
+        self.publish()
+        self.assertEqual(self.writes[-1][0]["fps"], 70)
+
+    def test_identical_visible_data_skips_render_and_write(self):
+        self.publish()
+        self.now += 1
+        self.publish()
+        self.assertEqual(len(self.writes), 1)
+        self.svc.ring_hud_path.unlink()
+        self.now += 1
+        self.publish()
+        self.assertEqual(len(self.writes), 2, "missing file is recreated")
+
+    def test_resize_republishes_at_new_scale(self):
+        self.publish()
+        self.svc.ring_hud_extent.write_text("3840 2160 1")
+        self.now += 1
+        self.publish()
+        self.assertEqual(self.writes[-1][1]["scale"], 3.0)
+        self.assertEqual(len(self.writes), 2)
+
+    def test_stale_and_nonfinite_fps_are_not_displayed(self):
+        self.publish()
+        self.status["telemetry"]["snapshot"]["sample_age_ms"] = 3000
+        self.now += 1
+        self.publish()
+        self.assertIsNone(self.writes[-1][0]["fps"])
+        self.status["telemetry"]["snapshot"]["sample_age_ms"] = 10
+        self.status["telemetry"]["snapshot"]["latest"]["output_fps"] = float("nan")
+        self.now += 1
+        self.publish()
+        self.assertIsNone(self.writes[-1][0]["fps"])
+
+    def test_failed_publish_is_retried_without_committing_sequence(self):
+        self.fail = True
+        self.assertFalse(self.publish())
+        self.assertEqual(self.svc._ring_hud_seq, 0)
+        self.fail = False
+        self.assertTrue(self.publish())
+        self.assertEqual(self.svc._ring_hud_seq, 1)
+
+    def test_failed_clear_retries_and_reenable_republishes(self):
+        self.publish()
+        self.fail = True
+        self.svc._clear_ring_hud()
+        self.assertNotEqual(self.svc._ring_hud_due, -1)
+        self.fail = False
+        self.svc._clear_ring_hud()
+        self.assertEqual(self.svc._ring_hud_due, -1)
+        self.assertTrue(self.publish())
+        self.assertIsNotNone(self.writes[-1][0])
+
+    def test_session_change_republishes_even_with_same_numbers(self):
+        self.publish()
+        self.svc._launch = {"launch_key": [4, 5, 6]}
+        self.now += 1
+        self.publish()
+        self.assertEqual(len(self.writes), 2)
+
+    def test_dead_frame_os_does_not_show_old_benefit_rings(self):
+        self.status["frame_os"] = {"enabled": True, "telemetry": {"live": False},
+                                   "benefit": {"ready": True, "response_pct": 50}}
+        self.publish()
+        self.assertNotIn("frame_os", self.writes[-1][0])

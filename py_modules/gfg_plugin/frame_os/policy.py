@@ -159,8 +159,10 @@ class InjectionPolicy:
 
         if focused is False:
             level, reason = "rest", "steam-ui"      # Steam's menu covers the game: rest at once
-        elif idle >= REST_IDLE_S and idle != float("inf"):
-            level, reason = "rest", "idle"     # never before any input was seen (no pad, no reader)
+        elif idle >= REST_IDLE_S and idle != float("inf") and inp.get("idle_verified") is True:
+            # Gamepad silence cannot prove the player is idle in a keyboard/mouse game.
+            # Require a future sensor with whole-session input coverage, not raw evdev silence.
+            level, reason = "rest", "idle-verified"
         elif now < self._boost_until and now < self._boost_blocked_until:
             level, reason = "calm", "boost-ineffective"
         elif now < self._boost_until and self.boost_real_hz > self.calm_real_hz:

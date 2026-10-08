@@ -55,7 +55,8 @@ class InjectionTests(unittest.TestCase):
 
     def test_idle_rests_and_input_wakes(self):
         p = InjectionPolicy(output_hz=90, calm_real_hz=30)
-        self.assertEqual(p.tick(0, {"idle_s": 25.0}).level, "rest")
+        self.assertEqual(p.tick(0, {"idle_s": 25.0}).level, "calm", "gamepad silence is not proof of AFK")
+        self.assertEqual(p.tick(0, {"idle_s": 25.0, "idle_verified": True}).level, "rest")
         self.assertEqual(p.tick(1, {"idle_s": 0.0, "camera": 0.0}).level, "calm")
 
     def test_scene_change_buys_a_short_burst(self):
@@ -368,7 +369,7 @@ class ActExecutorTests(unittest.TestCase):
         self.assertEqual(InjectionPolicy(output_hz=90, calm_real_hz=30, max_multiplier=3).rest_real_hz, 30)
         self.assertEqual(InjectionPolicy(output_hz=60, calm_real_hz=30, max_multiplier=4).rest_real_hz, 30)  # 15 < 20
         p = InjectionPolicy(output_hz=90, calm_real_hz=30, max_multiplier=4)
-        d = p.tick(100.0, {"camera": 0, "action": 0, "idle_s": 30.0})
+        d = p.tick(100.0, {"camera": 0, "action": 0, "idle_s": 30.0, "idle_verified": True})
         self.assertEqual((d.level, d.real_hz), ("rest", 22.5))
 
     def test_injection_deltas(self):
@@ -480,7 +481,7 @@ class RestPowerTests(unittest.TestCase):
         from gfg_plugin.frame_os.policy import EnergyBroker, InjectionPolicy
         x4 = InjectionPolicy(output_hz=90, calm_real_hz=30, max_multiplier=4, broker=EnergyBroker(calm_w=13.0))
         x3 = InjectionPolicy(output_hz=90, calm_real_hz=30, max_multiplier=3, broker=EnergyBroker(calm_w=13.0))
-        idle = {"camera": 0, "action": 0, "idle_s": 30.0}
+        idle = {"camera": 0, "action": 0, "idle_s": 30.0, "idle_verified": True}
         self.assertEqual(x4.tick(1.0, idle).tdp_w, 13.0 * 0.6)
         d = x3.tick(1.0, idle)
         self.assertEqual((d.real_hz, d.tdp_w), (30, 13.0 * 0.85))
@@ -516,13 +517,46 @@ class BenefitTests(unittest.TestCase):
         m = BenefitMeter()
         kw = dict(acting=False, level="calm", output_hz=90, calm_real_hz=30, boost_real_hz=45, calm_w=13.0,
                   tdp_w=13.0, telemetry={"live": True, "freshness_ms": 25.0, "present_interval_p50_ms": 33.3})
-        self.feed(m, 30, **kw)
+        self.feed(m, 1, **kw)
         self.assertIsNone(m.summary()["response_pct"])
-        self.feed(m, 40, **kw)
+        self.feed(m, 3, **kw)
         s = m.summary()
         self.assertTrue(s["estimate"])
         self.assertAlmostEqual(s["frames_pct"], 50.0)
         self.assertGreater(s["response_pct"], 0)
+
+    def test_live_frames_and_energy_are_not_blank_for_an_entire_minute(self):
+        from gfg_plugin.frame_os.benefit import BenefitMeter
+        m = BenefitMeter()
+        self.feed(m, 3, acting=True, level="calm", output_hz=90, calm_real_hz=30,
+                  boost_real_hz=45, calm_w=12.0, tdp_w=12.0,
+                  telemetry={"live": True, "freshness_ms": 15.0, "present_interval_p50_ms": 33.3})
+        summary = m.summary()
+        self.assertTrue(summary["ready"])
+        self.assertEqual(summary["frames_pct"], 0.0)
+        self.assertEqual(summary["energy_pct"], 0.0)
+        self.assertEqual(summary["energy_basis"], "tdp-cap-delta")
+
+    def test_single_short_boost_can_update_frames_ring(self):
+        from gfg_plugin.frame_os.benefit import BenefitMeter
+        m = BenefitMeter()
+        base = {"acting": True, "output_hz": 90, "calm_real_hz": 30, "boost_real_hz": 45,
+                "calm_w": 12.0, "tdp_w": 12.0}
+        self.feed(m, 3, level="calm",
+                  telemetry={"live": True, "freshness_ms": 15.0, "present_interval_p50_ms": 33.3},
+                  **base)
+        self.feed(m, 1, level="boost",
+                  telemetry={"live": True, "freshness_ms": 13.0, "present_interval_p50_ms": 22.2},
+                  **base)
+        self.assertGreater(m.summary()["frames_pct"], 40.0)
+
+    def test_missing_power_does_not_invent_energy_savings(self):
+        from gfg_plugin.frame_os.benefit import BenefitMeter
+        m = BenefitMeter()
+        self.feed(m, 3, acting=True, level="calm", output_hz=90, calm_real_hz=30,
+                  boost_real_hz=45, calm_w=None, tdp_w=None,
+                  telemetry={"live": True, "freshness_ms": 15.0, "present_interval_p50_ms": 33.3})
+        self.assertIsNone(m.summary()["energy_pct"])
 
     def test_spending_more_than_saving_is_negative(self):
         from gfg_plugin.frame_os.benefit import BenefitMeter
