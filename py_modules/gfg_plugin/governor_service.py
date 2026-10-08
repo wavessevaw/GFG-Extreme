@@ -1585,10 +1585,17 @@ class GovernorService:
         # The panel's refresh rate changed the target: a controller built for the old one is stale.
         controller = self._budget or self._ladder
         target_changed = controller is not None and int(getattr(controller, "target_output_fps", target)) != target
-        changed = (
-            target_changed
-            or (self._generation_seen is not None and generation != self._generation_seen)
+        new_game_session = (
+            (self._generation_seen is not None and generation != self._generation_seen)
             or (self._launch_key is not None and launch_key is not None and launch_key != self._launch_key)
+        )
+        if new_game_session:
+            # A failed Act executor belongs to the old game/telemetry session.
+            # Never carry the lockout to a different game.
+            self._injection_starvation_yields = 0
+            self._injection_hold_until = 0.0
+        changed = (
+            target_changed or new_game_session
             or (self._point_external is not None and external != self._point_external)
         )
         self._generation_seen = generation
