@@ -1487,6 +1487,34 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.step()
         self.assertIsNone(self.svc._injection, "no flapping right after a yield")
 
+    def test_repeated_act_output_starvation_locks_out_injection_for_session(self):
+        """A bad adaptive renderer must not cycle 16 times through 30-FPS drops."""
+        self._act_live_point()
+        self.svc.frame_os.last = {"telemetry": {"live": True}}
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNotNone(self.svc._injection)
+        self.feed(20, 20, 60)
+        self.step()
+        self.assertEqual(self.svc._injection_starvation_yields, 1)
+
+        # Simulate the 60-second hold expiring. The second observed starvation
+        # disables further Act injection, without disabling the Governor.
+        self.svc._injection_hold_until = self.t["now"] - 1.0
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNotNone(self.svc._injection)
+        self.feed(20, 20, 60)
+        self.step()
+        self.assertEqual(self.svc._injection_starvation_yields, 2)
+        self.assertTrue(self.svc.get_status("game")["frame_os"]["output_starvation_lockout"])
+        self.assertFalse(self.svc.frame_os.executor_active)
+        self.svc._injection_hold_until = self.t["now"] - 1.0
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNone(self.svc._injection)
+        self.assertTrue(self.svc.get_status("game")["enabled"])
+
     def test_stale_menu_event_does_not_disable_motionboost_starvation_guard(self):
         self._act_live_point()
         self.svc.frame_os.last = {"telemetry": {"live": True}}
