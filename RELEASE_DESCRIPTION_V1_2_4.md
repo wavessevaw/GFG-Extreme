@@ -10,6 +10,7 @@
 ### Quality: quicker recovery from unproductive renderer transitions
 - The Quality search can now reject a renderer-applied trial early when a full, fresh observation window confirms **both** a mismatched multiplier and a severely starved output.
 - It still waits for genuine renderer-applied evidence; unavailable or stale data is not taken as proof of failure.
+- Quality's power optimizer now checks **measured output FPS as well as real FPS**: a point cannot be accepted at 60/90 FPS just because its capped real stream is healthy. At the power ceiling it rejects persistently under-delivering points and resumes searching.
 - This reduces prolonged low-output searches; it does **not** promise every game can reach 90 FPS at native or high-quality ratios.
 
 ### Experimental Frame OS Act: stop repeated FPS collapses
