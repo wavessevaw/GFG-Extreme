@@ -961,6 +961,29 @@ class BudgetRuntimeTests(RuntimeBase):
         st = self.step()
         self.assertEqual(st["active_point"]["key"], "30x3")
 
+    def test_zero_slot_bounce_restarts_two_second_recovery_gate(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.capacity_report(0)
+        self.step(0.1)
+        self.assertTrue(self.svc._capacity_paused)
+        self.capacity_report(2)
+        self.feed(6, 45, 90, dt=0.5)
+        self.step(0.1)
+        self.assertIsNotNone(self.svc._capacity_restore_at)
+        self.capacity_report(0)  # no slots AGAIN, before the gate closes
+        st = self.step(0.1)
+        self.assertEqual(st["reason"], "renderer-capacity-unavailable")
+        self.assertIsNone(self.svc._capacity_restore_at)
+        self.capacity_report(2)
+        self.feed(4, 45, 90, dt=0.5)
+        st = self.step(0.1)
+        self.assertEqual(st["reason"], "renderer-capacity-recovering")
+        self.assertTrue(self.svc._capacity_paused)
+        self.feed(5, 45, 90, dt=0.5)
+        st = self.step(0.1)
+        self.assertEqual(st["request"]["point"], "30x3")
+
     def test_live_x3_to_x2_to_x3_recovers_without_false_blacklist(self):
         self.feed(20, 45, 90)
         self.step()
