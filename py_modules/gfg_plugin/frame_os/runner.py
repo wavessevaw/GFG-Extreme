@@ -18,7 +18,9 @@ from .benefit import BenefitMeter
 from .control_channel import ControlChannel
 from . import input_relay
 from .input_sensor import EvdevReader, InputState
-from .policy import EnergyBroker, InjectionPolicy
+from .policy import Decision, EnergyBroker, InjectionPolicy
+from .memory import EFFECTS
+from .proof import ProofMeter
 from .scene import SceneChangeDetector
 
 MODES = ("observe", "shadow", "act")
@@ -57,6 +59,11 @@ class FrameOsRunner:
         # cadence and the watts; otherwise act paces at the point's own cadence.
         self.executor_active = False
         self.benefit = BenefitMeter()
+        # A/B proof: rare short control windows turn the benefit estimates into measurements.
+        self.proof = ProofMeter()
+        self.ab_control: Optional[str] = None
+        # per game (Frame OS memory): Act effects the A/B proof ruled out in this game
+        self.game_disabled: Dict[str, bool] = {"shaping": False, "boost": False, "rest": False}
 
     # ---------------------------------------------------------- Governor side (1 Hz)
     def configure(self, *, enabled: bool, mode: str, output_hz: float, calm_real_hz: float,
@@ -71,6 +78,8 @@ class FrameOsRunner:
             self.channel.reset()
             self._published = None
             self.benefit.reset()            # the rings are per game session
+            self.proof.reset()
+            self.ab_control = None
             self.policy = None              # no bank/backoff from the previous session
             self.scene = SceneChangeDetector()
             self.last = {}
@@ -83,6 +92,7 @@ class FrameOsRunner:
             broker = EnergyBroker(calm_w=float(calm_w)) if calm_w else None
             self.policy = InjectionPolicy(output_hz=output_hz, calm_real_hz=calm_real_hz,
                                           max_multiplier=max_multiplier, broker=broker)
+            self._apply_game_flags()
         elif calm_w:
             if self.policy.broker is None:
                 self.policy.broker = EnergyBroker(calm_w=float(calm_w))
@@ -90,6 +100,23 @@ class FrameOsRunner:
                 self.policy.broker.calm_w = float(calm_w)   # the Governor moved the calm cap
         else:
             self.policy.broker = None  # power ownership was released
+
+    def apply_memory(self, disabled: Dict[str, bool], prior: Dict[str, Any]) -> None:
+        """This game's memory: effects off here, and the A/B pairs earlier sessions measured."""
+        self.game_disabled = {effect: bool((disabled or {}).get(effect)) for effect in self.game_disabled}
+        self.proof.load(prior or {}, skip={m for m, e in EFFECTS.items() if self.game_disabled[e]})
+        self._apply_game_flags()
+
+    def set_disabled(self, disabled: Dict[str, bool]) -> None:
+        """Effects newly ruled out mid-session: switch them off, keep this session's pairs."""
+        self.game_disabled = {effect: bool((disabled or {}).get(effect)) for effect in self.game_disabled}
+        self.proof.skip = {m for m, e in EFFECTS.items() if self.game_disabled[e]}
+        self._apply_game_flags()
+
+    def _apply_game_flags(self) -> None:
+        if self.policy is not None:
+            self.policy.boost_allowed = not self.game_disabled["boost"]
+            self.policy.rest_allowed = not self.game_disabled["rest"]
 
     @property
     def injection(self) -> Optional[tuple]:
@@ -129,16 +156,28 @@ class FrameOsRunner:
         cut = self.scene.tick(now, cost)
         decision = self.policy.tick(now, inp, scene_change=cut, draw_w=self.draw_w, focused=self.focused)
         acting = self.mode == "act"
-        if acting and telemetry.get("live"):
+        # A/B proof: what the game did under last tick's control, then this tick's control.
+        self.proof.observe(now, eligible=acting and self.executor_active and bool(telemetry.get("live")),
+                           level=decision.level, telemetry=telemetry, draw_w=self.draw_w)
+        control = self.proof.control(now, decision.level) if acting and self.executor_active else None
+        self.ab_control = control
+        if control == "hold-calm":
+            # The policy keeps its own level (the moment is unchanged); only the output is calm.
+            broker = self.policy.broker
+            decision = Decision("calm", self.policy.calm_real_hz, self.policy.output_hz,
+                                broker.calm_w if broker is not None else None, "ab-control")
+        if acting and telemetry.get("live") and control != "hold-calm":
+            # a held boost is not an ineffective one: never let a control window back boosts off
             interval = telemetry.get("present_interval_p50_ms")
             self.policy.note_delivered(now, 1000.0 / interval if interval else None)
         real_hz = decision.real_hz if acting and self.executor_active else self.policy.calm_real_hz
-        wanted = (self.mode, round(real_hz, 3))
+        shaping = control != "no-shaping" and not self.game_disabled["shaping"]
+        wanted = (self.mode, round(real_hz, 3), shaping)
         if wanted != self._published:
             # Tick shaping must be able to move a frame start through most of a real-frame slot:
             # at 30 real a one-refresh cap (11 ms) leaves two thirds of the queueing in place.
             published = self.channel.write_policy(enabled=True, real_hz=real_hz, mode=self.mode,
-                                      tick_shaping=True, pacing=True, generation=self._bump(),
+                                      tick_shaping=shaping, pacing=True, generation=self._bump(),
                                       max_wait_ms=round(0.8 * 1000.0 / real_hz, 2) if real_hz > 0 else 0.0)
             self._published = wanted if published else None
         else:
@@ -150,15 +189,19 @@ class FrameOsRunner:
             "generation": self.generation, "telemetry": telemetry,
             "acknowledged": self._published is not None and bool(telemetry.get("live"))
                             and telemetry.get("applied_generation") == self.generation,
-            "input_sensor": self._sensor_status(inp),
+            "input_sensor": self._sensor_status(inp), "ab_control": control,
+            "game_disabled": dict(self.game_disabled),
         }
         broker = self.policy.broker
         calm_w = broker.calm_w if broker is not None else None
         self.benefit.add(now, acting=acting, level=decision.level, telemetry=telemetry,
                          output_hz=self.policy.output_hz, calm_real_hz=self.policy.calm_real_hz,
                          boost_real_hz=self.policy.boost_real_hz, calm_w=calm_w,
-                         tdp_w=(calm_w + self.tdp_offset_w) if acting and calm_w else decision.tdp_w)
-        self.last["benefit"] = self.benefit.summary()
+                         tdp_w=(calm_w + self.tdp_offset_w) if acting and calm_w else decision.tdp_w,
+                         counted=control is None)
+        proof = self.proof.summary()
+        self.last["proof"] = proof
+        self.last["benefit"] = apply_proof(self.benefit.summary(), proof)
         return self.last
 
     def _sensor_status(self, inp: Dict[str, Any]) -> Dict[str, Any]:
@@ -216,3 +259,18 @@ class FrameOsRunner:
         self.last = {"enabled": False}
         if hasattr(self.channel, "close"):
             self.channel.close()
+
+
+def apply_proof(benefit: Dict[str, Any], proof: Dict[str, Any]) -> Dict[str, Any]:
+    """Measured A/B means replace the model's numbers metric by metric; ``measured`` says which."""
+    out = dict(benefit)
+    measured = {}
+    for metric, key in (("response", "response_pct"), ("frames", "frames_pct"), ("energy", "energy_pct")):
+        result = proof.get(metric) or {}
+        measured[metric] = bool(result.get("measured"))
+        if measured[metric]:
+            out[key] = result.get("mean")
+    out["measured"] = measured
+    if any(measured.values()):
+        out["ready"] = True
+    return out

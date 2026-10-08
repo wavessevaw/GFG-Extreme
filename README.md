@@ -10,8 +10,8 @@
 
 Press **Run**. GFG picks the frame rate for your screen, chooses how many frames to generate,<br>
 and sets the TDP as low as the game allows — then keeps adjusting while you play.<br>
-New in 1.2: **Frame OS** (experimental) gives you more real frames when you act and saves power when you don't,<br>
-and the in-game overlay turns into **rings**.
+**Frame OS** (experimental) gives you more real frames when you act and saves power when you don't —<br>
+and since 1.3 it **measures its own benefit in your game** and remembers what works there.
 
 [**Download the latest release**](https://github.com/wavessevaw/GFG-Extreme/releases) · [Quick start](#quick-start) · [Frame OS](#frame-os-experimental) · [Something not working?](#something-not-working)
 
@@ -66,7 +66,7 @@ A small Vulkan layer that sits above the frame generator. It watches every real 
   - **Learns** when a boost does not help in a game and stops paying for it.
   - **Rests** the moment the Steam menu covers the game, and hands control back to the Governor when the APU gets hot or the output falls short.
 
-Home gets a **Frame OS card** with three rings — **Response**, **Frames** and **Energy** — showing this session's benefit in percent, coloured from red (worse) through orange and yellow to green (a lot). In Observe and Shadow they are grey estimates. The same rings sit in the in-game overlay, next to FPS and TDP.
+Home gets a **Frame OS card** with three rings — **Response**, **Frames** and **Energy** — showing this session's benefit in percent, coloured from red (worse) through orange and yellow to green (a lot). In Observe and Shadow they are grey estimates. In Act, Frame OS **checks itself in your game**: every so often it switches one effect off for a few seconds and compares the same moment with and without it (A/B). Once a ring has three comparisons it shows the measured number instead of the estimate — the card says *Measured in game*, and the overlay shows `A/B` while a check runs. You can turn the check off in Diagnostics. Frame OS also **remembers each game**: what the A/B check measured carries over to the next session, and an effect that does not help in that game — say, a boost the GPU cannot feed — is switched off there automatically (and re-tried every few sessions). Boosts now start on the *onset* of a camera swing, not halfway through it. The same rings sit in the in-game overlay, next to FPS and TDP.
 
 <br clear="right">
 
@@ -84,7 +84,7 @@ When the game closes, Home sums the whole session up in rings: **average FPS**, 
 
 You need [Decky Loader](https://decky.xyz/) and [Lossless Scaling](https://store.steampowered.com/app/993090/Lossless_Scaling/) from Steam (the default public version).
 
-1. Download `GFG-Extreme-v1_2_4.zip` (or newer) from [Releases](https://github.com/wavessevaw/GFG-Extreme/releases) and install it in Decky (*Install from zip*). Accept the root access request — it is used only to set TDP.
+1. Download `GFG-Extreme-v1_3_0.zip` (or newer) from [Releases](https://github.com/wavessevaw/GFG-Extreme/releases) and install it in Decky (*Install from zip*). Accept the root access request — it is used only to set TDP.
 2. Open GFG Extreme and tap **Install engine**.
 3. In Steam, open the game's **Properties → Launch Options** and paste:
    ```text
@@ -124,7 +124,7 @@ Rings refresh **once a second** from recent renderer telemetry. Identical images
 
 ## Status
 
-**Stable (1.2).** Frame OS is experimental and off unless you turn it on. Every release is covered by an automated test suite (Python backend, the generated launcher run in bash, the interface rendered in a headless browser) and checked on a real Steam Deck. Logs from more games and setups are very welcome. Known limitations: [docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md).
+**Stable (1.3).** Frame OS is experimental and off unless you turn it on. Every release is covered by an automated test suite (Python backend, the generated launcher run in bash, the interface rendered in a headless browser) and checked on a real Steam Deck. Logs from more games and setups are very welcome. Known limitations: [docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md).
 
 <details>
 <summary><b>Everything else it can do</b></summary>

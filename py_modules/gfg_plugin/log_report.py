@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from .governor_telemetry import TelemetryObserver
 
-CURRENT_VERSION = "1.2.4"  # kept in step by scripts/bump_version.py
+CURRENT_VERSION = "1.3.0"  # kept in step by scripts/bump_version.py
 
 
 def _percentile(values: List[float], pct: float) -> Optional[float]:
@@ -230,6 +230,9 @@ def frame_os_summary(samples: List[Dict[str, Any]], processes_json: str) -> Opti
         "input_sources": dict(Counter(str((r.get("input") or {}).get("source")) for r in rows if r.get("input"))),
         "input_gamepads": max(((r.get("input") or {}).get("gamepads") or 0 for r in rows), default=0),
         "input_events": max(((r.get("input") or {}).get("events") or 0 for r in rows), default=0),
+        # the in-game A/B check: the last sample holds the session's pairs so far
+        "ab": next((r.get("proof") for r in reversed(rows) if isinstance(r.get("proof"), dict)), None),
+        "ab_control_share": round(sum(1 for r in rows if r.get("ab_control")) / len(rows), 3),
         "loaded_in_game": (any(loaded) if loaded else None),
         "not_loaded_processes": sorted({str(p.get("comm") or p.get("pid")) for p in not_loaded}),
         # The launcher exports the control-file path only when Frame OS was on at game start.
@@ -349,6 +352,16 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
                        + ".")
         if fo.get("injection"):
             out.append(f"Frame OS Act executor events: {fo['injection']}.")
+        ab = fo.get("ab") or {}
+        parts = []
+        for metric in ("response", "frames", "energy"):
+            r = ab.get(metric) or {}
+            if r.get("n"):
+                interval = f" ({r['low']}..{r['high']})" if r.get("low") is not None else ""
+                parts.append(f"{metric} {r['mean']:+}%{interval} over {r['n']} pair{'s' if r['n'] != 1 else ''}")
+        if parts:
+            out.append("Frame OS A/B in game (Act vs. the same moment without it): " + "; ".join(parts)
+                       + f"; control windows {round(100 * fo.get('ab_control_share', 0))}% of samples.")
         by_level = fo.get("by_level") or {}
         if by_level:
             parts = []

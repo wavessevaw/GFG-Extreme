@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.2.4).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.3.0).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -42,6 +42,8 @@ from .frame_os.control_channel import DEFAULT_PATH as DEFAULT_SHM, ControlChanne
 from . import hud_rings
 from .frame_os import layer_install as frame_os_layer
 from .frame_os.runner import FrameOsRunner
+from .frame_os.memory import GameMemory, seed_pairs
+from .frame_os.proof import METRICS as FRAME_OS_METRICS
 from .package_paths import PLUGIN_ROOT
 from .host_sensors import HostSensors, diagnose
 from .governor_hud import HudWriter, normalize as hud_normalize, output_fps as hud_output_fps
@@ -60,7 +62,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.2.4"
+VERSION = "1.3.0"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -136,6 +138,10 @@ class GovernorService:
         # GFG Frame OS (development, off by default): per-profile mode, launch marker, 10 Hz runner.
         self.frame_os_marker_path = self.configuration.runtime_state_dir / "frame-os.enabled"
         self.frame_os = FrameOsRunner(ControlChannel(Path(os.environ.get("GFG_FRAME_OS_SHM") or DEFAULT_SHM)))
+        # Frame OS memory: this game's A/B record, loaded once per game session
+        self._fo_memory: Optional[GameMemory] = None
+        self._fo_memory_key: Optional[tuple] = None
+        self._fo_saved: Dict[str, int] = {}
         self.frame_os_layer_source = frame_os_layer.bundled_dir(PLUGIN_ROOT)
         share = getattr(self.configuration, "local_share_dir", None)
         self.frame_os_layer_dir: Optional[Path] = frame_os_layer.target_dir(share) if share else None
@@ -331,6 +337,13 @@ class GovernorService:
             return {"success": False, "error": "no-game-identified", "profile": profile, "game": None}
         prefix = target["game"]
         forgotten = self.game_models.forget_game(prefix)
+        if self._frame_os_games().pop(prefix, None) is not None:
+            forgotten += 1
+            self._save_settings_quietly()
+            if self._fo_memory_key and self._fo_memory_key[0] == prefix:
+                self._fo_memory = GameMemory()
+                self._fo_memory.start_session()
+                self.frame_os.apply_memory(self._fo_memory.disabled(), {})
         budget = self._budget
         if budget is not None and profile == self._active_profile:
             # The live controller forgets too, or the next drain would write it all back.
@@ -554,6 +567,7 @@ class GovernorService:
             data["frame_os"] = {
                 "level": level, "estimate": benefit.get("estimate"), "verified_boost": delivered,
                 "active": active, "actual_real": measured_real, "actual_ratio": ratio,
+                "ab": bool(fo.get("ab_control")), "measured": benefit.get("measured") or {},
                 "response": percent("response_pct"), "frames": percent("frames_pct"),
                 "energy": percent("energy_pct")}
         scale = hud_rings.overlay_scale(self.ring_hud_extent)
@@ -836,6 +850,17 @@ class GovernorService:
 
     INJECTION_HOLD_S = 60.0
 
+    def _frame_os_ab(self) -> bool:
+        """A/B proof windows in Act (on unless the player turned them off)."""
+        return self._settings.get("frame_os_ab") is not False
+
+    def set_frame_os_ab(self, enabled: bool) -> Dict[str, Any]:
+        self._settings["frame_os_ab"] = bool(enabled)
+        self._save_settings()
+        self.frame_os.proof.enabled = bool(enabled)
+        self._poke()
+        return {"success": True, "error": None, "ab": self._frame_os_ab()}
+
     def set_frame_os_act_unlock(self, enabled: bool) -> Dict[str, Any]:
         self._settings["frame_os_act_unlocked"] = bool(enabled)
         if not enabled:
@@ -931,6 +956,7 @@ class GovernorService:
             return
         point = budget.point
         self.frame_os.focused = self._trusted_game_focus()
+        self.frame_os.proof.enabled = self._frame_os_ab()
         try:
             self.frame_os.draw_w = self.power.status().get("draw_w")
         except Exception:
@@ -941,6 +967,55 @@ class GovernorService:
             max_multiplier=float(self.observer.current_max_multiplier or 3.0),
             calm_w=budget.tdp if budget.tdp_control else None,
         )
+        self._sync_frame_os_memory(profile)
+
+    def _frame_os_games(self) -> Dict[str, Any]:
+        games = self._settings.get("frame_os_games")
+        if not isinstance(games, dict):
+            games = self._settings["frame_os_games"] = {}
+        return games
+
+    def _sync_frame_os_memory(self, profile: str) -> None:
+        """Load this game's Frame OS memory once per game session, then store new A/B pairs as they
+        arrive (rare: one control window per 20-90 s) and switch off effects they rule out."""
+        prefix = game_prefix(profile, self._game_app_id())
+        key = (prefix, tuple((self._launch or {}).get("launch_key") or ()))
+        if key != self._fo_memory_key:
+            memory = GameMemory(self._frame_os_games().get(prefix))
+            disabled = memory.start_session()
+            self._fo_memory, self._fo_memory_key = memory, key
+            self._fo_saved = {m: len(self.frame_os.proof.pairs[m]) for m in FRAME_OS_METRICS}
+            self.frame_os.apply_memory(disabled, seed_pairs(memory))
+            self._frame_os_games()[prefix] = memory.to_record()
+            self._save_settings_quietly()
+            return
+        memory = self._fo_memory
+        if memory is None:
+            return
+        fresh: Dict[str, List[float]] = {}
+        for metric in FRAME_OS_METRICS:
+            pairs = self.frame_os.proof.pairs[metric]
+            saved = self._fo_saved.get(metric, 0)
+            if len(pairs) < saved:
+                saved = 0          # the runner started over (Frame OS switched off and on)
+            if len(pairs) > saved:
+                fresh[metric] = list(pairs[saved:])
+            self._fo_saved[metric] = len(pairs)
+        if not fresh:
+            return
+        ruled_out = memory.add_pairs(fresh)
+        self._frame_os_games()[prefix] = memory.to_record()
+        self._save_settings_quietly()
+        if ruled_out:
+            self.frame_os.set_disabled(memory.disabled())
+            for effect, why in ruled_out.items():
+                self._journal("frame-os-effect-off", profile=profile, game=prefix, effect=effect, verdict=why)
+
+    def _save_settings_quietly(self) -> None:
+        try:
+            self._save_settings()
+        except OSError as error:
+            self.log.debug("Frame OS memory not stored: %s", error)
 
     def set_scale_ready(self, profile: str, scale_ready: bool) -> Dict[str, Any]:
         profile = str(profile or "").strip()
@@ -1075,6 +1150,8 @@ class GovernorService:
         value["session_history"] = (self._settings.get("session_history") or [])[: self.SESSION_HISTORY]
         value["frame_os"] = {"mode": self._frame_os_mode(profile or value.get("profile", "")),
                              "act_unlocked": self._frame_os_act_unlocked(),
+                             "ab": self._frame_os_ab(),
+                             "game": self._fo_memory.summary() if self._fo_memory is not None else None,
                              "starvation_yields": self._injection_starvation_yields,
                              "output_starvation_lockout": self._injection_starvation_yields >= 2,
                              "layer_installed": bool(self.frame_os_layer_dir and frame_os_layer.is_staged(self.frame_os_layer_dir)),

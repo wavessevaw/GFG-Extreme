@@ -143,6 +143,18 @@ class FrameOsReportTests(unittest.TestCase):
         self.assertIn("engine DXVK", "\n".join(rep["findings"]))
         self.assertEqual(fo["present_hold_ms"], 20.4)
 
+    def test_ab_results_are_reported(self):
+        rows = self.rows({"live": True, "frames": 900, "freshness_ms": 13.0})
+        for i, row in enumerate(rows):
+            row["frame_os"].update(mode="act", ab_control="no-shaping" if i == 3 else None,
+                                   proof={"response": {"n": 4, "mean": 46.5, "low": 38.0, "high": 55.0},
+                                          "frames": {"n": 0}, "energy": {"n": 1, "mean": 12.0}})
+        rep = analyze(bundle({"timeline.jsonl": timeline(rows),
+                              "game-processes.json": json.dumps([{"pid": 1, "frame_os_layer_loaded": True}])}))
+        text = "\n".join(rep["findings"])
+        self.assertIn("response +46.5% (38.0..55.0) over 4 pairs; energy +12.0% over 1 pair", text)
+        self.assertIn("control windows 10% of samples", text)
+
     def test_stale_telemetry_does_not_answer(self):
         layer = {"live": False, "frames": 900, "freshness_ms": 21.5}
         rep = analyze(bundle({"timeline.jsonl": timeline(self.rows(layer)),

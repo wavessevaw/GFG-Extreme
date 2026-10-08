@@ -121,6 +121,8 @@ def compact_frame_os(frame_os: Any) -> Any:
         "level": decision.get("level"), "real_hz": decision.get("real_hz"), "tdp_w": decision.get("tdp_w"),
         "decision_reason": decision.get("reason"),
         "input": frame_os.get("input_sensor"),
+        "ab_control": frame_os.get("ab_control"), "proof": frame_os.get("proof"),
+        "benefit": frame_os.get("benefit"),
         "layer": {k: tel.get(k) for k in (
             "live", "writer_pid", "engine", "passthrough", "frames", "hits", "misses", "cost_p50_ms", "cost_q_ms",
             "avg_delay_ms", "freshness_ms", "present_hold_ms", "acquire_block_ms", "present_interval_p50_ms",
@@ -484,7 +486,7 @@ class SessionRecorder:
             "decky_plugins": sorted(p.name for p in (self.user_home / "homebrew" / "plugins").glob("*"))
             if (self.user_home / "homebrew" / "plugins").is_dir() else [],
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme 1.2.4 (engine 4.0.0-gfg.4)",
+            "plugin_version": "GFG Extreme 1.3.0 (engine 4.0.0-gfg.4)",
         }
 
     def _write_bundle(self) -> Path:

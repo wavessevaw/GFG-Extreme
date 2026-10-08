@@ -1417,6 +1417,15 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
             self.svc.set_frame_os_act_unlock(True)
             self.assertEqual(self.svc._frame_os_mode("game"), "observe", "unlocking never re-arms Act silently")
 
+    def test_ab_check_is_on_by_default_and_persists_off(self):
+        self.assertTrue(self.svc.get_status("game")["frame_os"]["ab"])
+        self.assertTrue(self.svc.frame_os.proof.enabled)
+        self.assertFalse(self.svc.set_frame_os_ab(False)["ab"])
+        self.assertFalse(self.svc.frame_os.proof.enabled)
+        self.assertFalse(self.svc.get_status("game")["frame_os"]["ab"])
+        self.assertIs(self.svc._settings["frame_os_ab"], False)
+        self.svc.set_frame_os_ab(True)
+
     def _act_live_point(self):
         self.svc.set_frame_os_act_unlock(True)
         self.assertTrue(self.svc.set_frame_os("game", "act")["success"])
@@ -1425,6 +1434,38 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.feed(16, 30, 90)
         self.step()
         self.assertEqual(self.svc._point["key"], "30x3")
+
+    def test_frame_os_remembers_ab_results_per_game(self):
+        self.inspector.info.update(app_id="4242", launch_key=[1, 2, 2])
+        self._act_live_point()
+        self.assertEqual(self.svc._fo_memory_key[0], "app:4242")
+        self.assertEqual(self.svc._settings["frame_os_games"]["app:4242"]["sessions"], 1)
+        # this session measures boosts that bring nothing: the GPU cannot feed them here
+        self.svc.frame_os.proof.pairs["frames"].extend([1.0, 0.5, 1.5, 0.0])
+        self.feed(16, 30, 90)
+        self.step()
+        record = self.svc._settings["frame_os_games"]["app:4242"]
+        self.assertEqual(record["pairs"]["frames"], [1.0, 0.5, 1.5, 0.0])
+        self.assertEqual(record["off"], {"boost": 1})
+        self.assertTrue(self.svc.frame_os.game_disabled["boost"], "switched off mid-session")
+        self.assertEqual(self.svc.get_status("game")["frame_os"]["game"]["verdicts"]["frames"], "useless")
+        # the pairs are stored once, not again on the next steps
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertEqual(len(self.svc._settings["frame_os_games"]["app:4242"]["pairs"]["frames"]), 4)
+        # next launch of the same game: boost stays off, the rings start measured
+        self.inspector.info["launch_key"] = [1, 3, 3]
+        for real in (45, 30, 30):
+            self.feed(16, real, 90)
+            self.step()
+        self.assertEqual(self.svc._settings["frame_os_games"]["app:4242"]["sessions"], 2)
+        self.assertTrue(self.svc.frame_os.game_disabled["boost"])
+        self.assertFalse(self.svc.frame_os.policy.boost_allowed)
+        self.assertEqual(self.svc.frame_os.proof.summary()["frames"]["n"], 4)
+        # "Reset what GFG learned" forgets it too
+        self.assertTrue(self.svc.forget_game_model("game")["success"])
+        self.assertNotIn("app:4242", self.svc._settings["frame_os_games"])
+        self.assertFalse(self.svc.frame_os.game_disabled["boost"])
 
     def test_act_injects_adaptive_overlay_only_while_the_pacer_is_live(self):
         self._act_live_point()

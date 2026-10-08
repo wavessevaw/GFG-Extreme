@@ -183,6 +183,46 @@ broker's watts and skips window judgement. Heat or an output below 80 % of the t
 point back (`frame-os-injection-yielded`). Cadences: boost 45, calm 30, rest 22.5 (x4) at 90 Hz.
 Act needs an explicit unlock (Diagnostics → Unlock Act, or `GFG_FRAME_OS_EXPERIMENTAL_ACT=1`).
 
+## 3c. In-game A/B proof (Act)
+
+The benefit rings start as model estimates. In Act, `frame_os/proof.py` replaces them with
+measurements taken in the player's own game: now and then (every 20 s while learning, every 90 s
+once each metric has 6 pairs) a short **control window** runs with one Act effect switched off,
+and the windows right before and after it (effect on, same moment) are the comparison. A-B-A
+pairs cancel slow drift (heat, a scene getting heavier). The moment decides the test:
+
+| Level at the start | Control window | Metric | Window (settle) |
+|---|---|---|---|
+| calm  | tick shaping off, same cadence and pacing (`tick_shaping=0` in the policy) | frame age at present (`freshness_ms`) | 4 s (1 s) |
+| boost | boost held at the calm cadence and cap | real cadence (present interval p50) | 2.5 s (0.7 s) |
+| rest  | rest held at calm | measured APU draw | 5 s (1.5 s) |
+
+A window whose level changes, whose pacer telemetry is not live, or that lacks samples for 60 % of
+its length is dropped (`aborted`), never filled in. A metric is **measured** from 3 pairs; the
+summary is the mean and a 95 % t-interval over the pairs. Measured means replace the model's
+numbers metric by metric (`benefit.measured`), the Home card says which, the in-game rings show an
+`A/B` tag during a control window, and the recorded log reports every pair count and interval.
+Control windows are excluded from the session numbers, never trigger the boost back-off, and add
+no watts. Off switch: Diagnostics → *A/B check in Act* (`frame_os_ab`).
+
+## 3d. Per-game memory and predictive boost
+
+**Memory** (`frame_os/memory.py`, settings key `frame_os_games`, per `game_prefix`): the A/B
+pairs of every Act session in a game (the last 40 per metric) and a verdict per effect —
+*helps* (95 % interval above zero), *hurts* (below zero), *useless* (boost gains under 5 % with
+the interval's top under 10 %: the GPU cannot feed more real frames here) or *unclear*. An effect
+that hurts, or a useless boost, is switched off **for that game** at once and in later sessions:
+no tick shaping, no boost (energy stays in the bank) or no rest. Every 8 sessions a switched-off
+effect gets a fresh trial (its old pairs are dropped so they cannot outvote the re-check). Earlier
+sessions' pairs seed the A/B meter, so a known game's rings start measured and its control
+windows are rare from the start. *Reset what GFG learned* forgets the memory together with the
+Governor's game model.
+
+**Predictive boost** (`policy.py`): a camera swing is announced by the stick before it is fast.
+A right-stick deflection of at least 0.25 rising at 2.0 per second or faster starts the boost on
+the onset (`camera-onset`) instead of at the 0.5 threshold, about one real frame earlier, so the
+first fast frames are already real. Slow drift does not trigger it.
+
 ## 4. Phases and gates
 
 | Phase | Deliverable | Gate before the next phase |

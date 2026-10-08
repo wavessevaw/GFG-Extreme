@@ -55,7 +55,8 @@ class SessionStats:
         if isinstance(benefit, dict) and benefit.get("ready"):
             # The meter is cumulative for the game, so its latest reading is the session average.
             self.benefit = {"response": benefit.get("response_pct"), "frames": benefit.get("frames_pct"),
-                            "energy": benefit.get("energy_pct"), "estimate": bool(benefit.get("estimate"))}
+                            "energy": benefit.get("energy_pct"), "estimate": bool(benefit.get("estimate")),
+                            "measured": dict(benefit.get("measured") or {})}
         if frame_os:  # Frame OS decision (boost / calm / rest) while its layer answered
             self.frame_os_s[str(frame_os)] = self.frame_os_s.get(str(frame_os), 0.0) + dt
         for name, value in (("output", output), ("real", real), ("tdp", tdp), ("draw", draw), ("battery", battery_w)):
