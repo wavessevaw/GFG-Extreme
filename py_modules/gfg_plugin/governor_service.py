@@ -907,6 +907,12 @@ class GovernorService:
         return os.environ.get(self.FRAME_OS_ACT_ENV) == "1" or bool(self._settings.get("frame_os_act_unlocked"))
 
     INJECTION_HOLD_S = 60.0
+    # Do not interpret the transitional cadence right after an Act change as
+    # persistent frame starvation. Requires fresh, consecutive renderer samples.
+    INJECTION_GRACE_S = 4.0
+    INJECTION_MIN_SAMPLES = 3
+    STARVATION_RUN = 3
+    _injection_started_at: Optional[float] = None
 
     def _frame_os_ab(self) -> bool:
         """A/B proof windows in Act (on unless the player turned them off)."""
@@ -1019,7 +1025,7 @@ class GovernorService:
         age = None if at is None else self.observer.time_fn() - at
         if age is not None and age <= 5.0:
             return True
-        if age is None or age > self.MENU_MAX_S:
+        if age is None:
             return False
         budget = self._budget
         target = float(budget.point.target_output_fps) if budget is not None else float(
@@ -1032,7 +1038,17 @@ class GovernorService:
         # on screen mean the game shows, even when the point is starved (field case 1.2.3).
         generating = (isinstance(output, (int, float)) and isinstance(real, (int, float)) and real > 0
                       and output >= 1.4 * real)
-        return not (back or generating)
+        if back or generating:
+            return False
+        if age <= self.MENU_MAX_S:
+            return True
+        # Long-lived Steam menus still suspend generation. Expired focus
+        # timestamps alone do not prove anything in native (x1) mode.
+        point = self._point or {}
+        multiplier = point.get("multiplier") if isinstance(point, dict) else None
+        return (isinstance(multiplier, (int, float)) and multiplier > 1.2
+                and isinstance(output, (int, float)) and isinstance(real, (int, float))
+                and real > 0 and output < 1.2 * real)
 
     def _configure_frame_os(self, profile: str) -> None:
         budget = self._budget
@@ -2189,12 +2205,22 @@ class GovernorService:
         if acting and self._budget is not None:
             # Safety: heat or a starved output hands the point back to the Governor's own judgement.
             hot = (self._status.get("diagnosis") or {}).get("thermal") == "hot"
-            output = (self.observer.summary(self.FAST_CHECK_SECONDS, after_seq=self._injection_seq)
-                      .get("output") or {}).get("median")
-            starved = isinstance(output, (int, float)) and output < 0.8 * float(self._budget.point.target_output_fps)
+            fast = self.observer.summary(self.FAST_CHECK_SECONDS, after_seq=self._injection_seq)
+            output = (fast.get("output") or {}).get("median")
+            settled = (self._injection is None or self._injection_started_at is None
+                       or (self._clock() - self._injection_started_at >= self.INJECTION_GRACE_S
+                           and (fast.get("samples") or 0) >= self.INJECTION_MIN_SAMPLES))
+            floor = 0.8 * float(self._budget.point.target_output_fps)
+            recent = [sample.output_fps for sample in self.observer.samples_since(
+                self.observer.time_fn() - self.FAST_CHECK_SECONDS,
+                after_seq=self._injection_seq)][-self.STARVATION_RUN:]
+            lasting = (len(recent) >= self.STARVATION_RUN
+                       and all(isinstance(v, (int, float)) and v < floor for v in recent))
+            starved = (settled and lasting and isinstance(output, (int, float))
+                       and output < floor)
             # A starved output under a Steam menu (generation suspended) still takes the overlay
             # back, but it is no evidence against Act: it never counts toward the session lockout.
-            menu = self._menu_covering()
+            menu = self._menu_covering() or getattr(self.observer, "game_focused", None) is False
             if hot or starved:
                 acting = False
                 if self._injection is not None:
@@ -2232,6 +2258,7 @@ class GovernorService:
         self._injection = wanted
         self.frame_os.executor_active = wanted is not None
         self._injection_seq = self.observer.sample_seq
+        self._injection_started_at = self._clock() if wanted is not None else None
         # windows measured under injection say nothing about the plain point
         self._evaluation_after_seq = self.observer.sample_seq
         return wanted is not None
