@@ -44,3 +44,44 @@ On clean disable/unload Governor restores the original caps only when it still o
 ## Non-goals for Beta 1
 
 No ML/bandit/RL, no x4/x5 automation, no game-settings editing, no automatic OptiScaler configuration, no GPU clock control, no overclock/undervolt, and no hardware limit unlocking.
+
+## Smart power split (1.5)
+
+CPU and GPU share one APU power limit, so the CPU's boost clock in a GPU-bound game costs the GPU
+watts. `power_split.PowerSplit` (pure logic, injected clock) lowers the CPU's maximum clock through
+a ladder (100 / 85 / 70 / 60 / 50 % of the maximum, floor 1.6 GHz, never above the user's own
+limit). `cpu_freq.CpuFreqActuator` writes the ladder level to every cpufreq policy's
+`scaling_max_freq`.
+
+**When.** `GovernorService._sync_power_split` runs once per iteration. A step is possible only on a
+live budget point at its watts (`_split_ready`, pinned to that point's key and real rate) with TDP
+control, no Steam menu, no unfocused game and no Act injection. Anything else is *not eligible*:
+the cap is lifted. A step down needs real frames ≥ 97 % of the point's real rate, a GPU-bound or
+power-bound game, and the busiest core predicted ≤ 80 % at the lower clock
+(`top × f_now / f_next`). Each step is a 10 s probe. Real frames under 93 % lift the cap at once
+(after a 3 s settle) and start a 60 s cooldown. A busiest core ≥ 90 % steps back up one level, and
+that level is blocked for 10 min when this happens during a probe or a dip.
+
+**A/B.** While a level holds and the Governor is locked, every 60 s (240 s once 8 pairs exist) an
+A-B-A runs: 8 s capped, 8 s (+2 s settle) at full clock, 8 s capped. A change of TDP or level
+aborts it. The pair is the gain in GPU clock per watt (`mhz / draw`), plus the GPU clock and draw
+deltas for the log.
+
+**Memory.** `SplitMemory` is stored per game prefix in settings (`power_split_games`). It holds
+the deepest held level (the next session's first stop), the last 40 pairs and the session counts.
+At a session start, with at least 8 pairs from 2 or more sessions and a 99 % interval top under
+1 %, the split is switched off for that game and re-checked after 8 sessions. *Reset what GFG
+learned* clears it.
+
+**Safety.** The actuator snapshots the policies at claim time and restores them on release,
+`_restore_power`, game change and unload. A value changed by another tool pauses control without
+restoring. Before every write a marker records the initial and written values, and the next start
+restores any policy that still reads GFG's value. The root helper accepts only
+`/sys/devices/system/cpu/cpufreq/policyN/scaling_max_freq` with 100 MHz–10 GHz values, and it puts
+its last written values back when the plugin process goes away.
+
+**Log.** The events `power-split` (step, reason, clocks, core and GPU load) and `power-split-ab`
+(one pair). Timeline rows carry `power_split`, and `system.json` carries the cpufreq state. The
+log summary reports the lowest clock, the capped share, why the cap came off, and the A/B result
+with its interval.
+

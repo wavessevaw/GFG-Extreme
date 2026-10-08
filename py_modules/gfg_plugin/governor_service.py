@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.3.2).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.5.0).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -46,6 +46,8 @@ from .frame_os.memory import GameMemory, seed_pairs
 from .frame_os.proof import METRICS as FRAME_OS_METRICS
 from .package_paths import PLUGIN_ROOT
 from .host_sensors import HostSensors, diagnose
+from .cpu_freq import CpuFreqActuator
+from .power_split import PowerSplit, Sample as SplitSample, SplitMemory, levels_khz
 from .governor_hud import HudWriter, normalize as hud_normalize, output_fps as hud_output_fps
 from .governor_overlay import (
     OverlayRecord,
@@ -62,7 +64,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.3.2"
+VERSION = "1.5.0"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -131,6 +133,13 @@ class GovernorService:
         self.game_models = GameModelStore(self.configuration.config_dir / "gfg-game-models.json")
         self.power = SteamDeckPowerActuator(manager=SteamOSManagerTdp(home=os.environ.get("HOME")))
         self.power.journal = self._journal_power
+        # Smart power split (1.5): the CPU clock cap that gives a GPU-bound game's watts to the GPU
+        self.cpu = CpuFreqActuator(marker=self.configuration.runtime_state_dir / "cpu-cap.json")
+        self.cpu.journal = self._journal_power
+        self._split: Optional[PowerSplit] = None
+        self._split_memory: Optional[SplitMemory] = None
+        self._split_key: Optional[tuple] = None
+        self._split_ready: Optional[tuple] = None
         self.search = PowerSearch()
         self.settings_path = self.configuration.config_dir / "gfg-governor.json"
         self.events_path = self.configuration.runtime_state_dir / "governor-events.jsonl"
@@ -375,6 +384,14 @@ class GovernorService:
                 self._fo_memory = GameMemory()
                 self._fo_memory.start_session()
                 self.frame_os.apply_memory(self._fo_memory.disabled(), {})
+        if self._split_games().pop(prefix, None) is not None:
+            forgotten += 1
+            self._save_settings_quietly()
+            if self._split_key and self._split_key[0] == prefix and self._split is not None:
+                self._split_memory = SplitMemory()
+                self._split_memory.start_session()
+                self._split.start_level, self._split.prior_pairs, self._split.pairs = 0, [], []
+                self._split.enabled = self._power_split_enabled()
         budget = self._budget
         if budget is not None and profile == self._active_profile:
             # The live controller forgets too, or the next drain would write it all back.
@@ -931,6 +948,18 @@ class GovernorService:
         self._poke()
         return {"success": True, "error": None, "ab": self._frame_os_ab()}
 
+    def _power_split_enabled(self) -> bool:
+        """Smart power split (CPU clock cap in GPU-bound games): on unless the player turned it off."""
+        return self._settings.get("power_split") is not False
+
+    def set_power_split(self, enabled: bool) -> Dict[str, Any]:
+        self._settings["power_split"] = bool(enabled)
+        self._save_settings()
+        if self._split is not None:
+            self._split.enabled = bool(enabled) and not (self._split_memory and self._split_memory.disabled())
+        self._poke()
+        return {"success": True, "error": None, "power_split": self._power_split_enabled()}
+
     def set_frame_os_act_unlock(self, enabled: bool) -> Dict[str, Any]:
         self._settings["frame_os_act_unlocked"] = bool(enabled)
         if not enabled:
@@ -1127,6 +1156,88 @@ class GovernorService:
         self._frame_os_games()[prefix] = memory.to_record()
         self._save_settings_quietly()
 
+    def _split_games(self) -> Dict[str, Any]:
+        games = self._settings.get("power_split_games")
+        if not isinstance(games, dict):
+            games = self._settings["power_split_games"] = {}
+        return games
+
+    def _sync_split_memory(self, profile: str) -> None:
+        """A new game launch starts a power split session (this game's memory, a fresh ladder);
+        a probe that briefly says "not running" does not (same rule as the Frame OS memory)."""
+        launch = self._launch if isinstance(self._launch, dict) else {}
+        launch_key = tuple(launch.get("launch_key") or ()) if launch.get("running") else ()
+        if launch_key and launch_key != (self._split_key or (None, None))[1]:
+            if not self.cpu.discover():
+                return
+            prefix = game_prefix(profile, self._game_app_id())
+            memory = SplitMemory(self._split_games().get(prefix))
+            off = memory.start_session()
+            split = PowerSplit(levels_khz(self.cpu.max_khz, self.cpu.min_khz))
+            split.enabled = self._power_split_enabled() and not off
+            split.start_level = memory.level
+            split.prior_pairs = list(memory.pairs)
+            self._split, self._split_memory, self._split_key = split, memory, (prefix, launch_key)
+            self.cpu.release_external()
+            self._split_games()[prefix] = memory.to_record()
+            self._save_settings_quietly()
+            if memory.ruled_out:
+                self._event("power-split-off", "no-measured-benefit", profile=profile, game=prefix,
+                            pairs=len(memory.pairs))
+            return
+        if self._split is not None and self._split_memory is not None and self._split_key is not None:
+            if self._split_memory.record(self._split):
+                self._split_games()[self._split_key[0]] = self._split_memory.to_record()
+                self._save_settings_quietly()
+
+    async def _sync_power_split(self, profile: str) -> None:
+        """Step the CPU clock cap once per iteration.  Anything but a live budget point at its
+        watts (a pending point, Act, a menu, a loading screen, no game) runs uncapped."""
+        ready, self._split_ready = self._split_ready, None
+        self._sync_split_memory(profile)
+        split, budget = self._split, self._budget
+        if split is None:
+            if self.cpu.owned:
+                await asyncio.to_thread(self.cpu.restore)
+            self._status["power_split"] = {"enabled": self._power_split_enabled(), "phase": "off",
+                                           "available": bool(self.cpu.discover())}
+            return
+        # a point that changed later in this iteration has other real frames: wait for it to be live
+        eligible = bool(ready and budget is not None and budget.point.key == ready[0]
+                        and budget.tdp_control and self.power.state.owned
+                        and not self._menu_covering() and self._trusted_game_focus() is not False
+                        and not self.cpu.external_change)
+        if eligible and split.enabled and not self.cpu.owned:
+            eligible = await asyncio.to_thread(self.cpu.claim)
+        sensors = self._status.get("sensors") or {}
+        recent = self.observer.summary(self.FAST_CHECK_SECONDS)
+        draw = statistics.median(self._draw_samples[-3:]) if self._draw_samples else None
+        target_real = ready[1] if ready else 0.0
+        now = self._clock()
+        pairs_before = len(split.pairs)
+        cap = split.step(now, eligible, SplitSample(
+            real_fps=(recent.get("real") or {}).get("median"), target_real=target_real,
+            top_core_pct=sensors.get("cpu_top_core_pct"), gpu_busy_pct=sensors.get("gpu_busy_pct"),
+            gpu_mhz=sensors.get("gpu_clock_mhz"), draw_w=draw, tdp_w=self._applied_tdp,
+            steady=budget is not None and budget.phase == "locked"))
+        if self.cpu.owned:
+            if cap is None and split.level == 0 and split.ab_phase is None:
+                await asyncio.to_thread(self.cpu.restore)
+            elif not await asyncio.to_thread(self.cpu.set_cap_khz, cap):
+                split.step(now, False, SplitSample(None, target_real, None, None, None, None, None))
+        change = split.last_change
+        if change is not None:
+            self._event("power-split", change["reason"], profile=profile, cpu_khz=change["to_khz"],
+                        before_khz=change["from_khz"], level=change["level"], tdp_w=self._applied_tdp,
+                        real=(recent.get("real") or {}).get("median"),
+                        top_core=sensors.get("cpu_top_core_pct"), gpu_busy=sensors.get("gpu_busy_pct"))
+        if len(split.pairs) > pairs_before:
+            pair = split.pairs[-1]
+            self._event("power-split-ab", "measured", profile=profile, **pair)
+        self._status["power_split"] = {**split.summary(), "available": True,
+                                       "control": self.cpu.status(),
+                                       "game_off": bool(self._split_memory and self._split_memory.disabled())}
+
     def _save_settings_quietly(self) -> None:
         try:
             self._save_settings()
@@ -1197,6 +1308,11 @@ class GovernorService:
         if callable(reopen):
             reopen()
         await asyncio.to_thread(self.power.discover)
+        self.cpu.reopen()
+        try:  # also puts back a CPU clock limit a crashed session left behind
+            await asyncio.to_thread(self.cpu.discover)
+        except Exception as error:
+            self.log.debug("CPU clock control unavailable: %s", error)
         try:
             await asyncio.to_thread(self._sync_frame_os_marker)
         except OSError as error:
@@ -1252,6 +1368,10 @@ class GovernorService:
                 self._event("power-restored", "plugin-stop")
         except Exception as error:
             self.log.warning("Governor could not restore owned TDP: %s", error)
+        try:
+            await asyncio.to_thread(self.cpu.shutdown)
+        except Exception as error:
+            self.log.warning("Governor could not restore the CPU clock limit: %s", error)
 
     def get_status(self, profile: str = "") -> Dict[str, Any]:
         value = dict(self._status)
@@ -1273,6 +1393,7 @@ class GovernorService:
                              "layer_installed": bool(self.frame_os_layer_dir and frame_os_layer.is_staged(self.frame_os_layer_dir)),
                              "layer_error": self.frame_os_layer_error,
                              **{k: v for k, v in self.frame_os.last.items() if k != "input"}}
+        value["power_split"] = {**(self._status.get("power_split") or {}), "setting": self._power_split_enabled()}
         value["power"] = self.power.status()
         value["power_search"] = self.search.status.to_dict()
         value["request"] = self._request.to_dict() if self._request else None
@@ -1317,6 +1438,10 @@ class GovernorService:
         restored = await asyncio.to_thread(self.power.restore_if_owned)
         if restored.get("restored"):
             self._event("power-restored", reason)
+        if self.cpu.owned:                # the CPU clock goes back with the watts
+            await asyncio.to_thread(self.cpu.restore)
+        if self._split is not None and self._split.level:
+            self._split.step(self._clock(), False, SplitSample(None, 0.0, None, None, None, None, None))
         self.search = PowerSearch()
 
     def _clear_point_state(self) -> None:
@@ -1671,6 +1796,11 @@ class GovernorService:
         await asyncio.to_thread(self._update_sensors)
         self._sample_session()
         profile = self._status.get("profile") or ""
+        try:
+            await self._sync_power_split(profile)
+        except Exception as error:  # never disturb the Governor; the cap goes back
+            self.log.warning("Power split step failed: %s", error)
+            await asyncio.to_thread(self.cpu.restore)
         try:
             self._configure_frame_os(profile)
         except Exception as error:  # development feature: never disturb the Governor
@@ -2213,6 +2343,8 @@ class GovernorService:
         if await self._sync_injection(profile):
             self._status.update({"state": "LOCKED", "reason": "frame-os-act-holds-point"})
             return
+        # the point is live at its watts: the power split may act (on this point only)
+        self._split_ready = (point.key, float(point.base_target_fps))
         self._remember_if_held(profile, target, budget, point, now)
         self._store_failures(budget)
 

@@ -146,6 +146,7 @@ var rpc = {
   setFrameOs: safeCallable("set_governor_frame_os"),
   setFrameOsActUnlock: safeCallable("set_governor_frame_os_act_unlock"),
   setFrameOsAb: safeCallable("set_governor_frame_os_ab"),
+  setPowerSplit: safeCallable("set_governor_power_split"),
   setMode: safeCallable("set_governor_mode"),
   forgetModel: safeCallable("forget_governor_game_model"),
   modelTarget: safeCallable("get_governor_game_model_target"),
@@ -637,6 +638,59 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
     )
   );
 }
+var SPLIT_WAIT = {
+  "real-frames-short": "real frames came first",
+  "cpu-busy": "the game needs the CPU",
+  "not-eligible": "waiting for a steady game",
+  settling: "watching the game",
+  "switched-off": "off"
+};
+function splitLine(ps) {
+  if (!ps || ps.available === false) return null;
+  if (ps.setting === false) return "Off";
+  if (ps.game_off) return "Off for this game \xB7 no measured gain";
+  if (ps.control && ps.control.external_change) return "Paused \xB7 another tool sets the CPU clock";
+  if (ps.cap_khz) return "CPU capped at " + num(ps.cap_khz / 1e6, 1) + " GHz \xB7 the GPU gets the watts";
+  if (ps.ab === "control") return "Full CPU speed for a moment \xB7 A/B check";
+  return "Full CPU speed \xB7 " + (SPLIT_WAIT[ps.reason] || "watching the game");
+}
+function splitMeasured(ps) {
+  if (!ps || !ps.pairs) return "Not measured yet";
+  if (!ps.measured) return "Measuring \xB7 " + ps.pairs + " A/B";
+  return (ps.gain_pct >= 0 ? "+" : "") + num(ps.gain_pct, 1) + "% GPU clock/W \xB7 " + ps.pairs + " A/B";
+}
+function SplitCard({ ps }) {
+  const [on, setOn] = useState(!ps || ps.setting !== false);
+  const line = splitLine(ps);
+  if (!line) return null;
+  return h(
+    "div",
+    null,
+    h("div", { className: "sec" }, "CPU / GPU POWER SPLIT"),
+    h("div", { className: "card" }, h(
+      "div",
+      { className: "kv" },
+      h("span", null, "Now"),
+      h("b", null, line),
+      h("span", null, "Measured"),
+      h("b", null, splitMeasured(ps)),
+      ps.mhz_pct != null && ps.measured ? h("span", null, "Last check") : null,
+      ps.mhz_pct != null && ps.measured ? h("b", null, (ps.mhz_pct >= 0 ? "+" : "") + num(ps.mhz_pct, 1) + "% GPU clock, " + (ps.draw_pct >= 0 ? "\u2212" : "+") + num(Math.abs(ps.draw_pct), 1) + "% draw") : null
+    )),
+    h("div", { className: "list" }, h(Toggle, {
+      on,
+      title: "Smart power split",
+      sub: "In GPU-bound games the CPU runs a little slower so the GPU gets the watts. Real frames always come first.",
+      onChange: async (v) => {
+        setOn(v);
+        try {
+          await rpc.setPowerSplit(v);
+        } catch (e) {
+        }
+      }
+    }))
+  );
+}
 function GovernorPage({ s, back, profile, refresh }) {
   const dev = s.device || {}, req = s.request, pt = s.active_point, lad = s.ladder || {}, b = s.budget;
   const mode = s.mode || "budget";
@@ -668,6 +722,7 @@ function GovernorPage({ s, back, profile, refresh }) {
       Object.keys(b.known_failures || {}).length ? h("span", null, "Recently failed") : null,
       Object.keys(b.known_failures || {}).length ? h("b", null, Object.entries(b.known_failures).slice(0, 3).map(([k, w]) => fmtMult(k.split("x")[1] || 1) + " at \u2264" + num(w, 0) + " W").join(", ")) : null
     )) : null,
+    b ? h(SplitCard, { ps: s.power_split }) : null,
     h("div", { className: "sec" }, "DECISION"),
     h("div", { className: "card" }, h(
       "div",

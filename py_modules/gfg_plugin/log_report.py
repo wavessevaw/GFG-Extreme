@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from .governor_telemetry import TelemetryObserver
 
-CURRENT_VERSION = "1.3.2"  # kept in step by scripts/bump_version.py
+CURRENT_VERSION = "1.5.0"  # kept in step by scripts/bump_version.py
 
 
 def _percentile(values: List[float], pct: float) -> Optional[float]:
@@ -151,8 +151,37 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
         report["frame_os"]["by_level"] = frame_os_by_level(samples)
         report["frame_os"]["injection"] = dict(Counter(
             f"{e.get('event')}:{e.get('reason')}" for e in events if str(e.get("event", "")).startswith("frame-os-injection")))
+    report["power_split"] = power_split_summary(events)
+    rows = [r.get("power_split") for r in samples if isinstance(r.get("power_split"), dict)]
+    if report["power_split"] and rows:
+        report["power_split"]["capped_share"] = round(sum(bool(r.get("cap_khz")) for r in rows) / len(rows), 2)
     report["findings"] = findings(report, names)
     return report
+
+
+def power_split_summary(events: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Smart power split (1.5): the CPU clock steps, why the cap came off, and the A/B pairs."""
+    steps = [e for e in events if e.get("event") == "power-split"]
+    pairs = [e for e in events if e.get("event") == "power-split-ab"]
+    if not steps and not pairs:
+        return None
+    khz = [e["cpu_khz"] for e in steps if isinstance(e.get("cpu_khz"), (int, float))]
+    capped = [k for k, e in zip(khz, steps) if e.get("level")]
+
+    def col(key: str) -> List[float]:
+        return [float(e[key]) for e in pairs if isinstance(e.get(key), (int, float))]
+
+    from .frame_os.proof import stats  # noqa: PLC0415 - the same interval maths as the Frame OS A/B
+    gain = stats(col("gain"))
+    mhz, draw, real = col("mhz"), col("draw"), col("real")
+    return {
+        "reasons": dict(Counter(str(e.get("reason")) for e in steps)),
+        "lowest_khz": min(capped) if capped else None,
+        "gain": gain,
+        "mhz_pct": round(statistics.mean(mhz), 1) if mhz else None,
+        "draw_pct": round(statistics.mean(draw), 1) if draw else None,
+        "real_delta": round(statistics.mean(real), 2) if real else None,
+    }
 
 
 def frame_os_by_level(samples: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -383,6 +412,28 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
             else:
                 out.append(f"Frame OS input sensor: {fo['input_events']} gamepad events from "
                            f"{fo.get('input_gamepads')} gamepads; decisions {fo.get('levels')}.")
+    split = report.get("power_split")
+    if split:
+        reasons = split.get("reasons") or {}
+        text = "Power split: "
+        if split.get("lowest_khz"):
+            text += f"the CPU clock went down to {split['lowest_khz'] / 1e6:.1f} GHz"
+        else:
+            text += "the CPU clock was never capped"
+        lifts = [f"{n}× for {why.replace('-', ' ')}" for why, n in reasons.items()
+                 if why in ("real-frames-short", "cpu-busy")]
+        if split.get("capped_share") is not None:
+            text += f" (capped {int(100 * split['capped_share'])}% of the time)"
+        text += ("; the cap came off " + ", ".join(lifts) if lifts else "") + "."
+        g = split.get("gain") or {}
+        if g.get("n"):
+            interval = f" ({g['low']}..{g['high']})" if g.get("low") is not None else ""
+            text += (f" A/B in game (capped vs. the same moment at full CPU clock): GPU clock per watt "
+                     f"{g['mean']:+}%{interval} over {g['n']} pair{'s' if g['n'] != 1 else ''}"
+                     + (f"; GPU clock {split['mhz_pct']:+}%, draw {-split['draw_pct']:+}%"
+                        if split.get("mhz_pct") is not None and split.get("draw_pct") is not None else "")
+                     + (f", real FPS {split['real_delta']:+}" if split.get("real_delta") is not None else "") + ".")
+        out.append(text)
     if not out:
         out.append("Nothing unusual found.")
     return out

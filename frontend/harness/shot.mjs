@@ -34,6 +34,7 @@ await shot("home-balanced-oled", st("home-balanced"));
 const oled = { device: STATES["home-idle-oled"].device, target_output_fps: 90 };
 await shot("home-last-session", st("home-last-session-mixed", oled));
 await shot("page-details", st("readme-home"), ["Details"]);
+await shot("details-power-split", st("home-power-split"), ["Details"], "CPU / GPU POWER SPLIT", "DECISION");
 await shot("page-settings", st("readme-home"), ["Settings"]);
 await shot("page-setup", st("setup-bad"), ["Settings", "Diagnostics", "Check setup"]);
 await shot("page-hud", st("readme-home"), ["Settings", "In-game overlay"]);

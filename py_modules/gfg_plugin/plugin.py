@@ -820,6 +820,10 @@ class Plugin:
         """Frame OS A/B proof windows in Act (persisted; on by default)."""
         return await asyncio.to_thread(self.governor_service.set_frame_os_ab, bool(enabled))
 
+    async def set_governor_power_split(self, enabled: bool = True) -> Dict[str, Any]:
+        """Smart power split: CPU clock cap in GPU-bound games (persisted; on by default)."""
+        return await asyncio.to_thread(self.governor_service.set_power_split, bool(enabled))
+
     async def set_governor_scale_ready(
             self, profile_name: str, scale_ready: bool
     ) -> Dict[str, Any]:
@@ -1482,7 +1486,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Extreme 1.3.2 started")
+        decky.logger.info("GFG Extreme 1.5.0 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""

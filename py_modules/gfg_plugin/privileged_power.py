@@ -5,7 +5,8 @@ is loaded with Decky's ``root`` flag.  Running the whole plugin as root would
 leave root-owned files (wrapper, configs, logs) in the user's home, which the
 game and later non-root plugin versions cannot rewrite.  Instead, at import the
 root process forks a tiny helper that keeps root and can do exactly one thing,
-write an integer to a hwmon ``power*_cap`` file, and then the plugin process
+write an integer to a hwmon ``power*_cap`` file (or, for the smart power split, a cpufreq
+``scaling_max_freq``), and then the plugin process
 drops to the owner of ``DECKY_USER_HOME`` for good.  Without root nothing
 changes: no helper, and the caps are written directly if permitted.
 """
@@ -22,6 +23,8 @@ from typing import Optional
 
 _CAP_RE = re.compile(r"^/sys/devices/[A-Za-z0-9_.:/-]+/hwmon/hwmon[0-9]+/power[0-9]+_cap$")
 _MAX_UW = 100_000_000
+_CPU_RE = re.compile(r"^/sys/devices/system/cpu/cpufreq/policy[0-9]+/scaling_max_freq$")
+_CPU_KHZ = (100_000, 10_000_000)
 
 
 def allowed_cap_path(path: str) -> Optional[str]:
@@ -33,7 +36,55 @@ def allowed_cap_path(path: str) -> Optional[str]:
     return real if _CAP_RE.match(real) else None
 
 
+def allowed_cpu_path(path: str) -> Optional[str]:
+    """Resolved cpufreq ``scaling_max_freq`` path, or None for anything else."""
+    try:
+        real = os.path.realpath(path)
+    except (OSError, ValueError):
+        return None
+    return real if _CPU_RE.match(real) else None
+
+
+def _read_value(path: str) -> Optional[int]:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _write_value(path: str, value: int) -> None:
+    fd = os.open(path, os.O_WRONLY)
+    try:
+        os.write(fd, f"{value}\n".encode())
+    finally:
+        os.close(fd)
+
+
+def restore_cpu_caps(written: dict, read=_read_value, write=_write_value) -> list:
+    """The plugin is gone: put each CPU clock limit back that still reads what we wrote.
+
+    ``written`` maps a path to (the value found before our first write, our last write)."""
+    restored = []
+    for path, (original, last) in written.items():
+        if original is not None and last != original and read(path) == last:
+            try:
+                write(path, original)
+                restored.append(path)
+            except OSError:
+                pass
+    return restored
+
+
 def _serve(requests: int, replies: int) -> None:  # pragma: no cover - runs in the forked root child
+    cpu_written: dict = {}
+    try:
+        _serve_loop(requests, replies, cpu_written)
+    finally:
+        restore_cpu_caps(cpu_written)
+
+
+def _serve_loop(requests: int, replies: int, cpu_written: dict) -> None:  # pragma: no cover - root child
     buffer = b""
     while True:
         try:
@@ -50,16 +101,20 @@ def _serve(requests: int, replies: int) -> None:  # pragma: no cover - runs in t
                 raw_path, raw_value = line.decode("utf-8").rsplit(" ", 1)
                 value = int(raw_value)
                 path = allowed_cap_path(raw_path)
-                if path is None:
+                cpu = None if path else allowed_cpu_path(raw_path)
+                if path is None and cpu is None:
                     reply = b"err path-not-allowed\n"
-                elif not 0 < value <= _MAX_UW:
+                elif path is not None and not 0 < value <= _MAX_UW:
                     reply = b"err value-out-of-range\n"
+                elif cpu is not None and not _CPU_KHZ[0] <= value <= _CPU_KHZ[1]:
+                    reply = b"err value-out-of-range\n"
+                elif cpu is not None:
+                    original = cpu_written.get(cpu, (_read_value(cpu), None))[0]
+                    _write_value(cpu, value)
+                    cpu_written[cpu] = (original, value)
+                    reply = b"ok\n"
                 else:
-                    fd = os.open(path, os.O_WRONLY)
-                    try:
-                        os.write(fd, f"{value}\n".encode())
-                    finally:
-                        os.close(fd)
+                    _write_value(path, value)
                     reply = b"ok\n"
             except OSError as error:
                 reply = f"err {error.strerror or error}\n".replace("\n", " ").strip().encode() + b"\n"

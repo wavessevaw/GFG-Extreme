@@ -26,6 +26,12 @@ from gfg_plugin.config_schema import ConfigurationManager  # noqa: E402
 from gfg_plugin.configuration import ConfigurationService  # noqa: E402
 from gfg_plugin.governor_overlay import OverlayStore  # noqa: E402
 from gfg_plugin.governor_service import GovernorService  # noqa: E402
+from gfg_plugin.cpu_freq import CpuFreqActuator  # noqa: E402
+from gfg_plugin import power_split  # noqa: E402
+
+
+def ps_probe_s():
+    return power_split.PROBE_S
 
 H = "I MAKO Renderer: present diagnostics: "
 
@@ -115,6 +121,16 @@ class RuntimeBase(unittest.TestCase):
         self.inspector = FakeInspector()
         self.svc = GovernorService(self.cfg, self.display, logging.getLogger("gov-rt"), self.inspector)
         self.svc.power = FakePower()
+        # a cpufreq tree of its own: never the machine's (power split, 1.5)
+        self.cpufreq = Path(HOME) / "cpufreq"
+        for i in range(2):
+            d = self.cpufreq / f"policy{i}"
+            d.mkdir(parents=True)
+            (d / "cpuinfo_max_freq").write_text("3500000\n")
+            (d / "cpuinfo_min_freq").write_text("1400000\n")
+            (d / "scaling_max_freq").write_text("3500000\n")
+        self.svc.cpu = CpuFreqActuator(root=self.cpufreq, helper=lambda: None, access=lambda p, m: True,
+                                       marker=Path(HOME) / "cpu-cap.json")
         self.svc.DEFAULT_MODE = "quality"  # the v0.0.2 ladder; budget mode has its own tests
         self.svc.PREDICTIVE_SKIP = False
         self.svc.hud.MIN_REWRITE_S = 0.0  # MangoHud rewrite rate limit has its own tests  # these tests walk the full ladder; see PredictiveStartTests
@@ -915,6 +931,79 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual(st["budget"]["phase"], "search_down")
         self.assertEqual(st["state"], "OPTIMIZE_POWER")
 
+    def cpu_khz(self):
+        return int((self.cpufreq / "policy0" / "scaling_max_freq").read_text())
+
+    def gpu_bound_play(self, seconds, top=30.0, until_capped=False):
+        self.svc.sensors.sample = lambda force=False: {"gpu_busy_pct": 97.0, "cpu_top_core_pct": top,
+                                                       "gpu_clock_mhz": 1200.0}
+        st = None
+        end = self.t["now"] + seconds
+        self.lowest_khz = 3_500_000
+        while self.t["now"] < end:
+            self.feed(2, 30, 90)
+            st = self.step(1.0)
+            self.lowest_khz = min(self.lowest_khz, self.cpu_khz())
+            if until_capped and self.cpu_khz() < 3_500_000:
+                break
+        return st
+
+    def test_power_split_caps_the_cpu_in_a_gpu_bound_game_and_gives_it_back(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        st = self.gpu_bound_play(90, until_capped=True)
+        self.assertLess(self.cpu_khz(), 3_500_000, "GPU-bound with CPU headroom: the CPU clock is capped")
+        self.assertEqual(self.cpu_khz(), int((self.cpufreq / "policy1" / "scaling_max_freq").read_text()))
+        self.assertIn(st["power_split"]["phase"], ("probe", "hold"))
+        events = [json.loads(l) for l in Path(self.svc.events_path).read_text().splitlines()]
+        steps = [e for e in events if e.get("event") == "power-split"]
+        self.assertTrue(steps and steps[0]["reason"] == "step-down")
+        self.gpu_bound_play(ps_probe_s() + 3)          # the probe holds: the level is remembered
+        game = self.svc._split_key[0]
+        self.assertGreater(self.svc._settings["power_split_games"][game]["level"], 0, "remembered per game")
+        # the point goes (game exit, mode change): the user's clock is back at once
+        asyncio.run(self.svc._release_point("game", "test"))
+        self.assertEqual(self.cpu_khz(), 3_500_000)
+        self.assertFalse(Path(HOME, "cpu-cap.json").exists())
+
+    def test_power_split_lifts_the_cap_when_real_frames_drop(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.gpu_bound_play(90, until_capped=True)
+        self.assertLess(self.cpu_khz(), 3_500_000)
+        self.feed(5, 24, 72)
+        st = self.step(1.0)
+        self.assertEqual(self.cpu_khz(), 3_500_000, "real frames come first")
+        self.assertEqual(st["power_split"]["reason"], "real-frames-short")
+
+    def test_power_split_off_switch_and_unload(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.gpu_bound_play(90, until_capped=True)
+        self.assertLess(self.cpu_khz(), 3_500_000)
+        self.assertTrue(self.svc.set_power_split(False)["success"])
+        self.gpu_bound_play(3)
+        self.assertEqual(self.cpu_khz(), 3_500_000)
+        self.svc.set_power_split(True)
+        self.gpu_bound_play(90, until_capped=True)
+        self.assertLess(self.cpu_khz(), 3_500_000)
+        asyncio.run(self.svc.stop())
+        self.assertEqual(self.cpu_khz(), 3_500_000, "unload gives the clock back")
+
+    def test_power_split_never_caps_a_busy_cpu(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.gpu_bound_play(120, top=78.0)
+        self.assertEqual(self.lowest_khz, 3_500_000)
+
     def capacity_report(self, frames):
         self.svc.observer.consume_line(
             H + "operation=runtime-state-applied role=frame-generation "
@@ -1428,6 +1517,14 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertIsNone(svc.game_models.get(mine))
         self.assertIsNotNone(svc.game_models.get(other))
         self.assertFalse(svc.forget_game_model("")["success"])
+
+    def test_forget_game_model_forgets_the_power_split_too(self):
+        svc = self.svc
+        svc._settings["last_session"] = {"profile": "game", "app_id": "292030"}
+        svc._settings["power_split_games"] = {"app:292030": {"level": 3, "pairs": [5.0]}, "app:570": {"level": 1}}
+        r = svc.forget_game_model("game")
+        self.assertEqual(r["forgotten"], 1)
+        self.assertEqual(list(svc._settings["power_split_games"]), ["app:570"])
 
     def test_forget_game_model_names_the_game_or_refuses(self):
         svc = self.svc

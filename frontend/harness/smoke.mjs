@@ -11,6 +11,8 @@ const cases = [
   ["home-locked-oled", ["Details"], ["Details", "HEALTH", "Frametime p95 / p99", "24.5 / 31.2 ms", "×1 to ×3.75, deeper only as a last resort", "never modified"]],
   ["home-budget-oled", [], ["Adapting · 9 W", "Ideal: 11 W or less", "EASY"]],
   ["home-budget-oled", ["Details"], ["BATTERY", "TDP target", "9 W", "Ideal (≤ 11 W)", "9–11 W ideal, 15 W max (this Deck's maximum)"]],
+  ["home-power-split", ["Details"], ["CPU / GPU POWER SPLIT", "CPU capped at 2.4 GHz · the GPU gets the watts", "+7.4% GPU clock/W · 6 A/B", "+7.9% GPU clock, −0.4% draw", "Smart power split"]],
+  ["home-power-split-short", ["Details"], ["Full CPU speed · real frames came first", "Not measured yet"]],
   ["home-warm-start", [], ["Adapting · 8 W", "Started from what worked last time."]],
   ["home-warm-start", ["Details"], ["Remembered from last session"]],
   ["home-budget-oled", ["Details"], ["Searched from scratch"]],
