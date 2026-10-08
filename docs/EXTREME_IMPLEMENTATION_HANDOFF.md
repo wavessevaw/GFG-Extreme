@@ -1,0 +1,82 @@
+# Extreme: передача следующему агенту
+
+[Техническая база](EXTREME_FOUNDATION.md) · [Контракты](EXTREME_CONTRACTS.md)
+
+Пользователь поручил подготовить базу автоматического Extreme для обычного Deck: девять направлений, без разгона/BIOS и выше 15 Вт. Сейчас подготовлена документация; runtime, версия и релиз не изменены. Начать с апскейла + CAS. Целевая линия дальнейшей разработки — 1.6.0.
+
+## Перед началом
+
+Прочитать актуальные main, AGENTS.md при наличии и изменения рабочей ветки. База этого проекта — main 1.5.1 (80248114aecbb36e17f78faffc2006ccf61b25ff); нельзя перезаписывать более свежие исправления.
+
+Проверить реальный scaler/vkBasalt backend, возможность live changes и подтверждение применения. Не считать наличия config field достаточным. Отдельно исследовать поддерживаемые API Steam jobs, GPU cap, OEM fan и memory scope. Недоступное объяснять, не заменять опасной эвристикой.
+
+Не обещать +30–50%, автоматическую оценку качества картинки, эквивалент Reflex или улучшение батареи без соответствующего измерения.
+
+## P0 — первый реализуемый срез
+
+1. Добавить чистую policy и session state machine, bounded telemetry snapshot, capability discovery.
+2. Провести ВСЕ записи TDP через общий потолок min(15, user, thermal/power), включая Act/boost/recovery.
+3. Добавить журнал ownership/undo, восстановление выхода, crash/restart, suspend и конфликтов внешних изменений.
+4. Проверить launch provisioning scaler/CAS. При необходимости перезапуска показывать RESTART_REQUIRED.
+5. Расширить временный overlay логической точкой scale+CAS. Сначала 100/90/80%; 75/70% добавить после проверки native reference и backend.
+6. Разделить requested/applied. Добавить ACK фактического рендера и CAS либо честное unavailable.
+7. Реализовать один сериализованный trial с settle, свежими окнами, frozen TDP/FG/Act/power split и accept/reject/inconclusive.
+8. Добавить ручную поправку CAS без изменения Saved автоматическим поиском.
+9. В UI показывать подтверждённые параметры и «измеряется» для прироста. Не выводить рассчитанный из числа пикселей процент FPS.
+10. Проверить реальное разрешение/картинку на Deck; запись TOML не является аппаратной проверкой.
+
+Точки интеграции: governor_core/service/overlay, config_schema и генерация schema, shared_config, текущие frame_os runner и методы _configure_frame_os / _sync_power_split, существующие power_split/cpu_freq ownership, HUD/frontend. Сохранить текущие ограничения HUD и renderer; не помещать управление в present.
+
+Проверки первого среза: policy replay CPU/GPU-bound, clamp для каждого writer, частичный apply, отсутствие ACK, stale/repeated samples, PID reuse, external override, crash recovery и Saved unchanged. Затем backend integration и аппаратный smoke LCD/OLED.
+
+## P1 — доказательство и быстрый старт
+
+- Воспроизводимый Balanced A-B-A с одинаковым контекстом; отдельный опыт масштабирования фиксирует другие knobs.
+- Явно отделить real/output FPS, caps, treatment и scene drift.
+- Память по контексту, bounded/atomic schema, failures, короткий VERIFY при warm start.
+- HUD/log показывает измеренный gain только после валидного evidence; вывести причину отсутствия сравнения.
+
+## P2 — фон и питание
+
+- Поддерживаемый per-job pause Steam с сохранением исходных пользовательских пауз; никакого SIGSTOP Steam.
+- Ограниченный non-realtime priority игры с проверкой PID/start time и rollback.
+- GPU-bound: существующий CPU cap; CPU-bound: сначала снять свой cap, затем отдельно проверить штатный GPU-cap actuator.
+- A-B-A при стабильных Act/TDP/сцене; ownership/recovery tests обоих направлений.
+
+## P3 — охлаждение и Frame OS
+
+- Проверенный OEM fan bias, hysteresis, rate limit, thermal protection и rollback.
+- Act через существующее согласие, потолок мощности и правила 1.5.1: дождаться поиска бюджета, уступать периодическому поиску.
+- Bounded pacing/queue и stall shield с измерением frame age, p99 и max gap.
+- Input-to-photon измерять аппаратно; не выдавать программный proxy за задержку кнопки.
+
+## P4 — память
+
+Начать с pressure diagnostics и scoped reversible mechanisms. Global VM/swap — отдельная экспериментальная возможность с проверкой zram, диска и recovery. Не удалять используемый swap и не вызывать swapoff под давлением ради немедленного возврата. RESTORE_PENDING должен объяснять ресурс и условие безопасного завершения.
+
+## Готовность к релизу
+
+- LCD/OLED, CPU/GPU-bound, 60/90 Hz, Vulkan/DX11, 15 W и более низкие пользовательские ограничения.
+- Launch/exit, suspend/resume, смена питания, dock, загрузка/меню, внешний контроллер, stale telemetry.
+- Ни одной записи выше потолка, Saved unchanged, корректные ACK/rollback, нет оставленных остановленных задач.
+- Один эксперимент одновременно; неполные данные не обучают память.
+- Накладные расходы CPU, памяти, IPC, HUD и pacer измерены на Deck; горячий путь не получает блокирующую работу.
+- Выполнить проверки сборки и репозитория по актуальным инструкциям. Только после готовности обновлять версии, артефакты и release notes.
+- Не включать непроверенные hardware capabilities по умолчанию; документировать реальные ограничения.
+
+Рекомендуемый первый PR реализации: «Extreme scale/CAS policy and stock-power session contract». Сначала policy/контракты с mock capabilities и тестами, затем реальный actuator отдельным проверяемым изменением. Девять направлений не объединять в один непроверяемый runtime-коммит.
+
+## Статус реализации 1.6.0
+
+Сделано (P0, проверено тестами, на Deck не проверено):
+
+- Общий потолок `extreme.power_ceiling` = min(15 Вт, лимит игрока при захвате PPT, максимум железа); актуатор ограничивает им каждую запись (Governor, Act, recovery). Изменение лимита в QAM становится новым потолком.
+- Режим Extreme (`BudgetController(flavor="extreme")`): весь потолок в реальные кадры, без поиска меньших ватт, без x4, пол 30 реальных.
+- Масштаб 100/90/80 % и резкость скейлера как одна точка в overlay; Saved не меняется. Таблица CAS + поправка игрока (±0,3). Без двойной резкости с vkBasalt; собственный scaling профиля не трогается.
+- ACK: новый масштаб принимается только по `swapchain-context-create` (application vs presented extent) или строке скейлера `spatial scaling active`; нет ACK за 20 с — отказ точки, после двух — масштаб выключен до конца сессии. Резкость подтверждается только отчётом скейлера.
+- RESTART_REQUIRED для скейлера без scale-ready запуска и для Act без pacer.
+- Act — только после явного согласия при первом включении Extreme; выход возвращает прежний режим Frame OS.
+- Статус: состояние, потолок и источник, requested/applied, девять направлений с причинами, `gain.kind = unavailable`.
+- Лог и отчёт: состояние, потолок, максимальный прочитанный cap, подтверждённые масштабы.
+
+Не сделано (показывается как недоступное): тишина в фоне (P2), обратное направление power split (P2), охлаждение (P3), задержка и щит (P3), память (P4), 75/70 %, A-B-A сравнение с Balanced (P1), отдельные модули `extreme_service` / журнал владения для новых actuators (новых системных actuators в 1.6.0 нет).

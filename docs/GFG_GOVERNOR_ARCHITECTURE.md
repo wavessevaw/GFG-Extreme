@@ -85,3 +85,51 @@ its last written values back when the plugin process goes away.
 log summary reports the lowest clock, the capped share, why the cap came off, and the A/B result
 with its interval.
 
+
+## Extreme (1.6)
+
+First stage (P0) of [EXTREME_FOUNDATION.md](EXTREME_FOUNDATION.md); contracts in
+[EXTREME_CONTRACTS.md](EXTREME_CONTRACTS.md). Pure policy lives in `extreme.py`; the service owns the
+lifecycle. Extreme is a fourth Governor mode run by `BudgetController(flavor="extreme")`.
+
+**Power ceiling.** `extreme.power_ceiling` = min(15 W, the player's cap when GFG claimed the PPT
+controls, the hardware maximum). `_budget_power` sets it as the actuator's ceiling override on every
+step, so every write (`_apply_budget_tdp` with a Frame OS Act offset, recovery, the fast raise) is
+clamped by `SteamDeckPowerActuator._set_tdp_w`. A cap changed outside GFG is an external change as
+before; the re-claim snapshots the new value, which becomes the new ceiling
+(`BudgetController.limit_power`). The controller starts at the ceiling and never searches lower
+watts; spare headroom buys real frames (`reprobe-more-real-frames`). No x4 last resort, no watts
+above the ceiling, real floor 30.
+
+**Ladder.** `extreme_points`: every normal point (30 real .. native) at 80 %, 90 % and 100 % render
+scale, sorted by (real cadence, scale). Upgrades buy real frames with resolution first and win the
+resolution back on the next step; the guard gives up resolution before real frames. Scaled rungs
+need the Scaling Engine provisioned at launch: Extreme makes every launch scale-ready
+(`_scale_ready`), a game started before that gets `restart_required`. CPU-bound games, the
+profile's own scaling, and Gamescope WSI compatibility keep full resolution.
+
+**Scale + sharpening = one point.** `point_deltas(..., sharpness=)` writes `scaling_factor`,
+`scaling_method` and `scaling_sharpness` (a live field since 1.6) into the overlay only. Sharpening
+starts from `CAS_START` (90 % → 0.15, 80 % → 0.30) plus the player's correction
+(`set_extreme_sharpness`, ±0.3, GFG settings, never Saved). It is 0 when vkBasalt CAS/DLS runs (no
+double sharpening) and untouched when the profile scales on its own. A sharpening correction goes
+live on the held point without a new trial.
+
+**Acknowledgement.** `TelemetryObserver` keeps bounded render-scale evidence: the
+`swapchain-context-create` event (`application_width/height` against the presented `width/height`)
+and the scaler's `spatial scaling active: source=WxH; ...; sharpness=` line. A request whose render
+scale differs from the last acknowledged one is accepted only when evidence newer than the overlay
+write shows the game rendering at that scale (±3 percentage points, uniform in both axes).
+No evidence within 20 s rejects the point (`render-scale-not-acknowledged`); two misses stop scaled
+trials for the game session. Sharpening counts as confirmed only from the scaler's own report.
+
+**Status.** `get_status().extreme` is a cached snapshot: state (OFF / DISCOVER / BASELINE / APPLY /
+VERIFY / TUNE / ACTIVE / RESTART_REQUIRED / PAUSED), ceiling and its source, requested vs applied
+point (render %, sharpening, source/output extent), the nine directions with state and reason
+(`booster_states`), and `gain` with `kind: unavailable` until a same-scene A-B-A proof exists.
+Battery/Balanced publish `extreme_offer` when the locked budget leaves ≥ 1.5 W of the ceiling
+unused (no number promised). Frame OS Act follows Extreme only after the one-time consent
+(`set_extreme_act_consent`), and leaving Extreme restores the previous Frame OS mode. The game
+memory key carries the ceiling (`extreme-15w`), so a point learnt at 15 W is not reused at 12 W.
+The session recorder and the log report carry state, ceiling, the highest cap read and the scales
+the renderer confirmed.

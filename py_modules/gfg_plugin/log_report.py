@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from .governor_telemetry import TelemetryObserver
 
-CURRENT_VERSION = "1.5.1"  # kept in step by scripts/bump_version.py
+CURRENT_VERSION = "1.6.0"  # kept in step by scripts/bump_version.py
 
 
 def _percentile(values: List[float], pct: float) -> Optional[float]:
@@ -155,8 +155,30 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
     rows = [r.get("power_split") for r in samples if isinstance(r.get("power_split"), dict)]
     if report["power_split"] and rows:
         report["power_split"]["capped_share"] = round(sum(bool(r.get("cap_khz")) for r in rows) / len(rows), 2)
+    report["extreme"] = extreme_summary(samples, events)
     report["findings"] = findings(report, names)
     return report
+
+
+def extreme_summary(samples: List[Dict[str, Any]], events: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Extreme (1.6): ceiling, the highest TDP written, render scales the renderer confirmed."""
+    rows = [r.get("extreme") for r in samples if isinstance(r.get("extreme"), dict)]
+    if not rows:
+        return None
+    ceilings = [(r.get("ceiling") or {}).get("ceiling_w") for r in rows]
+    ceilings = [c for c in ceilings if isinstance(c, (int, float))]
+    tdps = [r.get("tdp") for r in samples if isinstance(r.get("extreme"), dict) and isinstance(r.get("tdp"), (int, float))]
+    applied = [r.get("applied") or {} for r in rows]
+    scales = Counter(str(a.get("render_pct")) for a in applied if a.get("render_pct") is not None)
+    return {
+        "samples": len(rows),
+        "states": dict(Counter(str(r.get("state")) for r in rows)),
+        "ceiling_w": min(ceilings) if ceilings else None,
+        "max_tdp_w": max(tdps) if tdps else None,
+        "confirmed_scales": dict(scales),
+        "acknowledged": sum(1 for e in events if e.get("event") == "extreme-scale-acknowledged"),
+        "not_acknowledged": sum(1 for e in events if e.get("event") == "extreme-scale-not-acknowledged"),
+    }
 
 
 def power_split_summary(events: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -434,6 +456,18 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
                         if split.get("mhz_pct") is not None and split.get("draw_pct") is not None else "")
                      + (f", real FPS {split['real_delta']:+}" if split.get("real_delta") is not None else "") + ".")
         out.append(text)
+    ext = report.get("extreme")
+    if ext:
+        text = (f"Extreme: ceiling {ext['ceiling_w']} W" if ext.get("ceiling_w") is not None else "Extreme: ceiling unknown")
+        if ext.get("max_tdp_w") is not None:
+            text += f", highest cap read {ext['max_tdp_w']} W"
+            if ext.get("ceiling_w") is not None and ext["max_tdp_w"] > ext["ceiling_w"] + 0.05:
+                text += " (ABOVE THE CEILING: a bug or another tool)"
+        scales = ", ".join(f"{k}%" for k in sorted(ext.get("confirmed_scales") or {}, key=lambda k: -float(k)))
+        text += f"; render scales confirmed by the renderer: {scales or 'none'}"
+        if ext.get("not_acknowledged"):
+            text += f"; {ext['not_acknowledged']} scale request(s) the renderer never confirmed"
+        out.append(text + ".")
     if not out:
         out.append("Nothing unusual found.")
     return out

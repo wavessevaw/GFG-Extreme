@@ -824,6 +824,14 @@ class Plugin:
         """Smart power split: CPU clock cap in GPU-bound games (persisted; on by default)."""
         return await asyncio.to_thread(self.governor_service.set_power_split, bool(enabled))
 
+    async def set_governor_extreme_sharpness(self, profile_name: str, offset: float = 0.0) -> Dict[str, Any]:
+        """Extreme: the player's sharpening correction (-0.3 .. +0.3) on top of the scale table."""
+        return await asyncio.to_thread(self.governor_service.set_extreme_sharpness, profile_name, offset)
+
+    async def set_governor_extreme_act_consent(self, allow: bool = False) -> Dict[str, Any]:
+        """Extreme: asked once on the first switch; allowing it is the Frame OS Act opt-in."""
+        return await asyncio.to_thread(self.governor_service.set_extreme_act_consent, bool(allow))
+
     async def set_governor_scale_ready(
             self, profile_name: str, scale_ready: bool
     ) -> Dict[str, Any]:
@@ -833,7 +841,7 @@ class Plugin:
         )
 
     async def set_governor_mode(self, profile_name: str, mode: str) -> Dict[str, Any]:
-        """Battery (lowest TDP first) or Quality (fewest generated frames first)."""
+        """Battery, Balanced, Quality or Extreme (the whole stock power limit into real frames)."""
         return await asyncio.to_thread(self.governor_service.set_mode, profile_name, mode)
 
     async def get_governor_game_model_target(self, profile_name: str) -> Dict[str, Any]:
@@ -1486,7 +1494,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Extreme 1.5.1 started")
+        decky.logger.info("GFG Extreme 1.6.0 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""

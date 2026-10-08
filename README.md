@@ -49,7 +49,17 @@ and keeps adjusting while you play. Your Deck never burns a watt it doesn't need
 
 Works with Steam games and, through Flatpak support, with Heroic, Lutris and emulators. Your saved settings are never touched: **Stop** puts everything back.
 
-## New in 1.5
+## New in 1.6: Extreme
+
+<p align="center"><img src="docs/img/home-extreme.png" width="250"></p>
+
+- **A fourth mode for the most real frames.** Extreme puts every watt of your Deck's **stock limit** into real frames: 15 W, or your own lower limit, never more. No overclock, no BIOS changes, on a stock Deck.
+- **Resolution as the currency.** When it buys real frames, Extreme renders at 90 % or 80 % and sharpens to match. Every change is counted only once the engine shows the game really renders at that size; otherwise it is rolled back. You can nudge the sharpening on Home.
+- **The wolf in the ring.** In Extreme the GFG wolf sits inside the main ring.
+- **Honest boosters.** Home lists nine directions and what each does in this session. What can't yet be done safely and measured on a stock Deck (background jobs, fan, memory, latency, stutter shield) is shown as unavailable with the reason, not faked.
+- **No promised numbers.** The gain against Balanced appears only after a same-scene A-B-A check, which comes in a later update. Battery and Balanced suggest Extreme when a game leaves power unused.
+
+### Also in 1.5
 
 - **Smart power split.** The Deck's CPU and GPU share one power limit. In a GPU-bound game the CPU still boosts to 3.5 GHz between frames and takes watts the GPU needs. GFG now lowers the CPU's top clock step by step, only while the busiest core has room to spare. The GPU gets those watts back, and the Governor turns them into a lower TDP for the same real frames. If real frames dip or the CPU gets busy, the cap comes off at once.
 - **Measured in your game.** Now and then GFG lifts the cap for a few seconds and compares GPU clock per watt with and without it. Details show the result. A game where the split makes no measurable difference gets it switched off automatically, and it is re-checked every few sessions.
@@ -75,13 +85,26 @@ Full notes: [Releases](https://github.com/wavessevaw/GFG-Extreme/releases).
 - **Tells you what you saved.** After a session Home shows the modes you used, the energy saved in Wh from the measured draw, and about how many minutes of battery that is.
 - **Leaves your settings alone.** Your saved profile is never modified; Stop puts everything back. No overclocking, never above your Deck's power ceiling, and if another tool keeps changing TDP, GFG stops fighting it. If Steam's TDP helper does not answer in time, your own limit stays.
 
-## Three modes
+## Four modes
 
 | | Real frames | Power | Pick it when |
 |---|---|---|---|
 | **Battery** | 24 or more | 9–11 W ideal, more only as a last resort | you want the longest play time |
 | **Balanced** | 30 or more | starts at 12 W, never above the normal range | you want a steadier picture |
 | **Quality** | as many as possible | lowered after quality is set | you are plugged in |
+| **Extreme** | as many as the limit gives, 30 or more | the whole stock limit: 15 W or your lower one | you want the most real frames on battery |
+
+## Extreme
+
+<p align="center"><img src="docs/img/details-extreme.png" width="300"></p>
+
+Extreme spends the Deck's whole stock power limit on real frames instead of saving it:
+
+- **One ceiling.** 15 W, or your own lower limit from the quick menu. Every power write, Frame OS Act included, is clamped to it. Change the limit while you play and the new one is the ceiling.
+- **Render scale with matched sharpening.** 100 → 90 → 80 %. Lower resolution is used only where it buys more real frames, never in a CPU-bound game, never over your profile's own scaling. Sharpening starts at 0.15 / 0.30 and you can correct it by ±0.3; it is skipped when your vkBasalt filter already sharpens.
+- **Confirmed or nothing.** A new render scale counts only after the engine reports the game's real render size. Without that, the change is rolled back within 20 s, and after two misses Extreme stays at full resolution for the session.
+- **Needs one restart.** The scaler is loaded at game start: after switching to Extreme, restart the game once to allow lower resolutions.
+- **Frame OS Act if you want it.** The first switch asks once whether Act may join.
 
 ## Smart power split
 
@@ -179,7 +202,7 @@ Heroic, Lutris, EmuDeck and other Flatpak apps: **Settings → System**, enable 
 
 ## Status
 
-**Stable (1.3).** Frame OS is experimental and off unless you turn it on. Every release is covered by an automated test suite (Python backend, the generated launcher run in bash, the interface rendered in a headless browser) and checked on a real Steam Deck. Logs from more games and setups are very welcome. Known limitations: [docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md).
+**Stable (1.6).** Extreme is a first stage and not yet validated on many games; Frame OS is experimental and off unless you turn it on. Every release is covered by an automated test suite (Python backend, the generated launcher run in bash, the interface rendered in a headless browser) and checked on a real Steam Deck. Logs from more games and setups are very welcome. Known limitations: [docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md).
 
 <details>
 <summary><b>Everything else it can do</b></summary>

@@ -102,4 +102,34 @@ export const css = `
 .gfg .col h4{margin:0 0 6px;font-size:10px;letter-spacing:.16em;color:var(--tx3)}
 .gfg .col.hot{border-color:rgba(251,13,0,.5)}.gfg .col.hot h4{color:var(--red)}
 .gfg .col div{font-size:12px;display:flex;justify-content:space-between;padding:2px 0}.gfg .col div span{color:var(--tx2)}
+
+.gfg .seg.four .segb{font-size:11.5px;padding:10px 2px}
+.gfg .seg .segb.x{color:#ff6a5c;letter-spacing:.04em}
+.gfg .seg .segb.x.on{background:linear-gradient(135deg,#ff2d1a,#b30800);color:#fff;box-shadow:0 0 14px rgba(251,13,0,.55)}
+.gfg .hero.xt{background:radial-gradient(120% 90% at 50% 0%,#3a0d0a 0%,var(--s1) 62%);border-color:rgba(251,13,0,.45)}
+.gfg .xbadge{display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:900;letter-spacing:.2em;color:#fff;background:linear-gradient(135deg,#ff2d1a,#b30800);padding:4px 9px;border-radius:999px;box-shadow:0 0 12px rgba(251,13,0,.5);flex:none}
+.gfg .status .h.xh{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.gfg .status:not(.left) .h.xh{justify-content:center}
+.gfg .ring .num.wolf .big{font-size:34px}.gfg .ring.compact .num.wolf .big{font-size:24px}.gfg .ring.side .num.wolf .big{font-size:15px}
+.gfg .ring.side .num.wolf .wolfimg{margin-bottom:0}
+.gfg .wolfimg{display:block;margin-bottom:2px;filter:drop-shadow(0 0 6px rgba(251,13,0,.55))}
+.gfg .arc .num.wolf .big{font-size:28px}
+.gfg .gain{display:flex;flex-direction:column;align-items:center;gap:3px;margin-top:12px;width:100%;padding-top:10px;border-top:1px solid var(--line);text-align:center}
+.gfg .gain .gl{font-size:12.5px;font-weight:700;color:#ff6a5c;letter-spacing:.02em}.gfg .gain span{font-size:10.5px;color:var(--tx3);line-height:1.35}
+.gfg .xcard{margin-top:12px;padding:12px}
+.gfg .boost{display:grid;grid-template-columns:1fr;gap:5px;margin-top:2px}
+.gfg .bt{display:flex;align-items:center;gap:8px;background:var(--s2);border:1px solid var(--line);border-radius:12px;padding:7px 10px;min-width:0}
+.gfg .bt>div{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex:1;min-width:0}
+.gfg .bt i{width:8px;height:8px;border-radius:50%;flex:none;background:#2fd27a;box-shadow:0 0 6px #2fd27a}
+.gfg .bt i.wait{background:#ffb02e;box-shadow:0 0 6px rgba(255,176,46,.6)}.gfg .bt i.idle{background:var(--tx3);box-shadow:none}
+.gfg .bt b{font-size:11.5px;font-weight:700;white-space:nowrap}.gfg .bt span{font-size:10px;color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}
+.gfg .bt.na b{color:var(--tx2)}
+.gfg .xsharp{display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:12px;color:var(--tx2)}
+.gfg .promo{display:flex;gap:12px;align-items:flex-start;border-color:rgba(251,13,0,.4);background:linear-gradient(135deg,#2a0a08,var(--s1) 70%)}
+.gfg .promo .t{flex:1;min-width:0}.gfg .promo .t b{display:block;font-size:14px}.gfg .promo .t span{display:block;font-size:11.5px;color:var(--tx2);margin-top:3px;line-height:1.35}
+.gfg .xconsent{margin-top:10px;flex-direction:column}
+.gfg .xbtns{display:flex;gap:8px;margin-top:10px}
+.gfg .xbtn{flex:1;display:flex;align-items:center;justify-content:center;height:36px;border-radius:11px;background:var(--s2);border:1px solid var(--line);font-size:12.5px;font-weight:700;color:var(--tx);cursor:pointer}
+.gfg .xbtn.on{background:linear-gradient(135deg,#ff2d1a,#b30800);border-color:transparent;color:#fff}
+.gfg .xconsent .xbtns{width:100%}
 `;

@@ -996,6 +996,171 @@ class BudgetRuntimeTests(RuntimeBase):
         asyncio.run(self.svc.stop())
         self.assertEqual(self.cpu_khz(), 3_500_000, "unload gives the clock back")
 
+    # -- Extreme (1.6): stock-power contract, scale + sharpening with renderer acknowledgement
+    def swapchain_report(self, width, height, app_width, app_height):
+        self.svc.observer.consume_line(
+            H + f"operation=swapchain-context-create context=1 pid=4372 role=frame-generation width={width} "
+            f"height={height} application_width={app_width} application_height={app_height} "
+            "spatial_pipeline=pre-frame-generation replacement=1", now=self.t["now"])
+
+    def start_extreme(self, user_w=None, scale_ready_launch=True):
+        if user_w is not None:
+            self.svc.power.state.initial_slow_uw = int(user_w * 1e6)
+        self.inspector.info["governor_launch"] = {"scaling": 1 if scale_ready_launch else 0, "rev": 1, "owner": 1}
+        self.assertTrue(self.svc.set_mode("game", "extreme")["success"])
+        self.feed(20, 45, 90)
+        st = self.step()
+        self.assertEqual(st["request"]["point"], "45x2")
+        self.feed(16, 45, 90)
+        return self.step()
+
+    def test_extreme_plays_the_whole_stock_ceiling_and_never_more(self):
+        self.assertTrue(self.svc._scale_ready("game") is False)
+        st = self.start_extreme()
+        self.assertTrue(self.svc._scale_ready("game"), "Extreme provisions the Scaling Engine at launch")
+        self.assertEqual(self.svc._budget.flavor, "extreme")
+        self.assertEqual(self.svc.power.ceiling, 15.0, "15 W on any Deck, an unlocked BIOS included")
+        self.assertEqual(self.svc.power.writes[-1], 15.0)
+        self.assertTrue(all(w <= 15.0 for w in self.svc.power.writes))
+        ext = st["extreme"]
+        self.assertEqual(ext["ceiling"]["source"], "stock-limit")
+        self.assertEqual([b["id"] for b in ext["boosters"]],
+                         ["upscale", "quiet", "split", "cooling", "act", "memory", "latency", "shield", "instant"])
+        states = {b["id"]: b["state"] for b in ext["boosters"]}
+        for unverified in ("quiet", "cooling", "memory", "latency", "shield"):
+            self.assertEqual(states[unverified], "unavailable", unverified)
+        self.assertEqual(states["upscale"], "ready", "full resolution until a scaled point is confirmed")
+        self.assertEqual(ext["gain"]["kind"], "unavailable")
+        self.assertIsNone(ext["gain"]["percent"], "no number without an A-B-A proof")
+        self.assertEqual(sha(self.cfg.config_file_path), self.saved_hash, "Saved is never written")
+
+    def test_extreme_never_raises_the_players_lower_limit(self):
+        st = self.start_extreme(user_w=12.0)
+        self.assertEqual(self.svc.power.ceiling, 12.0)
+        self.assertEqual(st["extreme"]["ceiling"], {"ceiling_w": 12.0, "source": "your-limit", "user_w": 12.0})
+        self.assertEqual(self.svc.power.writes[-1], 12.0)
+        # a Frame OS Act boost asks for more: the ceiling still holds
+        with patch.object(type(self.svc.frame_os), "tdp_offset_w", property(lambda _self: 3.0)):
+            self.svc._applied_tdp = None
+            asyncio.run(self.svc._apply_budget_tdp("game"))
+        self.assertTrue(all(w <= 12.0 for w in self.svc.power.writes), self.svc.power.writes)
+        # the player lowers the limit in Quick Access: the new value becomes the ceiling
+        self.svc.power.state.initial_slow_uw = 9_000_000
+        self.feed(16, 45, 90)
+        self.step()
+        self.assertEqual(self.svc.power.ceiling, 9.0)
+        self.assertEqual(self.svc._budget.tdp, 9.0)
+
+    def request_scaled(self, key="54x1.67@80"):
+        budget = self.svc._budget
+        budget._move("test-upgrade", idx=next(i for i, p in enumerate(budget.points) if p.render_scale_pct == 80))
+        st = None
+        for _ in range(3):
+            self.feed(12, 45, 90)
+            st = self.step()
+            if st["request"]:
+                break
+        self.assertEqual(st["request"]["point"], budget.point.key)
+        return budget.point
+
+    def test_extreme_scale_counts_only_after_the_renderer_shows_it(self):
+        self.start_extreme()
+        point = self.request_scaled()
+        prof = self.overlay_profile()
+        self.assertEqual((prof["scaling_factor"], prof["scaling_sharpness"]), (1.25, 0.3),
+                         "80 % render scale with the table's sharpening, in the overlay only")
+        self.feed_adaptive(20, point.base_target_fps, 90) if point.multiplier != int(point.multiplier) \
+            else self.feed(20, point.base_target_fps, 90)
+        st = self.step()
+        self.assertEqual(st["reason"], "awaiting-render-scale-acknowledgement")
+        self.assertEqual(st["extreme"]["state"], "VERIFY")
+        self.assertEqual(st["extreme"]["applied"]["render_pct"], 100, "a request is not an application")
+        self.assertEqual(st["extreme"]["requested"]["render_pct"], 80)
+        # the game rebuilt its swapchain at 1024x640 for a 1280x800 output: acknowledged
+        self.swapchain_report(1280, 800, 1024, 640)
+        self.feed_adaptive(4, point.base_target_fps, 90) if point.multiplier != int(point.multiplier) \
+            else self.feed(4, point.base_target_fps, 90)
+        st = self.step()
+        self.assertEqual(st["active_point"]["key"], point.key)
+        applied = st["extreme"]["applied"]
+        self.assertEqual((applied["render_pct"], applied["source"], applied["output"]), (80, (1024, 640), (1280, 800)))
+        self.assertIsNone(applied["sharpness"], "the scaler has not reported its sharpening yet")
+        up = next(b for b in st["extreme"]["boosters"] if b["id"] == "upscale")
+        self.assertEqual((up["state"], up["render_pct"]), ("active", 80))
+        # the scaler reports its sharpening: confirmed
+        self.svc.observer.consume_line(
+            "MAKO Renderer: spatial scaling active: source=1024x640; factor=1.25; effective_factor=1.25; "
+            "requested_method=ls1; active_method=ls1; sharpness=0.3; role=frame-generation", now=self.t["now"])
+        st = self.step(0.1)
+        self.assertEqual(st["extreme"]["applied"]["sharpness"], 0.3)
+        self.assertEqual(sha(self.cfg.config_file_path), self.saved_hash)
+
+    def test_extreme_scale_without_acknowledgement_is_rejected_then_dropped(self):
+        self.start_extreme()
+        for attempt in range(2):
+            point = self.request_scaled()
+            self.feed_adaptive(20, point.base_target_fps, 90) if point.multiplier != int(point.multiplier) \
+                else self.feed(20, point.base_target_fps, 90)
+            self.step(25.0)
+            self.assertIsNone(self.svc._request, "rejected after the acknowledgement timeout")
+            self.assertNotEqual(self.svc._budget.point.render_scale_pct if self.svc._point else 100, 80)
+            self.svc._budget.rejected.clear()
+        self.assertEqual(self.svc._extreme_scale_blocked, "renderer-did-not-confirm-render-scale")
+        self.feed(4, 45, 90)
+        st = self.step()
+        up = next(b for b in st["extreme"]["boosters"] if b["id"] == "upscale")
+        self.assertEqual((up["state"], up["reason"]), ("unavailable", "renderer-did-not-confirm-render-scale"))
+        self.assertFalse(self.svc._budget_can_scale({"scale_capable": True}), "no more scaled trials this session")
+
+    def test_extreme_without_a_scale_ready_launch_asks_for_a_restart(self):
+        st = self.start_extreme(scale_ready_launch=False)
+        up = next(b for b in st["extreme"]["boosters"] if b["id"] == "upscale")
+        self.assertEqual(up["state"], "restart_required")
+        self.assertFalse(self.svc._budget.scale_capable)
+
+    def test_extreme_sharpening_correction_goes_live_without_touching_saved(self):
+        self.start_extreme()
+        point = self.request_scaled()
+        self.swapchain_report(1280, 800, 1024, 640)
+        self.feed_adaptive(20, point.base_target_fps, 90) if point.multiplier != int(point.multiplier) \
+            else self.feed(20, point.base_target_fps, 90)
+        self.step()
+        self.assertEqual(self.svc.set_extreme_sharpness("game", 0.1)["offset"], 0.1)
+        self.assertEqual(self.svc.set_extreme_sharpness("game", 5)["offset"], 0.3, "clamped")
+        self.svc.set_extreme_sharpness("game", -0.1)
+        self.step(0.1)
+        self.assertEqual(self.overlay_profile()["scaling_sharpness"], 0.2)
+        self.assertEqual(sha(self.cfg.config_file_path), self.saved_hash)
+
+    def test_extreme_brings_frame_os_act_only_with_consent_and_gives_the_mode_back(self):
+        self.svc.set_frame_os("game", "observe")
+        self.svc.set_mode("game", "extreme")
+        self.assertEqual(self.svc._profile_settings("game")["frame_os"], "observe", "no consent asked yet")
+        self.svc.set_mode("game", "budget")
+        self.assertTrue(self.svc.set_extreme_act_consent(True)["act_unlocked"])
+        self.svc.set_mode("game", "extreme")
+        self.assertEqual(self.svc._frame_os_mode("game"), "act")
+        self.svc.set_mode("game", "balanced")
+        self.assertEqual(self.svc._profile_settings("game")["frame_os"], "observe")
+        self.svc.set_extreme_act_consent(False)
+        self.svc.set_mode("game", "extreme")
+        self.assertEqual(self.svc._profile_settings("game")["frame_os"], "observe")
+
+    def test_battery_offers_extreme_only_with_unused_power(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        st = self.step()
+        self.assertIsNone(st.get("extreme_offer"), "not before the budget settles")
+        for _ in range(30):
+            st = self.windows(1, 30, 90)
+            if self.svc._budget.phase == "locked":
+                break
+        self.assertEqual(self.svc._budget.phase, "locked")
+        offer = st.get("extreme_offer")
+        self.assertEqual((offer["ceiling_w"], offer["tdp_w"]), (15.0, self.svc._budget.tdp))
+        self.assertNotIn("gain_pct", offer, "no promised number")
+
     def test_power_split_never_caps_a_busy_cpu(self):
         self.feed(20, 45, 90)
         self.step()

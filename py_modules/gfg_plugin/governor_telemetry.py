@@ -16,6 +16,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Deque, Dict, Iterable, Optional
 
+from .extreme import SPATIAL_ACTIVE_MARKER, parse_spatial_active, swapchain_extent
+
 
 _DIAGNOSTIC_MARKER = "MAKO Renderer: present diagnostics:"
 _FIELD_RE = re.compile(r"(?:^|\s)([A-Za-z0-9_-]+)=([^\s]+)")
@@ -143,6 +145,7 @@ class TelemetryObserver:
     MAX_READ_BYTES = 1024 * 1024
     MAX_SAMPLES = 900
     MAX_EVENTS = 1800
+    MAX_SCALING_EVIDENCE = 32
 
     def __init__(
         self,
@@ -174,6 +177,9 @@ class TelemetryObserver:
         # (menu, quick access) covers it, None before the first report.
         self.game_focused: Optional[bool] = None
         self.game_focused_at: Optional[float] = None
+        # What the renderer says about render scale: the game's swapchain extent against the
+        # presented one, and its spatial scaler's report (Extreme's acknowledgement, 1.6).
+        self._scaling: Deque[Dict[str, Any]] = deque(maxlen=self.MAX_SCALING_EVIDENCE)
 
     def _note_capacity(self, value: Any) -> None:
         try:
@@ -245,6 +251,19 @@ class TelemetryObserver:
         self._generated_capacity = None
         self.game_focused = None
         self.game_focused_at = None
+        self._scaling.clear()
+
+    def scaling_after(self, event_seq: int) -> list[Dict[str, Any]]:
+        """Render-scale evidence strictly newer than ``event_seq``, oldest first."""
+        return [dict(record) for record in self._scaling if record["event_seq"] > int(event_seq)]
+
+    @property
+    def latest_scaling(self) -> Optional[Dict[str, Any]]:
+        return dict(self._scaling[-1]) if self._scaling else None
+
+    def _note_scaling(self, record: Optional[Dict[str, Any]], now_mono: float) -> None:
+        if record is not None:
+            self._scaling.append({**record, "event_seq": self._event_seq, "monotonic": now_mono})
 
     @staticmethod
     def parse_fields(line: str) -> Optional[Dict[str, str]]:
@@ -255,11 +274,16 @@ class TelemetryObserver:
     def consume_line(self, line: str, *, now: Optional[float] = None) -> Optional[FpsSample]:
         fields = self.parse_fields(line)
         if fields is None:
+            if SPATIAL_ACTIVE_MARKER in line:
+                self._event_seq += 1
+                self._note_scaling(parse_spatial_active(line), self.time_fn() if now is None else float(now))
             return None
         now_mono = self.time_fn() if now is None else float(now)
         self._event_seq += 1
         operation = str(fields.get("operation") or "")
         self._last_fields = dict(fields)
+        if operation == "swapchain-context-create":
+            self._note_scaling(swapchain_extent(fields), now_mono)
         if operation == "gamescope-focus" and fields.get("state"):
             self.game_focused = fields.get("state") == "game"
             self.game_focused_at = now_mono

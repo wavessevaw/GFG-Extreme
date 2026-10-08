@@ -1025,3 +1025,68 @@ class RenderScaleTests(unittest.TestCase):
         self.assertFalse(ctl.warm_start("30x3@90", 10.0, 0.0))
         ctl.scale_capable = True
         self.assertTrue(ctl.warm_start("30x3@90", 10.0, 0.0))
+
+
+class ExtremeTests(unittest.TestCase):
+    """Extreme (1.6): the most real frames at the full normal budget, resolution as the currency."""
+
+    def make(self, scale=True, max_w=15.0):
+        from gfg_plugin.governor_core import BudgetController
+        ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3.0, max_tdp_w=max_w, flavor="extreme")
+        ctl.scale_capable = scale
+        return ctl
+
+    def test_ladder_trades_resolution_for_real_frames(self):
+        from gfg_plugin.governor_core import extreme_points
+        keys = [p.key for p in extreme_points(90)]
+        self.assertEqual(keys[0], "23x3.913", "index 0 stays the (unused) last resort")
+        i = keys.index
+        self.assertLess(i("30x3"), i("33x2.75@80"))
+        self.assertLess(i("45x2@80"), i("45x2@90"))
+        self.assertLess(i("45x2@90"), i("45x2"))
+        self.assertLess(i("45x2"), i("51x1.75@80"))
+        self.assertEqual(keys[-1], "native90")
+        self.assertNotIn("24x3.75", keys, "never below 30 real")
+
+    def test_starts_at_45_real_on_the_full_budget_and_never_searches_watts_down(self):
+        ctl = self.make()
+        self.assertEqual((ctl.point.key, ctl.tdp), ("45x2", 15.0))
+        game = Game(fps_per_watt=4.0)        # 60 real at 15 W
+        _, trace = run(ctl, game, 0.0, 30)
+        self.assertTrue(all(t[1] == 15.0 for t in trace), "no lower-power probes in Extreme")
+        self.assertGreaterEqual(ctl.point.base_target_fps, 51, "headroom became more real frames")
+        self.assertEqual(ctl.flavor, "extreme")
+
+    def test_without_the_scaling_engine_the_plain_ladder_is_used(self):
+        ctl = self.make(scale=False)
+        game = Game(fps_per_watt=4.0)
+        _, trace = run(ctl, game, 0.0, 30)
+        self.assertTrue(all("@" not in t[0] for t in trace))
+
+    def test_heavy_scene_gives_up_resolution_before_real_frames(self):
+        ctl = self.make()
+        game = Game(fps_per_watt=4.0)
+        now, _ = run(ctl, game, 0.0, 6)
+        game.scene = 0.7                     # 42 real at 15 W: 45x2 no longer holds
+        now, trace = run(ctl, game, now, 6)
+        keys = [t[0] for t in trace]
+        self.assertTrue(any(k.endswith("@90") or k.endswith("@80") for k in keys),
+                        f"a lower render scale came before fewer real frames: {keys}")
+
+    def test_a_lower_ceiling_is_the_whole_budget(self):
+        ctl = self.make(max_w=12.0)          # the player's own 12 W: never raised to 15
+        self.assertEqual((ctl.tdp, ctl.normal_max_w, ctl.emergency_max_w), (12.0, 12.0, 12.0))
+        game = Game(fps_per_watt=4.0)
+        _, trace = run(ctl, game, 0.0, 30)
+        self.assertLessEqual(max(t[1] for t in trace), 12.0)
+        ctl.limit_power(9.0)                 # lowered in Quick Access mid-game
+        self.assertEqual((ctl.tdp, ctl.normal_max_w), (9.0, 9.0))
+        _, trace = run(ctl, game, 400.0, 20)
+        self.assertLessEqual(max(t[1] for t in trace), 9.0)
+
+    def test_no_last_resort_ratio(self):
+        ctl = self.make()
+        game = Game(fps_per_watt=1.0)        # hopeless: 15 real at 15 W
+        _, trace = run(ctl, game, 0.0, 40)
+        self.assertNotIn("23x3.913", [t[0] for t in trace])
+        self.assertGreaterEqual(min(BudgetController.EMERGENCY_CEILING_W, 15.0), max(t[1] for t in trace))

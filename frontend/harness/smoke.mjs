@@ -64,6 +64,11 @@ const cases = [
   ["home-idle-oled", ["Settings", "Diagnostics"], ["RECORD A LOG", "Record log", "FRAME OS (EXPERIMENTAL)", "Observe"]],
   ["home-locked-oled", [], ["FILTERS", "Vivid", "HDR look", "Fine-tune ›"]],
   ["home-locked-oled", ["Settings", "Filters"], ["Shader filters", "LOOKS", "SHARPENING", "ANTI-ALIASING", "EFFECTS · NONE", "Film Grain"]],
+  ["home-extreme", [], ["Extreme · 15 W", "▲ ON", "Limit 15 W · render 80% · sharpen 0.30", "Gain vs Balanced: not measured yet", "EXTREME BOOSTERS", "3 / 9 ACTIVE", "Upscale + sharpen", "80% · sharpen 0.30", "CPU capped at 2.4 GHz", "No safe Steam API yet", "Stock fan control stays", "Not applied: untested risk", "Sharpening", "EXTREME"]],
+  ["home-extreme", ["Details"], ["EXTREME", "Power limit", "15 W · stock limit", "1024×640 → 1280×800", "0.30 (engine confirmed)", "not measured (needs an A-B-A check)", "the whole limit: 15 W or your lower one, never above"]],
+  ["home-extreme-verify", [], ["Extreme · checking", "Render 90% counts only once the engine shows", "Checking render 90%", "Limit 15 W"]],
+  ["home-extreme-restart", [], ["Extreme · 12 W", "your own 12 W limit (never raised)", "Restart the game once to enable"]],
+  ["home-extreme-offer", [], ["Want more real frames?", "4 W of your 15 W limit unused", "not promised", "Try Extreme", "Not now"]],
 ];
 const browser = await launch();
 let failed = 0;
@@ -176,6 +181,46 @@ for (const [state, nav, expected] of cases) {
   if (!text.includes("Forgotten. The next start searches from scratch.")) { failed++; console.error(`FAIL forget model result not shown`); }
   await page.close();
   cases.push(["forget-model-confirm"]);
+}
+// Extreme: the wolf sits inside the main ring in every hero layout, and only in Extreme.
+{
+  const page = await openPage(browser, STATES["home-extreme"]);
+  for (let i = 0; i < 4; i++) {
+    const wolf = await page.evaluate(() => !!document.querySelector(".hero .num.wolf img.wolfimg"));
+    if (!wolf) { failed++; console.error(`FAIL extreme wolf missing in hero layout ${i}`); }
+    await page.locator(".herotap").first().click(); await page.waitForTimeout(80);
+  }
+  for (const e of page.__errors) { failed++; console.error(`FAIL extreme wolf: page error ${e}`); }
+  await page.close();
+  const other = await openPage(browser, STATES["home-balanced"]);
+  if (await other.evaluate(() => !!document.querySelector(".hero .wolfimg"))) { failed++; console.error("FAIL wolf shown outside Extreme"); }
+  await other.close();
+  cases.push(["extreme-wolf"]);
+}
+// First switch to Extreme asks about Frame OS Act once, then switches with the answer.
+{
+  const page = await openPage(browser, STATES["home-extreme-consent"]);
+  await page.getByText("EXTREME", { exact: true }).first().click();
+  await page.waitForTimeout(120);
+  const before = await page.evaluate(() => window.__modes || []);
+  if (before.length) { failed++; console.error(`FAIL extreme switched before the Act question: ${JSON.stringify(before)}`); }
+  if (!(await page.getByText("Let Frame OS Act join Extreme?", { exact: true }).count())) { failed++; console.error("FAIL no Act question"); }
+  await page.getByText("Without Act", { exact: true }).first().click();
+  await page.waitForTimeout(150);
+  const r = await page.evaluate(() => ({ modes: window.__modes || [], consents: window.__consents || [] }));
+  if (JSON.stringify(r) !== JSON.stringify({ modes: ["extreme"], consents: [false] })) { failed++; console.error(`FAIL extreme consent flow: ${JSON.stringify(r)}`); }
+  await page.close();
+  cases.push(["extreme-consent"]);
+}
+// The sharpening correction goes to the backend in 0.05 steps.
+{
+  const page = await openPage(browser, STATES["home-extreme"]);
+  await page.locator(".xsharp .stepb").nth(1).click();
+  await page.waitForTimeout(120);
+  const v = await page.evaluate(() => window.__sharp || []);
+  if (JSON.stringify(v) !== "[0.05]") { failed++; console.error(`FAIL extreme sharpening step: ${JSON.stringify(v)}`); }
+  await page.close();
+  cases.push(["extreme-sharpening"]);
 }
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);
