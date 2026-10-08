@@ -101,7 +101,7 @@ Heroic, Lutris, EmuDeck and other Flatpak apps: **Settings → System**, enable 
 
 <img src="docs/img/page-hud.png" width="230" align="right">
 
-The Home screen, shrunk into the corner of your game. A brand-red **FPS** ring with the real frame rate under it, a **TDP** ring, **battery** time in Detailed, and — with Frame OS on — the **Response / Frames / Energy** rings, coloured exactly like on Home. The ring that matches what Frame OS is doing right now is bright; the others dim.
+**What the rings actually mean:** **OUT FPS** is the output frame rate presented by the renderer; the small `REAL` number under it is the actual source frame cadence (for example `90` and `30 REAL` suggest about ×3 output). **TDP CAP** is the configured power limit, *not* measured power draw. Detailed adds battery time. With Frame OS enabled, **AGE EST** is a model-based frame-freshness proxy (not measured input-to-photon latency), **REAL GAIN** is the change in source-frame cadence relative to calm periods (or a grey plan in Observe/Shadow), and **CAP CUT** is the reduction in the configured TDP ceiling (not measured battery savings). The three percentages have *different baselines*; comparing their ring lengths is meaningless. `—` means unavailable, not zero. The label `OBSERVE EST`/`SHADOW EST` identifies modeled values; `ACT WAIT` means the executor has not confirmed active operation.
 
 When experimental Frame OS Act is enabled, Standard and Detailed Rings also show **CALM**, **VERIFYING**, or **BOOST 45R x2** using live FPS and a pacer acknowledgement. **BOOST** requires measured real-frame improvement and an active executor. This badge does not establish input-to-photon latency or battery savings.
 
