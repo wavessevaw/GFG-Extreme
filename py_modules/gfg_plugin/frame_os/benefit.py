@@ -45,9 +45,11 @@ class BenefitMeter:
 
     def add(self, now: float, *, acting: bool, level: Optional[str], telemetry: Dict[str, Any],
             output_hz: float, calm_real_hz: float, boost_real_hz: float,
-            calm_w: Optional[float], tdp_w: Optional[float]) -> None:
+            calm_w: Optional[float], tdp_w: Optional[float], counted: bool = True) -> None:
         dt = 0.0 if self._last is None else max(0.0, min(1.0, now - self._last))
         self._last = now
+        if not counted:
+            return      # an A/B control window is not Act: it never enters the session numbers
         if dt <= 0 or not telemetry.get("live") or output_hz <= 0 or calm_real_hz <= 0:
             return
         self.seconds += dt

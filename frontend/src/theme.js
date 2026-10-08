@@ -62,6 +62,8 @@ export const css = `
 .gfg .pill{font-size:10px;font-weight:800;letter-spacing:.12em;padding:3px 8px;border-radius:999px;background:var(--s3);color:var(--tx2)}
 .gfg .pill.boost{background:rgba(47,210,122,.16);color:#2fd27a}.gfg .pill.rest{background:#2a2f3a;color:#cfd6e4}
 .gfg .pill.would{background:transparent;border:1px dashed var(--tx3);color:var(--tx2)}
+.gfg .pill.ab{background:rgba(150,190,255,.16);color:#96beff}
+.gfg .abline{margin-top:10px;text-align:center;font-size:11px;color:var(--tx3);letter-spacing:.02em}
 .gfg .rings{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
 .gfg .mini{display:flex;flex-direction:column;align-items:center;gap:7px}
 .gfg .mring{position:relative}.gfg .mring svg{position:absolute;inset:0;transform:rotate(-90deg)}

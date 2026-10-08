@@ -95,6 +95,8 @@ var css = `
 .gfg .pill{font-size:10px;font-weight:800;letter-spacing:.12em;padding:3px 8px;border-radius:999px;background:var(--s3);color:var(--tx2)}
 .gfg .pill.boost{background:rgba(47,210,122,.16);color:#2fd27a}.gfg .pill.rest{background:#2a2f3a;color:#cfd6e4}
 .gfg .pill.would{background:transparent;border:1px dashed var(--tx3);color:var(--tx2)}
+.gfg .pill.ab{background:rgba(150,190,255,.16);color:#96beff}
+.gfg .abline{margin-top:10px;text-align:center;font-size:11px;color:var(--tx3);letter-spacing:.02em}
 .gfg .rings{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
 .gfg .mini{display:flex;flex-direction:column;align-items:center;gap:7px}
 .gfg .mring{position:relative}.gfg .mring svg{position:absolute;inset:0;transform:rotate(-90deg)}
@@ -143,6 +145,7 @@ var rpc = {
   setScaleReady: safeCallable("set_governor_scale_ready"),
   setFrameOs: safeCallable("set_governor_frame_os"),
   setFrameOsActUnlock: safeCallable("set_governor_frame_os_act_unlock"),
+  setFrameOsAb: safeCallable("set_governor_frame_os_ab"),
   setMode: safeCallable("set_governor_mode"),
   forgetModel: safeCallable("forget_governor_game_model"),
   modelTarget: safeCallable("get_governor_game_model_target"),
@@ -426,6 +429,7 @@ function FrameOsCard({ fo }) {
   const level = (fo.decision || {}).level;
   const pct = (v, sign) => v == null ? "" : (sign && v > 0 ? sign : v < 0 && !sign ? "\u2212" : "") + Math.abs(Math.round(v)) + "%";
   const resp = b.response_pct, frames = b.frames_pct, energy = b.energy_pct;
+  const ab = fo.ab_control ? "ab" : null;
   return h(
     "div",
     { className: "card fos" },
@@ -433,7 +437,7 @@ function FrameOsCard({ fo }) {
       "div",
       { className: "fos-head" },
       h("span", null, "FRAME OS"),
-      h("span", { className: "pill " + (est ? "would" : level || "") }, est ? "ESTIMATE" : (level || "").toUpperCase())
+      h("span", { className: "pill " + (est ? "would" : ab || level || "") }, est ? "ESTIMATE" : ab ? "A/B CHECK" : (level || "").toUpperCase())
     ),
     h(
       "div",
@@ -441,8 +445,17 @@ function FrameOsCard({ fo }) {
       h(MiniRing, { value: resp, max: 50, text: resp == null ? "" : (resp >= 0 ? "\u2212" : "+") + Math.abs(Math.round(resp)) + "%", label: "Response", live: level !== "rest", estimate: est }),
       h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "\u2212") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est }),
       h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), label: "Energy", live: level === "rest", estimate: est })
-    )
+    ),
+    fo.mode === "act" ? h("div", { className: "abline" }, proofLine(fo.proof, b.measured)) : null
   );
+}
+function proofLine(proof, measured) {
+  if (!proof || proof.enabled === false) return "A/B check off \xB7 rings are model estimates";
+  const names = { response: "Response", frames: "Frames", energy: "Energy" };
+  const done = Object.keys(names).filter((k) => measured && measured[k]);
+  const pairs = Math.max(...Object.keys(names).map((k) => (proof[k] || {}).n || 0));
+  if (!done.length) return "Checking in game (A/B)\u2026 " + pairs + " of 3 comparisons";
+  return "Measured in game: " + done.map((k) => names[k] + " \xD7" + proof[k].n).join(" \xB7 ");
 }
 function SessionRings({ ls, target }) {
   const b = ls.frame_os_benefit;
@@ -1063,6 +1076,27 @@ function FrameOsPanel({ s, profile }) {
     h(Note, { quiet: true }, unlocked ? "Observe and Shadow only measure. Act changes frame timing and power. Applies from the next game start." : "Frame OS is diagnostic only until Deck validation. Applies from the next game start."),
     mode !== "off" && fo.enabled && fo.telemetry && !fo.telemetry.live && fo.layer_installed !== false ? h(Note, null, "Frame OS is not active in this game yet: it loads at game start. Restart the game.") : null,
     mode !== "off" && fo.layer_installed === false ? h(Note, null, fo.layer_error ? "Frame OS layer not installed: " + fo.layer_error + "." : "Frame OS layer not installed yet.") : null,
+    unlocked ? h("div", { className: "list" }, h(Toggle, {
+      on: fo.ab !== false,
+      title: "A/B check in Act",
+      sub: "Now and then a few seconds without one Act effect, to measure what Act really gives",
+      onChange: async (v) => {
+        try {
+          await rpc.setFrameOsAb(v);
+        } catch (e) {
+        }
+      }
+    })) : null,
+    fo.enabled && fo.proof && mode === "act" ? h("div", { className: "card" }, h(
+      "div",
+      { className: "kv" },
+      ...["response", "frames", "energy"].flatMap((k) => {
+        const r = fo.proof[k] || {};
+        const name = { response: "Response (A/B)", frames: "Frames (A/B)", energy: "Energy (A/B)" }[k];
+        const val = r.n ? (r.mean > 0 ? "+" : "") + num(r.mean, 0) + "%" + (r.low != null ? " (" + num(r.low, 0) + "\u2026" + num(r.high, 0) + ")" : "") + " \xB7 " + r.n + (r.n === 1 ? " pair" : " pairs") : "not yet";
+        return [h("span", { key: k + "l" }, name), h("b", { key: k + "v" }, val)];
+      })
+    )) : null,
     fo.enabled ? h("div", { className: "card" }, h(
       "div",
       { className: "kv" },

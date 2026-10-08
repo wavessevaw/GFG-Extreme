@@ -1417,6 +1417,15 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
             self.svc.set_frame_os_act_unlock(True)
             self.assertEqual(self.svc._frame_os_mode("game"), "observe", "unlocking never re-arms Act silently")
 
+    def test_ab_check_is_on_by_default_and_persists_off(self):
+        self.assertTrue(self.svc.get_status("game")["frame_os"]["ab"])
+        self.assertTrue(self.svc.frame_os.proof.enabled)
+        self.assertFalse(self.svc.set_frame_os_ab(False)["ab"])
+        self.assertFalse(self.svc.frame_os.proof.enabled)
+        self.assertFalse(self.svc.get_status("game")["frame_os"]["ab"])
+        self.assertIs(self.svc._settings["frame_os_ab"], False)
+        self.svc.set_frame_os_ab(True)
+
     def _act_live_point(self):
         self.svc.set_frame_os_act_unlock(True)
         self.assertTrue(self.svc.set_frame_os("game", "act")["success"])

@@ -66,7 +66,7 @@ A small Vulkan layer that sits above the frame generator. It watches every real 
   - **Learns** when a boost does not help in a game and stops paying for it.
   - **Rests** the moment the Steam menu covers the game, and hands control back to the Governor when the APU gets hot or the output falls short.
 
-Home gets a **Frame OS card** with three rings — **Response**, **Frames** and **Energy** — showing this session's benefit in percent, coloured from red (worse) through orange and yellow to green (a lot). In Observe and Shadow they are grey estimates. The same rings sit in the in-game overlay, next to FPS and TDP.
+Home gets a **Frame OS card** with three rings — **Response**, **Frames** and **Energy** — showing this session's benefit in percent, coloured from red (worse) through orange and yellow to green (a lot). In Observe and Shadow they are grey estimates. In Act, Frame OS **checks itself in your game**: every so often it switches one effect off for a few seconds and compares the same moment with and without it (A/B). Once a ring has three comparisons it shows the measured number instead of the estimate — the card says *Measured in game*, and the overlay shows `A/B` while a check runs. You can turn the check off in Diagnostics. The same rings sit in the in-game overlay, next to FPS and TDP.
 
 <br clear="right">
 

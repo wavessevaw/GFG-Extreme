@@ -18,6 +18,13 @@ class RingHudTests(unittest.TestCase):
                          ["FPS", "TDP"])
 
 
+    def test_an_ab_window_is_named_instead_of_calm(self):
+        data = {**SAMPLE, "frame_os": {**SAMPLE["frame_os"], "ab": True}}
+        self.assertEqual(hud_rings.items_for(data, "standard")[-1]["text"], "A/B")
+        data["frame_os"]["active"] = False
+        self.assertNotIn("A/B", [i.get("text") for i in hud_rings.items_for(data, "standard")])
+        hud_rings.render(data, "detailed", 1.0)          # every glyph exists in the atlas
+
     def test_requested_boost_never_claims_it_was_delivered(self):
         sample = dict(SAMPLE)
         sample["frame_os"] = {**SAMPLE["frame_os"], "verified_boost": False}

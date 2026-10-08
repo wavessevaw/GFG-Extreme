@@ -30,6 +30,8 @@ const cases = [
   ["home-saving", [], ["SAVING", "6 W under your 15 W limit"]],
   ["home-effort-reason", [], ["GFG EFFORT", "HARD", "x3 required"]],
   ["home-frame-os-act", [], ["FRAME OS", "BOOST", "−47%", "+50%", "9%", "Response", "Frames", "Energy"]],
+  ["home-frame-os-act", [], ["Measured in game: Response ×5 · Frames ×3"]],
+  ["home-frame-os-act", ["Settings", "Diagnostics"], ["A/B check in Act", "Response (A/B)", "+47% (39…55) · 5 pairs", "Energy (A/B)", "+12% · 1 pair"]],
   ["home-frame-os-rest", [], ["FRAME OS", "REST", "−6%"]],
   ["home-frame-os-observe", [], ["FRAME OS", "ESTIMATE", "−44%", "+50%", "11%"]],
   ["home-frame-os-early", [], ["FRAME OS", "Response", "—"]],

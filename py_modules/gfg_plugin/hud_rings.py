@@ -204,7 +204,10 @@ def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
                           "label": label})
         # A visible status in Standard as well as Detailed. "BOOST" is earned:
         # a requested policy is not the same as an acknowledged real-cadence gain.
-        if fos.get("active") and level in ("boost", "rest", "calm"):
+        if fos.get("active") and fos.get("ab"):
+            # an A/B control window: Act is briefly off on purpose, say so instead of CALM
+            items.append({"kind": "tag", "text": "A/B", "rgb": (150, 190, 255)})
+        elif fos.get("active") and level in ("boost", "rest", "calm"):
             if level == "boost" and fos.get("verified_boost"):
                 real = fos.get("actual_real")
                 ratio = fos.get("actual_ratio")

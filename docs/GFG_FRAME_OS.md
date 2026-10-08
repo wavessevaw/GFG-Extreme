@@ -183,6 +183,28 @@ broker's watts and skips window judgement. Heat or an output below 80 % of the t
 point back (`frame-os-injection-yielded`). Cadences: boost 45, calm 30, rest 22.5 (x4) at 90 Hz.
 Act needs an explicit unlock (Diagnostics → Unlock Act, or `GFG_FRAME_OS_EXPERIMENTAL_ACT=1`).
 
+## 3c. In-game A/B proof (Act)
+
+The benefit rings start as model estimates. In Act, `frame_os/proof.py` replaces them with
+measurements taken in the player's own game: now and then (every 20 s while learning, every 90 s
+once each metric has 6 pairs) a short **control window** runs with one Act effect switched off,
+and the windows right before and after it (effect on, same moment) are the comparison. A-B-A
+pairs cancel slow drift (heat, a scene getting heavier). The moment decides the test:
+
+| Level at the start | Control window | Metric | Window (settle) |
+|---|---|---|---|
+| calm  | tick shaping off, same cadence and pacing (`tick_shaping=0` in the policy) | frame age at present (`freshness_ms`) | 4 s (1 s) |
+| boost | boost held at the calm cadence and cap | real cadence (present interval p50) | 2.5 s (0.7 s) |
+| rest  | rest held at calm | measured APU draw | 5 s (1.5 s) |
+
+A window whose level changes, whose pacer telemetry is not live, or that lacks samples for 60 % of
+its length is dropped (`aborted`), never filled in. A metric is **measured** from 3 pairs; the
+summary is the mean and a 95 % t-interval over the pairs. Measured means replace the model's
+numbers metric by metric (`benefit.measured`), the Home card says which, the in-game rings show an
+`A/B` tag during a control window, and the recorded log reports every pair count and interval.
+Control windows are excluded from the session numbers, never trigger the boost back-off, and add
+no watts. Off switch: Diagnostics → *A/B check in Act* (`frame_os_ab`).
+
 ## 4. Phases and gates
 
 | Phase | Deliverable | Gate before the next phase |

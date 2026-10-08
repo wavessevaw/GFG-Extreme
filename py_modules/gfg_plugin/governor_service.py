@@ -554,6 +554,7 @@ class GovernorService:
             data["frame_os"] = {
                 "level": level, "estimate": benefit.get("estimate"), "verified_boost": delivered,
                 "active": active, "actual_real": measured_real, "actual_ratio": ratio,
+                "ab": bool(fo.get("ab_control")), "measured": benefit.get("measured") or {},
                 "response": percent("response_pct"), "frames": percent("frames_pct"),
                 "energy": percent("energy_pct")}
         scale = hud_rings.overlay_scale(self.ring_hud_extent)
@@ -836,6 +837,17 @@ class GovernorService:
 
     INJECTION_HOLD_S = 60.0
 
+    def _frame_os_ab(self) -> bool:
+        """A/B proof windows in Act (on unless the player turned them off)."""
+        return self._settings.get("frame_os_ab") is not False
+
+    def set_frame_os_ab(self, enabled: bool) -> Dict[str, Any]:
+        self._settings["frame_os_ab"] = bool(enabled)
+        self._save_settings()
+        self.frame_os.proof.enabled = bool(enabled)
+        self._poke()
+        return {"success": True, "error": None, "ab": self._frame_os_ab()}
+
     def set_frame_os_act_unlock(self, enabled: bool) -> Dict[str, Any]:
         self._settings["frame_os_act_unlocked"] = bool(enabled)
         if not enabled:
@@ -931,6 +943,7 @@ class GovernorService:
             return
         point = budget.point
         self.frame_os.focused = self._trusted_game_focus()
+        self.frame_os.proof.enabled = self._frame_os_ab()
         try:
             self.frame_os.draw_w = self.power.status().get("draw_w")
         except Exception:
@@ -1075,6 +1088,7 @@ class GovernorService:
         value["session_history"] = (self._settings.get("session_history") or [])[: self.SESSION_HISTORY]
         value["frame_os"] = {"mode": self._frame_os_mode(profile or value.get("profile", "")),
                              "act_unlocked": self._frame_os_act_unlocked(),
+                             "ab": self._frame_os_ab(),
                              "starvation_yields": self._injection_starvation_yields,
                              "output_starvation_lockout": self._injection_starvation_yields >= 2,
                              "layer_installed": bool(self.frame_os_layer_dir and frame_os_layer.is_staged(self.frame_os_layer_dir)),

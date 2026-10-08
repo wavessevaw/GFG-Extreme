@@ -16,6 +16,7 @@ const rpc = {
   setScaleReady: safeCallable("set_governor_scale_ready"),
   setFrameOs: safeCallable("set_governor_frame_os"),
   setFrameOsActUnlock: safeCallable("set_governor_frame_os_act_unlock"),
+  setFrameOsAb: safeCallable("set_governor_frame_os_ab"),
   setMode: safeCallable("set_governor_mode"),
   forgetModel: safeCallable("forget_governor_game_model"),
   modelTarget: safeCallable("get_governor_game_model_target"),
@@ -239,13 +240,25 @@ function FrameOsCard({ fo }) {
   const level = (fo.decision || {}).level;
   const pct = (v, sign) => (v == null ? "" : (sign && v > 0 ? sign : v < 0 && !sign ? "−" : "") + Math.abs(Math.round(v)) + "%");
   const resp = b.response_pct, frames = b.frames_pct, energy = b.energy_pct;
+  const ab = fo.ab_control ? "ab" : null;
   return h("div", { className: "card fos" },
     h("div", { className: "fos-head" }, h("span", null, "FRAME OS"),
-      h("span", { className: "pill " + (est ? "would" : level || "") }, est ? "ESTIMATE" : (level || "").toUpperCase())),
+      h("span", { className: "pill " + (est ? "would" : ab || level || "") }, est ? "ESTIMATE" : ab ? "A/B CHECK" : (level || "").toUpperCase())),
     h("div", { className: "rings" },
       h(MiniRing, { value: resp, max: 50, text: resp == null ? "" : (resp >= 0 ? "−" : "+") + Math.abs(Math.round(resp)) + "%", label: "Response", live: level !== "rest", estimate: est }),
       h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "−") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est }),
-      h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), label: "Energy", live: level === "rest", estimate: est })));
+      h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), label: "Energy", live: level === "rest", estimate: est })),
+    fo.mode === "act" ? h("div", { className: "abline" }, proofLine(fo.proof, b.measured)) : null);
+}
+
+// One line under the rings: which numbers the in-game A/B check has measured so far.
+function proofLine(proof, measured) {
+  if (!proof || proof.enabled === false) return "A/B check off · rings are model estimates";
+  const names = { response: "Response", frames: "Frames", energy: "Energy" };
+  const done = Object.keys(names).filter((k) => measured && measured[k]);
+  const pairs = Math.max(...Object.keys(names).map((k) => (proof[k] || {}).n || 0));
+  if (!done.length) return "Checking in game (A/B)… " + pairs + " of 3 comparisons";
+  return "Measured in game: " + done.map((k) => names[k] + " ×" + proof[k].n).join(" · ");
 }
 
 // Last session as rings: averages for the whole game session, benefit rings when Frame OS ran.
@@ -594,6 +607,16 @@ function FrameOsPanel({ s, profile }) {
     mode !== "off" && fo.layer_installed === false
       ? h(Note, null, fo.layer_error ? "Frame OS layer not installed: " + fo.layer_error + "." : "Frame OS layer not installed yet.")
       : null,
+    unlocked ? h("div", { className: "list" }, h(Toggle, { on: fo.ab !== false, title: "A/B check in Act",
+      sub: "Now and then a few seconds without one Act effect, to measure what Act really gives",
+      onChange: async (v) => { try { await rpc.setFrameOsAb(v); } catch (e) {} } })) : null,
+    fo.enabled && fo.proof && mode === "act" ? h("div", { className: "card" }, h("div", { className: "kv" },
+      ...["response", "frames", "energy"].flatMap((k) => {
+        const r = fo.proof[k] || {};
+        const name = { response: "Response (A/B)", frames: "Frames (A/B)", energy: "Energy (A/B)" }[k];
+        const val = r.n ? (r.mean > 0 ? "+" : "") + num(r.mean, 0) + "%" + (r.low != null ? " (" + num(r.low, 0) + "…" + num(r.high, 0) + ")" : "") + " · " + r.n + (r.n === 1 ? " pair" : " pairs") : "not yet";
+        return [h("span", { key: k + "l" }, name), h("b", { key: k + "v" }, val)];
+      }))) : null,
     fo.enabled ? h("div", { className: "card" }, h("div", { className: "kv" },
       h("span", null, "Decision"), h("b", null, (d.level || "–") + (fo.acting ? "" : " (would)") + " · " + num(d.real_hz, 0) + " real"),
       h("span", null, "Freshness"), h("b", null, t.freshness_ms != null ? num(t.freshness_ms, 1) + " ms" : "–"),
