@@ -915,6 +915,34 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual(st["budget"]["phase"], "search_down")
         self.assertEqual(st["state"], "OPTIMIZE_POWER")
 
+    def test_fast_tdp_rescue_never_double_counts_a_cached_fps_window(self):
+        """One renderer sample batch is one check, not two just because the UI polls twice."""
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        budget = self.svc._budget
+        self.assertIsNotNone(budget)
+        self.assertEqual(self.svc._point["key"], "30x3")
+        self.step(0.1)  # initialize the new point's fresh-evidence cursor
+        baseline = budget.tdp
+        self.svc.power.values["draw_w"] = baseline
+        self.feed(4, 20, 60, dt=0.45)
+        self.step(0.1)
+        self.assertEqual(budget.starved_checks, 1)
+        self.assertEqual(budget.tdp, baseline)
+        # No new renderer sample here. Cached median cannot trigger a fast raise.
+        self.step(0.1)
+        self.assertEqual(budget.starved_checks, 0)
+        self.assertEqual(budget.tdp, baseline)
+        self.feed(4, 20, 60, dt=0.45)
+        self.step(0.1)
+        self.assertEqual(budget.starved_checks, 1)
+        self.assertEqual(budget.tdp, baseline)
+        self.feed(4, 20, 60, dt=0.45)
+        self.step(0.1)
+        self.assertGreater(budget.tdp, baseline, "two independent low-FPS batches justify watts")
+
     def test_host_heat_reaches_the_budget_controller(self):
         self.svc.sensors.sample = lambda force=False: {"temp_c": 84.0, "thermal_headroom_c": 6.0}
         self.feed(20, 45, 90)
