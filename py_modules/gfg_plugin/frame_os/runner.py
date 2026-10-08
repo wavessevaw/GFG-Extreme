@@ -112,6 +112,9 @@ class FrameOsRunner:
         cut = self.scene.tick(now, cost)
         decision = self.policy.tick(now, inp, scene_change=cut, draw_w=self.draw_w, focused=self.focused)
         acting = self.mode == "act"
+        if acting and telemetry.get("live"):
+            interval = telemetry.get("present_interval_p50_ms")
+            self.policy.note_delivered(now, 1000.0 / interval if interval else None)
         real_hz = decision.real_hz if acting else self.policy.calm_real_hz
         wanted = (self.mode, round(real_hz, 3))
         if wanted != self._published:

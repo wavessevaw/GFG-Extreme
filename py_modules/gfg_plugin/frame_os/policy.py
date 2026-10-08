@@ -24,6 +24,8 @@ BOOST_ACTION = 0.5          # ~2 presses/s
 BOOST_HOLD_S = 1.5          # keep a boost this long after its last trigger (no flicker)
 SCENE_BOOST_S = 1.0
 REST_IDLE_S = 20.0          # no input this long: pause menu, cutscene, AFK
+BOOST_PROOF_S = 3.0         # a boost that has not raised the measured real cadence by then ...
+BOOST_BACKOFF_S = 120.0     # ... is not paid for again this long (the GPU cannot feed it here)
 WAKE_IDLE_S = 0.2
 
 
@@ -105,6 +107,24 @@ class InjectionPolicy:
     _boost_until: float = -1e9
     _reason: str = "start"
     history: List[str] = field(default_factory=list)
+    _boost_since: Optional[float] = None
+    _boost_blocked_until: float = -1e9
+
+    def note_delivered(self, now: float, real_fps: Optional[float]) -> None:
+        """Measured real cadence while acting.  A boost the GPU cannot deliver is a waste of the
+        energy bank: stop boosting for a while instead of paying watts for nothing."""
+        if self.level != "boost":
+            self._boost_since = None
+            return
+        if real_fps is not None and real_fps >= 0.9 * self.boost_real_hz:
+            self._boost_since = None          # delivered
+            return
+        if self._boost_since is None:
+            self._boost_since = now
+        elif now - self._boost_since >= BOOST_PROOF_S:
+            self._boost_blocked_until = now + BOOST_BACKOFF_S
+            self._boost_since = None
+            self.history.append(f"{now:.1f}:boost-ineffective")
 
     @property
     def boost_real_hz(self) -> float:
@@ -136,6 +156,8 @@ class InjectionPolicy:
             level, reason = "rest", "steam-ui"      # Steam's menu covers the game: rest at once
         elif idle >= REST_IDLE_S:
             level, reason = "rest", "idle"
+        elif now < self._boost_until and now < self._boost_blocked_until:
+            level, reason = "calm", "boost-ineffective"
         elif now < self._boost_until and self.boost_real_hz > self.calm_real_hz:
             affordable = self.broker is None or self.broker.can_boost() or self.level == "boost"
             level, reason = ("boost", trigger or self._reason) if affordable else ("calm", "energy-bank-empty")

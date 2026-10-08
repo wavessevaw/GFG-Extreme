@@ -396,3 +396,30 @@ class SteamUiRestTests(unittest.TestCase):
         self.assertFalse(obs.game_focused)
         obs.consume_line(h + "game return_sequence=1 resumed=1 generation_suspended=0", now=2.0)
         self.assertTrue(obs.game_focused)
+
+
+class BoostProofTests(unittest.TestCase):
+    def test_undelivered_boost_backs_off(self):
+        from gfg_plugin.frame_os.policy import InjectionPolicy, BOOST_BACKOFF_S
+        p = InjectionPolicy(output_hz=90, calm_real_hz=30)
+        moving = {"camera": 0.9, "action": 0, "idle_s": 0.0}
+        t = 100.0
+        self.assertEqual(p.tick(t, moving).level, "boost")
+        for _ in range(40):                       # 4 s of boost, the layer still sees 30 real
+            t += 0.1
+            p.note_delivered(t, 30.0)
+            p.tick(t, moving)
+        d = p.tick(t + 0.1, moving)
+        self.assertEqual((d.level, d.reason), ("calm", "boost-ineffective"))
+        self.assertEqual(p.tick(t + BOOST_BACKOFF_S + 1, moving).level, "boost")
+
+    def test_delivered_boost_keeps_going(self):
+        from gfg_plugin.frame_os.policy import InjectionPolicy
+        p = InjectionPolicy(output_hz=90, calm_real_hz=30)
+        moving = {"camera": 0.9, "action": 0, "idle_s": 0.0}
+        t = 100.0
+        p.tick(t, moving)
+        for _ in range(60):
+            t += 0.1
+            p.note_delivered(t, 44.5)
+            self.assertEqual(p.tick(t, moving).level, "boost")
