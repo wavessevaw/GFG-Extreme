@@ -88,7 +88,9 @@ jobs:
           test -n "$previous" || { echo "::error::no previous Governor release to take Flatpak payloads from"; exit 1; }
           echo "Flatpak payloads from $previous"
           mkdir -p prev payloads
-          gh release download "$previous" --pattern '*.zip' --dir prev
+          gh release download "$previous" --pattern '*.zip' --pattern 'SHA256SUMS.txt' --dir prev
+          (cd prev && sha256sum --check SHA256SUMS.txt)
+          unzip -tq prev/*.zip
           unzip -q -j prev/*.zip 'GFG-Extreme/bin/*.flatpak' -d payloads
           ls -la payloads
 
@@ -108,6 +110,7 @@ jobs:
             zip="out/GFG-Extreme-v${version//./_}.zip"
           fi
           test -s "$zip"
+          python3 scripts/check_release_archive.py "$zip" "$version"
           for payload in libVkLayer_gfg_pacer.so VkLayer_gfg_pacer.json libVkLayer_gfg_hud.so VkLayer_gfg_hud.json; do
             unzip -Z1 "$zip" | grep -Fx "GFG-Extreme/bin/gfg-frame-os/$payload"
           done

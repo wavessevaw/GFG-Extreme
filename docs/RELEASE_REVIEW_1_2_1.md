@@ -20,7 +20,7 @@ Regression coverage: `tests/test_frame_os_release_regressions.py` (11 tests), pl
 
 ## Automated validation
 
-The branch CI runs the complete Python suite and generated-config check, native pacer scheduler/control tests, pacer/HUD ABI and mock-driver integration, Vulkan layer ordering, a clean frontend build comparison and Chromium smoke tests. The release job repeats these gates before packaging, checks Flatpak payload hashes, builds the native layers from the release commit, verifies packaged layer files and generates SHA256SUMS.
+The branch CI runs the complete Python suite and generated-config check, native pacer scheduler/control tests, pacer/HUD ABI and mock-driver integration, Vulkan layer ordering, a clean frontend build comparison and Chromium smoke tests. The release job repeats these gates before packaging, verifies the previous release ZIP against its published checksum and CRC, checks Flatpak payload hashes, builds the native layers from the release commit, verifies archive CRC/paths, packaged versions, entrypoints and x86-64 layer files and generates SHA256SUMS.
 
 Use the GitHub Actions runs for the final release commit as the authoritative pass/fail evidence; this document describes coverage, not a substitute for successful runs.
 
