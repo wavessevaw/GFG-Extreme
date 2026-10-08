@@ -48,14 +48,6 @@ jobs:
             test -f "$notes" || { echo "::error::$notes is missing"; exit 1; }
           fi
 
-      - name: Promote published v1.2.0 to official Latest
-        if: steps.version.outputs.exists == 'true' && steps.version.outputs.version == '1.2.0' && steps.version.outputs.stable == 'true'
-        run: |
-          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v1.2.0" --jq '.id')"
-          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-            -F prerelease=false -f make_latest=true -f name="GFG Extreme 1.2.0" >/dev/null
-          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '{tag_name, name, prerelease, draft}'
-
       - uses: actions/setup-python@v5
         if: steps.version.outputs.exists == 'false'
         with:
@@ -66,6 +58,13 @@ jobs:
         run: |
           python3 scripts/check_generated_config.py
           python3 -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Frame OS and HUD native tests
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          VULKAN_DEPS="$RUNNER_TEMP/vk" engine/gfg-pacer/tests/setup_vulkan_deps.sh
+          make -C engine/gfg-pacer VULKAN_DEPS="$RUNNER_TEMP/vk" test layer abi integration ordering
+          make -C engine/gfg-hud VULKAN_DEPS="$RUNNER_TEMP/vk" test layer abi integration
 
       - uses: actions/setup-node@v4
         if: steps.version.outputs.exists == 'false'
@@ -89,7 +88,9 @@ jobs:
           test -n "$previous" || { echo "::error::no previous Governor release to take Flatpak payloads from"; exit 1; }
           echo "Flatpak payloads from $previous"
           mkdir -p prev payloads
-          gh release download "$previous" --pattern '*.zip' --dir prev
+          gh release download "$previous" --pattern '*.zip' --pattern 'SHA256SUMS.txt' --dir prev
+          (cd prev && sha256sum --check SHA256SUMS.txt)
+          unzip -tq prev/*.zip
           unzip -q -j prev/*.zip 'GFG-Extreme/bin/*.flatpak' -d payloads
           ls -la payloads
 
@@ -100,10 +101,16 @@ jobs:
           VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" scripts/build_release.sh "${{ steps.version.outputs.version }}" payloads out
 
       - name: Verify Frame OS and Rings HUD packaged in Decky zip
-        if: steps.version.outputs.exists == 'false' && steps.version.outputs.version == '1.2.0'
+        if: steps.version.outputs.exists == 'false'
         run: |
-          zip="out/GFG-Extreme-v1_2_0.zip"
+          version="${{ steps.version.outputs.version }}"
+          if [[ "$version" =~ ^0\. ]]; then
+            zip="out/GFG-Extreme-Governor-v${version//./_}.zip"
+          else
+            zip="out/GFG-Extreme-v${version//./_}.zip"
+          fi
           test -s "$zip"
+          python3 scripts/check_release_archive.py "$zip" "$version"
           for payload in libVkLayer_gfg_pacer.so VkLayer_gfg_pacer.json libVkLayer_gfg_hud.so VkLayer_gfg_hud.json; do
             unzip -Z1 "$zip" | grep -Fx "GFG-Extreme/bin/gfg-frame-os/$payload"
           done
