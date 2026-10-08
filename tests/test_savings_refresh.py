@@ -1,14 +1,19 @@
 """Display refresh leases: same exact Gamescope path as the Target FPS slider."""
 import asyncio
+import logging
+import tempfile
 import unittest
+from pathlib import Path
+from test_governor_service import FakeConfig, FakeDisplay
+from gfg_plugin.governor_service import GovernorService
 
-from test_governor_runtime import RuntimeBase
 
-
-class RefreshLeaseTests(RuntimeBase):
+class RefreshLeaseTests(unittest.TestCase):
     def setUp(self):
-        super().setUp()
-        self.svc.DEFAULT_MODE = "budget"
+        self.temp = tempfile.TemporaryDirectory()
+        self.display = FakeDisplay()
+        self.svc = GovernorService(FakeConfig(Path(self.temp.name)), self.display, logging.getLogger("savings-refresh"))
+        self.svc._settings["profiles"] = {"game": {"mode": "budget", "enabled": True}}
         self.svc._device = {"model": "oled", "product": "Galileo"}
         self.display.hz = 90
         self.display.supported = [45, 60, 90]
@@ -28,6 +33,9 @@ class RefreshLeaseTests(RuntimeBase):
             "internal": not self.display.external,
             "valid_rates": list(self.display.supported)}
         self.svc._active_profile = "game"
+
+    def tearDown(self):
+        self.temp.cleanup()
 
     def sync(self, *, force_off=False):
         return asyncio.run(self.svc._sync_savings_refresh(
