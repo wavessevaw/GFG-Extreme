@@ -961,6 +961,51 @@ class BudgetRuntimeTests(RuntimeBase):
         st = self.step()
         self.assertEqual(st["active_point"]["key"], "30x3")
 
+    def test_capacity_waits_for_successful_saved_overlay_restore(self):
+        """A failed restore must never be reported as safely observe-only."""
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertEqual(self.svc._point["key"], "30x3")
+        original_write = self.svc._write_overlay_sync
+        original_restore = self.svc._restore_overlay_sync
+
+        def fail_write(*args, **kwargs):
+            raise OSError("synthetic overlay storage failure")
+
+        try:
+            self.svc._write_overlay_sync = fail_write
+            self.svc._restore_overlay_sync = lambda *args, **kwargs: "synthetic restore failure"
+            self.capacity_report(0)
+            state = self.step(0.1)
+            self.assertEqual((state["state"], state["reason"]), ("PAUSED", "overlay-restore-failed"))
+            self.assertTrue(self.svc._capacity_paused)
+            self.assertIn("game", self.svc._restore_pending)
+            self.assertFalse(self.svc.power.state.owned, "TDP should be restored even if overlay failed")
+
+            # A positive capacity report must not start the recovery gate or
+            # send a fresh FG request while Saved overlay is not restored.
+            self.capacity_report(2)
+            self.feed(5, 45, 90, dt=0.5)
+            state = self.step(0.1)
+            self.assertEqual((state["state"], state["reason"]), ("PAUSED", "overlay-restore-failed"))
+            self.assertIsNone(self.svc._capacity_restore_at)
+            self.assertIsNone(self.svc._request)
+
+            self.svc._write_overlay_sync = original_write
+            self.svc._restore_overlay_sync = original_restore
+            state = self.step(0.1)
+            self.assertNotIn("game", self.svc._restore_pending)
+            self.assertEqual(state["reason"], "renderer-capacity-recovering")
+            self.assertIsNone(self.svc._request)
+            self.feed(5, 45, 90, dt=0.5)
+            state = self.step(0.1)
+            self.assertEqual(state["request"]["point"], "30x3")
+        finally:
+            self.svc._write_overlay_sync = original_write
+            self.svc._restore_overlay_sync = original_restore
+
     def test_zero_slot_bounce_restarts_two_second_recovery_gate(self):
         self.feed(20, 45, 90)
         self.step()
