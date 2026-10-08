@@ -481,7 +481,7 @@ class RestPowerTests(unittest.TestCase):
         from gfg_plugin.frame_os.policy import EnergyBroker, InjectionPolicy
         x4 = InjectionPolicy(output_hz=90, calm_real_hz=30, max_multiplier=4, broker=EnergyBroker(calm_w=13.0))
         x3 = InjectionPolicy(output_hz=90, calm_real_hz=30, max_multiplier=3, broker=EnergyBroker(calm_w=13.0))
-        idle = {"camera": 0, "action": 0, "idle_s": 30.0}
+        idle = {"camera": 0, "action": 0, "idle_s": 30.0, "idle_verified": True}
         self.assertEqual(x4.tick(1.0, idle).tdp_w, 13.0 * 0.6)
         d = x3.tick(1.0, idle)
         self.assertEqual((d.real_hz, d.tdp_w), (30, 13.0 * 0.85))
