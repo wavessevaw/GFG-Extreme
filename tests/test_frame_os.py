@@ -288,6 +288,12 @@ class RunnerTests(unittest.TestCase):
             r.policy.broker.bank_j = 50.0
             reader.state.feed(ev(0.0, EV_ABS, ABS_RX, 32000))
             r.tick(0.0)
+            # without the Governor's executor (adaptive overlay) act keeps the point's cadence and watts
+            _e, _t, _p, _mode, hz, _m, _w, _g, _, _x = self.published_hz(tmp)
+            self.assertEqual((hz, r.tdp_offset_w), (30.0, 0.0))
+            r.executor_active = True
+            reader.state.feed(ev(0.05, EV_ABS, ABS_RX, 30000))
+            r.tick(0.1)
             enabled, _t, _p, mode, hz, _m, _w, gen, _, _written = self.published_hz(tmp)
             self.assertEqual((enabled, mode, hz), (1, 0, 45.0))
             self.assertEqual(r.tdp_offset_w, 4.0)
@@ -423,3 +429,45 @@ class BoostProofTests(unittest.TestCase):
             t += 0.1
             p.note_delivered(t, 44.5)
             self.assertEqual(p.tick(t, moving).level, "boost")
+
+
+class ReviewFixTests(unittest.TestCase):
+    def test_no_input_seen_is_calm_not_rest(self):
+        from gfg_plugin.frame_os.policy import InjectionPolicy
+        p = InjectionPolicy(output_hz=90, calm_real_hz=30)
+        d = p.tick(100.0, {"camera": 0, "action": 0, "idle_s": float("inf")})
+        self.assertEqual(d.level, "calm")
+
+    def test_relay_writes_whole_records_only(self):
+        import os
+        from gfg_plugin.frame_os import input_relay
+        from gfg_plugin.frame_os.input_sensor import EVENT
+        self.assertEqual(input_relay.PIPE_CHUNK % EVENT.size, 0)
+        r, w = os.pipe()
+        os.set_blocking(w, False)
+        payload = EVENT.pack(1, 0, 3, 3, 100) * 5000          # far more than the pipe holds
+        self.assertTrue(input_relay.write_records(w, payload))
+        os.set_blocking(r, False)
+        got = b""
+        while True:
+            try:
+                chunk = os.read(r, 65536)
+            except BlockingIOError:
+                break
+            if not chunk:
+                break
+            got += chunk
+        self.assertEqual(len(got) % EVENT.size, 0)
+        self.assertGreater(len(got), 0)
+        os.close(r)
+        self.assertFalse(input_relay.write_records(w, payload))  # reader gone
+        os.close(w)
+
+    def test_focus_resets_with_a_new_session(self):
+        import tempfile
+        from pathlib import Path
+        from gfg_plugin.governor_telemetry import TelemetryObserver
+        obs = TelemetryObserver(Path(tempfile.gettempdir()) / "none.log")
+        obs.game_focused = False
+        obs._reset_session()
+        self.assertIsNone(obs.game_focused)

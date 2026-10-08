@@ -215,6 +215,22 @@ def filter_records(data: bytes) -> bytes:
     return bytes(out)
 
 
+PIPE_CHUNK = (4096 // EVENT.size) * EVENT.size     # <= PIPE_BUF: each write is atomic, whole records
+
+
+def write_records(out: int, payload: bytes) -> bool:
+    """Whole records only; a full pipe (plugin not reading) drops the rest, never blocks.
+    False when the plugin is gone."""
+    for start in range(0, len(payload), PIPE_CHUNK):
+        try:
+            os.write(out, payload[start:start + PIPE_CHUNK])
+        except BlockingIOError:
+            return True
+        except OSError:
+            return False
+    return True
+
+
 def status_record(evdev: int, hidraw: int = 0) -> bytes:
     now = time.time()
     return EVENT.pack(int(now), int((now % 1) * 1e6), STATUS_TYPE, evdev, hidraw)
@@ -241,11 +257,7 @@ def _serve(out: int, wanted: Optional[Path]) -> None:  # pragma: no cover - runs
             payload = status_record(*last_count) + payload
         if not payload:
             continue
-        try:
-            os.write(out, payload)
-        except BlockingIOError:
-            continue          # the plugin is not reading (Frame OS off): drop, never block
-        except OSError:
+        if not write_records(out, payload):
             break             # the plugin went away
     pads.close()
 

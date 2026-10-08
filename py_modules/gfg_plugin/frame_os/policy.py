@@ -154,8 +154,8 @@ class InjectionPolicy:
 
         if focused is False:
             level, reason = "rest", "steam-ui"      # Steam's menu covers the game: rest at once
-        elif idle >= REST_IDLE_S:
-            level, reason = "rest", "idle"
+        elif idle >= REST_IDLE_S and idle != float("inf"):
+            level, reason = "rest", "idle"     # never before any input was seen (no pad, no reader)
         elif now < self._boost_until and now < self._boost_blocked_until:
             level, reason = "calm", "boost-ineffective"
         elif now < self._boost_until and self.boost_real_hz > self.calm_real_hz:

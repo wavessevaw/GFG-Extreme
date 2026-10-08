@@ -1333,8 +1333,9 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
             self.assertTrue(self.svc.set_frame_os("game", "act")["success"])
             self.assertTrue(self.svc.frame_os_marker_path.exists())
             self.assertFalse(self.svc.set_frame_os_act_unlock(False)["act_unlocked"])
-            self.assertEqual(self.svc._frame_os_mode("game"), "off")
-            self.assertFalse(self.svc.frame_os_marker_path.exists(), "a locked Act profile stops loading the layer")
+            self.assertEqual(self.svc._frame_os_mode("game"), "observe", "locking means back to measuring")
+            self.svc.set_frame_os_act_unlock(True)
+            self.assertEqual(self.svc._frame_os_mode("game"), "observe", "unlocking never re-arms Act silently")
 
     def _act_live_point(self):
         self.svc.set_frame_os_act_unlock(True)
@@ -1368,16 +1369,43 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.assertEqual((prof["adaptive"], prof["base_fps_cap"], prof["multiplier"]), (False, 30, 3))
         self.assertIsNone(self.svc._injection)
 
+    def test_emergency_watts_are_written_without_frame_os(self):
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        budget = self.svc._budget
+        budget.tdp = budget.normal_max_w + 3.0          # guard-emergency-power above the normal cap
+        self.svc._applied_tdp = None
+        asyncio.run(self.svc._apply_budget_tdp("game"))
+        self.assertEqual(self.svc.power.writes[-1], budget.normal_max_w + 3.0)
+
+    def test_stale_telemetry_takes_the_act_overlay_back(self):
+        self._act_live_point()
+        self.svc.frame_os.last = {"telemetry": {"live": True}}
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNotNone(self.svc._injection)
+        asyncio.run(self.svc._drop_injection("game", "telemetry-stale"))
+        self.assertIsNone(self.svc._injection)
+        self.assertFalse(self.svc.frame_os.executor_active)
+        self.assertFalse(self.overlay_profile()["adaptive"])
+
     def test_act_yields_to_the_governor_when_output_starves(self):
         self._act_live_point()
         self.svc.frame_os.last = {"telemetry": {"live": True}}
         self.feed(16, 30, 90)
         self.step()
         self.assertIsNotNone(self.svc._injection)
+        self.assertTrue(self.svc.frame_os.executor_active)
         self.feed(20, 20, 60)                     # output far below target
         self.step()
         self.assertIsNone(self.svc._injection)
+        self.assertFalse(self.svc.frame_os.executor_active)
         self.assertFalse(self.overlay_profile()["adaptive"])
+        self.feed(16, 30, 90)                     # recovered, but the yield holds injection off
+        self.step()
+        self.assertIsNone(self.svc._injection, "no flapping right after a yield")
 
     def test_act_offset_is_applied_on_top_of_the_budget_cap(self):
         with patch.dict(os.environ, {"GFG_FRAME_OS_EXPERIMENTAL_ACT": "1"}):
@@ -1389,6 +1417,7 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
             self.step()
             runner = self.svc.frame_os
             runner.last = {"decision": {"tdp_w": runner.policy.broker.calm_w + 4.0}}
+            runner.executor_active = True
             self.svc._applied_tdp = None
             asyncio.run(self.svc._apply_budget_tdp("game"))
             self.assertEqual(self.svc.power.writes[-1], min(self.svc._budget.normal_max_w, self.svc._budget.tdp + 4.0))

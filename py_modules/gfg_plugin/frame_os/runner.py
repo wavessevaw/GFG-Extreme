@@ -52,6 +52,9 @@ class FrameOsRunner:
         self._task: Optional[asyncio.Task] = None
         self.draw_w: Optional[float] = None
         self.focused: Optional[bool] = None   # Gamescope focus from the renderer (Governor sets it)
+        # The Governor's executor (adaptive overlay) is in place: only then may Act move the real
+        # cadence and the watts; otherwise act paces at the point's own cadence.
+        self.executor_active = False
 
     # ---------------------------------------------------------- Governor side (1 Hz)
     def configure(self, *, enabled: bool, mode: str, output_hz: float, calm_real_hz: float,
@@ -84,7 +87,7 @@ class FrameOsRunner:
     @property
     def tdp_offset_w(self) -> float:
         """Watts to add to the Governor's cap for the current level (act mode only)."""
-        if not (self.enabled and self.mode == "act" and self.policy and self.policy.broker):
+        if not (self.enabled and self.mode == "act" and self.executor_active and self.policy and self.policy.broker):
             return 0.0
         decision = self.last.get("decision") or {}
         tdp = decision.get("tdp_w")
@@ -115,7 +118,7 @@ class FrameOsRunner:
         if acting and telemetry.get("live"):
             interval = telemetry.get("present_interval_p50_ms")
             self.policy.note_delivered(now, 1000.0 / interval if interval else None)
-        real_hz = decision.real_hz if acting else self.policy.calm_real_hz
+        real_hz = decision.real_hz if acting and self.executor_active else self.policy.calm_real_hz
         wanted = (self.mode, round(real_hz, 3))
         if wanted != self._published:
             # Tick shaping must be able to move a frame start through most of a real-frame slot:

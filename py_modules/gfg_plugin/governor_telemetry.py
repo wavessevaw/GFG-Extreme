@@ -242,6 +242,7 @@ class TelemetryObserver:
         self._last_application = {}
         self._session_generation += 1
         self._generated_capacity = None
+        self.game_focused = None
 
     @staticmethod
     def parse_fields(line: str) -> Optional[Dict[str, str]]:
