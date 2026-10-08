@@ -24,7 +24,7 @@ class RingHudTests(unittest.TestCase):
         self.assertEqual(hud_rings.items_for(sample, "standard")[-1]["text"], "VERIFYING")
         sample["frame_os"] = {**sample["frame_os"], "active": False}
         self.assertEqual([item["text"] for item in hud_rings.items_for(sample, "standard")
-                          if item["kind"] == "tag"], [])
+                          if item["kind"] == "tag"], ["ACT WAIT"])
         sample["frame_os"] = {**SAMPLE["frame_os"], "level": "calm"}
         self.assertEqual(hud_rings.items_for(sample, "standard")[-1]["text"], "CALM")
         sample["frame_os"] = {**SAMPLE["frame_os"], "level": "rest"}
