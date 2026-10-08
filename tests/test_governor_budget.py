@@ -645,6 +645,75 @@ class GeneratedCapacityLimitTests(unittest.TestCase):
         self.assertTrue(any(c._usable(i, 0.0) for i, p in enumerate(c.points) if 3 < p.multiplier < 4))
 
 
+class TransientGeneratedCapacityTests(unittest.TestCase):
+    """Resource slots (swapchain) are temporary, not evidence of failed FPS."""
+
+    def controller(self):
+        return BudgetController(target_output_fps=90, now=0.0,
+                                min_tdp_w=3, max_tdp_w=20)
+
+    def test_x3_to_x2_and_back_retries_original_point_without_blacklist(self):
+        ctl = self.controller()
+        self.assertEqual(ctl.point.key, "30x3")
+        ctl.current_max_multiplier = 2.0
+        self.assertEqual(ctl.adapt_to_capacity(1.0), "move")
+        self.assertEqual(ctl.point.key, "45x2")
+        self.assertEqual(ctl.status()["capacity_resume_point"], "30x3")
+        self.assertEqual(ctl.request_failures, 0)
+        self.assertFalse(ctl.rejected)
+        self.assertEqual(ctl.new_failures, [])
+        self.assertEqual(ctl.adapt_to_capacity(2.0), "hold", "stable limit cannot exhaust us")
+        self.assertEqual(ctl.request_failures, 0)
+        ctl.current_max_multiplier = 3.0
+        self.assertEqual(ctl.adapt_to_capacity(3.0), "hold", "don't flap immediately")
+        self.assertEqual(ctl.adapt_to_capacity(5.1), "move")
+        self.assertEqual(ctl.point.key, "30x3")
+        self.assertEqual(ctl.phase, "settle", "must confirm the live renderer again")
+        self.assertIsNone(ctl.status()["capacity_resume_point"])
+        self.assertFalse(ctl.rejected)
+        self.assertEqual(ctl.request_failures, 0)
+
+    def test_capacity_recovery_must_be_stable_for_two_seconds(self):
+        ctl = self.controller()
+        ctl.current_max_multiplier = 2.0
+        ctl.adapt_to_capacity(1.0)
+        ctl.current_max_multiplier = 3.0
+        ctl.adapt_to_capacity(2.0)
+        ctl.current_max_multiplier = 2.0
+        self.assertEqual(ctl.adapt_to_capacity(3.0), "hold")
+        ctl.current_max_multiplier = 3.0
+        self.assertEqual(ctl.adapt_to_capacity(4.0), "hold")
+        self.assertEqual(ctl.adapt_to_capacity(5.0), "hold")
+        self.assertEqual(ctl.adapt_to_capacity(6.1), "move")
+        self.assertEqual(ctl.point.key, "30x3")
+
+    def test_initial_and_remembered_points_respect_current_swapchain(self):
+        ctl = self.controller()
+        ctl.current_max_multiplier = 2.0
+        self.assertFalse(ctl.warm_start("30x3", 8.0, 1.0))
+        self.assertEqual(ctl.adapt_to_capacity(1.0), "move")
+        self.assertEqual(ctl.point.key, "45x2")
+        self.assertEqual(ctl.request_failures, 0)
+        remembered = self.controller()
+        remembered.current_max_multiplier = 2.0
+        self.assertTrue(remembered.warm_start("45x2", 9.0, 1.0))
+        self.assertEqual(remembered.point.key, "45x2")
+
+    def test_genuine_failed_point_remains_rejected_after_capacity_returns(self):
+        ctl = self.controller()
+        ctl.probe = "up"
+        ctl._move("test", idx=ctl.idx + 1)
+        failed = ctl.point.key
+        ctl.request_failed(1.0, "confirmation-timeout")
+        self.assertIn(failed, ctl.rejected)
+        ctl.current_max_multiplier = 2.0
+        ctl.adapt_to_capacity(2.0)
+        ctl.current_max_multiplier = 3.0
+        ctl.adapt_to_capacity(3.0)
+        ctl.adapt_to_capacity(5.1)
+        self.assertIn(failed, ctl.rejected, "real renderer failures still use TTL")
+
+
 class FieldLogTests(unittest.TestCase):
     """Balanced mode, from a field log."""
 
