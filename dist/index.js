@@ -48,6 +48,11 @@ var css = `
 .gfg .ring .num{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .gfg .ring .big{font-size:52px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
 .gfg .ring .sub{font-size:11px;font-weight:700;letter-spacing:.16em;color:var(--tx2);margin-top:4px}
+.gfg .hero-col{display:flex;flex-direction:column;align-items:center}
+.gfg .herotap{border-radius:50%;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.gfg .ring.compact .big{font-size:38px}.gfg .ring.compact .sub{font-size:9.5px;letter-spacing:.14em;margin-top:3px}
+.gfg .arc{position:relative;width:190px;height:100px}.gfg .arc .num{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center}
+.gfg .arc .big{font-size:36px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}.gfg .arc .sub{font-size:9.5px;font-weight:700;letter-spacing:.14em;color:var(--tx2);margin-top:3px}
 .gfg .hero-side{display:flex;align-items:center;gap:14px;width:100%}
 .gfg .ring.side .big{font-size:27px}
 .gfg .status.left{margin-top:0;text-align:left;flex:1;min-width:0}.gfg .status .k{font-size:10px;font-weight:700;letter-spacing:.16em;color:var(--tx3);margin-bottom:3px}
@@ -420,12 +425,145 @@ function Ring({ value, max, label, sub, size = 176, stroke = 9, cls = "" }) {
     h("div", { className: "num" }, h("div", { className: "big" }, label), sub ? h("div", { className: "sub" }, sub) : null)
   );
 }
-function HeroTop({ value, max, label, sub, d }) {
+function Arc({ value, max, label, sub }) {
+  const w = 190, r = 80, cx = w / 2, cy = 92, f = Math.max(0, Math.min(1, max ? value / max : 0));
+  const len = Math.PI * r, d = "M " + (cx - r) + " " + cy + " A " + r + " " + r + " 0 0 1 " + (cx + r) + " " + cy;
   return h(
     "div",
-    { className: "hero-side" },
-    h(Ring, { value, max, label, size: 84, stroke: 6, cls: "side" }),
-    h("div", { className: "status left" }, h("div", { className: "k" }, sub), h("div", { className: "h" }, d.head), d.body ? h("div", { className: "p" }, d.body) : null)
+    { className: "arc" },
+    h(
+      "svg",
+      { viewBox: "0 0 " + w + " 100", width: w, height: 100 },
+      h("path", { d, fill: "none", stroke: "#26262d", strokeWidth: 8, strokeLinecap: "round" }),
+      h("path", { d, fill: "none", stroke: "#fb0d00", strokeWidth: 8, strokeLinecap: "round", strokeDasharray: len, strokeDashoffset: len * (1 - f), style: { transition: "stroke-dashoffset .6s" } })
+    ),
+    h("div", { className: "num" }, h("div", { className: "big" }, label), h("div", { className: "sub" }, sub))
+  );
+}
+var HERO_LAYOUTS = ["classic", "compact", "side", "arc"];
+var HERO_KEY = "gfg.hero";
+function useHeroLayout() {
+  const [layout, setLayout] = useState(() => {
+    try {
+      const v = window.localStorage.getItem(HERO_KEY);
+      if (HERO_LAYOUTS.includes(v)) return v;
+    } catch (e) {
+    }
+    return "side";
+  });
+  const next = () => setLayout((cur) => {
+    const v = HERO_LAYOUTS[(HERO_LAYOUTS.indexOf(cur) + 1) % HERO_LAYOUTS.length];
+    try {
+      window.localStorage.setItem(HERO_KEY, v);
+    } catch (e) {
+    }
+    return v;
+  });
+  return [layout, next];
+}
+function HeroTop({ layout, onTap, value, max, label, sub, d }) {
+  const status = (cls) => h(
+    "div",
+    { className: "status" + (cls ? " " + cls : "") },
+    cls ? h("div", { className: "k" }, sub) : null,
+    h("div", { className: "h" }, d.head),
+    d.body ? h("div", { className: "p" }, d.body) : null
+  );
+  const tap = (child) => h(Focusable, { className: "herotap", onClick: onTap }, child);
+  if (layout === "side") return h("div", { className: "hero-side" }, tap(h(Ring, { value, max, label, size: 84, stroke: 6, cls: "side" })), status("left"));
+  if (layout === "compact") return h("div", { className: "hero-col" }, tap(h(Ring, { value, max, label, sub, size: 128, stroke: 7, cls: "compact" })), status());
+  if (layout === "arc") return h("div", { className: "hero-col" }, tap(h(Arc, { value, max, label, sub })), status());
+  return h("div", { className: "hero-col" }, tap(h(Ring, { value, max, label, sub })), status());
+}
+var ringHue = (v, max) => v < 0 ? 0 : 25 + 115 * Math.min(1, Math.abs(v) / max);
+function MiniRing({ value, max, text, label, live, estimate, fixed }) {
+  const r = 26, w = 4, size = 2 * (r + w), c = 2 * Math.PI * r;
+  const has = value != null;
+  const f = has ? Math.min(1, Math.abs(value) / max) : 0;
+  const color = fixed || (estimate ? "#5c5c66" : "hsl(" + ringHue(value || 0, max) + " 80% 52% / " + (live ? 1 : 0.38) + ")");
+  const glow = live && has && !estimate && !fixed;
+  return h(
+    "div",
+    { className: "mini" + (glow ? " live" : "") },
+    h(
+      "div",
+      { className: "mring", style: { width: size, height: size } },
+      h(
+        "svg",
+        { viewBox: "0 0 " + size + " " + size, width: size, height: size },
+        h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#26262d", strokeWidth: w }),
+        // Halo as a wider faint arc inside the SVG: a CSS drop-shadow is clipped to a square in Steam's browser.
+        glow ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeOpacity: 0.22, strokeWidth: w + 4, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null,
+        has ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeWidth: w, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null
+      ),
+      h("div", { className: "mnum" + (estimate || !has ? " dim" : "") }, has ? text : "\u2014")
+    ),
+    h("div", { className: "mlab" }, label)
+  );
+}
+function FrameOsCard({ fo }) {
+  const b = fo.benefit;
+  if (!fo.enabled || !b) return null;
+  const est = !!b.estimate;
+  const level = (fo.decision || {}).level;
+  const pct = (v, sign) => v == null ? "" : (sign && v > 0 ? sign : v < 0 && !sign ? "\u2212" : "") + Math.abs(Math.round(v)) + "%";
+  const resp = b.response_pct, frames = b.frames_pct, energy = b.energy_pct;
+  const ab = fo.ab_control ? "ab" : null;
+  return h(
+    "div",
+    { className: "card fos" },
+    h(
+      "div",
+      { className: "fos-head" },
+      h("span", null, "FRAME OS"),
+      h("span", { className: "pill " + (est ? "would" : ab || level || "") }, est ? "ESTIMATE" : ab ? "A/B CHECK" : (level || "").toUpperCase())
+    ),
+    h(
+      "div",
+      { className: "rings" },
+      h(MiniRing, { value: resp, max: 50, text: resp == null ? "" : (resp >= 0 ? "\u2212" : "+") + Math.abs(Math.round(resp)) + "%", label: "Response", live: level !== "rest", estimate: est }),
+      h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "\u2212") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est }),
+      h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), label: "Energy", live: level === "rest", estimate: est })
+    ),
+    fo.mode === "act" ? h("div", { className: "abline" }, proofLine(fo.proof, b.measured)) : null,
+    fo.mode === "act" && learnedLine(fo.game) ? h("div", { className: "abline" }, learnedLine(fo.game)) : null
+  );
+}
+var EFFECT_TEXT = { boost: "Boost off here: no real-frame gain measured", shaping: "Frame timing off here: it did not help", rest: "Rest off here: it did not save power" };
+function learnedLine(game) {
+  if (!game || !game.disabled) return null;
+  const off = Object.keys(EFFECT_TEXT).filter((k) => game.disabled[k]);
+  return off.length ? off.map((k) => EFFECT_TEXT[k]).join(" \xB7 ") : null;
+}
+function proofLine(proof, measured) {
+  if (!proof || proof.enabled === false) return "A/B check off \xB7 rings are model estimates";
+  const names = { response: "Response", frames: "Frames", energy: "Energy" };
+  const done = Object.keys(names).filter((k) => measured && measured[k]);
+  const pairs = Math.max(...Object.keys(names).map((k) => (proof[k] || {}).n || 0));
+  if (!done.length) return "Checking in game (A/B)\u2026 " + pairs + " of 3 comparisons";
+  return "Measured in game: " + done.map((k) => names[k] + " \xD7" + proof[k].n).join(" \xB7 ");
+}
+function SessionRings({ ls, target }) {
+  const b = ls.frame_os_benefit;
+  const signed = (v, good) => v == null ? "" : (v >= 0 ? good : good === "+" ? "\u2212" : "+") + Math.abs(Math.round(v)) + "%";
+  const limit = ls.reference_w || 15;
+  return h(
+    "div",
+    null,
+    h(
+      "div",
+      { className: "rings" },
+      h(MiniRing, { value: ls.avg_output_fps, max: target, text: num(ls.avg_output_fps, 0), label: "FPS avg", fixed: "#fb0d00" }),
+      h(MiniRing, { value: ls.avg_real_fps, max: ls.avg_output_fps || target, text: num(ls.avg_real_fps, 0), label: "Real avg", fixed: "#f5f5f7" }),
+      h(MiniRing, { value: ls.avg_tdp_w, max: limit, text: ls.avg_tdp_w != null ? num(ls.avg_tdp_w, 0) + "W" : "", label: "TDP avg", fixed: "#f5f5f7" })
+    ),
+    b ? h(
+      "div",
+      { className: "rings", style: { marginTop: 10 } },
+      h(MiniRing, { value: b.response, max: 50, text: signed(b.response, "\u2212"), label: "Response", live: true, estimate: b.estimate }),
+      h(MiniRing, { value: b.frames, max: 50, text: signed(b.frames, "+"), label: "Frames", live: true, estimate: b.estimate }),
+      h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "\u2212" : "") + Math.abs(Math.round(b.energy)) + "%", label: "Energy", live: true, estimate: b.estimate })
+    ) : null
   );
 }
 function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch }) {
@@ -456,6 +594,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
     setBusy(false);
   };
   const showLive = s.enabled && out != null;
+  const [heroLayout, nextHero] = useHeroLayout();
   const tdp = pw.observed_tdp_w != null ? pw.observed_tdp_w : pw.current_tdp_w;
   const eff = s.effort && s.effort.level;
   const effWhy = eff && s.effort.reason;
@@ -498,7 +637,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
     h(
       "div",
       { className: "card hero" },
-      h(HeroTop, { value: showLive ? out : 0, max: target, label: showLive ? num(out, 0) : String(target), sub: showLive ? "FPS OUTPUT" : "TARGET FPS", d }),
+      h(HeroTop, { layout: heroLayout, onTap: nextHero, value: showLive ? out : 0, max: target, label: showLive ? num(out, 0) : String(target), sub: showLive ? "FPS OUTPUT" : "TARGET FPS", d }),
       showLive ? h(
         "div",
         { className: "flow" },

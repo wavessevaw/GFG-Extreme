@@ -15,6 +15,11 @@ export const css = `
 .gfg .ring .num{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .gfg .ring .big{font-size:52px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
 .gfg .ring .sub{font-size:11px;font-weight:700;letter-spacing:.16em;color:var(--tx2);margin-top:4px}
+.gfg .hero-col{display:flex;flex-direction:column;align-items:center}
+.gfg .herotap{border-radius:50%;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.gfg .ring.compact .big{font-size:38px}.gfg .ring.compact .sub{font-size:9.5px;letter-spacing:.14em;margin-top:3px}
+.gfg .arc{position:relative;width:190px;height:100px}.gfg .arc .num{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center}
+.gfg .arc .big{font-size:36px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}.gfg .arc .sub{font-size:9.5px;font-weight:700;letter-spacing:.14em;color:var(--tx2);margin-top:3px}
 .gfg .hero-side{display:flex;align-items:center;gap:14px;width:100%}
 .gfg .ring.side .big{font-size:27px}
 .gfg .status.left{margin-top:0;text-align:left;flex:1;min-width:0}.gfg .status .k{font-size:10px;font-weight:700;letter-spacing:.16em;color:var(--tx3);margin-bottom:3px}

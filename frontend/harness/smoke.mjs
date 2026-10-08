@@ -62,6 +62,8 @@ const cases = [
   ["home-idle-oled", ["Settings"], ["GFG Extreme 1.0.0"]],
   ["home-idle-oled", ["Settings", "Launch command"], ["Copy launch command", "Launch Options"]],
   ["home-idle-oled", ["Settings", "Diagnostics"], ["RECORD A LOG", "Record log", "FRAME OS (EXPERIMENTAL)", "Observe"]],
+  ["home-locked-oled", [], ["FILTERS", "Vivid", "HDR look", "Fine-tune ›"]],
+  ["home-locked-oled", ["Settings", "Filters"], ["Shader filters", "LOOKS", "SHARPENING", "ANTI-ALIASING", "EFFECTS · NONE", "Film Grain"]],
 ];
 const browser = await launch();
 let failed = 0;
@@ -71,6 +73,30 @@ for (const [state, nav, expected] of cases) {
   for (const needle of expected) if (!text.includes(needle)) { failed++; console.error(`FAIL ${state} ${JSON.stringify(nav)}: missing "${needle}"`); }
   for (const e of page.__errors) { failed++; console.error(`FAIL ${state}: page error ${e}`); }
   await page.close();
+}
+// Tapping the ring cycles the hero layout: side (default) -> half-ring -> big ring -> smaller ring -> side.
+{
+  const page = await openPage(browser, STATES["home-locked-oled"]);
+  const layout = () => page.evaluate(() => {
+    const e = document.querySelector(".hero");
+    return e.querySelector(".hero-side") ? "side" : e.querySelector(".arc") ? "arc" : e.querySelector(".ring.compact") ? "compact" : "classic";
+  });
+  const seen = [await layout()];
+  for (let i = 0; i < 4; i++) { await page.locator(".herotap").first().click(); await page.waitForTimeout(80); seen.push(await layout()); }
+  if (seen.join(",") !== "side,arc,classic,compact,side") { failed++; console.error(`FAIL hero tap cycle: ${seen.join(",")}`); }
+  for (const e of page.__errors) { failed++; console.error(`FAIL hero cycle: page error ${e}`); }
+  await page.close();
+  cases.push(["hero-cycle"]);
+}
+// One tap on a look writes the filter fields (and turns the vkBasalt layer on).
+{
+  const page = await openPage(browser, STATES["home-locked-oled"]);
+  await page.getByText("Vivid", { exact: true }).first().click();
+  await page.waitForTimeout(150);
+  const p = await page.evaluate(() => window.__patches);
+  if (!p.length || p[0].external_vulkan_layer !== "vkbasalt" || p[0].vkbasalt_shader !== "vibrance") { failed++; console.error(`FAIL filter preset patch: ${JSON.stringify(p)}`); }
+  await page.close();
+  cases.push(["filter-preset"]);
 }
 // Text settings are saved on Enter / blur, never per keystroke.
 {
