@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.4.0).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.4.1).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -63,7 +63,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -959,6 +959,14 @@ class GovernorService:
         return os.environ.get(self.FRAME_OS_ACT_ENV) == "1" or bool(self._settings.get("frame_os_act_unlocked"))
 
     INJECTION_HOLD_S = 60.0
+    # Field log (1.3.0, a DX12 game): both Act starts "starved" 1.1 s after the overlay switch, on
+    # one or two samples the renderer took while it re-planned for the adaptive overlay (output ==
+    # real), while the 1 Hz output stayed at 90; two of those locked Act out.  A starvation verdict
+    # needs the switch to have settled and enough fresh samples.
+    INJECTION_GRACE_S = 4.0
+    INJECTION_MIN_SAMPLES = 3
+    STARVATION_RUN = 3
+    _injection_started_at: Optional[float] = None
 
     def _frame_os_ab(self) -> bool:
         """A/B proof windows in Act (on unless the player turned them off)."""
@@ -2255,9 +2263,18 @@ class GovernorService:
         if acting and self._budget is not None:
             # Safety: heat or a starved output hands the point back to the Governor's own judgement.
             hot = (self._status.get("diagnosis") or {}).get("thermal") == "hot"
-            output = (self.observer.summary(self.FAST_CHECK_SECONDS, after_seq=self._injection_seq)
-                      .get("output") or {}).get("median")
-            starved = isinstance(output, (int, float)) and output < 0.8 * float(self._budget.point.target_output_fps)
+            fast = self.observer.summary(self.FAST_CHECK_SECONDS, after_seq=self._injection_seq)
+            output = (fast.get("output") or {}).get("median")
+            settled = (self._injection is None or self._injection_started_at is None
+                       or (self._clock() - self._injection_started_at >= self.INJECTION_GRACE_S
+                           and (fast.get("samples") or 0) >= self.INJECTION_MIN_SAMPLES))
+            # a drop must also last: a renderer re-plan is one or two samples, never three in a row
+            floor = 0.8 * float(self._budget.point.target_output_fps)
+            recent = [s.output_fps for s in self.observer.samples_since(
+                self.observer.time_fn() - self.FAST_CHECK_SECONDS, after_seq=self._injection_seq)][-self.STARVATION_RUN:]
+            lasting = (len(recent) >= self.STARVATION_RUN
+                       and all(isinstance(v, (int, float)) and v < floor for v in recent))
+            starved = settled and lasting and isinstance(output, (int, float)) and output < floor
             # A starved output under a Steam menu (generation suspended) still takes the overlay
             # back, but it is no evidence against Act: it never counts toward the session lockout.
             # Uncertain focus counts as menu here: a focus-lost event not yet followed by a
@@ -2300,6 +2317,7 @@ class GovernorService:
         self._injection = wanted
         self.frame_os.executor_active = wanted is not None
         self._injection_seq = self.observer.sample_seq
+        self._injection_started_at = self._clock() if wanted is not None else None
         # windows measured under injection say nothing about the plain point
         self._evaluation_after_seq = self.observer.sample_seq
         return wanted is not None

@@ -1568,6 +1568,26 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.step()
         self.assertIsNone(self.svc._injection, "no flapping right after a yield")
 
+    def test_the_renderer_replanning_right_after_act_starts_is_not_starvation(self):
+        # field log 1.3.0: output == real on one or two samples 1.1 s after the overlay switch
+        # (the renderer re-plans), twice in a session -> Act was locked out with output at 90
+        self._act_live_point()
+        self.svc.frame_os.last = {"telemetry": {"live": True}}
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNotNone(self.svc._injection)
+        for _ in range(2):
+            self.feed(2, 30, 30, dt=0.5)           # the switch: no generated frames for a moment
+            self.step(0.1)
+            self.assertIsNotNone(self.svc._injection, "a re-plan is not a starved output")
+            self.feed(16, 30, 90)
+            self.step()
+        self.assertEqual(self.svc._injection_starvation_yields, 0)
+        self.feed(20, 20, 60)                      # a real, sustained drop still yields
+        self.step()
+        self.assertIsNone(self.svc._injection)
+        self.assertEqual(self.svc._injection_starvation_yields, 1)
+
     def test_repeated_act_output_starvation_locks_out_injection_for_session(self):
         """A bad adaptive renderer must not cycle 16 times through 30-FPS drops."""
         self._act_live_point()
