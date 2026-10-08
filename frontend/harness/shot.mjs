@@ -44,6 +44,4 @@ await shot("page-frame-os", { ...fosBase, frame_os: { ...frameOs, ...fo, acknowl
   ["Settings", "Diagnostics"], "FRAME OS (EXPERIMENTAL)", "INSPECTOR");
 if (STATES["home-frame-os-act"]) await shot("home-frame-os", st("home-frame-os-act"));
 else console.error("home-frame-os-act not in lib.mjs yet: home-frame-os.png not rendered");
-// Current savings selector (Home), including the Hard 60/45 Hz rule.
-await shot("home-savings-hard", st("home-savings-hard"), [], "MODE", "Details");
 await browser.close();

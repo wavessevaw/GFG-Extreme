@@ -229,12 +229,6 @@ frames on screen mean the game is back even if the focus-restored event was miss
 the whole visit, and a starved output under the menu takes the overlay back without counting
 toward the session lockout.
 
-**Act start-up** (`governor_service._sync_injection`): the renderer re-plans for the adaptive overlay
-for about a second after Act starts (output == real frames on one or two samples). Field log 1.3.0:
-both starts were judged "output-starved" on those samples while the 1 Hz output stayed at 90, and
-two strikes locked Act out. A starvation verdict now needs 4 s since the start, at least 3 fresh
-samples, a low median and the last 3 samples in a row low.
-
 **Predictive Presentation** (`scheduler.c`): the tick-shaping plan follows the cost trend (fast -
 slow EWMA) beyond a band scaled to the recent spread (p90 - p50 of 32 frames): rising costs are
 planned one trend ahead, falling costs release the reserve from the recent frames. Plain jitter

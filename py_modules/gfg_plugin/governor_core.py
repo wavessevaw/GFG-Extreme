@@ -934,58 +934,6 @@ class BudgetController:
         self.thermal = "unknown"
         self.thermal_deferred = False
         self._heat_until = -1e9
-        self.savings_cap_w: Optional[float] = None
-        self._ceilings: Optional[tuple] = None
-        self._savings_base_min_w = self.min_w
-        self.savings_level = "off"
-        self.savings_quality_limited = False
-
-    def set_savings_cap(self, cap_w: Optional[float]) -> bool:
-        """The Battery savings ceiling, or None to restore normal Governor limits.
-
-        Lowers every ceiling the search, the guard and emergency watts use; the guard then keeps
-        the game smooth by trading generated-frame ratio for watts, as at the normal ceiling.
-        Returns True when the current TDP had to come down to the new ceiling."""
-        base = getattr(self, "_ceilings", None)
-        if base is None:
-            base = self._ceilings = (self.normal_max_w, self.emergency_max_w, self.ideal_max_w)
-        if cap_w is None:
-            self.normal_max_w, self.emergency_max_w, self.ideal_max_w = base
-            self.savings_cap_w = None
-            return False
-        cap = max(self.min_w, float(cap_w))
-        self.savings_cap_w = cap
-        self.normal_max_w = min(base[0], cap)
-        self.emergency_max_w = min(base[1], cap)
-        self.ideal_max_w = min(base[2], cap)
-        if self.tdp_control and self.tdp is not None and self.tdp > self.normal_max_w + 1e-6:
-            self.tdp = round(self.normal_max_w, 1)
-            self.last_reason = "savings-effort"
-            return True
-        return False
-
-    def set_savings_limits(self, *, level: str, floor_w: float,
-                           cap_w: Optional[float], quality_limited: bool = False) -> bool:
-        """Apply Battery effort only after the controller owns a live profile.
-
-        A low real-FPS floor raises power immediately; it is not constrained by
-        the energy ceiling that caused the starvation. Existing confirmation,
-        failure-memory and guarded search continue to own the operating point.
-        """
-        previous = (self.tdp, self.min_w, self.savings_cap_w)
-        self.savings_level = level
-        self.savings_quality_limited = bool(quality_limited)
-        normal_max = (self._ceilings or (self.normal_max_w,))[0]
-        self.min_w = min(normal_max, max(self._savings_base_min_w, float(floor_w)))
-        self.set_savings_cap(cap_w)
-        if self.tdp_control and self.tdp is not None and self.tdp < self.min_w - 0.01:
-            self.tdp = round(self.min_w, 1)
-            self.probe = None
-            self.good = self.bad = self.starved_checks = 0
-            self.last_good = (self.idx, self.tdp)
-            self.phase = "guard"
-            self.last_reason = "savings-real-fps-rescue"
-        return previous != (self.tdp, self.min_w, self.savings_cap_w)
 
     def warm_start(self, point_key: str, tdp_w: Optional[float], now: float) -> bool:
         """Start from a remembered point/TDP that held in an earlier session instead of searching.
@@ -1560,8 +1508,6 @@ class BudgetController:
             ),
             "exhausted": self.exhausted,
             "cap_ignored": self.cap_ignored,
-            "savings_level": self.savings_level,
-            "savings_quality_limited": self.savings_quality_limited,
             "warm_started": self.warm_started,
             "flavor": self.flavor,
             "verifying": self.verifying,

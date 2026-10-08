@@ -18,7 +18,6 @@ const rpc = {
   setFrameOsActUnlock: safeCallable("set_governor_frame_os_act_unlock"),
   setFrameOsAb: safeCallable("set_governor_frame_os_ab"),
   setMode: safeCallable("set_governor_mode"),
-  setSavings: safeCallable("set_governor_savings_effort"),
   forgetModel: safeCallable("forget_governor_game_model"),
   modelTarget: safeCallable("get_governor_game_model_target"),
   profiles: safeCallable("get_profiles"),
@@ -287,32 +286,6 @@ function SessionRings({ ls, target }) {
       h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "−" : "") + Math.abs(Math.round(b.energy)) + "%", label: "Energy", live: true, estimate: b.estimate })) : null);
 }
 
-// Battery-only efficiency aggressiveness. Levels describe policy, not fictitious hours.
-function SavingsCard({ savings, profile, refresh }) {
-  const [busy, setBusy] = useState(false);
-  const level = savings.level || "off";
-  const explanations = {
-    off: "Normal Battery Governor. No extra power limit.",
-    light: "Gentle power limit. Full screen refresh and responsiveness remain the priority.",
-    medium: "Stronger savings. Keeps the standard screen refresh; will release the limit if real FPS suffers.",
-    hard: "Maximum safe savings. OLED 60 Hz · LCD 45 Hz, when supported. Restores your previous refresh when switched off.",
-  };
-  const set = async (value) => {
-    setBusy(true);
-    try { await rpc.setSavings(profile, value); } catch (e) {}
-    setBusy(false);
-    if (refresh) refresh();
-  };
-  const limited = savings.quality_limited;
-  return h("div", null,
-    h("div", { className: "sec" }, "SAVINGS EFFORT"),
-    h(Seg, { value: level, options: [["off", "Off"], ["light", "Light"], ["medium", "Medium"], ["hard", "Hard"]], onChange: busy ? () => {} : set }),
-    h(Note, { quiet: true }, explanations[level] || explanations.off),
-    limited ? h(Note, { quiet: true }, "FPS protection raised the power floor. Performance takes priority over saving watts.") : null,
-    savings.refresh_error ? h(Note, { quiet: true }, "Screen refresh unchanged: " + savings.refresh_error) : null,
-    savings.refresh_manual_override ? h(Note, { quiet: true }, "Manual refresh override respected; GFG won't move your slider.") : null);
-}
-
 function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
   const [busy, setBusy] = useState(false);
   const missing = inst && inst.installed === false;
@@ -375,7 +348,6 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
     h("div", { className: "sec" }, "MODE"),
     h(Seg, { value: s.mode || "budget", options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"]], onChange: async (v) => { try { await rpc.setMode(profile, v); } catch (e) {} refresh(); } }),
     h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
-    (s.mode || "budget") === "budget" ? h(SavingsCard, { savings: s.savings || {}, profile, refresh }) : null,
     health ? h("div", { className: "hint" }, health) : null,
     !s.session && s.last_session ? h("div", { className: "card" }, h("div", { className: "sec" }, "LAST SESSION"),
       h(SessionRings, { ls: s.last_session, target }),
