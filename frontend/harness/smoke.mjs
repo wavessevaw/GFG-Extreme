@@ -99,15 +99,19 @@ for (const [state, nav, expected] of cases) {
   await page.close();
   cases.push(["last-session-above-limit"]);
 }
-// Frame OS mode: a refused change does not stay selected.
+// Frame OS safety: Act is absent unless the backend explicitly unlocks it;
+// refused Observe/Shadow changes must still roll back to Off.
 {
   const page = await openPage(browser, STATES["frame-os-refused"], ["Settings", "Diagnostics"]);
-  await page.getByText("Act", { exact: true }).first().click();
+  if (await page.getByText("Act", { exact: true }).count()) {
+    failed++; console.error("FAIL Frame OS Act visible without developer unlock");
+  }
+  await page.getByText("Shadow", { exact: true }).first().click();
   await page.waitForTimeout(150);
   const on = await page.evaluate(() => [...document.querySelectorAll(".segb.on")].map((e) => e.textContent));
-  if (!on.includes("Off") || on.includes("Act")) { failed++; console.error(`FAIL frame os mode not rolled back: ${JSON.stringify(on)}`); }
+  if (!on.includes("Off") || on.includes("Shadow")) { failed++; console.error(`FAIL frame os mode not rolled back: ${JSON.stringify(on)}`); }
   await page.close();
-  cases.push(["frame-os-rollback"]);
+  cases.push(["frame-os-safety-rollback"]);
 }
 // Reset what GFG learned: the first tap only asks, the second one forgets.
 {
