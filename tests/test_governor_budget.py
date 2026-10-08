@@ -687,6 +687,21 @@ class TransientGeneratedCapacityTests(unittest.TestCase):
         self.assertEqual(ctl.adapt_to_capacity(6.1), "move")
         self.assertEqual(ctl.point.key, "30x3")
 
+    def test_capacity_restoration_cannot_override_real_tdp_failure_backoff(self):
+        ctl = self.controller()
+        ctl.current_max_multiplier = 2.0
+        ctl.adapt_to_capacity(1.0)
+        failed = ctl.points[ctl._capacity_resume_idx]
+        ctl.known_failures[failed.key] = (ctl.tdp, 2.0)
+        ctl.current_max_multiplier = 3.0
+        self.assertEqual(ctl.adapt_to_capacity(3.0), "hold")
+        self.assertEqual(ctl.adapt_to_capacity(6.0), "hold", "real failure remains in force")
+        self.assertEqual(ctl.point.key, "45x2")
+        self.assertFalse(ctl.rejected)
+        self.assertEqual(ctl.adapt_to_capacity(603.0), "hold")
+        self.assertEqual(ctl.adapt_to_capacity(605.1), "move")
+        self.assertEqual(ctl.point.key, failed.key)
+
     def test_initial_and_remembered_points_respect_current_swapchain(self):
         ctl = self.controller()
         ctl.current_max_multiplier = 2.0
