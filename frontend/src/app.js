@@ -215,98 +215,10 @@ function Ring({ value, max, label, sub, size = 176, stroke = 9, cls = "" }) {
     h("div", { className: "num" }, h("div", { className: "big" }, label), sub ? h("div", { className: "sub" }, sub) : null));
 }
 
-// Half-ring gauge: the output against the target, number inside the arc.
-function Arc({ value, max, label, sub }) {
-  const w = 190, r = 80, cx = w / 2, cy = 92, f = Math.max(0, Math.min(1, max ? value / max : 0));
-  const len = Math.PI * r, d = "M " + (cx - r) + " " + cy + " A " + r + " " + r + " 0 0 1 " + (cx + r) + " " + cy;
-  return h("div", { className: "arc" },
-    h("svg", { viewBox: "0 0 " + w + " 100", width: w, height: 100 },
-      h("path", { d, fill: "none", stroke: "#26262d", strokeWidth: 8, strokeLinecap: "round" }),
-      h("path", { d, fill: "none", stroke: "#fb0d00", strokeWidth: 8, strokeLinecap: "round", strokeDasharray: len, strokeDashoffset: len * (1 - f), style: { transition: "stroke-dashoffset .6s" } })),
-    h("div", { className: "num" }, h("div", { className: "big" }, label), h("div", { className: "sub" }, sub)));
-}
-
-// The hero's number and status in one of the layouts under review (window.__gfgHero, harness only).
-function HeroTop({ variant, value, max, label, sub, d }) {
-  const status = h("div", { className: "status" }, h("div", { className: "h" }, d.head), d.body ? h("div", { className: "p" }, d.body) : null);
-  if (variant === "compact") return h("div", { className: "hero-col" }, h(Ring, { value, max, label, sub, size: 128, stroke: 7, cls: "compact" }), status);
-  if (variant === "side") return h("div", { className: "hero-side" }, h(Ring, { value, max, label, size: 84, stroke: 6, cls: "side" }),
+// Hero: a compact ring beside the status (design review 1.5: the 176 px ring and 52 px number were too big).
+function HeroTop({ value, max, label, sub, d }) {
+  return h("div", { className: "hero-side" }, h(Ring, { value, max, label, size: 84, stroke: 6, cls: "side" }),
     h("div", { className: "status left" }, h("div", { className: "k" }, sub), h("div", { className: "h" }, d.head), d.body ? h("div", { className: "p" }, d.body) : null));
-  if (variant === "arc") return h("div", { className: "hero-col" }, h(Arc, { value, max, label, sub }), status);
-  if (variant === "flow") return h("div", { className: "hero-col", style: { width: "100%" } }, status);
-  return h("div", { className: "hero-col" }, h(Ring, { value, max, label, sub }), status);
-}
-
-// Frame OS benefit rings: colour by effectiveness, red when Frame OS made it worse.
-const ringHue = (v, max) => (v < 0 ? 0 : 25 + 115 * Math.min(1, Math.abs(v) / max));
-function MiniRing({ value, max, text, label, live, estimate, fixed }) {
-  const r = 26, w = 4, size = 2 * (r + w), c = 2 * Math.PI * r;
-  const has = value != null;
-  const f = has ? Math.min(1, Math.abs(value) / max) : 0;
-  const color = fixed || (estimate ? "#5c5c66" : "hsl(" + ringHue(value || 0, max) + " 80% 52% / " + (live ? 1 : 0.38) + ")");
-  const glow = live && has && !estimate && !fixed;
-  return h("div", { className: "mini" + (glow ? " live" : "") },
-    h("div", { className: "mring", style: { width: size, height: size } },
-      h("svg", { viewBox: "0 0 " + size + " " + size, width: size, height: size },
-        h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#26262d", strokeWidth: w }),
-        // Halo as a wider faint arc inside the SVG: a CSS drop-shadow is clipped to a square in Steam's browser.
-        glow ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeOpacity: 0.22, strokeWidth: w + 4, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null,
-        has ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeWidth: w, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null),
-      h("div", { className: "mnum" + (estimate || !has ? " dim" : "") }, has ? text : "—")),
-    h("div", { className: "mlab" }, label));
-}
-
-function FrameOsCard({ fo }) {
-  const b = fo.benefit;
-  if (!fo.enabled || !b) return null;
-  const est = !!b.estimate;
-  const level = (fo.decision || {}).level;
-  const pct = (v, sign) => (v == null ? "" : (sign && v > 0 ? sign : v < 0 && !sign ? "−" : "") + Math.abs(Math.round(v)) + "%");
-  const resp = b.response_pct, frames = b.frames_pct, energy = b.energy_pct;
-  const ab = fo.ab_control ? "ab" : null;
-  return h("div", { className: "card fos" },
-    h("div", { className: "fos-head" }, h("span", null, "FRAME OS"),
-      h("span", { className: "pill " + (est ? "would" : ab || level || "") }, est ? "ESTIMATE" : ab ? "A/B CHECK" : (level || "").toUpperCase())),
-    h("div", { className: "rings" },
-      h(MiniRing, { value: resp, max: 50, text: resp == null ? "" : (resp >= 0 ? "−" : "+") + Math.abs(Math.round(resp)) + "%", label: "Response", live: level !== "rest", estimate: est }),
-      h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "−") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est }),
-      h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), label: "Energy", live: level === "rest", estimate: est })),
-    fo.mode === "act" ? h("div", { className: "abline" }, proofLine(fo.proof, b.measured)) : null,
-    fo.mode === "act" && learnedLine(fo.game) ? h("div", { className: "abline" }, learnedLine(fo.game)) : null);
-}
-
-// What Frame OS learned in this game and switched off because of it.
-const EFFECT_TEXT = { boost: "Boost off here: no real-frame gain measured", shaping: "Frame timing off here: it did not help", rest: "Rest off here: it did not save power" };
-function learnedLine(game) {
-  if (!game || !game.disabled) return null;
-  const off = Object.keys(EFFECT_TEXT).filter((k) => game.disabled[k]);
-  return off.length ? off.map((k) => EFFECT_TEXT[k]).join(" · ") : null;
-}
-
-// One line under the rings: which numbers the in-game A/B check has measured so far.
-function proofLine(proof, measured) {
-  if (!proof || proof.enabled === false) return "A/B check off · rings are model estimates";
-  const names = { response: "Response", frames: "Frames", energy: "Energy" };
-  const done = Object.keys(names).filter((k) => measured && measured[k]);
-  const pairs = Math.max(...Object.keys(names).map((k) => (proof[k] || {}).n || 0));
-  if (!done.length) return "Checking in game (A/B)… " + pairs + " of 3 comparisons";
-  return "Measured in game: " + done.map((k) => names[k] + " ×" + proof[k].n).join(" · ");
-}
-
-// Last session as rings: averages for the whole game session, benefit rings when Frame OS ran.
-function SessionRings({ ls, target }) {
-  const b = ls.frame_os_benefit;
-  const signed = (v, good) => (v == null ? "" : (v >= 0 ? good : good === "+" ? "−" : "+") + Math.abs(Math.round(v)) + "%");
-  const limit = ls.reference_w || 15;
-  return h("div", null,
-    h("div", { className: "rings" },
-      h(MiniRing, { value: ls.avg_output_fps, max: target, text: num(ls.avg_output_fps, 0), label: "FPS avg", fixed: "#fb0d00" }),
-      h(MiniRing, { value: ls.avg_real_fps, max: ls.avg_output_fps || target, text: num(ls.avg_real_fps, 0), label: "Real avg", fixed: "#f5f5f7" }),
-      h(MiniRing, { value: ls.avg_tdp_w, max: limit, text: ls.avg_tdp_w != null ? num(ls.avg_tdp_w, 0) + "W" : "", label: "TDP avg", fixed: "#f5f5f7" })),
-    b ? h("div", { className: "rings", style: { marginTop: 10 } },
-      h(MiniRing, { value: b.response, max: 50, text: signed(b.response, "−"), label: "Response", live: true, estimate: b.estimate }),
-      h(MiniRing, { value: b.frames, max: 50, text: signed(b.frames, "+"), label: "Frames", live: true, estimate: b.estimate }),
-      h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "−" : "") + Math.abs(Math.round(b.energy)) + "%", label: "Energy", live: true, estimate: b.estimate })) : null);
 }
 
 function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch }) {
@@ -328,7 +240,6 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
     await refresh(); setBusy(false);
   };
   const showLive = s.enabled && out != null;
-  const hero = window.__gfgHero || "classic";
   const tdp = pw.observed_tdp_w != null ? pw.observed_tdp_w : pw.current_tdp_w;
   const eff = s.effort && s.effort.level;
   const effWhy = eff && s.effort.reason;
@@ -353,14 +264,9 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
   return h("div", null,
     h("div", { className: "top" }, h("div", { className: "brand" }, h("img", { src: LOGO, width: 30, height: 30, style: { marginRight: 8, verticalAlign: "middle" } }), "GFG", h("b", null, "·"), "EXTREME"),
       h("div", { className: "chip" + (s.enabled ? " on" : "") }, h("i"), MODE_NAME[dev.mode] || "Display")),
-    h("div", { className: "card hero" + (hero === "flow" ? " flowhero" : "") },
-      h(HeroTop, { variant: hero, value: showLive ? out : 0, max: target, label: showLive ? num(out, 0) : String(target), sub: showLive ? "FPS OUTPUT" : "TARGET FPS", d }),
-      hero === "flow" ? h("div", { className: "bigflow" },
-        h("div", { className: "stat" }, h("div", { className: "v" }, showLive ? num(real, 0) : "–"), h("div", { className: "l" }, "REAL")), h("div", { className: "a" }, "→"),
-        h("div", { className: "stat hot" }, h("div", { className: "v" }, showLive ? (mult ? fmtMult(mult) : POINT_LABEL(s.active_point)) : "GFG"), h("div", { className: "l" }, "GFG")), h("div", { className: "a" }, "→"),
-        h("div", { className: "stat main" }, h("div", { className: "v" }, showLive ? num(out, 0) : String(target)), h("div", { className: "l" }, showLive ? "OUTPUT" : "TARGET"))) : null,
-      hero === "flow" ? h("div", { className: "bar thin", style: { width: "100%", marginTop: 10 } }, h("div", { style: { width: Math.min(100, ((showLive ? out : 0) / target) * 100) + "%" } })) : null,
-      showLive && hero !== "flow" ? h("div", { className: "flow" },
+    h("div", { className: "card hero" },
+      h(HeroTop, { value: showLive ? out : 0, max: target, label: showLive ? num(out, 0) : String(target), sub: showLive ? "FPS OUTPUT" : "TARGET FPS", d }),
+      showLive ? h("div", { className: "flow" },
         h("div", { className: "stat" }, h("div", { className: "v" }, num(real, 0)), h("div", { className: "l" }, "REAL")), h("div", { className: "a" }, "→"),
         h("div", { className: "stat hot" }, h("div", { className: "v" }, mult ? fmtMult(mult) : POINT_LABEL(s.active_point)), h("div", { className: "l" }, "GFG")), h("div", { className: "a" }, "→"),
         h("div", { className: "stat" }, h("div", { className: "v" }, num(out, 0)), h("div", { className: "l" }, "OUTPUT"))) : null,

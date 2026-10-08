@@ -15,16 +15,9 @@ export const css = `
 .gfg .ring .num{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .gfg .ring .big{font-size:52px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
 .gfg .ring .sub{font-size:11px;font-weight:700;letter-spacing:.16em;color:var(--tx2);margin-top:4px}
-.gfg .hero-col{display:flex;flex-direction:column;align-items:center}
-.gfg .ring.compact .big{font-size:38px}.gfg .ring.compact .sub{font-size:9.5px;letter-spacing:.14em;margin-top:3px}
 .gfg .hero-side{display:flex;align-items:center;gap:14px;width:100%}
 .gfg .ring.side .big{font-size:27px}
 .gfg .status.left{margin-top:0;text-align:left;flex:1;min-width:0}.gfg .status .k{font-size:10px;font-weight:700;letter-spacing:.16em;color:var(--tx3);margin-bottom:3px}
-.gfg .arc{position:relative;width:190px;height:100px}.gfg .arc .num{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center}
-.gfg .arc .big{font-size:36px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}.gfg .arc .sub{font-size:9.5px;font-weight:700;letter-spacing:.14em;color:var(--tx2);margin-top:3px}
-.gfg .flowhero .status{margin-top:0}
-.gfg .bigflow{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:end;gap:6px;width:100%;margin-top:14px}
-.gfg .bigflow .a{color:var(--tx3);font-size:14px;padding-bottom:16px}.gfg .bigflow .stat .v{font-size:22px}.gfg .bigflow .stat.main .v{font-size:30px;font-weight:800}
 .gfg .filters{padding:12px 12px 12px}
 .gfg .fgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 .gfg .ftile{display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 2px 7px;border-radius:12px;border:1px solid transparent;background:var(--s2);cursor:pointer}
@@ -43,7 +36,7 @@ export const css = `
 .gfg .echip.on{border-color:rgba(251,13,0,.6);background:var(--redbg)}.gfg .echip.on .en{color:var(--tx)}
 .gfg .eord{width:20px;height:20px;border-radius:6px;background:var(--s3);color:var(--tx3);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex:none}
 .gfg .eord.on{background:var(--red);color:#fff}
-.gfg .bar.thin{height:3px}.gfg .bar.thin>div{background:#8d8d96}
+
 .gfg .status{margin-top:10px;text-align:center}
 .gfg .status .h{font-size:15px;font-weight:700}.gfg .status .p{font-size:12px;color:var(--tx2);margin-top:3px;line-height:1.35}
 .gfg .flow{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:center;gap:6px;width:100%;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
