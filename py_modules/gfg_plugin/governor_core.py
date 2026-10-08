@@ -977,7 +977,7 @@ class BudgetController:
         self.savings_quality_limited = bool(quality_limited)
         normal_max = (self._ceilings or (self.normal_max_w,))[0]
         self.min_w = min(normal_max, max(self._savings_base_min_w, float(floor_w)))
-        self.set_playtime_cap(cap_w)
+        self.set_savings_cap(cap_w)
         if self.tdp_control and self.tdp is not None and self.tdp < self.min_w - 0.01:
             self.tdp = round(self.min_w, 1)
             self.probe = None
