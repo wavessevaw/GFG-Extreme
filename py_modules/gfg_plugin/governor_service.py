@@ -1418,22 +1418,47 @@ class GovernorService:
         if lease:
             applied = int(lease.get("applied_hz") or 0)
             original = int(lease.get("original_hz") or 0)
-            if actual != applied:
-                # The user moved the slider; don't fight it and don't restore later.
-                self._savings_refresh_lease = None
-                self._settings.pop("savings_refresh_lease", None)
-                if desired is not None:
-                    self._savings_refresh_override = profile
-                self._savings_refresh_error = None
-                self._save_settings_quietly()
-                return display
-            if desired == applied and lease.get("profile") == profile:
-                self._savings_refresh_error = None
-                return display
-            if original not in valid:
-                self._savings_refresh_error = "Original Hz not available; restore pending"
-                return display
-            target = original
+            # The lease is persisted *before* the Gamescope request. A failed
+            # or interrupted initial write leaves the original refresh intact:
+            # do not mistake that state for the user moving Steam's slider.
+            pending = lease.get("confirmed") is False
+            if pending and actual == original:
+                if desired != applied or lease.get("profile") != profile:
+                    # The player left Hard before the initial modeset succeeded.
+                    # There is nothing to restore, so drop the speculative lease.
+                    self._savings_refresh_lease = None
+                    self._settings.pop("savings_refresh_lease", None)
+                    self._savings_refresh_error = None
+                    self._save_settings_quietly()
+                    return display
+                if applied not in valid:
+                    self._savings_refresh_error = "Hard refresh rate no longer supported"
+                    return display
+                target = applied  # retry after the backoff; not a manual override
+            else:
+                if actual != applied:
+                    # Only an established modeset is evidence of manual
+                    # intervention. Respect the user's slider.
+                    self._savings_refresh_lease = None
+                    self._settings.pop("savings_refresh_lease", None)
+                    if desired is not None:
+                        self._savings_refresh_override = profile
+                    self._savings_refresh_error = None
+                    self._save_settings_quietly()
+                    return display
+                if pending:
+                    # The last write really did succeed, but its reply or our
+                    # process was interrupted before verification completed.
+                    lease["confirmed"] = True
+                    self._settings["savings_refresh_lease"] = lease
+                    self._save_settings_quietly()
+                if desired == applied and lease.get("profile") == profile:
+                    self._savings_refresh_error = None
+                    return display
+                if original not in valid:
+                    self._savings_refresh_error = "Original Hz not available; restore pending"
+                    return display
+                target = original
         else:
             if desired is None or self._savings_refresh_override == profile or actual == desired:
                 return display
@@ -1441,7 +1466,7 @@ class GovernorService:
                 self._savings_refresh_error = f"{desired} Hz is unavailable on this panel"
                 return display
             target = desired
-            lease = {"profile": profile, "original_hz": actual, "applied_hz": desired}
+            lease = {"profile": profile, "original_hz": actual, "applied_hz": desired, "confirmed": False}
             # Persist before changing the display: a restart can still restore.
             self._savings_refresh_lease = lease
             self._settings["savings_refresh_lease"] = lease
@@ -1458,7 +1483,11 @@ class GovernorService:
         if target == int(lease["original_hz"]):
             self._savings_refresh_lease = None
             self._settings.pop("savings_refresh_lease", None)
-            self._save_settings_quietly()
+        else:
+            lease["confirmed"] = True
+            self._savings_refresh_lease = lease
+            self._settings["savings_refresh_lease"] = lease
+        self._save_settings_quietly()
         self._savings_refresh_error = None
         self._last_display = {}
         self._last_display_poll = 0.0
