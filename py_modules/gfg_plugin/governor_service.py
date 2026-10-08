@@ -1071,7 +1071,7 @@ class GovernorService:
         age = None if at is None else self.observer.time_fn() - at
         if age is not None and age <= 5.0:
             return True
-        if age is None or age > self.MENU_MAX_S:
+        if age is None:
             return False
         budget = self._budget
         target = float(budget.point.target_output_fps) if budget is not None else float(
@@ -1084,7 +1084,20 @@ class GovernorService:
         # on screen mean the game shows, even when the point is starved (field case 1.2.3).
         generating = (isinstance(output, (int, float)) and isinstance(real, (int, float)) and real > 0
                       and output >= 1.4 * real)
-        return not (back or generating)
+        if back or generating:
+            return False
+        if age <= self.MENU_MAX_S:
+            return True
+        # Past MENU_MAX_S the event alone proves nothing (review of 1.3.1: a menu really open for
+        # minutes was then judged as a starved point).  Keep covering while the evidence says
+        # generation is suspended: a frame-generating point (ratio > 1) showing output ~ real.  A
+        # native point (x1) cannot tell a menu from play, so there the event expires.
+        point = self._point or {}
+        multiplier = point.get("multiplier") if isinstance(point, dict) else None
+        suspended = (isinstance(multiplier, (int, float)) and multiplier > 1.2
+                     and isinstance(output, (int, float)) and isinstance(real, (int, float)) and real > 0
+                     and output < 1.2 * real)
+        return suspended
 
     def _configure_frame_os(self, profile: str) -> None:
         budget = self._budget
@@ -2247,7 +2260,9 @@ class GovernorService:
             starved = isinstance(output, (int, float)) and output < 0.8 * float(self._budget.point.target_output_fps)
             # A starved output under a Steam menu (generation suspended) still takes the overlay
             # back, but it is no evidence against Act: it never counts toward the session lockout.
-            menu = self._menu_covering()
+            # Uncertain focus counts as menu here: a focus-lost event not yet followed by a
+            # focus-restored one (any age) never feeds the lockout; the overlay still yields.
+            menu = self._menu_covering() or getattr(self.observer, "game_focused", None) is False
             if hot or starved:
                 acting = False
                 if self._injection is not None:

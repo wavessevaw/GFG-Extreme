@@ -12,6 +12,7 @@
 Works in Battery and Balanced mode.
 
 ### Also in 1.4
+- **A Steam menu left open for minutes no longer counts against Frame OS.** Past two minutes the menu is still recognised while frame generation stays suspended, and an uncertain focus state never feeds the Act lockout; a missed "game is back" event still ends the pause as soon as generated frames show.
 - Everything from 1.3.1: flicker-free in-game rings, Predictive Presentation in the Frame OS pacer, and the Frame OS fixes from the 1.3.0 review.
 - READMEs (EN/RU) with a Playtime target section, fresh screenshots and a phone-friendly layout.
 

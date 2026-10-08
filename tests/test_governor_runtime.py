@@ -1641,13 +1641,30 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.assertEqual(self.svc._injection_starvation_yields, 0)
         self.assertIsNotNone(self.svc._injection, "Act still injects after three long menus")
 
-    def test_a_menu_event_without_its_return_expires(self):
+    def test_a_menu_open_for_minutes_still_never_locks_act_out(self):
+        # review of 1.3.1: past MENU_MAX_S a really open menu was judged as a starved point
+        self._act_live_point()
+        self.svc.frame_os.last = {"telemetry": {"live": True}}
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNotNone(self.svc._injection)
+        self.svc.observer.game_focused = False
+        self.svc.observer.game_focused_at = self.t["now"] - (self.svc.MENU_MAX_S + 60)   # open 3 min
+        for _ in range(4):
+            self.feed(20, 30, 30)                                  # generation suspended
+            st = self.step(2.0)
+            self.assertEqual((st["state"], st["reason"]), ("PAUSED", "steam-menu-open"))
+        self.assertEqual(self.svc._injection_starvation_yields, 0)
+
+    def test_a_missed_focus_restored_event_recovers_when_generation_resumes(self):
         self.feed(20, 45, 90)
         self.step()
+        self.feed(16, 30, 90)
+        self.step()
         self.svc.observer.game_focused = False
-        self.svc.observer.game_focused_at = self.t["now"] - (self.svc.MENU_MAX_S + 1)
-        self.feed(20, 30, 30)
-        self.assertNotEqual(self.step()["reason"], "steam-menu-open", "never paused forever")
+        self.svc.observer.game_focused_at = self.t["now"] - (self.svc.MENU_MAX_S + 60)
+        self.feed(20, 30, 90)                                       # generated frames on screen
+        self.assertNotEqual(self.step()["reason"], "steam-menu-open", "the game shows: never paused forever")
 
     def test_steam_menu_pauses_measuring_and_drops_its_samples(self):
         self.feed(20, 45, 90)

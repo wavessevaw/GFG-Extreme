@@ -129,7 +129,7 @@ The Home screen, shrunk into the corner of your game: a brand-red **FPS** ring w
 With Frame OS Act, a badge says what is happening: **CALM**, **REST**, **VERIFYING**, **BOOST 45R x2** (only once fresh frame data shows the extra real frames) or **A/B** during a check.
 
 - On by default in the **bottom-left corner**; **Settings → In-game overlay** picks Rings or Text, Minimal / Standard / Detailed and the corner.
-- Refreshes **once a second**; unchanged pictures are reused, and the layer never waits for the overlay during presentation.
+- Refreshes **once a second**; unchanged pictures are reused. A frame waits for the overlay only when both of its image's copy slots are still busy, and then for at most 2 ms.
 - Drawn by GFG's own small Vulkan layer after the frame generator. It needs one game restart after you first pick it; until then, in Flatpak apps and in HDR games you get the classic text line:
 
 `90 FPS  x3  (30)  sc100  TDP 9W  APU 8W  2h32  easy` — frames on screen, multiplier, real frames, render scale, TDP limit and measured APU draw, battery time left, how hard GFG is working, plus the Frame OS decision (`FOS boost 45`).
