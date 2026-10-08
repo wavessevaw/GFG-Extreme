@@ -75,25 +75,34 @@ class GameModelStore:
                             for k, f in floors.items() if isinstance(f, dict)}
 
     @staticmethod
+    def _finite_number(value: Any) -> bool:
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return False
+        try:
+            return math.isfinite(float(value))
+        except (OverflowError, ValueError):
+            # JSON may contain enormous ints or NaN/Infinity from a damaged
+            # file. They must not crash startup or poison future decisions.
+            return False
+
+    @staticmethod
     def _valid(entry: Any) -> bool:
         if not isinstance(entry, dict) or not isinstance(entry.get("point"), str):
             return False
         tdp = entry.get("tdp_w")
-        if tdp is not None and not (isinstance(tdp, (int, float)) and math.isfinite(tdp)
+        if tdp is not None and not (GameModelStore._finite_number(tdp)
                                     and 0 < tdp <= MAX_TDP_W):
             return False
         updated = entry.get("updated")
         confirmations = entry.get("confirmations", 0)
-        return (isinstance(updated, (int, float)) and not isinstance(updated, bool)
-                and math.isfinite(updated) and updated >= 0
+        return (GameModelStore._finite_number(updated) and updated >= 0
                 and isinstance(confirmations, int) and not isinstance(confirmations, bool)
                 and confirmations >= 0)
 
     @staticmethod
     def _valid_failure(value: Any) -> bool:
         return (isinstance(value, list) and len(value) == 2
-                and all(isinstance(x, (int, float)) and not isinstance(x, bool)
-                        and math.isfinite(x) for x in value)
+                and all(GameModelStore._finite_number(x) for x in value)
                 and 0 < value[0] <= MAX_TDP_W and value[1] >= 0)
 
     def get(self, key: str) -> Optional[Dict[str, Any]]:
@@ -175,8 +184,7 @@ class GameModelStore:
     @staticmethod
     def _valid_floor(v: Any) -> bool:
         return (isinstance(v, list) and len(v) == 3
-                and all(isinstance(x, (int, float)) and not isinstance(x, bool)
-                        and math.isfinite(x) for x in v)
+                and all(GameModelStore._finite_number(x) for x in v)
                 and 0 < v[0] <= MAX_TDP_W and v[1] >= 0
                 and isinstance(v[2], int) and v[2] >= 1)
 
