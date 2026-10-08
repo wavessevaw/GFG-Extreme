@@ -48,6 +48,33 @@ var css = `
 .gfg .ring .num{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .gfg .ring .big{font-size:52px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
 .gfg .ring .sub{font-size:11px;font-weight:700;letter-spacing:.16em;color:var(--tx2);margin-top:4px}
+.gfg .hero-col{display:flex;flex-direction:column;align-items:center}
+.gfg .herotap{border-radius:50%;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.gfg .ring.compact .big{font-size:38px}.gfg .ring.compact .sub{font-size:9.5px;letter-spacing:.14em;margin-top:3px}
+.gfg .arc{position:relative;width:190px;height:100px}.gfg .arc .num{position:absolute;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center}
+.gfg .arc .big{font-size:36px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}.gfg .arc .sub{font-size:9.5px;font-weight:700;letter-spacing:.14em;color:var(--tx2);margin-top:3px}
+.gfg .hero-side{display:flex;align-items:center;gap:14px;width:100%}
+.gfg .ring.side .big{font-size:27px}
+.gfg .status.left{margin-top:0;text-align:left;flex:1;min-width:0}.gfg .status .k{font-size:10px;font-weight:700;letter-spacing:.16em;color:var(--tx3);margin-bottom:3px}
+.gfg .filters{padding:12px 12px 12px}
+.gfg .fgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.gfg .ftile{display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 2px 7px;border-radius:12px;border:1px solid transparent;background:var(--s2);cursor:pointer}
+.gfg .ftile .sw{position:relative;width:38px;height:38px;border-radius:11px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);overflow:hidden}
+.gfg .ftile .slash{position:absolute;left:50%;top:-4px;bottom:-4px;width:2px;background:var(--tx3);transform:rotate(45deg)}
+.gfg .ftile .fl{font-size:10.5px;font-weight:700;color:var(--tx2);white-space:nowrap}
+.gfg .ftile.on{border-color:var(--red);background:var(--redbg)}.gfg .ftile.on .fl{color:var(--tx)}
+.gfg .ftile.dis{opacity:.4}
+.gfg .fmore{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px;padding:9px 10px;border-radius:11px;background:var(--s2);font-size:11.5px;color:var(--tx2);cursor:pointer}
+.gfg .fmore span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gfg .fmore b{color:var(--tx);font-weight:700;flex:none}
+.gfg .fnote{font-size:11px;line-height:1.35;color:var(--tx3);margin:8px 2px 0}.gfg .fnote.ok{color:#2fd27a}.gfg .fnote.warn{color:#ffb4ae}
+.gfg .pill.live{background:rgba(47,210,122,.16);color:#2fd27a}
+.gfg .egrid{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+.gfg .echip{display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:11px;background:var(--s1);border:1px solid var(--line);cursor:pointer;min-width:0}
+.gfg .echip .en{font-size:12px;font-weight:600;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gfg .echip.on{border-color:rgba(251,13,0,.6);background:var(--redbg)}.gfg .echip.on .en{color:var(--tx)}
+.gfg .eord{width:20px;height:20px;border-radius:6px;background:var(--s3);color:var(--tx3);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex:none}
+.gfg .eord.on{background:var(--red);color:#fff}
+
 .gfg .status{margin-top:10px;text-align:center}
 .gfg .status .h{font-size:15px;font-weight:700}.gfg .status .p{font-size:12px;color:var(--tx2);margin-top:3px;line-height:1.35}
 .gfg .flow{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:center;gap:6px;width:100%;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
@@ -146,6 +173,7 @@ var rpc = {
   setFrameOs: safeCallable("set_governor_frame_os"),
   setFrameOsActUnlock: safeCallable("set_governor_frame_os_act_unlock"),
   setFrameOsAb: safeCallable("set_governor_frame_os_ab"),
+  setPowerSplit: safeCallable("set_governor_power_split"),
   setMode: safeCallable("set_governor_mode"),
   forgetModel: safeCallable("forget_governor_game_model"),
   modelTarget: safeCallable("get_governor_game_model_target"),
@@ -238,6 +266,7 @@ function describe(s) {
 }
 var Icon = ({ d, size = 16 }) => h("svg", { viewBox: "0 0 24 24", width: size, height: size, fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, h("path", { d }));
 var ICONS = {
+  filter: "M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.9 1.2-1.8-.4-1 .2-2.2 1.3-2.2H17a4 4 0 0 0 4-4c0-5-4-10-9-10zM7.5 11.5h.01M10 7.5h.01M15 7.5h.01",
   bolt: "M13 2L4 14h7l-1 8 9-12h-7z",
   layers: "M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5",
   scale: "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5",
@@ -382,19 +411,69 @@ function useGovernor(profile) {
   }, [refresh]);
   return [s, refresh];
 }
-function Ring({ value, max, label, sub }) {
-  const r = 78, c = 2 * Math.PI * r, f = Math.max(0, Math.min(1, max ? value / max : 0));
+function Ring({ value, max, label, sub, size = 176, stroke = 9, cls = "" }) {
+  const r = (size - stroke) / 2 - 1, c = 2 * Math.PI * r, f = Math.max(0, Math.min(1, max ? value / max : 0));
   return h(
     "div",
-    { className: "ring" },
+    { className: "ring " + cls, style: { width: size, height: size } },
     h(
       "svg",
-      { viewBox: "0 0 176 176", width: 176, height: 176 },
-      h("circle", { cx: 88, cy: 88, r, fill: "none", stroke: "#26262d", strokeWidth: 9 }),
-      h("circle", { cx: 88, cy: 88, r, fill: "none", stroke: "#fb0d00", strokeWidth: 9, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } })
+      { viewBox: "0 0 " + size + " " + size, width: size, height: size },
+      h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#26262d", strokeWidth: stroke }),
+      h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#fb0d00", strokeWidth: stroke, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } })
+    ),
+    h("div", { className: "num" }, h("div", { className: "big" }, label), sub ? h("div", { className: "sub" }, sub) : null)
+  );
+}
+function Arc({ value, max, label, sub }) {
+  const w = 190, r = 80, cx = w / 2, cy = 92, f = Math.max(0, Math.min(1, max ? value / max : 0));
+  const len = Math.PI * r, d = "M " + (cx - r) + " " + cy + " A " + r + " " + r + " 0 0 1 " + (cx + r) + " " + cy;
+  return h(
+    "div",
+    { className: "arc" },
+    h(
+      "svg",
+      { viewBox: "0 0 " + w + " 100", width: w, height: 100 },
+      h("path", { d, fill: "none", stroke: "#26262d", strokeWidth: 8, strokeLinecap: "round" }),
+      h("path", { d, fill: "none", stroke: "#fb0d00", strokeWidth: 8, strokeLinecap: "round", strokeDasharray: len, strokeDashoffset: len * (1 - f), style: { transition: "stroke-dashoffset .6s" } })
     ),
     h("div", { className: "num" }, h("div", { className: "big" }, label), h("div", { className: "sub" }, sub))
   );
+}
+var HERO_LAYOUTS = ["classic", "compact", "side", "arc"];
+var HERO_KEY = "gfg.hero";
+function useHeroLayout() {
+  const [layout, setLayout] = useState(() => {
+    try {
+      const v = window.localStorage.getItem(HERO_KEY);
+      if (HERO_LAYOUTS.includes(v)) return v;
+    } catch (e) {
+    }
+    return "side";
+  });
+  const next = () => setLayout((cur) => {
+    const v = HERO_LAYOUTS[(HERO_LAYOUTS.indexOf(cur) + 1) % HERO_LAYOUTS.length];
+    try {
+      window.localStorage.setItem(HERO_KEY, v);
+    } catch (e) {
+    }
+    return v;
+  });
+  return [layout, next];
+}
+function HeroTop({ layout, onTap, value, max, label, sub, d }) {
+  const status = (cls) => h(
+    "div",
+    { className: "status" + (cls ? " " + cls : "") },
+    cls ? h("div", { className: "k" }, sub) : null,
+    h("div", { className: "h" }, d.head),
+    d.body ? h("div", { className: "p" }, d.body) : null
+  );
+  const tap = (child) => h(Focusable, { className: "herotap", onClick: onTap }, child);
+  if (layout === "side") return h("div", { className: "hero-side" }, tap(h(Ring, { value, max, label, size: 84, stroke: 6, cls: "side" })), status("left"));
+  if (layout === "compact") return h("div", { className: "hero-col" }, tap(h(Ring, { value, max, label, sub, size: 128, stroke: 7, cls: "compact" })), status());
+  if (layout === "arc") return h("div", { className: "hero-col" }, tap(h(Arc, { value, max, label, sub })), status());
+  return h("div", { className: "hero-col" }, tap(h(Ring, { value, max, label, sub })), status());
 }
 var ringHue = (v, max) => v < 0 ? 0 : 25 + 115 * Math.min(1, Math.abs(v) / max);
 function MiniRing({ value, max, text, label, live, estimate, fixed }) {
@@ -487,7 +566,7 @@ function SessionRings({ ls, target }) {
     ) : null
   );
 }
-function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
+function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch }) {
   const [busy, setBusy] = useState(false);
   const missing = inst && inst.installed === false;
   const d = describe(s);
@@ -515,6 +594,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
     setBusy(false);
   };
   const showLive = s.enabled && out != null;
+  const [heroLayout, nextHero] = useHeroLayout();
   const tdp = pw.observed_tdp_w != null ? pw.observed_tdp_w : pw.current_tdp_w;
   const eff = s.effort && s.effort.level;
   const effWhy = eff && s.effort.reason;
@@ -557,8 +637,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
     h(
       "div",
       { className: "card hero" },
-      h(Ring, { value: showLive ? out : 0, max: target, label: showLive ? num(out, 0) : String(target), sub: showLive ? "FPS OUTPUT" : "TARGET FPS" }),
-      h("div", { className: "status" }, h("div", { className: "h" }, d.head), d.body ? h("div", { className: "p" }, d.body) : null),
+      h(HeroTop, { layout: heroLayout, onTap: nextHero, value: showLive ? out : 0, max: target, label: showLive ? num(out, 0) : String(target), sub: showLive ? "FPS OUTPUT" : "TARGET FPS", d }),
       showLive ? h(
         "div",
         { className: "flow" },
@@ -600,6 +679,8 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
     } }),
     h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
     health ? h("div", { className: "hint" }, health) : null,
+    h("div", { style: { height: 12 } }),
+    h(FiltersCard, { profile, cfg, patch, go }),
     !s.session && s.last_session ? h(
       "div",
       { className: "card" },
@@ -637,6 +718,228 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
     )
   );
 }
+var SPLIT_WAIT = {
+  "real-frames-short": "real frames came first",
+  "cpu-busy": "the game needs the CPU",
+  "not-eligible": "waiting for a steady game",
+  settling: "watching the game",
+  "switched-off": "off"
+};
+function splitLine(ps) {
+  if (!ps || ps.available === false) return null;
+  if (ps.setting === false) return "Off";
+  if (ps.game_off) return "Off for this game \xB7 no measured gain";
+  if (ps.control && ps.control.external_change) return "Paused \xB7 another tool sets the CPU clock";
+  if (ps.cap_khz) return "CPU capped at " + num(ps.cap_khz / 1e6, 1) + " GHz \xB7 the GPU gets the watts";
+  if (ps.ab === "control") return "Full CPU speed for a moment \xB7 A/B check";
+  return "Full CPU speed \xB7 " + (SPLIT_WAIT[ps.reason] || "watching the game");
+}
+function splitMeasured(ps) {
+  if (!ps || !ps.pairs) return "Not measured yet";
+  if (!ps.measured) return "Measuring \xB7 " + ps.pairs + " A/B";
+  return (ps.gain_pct >= 0 ? "+" : "") + num(ps.gain_pct, 1) + "% GPU clock/W \xB7 " + ps.pairs + " A/B";
+}
+function SplitCard({ ps }) {
+  const [on, setOn] = useState(!ps || ps.setting !== false);
+  const line = splitLine(ps);
+  if (!line) return null;
+  return h(
+    "div",
+    null,
+    h("div", { className: "sec" }, "CPU / GPU POWER SPLIT"),
+    h("div", { className: "card" }, h(
+      "div",
+      { className: "kv" },
+      h("span", null, "Now"),
+      h("b", null, line),
+      h("span", null, "Measured"),
+      h("b", null, splitMeasured(ps)),
+      ps.mhz_pct != null && ps.measured ? h("span", null, "Last check") : null,
+      ps.mhz_pct != null && ps.measured ? h("b", null, (ps.mhz_pct >= 0 ? "+" : "") + num(ps.mhz_pct, 1) + "% GPU clock, " + (ps.draw_pct >= 0 ? "\u2212" : "+") + num(Math.abs(ps.draw_pct), 1) + "% draw") : null
+    )),
+    h("div", { className: "list" }, h(Toggle, {
+      on,
+      title: "Smart power split",
+      sub: "In GPU-bound games the CPU runs a little slower so the GPU gets the watts. Real frames always come first.",
+      onChange: async (v) => {
+        setOn(v);
+        try {
+          await rpc.setPowerSplit(v);
+        } catch (e) {
+        }
+      }
+    }))
+  );
+}
+var FILTER_PRESETS = [
+  { id: "off", name: "Off", sw: "linear-gradient(135deg,#2a2a31,#151519)", f: { vkbasalt_shader: "none", vkbasalt_sharpening: "none", vkbasalt_antialiasing: "none" } },
+  { id: "sharp", name: "Sharp", sw: "linear-gradient(135deg,#6f7682,#f2f5fa)", f: { vkbasalt_shader: "none", vkbasalt_sharpening: "cas", vkbasalt_sharpness: 0.5, vkbasalt_antialiasing: "none" } },
+  { id: "vivid", name: "Vivid", sw: "linear-gradient(135deg,#ff2d55,#ffcc00 55%,#34c759)", f: { vkbasalt_shader: "vibrance", vkbasalt_sharpening: "cas", vkbasalt_sharpness: 0.35, vkbasalt_antialiasing: "none" } },
+  { id: "hdr", name: "HDR look", sw: "linear-gradient(135deg,#ff9500,#ffe7b0 50%,#2f7cf6)", f: { vkbasalt_shader: "hdr_look", vkbasalt_sharpening: "cas", vkbasalt_sharpness: 0.3, vkbasalt_antialiasing: "none" } },
+  { id: "cinema", name: "Cinema", sw: "linear-gradient(135deg,#0f6a6a,#e09a3e)", f: { vkbasalt_shader: "technicolor2:vignette", vkbasalt_sharpening: "none", vkbasalt_antialiasing: "none" } },
+  { id: "noir", name: "Noir", sw: "linear-gradient(135deg,#050505,#d9d9d9)", f: { vkbasalt_shader: "noir:film_grain", vkbasalt_sharpening: "none", vkbasalt_antialiasing: "none" } },
+  { id: "retro", name: "Retro", sw: "linear-gradient(135deg,#6b3f17,#e6c27a)", f: { vkbasalt_shader: "nostalgia:vignette", vkbasalt_sharpening: "none", vkbasalt_antialiasing: "none" } },
+  { id: "smooth", name: "Smooth", sw: "linear-gradient(135deg,#3a4a66,#9fb4d9)", f: { vkbasalt_shader: "none", vkbasalt_sharpening: "cas", vkbasalt_sharpness: 0.3, vkbasalt_antialiasing: "smaa" } }
+];
+var FILTER_EFFECTS = [
+  ["hdr_look", "HDR Look"],
+  ["clarity", "Clarity"],
+  ["levels_plus", "Levels Plus"],
+  ["vibrance", "Vibrance"],
+  ["colourfulness", "Colourfulness"],
+  ["curves", "Curves"],
+  ["deband", "Deband"],
+  ["technicolor2", "Technicolor 2"],
+  ["dpx", "DPX / Cineon"],
+  ["bleach_bypass", "Bleach Bypass"],
+  ["noir", "Noir"],
+  ["technicolor", "Technicolor"],
+  ["monochrome", "Monochrome"],
+  ["sepia", "Sepia"],
+  ["film_grain", "Film Grain"],
+  ["vignette", "Vignette"],
+  ["cartoon", "Cartoon"],
+  ["nostalgia", "Nostalgia"],
+  ["chromatic_aberration", "Chromatic Aberration"]
+];
+var EFFECT_NAME = Object.fromEntries(FILTER_EFFECTS);
+var filtersOn = (cfg) => !!cfg && cfg.external_vulkan_layer === "vkbasalt";
+var presetOf = (cfg) => {
+  if (!cfg) return null;
+  if (!filtersOn(cfg)) return "off";
+  return (FILTER_PRESETS.find((p) => Object.entries(p.f).every(([k, v]) => typeof v === "number" ? Math.abs((cfg[k] || 0) - v) < 0.01 : cfg[k] === v)) || {}).id || "custom";
+};
+function filterSummary(cfg) {
+  if (!filtersOn(cfg)) return "Off";
+  const parts = cfg.vkbasalt_shader && cfg.vkbasalt_shader !== "none" ? cfg.vkbasalt_shader.split(":").map((e) => EFFECT_NAME[e] || e) : [];
+  if (cfg.vkbasalt_antialiasing && cfg.vkbasalt_antialiasing !== "none") parts.push(cfg.vkbasalt_antialiasing.toUpperCase());
+  if (cfg.vkbasalt_sharpening && cfg.vkbasalt_sharpening !== "none") parts.push(cfg.vkbasalt_sharpening.toUpperCase() + " " + Math.round((cfg.vkbasalt_sharpness || 0) * 100) + "%");
+  return parts.length ? parts.join(" + ") : "No effect";
+}
+function filterState(cfg, insp, wasOn) {
+  const actual = insp && insp.actual || {};
+  const running = actual.state === "running";
+  if (cfg && cfg.external_vulkan_layer === "mangohud") return { tone: "warn", pill: null, text: "This profile loads its own MangoHud layer in the slot filters use. Turn it off under All settings \u2192 external_vulkan_layer to use filters." };
+  if (!filtersOn(cfg)) return { tone: "quiet", pill: null, text: "Pick a look. Filters load when a game starts." };
+  if (running && actual.vkbasalt_loaded) return { tone: "ok", pill: "LIVE", text: "Changes apply in the game right away." };
+  if (running) return { tone: "warn", pill: "NEXT LAUNCH", text: wasOn ? "Filters are not loaded in this game. Restart the game to use them." : "Filters start with the next game launch." };
+  return { tone: "quiet", pill: null, text: "Ready for the next game. Changes also apply while you play." };
+}
+function useFilterInspector(profile, cfg) {
+  const [insp, setInsp] = useState(null);
+  const key = cfg ? [cfg.external_vulkan_layer, cfg.vkbasalt_shader, cfg.vkbasalt_sharpening].join("|") : "";
+  useEffect(() => {
+    let alive = true;
+    const poll = () => rpc.inspector(profile || "").then((r) => {
+      if (alive) setInsp(r);
+    }).catch(() => {
+    });
+    poll();
+    const id = setInterval(poll, 1e4);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [profile, key]);
+  return insp;
+}
+function PresetGrid({ cfg, onPick, disabled }) {
+  const active = presetOf(cfg);
+  return h("div", { className: "fgrid" }, FILTER_PRESETS.map((p) => h(
+    Focusable,
+    { key: p.id, className: "ftile" + (active === p.id ? " on" : "") + (disabled ? " dis" : ""), onClick: disabled ? void 0 : () => onPick(p) },
+    h("div", { className: "sw", style: { background: p.sw } }, p.id === "off" ? h("i", { className: "slash" }) : null),
+    h("div", { className: "fl" }, p.name)
+  )));
+}
+var applyPreset = (cfg, patch, p) => patch(p.id === "off" ? { ...p.f } : { external_vulkan_layer: "vkbasalt", ...p.f });
+function FiltersCard({ profile, cfg, patch, go }) {
+  const insp = useFilterInspector(profile, cfg);
+  if (!cfg) return null;
+  const st = filterState(cfg, insp, true), active = presetOf(cfg);
+  return h(
+    "div",
+    { className: "card filters" },
+    h("div", { className: "fos-head" }, h("span", null, "FILTERS"), st.pill ? h("span", { className: "pill " + (st.pill === "LIVE" ? "live" : "would") }, st.pill) : null),
+    h(PresetGrid, { cfg, disabled: st.tone === "warn" && !filtersOn(cfg), onPick: (p) => applyPreset(cfg, patch, p) }),
+    h(
+      Focusable,
+      { className: "fmore", onClick: () => go("filters") },
+      h("span", null, active === "custom" ? "Custom \xB7 " + filterSummary(cfg) : filterSummary(cfg)),
+      h("b", null, "Fine-tune \u203A")
+    ),
+    h("div", { className: "fnote " + st.tone }, st.text)
+  );
+}
+function FiltersPage({ back, profile, cfg, patch }) {
+  const insp = useFilterInspector(profile, cfg);
+  if (!cfg) return h(Page, { title: "Filters", onBack: back }, h("div", { className: "hint" }, "Loading\u2026"));
+  const on = filtersOn(cfg), st = filterState(cfg, insp, true);
+  const chain = cfg.vkbasalt_shader && cfg.vkbasalt_shader !== "none" ? cfg.vkbasalt_shader.split(":") : [];
+  const toggleEffect = (e) => {
+    const next = chain.includes(e) ? chain.filter((x) => x !== e) : [...chain, e];
+    patch({ external_vulkan_layer: "vkbasalt", vkbasalt_shader: next.length ? next.join(":") : "none" });
+  };
+  const sharp = cfg.vkbasalt_sharpening || "none";
+  const step = (k, dv) => patch({ [k]: Math.max(0, Math.min(1, Math.round(((cfg[k] || 0) + dv) * 20) / 20)) });
+  return h(
+    Page,
+    { title: "Filters", onBack: back },
+    h("div", { className: "list", style: { marginTop: 0 } }, h(Toggle, {
+      on,
+      title: "Shader filters",
+      sub: "vkBasalt effects on top of the game. Loads at game start; changes then apply live.",
+      onChange: (v) => patch({ external_vulkan_layer: v ? "vkbasalt" : "" })
+    })),
+    h("div", { className: "fnote " + st.tone, style: { marginTop: 10 } }, st.text),
+    h("div", { className: "sec" }, "LOOKS"),
+    h(PresetGrid, { cfg, onPick: (p) => applyPreset(cfg, patch, p) }),
+    h("div", { className: "sec" }, "SHARPENING"),
+    h(Seg, { value: sharp, options: [["none", "Off"], ["cas", "CAS"], ["dls", "DLS"]], onChange: (v) => patch({ external_vulkan_layer: "vkbasalt", vkbasalt_sharpening: v }) }),
+    sharp !== "none" ? h(
+      "div",
+      { className: "list" },
+      h(
+        "div",
+        { className: "row" },
+        h("div", { className: "t" }, h("b", null, "Strength"), h("span", null, "May show grain")),
+        h(
+          "div",
+          { className: "step" },
+          h(Focusable, { className: "stepb", onClick: () => step("vkbasalt_sharpness", -0.05) }, "\u2212"),
+          h("div", { className: "v" }, Math.round((cfg.vkbasalt_sharpness || 0) * 100) + "%"),
+          h(Focusable, { className: "stepb", onClick: () => step("vkbasalt_sharpness", 0.05) }, "+")
+        )
+      ),
+      sharp === "dls" ? h(
+        "div",
+        { className: "row" },
+        h("div", { className: "t" }, h("b", null, "Denoise"), h("span", null, "Keeps DLS off film grain")),
+        h(
+          "div",
+          { className: "step" },
+          h(Focusable, { className: "stepb", onClick: () => step("vkbasalt_dls_denoise", -0.05) }, "\u2212"),
+          h("div", { className: "v" }, Math.round((cfg.vkbasalt_dls_denoise || 0) * 100) + "%"),
+          h(Focusable, { className: "stepb", onClick: () => step("vkbasalt_dls_denoise", 0.05) }, "+")
+        )
+      ) : null
+    ) : null,
+    h("div", { className: "sec" }, "ANTI-ALIASING"),
+    h(Seg, { value: cfg.vkbasalt_antialiasing || "none", options: [["none", "Off"], ["fxaa", "FXAA"], ["smaa", "SMAA"]], onChange: (v) => patch({ external_vulkan_layer: "vkbasalt", vkbasalt_antialiasing: v }) }),
+    h("div", { className: "sec" }, "EFFECTS \xB7 " + (chain.length ? chain.length + " ON, IN THIS ORDER" : "NONE")),
+    h("div", { className: "egrid" }, FILTER_EFFECTS.map(([e, name]) => {
+      const i = chain.indexOf(e);
+      return h(
+        Focusable,
+        { key: e, className: "echip" + (i >= 0 ? " on" : ""), onClick: () => toggleEffect(e) },
+        h("span", { className: "eord" + (i >= 0 ? " on" : "") }, i >= 0 ? String(i + 1) : "+"),
+        h("span", { className: "en" }, name)
+      );
+    })),
+    chain.length ? h("div", { className: "list" }, h(Row, { icon: "stop", title: "Clear effects", sub: "Sharpening and anti-aliasing stay", onClick: () => patch({ vkbasalt_shader: "none" }) })) : null,
+    h(Note, { quiet: true }, "Effects run in the order you turn them on. Each one costs some GPU time, the heavy ones (HDR Look, Clarity, SMAA) the most: with the Governor on, that can mean a little more power or a deeper ratio.")
+  );
+}
 function GovernorPage({ s, back, profile, refresh }) {
   const dev = s.device || {}, req = s.request, pt = s.active_point, lad = s.ladder || {}, b = s.budget;
   const mode = s.mode || "budget";
@@ -668,6 +971,7 @@ function GovernorPage({ s, back, profile, refresh }) {
       Object.keys(b.known_failures || {}).length ? h("span", null, "Recently failed") : null,
       Object.keys(b.known_failures || {}).length ? h("b", null, Object.entries(b.known_failures).slice(0, 3).map(([k, w]) => fmtMult(k.split("x")[1] || 1) + " at \u2264" + num(w, 0) + " W").join(", ")) : null
     )) : null,
+    b ? h(SplitCard, { ps: s.power_split }) : null,
     h("div", { className: "sec" }, "DECISION"),
     h("div", { className: "card" }, h(
       "div",
@@ -911,7 +1215,8 @@ function SettingsPage({ back, go, profile, s }) {
       h(Row, { icon: "user", title: "Profile", value: profile || "Default", onClick: () => go("profiles") }),
       h(Row, { icon: "play", title: "Launch command", sub: "Copy it into the game's Steam launch options", onClick: () => go("launch") }),
       h(Row, { icon: "layers", title: "Frame generation backend", sub: "GFG Engine, OptiScaler, in-game", onClick: () => go("fg") }),
-      h(Row, { icon: "scale", title: "Scaling", sub: "Render scale for extra headroom", onClick: () => go("scaling") })
+      h(Row, { icon: "scale", title: "Scaling", sub: "Render scale for extra headroom", onClick: () => go("scaling") }),
+      h(Row, { icon: "filter", title: "Filters", sub: "Sharpening, anti-aliasing, color looks", onClick: () => go("filters") })
     ),
     h("div", { className: "sec" }, "SUPPORT"),
     h(
@@ -1349,7 +1654,11 @@ function Content() {
     setScreen("settings");
   };
   const back = () => setScreen("home");
-  const go = setScreen;
+  const [filtersFrom, setFiltersFrom] = useState("home");
+  const go = (to) => {
+    if (to === "filters") setFiltersFrom(screen === "settings" ? "settings" : "home");
+    setScreen(to);
+  };
   const [, force] = useState(0);
   useEffect(() => {
     const f = () => force((n) => n + 1);
@@ -1371,7 +1680,8 @@ function Content() {
   else if (screen === "all") body = h(AllSettingsPage, { back: () => setScreen("settings"), cfg, patch });
   else if (screen === "system") body = h(SystemPage, { back: () => setScreen("settings"), inst, reloadInst });
   else if (screen === "advanced") body = h(AdvancedPage, { back, s, insp, launch, go, profile });
-  else body = h(Home, { s, profile, go, refresh, inst, reloadInst, launch });
+  else if (screen === "filters") body = h(FiltersPage, { back: () => setScreen(filtersFrom), profile, cfg, patch });
+  else body = h(Home, { s, profile, go, refresh, inst, reloadInst, launch, cfg, patch });
   return h("div", { className: "gfg" }, h("style", null, css), errBanner, body);
 }
 var MdBolt = () => h("img", { src: LOGO, width: 20, height: 20 });

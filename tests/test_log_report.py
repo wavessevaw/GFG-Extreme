@@ -101,6 +101,23 @@ class ReportTests(unittest.TestCase):
         self.assertIn("recorded with: GFG Extreme 1.0.0", render(rep))
         self.assertTrue(rep["findings"][0].startswith("Recorded with 1.0.0; this report is from"))
 
+    def test_power_split_steps_and_ab_pairs_are_reported(self):
+        step = lambda khz, level, why: {"event": "power-split", "reason": why, "cpu_khz": khz, "level": level}
+        pair = lambda g: {"event": "power-split-ab", "reason": "measured", "gain": g, "mhz": g + 0.5,
+                          "draw": 0.2, "real": 0.0}
+        events = [step(3_000_000, 1, "step-down"), step(2_400_000, 2, "step-down"),
+                  step(3_500_000, 0, "real-frames-short"), pair(6.0), pair(8.0), pair(7.0)]
+        rep = analyze(bundle({"timeline.jsonl": timeline(self.rows()), "governor-events.jsonl": timeline(events)}))
+        split = rep["power_split"]
+        self.assertEqual(split["lowest_khz"], 2_400_000)
+        self.assertEqual(split["gain"]["n"], 3)
+        text = "\n".join(rep["findings"])
+        self.assertIn("the CPU clock went down to 2.4 GHz; the cap came off 1× for real frames short", text)
+        self.assertIn("GPU clock per watt +7.0% (", text)
+        self.assertIn("over 3 pairs; GPU clock +7.5%, draw -0.2%, real FPS +0.0", text)
+        none = analyze(bundle({"timeline.jsonl": timeline(self.rows()), "governor-events.jsonl": timeline([])}))
+        self.assertIsNone(none["power_split"])
+
     def test_frequent_not_power_bound_holds_are_reported(self):
         # review 1.1.x: the guard holding because the draw was far under the cap was invisible in logs.
         hold = lambda d: {"event": "budget-guard-not-power-bound", "reason": "guard-not-power-bound:real-p5-short",

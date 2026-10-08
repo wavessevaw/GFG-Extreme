@@ -103,6 +103,8 @@ def compact_status(status: Dict[str, Any]) -> Dict[str, Any]:
             "phase", "probe", "flavor", "verifying", "thermal", "thermal_deferred", "current_max_multiplier",
             "known_failures", "warm_started", "floor_w", "heat_limited")} if status.get("budget") else None,
         "frame_os": compact_frame_os(status.get("frame_os")),
+        "power_split": {k: (status.get("power_split") or {}).get(k) for k in (
+            "phase", "reason", "level", "cap_khz", "ab", "pairs", "gain_pct")} if status.get("power_split") else None,
     }
 
 
@@ -485,8 +487,12 @@ class SessionRecorder:
             "tdp_tools_processes": run(["pgrep", "-a", "-f", "ryzenadj|powertools|PowerControl|SimpleDeckyTDP"])[:2000],
             "decky_plugins": sorted(p.name for p in (self.user_home / "homebrew" / "plugins").glob("*"))
             if (self.user_home / "homebrew" / "plugins").is_dir() else [],
+            # power split (1.5): what the CPU clock limits read, and which cpufreq driver sets them
+            "cpufreq": {p.name: {"max": read(str(p / "scaling_max_freq")), "hw_max": read(str(p / "cpuinfo_max_freq")),
+                                 "driver": read(str(p / "scaling_driver"))}
+                        for p in sorted(Path("/sys/devices/system/cpu/cpufreq").glob("policy[0-9]*"))[:16]},
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme 1.3.2 (engine 4.0.0-gfg.4)",
+            "plugin_version": "GFG Extreme 1.5.0 (engine 4.0.0-gfg.4)",
         }
 
     def _write_bundle(self) -> Path:

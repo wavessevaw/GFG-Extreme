@@ -44,17 +44,20 @@ and keeps adjusting while you play. Your Deck never burns a watt it doesn't need
 - **🧠 Set it once.** Press **Run**. No TDP sliders, FPS caps or frame-generation settings to babysit. GFG remembers every game and starts from what worked last time.
 - **🛡️ Picture first.** Every change is checked against the renderer's own frame data and **rolled back if it doesn't hold**. GFG never trades smoothness for watts behind your back.
 - **⚡ Real frames when it matters.** **Frame OS** reads your controls: turn the camera or start a fight and it raises the *real* frame rate on the spot; pause, and it saves power.
+- **🔀 Watts go where the frames are.** In GPU-bound games GFG slows the CPU's boost just enough for the GPU to get the watts. It measures the effect in your game and switches the split off wherever it doesn't help.
 - **📊 Proof, not promises.** Frame OS **measures its own benefit in your game** with in-game A/B checks, and switches off whatever doesn't pay off there.
 
 Works with Steam games and, through Flatpak support, with Heroic, Lutris and emulators. Your saved settings are never touched: **Stop** puts everything back.
 
-## New in 1.3
+## New in 1.5
 
-- **Frame OS checks itself.** In Act it now and then switches one of its effects off for a few seconds and compares the same moment with and without it. After three comparisons its rings show **measured** numbers from your game instead of estimates.
-- **Frame OS remembers every game.** Results carry over to the next session; an effect that does not help in a game — say, a boost the GPU cannot feed — is switched off there automatically and re-tried every few sessions.
-- **Faster boosts.** A boost starts on the *onset* of a camera swing, about one real frame earlier.
-- **Sharper overlay.** The in-game BOOST badge now reads correctly (`BOOST 45R x2`), and an `A/B` badge shows while a check runs.
-- **1.3.1 — a rock-steady HUD and Predictive Presentation.** The in-game rings are drawn on every frame with no flicker, and the pacer plans each frame from the scene's cost trend, so a scene getting heavier no longer costs missed frames. Per-game switch-offs now need solid evidence from several sessions, and a Steam menu left open is never mistaken for a struggling game.
+- **Smart power split.** The Deck's CPU and GPU share one power limit. In a GPU-bound game the CPU still boosts to 3.5 GHz between frames and takes watts the GPU needs. GFG now lowers the CPU's top clock step by step, only while the busiest core has room to spare. The GPU gets those watts back, and the Governor turns them into a lower TDP for the same real frames. If real frames dip or the CPU gets busy, the cap comes off at once.
+- **Measured in your game.** Now and then GFG lifts the cap for a few seconds and compares GPU clock per watt with and without it. Details show the result. A game where the split makes no measurable difference gets it switched off automatically, and it is re-checked every few sessions.
+- **Filters are back.** Eight one-tap looks right on Home: Sharp, Vivid, HDR look, Cinema, Noir, Retro, Smooth or Off. They switch while you play. Settings → Filters has every control: sharpening and its strength, FXAA / SMAA, and 19 effects you can stack in any order.
+- **A smaller Home.** The FPS ring now sits beside the status. Tap the ring to switch layouts: big ring, smaller ring, ring beside the status, or half-ring.
+- **1.3.2 — a steadier Governor.** The screen refresh rate changes only when you change the Target FPS. A brief loss of frame-generation resources no longer blocks a mode for 10 minutes, and a fast TDP boost now needs fresh frame data.
+
+Also in 1.3: Frame OS checks its own effects with in-game A/B and remembers every game, the HUD is flicker-free, and pacing is predictive.
 
 Full notes: [Releases](https://github.com/wavessevaw/GFG-Extreme/releases).
 
@@ -79,6 +82,29 @@ Full notes: [Releases](https://github.com/wavessevaw/GFG-Extreme/releases).
 | **Battery** | 24 or more | 9–11 W ideal, more only as a last resort | you want the longest play time |
 | **Balanced** | 30 or more | starts at 12 W, never above the normal range | you want a steadier picture |
 | **Quality** | as many as possible | lowered after quality is set | you are plugged in |
+
+## Smart power split
+
+<p align="center"><img src="docs/img/details-power-split.png" width="300"></p>
+
+The Deck gives its CPU and GPU one shared power budget. Most demanding games are GPU-bound: the GPU decides the frame rate while the CPU waits, yet it still boosts to full clock and spends watts. GFG gives those watts to the GPU:
+
+- **Only where it can help.** The game must be GPU-bound or at the Governor's power cap, and its busiest CPU core must have room to spare even at the lower clock.
+- **One step at a time.** 3.5 → 3.0 → 2.4 → 2.1 → 1.8 GHz, never below 1.6 GHz and never above your own limit. Each step is a 10-second trial.
+- **Real frames first.** If real frames fall short or a core nears its limit, the cap comes off immediately. Loading screens, Steam's menu, Frame OS Act and a pending mode change always run at full CPU clock.
+- **Checked and remembered.** A/B checks measure GPU clock per watt with and without the cap. The deepest step that held is remembered per game, and a game with no measurable gain gets the split switched off.
+- **Always given back.** Your CPU limit returns when the game ends, when you press Stop, and when the plugin unloads, even after a crash. If another tool sets the CPU clock, GFG leaves it alone. You can switch it off in **Details → Smart power split**.
+
+## Filters
+
+<p align="center"><img src="docs/img/home-filters.png" width="300">&nbsp;&nbsp;<img src="docs/img/page-filters.png" width="250"></p>
+
+Change how the game looks without leaving it. Open the Quick Access menu and tap a look:
+
+- **Eight looks, one tap each.** Sharp (CAS), Vivid, HDR look, Cinema, Noir, Retro, Smooth (SMAA) or Off.
+- **Live in the game.** Once filters are loaded, a new look applies right away (**LIVE**). Filters load when the game starts, and the card tells you if this game needs a restart first.
+- **Fine-tune.** **Settings → Filters** has sharpening (CAS or DLS) with its strength, anti-aliasing (FXAA or SMAA), and 19 effects that run in the order you turn them on. Your own lines in the vkBasalt file are kept.
+- **Per profile.** Each game profile keeps its own look. Effects cost some GPU time; with the Governor on, a heavy stack can mean a little more power or a deeper ratio.
 
 ## Frame OS (experimental)
 

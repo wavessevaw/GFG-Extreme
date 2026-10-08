@@ -11,6 +11,8 @@ const cases = [
   ["home-locked-oled", ["Details"], ["Details", "HEALTH", "Frametime p95 / p99", "24.5 / 31.2 ms", "×1 to ×3.75, deeper only as a last resort", "never modified"]],
   ["home-budget-oled", [], ["Adapting · 9 W", "Ideal: 11 W or less", "EASY"]],
   ["home-budget-oled", ["Details"], ["BATTERY", "TDP target", "9 W", "Ideal (≤ 11 W)", "9–11 W ideal, 15 W max (this Deck's maximum)"]],
+  ["home-power-split", ["Details"], ["CPU / GPU POWER SPLIT", "CPU capped at 2.4 GHz · the GPU gets the watts", "+7.4% GPU clock/W · 6 A/B", "+7.9% GPU clock, −0.4% draw", "Smart power split"]],
+  ["home-power-split-short", ["Details"], ["Full CPU speed · real frames came first", "Not measured yet"]],
   ["home-warm-start", [], ["Adapting · 8 W", "Started from what worked last time."]],
   ["home-warm-start", ["Details"], ["Remembered from last session"]],
   ["home-budget-oled", ["Details"], ["Searched from scratch"]],
@@ -60,6 +62,8 @@ const cases = [
   ["home-idle-oled", ["Settings"], ["GFG Extreme 1.0.0"]],
   ["home-idle-oled", ["Settings", "Launch command"], ["Copy launch command", "Launch Options"]],
   ["home-idle-oled", ["Settings", "Diagnostics"], ["RECORD A LOG", "Record log", "FRAME OS (EXPERIMENTAL)", "Observe"]],
+  ["home-locked-oled", [], ["FILTERS", "Vivid", "HDR look", "Fine-tune ›"]],
+  ["home-locked-oled", ["Settings", "Filters"], ["Shader filters", "LOOKS", "SHARPENING", "ANTI-ALIASING", "EFFECTS · NONE", "Film Grain"]],
 ];
 const browser = await launch();
 let failed = 0;
@@ -69,6 +73,30 @@ for (const [state, nav, expected] of cases) {
   for (const needle of expected) if (!text.includes(needle)) { failed++; console.error(`FAIL ${state} ${JSON.stringify(nav)}: missing "${needle}"`); }
   for (const e of page.__errors) { failed++; console.error(`FAIL ${state}: page error ${e}`); }
   await page.close();
+}
+// Tapping the ring cycles the hero layout: side (default) -> half-ring -> big ring -> smaller ring -> side.
+{
+  const page = await openPage(browser, STATES["home-locked-oled"]);
+  const layout = () => page.evaluate(() => {
+    const e = document.querySelector(".hero");
+    return e.querySelector(".hero-side") ? "side" : e.querySelector(".arc") ? "arc" : e.querySelector(".ring.compact") ? "compact" : "classic";
+  });
+  const seen = [await layout()];
+  for (let i = 0; i < 4; i++) { await page.locator(".herotap").first().click(); await page.waitForTimeout(80); seen.push(await layout()); }
+  if (seen.join(",") !== "side,arc,classic,compact,side") { failed++; console.error(`FAIL hero tap cycle: ${seen.join(",")}`); }
+  for (const e of page.__errors) { failed++; console.error(`FAIL hero cycle: page error ${e}`); }
+  await page.close();
+  cases.push(["hero-cycle"]);
+}
+// One tap on a look writes the filter fields (and turns the vkBasalt layer on).
+{
+  const page = await openPage(browser, STATES["home-locked-oled"]);
+  await page.getByText("Vivid", { exact: true }).first().click();
+  await page.waitForTimeout(150);
+  const p = await page.evaluate(() => window.__patches);
+  if (!p.length || p[0].external_vulkan_layer !== "vkbasalt" || p[0].vkbasalt_shader !== "vibrance") { failed++; console.error(`FAIL filter preset patch: ${JSON.stringify(p)}`); }
+  await page.close();
+  cases.push(["filter-preset"]);
 }
 // Text settings are saved on Enter / blur, never per keystroke.
 {

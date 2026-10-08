@@ -11,8 +11,8 @@ const frameOs = { mode: "act", enabled: true, acting: true, act_unlocked: true, 
   decision: { level: "boost", real_hz: 45 },
   telemetry: { live: true, frames: 48210, freshness_ms: 13.1, present_interval_p50_ms: 22.2, present_interval_p95_ms: 23.6 } };
 const st = (name, more = {}) => ({ ...STATES[name], version: VERSION, ...more });
-async function shot(name, state, nav = [], from = null, to = null) {
-  const page = await openPage(browser, state, nav);
+async function shot(name, state, nav = [], from = null, to = null, extra = {}) {
+  const page = await openPage(browser, state, nav, extra);
   const file = out + name + ".png";
   if (from) {
     // Crop from a section heading to the next one (or the end of the page).
@@ -34,6 +34,7 @@ await shot("home-balanced-oled", st("home-balanced"));
 const oled = { device: STATES["home-idle-oled"].device, target_output_fps: 90 };
 await shot("home-last-session", st("home-last-session-mixed", oled));
 await shot("page-details", st("readme-home"), ["Details"]);
+await shot("details-power-split", st("home-power-split"), ["Details"], "CPU / GPU POWER SPLIT", "DECISION");
 await shot("page-settings", st("readme-home"), ["Settings"]);
 await shot("page-setup", st("setup-bad"), ["Settings", "Diagnostics", "Check setup"]);
 await shot("page-hud", st("readme-home"), ["Settings", "In-game overlay"]);
@@ -44,4 +45,18 @@ await shot("page-frame-os", { ...fosBase, frame_os: { ...frameOs, ...fo, acknowl
   ["Settings", "Diagnostics"], "FRAME OS (EXPERIMENTAL)", "INSPECTOR");
 if (STATES["home-frame-os-act"]) await shot("home-frame-os", st("home-frame-os-act"));
 else console.error("home-frame-os-act not in lib.mjs yet: home-frame-os.png not rendered");
+// Filters: the Home card while a game runs with vkBasalt loaded, and the full page.
+const fcfg = { fg_backend: "gfg", multiplier: 2, external_vulkan_layer: "vkbasalt", vkbasalt_shader: "vibrance",
+  vkbasalt_sharpening: "cas", vkbasalt_sharpness: 0.35, vkbasalt_antialiasing: "none", vkbasalt_dls_denoise: 0.2 };
+const fstate = { ...st("readme-home"), __actual: { state: "running", vkbasalt_loaded: true } };
+{
+  const page = await openPage(browser, fstate, [], { cfg: fcfg });
+  await page.waitForTimeout(300);
+  const box = await page.locator(".filters").first().boundingBox();
+  await page.screenshot({ path: out + "home-filters.png", fullPage: true, clip: { x: 0, y: Math.max(0, box.y - 8), width: 330, height: box.height + 16 } });
+  await page.close();
+  console.log(out + "home-filters.png");
+}
+await shot("page-filters", fstate, ["Settings", "Filters"], "Shader filters", null, { cfg: { ...fcfg,
+  vkbasalt_shader: "clarity:vibrance:film_grain", vkbasalt_sharpness: 0.45, vkbasalt_antialiasing: "smaa" } });
 await browser.close();
