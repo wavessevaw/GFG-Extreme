@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="570" viewBox="0 0 660 570" role="img" aria-labelledby="t d">
+<title id="t">GFG Extreme Battery savings effort</title>
+<desc id="d">Illustrative GFG card with Off, Light, Medium, Hard. Hard selected. OLED 60 Hz and LCD 45 Hz.</desc>
+<defs><linearGradient id="bg" x2="0.9" y2="1"><stop stop-color="#18191f"/><stop offset="1" stop-color="#0e1014"/></linearGradient><linearGradient id="red" x2="1" y2="0"><stop stop-color="#ef5654"/><stop offset="1" stop-color="#be292f"/></linearGradient></defs>
+<rect width="660" height="570" rx="30" fill="#0a0b0e"/>
+<rect x="24" y="23" width="612" height="524" rx="23" fill="url(#bg)" stroke="#34363c"/>
+<g font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif">
+<text x="56" y="71" font-size="19" letter-spacing="3" fill="#aaaeb8">GFG EXTREME</text>
+<text x="56" y="116" font-size="34" font-weight="700" fill="#f5f5f7">Battery</text>
+<text x="56" y="151" font-size="17" fill="#979ba5">Savings effort</text>
+<rect x="52" y="186" width="556" height="84" rx="20" fill="#282a30"/>
+<rect x="469" y="190" width="135" height="76" rx="17" fill="url(#red)"/>
+<g font-size="21" font-weight="600" text-anchor="middle"><text x="121" y="236" fill="#c6c8ce">Off</text><text x="261" y="236" fill="#c6c8ce">Light</text><text x="398" y="236" fill="#c6c8ce">Medium</text><text x="536" y="236" fill="white">Hard</text></g>
+<text x="56" y="321" font-size="26" font-weight="650" fill="#ffffff">Maximum safe savings</text>
+<text x="56" y="357" font-size="18" fill="#babdc6">Only Hard can adjust the panel refresh rate.</text>
+<rect x="56" y="386" width="546" height="65" rx="13" fill="#23252b"/>
+<text x="78" y="425" font-size="21" font-weight="650" fill="#f7f7f9">OLED 60 Hz</text>
+<text x="333" y="425" font-size="21" font-weight="650" fill="#f7f7f9">LCD 45 Hz</text>
+<text x="56" y="494" font-size="16" fill="#adb1ba">Real FPS comes first. Original refresh is restored.</text>
+<text x="56" y="519" font-size="14" fill="#747881">Illustrative interface. Not a battery-life guarantee.</text>
+</g></svg>
