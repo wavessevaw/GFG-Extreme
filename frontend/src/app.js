@@ -508,9 +508,11 @@ function FrameOsPanel({ s, profile }) {
   const d = fo.decision || {};
   return h("div", null,
     h("div", { className: "sec" }, "FRAME OS (EXPERIMENTAL)"),
-    h(Seg, { value: mode, options: [["off", "Off"], ["observe", "Observe"], ["shadow", "Shadow"], ["act", "Act"]],
+    h(Seg, { value: mode, options: [["off", "Off"], ["observe", "Observe"], ["shadow", "Shadow"]].concat(fo.act_unlocked ? [["act", "Act"]] : []),
              onChange: async (v) => { const prev = mode; setMode(v); let ok = false; try { const r = await rpc.setFrameOs(profile, v); ok = !!(r && r.success); } catch (e) {} if (!ok) setMode(prev); } }),
-    h(Note, { quiet: true }, "Observe and Shadow only measure. Act changes frame timing and power. Applies from the next game start."),
+    h(Note, { quiet: true }, fo.act_unlocked
+      ? "Observe and Shadow only measure. Act changes frame timing and power. Applies from the next game start."
+      : "Frame OS is diagnostic only until Deck validation. Applies from the next game start."),
     mode !== "off" && fo.enabled && fo.telemetry && !fo.telemetry.live && fo.layer_installed !== false
       ? h(Note, null, "Frame OS is not active in this game yet: it loads at game start. Restart the game.")
       : null,
