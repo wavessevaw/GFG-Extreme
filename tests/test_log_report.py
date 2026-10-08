@@ -171,3 +171,19 @@ class FrameOsLateSwitchTests(unittest.TestCase):
         rep = analyze(bundle({"timeline.jsonl": timeline(rows), "game-processes.json": json.dumps(procs)}))
         self.assertIn("restart the game", "\n".join(rep["findings"]))
         self.assertNotIn("32-bit", "\n".join(rep["findings"]))
+
+
+class FrameOsByLevelTests(unittest.TestCase):
+    def test_boost_and_calm_are_reported_separately(self):
+        def row(i, level, interval, fresh, acting):
+            return {"t": float(i), "state": "LOCKED", "output": 90, "tdp": 12,
+                    "frame_os": {"mode": "act", "layer_installed": True, "level": level, "acting": acting,
+                                 "layer": {"live": True, "frames": 100 + i, "present_interval_p50_ms": interval,
+                                           "freshness_ms": fresh, "present_hold_ms": fresh - 1}}}
+        rows = [row(i, "calm", 33.3, 25.0, True) for i in range(5)] + [row(i, "boost", 33.3, 25.0, True) for i in range(5, 10)]
+        rep = analyze(bundle({"timeline.jsonl": timeline(rows)}))
+        by = rep["frame_os"]["by_level"]
+        self.assertEqual((by["calm"]["samples"], by["boost"]["real_fps"]), (5, 30.0))
+        joined = "\n".join(rep["findings"])
+        self.assertIn("Frame OS by decision", joined)
+        self.assertIn("boost did not raise the real frame rate", joined)

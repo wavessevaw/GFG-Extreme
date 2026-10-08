@@ -147,8 +147,47 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
     report["failed_checks"] = [c for c in self_test if not c.get("ok")]
     report["overlay_burst_before_exit"] = overlay_burst_before_exit(_jsonl(_read(bundle, "activity.jsonl")))
     report["frame_os"] = frame_os_summary(samples, _read(bundle, "game-processes.json"))
+    if report["frame_os"]:
+        report["frame_os"]["by_level"] = frame_os_by_level(samples)
     report["findings"] = findings(report, names)
     return report
+
+
+def frame_os_by_level(samples: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Per decision (rest / calm / boost): what the layer measured and what the player got.
+
+    Answers the Act question directly: does boost deliver more real frames and lower freshness,
+    and does output smoothness hold while the cadence moves?"""
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for r in samples:
+        fo = r.get("frame_os")
+        if not isinstance(fo, dict) or not fo.get("level"):
+            continue
+        layer = fo.get("layer") or {}
+        if not layer.get("live"):
+            continue
+        groups.setdefault(str(fo["level"]), []).append({**layer, "_output": r.get("output"), "_tdp": r.get("tdp"),
+                                                        "_acting": fo.get("acting")})
+
+    def med(rows: List[Dict[str, Any]], key: str) -> Optional[float]:
+        values = [x[key] for x in rows if isinstance(x.get(key), (int, float)) and x[key] > 0]
+        return round(statistics.median(values), 2) if values else None
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for level, rows in sorted(groups.items()):
+        interval = med(rows, "present_interval_p50_ms")
+        outputs = [x["_output"] for x in rows if isinstance(x.get("_output"), (int, float))]
+        out[level] = {
+            "samples": len(rows),
+            "acting_share": round(sum(1 for x in rows if x.get("_acting")) / len(rows), 2),
+            "real_fps": round(1000.0 / interval, 1) if interval else None,
+            "freshness_ms": med(rows, "freshness_ms"),
+            "present_hold_ms": med(rows, "present_hold_ms"),
+            "interval_p95_ms": med(rows, "present_interval_p95_ms"),
+            "output_p5": _percentile(outputs, 5) if outputs else None,
+            "tdp_w": med(rows, "_tdp"),
+        }
+    return out
 
 
 def frame_os_summary(samples: List[Dict[str, Any]], processes_json: str) -> Optional[Dict[str, Any]]:
@@ -306,6 +345,20 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
                        f"{fo['present_interval_p95_ms']} ms (p50 / p95), present hold "
                        f"{fo.get('present_hold_ms')} ms" + (f", engine {', '.join(fo['engines'])}" if fo.get("engines") else "")
                        + ".")
+        by_level = fo.get("by_level") or {}
+        if by_level:
+            parts = []
+            for level in ("boost", "calm", "rest"):
+                row = by_level.get(level)
+                if row:
+                    parts.append(f"{level}: {row['samples']} s, {row['real_fps']} real, freshness "
+                                 f"{row['freshness_ms']} ms, output p5 {row['output_p5']}"
+                                 + (" (acting)" if row["acting_share"] >= 0.5 else ""))
+            out.append("Frame OS by decision — " + "; ".join(parts) + ".")
+            boost, calm = by_level.get("boost"), by_level.get("calm")
+            if (boost and calm and boost["acting_share"] >= 0.5 and boost.get("real_fps") and calm.get("real_fps")
+                    and boost["real_fps"] < calm["real_fps"] + 5):
+                out.append("Frame OS Act: boost did not raise the real frame rate (the renderer or the GPU held it).")
         if fo.get("input_sources"):
             if not fo.get("input_events"):
                 out.append(f"Frame OS input sensor saw no gamepad input (sources {fo['input_sources']}, "
