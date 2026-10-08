@@ -174,7 +174,9 @@ def start_and_drop_privileges(user_home: Optional[str]) -> bool:
     helper = spawn_helper()
     try:  # Frame OS input sensor: gamepad events only, from a second root child (input_relay.py)
         from .frame_os import input_relay
-        input_relay.set_relay_fd(input_relay.spawn_relay())
+        from .constants import CONFIG_DIR, RUNTIME_STATE_DIRNAME
+        marker = Path(user_home) / CONFIG_DIR / RUNTIME_STATE_DIRNAME / "frame-os.enabled"
+        input_relay.set_relay_fd(input_relay.spawn_relay(marker))
     except Exception:
         pass
     import pwd

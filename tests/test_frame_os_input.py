@@ -55,13 +55,62 @@ class GamepadDetectionTests(unittest.TestCase):
         self.assertEqual(len(out), 2 * EVENT.size)
 
 
+class DeckHidrawTests(unittest.TestCase):
+    def report(self, rx=0, ry=0, lx=0, b8=0, b9=0):
+        data = bytearray(64)
+        data[0], data[1], data[2], data[3] = 0x01, 0x00, 0x09, 0x40
+        data[8], data[9] = b8, b9
+        data[48:50] = lx.to_bytes(2, "little", signed=True)
+        data[52:54] = rx.to_bytes(2, "little", signed=True)
+        data[54:56] = ry.to_bytes(2, "little", signed=True)
+        return bytes(data)
+
+    def records(self, data):
+        return [EVENT.unpack_from(data, o)[2:] for o in range(0, len(data), EVENT.size)]
+
+    def test_sticks_and_button_edges_only_on_change(self):
+        dec = input_relay.DeckReportDecoder()
+        self.assertEqual(dec.decode(self.report(), 1.0), b"")                 # neutral: nothing
+        out = self.records(dec.decode(self.report(rx=20000, b8=0x80), 1.01))
+        self.assertIn((EV_ABS, ABS_RX, 20000), out)
+        self.assertEqual(sum(1 for r in out if r[0] == EV_KEY), 1)
+        self.assertEqual(dec.decode(self.report(rx=20100, b8=0x80), 1.02), b"")  # small move, held button
+        out = self.records(dec.decode(self.report(rx=0, b8=0), 1.03))
+        self.assertIn((EV_ABS, ABS_RX, 0), out)                                 # back to centre is sent
+        self.assertFalse(any(r[0] == EV_KEY for r in out))                      # release is not a press
+
+    def test_other_reports_ignored(self):
+        dec = input_relay.DeckReportDecoder()
+        bad = bytearray(self.report(rx=30000)); bad[2] = 0x04
+        self.assertEqual(dec.decode(bytes(bad), 1.0), b"")
+        self.assertEqual(dec.decode(b"\x01\x00\x09", 1.0), b"")
+
+    def test_hidraw_nodes_by_hid_id(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name, hid in (("hidraw2", "HID_ID=0003:000028DE:00001205"), ("hidraw0", "HID_ID=0003:0000046D:0000C52B")):
+                (root / name / "device").mkdir(parents=True)
+                (root / name / "device" / "uevent").write_text("DRIVER=steam\n" + hid + "\n")
+            self.assertEqual(list(input_relay.deck_hidraw_nodes(root, Path("/dev"))), [Path("/dev/hidraw2")])
+
+    def test_deck_evdev_skipped_when_hidraw_open(self):
+        with tempfile.TemporaryDirectory() as temp:
+            hid, ev = Path(temp) / "hidraw2", Path(temp) / "event5"
+            os.mkfifo(hid); os.mkfifo(ev)
+            pads = input_relay.GamepadSet(scan=lambda: {ev: "Steam Deck"}, hid_scan=lambda: {hid: "Steam Deck controller (hidraw)"})
+            pads.rescan(0.0)
+            self.assertEqual(list(pads.fds), [hid])
+            self.assertEqual(pads.counts, (0, 1))
+            pads.close()
+
+
 class RelayPipeTests(unittest.TestCase):
     def test_gamepad_set_hotplug_and_filtering(self):
         with tempfile.TemporaryDirectory() as temp:
             fifo = Path(temp) / "event9"
             os.mkfifo(fifo)
             nodes = {fifo: "Microsoft X-Box 360 pad 0"}
-            pads = input_relay.GamepadSet(scan=lambda: dict(nodes))
+            pads = input_relay.GamepadSet(scan=lambda: dict(nodes), hid_scan=lambda: {})
             pads.rescan(0.0)
             self.assertEqual(list(pads.names.values()), ["Microsoft X-Box 360 pad 0"])
             writer = os.open(str(fifo), os.O_WRONLY | os.O_NONBLOCK)

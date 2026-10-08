@@ -41,6 +41,7 @@ class InputState:
         self._last_input = None  # type: Optional[float]
         self._presses: Deque[float] = deque()
         self.devices: Optional[int] = None   # gamepads the relay has open (None: unknown)
+        self.hidraw: Optional[int] = None
         self.events = 0
 
     def _norm(self, value: int) -> float:
@@ -54,7 +55,8 @@ class InputState:
 
     def event(self, t: float, etype: int, code: int, value: int) -> None:
         if etype == STATUS_TYPE:
-            self.devices = code
+            self.devices = code + max(0, value)     # evdev pads + Deck hidraw nodes
+            self.hidraw = max(0, value)
             return
         self.events += 1
         if etype == EV_ABS and code in (ABS_RX, ABS_RY, ABS_X, ABS_Y):
@@ -142,7 +144,7 @@ class EvdevReader:
         if devices is None and self.source == "direct":
             devices = len(self._fds)
         return {"source": self.source if self._fds else "none", "gamepads": devices,
-                "events": self.state.events}
+                "deck_hidraw": self.state.hidraw, "events": self.state.events}
 
     def close(self) -> None:
         if self._owned:
