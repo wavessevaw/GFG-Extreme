@@ -127,9 +127,10 @@ class RuntimeBase(unittest.TestCase):
         self.assertEqual(sha(self.cfg.config_file_path), self.saved_hash, "Saved config was modified")
 
     def test_default_ring_marker_is_staged_without_prior_governor_settings(self):
-        # A freshly created ConfigService profile is absent from gfg-governor.json.
-        # Stage the layer anyway, or "enabled by default" would never reach the Vulkan loader.
-        self.assertNotIn("game", self.svc._settings["profiles"]) if not self.svc._profile_enabled("game") else None
+        # A ConfigService profile need not have any saved Governor or HUD preferences.
+        self.svc._settings = {"schema": 1, "profiles": {}}
+        self.assertEqual(self.svc.hud_settings("game")["position"], "bottom-left")
+        self.assertTrue(self.svc.hud_settings("game")["enabled"])
         self.svc._sync_frame_os_marker()
         self.assertTrue(self.svc.ring_hud_marker_path.exists())
 
