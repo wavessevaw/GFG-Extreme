@@ -683,9 +683,18 @@ class GovernorService:
         return result
 
     FRAME_OS_MODES = ("off", "observe", "shadow", "act")
+    FRAME_OS_ACT_ENV = "GFG_FRAME_OS_EXPERIMENTAL_ACT"
+
+    @classmethod
+    def _frame_os_act_unlocked(cls) -> bool:
+        """Act changes Vulkan frame timing and power: require an explicit developer opt-in."""
+        return os.environ.get(cls.FRAME_OS_ACT_ENV) == "1"
 
     def _frame_os_mode(self, profile: str) -> str:
         mode = str(self._profile_settings(profile).get("frame_os", "off"))
+        if mode == "act" and not self._frame_os_act_unlocked():
+            # Also protects profiles saved by an older build; a new UI alone is not a safety gate.
+            return "off"
         return mode if mode in self.FRAME_OS_MODES else "off"
 
     def set_frame_os(self, profile: str, mode: str) -> Dict[str, Any]:
@@ -693,6 +702,8 @@ class GovernorService:
         profile = str(profile or "").strip()
         if not profile or mode not in self.FRAME_OS_MODES:
             return {"success": False, "error": "profile and a mode of off/observe/shadow/act are required"}
+        if mode == "act" and not self._frame_os_act_unlocked():
+            return {"success": False, "error": "Frame OS Act is locked until Deck validation; developer opt-in required"}
         self._settings.setdefault("profiles", {}).setdefault(profile, {})["frame_os"] = mode
         self._save_settings()
         try:
@@ -706,7 +717,7 @@ class GovernorService:
         """The launcher loads the gfg-pacer layer only while some profile uses Frame OS."""
         profiles = self._settings.get("profiles", {})
         wanted = isinstance(profiles, dict) and any(
-            isinstance(v, dict) and v.get("frame_os", "off") in self.FRAME_OS_MODES[1:] for v in profiles.values())
+            self._frame_os_mode(profile) != "off" for profile in profiles)
         if wanted:
             # The launcher loads the layer only when it is staged; a build without it stays inert.
             if self.frame_os_layer_dir is not None:
@@ -870,6 +881,7 @@ class GovernorService:
         value["last_session"] = self._settings.get("last_session")
         value["session_history"] = (self._settings.get("session_history") or [])[: self.SESSION_HISTORY]
         value["frame_os"] = {"mode": self._frame_os_mode(profile or value.get("profile", "")),
+                             "act_unlocked": self._frame_os_act_unlocked(),
                              "layer_installed": bool(self.frame_os_layer_dir and frame_os_layer.is_staged(self.frame_os_layer_dir)),
                              "layer_error": self.frame_os_layer_error,
                              **{k: v for k, v in self.frame_os.last.items() if k != "input"}}
