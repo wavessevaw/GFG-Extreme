@@ -153,10 +153,21 @@ class FrameOsReportTests(unittest.TestCase):
     def test_layer_not_loaded_is_called_out(self):
         rep = analyze(bundle({"timeline.jsonl": timeline(self.rows({})),
                               "game-processes.json": json.dumps([{"pid": 1, "comm": "Game.exe",
-                                                                  "frame_os_layer_loaded": False}])}))
+                                                                  "frame_os_layer_loaded": False,
+                                                                  "env": {"GFG_FRAME_OS_SHM": "/dev/shm/gfg-frame-os"}}])}))
         self.assertIn("Game.exe did not load the Frame OS layer", "\n".join(rep["findings"]))
         self.assertIn("32-bit game?", "\n".join(rep["findings"]))
 
     def test_no_frame_os_rows_no_summary(self):
         rep = analyze(bundle({"timeline.jsonl": timeline([{"t": 0.0, "state": "LOCKED"}])}))
         self.assertIsNone(rep["frame_os"])
+
+
+class FrameOsLateSwitchTests(unittest.TestCase):
+    def test_game_started_before_frame_os_was_on(self):
+        rows = [{"t": float(i), "state": "LOCKED", "frame_os": {"mode": "observe", "layer_installed": True, "layer": {}}}
+                for i in range(5)]
+        procs = [{"pid": 1, "comm": "game.exe", "frame_os_layer_loaded": False, "env": {"DISABLE_GFG_FRAME_OS": "1"}}]
+        rep = analyze(bundle({"timeline.jsonl": timeline(rows), "game-processes.json": json.dumps(procs)}))
+        self.assertIn("restart the game", "\n".join(rep["findings"]))
+        self.assertNotIn("32-bit", "\n".join(rep["findings"]))

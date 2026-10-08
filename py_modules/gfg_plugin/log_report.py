@@ -188,6 +188,9 @@ def frame_os_summary(samples: List[Dict[str, Any]], processes_json: str) -> Opti
         "levels": dict(Counter(str(r.get("level")) for r in rows if r.get("level"))),
         "loaded_in_game": (any(loaded) if loaded else None),
         "not_loaded_processes": sorted({str(p.get("comm") or p.get("pid")) for p in not_loaded}),
+        # The launcher exports the control-file path only when Frame OS was on at game start.
+        "started_without_frame_os": bool(not_loaded) and all(
+            "GFG_FRAME_OS_SHM" not in (p.get("env") or {}) for p in not_loaded),
     }
 
 
@@ -282,6 +285,9 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
     if fo:
         if fo["layer_errors"]:
             out.append("Frame OS: the layer could not be installed: " + "; ".join(fo["layer_errors"]) + ".")
+        elif fo["loaded_in_game"] is False and fo.get("started_without_frame_os"):
+            out.append("Frame OS was switched on after the game had started (or was off at launch): it loads "
+                       "only at game start. Switch it on, then restart the game.")
         elif fo["loaded_in_game"] is False:
             who = ", ".join(fo.get("not_loaded_processes") or []) or "the game process"
             out.append(f"Frame OS was on, but {who} did not load the Frame OS layer "

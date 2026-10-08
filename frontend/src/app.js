@@ -511,6 +511,9 @@ function FrameOsPanel({ s, profile }) {
     h(Seg, { value: mode, options: [["off", "Off"], ["observe", "Observe"], ["shadow", "Shadow"], ["act", "Act"]],
              onChange: async (v) => { const prev = mode; setMode(v); let ok = false; try { const r = await rpc.setFrameOs(profile, v); ok = !!(r && r.success); } catch (e) {} if (!ok) setMode(prev); } }),
     h(Note, { quiet: true }, "Observe and Shadow only measure. Act changes frame timing and power. Applies from the next game start."),
+    mode !== "off" && fo.enabled && fo.telemetry && !fo.telemetry.live && fo.layer_installed !== false
+      ? h(Note, null, "Frame OS is not active in this game yet: it loads at game start. Restart the game.")
+      : null,
     mode !== "off" && fo.layer_installed === false
       ? h(Note, null, fo.layer_error ? "Frame OS layer not installed: " + fo.layer_error + "." : "Frame OS layer not installed yet.")
       : null,
