@@ -1848,9 +1848,22 @@ class GovernorService:
                         await self._release_point(profile, "renderer-capacity-unavailable")
                     self._event("renderer-capacity-paused", "no-generated-frame-slots",
                                 profile=profile, max_multiplier=current_capacity)
+                if profile in self._restore_pending:
+                    # A failed overlay restore leaves the old renderer settings
+                    # live. Never announce observe-only or silently resume a
+                    # recovered swapchain until Saved has actually been restored.
+                    self._status.update({"state": "PAUSED", "reason": "overlay-restore-failed"})
+                    return
                 self._status.update({"state": "OBSERVE_ONLY", "reason": "renderer-capacity-unavailable"})
                 return
             if self._capacity_paused:
+                if profile in self._restore_pending:
+                    # _retry_restores() runs above on every iteration. Wait
+                    # for it to succeed before starting the capacity recovery
+                    # timer, so a failed write cannot become a stale FG lease.
+                    self._capacity_restore_at = None
+                    self._status.update({"state": "PAUSED", "reason": "overlay-restore-failed"})
+                    return
                 if current_capacity is None:
                     self._status.update({"state": "OBSERVE_ONLY", "reason": "renderer-capacity-awaiting-report"})
                     return
