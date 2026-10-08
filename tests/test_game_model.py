@@ -1,4 +1,4 @@
-import sys, tempfile, unittest
+import json, sys, tempfile, unittest
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "py_modules"))
@@ -40,6 +40,52 @@ class StoreTests(unittest.TestCase):
             self.assertIsNone(GameModelStore(path).get("a|90|budget"))
 
 
+    def test_valid_entries_survive_corrupted_failure_and_floor_records(self):
+        with tempfile.TemporaryDirectory() as t:
+            path = Path(t) / "model.json"
+            good = context_key("game", 90, "budget")
+            floor = floor_key("game", 90)
+            data = {
+                "version": 1,
+                "entries": {
+                    good: {
+                        "point": "30x3", "tdp_w": 10.0, "updated": 1000.0,
+                        "confirmations": 1, "failed": {
+                            "broken": ["invalid", 900],
+                            "nan": [float("nan"), 900],
+                            "33x2.75": [10.0, 950.0],
+                        },
+                    },
+                    "invalid|90|budget": {
+                        "point": "30x3", "tdp_w": 10.0,
+                        "updated": float("nan"), "confirmations": 1,
+                    },
+                },
+                "floors": {floor: {
+                    "30x3": [9.0, 950.0, 2],
+                    "bad-timestamp": [9.0, float("nan"), 1],
+                    "bad-count": [9.0, 950.0, float("inf")],
+                }},
+            }
+            path.write_text(json.dumps(data), encoding="utf-8")
+            store = GameModelStore(path, clock=lambda: 1000.0)
+            self.assertEqual(store.get(good)["point"], "30x3")
+            self.assertIsNone(store.get("invalid|90|budget"))
+            self.assertEqual(store.failures(good), {"33x2.75": (10.0, 50.0)})
+            self.assertEqual(store.floor_failures(floor), {"30x3": (9.0, 50.0, 2)})
+            # A single malformed cache field cannot break normal writes.
+            self.assertTrue(store.record_failure(good, "45x2", 11.0))
+            self.assertIn("45x2", GameModelStore(path, clock=lambda: 1000.0).failures(good))
+
+    def test_invalid_utf8_cache_is_not_a_startup_failure(self):
+        with tempfile.TemporaryDirectory() as t:
+            path = Path(t) / "models.json"
+            path.write_bytes(b"\xff\xfe\x00")
+            store = GameModelStore(path)
+            self.assertIsNone(store.get("game|90|budget"))
+            self.assertEqual(store.failures("game|90|budget"), {})
+
+
 class GameIdentityAndFailureTests(unittest.TestCase):
     def test_key_is_per_game_when_the_steam_app_id_is_known(self):
         self.assertEqual(context_key("mako", 90, "budget", "292030"), "app:292030|90|budget")
@@ -61,6 +107,21 @@ class GameIdentityAndFailureTests(unittest.TestCase):
             self.assertEqual(store.failures(key), {"33x2.75": (10.0, 61.0)})  # kept by record(), age kept
             now["t"] += GameModelStore.FAILURE_TTL_S + 1
             self.assertEqual(store.failures(key), {})
+
+
+    def test_newly_held_point_supersedes_old_failure_for_same_point(self):
+        with tempfile.TemporaryDirectory() as t:
+            wall = {"t": 2000.0}
+            path = Path(t) / "models.json"
+            key = context_key("mako", 90, "budget", "292030")
+            store = GameModelStore(path, clock=lambda: wall["t"])
+            store.record_failure(key, "30x3", 9.0)
+            store.record_failure(key, "33x2.75", 10.0)
+            self.assertEqual(len(store.failures(key)), 2)
+            wall["t"] += 61
+            store.record(key, "30x3", 9.0)
+            self.assertEqual(store.failures(key), {"33x2.75": (10.0, 61.0)})
+            self.assertEqual(GameModelStore(path, clock=lambda: wall["t"]).get(key)["point"], "30x3")
 
 
 class FailureTtlAcrossReloadTests(unittest.TestCase):
@@ -180,6 +241,34 @@ class WarmStartTests(unittest.TestCase):
         self.assertFalse(c.warm_start("nope", 9.0, 1.0))
         self.assertFalse(c.warm_start(c.points[0].key, 9.0, 1.0))
         self.assertEqual(c.phase, "settle")
+
+    def test_recently_failed_remembered_state_is_skipped_without_an_fps_dip(self):
+        with tempfile.TemporaryDirectory() as t:
+            wall = {"t": 1000.0}
+            key = context_key("mako", 90, "budget")
+            path = Path(t) / "model.json"
+            store = GameModelStore(path, clock=lambda: wall["t"])
+            self.assertTrue(store.record(key, "30x3", 8.0))
+            wall["t"] += 70.0
+            store.record_failure(key, "30x3", 9.0)
+            # New controller after reload: recent failure belongs to the
+            # same game at the same or higher cap than its stored good point.
+            restored = GameModelStore(path, clock=lambda: wall["t"])
+            c = BudgetController(target_output_fps=90, now=7.0, min_tdp_w=3, max_tdp_w=20)
+            c.load_failures(restored.failures(key), now=7.0)
+            self.assertFalse(c.warm_start(restored.get(key)["point"], restored.get(key)["tdp_w"], 7.0))
+            self.assertEqual((c.phase, c.tdp, c.point.key), ("settle", 10.0, "30x3"))
+            self.assertIn("recent-failure", c.last_reason)
+            # At a cap ABOVE the one that failed, stored context is not
+            # disproven, and normal warm start is still legal.
+            higher = BudgetController(target_output_fps=90, now=7.0)
+            higher.load_failures(restored.failures(key), now=7.0)
+            self.assertTrue(higher.warm_start("30x3", 10.0, 7.0))
+            # After the original TTL, the old point can be tried again.
+            wall["t"] += GameModelStore.FAILURE_TTL_S + 1.0
+            fresh = BudgetController(target_output_fps=90, now=9.0)
+            fresh.load_failures(GameModelStore(path, clock=lambda: wall["t"]).failures(key), 9.0)
+            self.assertTrue(fresh.warm_start("30x3", 8.0, 9.0))
 
     def test_a_remembered_state_that_no_longer_holds_is_corrected_by_the_guard(self):
         c = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25)
