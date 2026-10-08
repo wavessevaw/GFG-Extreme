@@ -114,7 +114,7 @@ What the checks measured carries over to the next session of the same game, so i
 - It reads the energy left in the battery and divides it by the time to go — that is what the whole Deck may draw on average.
 - It measures what the screen, memory and fan take (battery drain minus the APU's own draw) and gives the APU the rest.
 - The Governor plays inside that ceiling: when a scene gets heavier it generates a little more rather than spending watts it does not have.
-- **Playable first.** The ceiling never pushes a game below its real-frame floor (24 in Battery, 30 in Balanced). If it would, GFG raises it, remembers what this game needs to stay playable, and tells you the realistic time instead — 30 FPS on screen from 10 real frames is not a frame rate you can play.
+- **Playable first.** The ceiling never pushes a game below its real-frame floor (24 in Battery, 30 in Balanced). If it would, GFG raises it, remembers what this game needs to stay playable, and tells you the realistic time instead — 30 FPS on screen from 10 real frames is not a frame rate you can play. It never starves a game just to find out, either: the ceiling only steps down to levels the game has already shown it holds.
 - Home says where you stand — *holding 7.5 W, 2h41 to go*, *no limit needed*, or, if even the lowest power cannot last that long, how long it can. In the game, the battery ring shows the goal and turns green while the battery outlasts it.
 
 Works in Battery and Balanced mode; on the charger the target waits.

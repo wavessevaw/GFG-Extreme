@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.4.2).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.4.3).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -63,7 +63,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.4.2"
+VERSION = "1.4.3"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -466,6 +466,7 @@ class GovernorService:
         max_w = (base[0] if base else budget.normal_max_w) if budget is not None else BudgetController.NORMAL_CEILING_W
         min_w = budget.min_w if budget is not None else BudgetController.MIN_TDP_W
         self._playable_guard(budget, max_w)
+        self.playtime.safe_w = budget.proven_w if budget is not None else None
         state = self.playtime.update(time.time(), battery=self._status.get("battery") or {}, apu_draw_w=draw,
                                      min_w=min_w, max_w=max_w)
         applies = bool(budget is not None and budget.tdp_control)

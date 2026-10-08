@@ -64,3 +64,10 @@ stores the level per game (`playable_w`, settings). The planner never sets a cei
 target that would need less is `limited`, with the realistic `reachable_min`. A new session starts
 0.5 W lower to re-check. `PlaytimePlanner.options` offers targets from this game and this charge:
 1.15x / 1.3x / 1.5x the current pace and *Max* (the longest playable time), in 10-minute steps.
+
+**Proven before lowered (1.4.3).** 1.4.2 learned `playable_w` only after the ceiling had already
+starved the game once. Now the floor is also `BudgetController.proven_w`: the lowest TDP at which
+the game held its point (a healthy window, a binding held level, or the warm-start level from an
+earlier session), else the start level (10 W Battery, the Balanced start in Balanced). The planner
+uses `max(playable_w, proven_w)`, so the ceiling only follows the Governor's own search down to
+levels that kept the point; a target that would need less is `limited` until they are proven.

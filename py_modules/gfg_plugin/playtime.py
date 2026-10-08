@@ -46,6 +46,7 @@ class PlaytimePlanner:
         self._cap: Optional[float] = None          # smoothed raw ceiling
         self.cap_w: Optional[float] = None         # the ceiling in force (stepped, hysteresis)
         self.playable_w: Optional[float] = None    # this game's lowest playable power (learned)
+        self.safe_w: Optional[float] = None        # proven by the Governor this session (not stored)
         self.last: Dict[str, Any] = {"active": False}
 
     # ------------------------------------------------------------------ settings
@@ -76,7 +77,7 @@ class PlaytimePlanner:
         energy_wh = float(energy_uwh) / 1e6
         pace_min = energy_wh / (float(battery_w) / 1e6) * 60.0
         others = self.others_w if self.others_w is not None else OTHERS_DEFAULT_W
-        floor = max(min_w, self.playable_w or 0.0)
+        floor = max(min_w, self.playable_w or 0.0, self.safe_w or 0.0)
         max_min = energy_wh * (1.0 - RESERVE) / (floor + others) * 60.0
         step = OPTION_ROUND_MIN
         choices = []
@@ -114,7 +115,7 @@ class PlaytimePlanner:
             return self.last
         battery_w = self._learn_others(battery, apu_draw_w)
         others_w = self.others_w if self.others_w is not None else OTHERS_DEFAULT_W
-        floor_w = max(min_w, min(max_w, self.playable_w)) if self.playable_w else min_w
+        floor_w = max(min_w, min(max_w, max(self.playable_w or 0.0, self.safe_w or 0.0)))
         energy_wh = float(energy_uwh) / 1e6
         allowed_w = energy_wh * (1.0 - RESERVE) / (remaining_s / 3600.0)
         raw = allowed_w - others_w
@@ -136,6 +137,9 @@ class PlaytimePlanner:
                      "allowed_w": round(allowed_w, 1), "others_w": round(others_w, 1),
                      "reachable_min": reachable_min, "forecast_min": forecast_min,
                      "energy_wh": round(energy_wh, 1), "playable_w": self.playable_w,
+                     "floor_w": round(floor_w, 1),
+                     # why the floor is there: the game starved below it, or nothing lower is proven yet
+                     "floor_by": "playable" if (self.playable_w or 0.0) >= (self.safe_w or 0.0) else "proven",
                      "options": self.options(battery=battery, min_w=min_w)}
         return self.last
 

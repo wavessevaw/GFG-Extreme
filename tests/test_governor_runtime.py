@@ -905,12 +905,20 @@ class BudgetRuntimeTests(RuntimeBase):
         self.feed(20, 45, 90)
         st = self.step()
         self.feed(16, 30, 90)
-        for _ in range(40):
+        st = self.step(1.0)
+        # nothing proven yet: the ceiling stays at the start level, the game is never starved to find out
+        self.assertEqual(st["playtime"]["state"], "limited")
+        self.assertEqual(st["playtime"]["floor_by"], "proven")
+        self.assertGreaterEqual(self.svc._budget.playtime_cap_w, 10.0)
+        st = self.windows(10, 30, 90)      # the search proves lower levels hold
+        for _ in range(5):
             st = self.step(1.0)
         pt = st["playtime"]
         self.assertEqual(pt["state"], "holding")
+        self.assertLess(self.svc._budget.proven_w, 10.0)
         # 40 Wh * 0.95 / 3 h = 12.7 W for the whole Deck, minus 5 W: ~7.5 W for the APU
-        self.assertLessEqual(max(self.svc.power.writes), max(pt["cap_w"], self.svc._budget.min_w))
+        # the start write (before any proof) may be higher; the power in force is inside the ceiling
+        self.assertLessEqual(self.svc.power.writes[-1], max(pt["cap_w"], self.svc._budget.min_w))
         self.assertEqual(st["budget"]["limits_w"]["normal"], pt["cap_w"])
         self.assertEqual(self.svc._settings["playtime"]["target_h"], 3.0)
         # off again: the normal ceiling is back
@@ -933,7 +941,7 @@ class BudgetRuntimeTests(RuntimeBase):
         for _ in range(5):
             st = self.step(1.0)
         cap0 = self.svc._budget.playtime_cap_w
-        self.assertLessEqual(cap0, 6.5)
+        self.assertLessEqual(cap0, 10.0, "before any proof: the start level, never below")
         for _ in range(12):                        # the game starves under that ceiling
             self.feed(3, 10, 30, dt=0.4)
             st = self.step(1.0)
@@ -941,6 +949,7 @@ class BudgetRuntimeTests(RuntimeBase):
         playable = self.svc._settings["playable_w"]
         self.assertTrue(playable and max(playable.values()) > cap0)
         self.assertEqual(st["playtime"]["state"], "limited")
+        self.assertEqual(st["playtime"]["floor_by"], "playable")
         self.assertIn("reachable_min", st["playtime"])
         events = [e for e in (json.loads(l) for l in Path(self.svc.events_path).read_text().splitlines())
                   if e.get("event") == "playtime-playable-floor"]

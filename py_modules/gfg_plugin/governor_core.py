@@ -936,6 +936,18 @@ class BudgetController:
         self._heat_until = -1e9
         self.playtime_cap_w: Optional[float] = None
         self._ceilings: Optional[tuple] = None
+        self._proven_w: Optional[float] = None    # lowest TDP this game has held its point at
+
+    @property
+    def proven_w(self) -> float:
+        """The lowest power this game has *shown* it stays playable at: a level it held its point
+        at (this session or remembered), else the controller's start level.  The playtime ceiling
+        never goes below it, so a target never starves a game just to find out (review of 1.4.2:
+        the floor was learned only after the game had collapsed once)."""
+        if self._proven_w is not None:
+            return max(self.min_w, self._proven_w)
+        start = BALANCED_START_TDP_W if self.flavor == "balanced" else self.START_TDP_W
+        return max(self.min_w, min(start, self.normal_max_w if self._ceilings is None else self._ceilings[0]))
 
     def set_playtime_cap(self, cap_w: Optional[float]) -> bool:
         """A playtime target's power ceiling (``playtime.PlaytimePlanner``), or None to lift it.
@@ -978,6 +990,8 @@ class BudgetController:
             self.tdp = round(min(max(float(tdp_w), self.min_w), self.normal_max_w), 1)
         self.good = self.bad = 0
         self.warm_started = True
+        if self.tdp is not None:
+            self._proven_w = float(self.tdp)       # remembered from an earlier session
         self._lock(now, "warm-start")
         return True
 
@@ -1047,6 +1061,7 @@ class BudgetController:
         if self.tdp_control and self.tdp is not None and self._binding(self.draw_w):
             self.held = [(t, w) for t, w in self.held if now - t < self.WORK_MEMORY_S]
             self.held.append((now, float(self.tdp)))
+            self._proven_w = min(self._proven_w or float(self.tdp), float(self.tdp))
 
     def _work_tdp(self, now: float) -> Optional[float]:
         """The last level the game held at a binding cap: where it goes back after a menu or a pause."""
@@ -1213,6 +1228,8 @@ class BudgetController:
         if self.good < self.HEALTHY_WINDOWS:
             return "hold"
         self.last_good = (self.idx, self.tdp)
+        if self.tdp is not None:     # the point held here: playable at this power (proven_w)
+            self._proven_w = min(self._proven_w if self._proven_w is not None else float(self.tdp), float(self.tdp))
         self.verifying = None
         self._remember_held(now)
         self.exhausted = False

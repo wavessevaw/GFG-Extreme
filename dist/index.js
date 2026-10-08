@@ -502,7 +502,7 @@ function playtimeText(pt) {
     case "on-track":
       return "No limit needed: at this pace the battery lasts about " + hm(pt.forecast_min) + ".";
     case "limited":
-      return "This game needs about " + num(pt.playable_w, 1) + " W to stay playable, so GFG holds that: about " + hm(pt.reachable_min) + " is realistic.";
+      return pt.floor_by === "proven" ? "GFG lowers power only to levels this game has already held (now " + num(pt.floor_w, 1) + " W): about " + hm(pt.reachable_min) + " is realistic so far, more as lower levels prove out." : "This game needs about " + num(pt.floor_w != null ? pt.floor_w : pt.playable_w, 1) + " W to stay playable, so GFG holds that: about " + hm(pt.reachable_min) + " is realistic.";
     case "tight":
       return "Even the lowest power won't last that long: about " + hm(pt.reachable_min) + " is possible. Running as frugally as the game allows.";
     case "charging":
