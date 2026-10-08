@@ -38,7 +38,7 @@ from .governor_battery import BatteryEstimator, read_battery
 from .steamos_tdp import SteamOSManagerTdp
 from .game_model import GameModelStore, context_key, floor_key, game_prefix
 from .session_stats import SessionStats
-from .playtime import CHOICES_H as PLAYTIME_CHOICES_H, PlaytimePlanner
+from .savings_effort import SavingsEffort, LEVELS as SAVINGS_LEVELS, hard_refresh_target
 from .frame_os.control_channel import DEFAULT_PATH as DEFAULT_SHM, ControlChannel
 from . import hud_rings
 from .frame_os import layer_install as frame_os_layer
@@ -63,7 +63,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.4.2"
+VERSION = "1.4.3"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -170,10 +170,16 @@ class GovernorService:
         self.hud = HudWriter(self.configuration.config_dir)
         self._battery = BatteryEstimator()
         self.battery_reader = read_battery
-        # Playtime target: "last N hours" as an APU power ceiling (Battery / Balanced)
-        self.playtime = PlaytimePlanner()
-        saved_playtime = self._settings.get("playtime") if isinstance(self._settings.get("playtime"), dict) else {}
-        self.playtime.restore(saved_playtime.get("target_h"), saved_playtime.get("deadline"), time.time())
+        # v1.4.3 migrates the unsupported fixed-hours promise to an explicit
+        # Battery-only effort selector. Never reactivate an old saved deadline.
+        self._settings.pop("playtime", None)
+        self.savings = SavingsEffort()
+        self._savings_refresh_lease = self._settings.get("savings_refresh_lease")
+        if not isinstance(self._savings_refresh_lease, dict):
+            self._savings_refresh_lease = None
+        self._savings_refresh_override = None
+        self._savings_refresh_error = None
+        self._savings_refresh_retry_at = 0.0
         self._io_lock = threading.RLock()
         self._forced_release: set[str] = set()
         self._restore_pending: Dict[str, str] = {}
@@ -329,6 +335,23 @@ class GovernorService:
         self._poke()
         return {"success": True, "error": None, "profile": profile, "mode": mode}
 
+    def savings_level(self, profile: str) -> str:
+        value = self._profile_settings(profile).get("savings_effort", "off")
+        return value if value in SAVINGS_LEVELS else "off"
+
+    def set_savings_effort(self, profile: str, level: str) -> Dict[str, Any]:
+        profile = str(profile or "").strip()
+        level = str(level or "").strip().lower()
+        if not profile or level not in SAVINGS_LEVELS:
+            return {"success": False, "error": "invalid-savings-effort"}
+        if self._mode(profile) != "budget" and level != "off":
+            return {"success": False, "error": "battery-mode-only"}
+        self._settings.setdefault("profiles", {}).setdefault(profile, {})["savings_effort"] = level
+        self._savings_refresh_override = None  # a deliberate selection can own the rate again
+        self._save_settings()
+        self._poke()
+        return {"success": True, "error": None, "level": level, "profile": profile}
+
     def game_model_target(self, profile: str) -> Optional[Dict[str, Any]]:
         """Which game "Reset what GFG learned" would reset for ``profile``, or None.
 
@@ -409,95 +432,63 @@ class GovernorService:
             self._status["battery"] = self._battery.update(self.battery_reader())
         except Exception as error:  # sysfs quirks must never break the loop
             self.log.debug("Governor battery read failed: %s", error)
-        self._update_playtime()
+        self._update_savings_effort()
 
-    PLAYABLE_HOLD_S = 6.0
-    PLAYABLE_STEP_W = 1.0
-    _playable_game: Optional[str] = None
-    _unplayable_since: Optional[float] = None
+    def _savings_game(self, profile: str) -> str:
+        return game_prefix(profile, self._game_app_id()) if profile else ""
 
-    def _playable_guard(self, budget: Optional[BudgetController], max_w: float) -> None:
-        """Playable first (field report 1.4.0: a 6 W ceiling left a heavy game at 10 real frames
-        shown as 30).  While the playtime ceiling is what limits the game and its real frames sit
-        below the mode's floor for PLAYABLE_HOLD_S, the ceiling goes up a watt and the level is
-        remembered for this game: the target then reports what is realistic instead."""
+    def _update_savings_effort(self) -> None:
+        """Reconcile Battery effort and learn when the real stream is not playable."""
         profile = self._active_profile or ""
-        game = game_prefix(profile, self._game_app_id()) if profile else None
-        if game != self._playable_game:
-            self._playable_game, self._unplayable_since = game, None
-            known = ((self._settings.get("playable_w") or {}).get(game) if game else None)
-            # one step lower each new session: a patch or new settings may have made it lighter
-            self.playtime.playable_w = (max(budget.min_w if budget else 0.0, float(known) - 0.5)
-                                        if isinstance(known, (int, float)) else None)
-        cap = budget.playtime_cap_w if budget is not None else None
-        binding = (budget is not None and cap is not None and budget.tdp is not None
-                   and budget.tdp >= cap - 0.05 and not self._menu_covering())
-        if not binding:
-            self._unplayable_since = None
-            return
-        floor = BALANCED_REAL_FLOOR_FPS if budget.flavor == "balanced" else REAL_FLOOR_FPS
-        fast = self.observer.summary(5.0)
-        real = (fast.get("real") or {}).get("median")
-        if not (isinstance(real, (int, float)) and (fast.get("samples") or 0) >= 3 and real < 0.92 * floor):
-            self._unplayable_since = None
-            return
-        now = self._clock()
-        if self._unplayable_since is None:
-            self._unplayable_since = now
-            return
-        if now - self._unplayable_since < self.PLAYABLE_HOLD_S:
-            return
-        self._unplayable_since = None
-        watts = self.playtime.raise_playable(cap + self.PLAYABLE_STEP_W, max_w)
-        if game:
-            self._settings.setdefault("playable_w", {})[game] = watts
-            self._save_settings_quietly()
-        self._event("playtime-playable-floor", "real-below-floor", profile=profile, real=round(real, 1),
-                    floor=floor, watts=watts)
-
-    def _update_playtime(self) -> None:
-        """Recompute the playtime ceiling from the battery and the measured draw (every step)."""
+        supported = bool(profile and self._mode(profile) == "budget")
+        level = self.savings_level(profile) if supported else "off"
+        game = self._savings_game(profile)
+        learned = ((self._settings.get("savings_playable_w") or {}).get(game) if game else None)
+        self.savings.configure(level, game, learned)
         budget = self._budget
-        try:
-            draw = self.power.status().get("draw_w")
-        except Exception:
-            draw = None
-        base = getattr(budget, "_ceilings", None) if budget is not None else None
-        max_w = (base[0] if base else budget.normal_max_w) if budget is not None else BudgetController.NORMAL_CEILING_W
-        min_w = budget.min_w if budget is not None else BudgetController.MIN_TDP_W
-        self._playable_guard(budget, max_w)
-        state = self.playtime.update(time.time(), battery=self._status.get("battery") or {}, apu_draw_w=draw,
-                                     min_w=min_w, max_w=max_w)
-        applies = bool(budget is not None and budget.tdp_control)
-        self._status["playtime"] = {**state, "applies": applies,
-                                    "mode_supported": self._mode(self._active_profile or "") in ("budget", "balanced")}
-        if budget is not None:
-            # every step (also while a point request is pending): the ceiling follows at once; a
-            # lowered TDP goes out with the next budget write
-            self._sync_playtime_cap(budget, self._active_profile or "")
-        if state.get("state") == "reached" and self._settings.get("playtime"):
-            self._settings.pop("playtime", None)
-            self.playtime.set_target(None, time.time())
-            self._save_settings_quietly()
+        base = getattr(budget, "_ceilings", None) if budget else None
+        max_w = base[0] if base else (budget.normal_max_w if budget else BudgetController.NORMAL_CEILING_W)
+        min_w = getattr(budget, "_savings_base_min_w", BudgetController.MIN_TDP_W)
+        limits = self.savings.limits(min_w, max_w)
+        if (supported and level != "off" and budget is not None and budget.tdp_control
+                and self._point and self._request is None and not self._menu_covering()):
+            fresh = self.observer.summary(self.FAST_CHECK_SECONDS)
+            snapshot = self.observer.snapshot()
+            age = snapshot.get("sample_age_ms")
+            samples = fresh.get("samples") or 0
+            real = (fresh.get("real") or {}).get("median")
+            output = (fresh.get("output") or {}).get("median")
+            try:
+                draw = self.power.status().get("draw_w")
+            except Exception:
+                draw = None
+            cap_binding = (budget.savings_cap_w is not None
+                           and budget.tdp is not None
+                           and budget.tdp >= budget.normal_max_w - 0.1)
+            if cap_binding and self.savings.observe(
+                    self._clock(), real_fps=real, output_fps=output,
+                    target_fps=budget.target_output_fps, tdp_w=budget.tdp,
+                    draw_w=draw, valid=bool(samples >= 3 and isinstance(age, (int, float))
+                                                 and age <= self.MAX_SAMPLE_AGE_MS),
+                    normal_max_w=max_w):
+                if game:
+                    self._settings.setdefault("savings_playable_w", {})[game] = self.savings.learned_floor_w
+                    self._save_settings_quietly()
+                self._event("savings-fps-rescue", "real-source-fps-too-low", profile=profile,
+                            real=real, output=output, floor_w=self.savings.learned_floor_w)
+                limits = self.savings.limits(min_w, max_w)
+        self._status["savings"] = {
+            **limits, "mode_supported": supported,
+            "refresh_target_hz": self._savings_refresh_target(profile),
+            "refresh_error": self._savings_refresh_error,
+            "refresh_manual_override": self._savings_refresh_override == profile,
+        }
+        if budget is not None and budget.flavor == "battery":
+            self._sync_savings_cap(budget, profile)
 
     def set_playtime_target(self, hours: Optional[float]) -> Dict[str, Any]:
-        """Battery must last ``hours`` from now (None / 0: off)."""
-        try:
-            value = float(hours) if hours else None
-        except (TypeError, ValueError):
-            return {"success": False, "error": "invalid-hours"}
-        if value is not None and not 0.25 <= value <= 12:
-            return {"success": False, "error": "invalid-hours"}
-        now = time.time()
-        self.playtime.set_target(value, now)
-        if value is None:
-            self._settings.pop("playtime", None)
-        else:
-            self._settings["playtime"] = {"target_h": value, "deadline": self.playtime.deadline}
-        self._save_settings()
-        self._update_playtime()
-        self._poke()
-        return {"success": True, "error": None, "playtime": self._status.get("playtime")}
+        """Compatibility RPC: hours have been removed, not silently converted to watts."""
+        return {"success": False, "error": "replaced-with-battery-savings-effort"}
 
     def _delivering_target(self, telemetry: Dict[str, Any]) -> Optional[str]:
         """'easy'/'medium' when measured output already holds the target (stable game), else None."""
@@ -1330,6 +1321,8 @@ class GovernorService:
             except Exception as error:
                 self.log.debug("Governor loop ended with error: %s", error)
         self._task = None
+        if self._savings_refresh_lease is not None:
+            await self._sync_savings_refresh(self._active_profile or "", force_off=True)
         await self.frame_os.stop()
         # Restore overlays to Saved (verified, lease dropped) before power ownership is released.
         names = list(dict.fromkeys([*self._saved_profile_names(), *self._settings.get("profiles", {})]))
@@ -1380,6 +1373,128 @@ class GovernorService:
         if self._restore_pending:
             value["restore_pending"] = dict(self._restore_pending)
         return value
+
+
+    def _savings_refresh_target(self, profile: str) -> Optional[int]:
+        if (not profile or not self._profile_enabled(profile)
+                or self._mode(profile) != "budget"):
+            return None
+        return hard_refresh_target(self.savings_level(profile),
+                                   (self._device or {}).get("model", ""), external=False)
+
+    async def _sync_savings_refresh(self, profile: str, display: Optional[Dict[str, Any]] = None,
+                                    *, force_off: bool = False) -> Dict[str, Any]:
+        """Own the rate through a persisted lease; manual Steam slider always wins.
+
+        Only exact, verified Gamescope changes count. No writes on docked screens;
+        restore the original rate on leaving Hard, plugin disable or unload.
+        """
+        if display is None:
+            try:
+                display = await asyncio.to_thread(self._display_probe)
+            except Exception as error:
+                self._savings_refresh_error = f"display-probe-failed: {error}"
+                return {}
+        if not isinstance(display, dict) or not display.get("success") or display.get("external"):
+            return display or {}
+        reader = getattr(self.display, "read_current_refresh_hz", None)
+        writer = getattr(self.display, "sync_target_fps", None)
+        if not callable(reader) or not callable(writer):
+            self._savings_refresh_error = "Gamescope refresh control unavailable"
+            return display
+        try:
+            actual = await asyncio.to_thread(reader)
+        except Exception as error:
+            self._savings_refresh_error = f"refresh-read-failed: {error}"
+            return display
+        if not isinstance(actual, (int, float)) or not 20 <= actual <= 240:
+            self._savings_refresh_error = "Current screen Hz unavailable"
+            return display
+        actual = int(round(actual))
+        display = {**display, "current_refresh_hz": actual}
+        valid = [int(v) for v in (display.get("valid_rates") or []) if isinstance(v, (int, float))]
+        desired = None if force_off else self._savings_refresh_target(profile)
+        lease = self._savings_refresh_lease
+        if lease:
+            applied = int(lease.get("applied_hz") or 0)
+            original = int(lease.get("original_hz") or 0)
+            # The lease is persisted *before* the Gamescope request. A failed
+            # or interrupted initial write leaves the original refresh intact:
+            # do not mistake that state for the user moving Steam's slider.
+            pending = lease.get("confirmed") is False
+            if pending and actual == original:
+                if desired != applied or lease.get("profile") != profile:
+                    # The player left Hard before the initial modeset succeeded.
+                    # There is nothing to restore, so drop the speculative lease.
+                    self._savings_refresh_lease = None
+                    self._settings.pop("savings_refresh_lease", None)
+                    self._savings_refresh_error = None
+                    self._save_settings_quietly()
+                    return display
+                if applied not in valid:
+                    self._savings_refresh_error = "Hard refresh rate no longer supported"
+                    return display
+                target = applied  # retry after the backoff; not a manual override
+            else:
+                if actual != applied:
+                    # Only an established modeset is evidence of manual
+                    # intervention. Respect the user's slider.
+                    self._savings_refresh_lease = None
+                    self._settings.pop("savings_refresh_lease", None)
+                    if desired is not None:
+                        self._savings_refresh_override = profile
+                    self._savings_refresh_error = None
+                    self._save_settings_quietly()
+                    return display
+                if pending:
+                    # The last write really did succeed, but its reply or our
+                    # process was interrupted before verification completed.
+                    lease["confirmed"] = True
+                    self._settings["savings_refresh_lease"] = lease
+                    self._save_settings_quietly()
+                if desired == applied and lease.get("profile") == profile:
+                    self._savings_refresh_error = None
+                    return display
+                if original not in valid:
+                    self._savings_refresh_error = "Original Hz not available; restore pending"
+                    return display
+                target = original
+        else:
+            if desired is None or self._savings_refresh_override == profile or actual == desired:
+                return display
+            if desired not in valid:
+                self._savings_refresh_error = f"{desired} Hz is unavailable on this panel"
+                return display
+            target = desired
+            lease = {"profile": profile, "original_hz": actual, "applied_hz": desired, "confirmed": False}
+            # Persist before changing the display: a restart can still restore.
+            self._savings_refresh_lease = lease
+            self._settings["savings_refresh_lease"] = lease
+            self._save_settings_quietly()
+        if self._clock() < self._savings_refresh_retry_at:
+            return display
+        result = await asyncio.to_thread(writer, target)
+        if not (result.get("success") and result.get("applied")
+                and result.get("verified") and result.get("verified_refresh_hz") == target):
+            self._savings_refresh_error = str(result.get("error") or result.get("reason") or "refresh-not-verified")
+            self._savings_refresh_retry_at = self._clock() + 15.0
+            # Leave lease until next verified read: the write may have succeeded.
+            return display
+        if target == int(lease["original_hz"]):
+            self._savings_refresh_lease = None
+            self._settings.pop("savings_refresh_lease", None)
+        else:
+            lease["confirmed"] = True
+            self._savings_refresh_lease = lease
+            self._settings["savings_refresh_lease"] = lease
+        self._save_settings_quietly()
+        self._savings_refresh_error = None
+        self._last_display = {}
+        self._last_display_poll = 0.0
+        self._event("savings-refresh", "applied" if target != int(lease["original_hz"]) else "restored",
+                    profile=profile, hz=target)
+        display["current_refresh_hz"] = target
+        return display
 
     def _display_probe(self) -> Dict[str, Any]:
         """Active display + the internal panel's actual refresh rate when Gamescope reports it."""
@@ -1818,6 +1933,8 @@ class GovernorService:
                 await self._release(forced, "governor-disabled")
         if profile != self._active_profile:
             old = self._active_profile
+            if old and self._savings_refresh_lease is not None:
+                await self._sync_savings_refresh(old, force_off=True)
             if old:
                 await self._release(old, "profile-changed")
             else:
@@ -1829,6 +1946,8 @@ class GovernorService:
         enabled = self._profile_enabled(profile)
         self._status.update({"profile": profile, "enabled": enabled})
         if not enabled:
+            if self._savings_refresh_lease is not None:
+                await self._sync_savings_refresh(profile, force_off=True)
             if self.power.state.owned or self._status.get("state") != "DISABLED" or self._point or self._request:
                 await self._release(profile, "governor-disabled")
             # 1.2.2 ships with Rings on by default. The HUD is independent of
@@ -1852,6 +1971,7 @@ class GovernorService:
         external = bool(display.get("external", False))
         if self._device is None:
             self._device = await asyncio.to_thread(detect_model)
+        display = await self._sync_savings_refresh(profile, display)
         policy = target_for(self._device["model"], external=external, valid_rates=display.get("valid_rates"),
                             current_hz=display.get("current_refresh_hz"))
         target = int(policy["target"])
@@ -2206,7 +2326,7 @@ class GovernorService:
         budget.scale_capable = self._budget_can_scale(capability)
         # Current resources, re-read every step: a swapchain recreation can raise it again.
         budget.current_max_multiplier = self.observer.current_max_multiplier
-        self._sync_playtime_cap(budget, profile)
+        self._sync_savings_cap(budget, profile)
         if (budget.current_max_multiplier is not None
                 and float(budget.point.multiplier) > budget.current_max_multiplier + 1e-6):
             # The current target is beyond what the renderer can generate: fall back at once.
@@ -2476,17 +2596,28 @@ class GovernorService:
         except Exception as error:  # remembering is best-effort and must never disturb the loop
             self.log.debug("Game model not stored: %s", error)
 
-    def _sync_playtime_cap(self, budget: BudgetController, profile: str) -> None:
-        """Playtime target: its power ceiling bounds the search, the guard and emergency watts."""
-        cap = (self._status.get("playtime") or {}).get("cap_w") if budget.tdp_control else None
-        if cap != budget.playtime_cap_w and budget.set_playtime_cap(cap):
-            self._event("playtime-ceiling", "tdp-lowered", profile=profile, watts=budget.tdp)
+    def _sync_savings_cap(self, budget: BudgetController, profile: str) -> None:
+        """Battery-only effort; restore ordinary ceilings in Balanced/Quality."""
+        supported = self._mode(profile) == "budget" and budget.flavor == "battery"
+        level = self.savings_level(profile) if supported else "off"
+        limits = self.savings.limits(budget._savings_base_min_w,
+                                     (budget._ceilings or (budget.normal_max_w,))[0])
+        if level == "off":
+            limits = {**limits, "minimum_w": budget._savings_base_min_w, "cap_w": None,
+                      "quality_limited": False}
+        before = budget.tdp
+        budget.set_savings_limits(level=level, floor_w=limits["minimum_w"],
+                                  cap_w=limits["cap_w"], quality_limited=limits["quality_limited"])
+        if before is not None and budget.tdp is not None and budget.tdp < before:
+            self._event("savings-ceiling", "tdp-lowered", profile=profile, watts=budget.tdp)
+        elif before is not None and budget.tdp is not None and budget.tdp > before:
+            self._event("savings-floor", "real-fps-rescue", profile=profile, watts=budget.tdp)
 
     async def _apply_budget_tdp(self, profile: str) -> bool:
         budget = self._budget
         if budget is None or not budget.tdp_control or budget.tdp is None or not self.power.state.owned:
             return True
-        self._sync_playtime_cap(budget, profile)   # no TDP write ever bypasses the ceiling
+        self._sync_savings_cap(budget, profile)  # final bounds before the actuator writes
         # Frame OS (act mode) adds the watts of a funded boost / removes them in rest.
         offset = self.frame_os.tdp_offset_w
         # Without an offset the controller's own value goes out as is (emergency watts included).

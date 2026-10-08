@@ -147,7 +147,7 @@ var rpc = {
   setFrameOsActUnlock: safeCallable("set_governor_frame_os_act_unlock"),
   setFrameOsAb: safeCallable("set_governor_frame_os_ab"),
   setMode: safeCallable("set_governor_mode"),
-  setPlaytime: safeCallable("set_governor_playtime"),
+  setSavings: safeCallable("set_governor_savings_effort"),
   forgetModel: safeCallable("forget_governor_game_model"),
   modelTarget: safeCallable("get_governor_game_model_target"),
   profiles: safeCallable("get_profiles"),
@@ -488,56 +488,35 @@ function SessionRings({ ls, target }) {
     ) : null
   );
 }
-var hm = (min) => min == null ? "\u2013" : Math.floor(min / 60) + "h" + String(min % 60).padStart(2, "0");
-function playtimeText(pt) {
-  const o = pt.options;
-  if (!pt.active) {
-    if (!o) return "Unplug and start a game: GFG shows how long this charge can last while the game stays playable.";
-    return "At this pace about " + hm(o.pace_min) + ". Pick a longer time and GFG holds the power that gets you there \u2014 up to " + hm(o.max_min) + " while the game stays playable.";
-  }
-  if (pt.mode_supported === false) return "Works in Battery and Balanced mode.";
-  switch (pt.state) {
-    case "holding":
-      return "Holding the APU at " + num(pt.cap_w, 1) + " W so the battery lasts \u2014 " + hm(pt.remaining_min) + " to go.";
-    case "on-track":
-      return "No limit needed: at this pace the battery lasts about " + hm(pt.forecast_min) + ".";
-    case "limited":
-      return "This game needs about " + num(pt.playable_w, 1) + " W to stay playable, so GFG holds that: about " + hm(pt.reachable_min) + " is realistic.";
-    case "tight":
-      return "Even the lowest power won't last that long: about " + hm(pt.reachable_min) + " is possible. Running as frugally as the game allows.";
-    case "charging":
-      return "Charging \u2014 the target applies again on battery.";
-    case "reached":
-      return "Target reached.";
-    case "no-battery":
-      return "No battery reading on this device.";
-    default:
-      return "Waiting for a game.";
-  }
-}
-function PlaytimeCard({ pt, refresh }) {
+function SavingsCard({ savings, profile, refresh }) {
   const [busy, setBusy] = useState(false);
-  const o = pt.options;
-  let mins = o && o.choices && o.choices.length ? o.choices.slice(0, 4) : [120, 180, 240];
-  const current = pt.active && pt.target_h ? Math.round(pt.target_h * 60) : 0;
-  if (current && !mins.includes(current)) mins = [...mins, current].sort((a, b) => a - b).slice(-4);
-  const label = (m) => (o && m === o.max_min ? "Max " : "") + hm(m);
-  const set = async (v) => {
+  const level = savings.level || "off";
+  const explanations = {
+    off: "Normal Battery Governor. No extra power limit.",
+    light: "Gentle power limit. Full screen refresh and responsiveness remain the priority.",
+    medium: "Stronger savings. Keeps the standard screen refresh; will release the limit if real FPS suffers.",
+    hard: "Maximum safe savings. OLED 60 Hz \xB7 LCD 45 Hz, when supported. Restores your previous refresh when switched off."
+  };
+  const set = async (value) => {
     setBusy(true);
     try {
-      await rpc.setPlaytime(Number(v) / 60);
+      await rpc.setSavings(profile, value);
     } catch (e) {
     }
     setBusy(false);
-    refresh && refresh();
+    if (refresh) refresh();
   };
+  const limited = savings.quality_limited;
   return h(
     "div",
     null,
-    h("div", { className: "sec" }, "PLAYTIME TARGET"),
-    h(Seg, { value: String(current), options: [["0", "Off"]].concat(mins.map((m) => [String(m), label(m)])), onChange: busy ? () => {
+    h("div", { className: "sec" }, "SAVINGS EFFORT"),
+    h(Seg, { value: level, options: [["off", "Off"], ["light", "Light"], ["medium", "Medium"], ["hard", "Hard"]], onChange: busy ? () => {
     } : set }),
-    h(Note, { quiet: true }, playtimeText(pt))
+    h(Note, { quiet: true }, explanations[level] || explanations.off),
+    limited ? h(Note, { quiet: true }, "FPS protection raised the power floor. Performance takes priority over saving watts.") : null,
+    savings.refresh_error ? h(Note, { quiet: true }, "Screen refresh unchanged: " + savings.refresh_error) : null,
+    savings.refresh_manual_override ? h(Note, { quiet: true }, "Manual refresh override respected; GFG won't move your slider.") : null
   );
 }
 function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
@@ -652,7 +631,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch }) {
       refresh();
     } }),
     h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
-    h(PlaytimeCard, { pt: s.playtime || {}, refresh }),
+    (s.mode || "budget") === "budget" ? h(SavingsCard, { savings: s.savings || {}, profile, refresh }) : null,
     health ? h("div", { className: "hint" }, health) : null,
     !s.session && s.last_session ? h(
       "div",
