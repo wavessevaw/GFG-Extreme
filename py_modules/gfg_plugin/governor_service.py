@@ -411,9 +411,11 @@ class GovernorService:
 
     def hud_settings(self, profile: str) -> Dict[str, Any]:
         raw = self._profile_settings(profile).get("hud") or {}
-        preset, position = hud_normalize(raw.get("preset"), raw.get("position"))
+        preset, position = hud_normalize(raw.get("preset"), raw.get("position", "bottom-left"))
         style = raw.get("style") if raw.get("style") in self.HUD_STYLES else "rings"
-        return {"enabled": bool(raw.get("enabled", False)), "preset": preset, "position": position, "style": style}
+        # A missing setting is a new install (or an older profile). Preserve an explicitly
+        # disabled HUD on upgrades, but show Rings bottom-left by default.
+        return {"enabled": bool(raw.get("enabled", True)), "preset": preset, "position": position, "style": style}
 
     HUD_STYLES = ("rings", "text")
     RING_HUD_PERIOD_S = 1.0
@@ -562,10 +564,9 @@ class GovernorService:
         Everyone else gets no extra Vulkan layer; for them the HUD needs one
         relaunch after it is first turned on.
         """
-        profiles = self._settings.get("profiles", {})
-        return isinstance(profiles, dict) and any(
-            isinstance(v, dict) and (bool(v.get("enabled", False)) or bool((v.get("hud") or {}).get("enabled", False)))
-            for v in profiles.values()
+        return any(
+            self._profile_enabled(profile) or self.hud_settings(profile)["enabled"]
+            for profile in self._saved_profile_names()
         )
 
     def _sync_hud_presence(self) -> None:
@@ -594,10 +595,7 @@ class GovernorService:
                 pass
 
     def _is_idle(self) -> bool:
-        profiles = self._settings.get("profiles", {})
-        hud_on = isinstance(profiles, dict) and any(
-            isinstance(v, dict) and bool((v.get("hud") or {}).get("enabled", False)) for v in profiles.values()
-        )
+        hud_on = any(self.hud_settings(profile)["enabled"] for profile in self._saved_profile_names())
         return not (self._any_profile_enabled() or hud_on or self._restore_pending or self._forced_release
                     or self._point or self._request)
 
@@ -851,9 +849,9 @@ class GovernorService:
 
     def _sync_frame_os_marker(self) -> None:
         """The launcher loads the gfg-pacer layer only while some profile uses Frame OS."""
-        profiles = self._settings.get("profiles", {})
-        wanted = isinstance(profiles, dict) and any(
-            self._frame_os_mode(profile) != "off" for profile in profiles)
+        profiles = list(dict.fromkeys([*self._saved_profile_names(),
+                                          *self._settings.get("profiles", {})]))
+        wanted = any(self._frame_os_mode(profile) != "off" for profile in profiles)
         if wanted:
             # The launcher loads the layer only when it is staged; a build without it stays inert.
             if self.frame_os_layer_dir is not None:
@@ -868,7 +866,7 @@ class GovernorService:
             except FileNotFoundError:
                 pass
         # Ring HUD: the launcher adds the GFG HUD layer while some profile shows the rings.
-        rings = isinstance(profiles, dict) and any(
+        rings = any(
             self.hud_settings(profile)["enabled"] and self.hud_settings(profile)["style"] == "rings"
             for profile in profiles)
         if rings and self.frame_os_layer_dir is not None:
@@ -892,7 +890,13 @@ class GovernorService:
                                     max_multiplier=1, calm_w=None)
             return
         point = budget.point
-        self.frame_os.focused = getattr(self.observer, "game_focused", None)
+        # A focus-lost event without its matching focus-restored event must not hold
+        # Frame OS in REST forever. A Steam overlay signal is only trusted briefly.
+        focus = getattr(self.observer, "game_focused", None)
+        focus_at = getattr(self.observer, "game_focused_at", None)
+        if focus is False and (focus_at is None or self._clock() - focus_at > 5.0):
+            focus = None
+        self.frame_os.focused = focus
         try:
             self.frame_os.draw_w = self.power.status().get("draw_w")
         except Exception:
