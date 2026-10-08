@@ -921,6 +921,37 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertNotIn("playtime", self.svc._settings)
         self.assertFalse(self.svc.set_playtime_target(40)["success"])
 
+    def test_playtime_never_starves_a_heavy_game(self):
+        # field report 1.4.0: a long target put a heavy game at 6 W: 10 real frames shown as 30
+        self.svc.battery_reader = lambda: {"available": True, "discharging": True, "percent": 50,
+                                           "energy_uwh": 30e6, "power_uw": 14e6}
+        self.svc.power.values["draw_w"] = 9.0
+        self.svc.set_playtime_target(4.0)
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        for _ in range(5):
+            st = self.step(1.0)
+        cap0 = self.svc._budget.playtime_cap_w
+        self.assertLessEqual(cap0, 6.5)
+        for _ in range(12):                        # the game starves under that ceiling
+            self.feed(3, 10, 30, dt=0.4)
+            st = self.step(1.0)
+        self.assertGreater(self.svc._budget.playtime_cap_w, cap0, "the ceiling went up for playability")
+        playable = self.svc._settings["playable_w"]
+        self.assertTrue(playable and max(playable.values()) > cap0)
+        self.assertEqual(st["playtime"]["state"], "limited")
+        self.assertIn("reachable_min", st["playtime"])
+        events = [e for e in (json.loads(l) for l in Path(self.svc.events_path).read_text().splitlines())
+                  if e.get("event") == "playtime-playable-floor"]
+        self.assertTrue(events)
+        # once playable, it stays put
+        level = self.svc._budget.playtime_cap_w
+        for _ in range(12):
+            self.feed(3, 30, 90, dt=0.4)
+            self.step(1.0)
+        self.assertEqual(self.svc._budget.playtime_cap_w, level)
+
     def test_starts_at_10_watts_and_30x3_then_lowers_power(self):
         self.feed(20, 45, 90)
         st = self.step()
