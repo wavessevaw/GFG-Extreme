@@ -13,7 +13,9 @@ from py_modules.gfg_plugin import hud_rings
 
 SAMPLE = {"fps": 90, "real": 45, "target": 90, "tdp": 15, "limit": 15,
           "battery_min": 125, "battery_pct": 72,
-          "frame_os": {"estimate": False, "level": "boost", "response": 47, "frames": 50, "energy": 9}}
+          # Compare only the common CALM presentation. The new verified BOOST tag is an
+          # intentional feature; pixel-equivalence against v1.2.1 cannot apply to it.
+          "frame_os": {"estimate": False, "level": "calm", "response": 47, "frames": 50, "energy": 9}}
 
 
 def timing(module, preset, scale):

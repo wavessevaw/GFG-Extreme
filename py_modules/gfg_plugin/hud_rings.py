@@ -202,9 +202,24 @@ def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
                           "opacity": 1.0 if (live or est) else 0.45,
                           "text": _fmt_pct(v, sign) if v is not None else "—", "style": "ben",
                           "label": label})
-        if preset == "detailed" and level in ("boost", "rest"):
-            items.append({"kind": "tag", "text": level.upper(),
-                          "rgb": (95, 240, 160) if level == "boost" else (223, 230, 242)})
+        # A visible status in Standard as well as Detailed. "BOOST" is earned:
+        # a requested policy is not the same as an acknowledged real-cadence gain.
+        if fos.get("active") and level in ("boost", "rest", "calm"):
+            if level == "boost" and fos.get("verified_boost"):
+                real = fos.get("actual_real")
+                ratio = fos.get("actual_ratio")
+                suffix = ""
+                if isinstance(real, (int, float)) and isinstance(ratio, (int, float)) and ratio > 0:
+                    multiplier = str(round(ratio)) if abs(ratio - round(ratio)) < 0.1 else f"{ratio:.1f}"
+                    suffix = f" {round(real)}R x{multiplier}"
+                label, colour = "BOOST" + suffix, (95, 240, 160)
+            elif level == "boost":
+                label, colour = "VERIFYING", GREY
+            elif level == "rest":
+                label, colour = "REST", (223, 230, 242)
+            else:
+                label, colour = "CALM", (223, 230, 242)
+            items.append({"kind": "tag", "text": label, "rgb": colour})
     return items
 
 

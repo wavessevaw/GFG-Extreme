@@ -321,6 +321,14 @@ class BottleneckAwareLadderTests(RuntimeBase):
 
 
 class TrialFlowTests(RuntimeBase):
+    def test_expired_steam_menu_focus_does_not_freeze_governor(self):
+        self.feed(12, 30, 90)
+        self.svc.observer.game_focused = False
+        self.svc.observer.game_focused_at = self.t["now"] - 8.0
+        st = self.step()
+        self.assertNotEqual(st.get("reason"), "steam-menu-open")
+        self.assertIsNone(self.svc._menu_since)
+
     def test_ladder_rejects_unhealthy_point_rolls_back_then_confirms_next(self):
         self.prime_not_matching()
         st = self.step()
@@ -759,6 +767,25 @@ class OverlayHousekeepingTests(RuntimeBase):
 
 class LiveAttachTests(RuntimeBase):
     """v0.0.8: the Governor attaches to a game that is already running."""
+
+    def test_hud_only_default_rings_keep_live_fps_and_target(self):
+        """Default overlay cannot depend on the power Governor being enabled."""
+        from gfg_plugin import hud_rings
+        self.assertFalse(self.svc._profile_enabled("game"))
+        self.assertTrue(self.svc.hud_settings("game")["enabled"])
+        self.feed(12, 30, 90)
+        st = self.step()
+        self.assertFalse(st["enabled"], "passive telemetry must not enable Governor")
+        self.assertEqual(st["telemetry"]["snapshot"]["latest"]["output_fps"], 90)
+        self.assertEqual(st["target_output_fps"], 90, "OLED ring uses display refresh")
+        self.assertTrue(self.svc._launch.get("running"), "HUD-only still probes the active game")
+        self.assertFalse(self.svc.power.state.owned)
+        with patch.object(hud_rings, "write_overlay", return_value=True) as writer:
+            self.svc._ring_hud_due = 0
+            self.svc._ring_hud_key = None
+            self.assertTrue(self.svc._publish_ring_hud(st, self.svc.hud_settings("game")))
+        picture = writer.call_args.args[0]
+        self.assertEqual((picture["fps"], picture["real"], picture["target"]), (90, 30, 90))
 
     def setUp(self):
         super().setUp()
@@ -1460,6 +1487,20 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.step()
         self.assertIsNone(self.svc._injection, "no flapping right after a yield")
 
+    def test_stale_menu_event_does_not_disable_motionboost_starvation_guard(self):
+        self._act_live_point()
+        self.svc.frame_os.last = {"telemetry": {"live": True}}
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNotNone(self.svc._injection)
+        # A missed focus-restored event must not suppress the 60/90 output guard.
+        self.svc.observer.game_focused = False
+        self.svc.observer.game_focused_at = self.t["now"] - 9.0
+        self.feed(20, 20, 60)
+        self.step()
+        self.assertIsNone(self.svc._injection, "starved Act must roll back despite stale Steam focus")
+        self.assertFalse(self.svc.frame_os.executor_active)
+
     def test_steam_menu_pauses_measuring_and_drops_its_samples(self):
         self.feed(20, 45, 90)
         self.step()
@@ -1468,6 +1509,7 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         writes = list(self.svc.power.writes)
         self.svc.observer.game_focused = False
         self.feed(20, 30, 30)                     # generation suspended under the menu
+        self.svc.observer.game_focused_at = self.t["now"]  # event and FPS share monotonic clock
         st = self.step()
         self.assertEqual((st["state"], st["reason"]), ("PAUSED", "steam-menu-open"))
         self.assertEqual(self.svc.power.writes, writes, "nothing changes while the menu is open")
@@ -1599,6 +1641,38 @@ class RingRefreshTests(unittest.TestCase):
         self.now += 1
         self.publish()
         self.assertEqual(len(self.writes), 2)
+
+    def test_motionboost_badge_requires_executor_pacer_ack_and_measured_frames(self):
+        self.settings["preset"] = "standard"
+        self.svc.frame_os = types.SimpleNamespace(
+            executor_active=True, policy=types.SimpleNamespace(calm_real_hz=30.0))
+        self.status["frame_os"] = {
+            "enabled": True, "mode": "act", "acknowledged": True,
+            "decision": {"level": "boost"}, "telemetry": {"live": True},
+            "benefit": {"ready": True, "frames_pct": 50.0, "response_pct": None, "energy_pct": 0.0},
+        }
+        self.publish()
+        data = self.writes[-1][0]["frame_os"]
+        self.assertTrue(data["verified_boost"])
+        self.assertEqual((data["actual_real"], data["actual_ratio"]), (45, 2.0))
+        self.status["frame_os"]["acknowledged"] = False
+        self.now += 1.0
+        self.publish()
+        self.assertFalse(self.writes[-1][0]["frame_os"]["verified_boost"])
+        self.status["frame_os"]["acknowledged"] = True
+        self.status["telemetry"]["snapshot"]["latest"]["real_fps"] = 30
+        self.now += 1.0
+        self.publish()
+        self.assertFalse(self.writes[-1][0]["frame_os"]["verified_boost"])
+        self.svc.frame_os.executor_active = False
+        self.now += 1.0
+        self.publish()
+        self.assertFalse(self.writes[-1][0]["frame_os"]["active"])
+        self.svc.frame_os.executor_active = True
+        self.status["telemetry"]["snapshot"]["sample_age_ms"] = 3000
+        self.now += 1.0
+        self.publish()
+        self.assertFalse(self.writes[-1][0]["frame_os"]["verified_boost"])
 
     def test_dead_frame_os_does_not_show_old_benefit_rings(self):
         self.status["frame_os"] = {"enabled": True, "telemetry": {"live": False},

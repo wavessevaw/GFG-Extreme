@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.2.2).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.2.3).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -60,7 +60,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.2.2"
+VERSION = "1.2.3"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -517,21 +517,44 @@ class GovernorService:
         fo = status.get("frame_os") or {}
         benefit = fo.get("benefit") or {}
         data: Dict[str, Any] = {
-            "fps": number(fps) if fresh and status.get("enabled") else None,
-            "real": number(real) if fresh and status.get("enabled") else None,
+            # HUD is independent from Governor: turning off power optimization
+            # must not blank out live FPS from the same renderer.
+            "fps": number(fps) if fresh else None,
+            "real": number(real) if fresh else None,
             "tdp": number(power.get("observed_tdp_w") if power.get("observed_tdp_w") is not None
                           else power.get("current_tdp_w")),
             "target": number(status.get("target_output_fps") or (status.get("device") or {}).get("target")),
             "limit": number(power.get("initial_tdp_w") or power.get("maximum_tdp_w")) or 15,
             "battery_min": number(battery.get("minutes_left")), "battery_pct": number(battery.get("percent")),
         }
-        if fo.get("enabled") and (fo.get("telemetry") or {}).get("live") and benefit.get("ready"):
+        # Display *delivered* MotionBoost, not a requested policy. A pacer ACK
+        # alone is insufficient: the adaptive Render v4 overlay must also be in
+        # place, and fresh renderer samples must show the real cadence increased
+        # without losing the expected output rate.
+        if fo.get("enabled") and (fo.get("telemetry") or {}).get("live"):
             def percent(key):
-                value = benefit.get(key)
+                value = benefit.get(key) if benefit.get("ready") else None
                 return round(value) if isinstance(value, (int, float)) and math.isfinite(value) else None
+            decision = fo.get("decision") or {}
+            level = decision.get("level")
+            active = bool(fo.get("mode") == "act" and self.frame_os.executor_active
+                          and fo.get("acknowledged"))
+            calm = self.frame_os.policy.calm_real_hz if self.frame_os.policy else None
+            measured_real = number(real) if fresh else None
+            measured_out = number(fps) if fresh else None
+            target = data.get("target")
+            delivered = bool(active and level == "boost" and measured_real is not None
+                             and isinstance(calm, (int, float)) and calm > 0
+                             and measured_real >= 1.2 * calm
+                             and measured_out is not None and target
+                             and measured_out >= 0.85 * target)
+            ratio = (round(measured_out / measured_real, 1)
+                     if measured_real and measured_out else None)
             data["frame_os"] = {
-                "level": (fo.get("decision") or {}).get("level"), "estimate": benefit.get("estimate"),
-                "response": percent("response_pct"), "frames": percent("frames_pct"), "energy": percent("energy_pct")}
+                "level": level, "estimate": benefit.get("estimate"), "verified_boost": delivered,
+                "active": active, "actual_real": measured_real, "actual_ratio": ratio,
+                "response": percent("response_pct"), "frames": percent("frames_pct"),
+                "energy": percent("energy_pct")}
         scale = hud_rings.overlay_scale(self.ring_hud_extent)
         key = (hud_rings.visual_key(data, settings["preset"], settings["position"], scale),
                tuple((self._launch or {}).get("launch_key") or ()))
@@ -888,7 +911,7 @@ class GovernorService:
         """Treat a missing Steam focus-restored event as unknown, never permanent REST."""
         focus = getattr(self.observer, "game_focused", None)
         focus_at = getattr(self.observer, "game_focused_at", None)
-        if focus is False and (focus_at is None or self._clock() - focus_at > 5.0):
+        if focus is False and (focus_at is None or self.observer.time_fn() - focus_at > 5.0):
             return None
         return focus
 
@@ -1450,6 +1473,39 @@ class GovernorService:
         if profile:
             await asyncio.to_thread(self._sync_hud, profile)
 
+    async def _sample_passive_hud(self, profile: str) -> None:
+        """Keep the 1 Hz overlay accurate without claiming TDP or changing renderer settings."""
+        if not self.hud_settings(profile)["enabled"]:
+            return
+        await asyncio.to_thread(self.observer.poll)
+        snapshot = self.observer.snapshot()
+        self._status["telemetry"] = {
+            "snapshot": snapshot,
+            "summary": self.observer.summary(self.WINDOW_SECONDS),
+        }
+        # The ring layer reports size for an actual game session. This probe is
+        # normally done by Governor, but a HUD-only user needs it too.
+        await self._launch_info(profile)
+        display = await self._display_info()
+        external = bool(display.get("external", False))
+        if self._device is None:
+            self._device = await asyncio.to_thread(detect_model)
+        policy = target_for(
+            self._device["model"], external=external,
+            valid_rates=display.get("valid_rates"),
+            current_hz=display.get("current_refresh_hz"),
+        )
+        self._status.update({
+            "target_output_fps": int(policy["target"]),
+            "device": {**self._device, "mode": policy["mode"], "target_reason": policy["reason"]},
+            "display": {
+                "external": external,
+                "internal": bool(display.get("internal", not external)),
+                "valid_rates": display.get("valid_rates", []),
+                "current_refresh_hz": display.get("current_refresh_hz"),
+            },
+        })
+
     async def _iteration_core(self) -> None:
         await asyncio.to_thread(self._standby_overlays_sync)
         profile, response = await asyncio.to_thread(self.configuration.get_current_profile_snapshot)
@@ -1477,6 +1533,10 @@ class GovernorService:
         if not enabled:
             if self.power.state.owned or self._status.get("state") != "DISABLED" or self._point or self._request:
                 await self._release(profile, "governor-disabled")
+            # 1.2.2 ships with Rings on by default. The HUD is independent of
+            # Governor power control: continue reading passive renderer FPS even
+            # when optimization has been explicitly disabled.
+            await self._sample_passive_hud(profile)
             return
         if config.get("fg_backend", FG_BACKEND_GFG) != FG_BACKEND_GFG:
             if self._point or self._request or self.power.state.owned:
@@ -1542,7 +1602,7 @@ class GovernorService:
         # Steam's menu / quick access covers the game: the renderer suspends frame generation, so
         # the output drops for reasons that have nothing to do with the point.  Measure nothing,
         # change nothing, and drop what was sampled meanwhile once the game is back.
-        if getattr(self.observer, "game_focused", None) is False:
+        if self._trusted_game_focus() is False:
             if self._menu_since is None:
                 self._menu_since = self._clock()
             self._status.update({"state": "PAUSED", "reason": "steam-menu-open"})
@@ -1943,7 +2003,7 @@ class GovernorService:
             output = (self.observer.summary(self.FAST_CHECK_SECONDS, after_seq=self._injection_seq)
                       .get("output") or {}).get("median")
             starved = (isinstance(output, (int, float)) and output < 0.8 * float(self._budget.point.target_output_fps)
-                       and getattr(self.observer, "game_focused", None) is not False)   # Steam's menu stops FG
+                       and self._trusted_game_focus() is not False)   # only a fresh Steam menu event suppresses starvation
             if hot or starved:
                 acting = False
                 if self._injection is not None:

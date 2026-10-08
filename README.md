@@ -84,7 +84,7 @@ When the game closes, Home sums the whole session up in rings: **average FPS**, 
 
 You need [Decky Loader](https://decky.xyz/) and [Lossless Scaling](https://store.steampowered.com/app/993090/Lossless_Scaling/) from Steam (the default public version).
 
-1. Download `GFG-Extreme-v1_2_0.zip` (or newer) from [Releases](https://github.com/wavessevaw/GFG-Extreme/releases) and install it in Decky (*Install from zip*). Accept the root access request — it is used only to set TDP.
+1. Download `GFG-Extreme-v1_2_3.zip` (or newer) from [Releases](https://github.com/wavessevaw/GFG-Extreme/releases) and install it in Decky (*Install from zip*). Accept the root access request — it is used only to set TDP.
 2. Open GFG Extreme and tap **Install engine**.
 3. In Steam, open the game's **Properties → Launch Options** and paste:
    ```text
@@ -102,6 +102,8 @@ Heroic, Lutris, EmuDeck and other Flatpak apps: **Settings → System**, enable 
 <img src="docs/img/page-hud.png" width="230" align="right">
 
 The Home screen, shrunk into the corner of your game. A brand-red **FPS** ring with the real frame rate under it, a **TDP** ring, **battery** time in Detailed, and — with Frame OS on — the **Response / Frames / Energy** rings, coloured exactly like on Home. The ring that matches what Frame OS is doing right now is bright; the others dim.
+
+When experimental Frame OS Act is enabled, Standard and Detailed Rings also show **CALM**, **VERIFYING**, or **BOOST 45R x2** using live FPS and a pacer acknowledgement. **BOOST** requires measured real-frame improvement and an active executor. This badge does not establish input-to-photon latency or battery savings.
 
 Rings refresh **once a second** from recent renderer telemetry. Identical images are reused, and rounded panels, ring geometry and glyphs are cached. Missing or stale FPS is shown as unavailable. The Vulkan layer skips a busy HUD copy rather than waiting for it during presentation.
 
