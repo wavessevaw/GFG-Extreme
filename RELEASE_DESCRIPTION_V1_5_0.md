@@ -1,4 +1,4 @@
-## GFG Extreme 1.5.0: Smart power split
+## GFG Extreme 1.5.0: Smart power split, filters, a smaller Home
 
 The Steam Deck's CPU and GPU share one power limit. In most demanding games the GPU sets the frame rate while the CPU waits, yet the CPU still boosts to full clock between frames and spends watts the GPU could use. 1.5 gives those watts to the GPU, automatically.
 
@@ -20,6 +20,15 @@ The Steam Deck's CPU and GPU share one power limit. In most demanding games the 
 - Your CPU limit comes back when the game ends, when you press Stop and when the plugin unloads, even after a crash.
 - If another tool (PowerTools, a script) sets the CPU clock, GFG leaves it alone.
 - To turn the feature off, use **Details → Smart power split**.
+
+### Filters are back
+- Home has **eight one-tap looks**: Sharp, Vivid, HDR look, Cinema, Noir, Retro, Smooth and Off. Once the game has loaded filters, a look **switches live** in the game.
+- If this game needs a restart first, the card says so.
+- **Settings → Filters** has every control: CAS or DLS sharpening with its strength, FXAA or SMAA, and 19 effects that run in the order you turn them on.
+
+### A smaller Home
+- The FPS ring now sits beside the status, so Home takes less space.
+- **Tap the ring** to switch layouts: big ring, smaller ring, ring beside the status, or half-ring. Your choice is kept.
 
 ### Install
 Download `GFG-Extreme-v1_5_0.zip` below and install it with Decky Loader (*Install from zip*) over your current version. Settings, profiles and everything GFG learned are kept.
