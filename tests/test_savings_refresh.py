@@ -165,6 +165,77 @@ class RefreshLeaseTests(unittest.TestCase):
         self.assertEqual(self.display.hz, 90)
         self.assertIsNone(self.svc._savings_refresh_lease)
 
+    def test_all_modes_restore_oled_90_even_when_backend_early_exits(self):
+        """Repro: v1.4.3 held 60 Hz across Battery / Balanced / Quality.
+
+        The old code returned OBSERVE_ONLY for an external FG backend before
+        it could call the display restore method. A physical 60 Hz panel then
+        forced a 60 FPS target even in Quality.
+        """
+        from gfg_plugin.governor_device import target_for
+        for mode in ("balanced", "quality", "budget"):
+            with self.subTest(mode=mode):
+                self.svc.set_mode("game", "budget")
+                self.svc.set_savings_effort("game", "hard")
+                self.sync()
+                self.assertEqual(self.display.hz, 60)
+                self.svc.set_mode("game", mode)
+                if mode == "budget":
+                    self.svc.set_savings_effort("game", "off")
+                self.svc.configuration.get_current_profile_snapshot = lambda: (
+                    "game", {"success": True, "config": {"fg_backend": "optiscaler"}})
+                # _iteration_core exits early; restore cannot wait for a game.
+                asyncio.run(self.svc._iteration_core())
+                self.assertEqual(self.display.hz, 90,
+                                 "GFG must not keep the OLED at 60 after Hard")
+                self.assertEqual(target_for("oled", external=False, current_hz=self.display.hz)["target"], 90)
+                self.assertIsNone(self.svc._savings_refresh_lease)
+
+    def test_missing_game_config_does_not_strand_hard_refresh(self):
+        self.svc.set_savings_effort("game", "hard")
+        self.sync()
+        self.assertEqual(self.display.hz, 60)
+        self.svc.set_savings_effort("game", "off")
+        self.svc.configuration.get_current_profile_snapshot = lambda: (
+            None, {"success": False, "error": "profile-unavailable"})
+        asyncio.run(self.svc._iteration_core())
+        self.assertEqual(self.display.hz, 90)
+        self.assertIsNone(self.svc._savings_refresh_lease)
+
+    def test_leaving_hard_restores_immediately_without_game_loop(self):
+        self.svc.set_savings_effort("game", "hard")
+        self.sync()
+        self.svc.set_savings_effort("game", "medium")
+        asyncio.run(self.svc.reconcile_savings_refresh("game"))
+        self.assertEqual(self.display.hz, 90)
+        self.assertIsNone(self.svc._savings_refresh_lease)
+
+    def test_restore_failure_is_not_silently_discarded(self):
+        self.svc.set_savings_effort("game", "hard")
+        self.sync()
+        self.svc.set_mode("game", "quality")
+        original_writer = self.display.sync_target_fps
+        self.display.sync_target_fps = lambda value: {
+            "success": False, "applied": False, "error": "Gamescope busy"}
+        asyncio.run(self.svc.reconcile_savings_refresh("game"))
+        self.assertEqual(self.display.hz, 60)
+        self.assertIsNotNone(self.svc._savings_refresh_lease)
+        self.assertIn("Gamescope busy", self.svc._savings_refresh_error)
+        self.display.sync_target_fps = original_writer
+        self.svc._savings_refresh_retry_at = -1e9
+        asyncio.run(self.svc.reconcile_savings_refresh("game"))
+        self.assertEqual(self.display.hz, 90)
+        self.assertIsNone(self.svc._savings_refresh_lease)
+
+    def test_exiting_hard_restores_if_going_observe_only(self):
+        self.svc.set_savings_effort("game", "hard")
+        self.sync()
+        self.svc.set_mode("game", "balanced")
+        self.svc.configuration.get_current_profile_snapshot = lambda: (
+            "game", {"success": True, "config": {"fg_backend": "optiscaler"}})
+        asyncio.run(self.svc._iteration_core())
+        self.assertEqual(self.display.hz, 90)
+
     def test_reload_can_restore_persisted_lease(self):
         self.svc.set_savings_effort("game", "hard")
         self.sync()
