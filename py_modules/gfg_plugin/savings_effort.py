@@ -18,7 +18,7 @@ PRESETS: Dict[str, tuple[Optional[float], float]] = {
     "medium": (12.0, 9.0),
     "hard": (11.0, 9.0),
 }
-UNPLAYABLE_REAL_FPS = 22.0
+UNPLAYABLE_REAL_FPS = 24.0
 UNPLAYABLE_OUTPUT_RATIO = 0.80
 UNPLAYABLE_HOLD_S = 4.0
 POWER_BINDING_MARGIN_W = 1.5
@@ -73,9 +73,7 @@ class SavingsEffort:
         binding = draw_w is None or (
             isinstance(draw_w, (int, float)) and math.isfinite(draw_w)
             and draw_w >= float(tdp_w or 0) - POWER_BINDING_MARGIN_W)
-        bad = (sane and binding and (
-            real_fps < 20.0 or (real_fps < UNPLAYABLE_REAL_FPS
-                               and output_fps < target_fps * UNPLAYABLE_OUTPUT_RATIO)))
+        bad = sane and binding and real_fps < UNPLAYABLE_REAL_FPS
         if self.level == "off":
             self._bad_since = self._last_bad_at = None
             return False
@@ -93,3 +91,9 @@ class SavingsEffort:
         # beyond the device's normal limit based solely on this quick check.
         self.learned_floor_w = round(min(normal_max_w, max(old + 1.0, float(tdp_w) + RECOVERY_STEP_W)), 1)
         return self.learned_floor_w > old + 0.01
+
+def hard_refresh_target(level: str, model: str, external: bool) -> Optional[int]:
+    """Only Hard in Battery requests a display rate; never touch docked panels."""
+    if level != "hard" or external:
+        return None
+    return {"oled": 60, "lcd": 45}.get(model)
