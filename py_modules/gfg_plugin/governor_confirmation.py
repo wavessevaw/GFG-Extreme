@@ -57,6 +57,7 @@ def evaluate_confirmation(
     req: Request, observer: Any, now: float, *, budget: bool,
     min_samples: int, min_span_s: float, timeout_s: float,
     early_span_s: float = EARLY_DELIVERED_SPAN_SECONDS,
+    fast_mismatch: bool = False,
 ) -> tuple[str, str]:
     """Return (wait|confirmed|failed, reason).  On confirmation ``req`` is updated in place."""
     if observer.session_generation != req.generation:
@@ -83,6 +84,20 @@ def evaluate_confirmation(
         return "confirmed", req.confirmation_mode
     if budget and delivered_deeper(req, applied, samples, want, tol, min_samples=min_samples, span_s=early_span_s):
         return "failed", "delivered-deeper-ratio"
+    # Quality used to wait 25 s for a renderer that *acknowledged* the new
+    # overlay but kept the previous low-FPS cadence.  After an applied event and
+    # a full, stable observation window, a mismatched ratio AND starved output
+    # cannot be confirmation; reject it without repeatedly punishing the player.
+    # Never infer this from a missing apply event or stale/mixed samples.
+    if fast_mismatch and applied and len(samples) >= min_samples:
+        end = samples[-1].monotonic
+        recent = [sample for sample in samples if end - sample.monotonic <= early_span_s]
+        if (len(recent) >= min_samples
+                and recent[-1].monotonic - recent[0].monotonic >= early_span_s * 0.8
+                and all(not _at_ratio(req, sample, want, tol)
+                        and sample.output_fps < 0.8 * req.point.target_output_fps
+                        for sample in recent)):
+            return "failed", "applied-ratio-not-delivering"
     if now - req.created > timeout_s:
         return "failed", "confirmation-timeout"
     return "wait", "awaiting-fresh-evidence"
