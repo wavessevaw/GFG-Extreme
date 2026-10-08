@@ -190,6 +190,24 @@ static void test_file_policy(void)
               "dead owner can be replaced after telemetry timeout");
     }
 
+    /* A timestamp from a future/different clock must never arm Act. */
+    p = policy(60);
+    put(m, &p, t + 10000 * MS);
+    t += 100 * MS;
+    gfg_ctl_poll(t, &st);
+    CHECK(!st.enabled, "future heartbeat must be disabled");
+
+    /* Reading a nearly expired policy must not grant another heartbeat window
+     * when its writer subsequently dies in the middle of a seqlock update. */
+    put(m, &p, t);
+    t += GFG_CTL_HEARTBEAT_NS - 100 * MS;
+    gfg_ctl_poll(t, &st);
+    CHECK(st.enabled, "nearly expired heartbeat still valid");
+    m->policy_seq |= 1u;
+    t += 200 * MS;
+    gfg_ctl_poll(t, &st);
+    CHECK(!st.enabled, "cached policy expires from written timestamp, not read time");
+
     /* heartbeat: a policy the Governor stopped rewriting is not trusted */
     p = policy(60);
     put(m, &p, t);

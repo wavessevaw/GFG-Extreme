@@ -8,6 +8,7 @@ Reviewed baseline: release v1.2.0 (`43d3078e2e8784c6d0aca3203de957c16aa92f40`), 
 | --- | --- |
 | Hold a stick without changing its position for more than 20 seconds | Treat held axes as activity, so the idle policy does not lower the game cadence/power |
 | Input node returns EOF/ENODEV, or relay reports zero devices | Drop dead descriptors, discard partial records and clear stale activity |
+| Future policy timestamp or a writer stuck mid-update near expiry | Reject future heartbeats and expire cached policies from their original write time |
 | Control policy write fails, then the requested cadence stays unchanged | Record publication only after success; retry failed heartbeats with a full policy |
 | Disable/re-enable Frame OS with the same Governor point | Reset policy, energy bank, backoff, scene detector and reader state |
 | TDP control is gained/lost without changing cadence | Create/remove the energy broker with power ownership |
@@ -15,7 +16,7 @@ Reviewed baseline: release v1.2.0 (`43d3078e2e8784c6d0aca3203de957c16aa92f40`), 
 | Release workflow runs concurrently with CI | Run native tests in the release job before packaging/publishing |
 | Version differs from 1.2.0 | Verify pacer and HUD payloads for every newly published ZIP |
 
-Regression coverage: `tests/test_frame_os_release_regressions.py` (11 tests).
+Regression coverage: `tests/test_frame_os_release_regressions.py` (11 tests), plus native heartbeat regression checks in `engine/gfg-pacer/tests/test_control.c`.
 
 ## Automated validation
 

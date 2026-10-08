@@ -118,7 +118,7 @@ static uint32_t g_env_mode;
 static gfg_policy g_env_policy;
 static int64_t g_next_poll;
 /* Last complete policy read: do not retain Act forever after a writer crashes mid-seqlock. */
-static int64_t g_last_policy_read_ns;
+static int64_t g_last_policy_written_ns;
 static gfg_ctl_state g_state;
 
 static int env_int(const char *name, int def)
@@ -240,7 +240,7 @@ static void init_locked(void)
     g_shm = NULL;            /* after fork: the parent's mapping is not ours to use */
     g_created = 0;
     g_next_poll = 0;
-    g_last_policy_read_ns = 0;
+    g_last_policy_written_ns = 0;
     g_state = (gfg_ctl_state){0};
     gfg_ctl_path(g_path, sizeof(g_path));
     g_env_enabled = env_int("GFG_FRAME_OS_ENABLE", 0) == 1;
@@ -286,17 +286,18 @@ int gfg_ctl_poll(int64_t now_ns, gfg_ctl_state *out)
             if (gfg_ctl_read_policy(g_shm, &c) != 0) {
                 /* A dead writer may leave policy_seq odd indefinitely. A cached Act policy
                  * must not outlive the heartbeat window if no valid read is possible. */
-                if (g_last_policy_read_ns > 0 && now_ns >= g_last_policy_read_ns &&
-                    now_ns - g_last_policy_read_ns <= GFG_CTL_HEARTBEAT_NS)
+                if (g_last_policy_written_ns > 0 && now_ns >= g_last_policy_written_ns &&
+                    now_ns - g_last_policy_written_ns <= GFG_CTL_HEARTBEAT_NS)
                     n = g_state;
-            } else if (c.enabled == 1 && c.written_ns > 0 && now_ns - c.written_ns <= GFG_CTL_HEARTBEAT_NS &&
+            } else if (c.enabled == 1 && c.written_ns > 0 && now_ns >= c.written_ns &&
+                       now_ns - c.written_ns <= GFG_CTL_HEARTBEAT_NS &&
                        to_sched_policy(&c, &n.policy)) {
                 n.enabled = 1;
                 n.mode = c.mode;
                 n.generation = c.generation;
-                g_last_policy_read_ns = now_ns;
+                g_last_policy_written_ns = c.written_ns;
             } else {
-                g_last_policy_read_ns = now_ns;
+                g_last_policy_written_ns = 0;
             }
         }
         if (!n.enabled) {

@@ -4,6 +4,7 @@ Fixes from the 1.2.0 release review:
 
 - Holding either stick no longer sends Frame OS into idle/rest after 20 seconds.
 - Disconnected input devices are removed and can be rediscovered; lost input clears stale stick activity.
+- The native pacer rejects future heartbeats and expires cached policies from their original write time.
 - Frame OS retries failed policy writes and heartbeats.
 - Re-enabling Frame OS starts with a fresh energy bank, boost backoff and scene detector.
 - Energy-broker ownership follows changes in Governor power control.
