@@ -529,6 +529,8 @@ class PowerSearch:
         hard_pressure: int = 0,
         misses: int = 0,
         health_ratio: float = 1.05,
+        output_fps: Optional[float] = None,
+        output_target_fps: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Evaluate one fresh evidence window at the current power level.
 
@@ -545,7 +547,20 @@ class PowerSearch:
             return {"action": "wait", "state": s.to_dict()}
         target = max(1.0, float(base_target_fps))
         p5 = float(p5_fps)
-        healthy = p5 >= target * float(health_ratio) and int(hard_pressure) == 0 and int(misses) == 0
+        # A stable real-frame cap does not prove the output is reaching its
+        # display budget: 30 real x2 can sit at 60 output on a 90 Hz panel.
+        # Quality must reject that point, but never spend power on missing
+        # output evidence (loading / missing renderer diagnostics).
+        output_healthy = True
+        if output_target_fps is not None:
+            if (not isinstance(output_fps, (int, float)) or not math.isfinite(float(output_fps))
+                    or not isinstance(output_target_fps, (int, float))
+                    or not math.isfinite(float(output_target_fps)) or output_target_fps <= 0):
+                s.reason = "insufficient-fresh-output-evidence"
+                return {"action": "wait", "state": s.to_dict()}
+            output_healthy = float(output_fps) >= float(output_target_fps) * 0.94
+        healthy = (p5 >= target * float(health_ratio) and int(hard_pressure) == 0
+                   and int(misses) == 0 and output_healthy)
         if s.state != "optimizing":
             return self._watch_locked(healthy, p5 < target * 0.85)
 
