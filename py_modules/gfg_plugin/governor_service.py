@@ -180,6 +180,7 @@ class GovernorService:
         self._savings_refresh_override = None
         self._savings_refresh_error = None
         self._savings_refresh_retry_at = 0.0
+        self._savings_refresh_gate = asyncio.Lock()  # UI RPC and Governor loop share one Gamescope lease
         self._io_lock = threading.RLock()
         self._forced_release: set[str] = set()
         self._restore_pending: Dict[str, str] = {}
@@ -482,6 +483,8 @@ class GovernorService:
             "refresh_target_hz": self._savings_refresh_target(profile),
             "refresh_error": self._savings_refresh_error,
             "refresh_manual_override": self._savings_refresh_override == profile,
+            "refresh_restore_pending": bool(self._savings_refresh_lease and
+                                             self._savings_refresh_target(profile) is None),
         }
         if budget is not None and budget.flavor == "battery":
             self._sync_savings_cap(budget, profile)
@@ -784,7 +787,7 @@ class GovernorService:
         profile = self._current_hud_profile()
         hud_on = bool(profile and self.hud_settings(profile)["enabled"])
         return not (self._any_profile_enabled() or hud_on or self._restore_pending or self._forced_release
-                    or self._point or self._request)
+                    or self._point or self._request or self._savings_refresh_lease is not None)
 
     def _any_profile_enabled(self) -> bool:
         profiles = self._settings.get("profiles", {})
@@ -1322,7 +1325,7 @@ class GovernorService:
                 self.log.debug("Governor loop ended with error: %s", error)
         self._task = None
         if self._savings_refresh_lease is not None:
-            await self._sync_savings_refresh(self._active_profile or "", force_off=True)
+            await self.reconcile_savings_refresh(self._active_profile or "", force_off=True)
         await self.frame_os.stop()
         # Restore overlays to Saved (verified, lease dropped) before power ownership is released.
         names = list(dict.fromkeys([*self._saved_profile_names(), *self._settings.get("profiles", {})]))
@@ -1382,8 +1385,38 @@ class GovernorService:
         return hard_refresh_target(self.savings_level(profile),
                                    (self._device or {}).get("model", ""), external=False)
 
+    async def reconcile_savings_refresh(self, profile: str = "", *, force_off: bool = False) -> Dict[str, Any]:
+        """Refresh modes must follow the selected mode, not wait for active gameplay.
+
+        Called immediately by the Decky mode/effort RPC and at the start of
+        every Governor iteration. This also restores after a failed overlay,
+        a stopped game or an observe-only renderer backend.
+        """
+        if self._device is None:
+            self._device = await asyncio.to_thread(detect_model)
+        selected = str(profile or "")
+        if not selected:
+            selected = self._current_hud_profile()
+        if not selected and self._savings_refresh_lease:
+            selected = str(self._savings_refresh_lease.get("profile") or "")
+            force_off = True
+        if not self._savings_refresh_lease and self._savings_refresh_target(selected) is None:
+            return {}
+        info = await self._sync_savings_refresh(selected, force_off=force_off)
+        if self._savings_refresh_lease is not None and (
+                force_off or self._savings_refresh_target(selected) is None):
+            self._savings_refresh_error = self._savings_refresh_error or "refresh-restore-pending"
+        return info
+
     async def _sync_savings_refresh(self, profile: str, display: Optional[Dict[str, Any]] = None,
                                     *, force_off: bool = False) -> Dict[str, Any]:
+        # GFG's own loop and UI RPC must not race a restore against an Apply.
+        async with self._savings_refresh_gate:
+            return await self._sync_savings_refresh_unlocked(
+                profile, display, force_off=force_off)
+
+    async def _sync_savings_refresh_unlocked(self, profile: str, display: Optional[Dict[str, Any]] = None,
+                                             *, force_off: bool = False) -> Dict[str, Any]:
         """Own the rate through a persisted lease; manual Steam slider always wins.
 
         Only exact, verified Gamescope changes count. No writes on docked screens;
@@ -1395,8 +1428,14 @@ class GovernorService:
             except Exception as error:
                 self._savings_refresh_error = f"display-probe-failed: {error}"
                 return {}
-        if not isinstance(display, dict) or not display.get("success") or display.get("external"):
+        if not isinstance(display, dict) or not display.get("success"):
+            if self._savings_refresh_lease is not None:
+                self._savings_refresh_error = "display-probe-unavailable; refresh-restore-pending"
             return display or {}
+        if display.get("external"):
+            if self._savings_refresh_lease is not None:
+                self._savings_refresh_error = "external-display-active; handheld-restore-pending"
+            return display
         reader = getattr(self.display, "read_current_refresh_hz", None)
         writer = getattr(self.display, "sync_target_fps", None)
         if not callable(reader) or not callable(writer):
@@ -1408,7 +1447,7 @@ class GovernorService:
             self._savings_refresh_error = f"refresh-read-failed: {error}"
             return display
         if not isinstance(actual, (int, float)) or not 20 <= actual <= 240:
-            self._savings_refresh_error = "Current screen Hz unavailable"
+            self._savings_refresh_error = "Current screen Hz unavailable; restore pending"
             return display
         actual = int(round(actual))
         display = {**display, "current_refresh_hz": actual}
@@ -1923,6 +1962,9 @@ class GovernorService:
         await asyncio.to_thread(self._standby_overlays_sync)
         profile, response = await asyncio.to_thread(self.configuration.get_current_profile_snapshot)
         config = response.get("config") if isinstance(response, dict) else None
+        # Safety-critical: unwind Battery Hard's global Gamescope modeset
+        # BEFORE any renderer/backend/overlay/paused-state early return.
+        await self.reconcile_savings_refresh(profile or "", force_off=not bool(profile and isinstance(config, dict)))
         if not profile or not isinstance(config, dict):
             self._status.update({"state": "PAUSED", "reason": "profile-unavailable", "profile": profile or ""})
             return
@@ -1972,6 +2014,7 @@ class GovernorService:
         if self._device is None:
             self._device = await asyncio.to_thread(detect_model)
         display = await self._sync_savings_refresh(profile, display)
+        external = bool(display.get("external", False))
         policy = target_for(self._device["model"], external=external, valid_rates=display.get("valid_rates"),
                             current_hz=display.get("current_refresh_hz"))
         target = int(policy["target"])
