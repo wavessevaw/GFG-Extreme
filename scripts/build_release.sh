@@ -20,6 +20,12 @@ mkdir -p "$work/GFG-Extreme/bin/gfg-frame-os"
 install -m 644 "$pacer/build/libVkLayer_gfg_pacer.so" "$pacer/build/VkLayer_gfg_pacer.json" \
   "$work/GFG-Extreme/bin/gfg-frame-os/"
 rm -rf "$pacer/build"
+# Ring HUD runs as a separate layer after the renderer. Ship it beside the pacer.
+hud="$work/GFG-Extreme/engine/gfg-hud"
+make -s -C "$hud" layer abi VULKAN_HEADERS="${VULKAN_HEADERS:?set VULKAN_HEADERS to a Vulkan-Headers include dir}"
+install -m 644 "$hud/build/libVkLayer_gfg_hud.so" "$hud/build/VkLayer_gfg_hud.json" \
+  "$work/GFG-Extreme/bin/gfg-frame-os/"
+rm -rf "$hud/build"
 # HUD layer (64-bit): copies the plugin's pre-rendered overlay into presented frames; shipped
 # next to the pacer files.
 hud="$work/GFG-Extreme/engine/gfg-hud"
