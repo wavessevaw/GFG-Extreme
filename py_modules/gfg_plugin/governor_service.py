@@ -144,8 +144,8 @@ class GovernorService:
         self.ring_hud_path = Path(os.environ.get("GFG_HUD_FILE") or hud_rings.DEFAULT_PATH)
         self.ring_hud_extent = Path(os.environ.get("GFG_HUD_EXTENT_FILE") or hud_rings.DEFAULT_EXTENT)
         self.ring_hud_marker_path = self.configuration.runtime_state_dir / "hud-rings.enabled"
-        self._ring_hud_acc: Dict[str, list] = {}
-        self._ring_hud_levels: Dict[str, int] = {}
+        self._ring_hud_key = None
+        self._ring_hud_lock = threading.Lock()
         self._ring_hud_due = 0.0
         self._ring_hud_seq = 0
         self.ring_hud_layer_error: Optional[str] = None
@@ -416,7 +416,7 @@ class GovernorService:
         return {"enabled": bool(raw.get("enabled", False)), "preset": preset, "position": position, "style": style}
 
     HUD_STYLES = ("rings", "text")
-    RING_HUD_PERIOD_S = 20.0
+    RING_HUD_PERIOD_S = 1.0
 
     def set_hud(self, profile: str, enabled: Any = None, preset: Any = None, position: Any = None,
                 style: Any = None) -> Dict[str, Any]:
@@ -453,10 +453,9 @@ class GovernorService:
             if settings["enabled"]:
                 status = self.get_status(profile)
                 rings = settings["style"] == "rings" and self._ring_hud_live()
-                if rings:
-                    # the GFG HUD layer draws the rings; MangoHud stays loaded but hidden
+                if rings and self._publish_ring_hud(status, settings):
+                    # Hide the fallback only after publishing a usable ring HUD.
                     self.hud.deactivate()
-                    self._publish_ring_hud(status, settings)
                 else:
                     self._clear_ring_hud()
                     # MangoHud re-reads a changed config, so the FPS source follows the telemetry.
@@ -489,56 +488,73 @@ class GovernorService:
         started = key[2] if isinstance(key, (list, tuple)) and len(key) > 2 else None   # wall-clock launch time
         return isinstance(started, (int, float)) and written >= float(started) - 5.0
 
-    def _sample_ring_hud(self, status: Dict[str, Any]) -> None:
-        tel = status.get("telemetry") or {}
-        summary = tel.get("summary") or tel
-        power = status.get("power") or {}
-        for key, value in (("fps", (summary.get("output") or {}).get("median")),
-                           ("real", (summary.get("real") or {}).get("median")),
-                           ("tdp", power.get("observed_tdp_w") if power.get("observed_tdp_w") is not None
-                            else power.get("current_tdp_w"))):
-            if isinstance(value, (int, float)) and value > 0:
-                acc = self._ring_hud_acc.setdefault(key, [0.0, 0])
-                acc[0] += float(value)
-                acc[1] += 1
-        level = ((status.get("frame_os") or {}).get("decision") or {}).get("level")
-        if level:
-            self._ring_hud_levels[level] = self._ring_hud_levels.get(level, 0) + 1
+    def _publish_ring_hud(self, status: Dict[str, Any], settings: Dict[str, Any]) -> bool:
+        with self._ring_hud_lock:
+            return self._publish_ring_hud_locked(status, settings)
 
-    def _publish_ring_hud(self, status: Dict[str, Any], settings: Dict[str, Any]) -> None:
-        """Averages over 20 s, drawn once per 20 s (a calm HUD, and cheap)."""
-        self._sample_ring_hud(status)
+    def _publish_ring_hud_locked(self, status: Dict[str, Any], settings: Dict[str, Any]) -> bool:
+        """Refresh at 1 Hz, skip identical pictures, and never display stale FPS."""
         now = self._clock()
         if now < self._ring_hud_due:
-            return
-        self._ring_hud_due = now + self.RING_HUD_PERIOD_S
-        avg = {k: v[0] / v[1] for k, v in self._ring_hud_acc.items() if v[1]}
+            return self._ring_hud_key is not None
+        tel = status.get("telemetry") or {}
+        summary = tel.get("summary") or tel
+        snapshot = tel.get("snapshot")
+        latest = (snapshot or {}).get("latest") or {}
+        age = (snapshot or {}).get("sample_age_ms")
+        fresh = snapshot is None or (isinstance(age, (int, float)) and 0 <= age <= 2500)
+
+        def number(value):
+            return round(float(value)) if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0 else None
+
+        # Renderer samples already summarize an interval. Avoid another 12/20-second average.
+        fps = latest.get("output_fps") if snapshot is not None else (summary.get("output") or {}).get("median")
+        real = latest.get("real_fps") if snapshot is not None else (summary.get("real") or {}).get("median")
         power = status.get("power") or {}
         battery = status.get("battery") or {}
         fo = status.get("frame_os") or {}
         benefit = fo.get("benefit") or {}
         data: Dict[str, Any] = {
-            "fps": avg.get("fps"), "real": avg.get("real"), "tdp": avg.get("tdp"),
-            "target": status.get("target_output_fps") or (status.get("device") or {}).get("target"),
-            "limit": power.get("initial_tdp_w") or power.get("maximum_tdp_w") or 15,
-            "battery_min": battery.get("minutes_left"), "battery_pct": battery.get("percent"),
+            "fps": number(fps) if fresh and status.get("enabled") else None,
+            "real": number(real) if fresh and status.get("enabled") else None,
+            "tdp": number(power.get("observed_tdp_w") if power.get("observed_tdp_w") is not None
+                          else power.get("current_tdp_w")),
+            "target": number(status.get("target_output_fps") or (status.get("device") or {}).get("target")),
+            "limit": number(power.get("initial_tdp_w") or power.get("maximum_tdp_w")) or 15,
+            "battery_min": number(battery.get("minutes_left")), "battery_pct": number(battery.get("percent")),
         }
-        if fo.get("enabled") and fo.get("mode", "off") != "off" and benefit.get("ready"):
+        if fo.get("enabled") and (fo.get("telemetry") or {}).get("live") and benefit.get("ready"):
+            def percent(key):
+                value = benefit.get(key)
+                return round(value) if isinstance(value, (int, float)) and math.isfinite(value) else None
             data["frame_os"] = {
-                "level": max(self._ring_hud_levels, key=self._ring_hud_levels.get) if self._ring_hud_levels else None,
-                "estimate": benefit.get("estimate"), "response": benefit.get("response_pct"),
-                "frames": benefit.get("frames_pct"), "energy": benefit.get("energy_pct")}
-        self._ring_hud_acc, self._ring_hud_levels = {}, {}
-        self._ring_hud_seq += 1
-        hud_rings.write_overlay(data, preset=settings["preset"], position=settings["position"],
-                                seq=self._ring_hud_seq, path=self.ring_hud_path, extent_path=self.ring_hud_extent)
+                "level": (fo.get("decision") or {}).get("level"), "estimate": benefit.get("estimate"),
+                "response": percent("response_pct"), "frames": percent("frames_pct"), "energy": percent("energy_pct")}
+        scale = hud_rings.overlay_scale(self.ring_hud_extent)
+        key = (hud_rings.visual_key(data, settings["preset"], settings["position"], scale),
+               tuple((self._launch or {}).get("launch_key") or ()))
+        if key == self._ring_hud_key and self.ring_hud_path.is_file():
+            self._ring_hud_due = now + self.RING_HUD_PERIOD_S
+            return True
+        seq = self._ring_hud_seq + 1
+        if not hud_rings.write_overlay(data, preset=settings["preset"], position=settings["position"],
+                                       seq=seq, path=self.ring_hud_path, extent_path=self.ring_hud_extent, scale=scale):
+            self._ring_hud_key = None
+            self._ring_hud_due = 0.0   # retry next tick, not after a long stale display
+            return False
+        self._ring_hud_seq, self._ring_hud_key = seq, key
+        self._ring_hud_due = now + self.RING_HUD_PERIOD_S
+        return True
 
     def _clear_ring_hud(self) -> None:
-        if self._ring_hud_seq and self._ring_hud_due != -1.0:
-            self._ring_hud_seq += 1
-            hud_rings.write_overlay(None, preset="standard", position="top-left", seq=self._ring_hud_seq,
-                                    path=self.ring_hud_path, extent_path=self.ring_hud_extent)
-            self._ring_hud_due = -1.0       # cleared; the next publish draws at once
+        with self._ring_hud_lock:
+            self._ring_hud_key = None
+            if self._ring_hud_seq and self._ring_hud_due != -1.0:
+                seq = self._ring_hud_seq + 1
+                if hud_rings.write_overlay(None, preset="standard", position="top-left", seq=seq,
+                                            path=self.ring_hud_path, extent_path=self.ring_hud_extent):
+                    self._ring_hud_seq = seq
+                    self._ring_hud_due = -1.0   # next publish draws at once; failures retry
 
     def _hud_preload_wanted(self) -> bool:
         """Keep a hidden MangoHud in new launches only for Governor/HUD users.

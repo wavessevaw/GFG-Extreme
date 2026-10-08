@@ -1,4 +1,5 @@
 import struct, tempfile, unittest
+from unittest.mock import patch
 from pathlib import Path
 from py_modules.gfg_plugin import hud_rings
 
@@ -55,6 +56,38 @@ class RingHudTests(unittest.TestCase):
         self.assertEqual(hud_rings.scale_for(800), 1.0)
         self.assertEqual(hud_rings.scale_for(1200), 1.5)
         self.assertEqual(hud_rings.scale_for(2160), 3.0)
+
+    def test_zero_fps_is_not_missing_telemetry(self):
+        items = hud_rings.items_for({**SAMPLE, "fps": 0, "real": 0}, "minimal")
+        self.assertEqual(items[0]["text"], "0")
+        self.assertEqual(items[0]["sub"], "0 REAL")
+
+    def test_geometry_background_and_glyph_caches_are_reused(self):
+        hud_rings._ring_geometry.cache_clear()
+        hud_rings._panel.cache_clear()
+        hud_rings._glyph_alpha.cache_clear()
+        hud_rings.render(SAMPLE, "standard", 1.0)
+        geometry = hud_rings._ring_geometry.cache_info().misses
+        panel = hud_rings._panel.cache_info().misses
+        glyphs = hud_rings._glyph_alpha.cache_info().misses
+        hud_rings.render(SAMPLE, "standard", 1.0)
+        self.assertEqual(hud_rings._ring_geometry.cache_info().misses, geometry)
+        self.assertEqual(hud_rings._panel.cache_info().misses, panel)
+        self.assertEqual(hud_rings._glyph_alpha.cache_info().misses, glyphs)
+
+    def test_cached_background_is_not_modified_by_render(self):
+        first = hud_rings.render(SAMPLE, "minimal")
+        hud_rings.render({**SAMPLE, "fps": 20, "tdp": 4}, "minimal")
+        self.assertEqual(hud_rings.render(SAMPLE, "minimal"), first)
+
+    def test_failed_atomic_write_leaves_previous_overlay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "hud.raw"
+            path.write_bytes(b"previous")
+            with patch.object(hud_rings.os, "replace", side_effect=OSError("busy")):
+                self.assertFalse(hud_rings.write_overlay(None, preset="minimal",
+                                 position="top-left", seq=2, path=path))
+            self.assertEqual(path.read_bytes(), b"previous")
 
 
 if __name__ == "__main__":

@@ -27,6 +27,12 @@ jobs:
       - name: HUD layer tests (overlay file, pixel conversion, layer on the mock Vulkan driver)
         run: make -C engine/gfg-hud VULKAN_DEPS="$RUNNER_TEMP/vk" test layer abi integration
 
+      - name: HUD pixels and CPU cost versus 1.2.1
+        run: |
+          git fetch --depth=1 origin tag v1.2.1
+          git show v1.2.1:py_modules/gfg_plugin/hud_rings.py > "$RUNNER_TEMP/hud_baseline.py"
+          python3 tools/benchmark_hud.py --baseline "$RUNNER_TEMP/hud_baseline.py"
+
       - name: Frontend build is committed and current
         run: |
           npm ci

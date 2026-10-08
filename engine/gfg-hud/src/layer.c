@@ -40,7 +40,7 @@
 #include "overlay.h"
 
 #define LAYER_EXPORT __attribute__((visibility("default")))
-#define FENCE_WAIT_NS 100000000ull      /* per present: an image's previous HUD copy (normally long done) */
+#define FENCE_WAIT_NS 0ull              /* never stall a game frame for HUD work; retry next present */
 #define DESTROY_WAIT_NS 5000000000ull   /* teardown: then leak rather than free in-use objects */
 #define MAX_QUEUES 64
 #define MAX_POOLS 16

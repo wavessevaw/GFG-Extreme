@@ -47,7 +47,12 @@ $(BUILD)/test_hud: tests/test_hud.c src/overlay.h
 	$(CC) $(CFLAGS) -I$(VULKAN_HEADERS) -o $@ tests/test_hud.c \
 		-L$(VULKAN_LOADER_DIR) -Wl,-rpath,$(VULKAN_LOADER_DIR) -lvulkan
 
-integration: layer $(BUILD)/test_hud
+$(BUILD)/test_sync: tests/test_sync.c $(LAYER_SRC) $(LAYER_HDR)
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I$(VULKAN_HEADERS) -o $@ tests/test_sync.c src/overlay.c -lpthread
+
+integration: layer $(BUILD)/test_hud $(BUILD)/test_sync
+	$(BUILD)/test_sync
 	@test -f $(MOCK_ICD_JSON) || { echo "mock ICD manifest not found: $(MOCK_ICD_JSON) (set MOCK_ICD_JSON or run ../gfg-pacer/tests/setup_vulkan_deps.sh)"; exit 1; }
 	MOCK_ICD_JSON=$(MOCK_ICD_JSON) tests/run_integration.sh $(BUILD)
 
