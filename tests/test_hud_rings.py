@@ -12,8 +12,8 @@ class RingHudTests(unittest.TestCase):
     def test_presets_choose_their_rings(self):
         labels = lambda p: [i.get("label") or i.get("text") or i["kind"] for i in hud_rings.items_for(SAMPLE, p)]
         self.assertEqual(labels("minimal"), ["FPS/90", "TDP CAP"])
-        self.assertEqual(labels("standard"), ["FPS/90", "TDP CAP", "sep", "AGE EST", "REAL GAIN", "CAP CUT", "BOOST 45R x2"])
-        self.assertEqual(labels("detailed"), ["FPS/90", "TDP CAP", "BATTERY", "sep", "AGE EST", "REAL GAIN", "CAP CUT", "BOOST 45R x2"])
+        self.assertEqual(labels("standard"), ["FPS/90", "TDP CAP", "sep", "AGE EST", "REAL +", "CAP CUT", "BOOST 45R x2"])
+        self.assertEqual(labels("detailed"), ["FPS/90", "TDP CAP", "BATTERY", "sep", "AGE EST", "REAL +", "CAP CUT", "BOOST 45R x2"])
         self.assertEqual([i.get("label") for i in hud_rings.items_for({**SAMPLE, "frame_os": None}, "standard")],
                          ["FPS/90", "TDP CAP"])
 
@@ -43,7 +43,7 @@ class RingHudTests(unittest.TestCase):
     def test_benefit_text_and_colour(self):
         items = {i.get("label"): i for i in hud_rings.items_for(SAMPLE, "standard")}
         self.assertEqual(items["AGE EST"]["text"], "−47%")
-        self.assertEqual(items["REAL GAIN"]["text"], "+50%")
+        self.assertEqual(items["REAL +"]["text"], "+50%")
         self.assertEqual(items["CAP CUT"]["opacity"], 0.45)            # not the live benefit in boost
         r, g, _b = hud_rings.effect_color(50, 50)
         self.assertGreater(g, r)                                        # full benefit is green
