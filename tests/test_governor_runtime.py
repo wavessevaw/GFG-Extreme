@@ -126,6 +126,13 @@ class RuntimeBase(unittest.TestCase):
     def tearDown(self):
         self.assertEqual(sha(self.cfg.config_file_path), self.saved_hash, "Saved config was modified")
 
+    def test_default_ring_marker_is_staged_without_prior_governor_settings(self):
+        # A freshly created ConfigService profile is absent from gfg-governor.json.
+        # Stage the layer anyway, or "enabled by default" would never reach the Vulkan loader.
+        self.assertNotIn("game", self.svc._settings["profiles"]) if not self.svc._profile_enabled("game") else None
+        self.svc._sync_frame_os_marker()
+        self.assertTrue(self.svc.ring_hud_marker_path.exists())
+
     def test_ring_hud_falls_back_to_text_until_the_layer_reports(self):
         import time as _t
         from gfg_plugin import hud_rings
@@ -179,6 +186,8 @@ class RuntimeBase(unittest.TestCase):
         self.assertFalse(self.svc._is_idle())          # enabled in setUp
         self.svc.set_enabled("game", False)
         self.step()
+        self.assertFalse(self.svc._is_idle(), "new installs keep Rings enabled even with Governor off")
+        self.svc.set_hud("game", False)
         self.assertTrue(self.svc._is_idle())
         self.svc.set_hud("game", True)
         self.assertFalse(self.svc._is_idle())          # HUD status needs the loop
@@ -188,6 +197,7 @@ class RuntimeBase(unittest.TestCase):
     def test_loop_wakes_immediately_when_poked_while_idle(self):
         async def scenario():
             self.svc.set_enabled("game", False)
+            self.svc.set_hud("game", False)
             self.svc.IDLE_LOOP_SECONDS = 30.0
             calls = []
             original = self.svc._iteration
@@ -799,7 +809,13 @@ class LiveAttachTests(RuntimeBase):
     def test_hidden_hud_only_for_governor_or_hud_users(self):
         from gfg_plugin.governor_hud import active_config_path
         active = active_config_path(self.cfg.config_dir)
-        self.assertFalse(active.exists(), "no Governor, no HUD: MangoHud must not load in games")
+        self.assertEqual(self.svc.hud_settings("game"),
+                         {"enabled": True, "preset": "standard", "position": "bottom-left", "style": "rings"})
+        self.svc._sync_hud_presence()
+        self.assertIn("no_display=1", active.read_text(), "default HUD preloaded for first launch")
+        self.svc.set_hud("game", False)
+        self.svc.set_enabled("game", False)
+        self.assertFalse(active.exists(), "user-disabled HUD stays disabled")
         self.svc.set_enabled("game", True)
         self.assertIn("no_display=1", active.read_text())
         self.svc.set_enabled("game", False)
