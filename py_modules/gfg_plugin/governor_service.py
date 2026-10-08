@@ -890,7 +890,7 @@ class GovernorService:
         """Treat a missing Steam focus-restored event as unknown, never permanent REST."""
         focus = getattr(self.observer, "game_focused", None)
         focus_at = getattr(self.observer, "game_focused_at", None)
-        if focus is False and (focus_at is None or self._clock() - focus_at > 5.0):
+        if focus is False and (focus_at is None or self.observer.time_fn() - focus_at > 5.0):
             return None
         return focus
 
