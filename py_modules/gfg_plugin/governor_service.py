@@ -38,7 +38,7 @@ from .governor_battery import BatteryEstimator, read_battery
 from .steamos_tdp import SteamOSManagerTdp
 from .game_model import GameModelStore, context_key, floor_key, game_prefix
 from .session_stats import SessionStats
-from .playtime import CHOICES_H as PLAYTIME_CHOICES_H, PlaytimePlanner
+from .savings_effort import SavingsEffort, LEVELS as SAVINGS_LEVELS
 from .frame_os.control_channel import DEFAULT_PATH as DEFAULT_SHM, ControlChannel
 from . import hud_rings
 from .frame_os import layer_install as frame_os_layer
@@ -170,10 +170,15 @@ class GovernorService:
         self.hud = HudWriter(self.configuration.config_dir)
         self._battery = BatteryEstimator()
         self.battery_reader = read_battery
-        # Playtime target: "last N hours" as an APU power ceiling (Battery / Balanced)
-        self.playtime = PlaytimePlanner()
-        saved_playtime = self._settings.get("playtime") if isinstance(self._settings.get("playtime"), dict) else {}
-        self.playtime.restore(saved_playtime.get("target_h"), saved_playtime.get("deadline"), time.time())
+        # v1.4.3 migrates the unsupported fixed-hours promise to an explicit
+        # Battery-only effort selector. Never reactivate an old saved deadline.
+        self._settings.pop("playtime", None)
+        self.savings = SavingsEffort()
+        self._savings_refresh_lease = self._settings.get("savings_refresh_lease")
+        if not isinstance(self._savings_refresh_lease, dict):
+            self._savings_refresh_lease = None
+        self._savings_refresh_override = None
+        self._savings_refresh_error = None
         self._io_lock = threading.RLock()
         self._forced_release: set[str] = set()
         self._restore_pending: Dict[str, str] = {}
@@ -329,6 +334,23 @@ class GovernorService:
         self._poke()
         return {"success": True, "error": None, "profile": profile, "mode": mode}
 
+    def savings_level(self, profile: str) -> str:
+        value = self._profile_settings(profile).get("savings_effort", "off")
+        return value if value in SAVINGS_LEVELS else "off"
+
+    def set_savings_effort(self, profile: str, level: str) -> Dict[str, Any]:
+        profile = str(profile or "").strip()
+        level = str(level or "").strip().lower()
+        if not profile or level not in SAVINGS_LEVELS:
+            return {"success": False, "error": "invalid-savings-effort"}
+        if self._mode(profile) != "budget" and level != "off":
+            return {"success": False, "error": "battery-mode-only"}
+        self._settings.setdefault("profiles", {}).setdefault(profile, {})["savings_effort"] = level
+        self._savings_refresh_override = None  # a deliberate selection can own the rate again
+        self._save_settings()
+        self._poke()
+        return {"success": True, "error": None, "level": level, "profile": profile}
+
     def game_model_target(self, profile: str) -> Optional[Dict[str, Any]]:
         """Which game "Reset what GFG learned" would reset for ``profile``, or None.
 
@@ -409,95 +431,63 @@ class GovernorService:
             self._status["battery"] = self._battery.update(self.battery_reader())
         except Exception as error:  # sysfs quirks must never break the loop
             self.log.debug("Governor battery read failed: %s", error)
-        self._update_playtime()
+        self._update_savings_effort()
 
-    PLAYABLE_HOLD_S = 6.0
-    PLAYABLE_STEP_W = 1.0
-    _playable_game: Optional[str] = None
-    _unplayable_since: Optional[float] = None
+    def _savings_game(self, profile: str) -> str:
+        return game_prefix(profile, self._game_app_id()) if profile else ""
 
-    def _playable_guard(self, budget: Optional[BudgetController], max_w: float) -> None:
-        """Playable first (field report 1.4.0: a 6 W ceiling left a heavy game at 10 real frames
-        shown as 30).  While the playtime ceiling is what limits the game and its real frames sit
-        below the mode's floor for PLAYABLE_HOLD_S, the ceiling goes up a watt and the level is
-        remembered for this game: the target then reports what is realistic instead."""
+    def _update_savings_effort(self) -> None:
+        """Reconcile Battery effort and learn when the real stream is not playable."""
         profile = self._active_profile or ""
-        game = game_prefix(profile, self._game_app_id()) if profile else None
-        if game != self._playable_game:
-            self._playable_game, self._unplayable_since = game, None
-            known = ((self._settings.get("playable_w") or {}).get(game) if game else None)
-            # one step lower each new session: a patch or new settings may have made it lighter
-            self.playtime.playable_w = (max(budget.min_w if budget else 0.0, float(known) - 0.5)
-                                        if isinstance(known, (int, float)) else None)
-        cap = budget.playtime_cap_w if budget is not None else None
-        binding = (budget is not None and cap is not None and budget.tdp is not None
-                   and budget.tdp >= cap - 0.05 and not self._menu_covering())
-        if not binding:
-            self._unplayable_since = None
-            return
-        floor = BALANCED_REAL_FLOOR_FPS if budget.flavor == "balanced" else REAL_FLOOR_FPS
-        fast = self.observer.summary(5.0)
-        real = (fast.get("real") or {}).get("median")
-        if not (isinstance(real, (int, float)) and (fast.get("samples") or 0) >= 3 and real < 0.92 * floor):
-            self._unplayable_since = None
-            return
-        now = self._clock()
-        if self._unplayable_since is None:
-            self._unplayable_since = now
-            return
-        if now - self._unplayable_since < self.PLAYABLE_HOLD_S:
-            return
-        self._unplayable_since = None
-        watts = self.playtime.raise_playable(cap + self.PLAYABLE_STEP_W, max_w)
-        if game:
-            self._settings.setdefault("playable_w", {})[game] = watts
-            self._save_settings_quietly()
-        self._event("playtime-playable-floor", "real-below-floor", profile=profile, real=round(real, 1),
-                    floor=floor, watts=watts)
-
-    def _update_playtime(self) -> None:
-        """Recompute the playtime ceiling from the battery and the measured draw (every step)."""
+        supported = bool(profile and self._mode(profile) == "budget")
+        level = self.savings_level(profile) if supported else "off"
+        game = self._savings_game(profile)
+        learned = ((self._settings.get("savings_playable_w") or {}).get(game) if game else None)
+        self.savings.configure(level, game, learned)
         budget = self._budget
-        try:
-            draw = self.power.status().get("draw_w")
-        except Exception:
-            draw = None
-        base = getattr(budget, "_ceilings", None) if budget is not None else None
-        max_w = (base[0] if base else budget.normal_max_w) if budget is not None else BudgetController.NORMAL_CEILING_W
-        min_w = budget.min_w if budget is not None else BudgetController.MIN_TDP_W
-        self._playable_guard(budget, max_w)
-        state = self.playtime.update(time.time(), battery=self._status.get("battery") or {}, apu_draw_w=draw,
-                                     min_w=min_w, max_w=max_w)
-        applies = bool(budget is not None and budget.tdp_control)
-        self._status["playtime"] = {**state, "applies": applies,
-                                    "mode_supported": self._mode(self._active_profile or "") in ("budget", "balanced")}
-        if budget is not None:
-            # every step (also while a point request is pending): the ceiling follows at once; a
-            # lowered TDP goes out with the next budget write
-            self._sync_playtime_cap(budget, self._active_profile or "")
-        if state.get("state") == "reached" and self._settings.get("playtime"):
-            self._settings.pop("playtime", None)
-            self.playtime.set_target(None, time.time())
-            self._save_settings_quietly()
+        base = getattr(budget, "_ceilings", None) if budget else None
+        max_w = base[0] if base else (budget.normal_max_w if budget else BudgetController.NORMAL_CEILING_W)
+        min_w = getattr(budget, "_savings_base_min_w", BudgetController.MIN_TDP_W)
+        limits = self.savings.limits(min_w, max_w)
+        if (supported and level != "off" and budget is not None and budget.tdp_control
+                and self._point and self._request is None and not self._menu_covering()):
+            fresh = self.observer.summary(self.FAST_CHECK_SECONDS)
+            snapshot = self.observer.snapshot()
+            age = snapshot.get("sample_age_ms")
+            samples = fresh.get("samples") or 0
+            real = (fresh.get("real") or {}).get("median")
+            output = (fresh.get("output") or {}).get("median")
+            try:
+                draw = self.power.status().get("draw_w")
+            except Exception:
+                draw = None
+            cap_binding = (budget.playtime_cap_w is not None
+                           and budget.tdp is not None
+                           and budget.tdp >= budget.normal_max_w - 0.1)
+            if cap_binding and self.savings.observe(
+                    self._clock(), real_fps=real, output_fps=output,
+                    target_fps=budget.target_output_fps, tdp_w=budget.tdp,
+                    draw_w=draw, valid=bool(samples >= 3 and isinstance(age, (int, float))
+                                                 and age <= self.MAX_SAMPLE_AGE_MS),
+                    normal_max_w=max_w):
+                if game:
+                    self._settings.setdefault("savings_playable_w", {})[game] = self.savings.learned_floor_w
+                    self._save_settings_quietly()
+                self._event("savings-fps-rescue", "real-source-fps-too-low", profile=profile,
+                            real=real, output=output, floor_w=self.savings.learned_floor_w)
+                limits = self.savings.limits(min_w, max_w)
+        self._status["savings"] = {
+            **limits, "mode_supported": supported,
+            "refresh_target_hz": self._savings_refresh_target(profile),
+            "refresh_error": self._savings_refresh_error,
+            "refresh_manual_override": self._savings_refresh_override == profile,
+        }
+        if budget is not None and budget.flavor == "battery":
+            self._sync_savings_cap(budget, profile)
 
     def set_playtime_target(self, hours: Optional[float]) -> Dict[str, Any]:
-        """Battery must last ``hours`` from now (None / 0: off)."""
-        try:
-            value = float(hours) if hours else None
-        except (TypeError, ValueError):
-            return {"success": False, "error": "invalid-hours"}
-        if value is not None and not 0.25 <= value <= 12:
-            return {"success": False, "error": "invalid-hours"}
-        now = time.time()
-        self.playtime.set_target(value, now)
-        if value is None:
-            self._settings.pop("playtime", None)
-        else:
-            self._settings["playtime"] = {"target_h": value, "deadline": self.playtime.deadline}
-        self._save_settings()
-        self._update_playtime()
-        self._poke()
-        return {"success": True, "error": None, "playtime": self._status.get("playtime")}
+        """Compatibility RPC: hours have been removed, not silently converted to watts."""
+        return {"success": False, "error": "replaced-with-battery-savings-effort"}
 
     def _delivering_target(self, telemetry: Dict[str, Any]) -> Optional[str]:
         """'easy'/'medium' when measured output already holds the target (stable game), else None."""
@@ -2206,7 +2196,7 @@ class GovernorService:
         budget.scale_capable = self._budget_can_scale(capability)
         # Current resources, re-read every step: a swapchain recreation can raise it again.
         budget.current_max_multiplier = self.observer.current_max_multiplier
-        self._sync_playtime_cap(budget, profile)
+        self._sync_savings_cap(budget, profile)
         if (budget.current_max_multiplier is not None
                 and float(budget.point.multiplier) > budget.current_max_multiplier + 1e-6):
             # The current target is beyond what the renderer can generate: fall back at once.
@@ -2476,17 +2466,28 @@ class GovernorService:
         except Exception as error:  # remembering is best-effort and must never disturb the loop
             self.log.debug("Game model not stored: %s", error)
 
-    def _sync_playtime_cap(self, budget: BudgetController, profile: str) -> None:
-        """Playtime target: its power ceiling bounds the search, the guard and emergency watts."""
-        cap = (self._status.get("playtime") or {}).get("cap_w") if budget.tdp_control else None
-        if cap != budget.playtime_cap_w and budget.set_playtime_cap(cap):
-            self._event("playtime-ceiling", "tdp-lowered", profile=profile, watts=budget.tdp)
+    def _sync_savings_cap(self, budget: BudgetController, profile: str) -> None:
+        """Battery-only effort; restore ordinary ceilings in Balanced/Quality."""
+        supported = self._mode(profile) == "budget" and budget.flavor == "battery"
+        level = self.savings_level(profile) if supported else "off"
+        limits = self.savings.limits(budget._savings_base_min_w,
+                                     (budget._ceilings or (budget.normal_max_w,))[0])
+        if level == "off":
+            limits = {**limits, "minimum_w": budget._savings_base_min_w, "cap_w": None,
+                      "quality_limited": False}
+        before = budget.tdp
+        budget.set_savings_limits(level=level, floor_w=limits["minimum_w"],
+                                  cap_w=limits["cap_w"], quality_limited=limits["quality_limited"])
+        if before is not None and budget.tdp is not None and budget.tdp < before:
+            self._event("savings-ceiling", "tdp-lowered", profile=profile, watts=budget.tdp)
+        elif before is not None and budget.tdp is not None and budget.tdp > before:
+            self._event("savings-floor", "real-fps-rescue", profile=profile, watts=budget.tdp)
 
     async def _apply_budget_tdp(self, profile: str) -> bool:
         budget = self._budget
         if budget is None or not budget.tdp_control or budget.tdp is None or not self.power.state.owned:
             return True
-        self._sync_playtime_cap(budget, profile)   # no TDP write ever bypasses the ceiling
+        self._sync_savings_cap(budget, profile)  # final bounds before the actuator writes
         # Frame OS (act mode) adds the watts of a funded boost / removes them in rest.
         offset = self.frame_os.tdp_offset_w
         # Without an offset the controller's own value goes out as is (emergency watts included).
