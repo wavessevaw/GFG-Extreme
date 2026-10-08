@@ -527,13 +527,34 @@ class GovernorService:
             "limit": number(power.get("initial_tdp_w") or power.get("maximum_tdp_w")) or 15,
             "battery_min": number(battery.get("minutes_left")), "battery_pct": number(battery.get("percent")),
         }
-        if fo.get("enabled") and (fo.get("telemetry") or {}).get("live") and benefit.get("ready"):
+        # Display *delivered* MotionBoost, not a requested policy. A pacer ACK
+        # alone is insufficient: the adaptive Render v4 overlay must also be in
+        # place, and fresh renderer samples must show the real cadence increased
+        # without losing the expected output rate.
+        if fo.get("enabled") and (fo.get("telemetry") or {}).get("live"):
             def percent(key):
-                value = benefit.get(key)
+                value = benefit.get(key) if benefit.get("ready") else None
                 return round(value) if isinstance(value, (int, float)) and math.isfinite(value) else None
+            decision = fo.get("decision") or {}
+            level = decision.get("level")
+            active = bool(fo.get("mode") == "act" and self.frame_os.executor_active
+                          and fo.get("acknowledged"))
+            calm = self.frame_os.policy.calm_real_hz if self.frame_os.policy else None
+            measured_real = number(real) if fresh else None
+            measured_out = number(fps) if fresh else None
+            target = data.get("target")
+            delivered = bool(active and level == "boost" and measured_real is not None
+                             and isinstance(calm, (int, float)) and calm > 0
+                             and measured_real >= 1.2 * calm
+                             and measured_out is not None and target
+                             and measured_out >= 0.85 * target)
+            ratio = (round(measured_out / measured_real, 1)
+                     if measured_real and measured_out else None)
             data["frame_os"] = {
-                "level": (fo.get("decision") or {}).get("level"), "estimate": benefit.get("estimate"),
-                "response": percent("response_pct"), "frames": percent("frames_pct"), "energy": percent("energy_pct")}
+                "level": level, "estimate": benefit.get("estimate"), "verified_boost": delivered,
+                "active": active, "actual_real": measured_real, "actual_ratio": ratio,
+                "response": percent("response_pct"), "frames": percent("frames_pct"),
+                "energy": percent("energy_pct")}
         scale = hud_rings.overlay_scale(self.ring_hud_extent)
         key = (hud_rings.visual_key(data, settings["preset"], settings["position"], scale),
                tuple((self._launch or {}).get("launch_key") or ()))
