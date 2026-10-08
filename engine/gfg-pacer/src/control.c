@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <math.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -314,20 +315,39 @@ int gfg_ctl_poll(int64_t now_ns, gfg_ctl_state *out)
     return 0;
 }
 
-/* g_lock held.  This process may write telemetry: it is the writer, or the writer went quiet. */
+/* g_lock is process-private. Writer handoff across processes requires an atomic
+ * owner claim and must never steal from a still-alive process: that process may
+ * be between its ownership check and the seqlock write. Safety beats ambiguous
+ * multi-process telemetry; a later per-launch channel can select the actual game.
+ */
+static int writer_alive(uint32_t pid)
+{
+    if (pid == 0)
+        return 0;
+    if (kill((pid_t)pid, 0) == 0)
+        return 1;
+    return errno != ESRCH; /* EPERM or an unknown error: conservative, do not steal */
+}
+
+/* g_lock held. A previous writer must have exited and become stale before takeover. */
 static int may_write_locked(int64_t now_ns)
 {
     gfg_ctl_telemetry cur;
     if (!g_shm || g_pid != getpid() || !header_ok(g_shm))
         return 0;
-    if (__atomic_load_n(&g_shm->writer_pid, __ATOMIC_RELAXED) == (uint32_t)g_pid)
+    uint32_t owner = __atomic_load_n(&g_shm->writer_pid, __ATOMIC_ACQUIRE);
+    if (owner == (uint32_t)g_pid)
         return 1;
+    if (writer_alive(owner))
+        return 0;
     if (gfg_ctl_read_telemetry(g_shm, &cur) != 0)
         return 0;
     if (cur.last_present_ns > 0 && now_ns - cur.last_present_ns <= GFG_CTL_TAKEOVER_NS)
         return 0;
-    __atomic_store_n(&g_shm->writer_pid, (uint32_t)g_pid, __ATOMIC_RELAXED);
-    return 1;
+    /* Both children may have seen the same dead owner. Only one can claim it.
+     * No process can publish concurrently while another live owner holds it. */
+    return __atomic_compare_exchange_n(&g_shm->writer_pid, &owner, (uint32_t)g_pid,
+                                       0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
 }
 
 int gfg_ctl_publish(const gfg_ctl_telemetry *t)
