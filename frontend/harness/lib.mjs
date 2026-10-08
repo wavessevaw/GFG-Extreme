@@ -56,8 +56,9 @@ window.__patches = [];
 window.appStore = { GetAppOverviewByAppID: (id) => (id === 292030 ? { display_name: "Sample Game" } : null) };
 window.__state = ${JSON.stringify(state)};
 window.__cfg = ${JSON.stringify(extra.cfg || { fg_backend: "gfg", multiplier: 2, })};
+window.__gfgHero = ${JSON.stringify(extra.hero || null)};
 var callable = (n) => async (...a) => ({ get_governor_status: () => window.__state, get_profiles: () => ({ profiles: ["Default", "Sample Game", "Another Game"], current_profile: "Sample Game" }),
-  get_profile_config: () => ({ config: window.__cfg }), get_pipeline_inspector: () => ({ saved: { fg_backend: "gfg", multiplier: 2, scaling: "off" }, effective: { fg_backend: "gfg", multiplier: 2, scaling: "off" }, actual: { renderer: "loaded", multiplier: 2 } }),
+  get_profile_config: () => ({ config: window.__cfg }), get_pipeline_inspector: () => ({ saved: { fg_backend: "gfg", multiplier: 2, scaling: "off" }, effective: { fg_backend: "gfg", multiplier: 2, scaling: "off" }, actual: { renderer: "loaded", multiplier: 2, ...(window.__state.__actual || {}) } }),
   check_mako_installed: () => ({ installed: true, installed_engine_version: '4.0.1', expected_engine_version: '4.0.1', engine_update_required: false, host_architecture_supported: true }), check_flatpak_extension_status: () => ({ success: true, installed_23_08: false, installed_24_08: true, installed_25_08: true }), get_flatpak_apps: () => ({ success: true, total_apps: 2, apps: [{ app_id: 'org.example.A', app_name: 'Heroic', has_filesystem_override: true, has_wrapper_override: true, has_required_env_override: true }, { app_id: 'org.example.B', app_name: 'Lutris', has_filesystem_override: false, has_wrapper_override: false }] }),
   get_config_schema: () => ({ field_names: ['scaling_enabled','scaling_factor','multiplier','dll','allow_fp16'], field_types: { scaling_enabled: 'boolean', scaling_factor: 'float', multiplier: 'integer', dll: 'string', allow_fp16: 'boolean' }, defaults: { scaling_enabled: false, scaling_factor: 1.5, multiplier: 2, dll: '', allow_fp16: true }, descriptions: { scaling_enabled: 'restart-bound scaling engine switch', scaling_factor: 'output scaling factor from 1.0x to 2.0x', multiplier: 'fixed multiplier', dll: 'optional full path to Lossless.dll', allow_fp16: 'allow FP16 acceleration' } }),
   run_setup_check: () => window.__state.__setup || ({ success: true, total: 3, failed: 0, checks: [{ check: 'launch wrapper installed', ok: true }, { check: 'overlay config published (active.conf)', ok: true }, { check: 'TDP control: fastPPT/slowPPT cap writable', ok: true }] }),
@@ -69,7 +70,7 @@ var callable = (n) => async (...a) => ({ get_governor_status: () => window.__sta
   set_governor_frame_os_act_unlock: (enabled) => { (window.__actUnlocks = window.__actUnlocks || []).push(enabled); return { success: true, act_unlocked: !!enabled }; },
   set_governor_frame_os: (p, m) => (window.__state.__frameOsFail ? { success: false, error: "marker: read-only" } : { success: true, mode: m }),
   forget_governor_game_model: (p) => { (window.__forgets = window.__forgets || []).push(p); return { success: true, forgotten: 2, game: "app:292030" }; },
-  update_profile_config_fields: (p, c) => { window.__patches.push(c); return { success: true }; } }[n] || (() => ({ success: true })))(...a);
+  update_profile_config_fields: (p, c) => { window.__patches.push(c); Object.assign(window.__cfg, c); return { success: true }; } }[n] || (() => ({ success: true })))(...a);
 var definePlugin = (f) => f;`;
 
 export async function openPage(browser, state, nav = [], extra = {}) {
