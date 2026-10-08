@@ -126,6 +126,15 @@ class RuntimeBase(unittest.TestCase):
     def tearDown(self):
         self.assertEqual(sha(self.cfg.config_file_path), self.saved_hash, "Saved config was modified")
 
+    def test_stale_focus_lost_cannot_pin_frame_os_in_rest(self):
+        self.svc.observer.game_focused = False
+        self.svc.observer.game_focused_at = self.t["now"] - 7.0
+        self.assertIsNone(self.svc._trusted_game_focus())
+        self.svc.observer.game_focused_at = self.t["now"] - 1.0
+        self.assertIs(self.svc._trusted_game_focus(), False)
+        self.svc.observer.game_focused = True
+        self.assertIs(self.svc._trusted_game_focus(), True)
+
     def test_default_ring_marker_is_staged_without_prior_governor_settings(self):
         # A ConfigService profile need not have any saved Governor or HUD preferences.
         self.svc._settings = {"schema": 1, "profiles": {}}
