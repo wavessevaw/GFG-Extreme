@@ -356,6 +356,18 @@ class FastRaiseTests(unittest.TestCase):
         self.assertEqual(ctl.tdp, work)
         self.assertEqual(ctl.last_good, (ctl.idx, work))   # a failed probe never reverts below it
 
+    def test_missing_renderer_sample_breaks_consecutive_fast_checks(self):
+        ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
+        ctl.tdp = 6.0
+        self.assertEqual(ctl.fast_check(1.0, 12.0, 6.0), "hold")
+        self.assertEqual(ctl.starved_checks, 1)
+        self.assertEqual(ctl.fast_check(2.0, None, None), "hold")
+        self.assertEqual(ctl.starved_checks, 0, "telemetry loss must end a starvation run")
+        self.assertEqual(ctl.fast_check(3.0, 12.0, 6.0), "hold")
+        self.assertEqual(ctl.tdp, 6.0)
+        self.assertEqual(ctl.fast_check(4.0, 12.0, 6.0), "move")
+        self.assertEqual(ctl.tdp, 8.0)
+
     def test_without_history_it_climbs_two_watts_per_three_seconds(self):
         ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
         ctl.tdp, t = 6.0, 0.0
