@@ -2260,6 +2260,8 @@ class GovernorService:
             hard_pressure=int(fresh.get("hard_pressure") or 0),
             misses=int(fresh.get("misses") or 0),
             health_ratio=health_ratio,
+            output_fps=(fresh.get("output") or {}).get("median"),
+            output_target_fps=float(point["target_output_fps"]),
         )
         action = outcome.get("action")
         # Every window is judged once: the next one starts on fresh samples only.
