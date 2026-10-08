@@ -32,10 +32,10 @@ const cases = [
   ["home-frame-os-act", [], ["FRAME OS", "BOOST", "−47%", "+50%", "9%", "Response", "Frames", "Energy"]],
   ["home-frame-os-act", [], ["Measured in game: Response ×5 · Frames ×3"]],
   ["home-frame-os-learned", [], ["Boost off here: no real-frame gain measured"]],
-  ["home-idle-oled", [], ["PLAYTIME TARGET", "Off", "Unplug and start a game"]],
-  ["home-playtime-off", [], ["2h10", "2h30", "Max 2h50", "At this pace about 1h58", "up to 2h50 while the game stays playable"]],
-  ["home-playtime", [], ["PLAYTIME TARGET", "Holding the APU at 9.5 W so the battery lasts — 2h21 to go."]],
-  ["home-playtime-limited", [], ["This game needs about 9 W to stay playable, so GFG holds that: about 2h20 is realistic.", "3h00"]],
+  ["home-idle-oled", [], ["SAVINGS EFFORT", "Off", "Light", "Medium", "Hard"]],
+  ["home-savings-hard", [], ["SAVINGS EFFORT", "OLED 60 Hz · LCD 45 Hz"]],
+  ["home-savings-medium", [], ["Stronger savings", "standard screen refresh"]],
+  ["home-savings-limited", [], ["FPS protection raised the power floor"]],
   ["home-frame-os-learned", ["Settings", "Diagnostics"], ["THIS GAME", "no gain · off (5 A/B)", "helps (12 A/B)"]],
   ["home-frame-os-act", ["Settings", "Diagnostics"], ["A/B check in Act", "Response (A/B)", "+47% (39…55) · 5 pairs", "Energy (A/B)", "+12% · 1 pair", "THIS GAME", "Sessions with Act", "helps (5 A/B)", "helps (9 A/B)", "learning (1 A/B)"]],
   ["home-frame-os-rest", [], ["FRAME OS", "REST", "−6%"]],
@@ -72,6 +72,19 @@ for (const [state, nav, expected] of cases) {
   const text = await page.evaluate(() => document.body.innerText);
   for (const needle of expected) if (!text.includes(needle)) { failed++; console.error(`FAIL ${state} ${JSON.stringify(nav)}: missing "${needle}"`); }
   for (const e of page.__errors) { failed++; console.error(`FAIL ${state}: page error ${e}`); }
+  await page.close();
+}
+// Savings effort must only be visible on Battery mode, never Balanced / Quality.
+for (const mode of ["home-balanced", "home-quality-oled"]) {
+  const page = await openPage(browser, STATES[mode]);
+  const shown = await page.evaluate(() => document.body.innerText);
+  if (shown.includes("SAVINGS EFFORT")) { failed++; console.error("FAIL savings selector visible in " + mode); }
+  await page.close();
+}
+{
+  const page = await openPage(browser, STATES["home-savings-hard"]);
+  const chosen = await page.evaluate(() => document.body.innerText);
+  if (!chosen.includes("OLED 60 Hz · LCD 45 Hz")) { failed++; console.error("FAIL missing Hard rate policy"); }
   await page.close();
 }
 // Text settings are saved on Enter / blur, never per keystroke.
