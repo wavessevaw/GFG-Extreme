@@ -195,7 +195,7 @@ def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
         # The percentages have *different denominators*; do not label them as
         # input latency or battery energy savings. All are session aggregates.
         for key, full, sign, label, live in (("response", 50, "-", "AGE EST", level != "rest"),
-                                             ("frames", 50, "+", "REAL GAIN", level == "boost"),
+                                             ("frames", 50, "+", "REAL +", level == "boost"),
                                              ("energy", 30, "", "CAP CUT", level == "rest")):
             v = fos.get(key)
             items.append({"kind": "ring", "size": 40, "w": 3.5,
