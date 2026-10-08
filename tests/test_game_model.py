@@ -124,6 +124,20 @@ class GameIdentityAndFailureTests(unittest.TestCase):
             self.assertEqual(GameModelStore(path, clock=lambda: wall["t"]).get(key)["point"], "30x3")
 
 
+    def test_uncapped_success_cannot_erase_wattage_failures(self):
+        with tempfile.TemporaryDirectory() as t:
+            wall = {"t": 5000.0}
+            path = Path(t) / "models.json"
+            key = context_key("mako", 90, "budget", "292030")
+            store = GameModelStore(path, clock=lambda: wall["t"])
+            self.assertTrue(store.record_failure(key, "30x3", 9.0))
+            wall["t"] += 61.0
+            store.record(key, "30x3", None)  # renderer held, but watts were not controlled
+            self.assertEqual(store.failures(key), {"30x3": (9.0, 61.0)})
+            self.assertEqual(GameModelStore(path, clock=lambda: wall["t"]).failures(key),
+                             {"30x3": (9.0, 61.0)})
+
+
 class FailureTtlAcrossReloadTests(unittest.TestCase):
     """PR #40 review: a reload must keep the remaining TTL, not start a new 15 minutes."""
 
