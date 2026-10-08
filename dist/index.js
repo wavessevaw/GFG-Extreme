@@ -490,13 +490,19 @@ function SessionRings({ ls, target }) {
 }
 var hm = (min) => min == null ? "\u2013" : Math.floor(min / 60) + "h" + String(min % 60).padStart(2, "0");
 function playtimeText(pt) {
-  if (!pt.active) return "Pick how long you want to play on this charge. GFG holds the power that gets you there and keeps the game smooth inside it.";
+  const o = pt.options;
+  if (!pt.active) {
+    if (!o) return "Unplug and start a game: GFG shows how long this charge can last while the game stays playable.";
+    return "At this pace about " + hm(o.pace_min) + ". Pick a longer time and GFG holds the power that gets you there \u2014 up to " + hm(o.max_min) + " while the game stays playable.";
+  }
   if (pt.mode_supported === false) return "Works in Battery and Balanced mode.";
   switch (pt.state) {
     case "holding":
       return "Holding the APU at " + num(pt.cap_w, 1) + " W so the battery lasts \u2014 " + hm(pt.remaining_min) + " to go.";
     case "on-track":
       return "No limit needed: at this pace the battery lasts about " + hm(pt.forecast_min) + ".";
+    case "limited":
+      return "This game needs about " + num(pt.playable_w, 1) + " W to stay playable, so GFG holds that: about " + hm(pt.reachable_min) + " is realistic.";
     case "tight":
       return "Even the lowest power won't last that long: about " + hm(pt.reachable_min) + " is possible. Running as frugally as the game allows.";
     case "charging":
@@ -511,11 +517,15 @@ function playtimeText(pt) {
 }
 function PlaytimeCard({ pt, refresh }) {
   const [busy, setBusy] = useState(false);
-  const value = pt.active ? String(pt.target_h) : "0";
+  const o = pt.options;
+  let mins = o && o.choices && o.choices.length ? o.choices.slice(0, 4) : [120, 180, 240];
+  const current = pt.active && pt.target_h ? Math.round(pt.target_h * 60) : 0;
+  if (current && !mins.includes(current)) mins = [...mins, current].sort((a, b) => a - b).slice(-4);
+  const label = (m) => (o && m === o.max_min ? "Max " : "") + hm(m);
   const set = async (v) => {
     setBusy(true);
     try {
-      await rpc.setPlaytime(Number(v));
+      await rpc.setPlaytime(Number(v) / 60);
     } catch (e) {
     }
     setBusy(false);
@@ -525,7 +535,7 @@ function PlaytimeCard({ pt, refresh }) {
     "div",
     null,
     h("div", { className: "sec" }, "PLAYTIME TARGET"),
-    h(Seg, { value, options: [["0", "Off"], ["2", "2h"], ["3", "3h"], ["4", "4h"], ["5", "5h"]], onChange: busy ? () => {
+    h(Seg, { value: String(current), options: [["0", "Off"]].concat(mins.map((m) => [String(m), label(m)])), onChange: busy ? () => {
     } : set }),
     h(Note, { quiet: true }, playtimeText(pt))
   );

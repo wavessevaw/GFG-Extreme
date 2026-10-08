@@ -51,7 +51,7 @@ Works with Steam games and, through Flatpak support, with Heroic, Lutris and emu
 
 ## New in 1.4
 
-- **Playtime target.** Pick how long this charge has to last — 2, 3, 4 or 5 hours — and GFG works out the power the APU may use: what is left in the battery, divided by the time to go, minus what the screen and the rest of the Deck draw. The Governor keeps the game smooth *inside* that budget by generating a little more instead of spending watts. Home says whether you are on track, and the battery ring in the game shows the goal.
+- **Playtime target.** Pick how long this charge has to last — from times this game can really reach — and GFG works out the power the APU may use: what is left in the battery, divided by the time to go, minus what the screen and the rest of the Deck draw. The Governor keeps the game smooth *inside* that budget by generating a little more instead of spending watts. Home says whether you are on track, and the battery ring in the game shows the goal.
 - **Since 1.3:** Frame OS checks itself in your game with A/B comparisons and remembers what works in every game; the pacer plans frames from the scene's cost trend; the in-game rings are drawn on every frame without flicker.
 
 Full notes: [Releases](https://github.com/wavessevaw/GFG-Extreme/releases).
@@ -109,11 +109,12 @@ What the checks measured carries over to the next session of the same game, so i
 
 <p align="center"><img src="docs/img/home-playtime.png" width="300"></p>
 
-"I want to play for three hours." Pick **2h, 3h, 4h or 5h** on Home and GFG turns it into a power budget:
+"I want to play longer than this." Home shows how long this charge lasts at the current pace and offers longer times **this game can actually reach while staying playable** — up to *Max*. Pick one and GFG turns it into a power budget:
 
 - It reads the energy left in the battery and divides it by the time to go — that is what the whole Deck may draw on average.
 - It measures what the screen, memory and fan take (battery drain minus the APU's own draw) and gives the APU the rest.
 - The Governor plays inside that ceiling: when a scene gets heavier it generates a little more rather than spending watts it does not have.
+- **Playable first.** The ceiling never pushes a game below its real-frame floor (24 in Battery, 30 in Balanced). If it would, GFG raises it, remembers what this game needs to stay playable, and tells you the realistic time instead — 30 FPS on screen from 10 real frames is not a frame rate you can play.
 - Home says where you stand — *holding 7.5 W, 2h41 to go*, *no limit needed*, or, if even the lowest power cannot last that long, how long it can. In the game, the battery ring shows the goal and turns green while the battery outlasts it.
 
 Works in Battery and Balanced mode; on the charger the target waits.

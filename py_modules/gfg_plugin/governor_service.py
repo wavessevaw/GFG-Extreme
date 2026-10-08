@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.4.1).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.4.2).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -32,7 +32,7 @@ from .constants import PRESENT_DIAGNOSTICS_FALLBACK_LOG, PRESENT_DIAGNOSTICS_LOG
 from .governor_core import (
     multiplier_tolerance,
     BudgetController, EffortEstimator, OperatingPoint, OperatingPointPlanner, PowerSearch, TrialLadder,
-    effort_assessment, window_verdict,
+    effort_assessment, window_verdict, REAL_FLOOR_FPS, BALANCED_REAL_FLOOR_FPS,
 )
 from .governor_battery import BatteryEstimator, read_battery
 from .steamos_tdp import SteamOSManagerTdp
@@ -63,7 +63,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -411,6 +411,50 @@ class GovernorService:
             self.log.debug("Governor battery read failed: %s", error)
         self._update_playtime()
 
+    PLAYABLE_HOLD_S = 6.0
+    PLAYABLE_STEP_W = 1.0
+    _playable_game: Optional[str] = None
+    _unplayable_since: Optional[float] = None
+
+    def _playable_guard(self, budget: Optional[BudgetController], max_w: float) -> None:
+        """Playable first (field report 1.4.0: a 6 W ceiling left a heavy game at 10 real frames
+        shown as 30).  While the playtime ceiling is what limits the game and its real frames sit
+        below the mode's floor for PLAYABLE_HOLD_S, the ceiling goes up a watt and the level is
+        remembered for this game: the target then reports what is realistic instead."""
+        profile = self._active_profile or ""
+        game = game_prefix(profile, self._game_app_id()) if profile else None
+        if game != self._playable_game:
+            self._playable_game, self._unplayable_since = game, None
+            known = ((self._settings.get("playable_w") or {}).get(game) if game else None)
+            # one step lower each new session: a patch or new settings may have made it lighter
+            self.playtime.playable_w = (max(budget.min_w if budget else 0.0, float(known) - 0.5)
+                                        if isinstance(known, (int, float)) else None)
+        cap = budget.playtime_cap_w if budget is not None else None
+        binding = (budget is not None and cap is not None and budget.tdp is not None
+                   and budget.tdp >= cap - 0.05 and not self._menu_covering())
+        if not binding:
+            self._unplayable_since = None
+            return
+        floor = BALANCED_REAL_FLOOR_FPS if budget.flavor == "balanced" else REAL_FLOOR_FPS
+        fast = self.observer.summary(5.0)
+        real = (fast.get("real") or {}).get("median")
+        if not (isinstance(real, (int, float)) and (fast.get("samples") or 0) >= 3 and real < 0.92 * floor):
+            self._unplayable_since = None
+            return
+        now = self._clock()
+        if self._unplayable_since is None:
+            self._unplayable_since = now
+            return
+        if now - self._unplayable_since < self.PLAYABLE_HOLD_S:
+            return
+        self._unplayable_since = None
+        watts = self.playtime.raise_playable(cap + self.PLAYABLE_STEP_W, max_w)
+        if game:
+            self._settings.setdefault("playable_w", {})[game] = watts
+            self._save_settings_quietly()
+        self._event("playtime-playable-floor", "real-below-floor", profile=profile, real=round(real, 1),
+                    floor=floor, watts=watts)
+
     def _update_playtime(self) -> None:
         """Recompute the playtime ceiling from the battery and the measured draw (every step)."""
         budget = self._budget
@@ -421,6 +465,7 @@ class GovernorService:
         base = getattr(budget, "_ceilings", None) if budget is not None else None
         max_w = (base[0] if base else budget.normal_max_w) if budget is not None else BudgetController.NORMAL_CEILING_W
         min_w = budget.min_w if budget is not None else BudgetController.MIN_TDP_W
+        self._playable_guard(budget, max_w)
         state = self.playtime.update(time.time(), battery=self._status.get("battery") or {}, apu_draw_w=draw,
                                      min_w=min_w, max_w=max_w)
         applies = bool(budget is not None and budget.tdp_control)

@@ -77,7 +77,38 @@ class PlannerTests(unittest.TestCase):
         p.restore(3.0, 5000.0, now=2000.0)
         self.assertEqual((p.target_h, p.deadline), (3.0, 5000.0))
         p.set_target(None, 0.0)
-        self.assertEqual(p.update(0, battery=bat(50, 16), apu_draw_w=11, min_w=4, max_w=15), {"active": False})
+        self.assertFalse(p.update(0, battery=bat(50, 16), apu_draw_w=11, min_w=4, max_w=15)["active"])
+
+
+class PlayableTests(unittest.TestCase):
+    def test_options_come_from_this_game_and_this_charge(self):
+        p = playtime.PlaytimePlanner()
+        p.update(0, battery=bat(40, 18), apu_draw_w=13, min_w=4, max_w=15)   # learns the rest: 5 W
+        o = p.options(battery=bat(40, 18), min_w=4.0)
+        self.assertEqual(o["pace_min"], 133)                    # 40 Wh at 18 W
+        self.assertEqual(o["max_min"], 250)                     # 38 Wh at 4 + 5 W
+        self.assertTrue(all(o["pace_min"] < m <= o["max_min"] for m in o["choices"]))
+        self.assertEqual(o["choices"][-1], o["max_min"])
+        self.assertTrue(all(m % 10 == 0 for m in o["choices"]))
+        # a heavy game that needs 9 W to stay playable: the longest choice shrinks with it
+        p.playable_w = 9.0
+        heavy = p.options(battery=bat(40, 18), min_w=4.0)
+        self.assertEqual(heavy["max_min"], 160)
+        self.assertLess(heavy["max_min"], o["max_min"])
+        self.assertIsNone(p.options(battery=bat(40, 18, discharging=False), min_w=4.0))
+
+    def test_the_ceiling_never_goes_below_the_playable_power(self):
+        # field report 1.4.0: the ceiling sank to 6 W, the game to 10 real frames shown as 30
+        p = playtime.PlaytimePlanner()
+        p.set_target(4.0, 0.0)
+        out = p.update(0, battery=bat(30, 14), apu_draw_w=9, min_w=4, max_w=15)
+        self.assertEqual(out["state"], "tight")
+        self.assertEqual(p.raise_playable(9.0, max_w=15.0), 9.0)
+        out = p.update(1, battery=bat(30, 14), apu_draw_w=9, min_w=4, max_w=15)
+        self.assertEqual((out["state"], out["cap_w"]), ("limited", 9.0))
+        self.assertEqual(out["reachable_min"], int(30 * 0.95 / (9.0 + 5.0) * 60))
+        self.assertEqual(p.raise_playable(7.0, max_w=15.0), 9.0, "the floor only rises in a session")
+        self.assertEqual(p.raise_playable(40.0, max_w=15.0), 15.0)
 
 
 class CeilingTests(unittest.TestCase):

@@ -56,3 +56,11 @@ every TDP write passes through `_sync_playtime_cap`, so nothing bypasses it. Ins
 guard keeps the output by moving to deeper generated-frame ratios, as at the normal ceiling.
 States: `holding`, `on-track` (no limit needed), `tight` (cannot be met; `reachable_min`),
 `charging`, `reached`. The target and its wall-clock deadline persist in the settings.
+
+**Playable first (1.4.2).** Field report: a long target put a heavy game at 6 W, 10 real frames
+shown as 30. `_playable_guard` watches the real frames while the playtime ceiling is binding; below
+92 % of the mode's real floor (24 Battery / 30 Balanced) for 6 s it raises the ceiling by 1 W and
+stores the level per game (`playable_w`, settings). The planner never sets a ceiling below it; a
+target that would need less is `limited`, with the realistic `reachable_min`. A new session starts
+0.5 W lower to re-check. `PlaytimePlanner.options` offers targets from this game and this charge:
+1.15x / 1.3x / 1.5x the current pace and *Max* (the longest playable time), in 10-minute steps.

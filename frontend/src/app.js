@@ -290,11 +290,16 @@ function SessionRings({ ls, target }) {
 // Playtime target: "the battery must last N hours" -> an APU power ceiling the Governor plays inside.
 const hm = (min) => (min == null ? "–" : Math.floor(min / 60) + "h" + String(min % 60).padStart(2, "0"));
 function playtimeText(pt) {
-  if (!pt.active) return "Pick how long you want to play on this charge. GFG holds the power that gets you there and keeps the game smooth inside it.";
+  const o = pt.options;
+  if (!pt.active) {
+    if (!o) return "Unplug and start a game: GFG shows how long this charge can last while the game stays playable.";
+    return "At this pace about " + hm(o.pace_min) + ". Pick a longer time and GFG holds the power that gets you there — up to " + hm(o.max_min) + " while the game stays playable.";
+  }
   if (pt.mode_supported === false) return "Works in Battery and Balanced mode.";
   switch (pt.state) {
     case "holding": return "Holding the APU at " + num(pt.cap_w, 1) + " W so the battery lasts — " + hm(pt.remaining_min) + " to go.";
     case "on-track": return "No limit needed: at this pace the battery lasts about " + hm(pt.forecast_min) + ".";
+    case "limited": return "This game needs about " + num(pt.playable_w, 1) + " W to stay playable, so GFG holds that: about " + hm(pt.reachable_min) + " is realistic.";
     case "tight": return "Even the lowest power won't last that long: about " + hm(pt.reachable_min) + " is possible. Running as frugally as the game allows.";
     case "charging": return "Charging — the target applies again on battery.";
     case "reached": return "Target reached.";
@@ -304,11 +309,16 @@ function playtimeText(pt) {
 }
 function PlaytimeCard({ pt, refresh }) {
   const [busy, setBusy] = useState(false);
-  const value = pt.active ? String(pt.target_h) : "0";
-  const set = async (v) => { setBusy(true); try { await rpc.setPlaytime(Number(v)); } catch (e) {} setBusy(false); refresh && refresh(); };
+  const o = pt.options;
+  // the choices come from this game and this charge; without a reading, a few plain ones
+  let mins = o && o.choices && o.choices.length ? o.choices.slice(0, 4) : [120, 180, 240];
+  const current = pt.active && pt.target_h ? Math.round(pt.target_h * 60) : 0;
+  if (current && !mins.includes(current)) mins = [...mins, current].sort((a, b) => a - b).slice(-4);
+  const label = (m) => (o && m === o.max_min ? "Max " : "") + hm(m);
+  const set = async (v) => { setBusy(true); try { await rpc.setPlaytime(Number(v) / 60); } catch (e) {} setBusy(false); refresh && refresh(); };
   return h("div", null,
     h("div", { className: "sec" }, "PLAYTIME TARGET"),
-    h(Seg, { value, options: [["0", "Off"], ["2", "2h"], ["3", "3h"], ["4", "4h"], ["5", "5h"]], onChange: busy ? () => {} : set }),
+    h(Seg, { value: String(current), options: [["0", "Off"]].concat(mins.map((m) => [String(m), label(m)])), onChange: busy ? () => {} : set }),
     h(Note, { quiet: true }, playtimeText(pt)));
 }
 
