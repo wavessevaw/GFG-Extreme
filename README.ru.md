@@ -23,9 +23,9 @@ GFG Extreme дорисовывает кадры, которые игра не у
 
 <img src="docs/img/home-frame-os.png" width="260">&nbsp;&nbsp;
 <img src="docs/img/page-frame-os.png" width="260">&nbsp;&nbsp;
-<img src="docs/img/home-last-session.png" width="260">
+<img src="docs/img/home-savings-hard.svg" width="260">
 
-<sub>Главный экран с измерениями Frame OS в игре · Frame OS: результаты A/B и что он узнал об этой игре · Итоги прошлой сессии кольцами. Отрисовано настоящим интерфейсом на примерных данных.</sub>
+<sub>Главный экран с измерениями Frame OS в игре · Frame OS: результаты A/B и что он узнал об этой игре · Иллюстрация новой карточки Battery Savings Effort (Hard).</sub>
 
 <br><br>
 
