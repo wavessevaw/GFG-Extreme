@@ -408,8 +408,10 @@ function MiniRing({ value, max, text, label, live, estimate, fixed }) {
       { className: "mring", style: { width: size, height: size } },
       h(
         "svg",
-        { viewBox: "0 0 " + size + " " + size, width: size, height: size, style: glow ? { filter: "drop-shadow(0 0 5px " + color.replace("/ 1)", "/ .45)") + ")" } : null },
+        { viewBox: "0 0 " + size + " " + size, width: size, height: size },
         h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#26262d", strokeWidth: w }),
+        // Halo as a wider faint arc inside the SVG: a CSS drop-shadow is clipped to a square in Steam's browser.
+        glow ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeOpacity: 0.22, strokeWidth: w + 4, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null,
         has ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeWidth: w, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null
       ),
       h("div", { className: "mnum" + (estimate || !has ? " dim" : "") }, has ? text : "\u2014")
