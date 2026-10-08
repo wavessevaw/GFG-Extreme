@@ -1005,8 +1005,14 @@ class BudgetController:
             return "hold"
         if self._capacity_resume_idx is not None:
             resume = self._capacity_resume_idx
-            if (self._usable(resume, now) and
-                    (self.idx != resume)):
+            if self.idx == resume:
+                self._capacity_resume_idx = None
+                self._capacity_recovered_at = None
+                return "hold"
+            # Availability alone is not evidence that an actually failed
+            # operating point will now hold. Respect genuine game/TDP failures
+            # recorded by the regular controller.
+            if self._upgrade_allowed(resume, now):
                 if self._capacity_recovered_at is None:
                     self._capacity_recovered_at = now
                 if now - self._capacity_recovered_at >= self.CAPACITY_RECOVERY_CONFIRM_S:
