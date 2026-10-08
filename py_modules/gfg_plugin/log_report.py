@@ -149,6 +149,8 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
     report["frame_os"] = frame_os_summary(samples, _read(bundle, "game-processes.json"))
     if report["frame_os"]:
         report["frame_os"]["by_level"] = frame_os_by_level(samples)
+        report["frame_os"]["injection"] = dict(Counter(
+            f"{e.get('event')}:{e.get('reason')}" for e in events if str(e.get("event", "")).startswith("frame-os-injection")))
     report["findings"] = findings(report, names)
     return report
 
@@ -345,6 +347,8 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
                        f"{fo['present_interval_p95_ms']} ms (p50 / p95), present hold "
                        f"{fo.get('present_hold_ms')} ms" + (f", engine {', '.join(fo['engines'])}" if fo.get("engines") else "")
                        + ".")
+        if fo.get("injection"):
+            out.append(f"Frame OS Act executor events: {fo['injection']}.")
         by_level = fo.get("by_level") or {}
         if by_level:
             parts = []

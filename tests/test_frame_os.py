@@ -352,3 +352,26 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(self.published_hz(tmp)[0], 0)
             r.close()
             self.assertEqual(self.published_hz(tmp)[0], 0)
+
+
+class ActExecutorTests(unittest.TestCase):
+    def test_rest_cadence_is_x4_at_90_and_calm_when_too_low(self):
+        from gfg_plugin.frame_os.policy import InjectionPolicy
+        self.assertEqual(InjectionPolicy(output_hz=90, calm_real_hz=30).rest_real_hz, 22.5)
+        self.assertEqual(InjectionPolicy(output_hz=60, calm_real_hz=30).rest_real_hz, 30)   # 15 < 20
+        p = InjectionPolicy(output_hz=90, calm_real_hz=30)
+        d = p.tick(100.0, {"camera": 0, "action": 0, "idle_s": 30.0})
+        self.assertEqual((d.level, d.real_hz), ("rest", 22.5))
+
+    def test_injection_deltas(self):
+        from gfg_plugin.governor_overlay import injection_deltas
+        fixed = {"adaptive": False, "multiplier": 3, "target_fps": 90, "base_fps_cap": 30, "frame_generation_enabled": True}
+        out = injection_deltas(fixed, 90, 45, 22.5)
+        self.assertEqual((out["adaptive"], out["base_fps_cap"], out["adaptive_max_multiplier"]), (True, 45, 4))
+        self.assertEqual(out["multiplier"], 3)
+        self.assertIsNone(injection_deltas({**fixed, "adaptive": True}, 90, 45, 22.5))       # fractional point
+        self.assertIsNone(injection_deltas({**fixed, "multiplier": 1, "frame_generation_enabled": False}, 90, 45, 22.5))
+        self.assertIsNone(injection_deltas(fixed, 90, 30, 22.5))                             # no headroom
+        self.assertEqual(injection_deltas(fixed, 90, 80, 22.5)["base_fps_cap"], 45)           # <= output / 2
+        x2 = injection_deltas({**fixed, "multiplier": 2, "base_fps_cap": 45}, 90, 60, 45)
+        self.assertIsNone(x2, "45x2: boost cap would equal calm")

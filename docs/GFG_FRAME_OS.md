@@ -176,6 +176,13 @@ Deck experiment that gates Phase 2: adaptive mode at target 90 / cap 45, layer p
 30 <-> 45 every few seconds; measure output stability, generated-frame misses and transition
 artefacts from the renderer's own diagnostics.
 
+Implemented (branch): `governor_overlay.injection_deltas` writes the adaptive overlay (target =
+output, cap = boost cadence, max multiplier up to x4 for rest) once the point is live and the pacer's
+telemetry is live; the Governor then holds the point (`frame-os-act-holds-point`), applies the
+broker's watts and skips window judgement. Heat or an output below 80 % of the target hands the
+point back (`frame-os-injection-yielded`). Cadences: boost 45, calm 30, rest 22.5 (x4) at 90 Hz.
+Act needs an explicit unlock (Diagnostics → Unlock Act, or `GFG_FRAME_OS_EXPERIMENTAL_ACT=1`).
+
 ## 4. Phases and gates
 
 | Phase | Deliverable | Gate before the next phase |

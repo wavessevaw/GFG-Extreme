@@ -113,6 +113,20 @@ for (const [state, nav, expected] of cases) {
   await page.close();
   cases.push(["frame-os-safety-rollback"]);
 }
+// Act unlock: the first tap only asks, the second unlocks and shows Act.
+{
+  const page = await openPage(browser, STATES["frame-os-refused"], ["Settings", "Diagnostics", "Unlock Act (experimental)"]);
+  const asked = await page.evaluate(() => (window.__actUnlocks || []).length);
+  await page.getByText("Tap again to unlock Act", { exact: true }).first().click();
+  await page.waitForTimeout(150);
+  const calls = await page.evaluate(() => window.__actUnlocks || []);
+  if (asked !== 0) { failed++; console.error("FAIL act unlocked without confirmation"); }
+  if (JSON.stringify(calls) !== "[true]") { failed++; console.error(`FAIL act unlock calls: ${JSON.stringify(calls)}`); }
+  if (!(await page.getByText("Act", { exact: true }).count())) { failed++; console.error("FAIL Act not offered after unlock"); }
+  if (!(await page.getByText("Lock Act", { exact: true }).count())) { failed++; console.error("FAIL no Lock Act after unlock"); }
+  await page.close();
+  cases.push(["frame-os-act-unlock"]);
+}
 // Reset what GFG learned: the first tap only asks, the second one forgets.
 {
   const page = await openPage(browser, STATES["home-idle-oled"], ["Settings", "Diagnostics", "Reset what GFG learned for Sample Game"]);

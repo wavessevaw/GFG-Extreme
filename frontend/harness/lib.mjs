@@ -57,6 +57,7 @@ var callable = (n) => async (...a) => ({ get_governor_status: () => window.__sta
   get_log_recording_status: () => window.__state.__log || {},
   get_launch_option: () => ({ launch_option: "/home/deck/.local/bin/gfg %command%" }),
   get_governor_game_model_target: (p) => ({ success: true, target: window.__state.__modelTarget !== undefined ? window.__state.__modelTarget : { profile: p, app_id: "292030", game: "app:292030" } }),
+  set_governor_frame_os_act_unlock: (enabled) => { (window.__actUnlocks = window.__actUnlocks || []).push(enabled); return { success: true, act_unlocked: !!enabled }; },
   set_governor_frame_os: (p, m) => (window.__state.__frameOsFail ? { success: false, error: "marker: read-only" } : { success: true, mode: m }),
   forget_governor_game_model: (p) => { (window.__forgets = window.__forgets || []).push(p); return { success: true, forgotten: 2, game: "app:292030" }; },
   update_profile_config_fields: (p, c) => { window.__patches.push(c); return { success: true }; } }[n] || (() => ({ success: true })))(...a);

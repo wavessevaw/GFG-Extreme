@@ -74,6 +74,13 @@ class FrameOsRunner:
             self.policy.broker.calm_w = float(calm_w)   # the Governor moved the calm cap
 
     @property
+    def injection(self) -> Optional[tuple]:
+        """(boost_real_hz, rest_real_hz) while Act may move the real cadence, else None."""
+        if not (self.enabled and self.mode == "act" and self.policy is not None):
+            return None
+        return self.policy.boost_real_hz, self.policy.rest_real_hz
+
+    @property
     def tdp_offset_w(self) -> float:
         """Watts to add to the Governor's cap for the current level (act mode only)."""
         if not (self.enabled and self.mode == "act" and self.policy and self.policy.broker):

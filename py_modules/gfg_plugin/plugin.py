@@ -812,6 +812,10 @@ class Plugin:
         """GFG Frame OS development switch: off / observe / shadow / act (applies from next launch)."""
         return await asyncio.to_thread(self.governor_service.set_frame_os, profile_name, mode)
 
+    async def set_governor_frame_os_act_unlock(self, enabled: bool = False) -> Dict[str, Any]:
+        """Frame OS Act opt-in (persisted; Act changes frame timing and power)."""
+        return await asyncio.to_thread(self.governor_service.set_frame_os_act_unlock, bool(enabled))
+
     async def set_governor_scale_ready(
             self, profile_name: str, scale_ready: bool
     ) -> Dict[str, Any]:

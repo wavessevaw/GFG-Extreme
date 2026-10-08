@@ -1326,6 +1326,59 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
             self.svc._sync_frame_os_marker()
             self.assertFalse(self.svc.frame_os_marker_path.exists())
 
+    def test_act_unlock_setting_persists_without_env(self):
+        with patch.dict(os.environ, {"GFG_FRAME_OS_EXPERIMENTAL_ACT": "0"}):
+            self.assertFalse(self.svc.set_frame_os("game", "act")["success"])
+            self.assertTrue(self.svc.set_frame_os_act_unlock(True)["act_unlocked"])
+            self.assertTrue(self.svc.set_frame_os("game", "act")["success"])
+            self.assertTrue(self.svc.frame_os_marker_path.exists())
+            self.assertFalse(self.svc.set_frame_os_act_unlock(False)["act_unlocked"])
+            self.assertEqual(self.svc._frame_os_mode("game"), "off")
+            self.assertFalse(self.svc.frame_os_marker_path.exists(), "a locked Act profile stops loading the layer")
+
+    def _act_live_point(self):
+        self.svc.set_frame_os_act_unlock(True)
+        self.assertTrue(self.svc.set_frame_os("game", "act")["success"])
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertEqual(self.svc._point["key"], "30x3")
+
+    def test_act_injects_adaptive_overlay_only_while_the_pacer_is_live(self):
+        self._act_live_point()
+        self.assertIsNone(self.svc._injection, "no pacer telemetry yet: the renderer keeps the fixed ratio")
+        self.svc.frame_os.last = {"telemetry": {"live": True}}
+        self.feed(16, 30, 90)
+        st = self.step()
+        prof = self.overlay_profile()
+        self.assertEqual((prof["adaptive"], prof["base_fps_cap"], prof["target_fps"]), (True, 45, 90))
+        self.assertEqual(prof["adaptive_max_multiplier"], 4, "rest runs x4 at 22.5 real")
+        self.assertFalse(prof["adaptive_stable_cadence"])
+        self.assertEqual((st["state"], st["reason"]), ("LOCKED", "frame-os-act-holds-point"))
+        writes = list(self.svc.power.writes)
+        self.windows(3, 22, 90)              # rest cadence: never judged as a failing point
+        self.assertEqual(self.svc._point["key"], "30x3")
+        self.assertEqual(self.svc.power.writes[-1], writes[-1])
+        # Act off: the next step takes the adaptive overlay back to the plain point
+        self.svc.set_frame_os("game", "observe")
+        self.feed(16, 30, 90)
+        self.step()
+        prof = self.overlay_profile()
+        self.assertEqual((prof["adaptive"], prof["base_fps_cap"], prof["multiplier"]), (False, 30, 3))
+        self.assertIsNone(self.svc._injection)
+
+    def test_act_yields_to_the_governor_when_output_starves(self):
+        self._act_live_point()
+        self.svc.frame_os.last = {"telemetry": {"live": True}}
+        self.feed(16, 30, 90)
+        self.step()
+        self.assertIsNotNone(self.svc._injection)
+        self.feed(20, 20, 60)                     # output far below target
+        self.step()
+        self.assertIsNone(self.svc._injection)
+        self.assertFalse(self.overlay_profile()["adaptive"])
+
     def test_act_offset_is_applied_on_top_of_the_budget_cap(self):
         with patch.dict(os.environ, {"GFG_FRAME_OS_EXPERIMENTAL_ACT": "1"}):
             self.assertTrue(self.svc.set_frame_os("game", "act")["success"])

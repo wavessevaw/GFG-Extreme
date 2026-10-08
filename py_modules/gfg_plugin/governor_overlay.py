@@ -409,3 +409,31 @@ def _body_scaling_enabled(body: str, profile: str) -> bool:
         if isinstance(entry, dict) and entry.get("name") == profile:
             return bool(entry.get("scaling_enabled", False))
     return False
+
+
+def injection_deltas(deltas: Dict[str, Any], output_hz: float, boost_real_hz: float,
+                     rest_real_hz: float) -> Optional[Dict[str, Any]]:
+    """Frame OS Act executor contract (docs/GFG_FRAME_OS.md §3b) on top of a point's deltas.
+
+    The renderer goes to adaptive mode with the output target and a real-frame cap at the boost
+    cadence; the gfg-pacer layer above it then gates the game's real frames (rest / calm / boost)
+    and the renderer fills the rest, without a config write per decision.  None when the point
+    cannot carry it: native, fractional (already adaptive), or no headroom above calm."""
+    if deltas.get("adaptive") or not deltas.get("frame_generation_enabled"):
+        return None
+    multiplier = int(deltas.get("multiplier") or 0)
+    if multiplier < 2 or output_hz <= 0:
+        return None
+    cap = min(boost_real_hz, output_hz / 2.0, 60.0)
+    calm = output_hz / multiplier
+    if cap <= calm + 1e-6:
+        return None
+    deepest = output_hz / max(1.0, min(rest_real_hz, calm))
+    return {
+        **deltas,
+        "adaptive": True,
+        "adaptive_auto_base_fps_cap": False,
+        "adaptive_stable_cadence": False,
+        "adaptive_max_multiplier": int(min(MAX_AUTO_MULTIPLIER, max(multiplier, math.ceil(deepest - 1e-6)))),
+        "base_fps_cap": int(round(cap)),
+    }

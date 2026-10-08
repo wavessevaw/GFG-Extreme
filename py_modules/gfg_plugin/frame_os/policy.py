@@ -110,6 +110,13 @@ class InjectionPolicy:
     def boost_real_hz(self) -> float:
         return boost_level(self.output_hz, self.calm_real_hz, self.max_multiplier)
 
+    @property
+    def rest_real_hz(self) -> float:
+        """Idle (menus, cutscenes, AFK): x4 saves energy on a scene that barely moves; the
+        renderer fills the output.  Never below 20 real, never above calm."""
+        rest = self.output_hz / 4.0
+        return rest if 20.0 <= rest < self.calm_real_hz else self.calm_real_hz
+
     def tick(self, now: float, inp: Dict[str, float], scene_change: bool = False,
              draw_w: Optional[float] = None) -> Decision:
         camera, action = float(inp.get("camera", 0.0)), float(inp.get("action", 0.0))
@@ -139,6 +146,6 @@ class InjectionPolicy:
         if level != self.level:
             self.history.append(f"{now:.1f}:{self.level}->{level}:{reason}")
         self.level, self._reason = level, reason
-        real = self.boost_real_hz if level == "boost" else self.calm_real_hz
+        real = {"boost": self.boost_real_hz, "rest": self.rest_real_hz}.get(level, self.calm_real_hz)
         tdp = self.broker.tdp_for(level) if self.broker is not None else None
         return Decision(level, real, self.output_hz, tdp, reason)

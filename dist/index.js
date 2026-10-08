@@ -131,6 +131,7 @@ var rpc = {
   setHud: safeCallable("set_governor_hud"),
   setScaleReady: safeCallable("set_governor_scale_ready"),
   setFrameOs: safeCallable("set_governor_frame_os"),
+  setFrameOsActUnlock: safeCallable("set_governor_frame_os_act_unlock"),
   setMode: safeCallable("set_governor_mode"),
   forgetModel: safeCallable("forget_governor_game_model"),
   modelTarget: safeCallable("get_governor_game_model_target"),
@@ -930,13 +931,28 @@ function FrameOsPanel({ s, profile }) {
   }, [fo.mode]);
   const t = fo.telemetry || {};
   const d = fo.decision || {};
+  const [unlock, setUnlock] = useState("idle");
+  const [unlocked, setUnlocked] = useState(!!fo.act_unlocked);
+  useEffect(() => {
+    setUnlocked(!!fo.act_unlocked);
+  }, [fo.act_unlocked]);
+  const toggleAct = async (enabled) => {
+    setUnlock("busy");
+    try {
+      const r = await rpc.setFrameOsActUnlock(enabled);
+      if (r && r.success) setUnlocked(!!r.act_unlocked);
+    } catch (e) {
+    }
+    if (!enabled && mode === "act") setMode("off");
+    setUnlock("idle");
+  };
   return h(
     "div",
     null,
     h("div", { className: "sec" }, "FRAME OS (EXPERIMENTAL)"),
     h(Seg, {
       value: mode,
-      options: [["off", "Off"], ["observe", "Observe"], ["shadow", "Shadow"]].concat(fo.act_unlocked ? [["act", "Act"]] : []),
+      options: [["off", "Off"], ["observe", "Observe"], ["shadow", "Shadow"]].concat(unlocked ? [["act", "Act"]] : []),
       onChange: async (v) => {
         const prev = mode;
         setMode(v);
@@ -949,7 +965,8 @@ function FrameOsPanel({ s, profile }) {
         if (!ok) setMode(prev);
       }
     }),
-    h(Note, { quiet: true }, fo.act_unlocked ? "Observe and Shadow only measure. Act changes frame timing and power. Applies from the next game start." : "Frame OS is diagnostic only until Deck validation. Applies from the next game start."),
+    h("div", { className: "list" }, unlocked ? h(Row, { icon: "stop", title: "Lock Act", sub: "Back to measuring only", onClick: unlock === "busy" ? void 0 : () => toggleAct(false) }) : unlock === "confirm" ? h(Row, { icon: "stop", title: "Tap again to unlock Act", sub: "Act changes frame timing and power in the game", onClick: () => toggleAct(true) }) : h(Row, { icon: "cog", title: "Unlock Act (experimental)", sub: "More real frames in action, savings in pauses", onClick: unlock === "busy" ? void 0 : () => setUnlock("confirm") })),
+    h(Note, { quiet: true }, unlocked ? "Observe and Shadow only measure. Act changes frame timing and power. Applies from the next game start." : "Frame OS is diagnostic only until Deck validation. Applies from the next game start."),
     mode !== "off" && fo.enabled && fo.telemetry && !fo.telemetry.live && fo.layer_installed !== false ? h(Note, null, "Frame OS is not active in this game yet: it loads at game start. Restart the game.") : null,
     mode !== "off" && fo.layer_installed === false ? h(Note, null, fo.layer_error ? "Frame OS layer not installed: " + fo.layer_error + "." : "Frame OS layer not installed yet.") : null,
     fo.enabled ? h("div", { className: "card" }, h(

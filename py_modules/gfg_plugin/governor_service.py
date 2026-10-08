@@ -49,6 +49,7 @@ from .governor_overlay import (
     OverlayStore,
     PointNotApplicable,
     base_deltas,
+    injection_deltas,
     point_deltas,
 )
 from .governor_device import detect_model, target_for
@@ -177,6 +178,8 @@ class GovernorService:
         self._exhausted = False
         self._point_external: Optional[bool] = None
         self._point_deltas: Dict[str, Any] = {}
+        # Frame OS Act: the adaptive overlay written on top of the live point (None: not injecting)
+        self._injection: Optional[Dict[str, Any]] = None
         self._request: Optional[Request] = None
         self._request_counter = getattr(self, "_request_counter", 0)
         self._ladder: Optional[TrialLadder] = None
@@ -685,10 +688,19 @@ class GovernorService:
     FRAME_OS_MODES = ("off", "observe", "shadow", "act")
     FRAME_OS_ACT_ENV = "GFG_FRAME_OS_EXPERIMENTAL_ACT"
 
-    @classmethod
-    def _frame_os_act_unlocked(cls) -> bool:
-        """Act changes Vulkan frame timing and power: require an explicit developer opt-in."""
-        return os.environ.get(cls.FRAME_OS_ACT_ENV) == "1"
+    def _frame_os_act_unlocked(self) -> bool:
+        """Act changes Vulkan frame timing and power: require an explicit opt-in (setting or env)."""
+        return os.environ.get(self.FRAME_OS_ACT_ENV) == "1" or bool(self._settings.get("frame_os_act_unlocked"))
+
+    def set_frame_os_act_unlock(self, enabled: bool) -> Dict[str, Any]:
+        self._settings["frame_os_act_unlocked"] = bool(enabled)
+        self._save_settings()
+        try:
+            self._sync_frame_os_marker()   # a locked Act profile stops loading the layer
+        except OSError as error:
+            return {"success": False, "error": f"marker: {error}"}
+        self._poke()
+        return {"success": True, "error": None, "act_unlocked": self._frame_os_act_unlocked()}
 
     def _frame_os_mode(self, profile: str) -> str:
         mode = str(self._profile_settings(profile).get("frame_os", "off"))
@@ -741,7 +753,10 @@ class GovernorService:
                                     max_multiplier=1, calm_w=None)
             return
         point = budget.point
-        self.frame_os.draw_w = (self._status.get("power_feedback") or {}).get("draw_w")
+        try:
+            self.frame_os.draw_w = self.power.status().get("draw_w")
+        except Exception:
+            self.frame_os.draw_w = (self._status.get("power_feedback") or {}).get("draw_w")
         self.frame_os.configure(
             enabled=True, mode=mode, output_hz=float(point.target_output_fps),
             calm_real_hz=float(point.base_target_fps),
@@ -936,6 +951,7 @@ class GovernorService:
         self._point_mode = ""
         self._point_external = None
         self._point_deltas = {}
+        self._injection = None
         self._request = None
         self._ladder = None
         # Failures the controller found since its last drain would be lost with it.
@@ -1053,6 +1069,7 @@ class GovernorService:
             return False
         self._request_counter += 1
         self._record = record
+        self._injection = None  # this write replaced any Act overlay
         self._ladder.mark_attempt() if self._ladder else None
         self._request = Request(
             request_id=self._request_counter, point=point, deltas=full, previous_deltas=previous,
@@ -1137,7 +1154,7 @@ class GovernorService:
         if not stale:
             return
         base = self._base_for(profile, saved)
-        desired = {**base, **self._point_deltas}
+        desired = {**base, **(self._injection or self._point_deltas)}
         key = self._point["key"] if self._point else "base"
         try:
             record = await asyncio.to_thread(self._ensure_overlay_sync, profile, desired, key)
@@ -1666,6 +1683,11 @@ class GovernorService:
         # 2. The point is live: apply this level's watts.
         if not await self._apply_budget_tdp(profile):
             return
+        # Frame OS Act owns the real cadence while it injects: the Governor holds this point and its
+        # watts (the energy broker moves them) and does not judge windows the pacer shapes on purpose.
+        if await self._sync_injection(profile):
+            self._status.update({"state": "LOCKED", "reason": "frame-os-act-holds-point"})
+            return
         self._remember_if_held(profile, target, budget, point, now)
         self._store_failures(budget)
 
@@ -1724,6 +1746,48 @@ class GovernorService:
         self._status.update({"state": self._budget_state(), "reason": budget.last_reason,
                              "last_verdict": verdict.to_dict(), "power_feedback": feedback})
         await self._apply_budget_tdp(profile)
+
+    async def _sync_injection(self, profile: str) -> bool:
+        """Write (or take back) the Act adaptive overlay; True while Act injects on this point."""
+        live = bool(((self.frame_os.last or {}).get("telemetry") or {}).get("live"))
+        # only while the pacer is really in the game: without it the renderer would take 45 real
+        acting = self._frame_os_mode(profile) == "act" and self._request is None and bool(self._point_deltas)
+        if acting and self._budget is not None:
+            # Safety: heat or a starved output hands the point back to the Governor's own judgement.
+            hot = (self._status.get("diagnosis") or {}).get("thermal") == "hot"
+            output = (self.observer.summary(self.FAST_CHECK_SECONDS).get("output") or {}).get("median")
+            starved = isinstance(output, (int, float)) and output < 0.8 * float(self._budget.point.target_output_fps)
+            if hot or starved:
+                acting = False
+                if self._injection is not None:
+                    self._event("frame-os-injection-yielded", "hot" if hot else "output-starved",
+                                profile=profile, output=output)
+        cadences = self.frame_os.injection if acting and live else None
+        wanted = None
+        if cadences is not None and self._budget is not None:
+            boost, rest = cadences
+            wanted = injection_deltas(self._point_deltas, float(self._budget.point.target_output_fps), boost, rest)
+        if wanted == self._injection:
+            return wanted is not None
+        saved = await asyncio.to_thread(self._saved_profile_config, profile)
+        if saved is None:
+            return False
+        desired = {**self._base_for(profile, saved), **(wanted or self._point_deltas)}
+        key = self._point["key"] if self._point else "base"
+        try:
+            record = await asyncio.to_thread(self._ensure_overlay_sync, profile, desired, key)
+        except (OSError, ValueError) as error:
+            self._event("frame-os-injection-failed", "overlay-write-failed", profile=profile, error=str(error))
+            return False
+        if record is not None:
+            self._record = record
+        self._event("frame-os-injection", "start" if wanted else "stop", profile=profile, point=key,
+                    base_fps_cap=(wanted or {}).get("base_fps_cap"),
+                    adaptive_max_multiplier=(wanted or {}).get("adaptive_max_multiplier"))
+        self._injection = wanted
+        # windows measured under injection say nothing about the plain point
+        self._evaluation_after_seq = self.observer.sample_seq
+        return wanted is not None
 
     def _power_feedback(self, profile: str, budget: BudgetController) -> Dict[str, Any]:
         """Compare the measured APU draw with the cap we wrote."""
