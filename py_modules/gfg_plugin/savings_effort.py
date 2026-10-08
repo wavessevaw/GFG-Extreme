@@ -13,7 +13,7 @@ LEVELS = ("off", "light", "medium", "hard")
 # (normal APU ceiling, minimum search watts). A hard setting may be relaxed by
 # real gameplay evidence. "Off" means no extra ceiling, *not* an unsafe 6 W floor.
 PRESETS: Dict[str, tuple[Optional[float], float]] = {
-    "off": (None, 10.0),
+    "off": (None, 6.0),
     "light": (14.0, 10.0),
     "medium": (12.0, 9.0),
     "hard": (11.0, 9.0),
@@ -73,8 +73,12 @@ class SavingsEffort:
         binding = draw_w is None or (
             isinstance(draw_w, (int, float)) and math.isfinite(draw_w)
             and draw_w >= float(tdp_w or 0) - POWER_BINDING_MARGIN_W)
-        bad = (sane and binding and real_fps < UNPLAYABLE_REAL_FPS
-               and output_fps < target_fps * UNPLAYABLE_OUTPUT_RATIO)
+        bad = (sane and binding and (
+            real_fps < 20.0 or (real_fps < UNPLAYABLE_REAL_FPS
+                               and output_fps < target_fps * UNPLAYABLE_OUTPUT_RATIO)))
+        if self.level == "off":
+            self._bad_since = self._last_bad_at = None
+            return False
         if not bad:
             self._bad_since = self._last_bad_at = None
             return False
