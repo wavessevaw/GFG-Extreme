@@ -558,16 +558,18 @@ class GovernorService:
                     self._ring_hud_seq = seq
                     self._ring_hud_due = -1.0   # next publish draws at once; failures retry
 
-    def _hud_preload_wanted(self) -> bool:
-        """Keep a hidden MangoHud in new launches only for Governor/HUD users.
+    def _current_hud_profile(self) -> str:
+        """Only the selected Saved profile controls the global Vulkan HUD launch marker."""
+        try:
+            name, _snapshot = self.configuration.get_current_profile_snapshot()
+            return str(name or "")
+        except Exception:
+            return str(self._active_profile or "")
 
-        Everyone else gets no extra Vulkan layer; for them the HUD needs one
-        relaunch after it is first turned on.
-        """
-        return any(
-            self._profile_enabled(profile) or self.hud_settings(profile)["enabled"]
-            for profile in self._saved_profile_names()
-        )
+    def _hud_preload_wanted(self) -> bool:
+        """Load the HUD only for the selected profile, honoring an explicit opt-out."""
+        profile = self._current_hud_profile()
+        return bool(profile and (self._profile_enabled(profile) or self.hud_settings(profile)["enabled"]))
 
     def _sync_hud_presence(self) -> None:
         """Start/toggle path: hidden HUD config for Governor/HUD users, none otherwise.
@@ -595,7 +597,8 @@ class GovernorService:
                 pass
 
     def _is_idle(self) -> bool:
-        hud_on = any(self.hud_settings(profile)["enabled"] for profile in self._saved_profile_names())
+        profile = self._current_hud_profile()
+        hud_on = bool(profile and self.hud_settings(profile)["enabled"])
         return not (self._any_profile_enabled() or hud_on or self._restore_pending or self._forced_release
                     or self._point or self._request)
 
@@ -866,9 +869,9 @@ class GovernorService:
             except FileNotFoundError:
                 pass
         # Ring HUD: the launcher adds the GFG HUD layer while some profile shows the rings.
-        rings = any(
-            self.hud_settings(profile)["enabled"] and self.hud_settings(profile)["style"] == "rings"
-            for profile in profiles)
+        selected = self._current_hud_profile()
+        rings = bool(selected and self.hud_settings(selected)["enabled"]
+                     and self.hud_settings(selected)["style"] == "rings")
         if rings and self.frame_os_layer_dir is not None:
             staged = frame_os_layer.stage(self.frame_os_layer_source, self.frame_os_layer_dir, self.log,
                                           registry_dir=self.frame_os_registry_dir, layer_key="hud")
