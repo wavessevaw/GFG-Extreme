@@ -8,6 +8,13 @@
 - Stale/missing FPS shows as unavailable; zero FPS displays as zero.
 - Resize, session changes and failed writes are handled without retaining a stale publication state. Text HUD remains the fallback if a Rings write fails.
 
+### Rings settings and diagnostics
+- New installs start with Rings enabled in the bottom-left corner. Existing saved on/off, style and position choices are respected.
+- Frame OS Response, Frames and Energy rings are populated after two seconds of live telemetry instead of staying blank for the first minute. No boost yet displays 0% real-frame uplift rather than a missing value; unavailable power or telemetry remains explicitly unavailable.
+- The Energy ring represents the change in the configured TDP ceiling, **not measured battery savings**; actual consumption still needs paired Deck trials.
+- Fixed the misleading always-REST state: gamepad silence alone cannot verify AFK in games using keyboard/mouse, and stale Steam focus-lost reports expire instead of persisting indefinitely. REST remains available on a fresh Steam UI focus-lost event. Real-world input-mode validation is still pending.
+- Existing 1 Hz bitmap refresh remains intact, with caching and fallback to the text overlay.
+
 ### Validation
 Python regressions cover cadence, caching, stale data, resize, session changes and write failures. A native test checks busy-GPU skip/recovery. CI compares pixels and CPU rasterization time against 1.2.1, alongside the existing Vulkan integration, ABI and frontend checks.
 
