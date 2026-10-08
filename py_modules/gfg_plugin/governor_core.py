@@ -1040,6 +1040,10 @@ class BudgetController:
             self.starved_checks = 0
             return "hold"
         if not isinstance(real_median, (int, float)) or not math.isfinite(float(real_median)):
+            # A missing renderer sample breaks the chain of consecutive
+            # starvation checks. Never carry one bad observation across a
+            # loading screen, telemetry outage or resumed Steam overlay.
+            self.starved_checks = 0
             return "hold"
         base = float(self.point.base_target_fps)
         short = float(real_median) < base * HOLD_REAL_RATIO
