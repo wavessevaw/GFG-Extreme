@@ -69,7 +69,8 @@ class FlowTrial:
         self.reason = reason
         self.pending_accept = False
         self.proof = None
-        if self.wanted is not None and self.wanted != self.original:
+        if self.wanted is not None and (self.wanted != self.original
+                                        or self.actual is None or abs(self.actual - self.original) >= .005):
             return self._request(self.original, "wait-restore", now, event_seq)
         self.phase = "done"
         self.wanted = None

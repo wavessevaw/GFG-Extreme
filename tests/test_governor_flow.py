@@ -153,3 +153,19 @@ class FlowTests(unittest.TestCase):
         self.assertEqual(trial.phase, "done")
         self.assertEqual(trial.reason, "output-starved")
         self.assertIsNone(trial.proof)
+
+
+    def test_starvation_during_restore_wait_still_requires_saved_ack(self):
+        trial = FlowTrial()
+        trial.context = ("game", "budget")
+        trial.original = .8
+        trial.wanted = .8
+        trial.phase = "wait-a"
+        trial.started = 0
+        trial.mark = 100
+        result = trial.step(now=1, context=trial.context, mode="budget", eligible=True,
+                            saved_flow=.8, actual_flow=.7, ack_seq=99, event_seq=101,
+                            sample={"seq": 1, "real": 15, "output": 45}, target=90, base_target=30)
+        self.assertEqual(result, .8)
+        self.assertEqual(trial.phase, "wait-restore")
+        self.assertTrue(trial.busy)
