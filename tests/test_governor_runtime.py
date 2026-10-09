@@ -1015,16 +1015,16 @@ class BudgetRuntimeTests(RuntimeBase):
         self.feed(16, 45, 90)
         return self.step()
 
-    def test_extreme_plays_the_whole_stock_ceiling_and_never_more(self):
+    def test_extreme_uses_the_inherited_device_ceiling(self):
         self.assertTrue(self.svc._scale_ready("game") is False)
         st = self.start_extreme()
         self.assertTrue(self.svc._scale_ready("game"), "Extreme provisions the Scaling Engine at launch")
         self.assertEqual(self.svc._budget.flavor, "extreme")
-        self.assertEqual(self.svc.power.ceiling, 15.0, "15 W on any Deck, an unlocked BIOS included")
-        self.assertEqual(self.svc.power.writes[-1], 15.0)
-        self.assertTrue(all(w <= 15.0 for w in self.svc.power.writes))
+        self.assertEqual(self.svc.power.ceiling, 12.0, "inherited user cap is 12 W")
+        self.assertEqual(self.svc.power.writes[-1], 12.0)
+        self.assertTrue(all(w <= 12.0 for w in self.svc.power.writes))
         ext = st["extreme"]
-        self.assertEqual(ext["ceiling"]["source"], "stock-limit")
+        self.assertEqual(ext["ceiling"]["source"], "your-limit")
         self.assertEqual([b["id"] for b in ext["boosters"]],
                          ["upscale", "quiet", "split", "cooling", "act", "memory", "latency", "shield", "instant"])
         states = {b["id"]: b["state"] for b in ext["boosters"]}
@@ -1257,7 +1257,7 @@ class BudgetRuntimeTests(RuntimeBase):
                 break
         self.assertEqual(self.svc._budget.phase, "locked")
         offer = st.get("extreme_offer")
-        self.assertEqual((offer["ceiling_w"], offer["tdp_w"]), (15.0, self.svc._budget.tdp))
+        self.assertEqual((offer["ceiling_w"], offer["tdp_w"]), (12.0, self.svc._budget.tdp))
         self.assertNotIn("gain_pct", offer, "no promised number")
 
     def test_power_split_never_caps_a_busy_cpu(self):
