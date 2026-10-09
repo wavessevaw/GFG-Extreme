@@ -84,7 +84,7 @@ const MODE_TEXT = {
   balanced: "Balanced: starts at about 45 real FPS and 12 W, never goes below 30 real FPS and never above your Deck's normal power range. A bit more battery for a steadier picture.",
   budget: "Battery: lowest TDP first, 9–11 W ideal. Real FPS stays at 24 or more; a deeper ratio (down to 20 real) and the highest watts your Deck allows only as a last resort.",
   quality: "Quality: fewest generated frames first, then lowers TDP. Uses more battery.",
-  extreme: "Extreme: the most real frames at your Deck's stock limit — 15 W, or your own lower limit, never more, no overclock. Lowers render resolution to 90% / 80% with matched sharpening only when the engine confirms it. Uses more battery than Balanced.",
+  extreme: "Extreme — BETA / EXPERIMENTAL. In development; not recommended for regular play. Uses your Deck's stock limit — 15 W, or your own lower limit, never more, no overclock. Lowers render resolution to 90% / 80% with matched sharpening only when the engine confirms it. Uses more battery than Balanced.",
 };
 
 // ---------- Extreme (1.6)
@@ -351,13 +351,14 @@ function MiniRing({ value, max, text, displayText, label, live, estimate, fixed 
 function energySavingsText(cap, maximum = 15) {
   if (typeof cap !== "number" || !Number.isFinite(cap) || cap < 0 ||
       typeof maximum !== "number" || !Number.isFinite(maximum) || maximum <= 0) return "—";
-  const stockMaximum = Math.min(maximum, 15);
+  const stockMaximum = maximum;
   return Math.round(Math.max(0, Math.min(100, 100 * (stockMaximum - cap) / stockMaximum))) + "%";
 }
 function observedEnergyText(power = {}) {
   const current = power.observed_tdp_w != null ? power.observed_tdp_w : power.current_tdp_w;
   const caps = [current, power.observed_fast_w].filter(v => typeof v === "number" && Number.isFinite(v) && v >= 0);
-  const maximum = typeof power.maximum_tdp_w === "number" && Number.isFinite(power.maximum_tdp_w) && power.maximum_tdp_w > 0 ? power.maximum_tdp_w : 15;
+  const candidate = power.gamescope_max_tdp_w != null ? power.gamescope_max_tdp_w : power.maximum_tdp_w;
+  const maximum = typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0 ? candidate : 15;
   return caps.length ? energySavingsText(Math.max(...caps), maximum) : "—";
 }
 function FrameOsCard({ fo, power }) {
@@ -410,7 +411,7 @@ function SessionRings({ ls, target }) {
     b ? h("div", { className: "rings", style: { marginTop: 10 } },
       h(MiniRing, { value: b.response, max: 50, text: signed(b.response, "−"), label: "Response", live: true, estimate: b.estimate }),
       h(MiniRing, { value: b.frames, max: 50, text: signed(b.frames, "+"), label: "Frames", live: true, estimate: b.estimate }),
-      h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "−" : "") + Math.abs(Math.round(b.energy)) + "%", displayText: energySavingsText(ls.avg_tdp_w, ls.maximum_tdp_w || 15), label: "Energy", live: true, estimate: b.estimate })) : null);
+      h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "−" : "") + Math.abs(Math.round(b.energy)) + "%", displayText: energySavingsText(ls.avg_tdp_w, ls.energy_reference_w || ls.maximum_tdp_w || 15), label: "Energy", live: true, estimate: b.estimate })) : null);
 }
 
 // Extreme: the nine directions with what each really does in this session.
@@ -457,6 +458,7 @@ function ExtremeCard({ x, profile, refresh }) {
   const dot = (st) => (st === "active" ? "" : st === "waiting" || st === "restart_required" || st === "ready" ? " wait" : " idle");
   return h("div", { className: "card xcard" },
     h("div", { className: "fos-head" }, h("span", null, "EXTREME BOOSTERS"), h("span", { className: "pill live" }, active + " / " + list.length + " ACTIVE")),
+    h("div", { className: "abline", role: "note" }, h("b", null, "BETA / EXPERIMENTAL"), " · In development; not recommended for regular play."),
     h("div", { className: "boost" }, list.map((b) => h("div", { key: b.id, className: "bt" + (b.state === "unavailable" || b.state === "off" ? " na" : "") },
       h("i", { className: dot(b.state).trim() }), h("div", null, h("b", null, XB_TITLE[b.id] || b.id), h("span", null, boosterDetail(b)))))),
     h(FrameTimingControls, { key: profile, profile, settings: x.feature_settings, refresh }),
@@ -483,7 +485,7 @@ function ExtremeOffer({ o, onTry, onHide }) {
   return h("div", { className: "card promo", style: { marginTop: 12 } },
     h("span", { className: "xbadge" }, "▲"),
     h("div", { className: "t" }, h("b", null, "Want more real frames?"),
-      h("span", null, "This game leaves " + num(o.headroom_w, 0) + " W of your " + num(o.ceiling_w, 0) + " W limit unused. Extreme puts it into real frames — no overclock; the result is measured in game, not promised."),
+      h("span", null, "This game leaves " + num(o.headroom_w, 0) + " W of your " + num(o.ceiling_w, 0) + " W limit unused. Extreme is BETA / EXPERIMENTAL: in development and not recommended for regular play. Performance gains are not promised."),
       h("div", { className: "xbtns" }, h(Focusable, { className: "xbtn on", onClick: onTry }, "Try Extreme"), h(Focusable, { className: "xbtn", onClick: onHide }, "Not now"))));
 }
 
@@ -565,7 +567,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
       h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 18 }), busy ? "WORKING…" : missing ? "INSTALL ENGINE" : s.enabled ? "STOP" : "RUN"),
     h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : missing ? "The GFG engine is not installed yet. One tap installs it." : "Target " + target + " FPS · " + (dev.reason || "picked automatically for this screen")),
     h("div", { className: "sec" }, "MODE"),
-    h(Seg, { cls: "four", value: s.mode || "budget", options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"], ["extreme", "EXTREME", "x"]], onChange: setMode }),
+    h(Seg, { cls: "four", value: s.mode || "budget", options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"], ["extreme", h("span", { style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2 } }, h("span", null, "EXTREME"), h("small", { style: { fontSize: 8, lineHeight: 1.1 } }, "BETA")), "x"]], onChange: setMode }),
     asking ? h(ActConsent, { onAnswer: answerAct }) : null,
     h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
     health ? h("div", { className: "hint" }, health) : null,
@@ -808,7 +810,7 @@ function FgPage({ back, cfg, patch }) {
     h(Seg, { value: be, options: [["gfg", "GFG Engine"], ["optiscaler", "OptiScaler"], ["native", "In-game"], ["off", "Off"]], onChange: (v) => patch({ fg_backend: v }) }),
     h(Note, { quiet: true }, { gfg: "GFG Engine makes the extra frames. This is the only mode the Governor controls.", optiscaler: "The game's OptiScaler makes the frames. GFG only watches.", native: "The game's own frame generation (DLSS/FSR) is used. GFG only watches.", off: "No frame generation from GFG." }[be]),
     be === "gfg" ? h("div", null,
-      h("div", { className: "list" }, h(Toggle, { on: !!(cfg && cfg.open_frame_generation), title: "GFG Open generator", sub: "Experimental colour-flow interpolation. Native 64-bit SDR games; restart after changing. No Lossless.dll needed for FG.", onChange: (v) => patch({ open_frame_generation: v }) })),
+      h("div", { className: "list" }, h(Toggle, { on: !!(cfg && cfg.open_frame_generation), title: "GFG Open generator", sub: "IN DEVELOPMENT — not recommended for regular play. May reduce real FPS or cause artifacts. Native 64-bit SDR only; restart after changing.", onChange: (v) => patch({ open_frame_generation: v }) })),
       h("div", { className: "sec" }, "SAVED MULTIPLIER"),
       h(Seg, { value: String(mult), options: [["2", "×2"], ["3", "×3"]], onChange: (v) => patch({ multiplier: Number(v) }) }),
       h(Note, { quiet: true }, "Used when the Governor is off. With the Governor on, it picks ×1 to ×3.75 itself (×4 only as a last resort) and never changes this value.")) :

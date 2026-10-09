@@ -237,3 +237,19 @@ class ProofProvenanceTests(unittest.TestCase):
         self.assertEqual(result["session"]["mean"], 12.0)
         self.assertFalse(result["session"]["measured"])
         self.assertEqual(result["historical"]["mean"], 42.0)
+
+class LiveRingProvenanceTests(unittest.TestCase):
+    def test_previous_backend_pairs_do_not_label_new_session_as_measured(self):
+        from gfg_plugin.frame_os.runner import apply_proof
+        meter = proof.ProofMeter()
+        meter.load({"response": [40, 42, 44, 42, 43]})
+        benefit = {"ready": False, "response_pct": None, "frames_pct": None, "energy_pct": None}
+        result = apply_proof(benefit, meter.summary())
+        self.assertFalse(result["ready"])
+        self.assertFalse(result["measured"]["response"])
+        self.assertIsNone(result["response_pct"])
+        meter.pairs["response"].extend([10, 11, 12, 11, 10])
+        result = apply_proof(benefit, meter.summary())
+        self.assertTrue(result["measured"]["response"])
+        self.assertAlmostEqual(result["response_pct"], 10.8)
+        self.assertEqual(result["provenance"]["response"], "session-ab")

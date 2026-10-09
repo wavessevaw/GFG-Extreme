@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.6.6).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.6.7).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -66,7 +66,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, confirmation_evidence, matches,
 )
 
-VERSION = "1.6.6"
+VERSION = "1.6.7"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -634,13 +634,15 @@ class GovernorService:
             "limit": number(power.get("initial_tdp_w") or power.get("maximum_tdp_w")) or 15,
             "battery_min": number(battery.get("minutes_left")), "battery_pct": number(battery.get("percent")),
         }
-        # ENERGY compares the current cap to stock console maximum, never the
-        # pre-search/user/Extreme ceiling. Preserve fractions and both PPT caps.
-        maximum = power.get("maximum_tdp_w")
+        # ENERGY uses Steam's slider maximum, not Extreme's actuator ceiling.
+        # Keep the actual cap separate from APU draw and preserve fractions.
+        maximum = power.get("gamescope_max_tdp_w")
+        if maximum is None:
+            maximum = power.get("maximum_tdp_w")
         if (not isinstance(maximum, (int, float)) or isinstance(maximum, bool)
                 or not math.isfinite(maximum) or maximum <= 0):
             maximum = extreme_policy.EXTREME_CEILING_W
-        data["maximum_tdp"] = min(float(maximum), extreme_policy.EXTREME_CEILING_W)
+        data["maximum_tdp"] = float(maximum)
         current = power.get("observed_tdp_w")
         if current is None:
             current = power.get("current_tdp_w")
@@ -1761,7 +1763,8 @@ class GovernorService:
                              "layer_installed": bool(self.frame_os_layer_dir and frame_os_layer.is_staged(self.frame_os_layer_dir)),
                              "layer_error": self.frame_os_layer_error,
                              **{k: v for k, v in self.frame_os.last.items() if k != "input"}}
-        value["power_split"] = {**(self._status.get("power_split") or {}), "setting": self._power_split_enabled()}
+        value["power_split"] = {**(self._status.get("power_split") or {}), "setting": self._power_split_enabled(),
+                                "control": self.cpu.status()}
         value["extreme"] = self._status.get("extreme") or {"enabled": False, "state": "OFF"}
         value["scale_blocked"] = (("game-ignores-render-scale" if self._scale_blocked == extreme_policy.GAME_IGNORES_SCALE
                                    else self._scale_blocked)
@@ -2123,6 +2126,8 @@ class GovernorService:
         # when none was sampled.
         result.setdefault("mode", self._mode(profile) if profile else "")
         result.update({"ended": time.time(), "profile": profile or "", "app_id": self._session_app_id})
+        power = self.power.status()
+        result["energy_reference_w"] = power.get("gamescope_max_tdp_w") or power.get("maximum_tdp_w")
         self._settings["last_session"] = result
         history = [h for h in self._settings.get("session_history") or [] if isinstance(h, dict)]
         self._settings["session_history"] = ([result] + history)[: self.SESSION_HISTORY]

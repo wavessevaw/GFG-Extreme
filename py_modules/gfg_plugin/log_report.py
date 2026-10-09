@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from .governor_telemetry import TelemetryObserver
 
-CURRENT_VERSION = "1.6.6"  # kept in step by scripts/bump_version.py
+CURRENT_VERSION = "1.6.7"  # kept in step by scripts/bump_version.py
 
 
 def _percentile(values: List[float], pct: float) -> Optional[float]:
@@ -495,7 +495,7 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
         if split.get("lowest_khz"):
             text += f"the CPU clock went down to {split['lowest_khz'] / 1e6:.1f} GHz"
         else:
-            text += "the CPU clock was never capped"
+            text += "no successful full-policy CPU cap was recorded (partial or pending writes are not counted)"
         lifts = [f"{n}× for {why.replace('-', ' ')}" for why, n in reasons.items()
                  if why in ("real-frames-short", "cpu-busy")]
         if split.get("capped_share") is not None:

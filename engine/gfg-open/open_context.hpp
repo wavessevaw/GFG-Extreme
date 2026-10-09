@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "mako-backend/mako.hpp"
+#include "budget.hpp"
 #include "mako-common/helpers/file_descriptors.hpp"
 #include "mako-common/vulkan/buffer.hpp"
 #include "mako-common/vulkan/command_buffer.hpp"
@@ -43,11 +44,24 @@ class OpenContext {
  void writeOutput(size_t,const Params&);
  uint64_t idx=1,frame=0;
  bool scheduled=false;
+ GpuBudget budget;
+ VkQueryPool queries=VK_NULL_HANDLE;
+ PFN_vkDestroyQueryPool destroyQueries=nullptr;
+ PFN_vkGetQueryPoolResults readQueries=nullptr;
+ PFN_vkCmdResetQueryPool resetQueries=nullptr;
+ PFN_vkCmdWriteTimestamp writeTimestamp=nullptr;
+ float timestampPeriod=0;
+ uint32_t timestampBits=0;
+ size_t scheduledCount=0;
+ void initTiming();
+ void collectTiming();
+ void publishTiming(double prepassMs,double compositionMs) const;
  void prepare();
  void record(size_t count,bool history);
  void submitPrepass(VkFence completion);
  public:
  OpenContext(const vk::Vulkan&,ls::FileDescriptorScope&,ls::FileDescriptorScope&,ls::FileDescriptorScope&,VkExtent2D,mako::backend::FrameEncoding);
+ ~OpenContext();
  void scheduleFrames();
  void scheduleFrames(std::span<const float>);
  void scheduleFrameHistory();

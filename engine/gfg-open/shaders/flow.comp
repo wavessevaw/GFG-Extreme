@@ -35,7 +35,8 @@ float coarseCost(bool back,ivec2 q,ivec2 d){
  return e/9;
 }
 vec4 solve(bool back,ivec2 block) {
- ivec2 q=min(block*8+ivec2(4),ivec2(p.size.xy)-1);
+ ivec2 stride=(ivec2(p.size.xy)+ivec2(p.size.zw)-1)/ivec2(p.size.zw);
+ ivec2 q=min(block*stride+stride/2,ivec2(p.size.xy)-1);
  float stationary=cost(back,q,ivec2(0));
  // Exact/static tiles never run the search. Textureless motion remains
  // ambiguous and will use a real frame rather than fabricate a contour.
@@ -62,7 +63,7 @@ vec4 solve(bool back,ivec2 block) {
 void main(){
  ivec2 b=ivec2(gl_GlobalInvocationID.xy);
  if(any(greaterThanEqual(b,ivec2(p.size.zw))))return;
- if(p.timing.z==0){imageStore(forwardFlow,b,vec4(0,0,1,0));imageStore(backwardFlow,b,vec4(0,0,1,0));return;}
+ if(p.timing.z==0 || p.timing.w>0){imageStore(forwardFlow,b,vec4(0,0,1,0));imageStore(backwardFlow,b,vec4(0,0,1,0));return;}
  imageStore(forwardFlow,b,solve(false,b));
  imageStore(backwardFlow,b,solve(true,b));
 }

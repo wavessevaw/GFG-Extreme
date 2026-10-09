@@ -306,3 +306,14 @@ class PowerRestoreSafetyTests(GovernorPowerActuatorTests):
             actuator.reopen()
             actuator.claim()
             self.assertTrue(actuator.set_tdp_w(8)["success"])
+
+class EnergySliderReferenceTests(unittest.TestCase):
+    def test_slider_maximum_is_independent_of_extreme_ceiling(self):
+        from types import SimpleNamespace
+        actuator = SteamDeckPowerActuator(manager=SimpleNamespace(range=(3, 20)), helper=lambda: None)
+        actuator.state.slow_max_uw = 30_000_000
+        actuator.state.ceiling_override_uw = 15_000_000
+        status = actuator.status()
+        self.assertEqual(status["gamescope_max_tdp_w"], 20)
+        self.assertEqual(status["maximum_tdp_w"], 30)
+        self.assertEqual(status["energy_reference_source"], "steamos-manager-slider")

@@ -53,7 +53,7 @@ def check(path, version):
         data = read("bin/gfg-open/libmako-render.so")
         if data[:6] != b"\x7fELF\x02\x01" or int.from_bytes(data[18:20], "little") != 62:
             raise ValueError("not an x86_64 open generator")
-        if b"GFG Open: backend=color-flow-v1" not in data:
+        if not any(b"GFG Open: backend=" + name in data for name in (b"color-flow-v1", b"color-flow-v2")):
             raise ValueError("open generator implementation missing")
         manifest = json.loads(read("bin/gfg-open/VkLayer_MAKO_render.json"))
         if manifest["layer"]["library_path"] != "./libmako-render.so":

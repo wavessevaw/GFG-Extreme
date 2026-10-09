@@ -1183,12 +1183,13 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual(seen[-1]["limit"], 12)
         self.assertEqual(seen[-1]["extreme"], {"render_pct": None}, "full resolution: no number")
 
-    def test_energy_ring_uses_stock_maximum_and_unrounded_confirmed_caps(self):
+    def test_energy_ring_uses_slider_maximum_and_unrounded_confirmed_caps(self):
         from gfg_plugin import hud_rings
         settings = {"preset": "standard", "position": "top-left"}
         cases = [
-            ({"maximum_tdp_w": 20, "initial_tdp_w": 12, "observed_tdp_w": 12,
-              "observed_fast_w": 12, "draw_w": 5}, "20%"),
+            ({"gamescope_max_tdp_w": 20, "maximum_tdp_w": 30, "initial_tdp_w": 20,
+              "observed_tdp_w": 15, "observed_fast_w": 15, "draw_w": 5}, "25%"),
+            ({"maximum_tdp_w": 20, "observed_tdp_w": 12, "observed_fast_w": 12}, "40%"),
             ({"maximum_tdp_w": 15, "observed_tdp_w": 12.75,
               "observed_fast_w": 12.75}, "15%"),
             ({"maximum_tdp_w": 15, "observed_tdp_w": 12,
@@ -1207,8 +1208,8 @@ class BudgetRuntimeTests(RuntimeBase):
                     self.assertTrue(self.svc._publish_ring_hud(status, settings))
                 saving = hud_rings.energy_savings_pct(seen[-1]["energy_tdp"], seen[-1]["maximum_tdp"])
                 self.assertEqual(hud_rings._fmt_pct(saving, "") if saving is not None else "—", expected)
-                self.assertEqual(seen[-1]["maximum_tdp"], 15)
-                self.assertEqual(seen[-1]["limit"], 12)
+                self.assertEqual(seen[-1]["maximum_tdp"], power.get("gamescope_max_tdp_w") or power["maximum_tdp_w"])
+                self.assertEqual(seen[-1]["limit"], 12, "existing arc limit stays unchanged")
 
     def test_extreme_without_a_scale_ready_launch_asks_for_a_restart(self):
         st = self.start_extreme(scale_ready_launch=False)

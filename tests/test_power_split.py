@@ -317,6 +317,39 @@ class CpuFreqActuatorTests(unittest.TestCase):
             self.assertEqual(a.marker.read_text(), "{")
             self.assertEqual(self.read(root), 3_500_000)
 
+    def test_successful_helper_reply_with_late_readback_stays_owned(self):
+        class LateReadback:
+            pending = None
+            def write(self, path, value):
+                self.pending = (path, value)  # accepted, but sysfs has not changed
+            def restore_cpu(self, path, value):
+                if self.pending and self.pending[0] == path:
+                    self.pending = None  # ordered undo supersedes our accepted write
+                path.write_text(f"{value}\n")
+        for lands in (False, True):
+            with self.subTest(lands=lands), tempfile.TemporaryDirectory() as temp:
+                root, a = self.make(temp, policies=8)
+                helper = LateReadback()
+                a._helper = lambda: helper
+                events = []
+                a.journal = lambda kind, **fields: events.append(kind)
+                with patch("gfg_plugin.cpu_freq.allowed_cpu_path", side_effect=lambda p: p):
+                    self.assertTrue(a.claim())
+                    self.assertFalse(a.set_cap_khz(3_000_000))
+                    self.assertTrue(a.restore_pending)
+                    self.assertIsNone(a.cap_khz)
+                    if lands:
+                        path, value = helper.pending
+                        path.write_text(f"{value}\n")
+                        self.assertEqual(a.status()["observed_policy_caps_khz"]["policy0"], 3_000_000)
+                    self.assertTrue(a.restore())
+                    self.assertFalse(a.external_change)
+                    self.assertFalse(a.restore_pending)
+                    self.assertNotIn("cpu-cap-external-change", events)
+                    self.assertEqual([self.read(root, i) for i in range(8)], [3_500_000]*8)
+                    self.assertFalse(a.marker.exists())
+                    self.assertIsNone(helper.pending)
+
     def test_late_helper_cap_remains_ours_and_can_be_restored(self):
         class Late:
             once = True

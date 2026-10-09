@@ -89,7 +89,8 @@ class RunnerMemoryTests(unittest.TestCase):
         self.assertIsNone(status["proof"]["testing"] if status["proof"]["phase"] == "wait" else None)
         self.assertFalse(r.policy.boost_allowed)
         self.assertEqual(status["proof"]["response"]["n"], 0, "no shaping: nothing to test")
-        self.assertTrue(status["benefit"]["measured"]["frames"], "earlier sessions' pairs count")
+        self.assertFalse(status["benefit"]["measured"]["frames"], "earlier sessions are historical, not current measurement")
+        self.assertEqual(status["proof"]["frames"]["historical"]["n"], 3)
         # a new policy (the Governor moved the point) keeps the per-game switches
         r.configure(enabled=True, mode="act", output_hz=90, calm_real_hz=45, max_multiplier=2.0, calm_w=10.0)
         self.assertFalse(r.policy.boost_allowed)

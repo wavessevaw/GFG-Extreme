@@ -540,6 +540,16 @@ class SteamDeckPowerActuator:
 
     def status(self) -> Dict[str, Any]:
         value = self.state.to_dict()
+        # Cached SteamOSManager TdpLimitMax is the upper bound of Steam's
+        # Gamescope/QAM slider, independent of Governor's current 15 W ceiling.
+        manager_range = getattr(self.manager, "range", None)
+        slider_max = manager_range[1] if isinstance(manager_range, (tuple, list)) and len(manager_range) == 2 else None
+        if isinstance(slider_max, (int, float)) and not isinstance(slider_max, bool) and 0 < slider_max <= 60:
+            value["gamescope_max_tdp_w"] = float(slider_max)
+            value["energy_reference_source"] = "steamos-manager-slider"
+        else:
+            value["gamescope_max_tdp_w"] = None
+            value["energy_reference_source"] = "hwmon-maximum"
         if self._fast_path is not None and self._slow_path is not None:
             current_fast = _read_int(self._fast_path)
             current_slow = _read_int(self._slow_path)

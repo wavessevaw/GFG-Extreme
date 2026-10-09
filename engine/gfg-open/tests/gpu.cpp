@@ -46,7 +46,8 @@ int main(){
   VkImageSubresource sub{VK_IMAGE_ASPECT_COLOR_BIT,0,0};vkGetImageSubresourceLayout(device,r.image,&sub,&r.layout);
   VkImageViewCreateInfo v{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};v.image=r.image;v.viewType=VK_IMAGE_VIEW_TYPE_2D;v.format=format;v.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};VKCHECK(vkCreateImageView(device,&v,nullptr,&r.view));return r;
  };
- constexpr uint32_t W=67,H=49,TW=(W+7)/8,TH=(H+7)/8;
+ const uint32_t tile=getenv("GFG_OPEN_TEST_TILE")?16:8;
+ const uint32_t W=tile==16?131:67,H=tile==16?99:49,TW=(W+tile-1)/tile,TH=(H+tile-1)/tile;
  std::array<Image,9> images{image(W,H,VK_FORMAT_R8G8B8A8_UNORM),image(W,H,VK_FORMAT_R8G8B8A8_UNORM),
  image(TW,TH,VK_FORMAT_R32G32B32A32_SFLOAT),image(TW,TH,VK_FORMAT_R32G32B32A32_SFLOAT),
  image(TW,TH,VK_FORMAT_R32G32B32A32_SFLOAT),image(TW,TH,VK_FORMAT_R32G32B32A32_SFLOAT),image(W,H,VK_FORMAT_R8G8B8A8_UNORM),image((W+3)/4,(H+3)/4,VK_FORMAT_R32G32B32A32_SFLOAT),image((W+3)/4,(H+3)/4,VK_FORMAT_R32G32B32A32_SFLOAT)};
@@ -135,6 +136,11 @@ int main(){
  // Initial history invalid: output must be current real frame.
  p.timing[1]=0;p.timing[2]=0;memcpy(params,&p,32);fill(0,0,-1);fill(1,0,17);dispatch(0);dispatch(1);dispatch(2);dispatch(3);
  for(uint32_t y=0;y<H;y++)for(uint32_t x=0;x<W;x++)assert(pixel(6,x,y)[0]==17);
+ // Cost guard bypass must copy the real frame exactly, without previous
+ // history, motion search, stale contours, or interpolated colour.
+ p.timing[1]=1;p.timing[2]=1;p.timing[3]=1;memcpy(params,&p,32);
+ fill(0,0,-1);fill(1,2,-1);dispatch(0);dispatch(1);dispatch(2);dispatch(3);
+ for(uint32_t y=0;y<H;y++)for(uint32_t x=0;x<W;x++)assert(memcmp(pixel(6,x,y),pixel(1,x,y),4)==0);
  std::cout<<"GPU PASS: static, translation, fractional timestamps, occlusion, static overlay, scene-cut, initial history, odd extent\n";
  vkDeviceWaitIdle(device);vkDestroyCommandPool(device,cmdpool,nullptr);vkDestroyDescriptorPool(device,pool,nullptr);
  for(auto pipe:pipelines)vkDestroyPipeline(device,pipe,nullptr);vkDestroyPipelineLayout(device,pl,nullptr);vkDestroyDescriptorSetLayout(device,layout,nullptr);
