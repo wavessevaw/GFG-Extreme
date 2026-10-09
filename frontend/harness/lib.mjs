@@ -85,6 +85,7 @@ var callable = (n) => async (...a) => ({ get_governor_status: () => window.__sta
   get_launch_option: () => ({ launch_option: "/home/deck/.local/bin/gfg %command%" }),
   get_governor_game_model_target: (p) => ({ success: true, target: window.__state.__modelTarget !== undefined ? window.__state.__modelTarget : { profile: p, app_id: "292030", game: "app:292030" } }),
   set_governor_power_split: (enabled) => { (window.__splitSets = window.__splitSets || []).push(enabled); return { success: true, power_split: !!enabled }; },
+  set_governor_auto_flow: (enabled) => { (window.__flowSets = window.__flowSets || []).push(enabled); if (window.__state.__flowFail) return { success: false, error: "Could not save flow policy" }; return { success: true, enabled }; },
   set_governor_mode: (p, m) => { (window.__modes = window.__modes || []).push(m); return { success: true, mode: m }; },
   set_governor_extreme_act_consent: (allow) => { (window.__consents = window.__consents || []).push(allow); return { success: true, consent: !!allow }; },
   set_governor_extreme_sharpness: (p, v) => { (window.__sharp = window.__sharp || []).push(v); return { success: true, offset: v }; },
