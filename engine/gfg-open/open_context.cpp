@@ -99,7 +99,7 @@ void OpenContext::scheduleFrames(std::span<const float> timestamps){
  float previous=0;
  for(float t:timestamps){if(!std::isfinite(t)||t<=previous||t>=1)throw std::runtime_error("Invalid GFG Open interpolation timestamp");previous=t;}
  prepare();
- Params params{{extent.width,extent.height,tiles.width,tiles.height},{0,frame>1?1.f:0.f,0,0}};
+ Params params{{extent.width,extent.height,tiles.width,tiles.height},{0,frame>1?1.f:0.f,frame>0?1.f:0.f,0}};
  pairParams.write(v,params);
  for(size_t i=0;i<count;i++){
   params.timing={timestamps.empty()?float(i+1)/float(count+1):timestamps[i],frame>0?1.f:0.f,0,0};

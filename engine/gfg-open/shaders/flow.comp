@@ -27,7 +27,7 @@ vec4 solve(bool back,ivec2 block) {
  // ambiguous and will use a real frame rather than fabricate a contour.
  if(stationary<.0025) return vec4(0,0,stationary,1);
  ivec2 bestD=ivec2(0); float best=stationary,second=1e10;
- if(p.timing.y>0) {
+ if(p.timing.y>0 && stationary<.16) {
   vec4 old=back?imageLoad(historyBackward,block):imageLoad(historyForward,block);
   if(old.w>.5) {
    ivec2 d=ivec2(round(old.xy));
@@ -47,6 +47,7 @@ vec4 solve(bool back,ivec2 block) {
 void main(){
  ivec2 b=ivec2(gl_GlobalInvocationID.xy);
  if(any(greaterThanEqual(b,ivec2(p.size.zw))))return;
+ if(p.timing.z==0){imageStore(forwardFlow,b,vec4(0,0,1,0));imageStore(backwardFlow,b,vec4(0,0,1,0));return;}
  imageStore(forwardFlow,b,solve(false,b));
  imageStore(backwardFlow,b,solve(true,b));
 }

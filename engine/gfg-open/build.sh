@@ -19,5 +19,16 @@ cmake -S "$task_build/upstream/engine" -B "$task_build/cmake" -G Ninja \
 cmake --build "$task_build/cmake" --target mako-render -j 4
 find "$task_build/cmake" -name libmako-render.so -exec cp '{}' "$task_output/libmako-render.so" \;
 test -s "$task_output/libmako-render.so"
-(cd "$task_output" && sha256sum libmako-render.so > SHA256SUMS)
+cp "$task_build/cmake/mako-render/VkLayer_MAKO_render.json" "$task_output/"
+python3 - "$task_output/VkLayer_MAKO_render.json" <<'PY'
+import sys,json
+from pathlib import Path
+p=Path(sys.argv[1]);m=json.loads(p.read_text())
+m["layer"]["library_path"]="./libmako-render.so"
+m["layer"]["description"]="GFG Open experimental color-flow generator"
+p.write_text(json.dumps(m,indent=2)+"\n")
+PY
+cp "$task_build/upstream/LICENSE.md" "$task_output/TRANSPORT_LICENSE.md"
+cp "$task_build/upstream/THIRD_PARTY_NOTICES.md" "$task_output/THIRD_PARTY_NOTICES.md"
+(cd "$task_output" && sha256sum libmako-render.so VkLayer_MAKO_render.json > SHA256SUMS)
 printf '%s\n' "GFG Open color-flow-v1; transport $task_pin; SDR8 x86_64" > "$task_output/BUILD.txt"

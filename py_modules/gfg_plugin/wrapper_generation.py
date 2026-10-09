@@ -26,6 +26,7 @@ from .config_schema_generated import (
     get_script_generation_logic,
 )
 from .constants import (
+    PLUGIN_ROOT,
     COMPETING_LSFG_DISABLE_ENVS,
     DXVK_HDR_ENV,
     EXTERNAL_VULKAN_LAYER_ENV,
@@ -80,7 +81,7 @@ from .profile_storage import (
 )
 
 
-WRAPPER_FORMAT_VERSION = 83
+WRAPPER_FORMAT_VERSION = 84
 WRAPPER_FORMAT_MARKER = f"# mako-wrapper-format: {WRAPPER_FORMAT_VERSION}"
 HOST_COMPATIBILITY_MARKER = "# mako-host-compatibility: aarch64-passthrough-v1"
 DIAGNOSTICS_DEFAULT_MARKER = (
@@ -579,6 +580,7 @@ def script_configuration_lines(
     """Generate wrapper settings without repeating forced compatibility exports."""
     effective = effective_runtime_config(config)
     lines = get_script_generation_logic()(config)
+    lines.append(f"export GFG_OPEN_FG={1 if config.get('open_frame_generation', False) and config.get('fg_backend', FG_BACKEND_GFG) == FG_BACKEND_GFG else 0}")
     if config.get("fg_backend", FG_BACKEND_GFG) != FG_BACKEND_GFG:
         # Renderer v4 already supports these environment overrides. They are the
         # non-destructive runtime projection of the saved GFG Engine settings.
@@ -870,6 +872,16 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         f"    mako_vkbasalt_manifest={vkbasalt_manifest}",
         f"    mako_vkbasalt_manifest32={vkbasalt_manifest32}",
         "fi",
+        # Select one renderer identity; never admit legacy and open together.
+        'if [ "${GFG_OPEN_FG:-0}" = 1 ]; then',
+        f"    gfg_open_layer_dir={shlex.quote(str(PLUGIN_ROOT / 'bin' / 'gfg-open'))}",
+        '    if [ "$mako_flatpak_runtime" != 1 ] && [ -r "$gfg_open_layer_dir/VkLayer_MAKO_render.json" ] && [ -r "$gfg_open_layer_dir/libmako-render.so" ]; then',
+        '        mako_implicit_layer_path="$gfg_open_layer_dir"',
+        '    else',
+        '        export GFG_OPEN_FG=0',
+        '        printf "%s\\n" "GFG Open unavailable for this launch; using the installed renderer." >&2',
+        '    fi',
+        'fi',
         # Preserve the established Renderer -> Gamescope WSI -> spatial order.
         # Flatpak preparation stages the host's own WSI binary beside its
         # guarded manifest, so Heroic and EmuDeck use this same chain without

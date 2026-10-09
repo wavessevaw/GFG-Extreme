@@ -17,7 +17,7 @@ jobs:
       - name: Execute released SPIR-V on software Vulkan
         run: |
           g++ -std=c++20 -O2 engine/gfg-open/tests/gpu.cpp -lvulkan -o /tmp/gfg-open-gpu-test
-          VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json /tmp/gfg-open-gpu-test
+          VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp*.json' -print -quit)" /tmp/gfg-open-gpu-test
       - uses: actions/upload-artifact@v4
         with:
           name: gfg-open-x86_64

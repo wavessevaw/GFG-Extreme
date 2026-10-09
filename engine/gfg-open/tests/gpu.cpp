@@ -42,7 +42,7 @@ int main(){
  image(TW,TH,VK_FORMAT_R32G32B32A32_SFLOAT),image(TW,TH,VK_FORMAT_R32G32B32A32_SFLOAT),image(W,H,VK_FORMAT_R8G8B8A8_UNORM)};
  VkBuffer buffer;VkBufferCreateInfo bc{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bc.size=32;bc.usage=VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;VKCHECK(vkCreateBuffer(device,&bc,nullptr,&buffer));
  VkMemoryRequirements br;vkGetBufferMemoryRequirements(device,buffer,&br);auto bm=alloc(br);VKCHECK(vkBindBufferMemory(device,buffer,bm,0));void* params;VKCHECK(vkMapMemory(device,bm,0,VK_WHOLE_SIZE,0,&params));
- struct P{uint32_t size[4];float timing[4];}p{{W,H,TW,TH},{.5f,1,0,0}};memcpy(params,&p,32);
+ struct P{uint32_t size[4];float timing[4];}p{{W,H,TW,TH},{.5f,1,1,0}};memcpy(params,&p,32);
  std::array<VkDescriptorSetLayoutBinding,7> bindings{};
  bindings[0]={0,VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr};
  for(uint32_t i=1;i<7;i++)bindings[i]={47+i,VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr};
