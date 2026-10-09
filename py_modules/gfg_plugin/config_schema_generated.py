@@ -19,6 +19,7 @@ SCALING_SHARPNESS = "scaling_sharpness"
 FRAME_GENERATION_PROVISIONED = "frame_generation_provisioned"
 FRAME_GENERATION_ENABLED = "frame_generation_enabled"
 AUTOMATIC_DOCK_MODE = "automatic_dock_mode"
+OPEN_FRAME_GENERATION = "open_frame_generation"
 FG_BACKEND = "fg_backend"
 OPTISCALER_PROXY = "optiscaler_proxy"
 FRAME_GENERATION_REFRESH_THRESHOLD = "frame_generation_refresh_threshold"
@@ -66,6 +67,7 @@ class ConfigurationData(TypedDict):
     frame_generation_provisioned: bool
     frame_generation_enabled: bool
     automatic_dock_mode: bool
+    open_frame_generation: bool
     fg_backend: str
     optiscaler_proxy: str
     frame_generation_refresh_threshold: int
@@ -113,6 +115,7 @@ class ConfigurationPatch(TypedDict, total=False):
     frame_generation_provisioned: bool
     frame_generation_enabled: bool
     automatic_dock_mode: bool
+    open_frame_generation: bool
     fg_backend: str
     optiscaler_proxy: str
     frame_generation_refresh_threshold: int
@@ -151,6 +154,7 @@ class ConfigurationPatch(TypedDict, total=False):
 class WrapperSettingsData(TypedDict):
     """Canonical launcher-only profile settings - AUTO-GENERATED"""
     automatic_dock_mode: bool
+    open_frame_generation: bool
     fg_backend: str
     optiscaler_proxy: str
     disable_mako: bool

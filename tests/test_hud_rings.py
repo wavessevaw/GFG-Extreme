@@ -45,6 +45,17 @@ class RingHudTests(unittest.TestCase):
         self.assertNotIn("tag", [i["kind"] for i in hud_rings.items_for(data, "minimal")])
         hud_rings.render({**data, "extreme": {"render_pct": 90}}, "detailed", 1.0)
 
+    def test_energy_number_saves_cap_but_preserves_arc(self):
+        for cap, expected in ((15, "0%"), (12, "20%"), (12.75, "15%"), (0, "100%"), (20, "0%")):
+            data = {**SAMPLE, "energy_tdp": cap, "maximum_tdp": 15}
+            ring = next(i for i in hud_rings.items_for(data, "standard") if i.get("label") == "ENERGY")
+            self.assertEqual(ring["text"], expected)
+            self.assertAlmostEqual(ring["frac"], 9 / 30)
+            self.assertEqual(ring["rgb"], hud_rings.effect_color(9, 30))
+            self.assertEqual(ring["opacity"], .45)
+        for bad in (None, True, float("nan"), float("inf"), -1):
+            self.assertIsNone(hud_rings.energy_savings_pct(bad, 15))
+
     def test_benefit_text_and_colour(self):
         items = {i.get("label"): i for i in hud_rings.items_for(SAMPLE, "standard")}
         self.assertEqual(items["RESP"]["text"], "−47%")

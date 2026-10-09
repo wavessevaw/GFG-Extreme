@@ -1,6 +1,6 @@
 # Comprehensive Extreme runtime development
 
-The first validated runtime foundations ship in 1.6.5 (PR #85). The remaining integration work is listed below and continues in subsequent releases.
+Runtime foundations shipped in 1.6.5 (PR #85). Release 1.6.6 connects native frame timing and stall shield to per-profile controls and confirmed booster states (PR #86). Remaining integration work is listed below.
 
 ## Acceptance criteria
 
@@ -22,7 +22,7 @@ blocked reason and pending restoration. Never label a placeholder as active.
 
 1. Bounded PPT ownership before trials and preserved ceilings across internal replans.
 2. Native optional stall-shield policy and explicit support/active telemetry bits.
-   Default remains disabled until the controller/settings integration is finished.
+   Shield is opt-in per profile; frame timing preserves its existing default. Both now have controls and native acknowledgement in 1.6.6.
 3. Root-helper leases for GFG-marked game thread priorities and OOM preference.
    PID/TID start times guard against identifier reuse. Undo is persisted before writes;
    expiry, EOF and helper restart restore changes if still owned.
@@ -31,15 +31,17 @@ blocked reason and pending restoration. Never label a placeholder as active.
 5. Regression coverage for transitions, expiry, crash recovery, external changes,
    inherited thread priority, partial failure and reused process identifiers.
 
-These resource foundations are not yet wired into the Governor or exposed as active
-boosters. Installing 1.6.5 does not enable them automatically.
+Process and fan resources are not yet wired into the Governor as active boosters.
+Native frame timing and stall shield are connected in 1.6.6: Home → Extreme or
+Settings → Diagnostics. Act must be enabled and the updated layer loaded. Only
+current-generation native acknowledgement with support/active bits counts as active.
 
 ## Remaining development
 
 - Wire resource leases to the active game, settings and confirmed booster status.
 - Implement Steam download control with verified pause/resume and persistent undo.
   Pausing downloads must not be presented as stopping all shader compilation.
-- Integrate low-latency and stall-shield toggles with native acknowledgement.
+- Validate native frame timing and stall recovery on the Deck; CI covers policy/status/UI integration.
 - Investigate Act/FG starvation and rejected fractional operating points together.
 - Add supported reverse CPU/GPU power allocation with transactional restoration.
 - Make every setting/filter accessible while surfacing actual layer conflicts.

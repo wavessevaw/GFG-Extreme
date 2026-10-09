@@ -31,16 +31,16 @@ const cases = [
   ["home-history", ["Details"], ["RECENT SESSIONS", "29 min · Battery", "90 FPS · 10.7 W · 77 °C", "12 min · Quality", "88 FPS · 19.4 W"]],
   ["home-saving", [], ["SAVING", "6 W under your 15 W limit"]],
   ["home-effort-reason", [], ["GFG EFFORT", "HARD", "x3 required"]],
-  ["home-frame-os-act", [], ["FRAME OS", "BOOST", "−47%", "+50%", "9%", "Response", "Frames", "Energy"]],
+  ["home-frame-os-act", [], ["FRAME OS", "BOOST", "−47%", "+50%", "0%", "Response", "Frames", "Energy"]],
   ["home-frame-os-act", [], ["Measured in game: Response ×5 · Frames ×3"]],
   ["home-frame-os-learned", [], ["Boost off here: no real-frame gain measured"]],
   ["home-frame-os-learned", ["Settings", "Diagnostics"], ["THIS GAME", "no gain · off (5 A/B)", "helps (12 A/B)"]],
   ["home-frame-os-act", ["Settings", "Diagnostics"], ["A/B check in Act", "Response (A/B)", "+47% (39…55) · 5 pairs", "Energy (A/B)", "+12% · 1 pair", "THIS GAME", "Sessions with Act", "helps (5 A/B)", "helps (9 A/B)", "learning (1 A/B)"]],
-  ["home-frame-os-rest", [], ["FRAME OS", "REST", "−6%"]],
-  ["home-frame-os-observe", [], ["FRAME OS", "ESTIMATE", "−44%", "+50%", "11%"]],
+  ["home-frame-os-rest", [], ["FRAME OS", "REST", "27%"]],
+  ["home-frame-os-observe", [], ["FRAME OS", "ESTIMATE", "−44%", "+50%", "27%"]],
   ["home-frame-os-early", [], ["FRAME OS", "Response", "—"]],
   ["frame-os-no-layer", ["Settings", "Diagnostics"], ["FRAME OS (EXPERIMENTAL)", "Frame OS layer not installed: this build does not include the Frame OS layer."]],
-  ["home-last-session-mixed", [], ["LAST SESSION", "Modes", "Battery 18m · Balanced 13m", "Energy saved", "~2.3 Wh measured · ~14 min more battery", "Frame OS", "calm 20m · boost 6m · rest 4m", "Response", "−41%", "+12%", "9%"]],
+  ["home-last-session-mixed", [], ["LAST SESSION", "Modes", "Battery 18m · Balanced 13m", "Energy saved", "~2.3 Wh measured · ~14 min more battery", "Frame OS", "calm 20m · boost 6m · rest 4m", "Response", "−41%", "+12%", "29%"]],
   ["home-last-session-mixed", ["Details"], ["RECENT SESSIONS", "31 min · Battery 18m · Balanced 13m"]],
   ["home-idle-oled", ["Settings", "Diagnostics"], ["Reset what GFG learned for Sample Game", "Starts the next search from scratch"]],
   ["home-idle-oled", ["Settings", "Diagnostics", "Reset what GFG learned for Sample Game"], ["Tap again to forget", "remembered for Sample Game", "This cannot be undone"]],
@@ -224,6 +224,61 @@ for (const [state, nav, expected] of cases) {
   if (JSON.stringify(v) !== "[0.05]") { failed++; console.error(`FAIL extreme sharpening step: ${JSON.stringify(v)}`); }
   await page.close();
   cases.push(["extreme-sharpening"]);
+}
+// Extreme native preferences are available, saved independently and rolled back on RPC failure.
+{
+  const page = await openPage(browser, STATES["home-extreme"]);
+  await page.getByText("Stall shield", { exact: true }).first().click();
+  await page.waitForTimeout(120);
+  await page.getByText("Frame timing", { exact: true }).first().click();
+  await page.waitForTimeout(120);
+  const sets = await page.evaluate(() => (window.__featureSets || []).map(x => x.slice(1)));
+  if (JSON.stringify(sets) !== '[["shield",true],["latency",false]]') {
+    failed++; console.error("FAIL frame timing preference calls: " + JSON.stringify(sets));
+  }
+  await page.close();
+  cases.push(["extreme-frame-preferences"]);
+}
+{
+  const state = { ...STATES["home-extreme"], __featureFail: true };
+  const page = await openPage(browser, state);
+  const row = page.locator(".row").filter({ has: page.getByText("Stall shield", { exact: true }) });
+  await row.click();
+  await page.waitForTimeout(120);
+  if (!(await page.getByText("Could not save frame timing", { exact: true }).count())
+      || await row.locator(".tog.on").count()) {
+    failed++; console.error("FAIL frame timing save error kept a successful toggle");
+  }
+  await page.close();
+  cases.push(["extreme-frame-preferences-error"]);
+}
+// Energy text changes, while the existing benefit arc remains 9/30.
+{
+  for (const [slow, fast, expected] of [[12,12,"20%"],[12.75,12.75,"15%"],[12,15,"0%"],[null,null,"—"]]) {
+    const state = { ...STATES["home-frame-os-act"], power: { observed_tdp_w: slow, observed_fast_w: fast, maximum_tdp_w: 20 } };
+    const page = await openPage(browser, state);
+    const data = await page.evaluate(() => {
+      const ring = [...document.querySelectorAll(".fos .mini")].find(e => e.querySelector(".mlab").textContent === "Energy");
+      return { text: ring.querySelector(".mnum").textContent, offset: Number(ring.querySelector("circle:last-child").getAttribute("stroke-dashoffset")) };
+    });
+    if (data.text !== expected || Math.abs(data.offset - 2 * Math.PI * 26 * .7) > .0001) {
+      failed++; console.error("FAIL Energy text/arc: " + JSON.stringify(data));
+    }
+    await page.close();
+  }
+  cases.push(["energy-cap-number-preserves-arc"]);
+}
+{
+  const page = await openPage(browser, STATES["home-extreme"], ["Settings", "Frame generation backend"]);
+  await page.getByText("GFG Open generator", { exact: true }).click();
+  await page.waitForTimeout(120);
+  const calls = await page.evaluate(() => window.__patches);
+  if (!calls.some(c => c.open_frame_generation === true)) {
+    failed++; console.error("FAIL open generator control did not save");
+  }
+  for (const e of page.__errors) { failed++; console.error("FAIL open generator: " + e); }
+  await page.close();
+  cases.push(["open-generator-control"]);
 }
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);

@@ -170,6 +170,17 @@ def _fmt_pct(value: float, sign_good: str) -> str:
     return ("−" if value < 0 else "") + f"{n}%"
 
 
+def energy_savings_pct(tdp: Any, maximum_tdp: Any) -> Optional[float]:
+    """Share of the console's maximum TDP cap saved, not measured battery energy."""
+    if (isinstance(tdp, bool) or isinstance(maximum_tdp, bool)
+            or not isinstance(tdp, (int, float)) or not isinstance(maximum_tdp, (int, float))
+            or not math.isfinite(tdp) or not math.isfinite(maximum_tdp)
+            or tdp < 0 or maximum_tdp <= 0):
+        return None
+    return max(0.0, min(100.0, 100.0 * (maximum_tdp - tdp) / maximum_tdp))
+
+
+
 def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
     """What to draw, left to right."""
     items: List[Dict[str, Any]] = []
@@ -196,11 +207,13 @@ def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
                                              ("frames", 50, "+", "FRAMES", level == "boost"),
                                              ("energy", 30, "", "ENERGY", level == "rest")):
             v = fos.get(key)
+            saving = energy_savings_pct(data.get("energy_tdp", data.get("tdp")), data.get("maximum_tdp", 15))
+            text_value = saving if key == "energy" else v
             items.append({"kind": "ring", "size": 40, "w": 3.5,
                           "frac": abs(v) / full if v is not None else 0,
                           "rgb": GREY if est or v is None else effect_color(v, full),
                           "opacity": 1.0 if (live or est) else 0.45,
-                          "text": _fmt_pct(v, sign) if v is not None else "—", "style": "ben",
+                          "text": _fmt_pct(text_value, sign) if text_value is not None else "—", "style": "ben",
                           "label": label})
         # A visible status in Standard as well as Detailed. "BOOST" is earned:
         # a requested policy is not the same as an acknowledged real-cadence gain.

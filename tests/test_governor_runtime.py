@@ -1028,8 +1028,11 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual([b["id"] for b in ext["boosters"]],
                          ["upscale", "quiet", "split", "cooling", "act", "memory", "latency", "shield", "instant"])
         states = {b["id"]: b["state"] for b in ext["boosters"]}
-        for unverified in ("quiet", "cooling", "memory", "latency", "shield"):
+        for unverified in ("quiet", "cooling", "memory"):
             self.assertEqual(states[unverified], "unavailable", unverified)
+        self.assertEqual(states["latency"], "off", "timing is accessible but Act is not enabled")
+        self.assertEqual(states["shield"], "off", "shield is opt-in")
+        self.assertEqual(ext["feature_settings"], {"latency": True, "shield": False})
         self.assertEqual(states["upscale"], "ready", "full resolution until a scaled point is confirmed")
         self.assertEqual(ext["gain"]["kind"], "unavailable")
         self.assertIsNone(ext["gain"]["percent"], "no number without an A-B-A proof")
@@ -1179,6 +1182,33 @@ class BudgetRuntimeTests(RuntimeBase):
             self.svc._publish_ring_hud(self.svc.get_status("game"), settings)
         self.assertEqual(seen[-1]["limit"], 12)
         self.assertEqual(seen[-1]["extreme"], {"render_pct": None}, "full resolution: no number")
+
+    def test_energy_ring_uses_stock_maximum_and_unrounded_confirmed_caps(self):
+        from gfg_plugin import hud_rings
+        settings = {"preset": "standard", "position": "top-left"}
+        cases = [
+            ({"maximum_tdp_w": 20, "initial_tdp_w": 12, "observed_tdp_w": 12,
+              "observed_fast_w": 12, "draw_w": 5}, "20%"),
+            ({"maximum_tdp_w": 15, "observed_tdp_w": 12.75,
+              "observed_fast_w": 12.75}, "15%"),
+            ({"maximum_tdp_w": 15, "observed_tdp_w": 12,
+              "observed_fast_w": 15}, "0%"),
+            ({"maximum_tdp_w": 15}, "—"),
+        ]
+        for power, expected in cases:
+            with self.subTest(power=power):
+                seen = []
+                status = {"power": power, "extreme": {"enabled": True,
+                          "ceiling": {"ceiling_w": 12}, "applied": {"render_pct": 100}}}
+                with patch.object(hud_rings, "write_overlay",
+                                  lambda data, **kw: seen.append(data) or True):
+                    self.svc._ring_hud_due = 0
+                    self.svc._ring_hud_key = None
+                    self.assertTrue(self.svc._publish_ring_hud(status, settings))
+                saving = hud_rings.energy_savings_pct(seen[-1]["energy_tdp"], seen[-1]["maximum_tdp"])
+                self.assertEqual(hud_rings._fmt_pct(saving, "") if saving is not None else "—", expected)
+                self.assertEqual(seen[-1]["maximum_tdp"], 15)
+                self.assertEqual(seen[-1]["limit"], 12)
 
     def test_extreme_without_a_scale_ready_launch_asks_for_a_restart(self):
         st = self.start_extreme(scale_ready_launch=False)

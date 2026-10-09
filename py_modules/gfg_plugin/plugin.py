@@ -816,6 +816,12 @@ class Plugin:
         """Frame OS Act opt-in (persisted; Act changes frame timing and power)."""
         return await asyncio.to_thread(self.governor_service.set_frame_os_act_unlock, bool(enabled))
 
+    async def set_governor_frame_os_feature(self, profile_name: str, feature: str,
+                                           enabled: bool) -> Dict[str, Any]:
+        """Per-profile native frame-timing/shield preference; active status requires native ACK."""
+        return await asyncio.to_thread(self.governor_service.set_frame_os_feature,
+                                       profile_name, feature, enabled)
+
     async def set_governor_frame_os_ab(self, enabled: bool = True) -> Dict[str, Any]:
         """Frame OS A/B proof windows in Act (persisted; on by default)."""
         return await asyncio.to_thread(self.governor_service.set_frame_os_ab, bool(enabled))
@@ -1494,7 +1500,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Extreme 1.6.5 started")
+        decky.logger.info("GFG Extreme 1.6.6 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""

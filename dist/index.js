@@ -203,6 +203,7 @@ var rpc = {
   setFrameOs: safeCallable("set_governor_frame_os"),
   setFrameOsActUnlock: safeCallable("set_governor_frame_os_act_unlock"),
   setFrameOsAb: safeCallable("set_governor_frame_os_ab"),
+  setFrameOsFeature: safeCallable("set_governor_frame_os_feature"),
   setPowerSplit: safeCallable("set_governor_power_split"),
   setMode: safeCallable("set_governor_mode"),
   setExtremeSharpness: safeCallable("set_governor_extreme_sharpness"),
@@ -281,6 +282,13 @@ var XB_TITLE = {
   instant: "Instant start"
 };
 var XB_REASON = {
+  "pacing-setting-off": "Off in Settings",
+  "pacer-feature-upgrade-required": "Restart with the updated Frame OS layer",
+  "pacing-paused": "Waiting for gameplay",
+  "pacing-ab-control": "A/B control window",
+  "native-frame-timing-active": "Frame-start timing confirmed by the layer",
+  "native-stall-shield-active": "Late-frame recovery confirmed by the layer",
+  "awaiting-pacer-acknowledgement": "Waiting for native confirmation",
   "game-not-running": "Waiting for the game",
   "scaler-not-provisioned-at-launch": "Restart the game once to enable",
   "cpu-bound-full-resolution": "CPU-bound: full resolution kept",
@@ -599,7 +607,7 @@ function HeroTop({ layout, onTap, value, max, label, sub, d, wolf }) {
   return h("div", { className: "hero-col" }, tap(h(Ring, { value, max, label, sub, cls: x.trim(), wolf })), status());
 }
 var ringHue = (v, max) => v < 0 ? 0 : 25 + 115 * Math.min(1, Math.abs(v) / max);
-function MiniRing({ value, max, text, label, live, estimate, fixed }) {
+function MiniRing({ value, max, text, displayText, label, live, estimate, fixed }) {
   const r = 26, w = 4, size = 2 * (r + w), c = 2 * Math.PI * r;
   const has = value != null;
   const f = has ? Math.min(1, Math.abs(value) / max) : 0;
@@ -619,12 +627,23 @@ function MiniRing({ value, max, text, label, live, estimate, fixed }) {
         glow ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeOpacity: 0.22, strokeWidth: w + 4, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null,
         has ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeWidth: w, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null
       ),
-      h("div", { className: "mnum" + (estimate || !has ? " dim" : "") }, has ? text : "\u2014")
+      h("div", { className: "mnum" + (estimate || !has ? " dim" : "") }, displayText !== void 0 ? displayText : has ? text : "\u2014")
     ),
     h("div", { className: "mlab" }, label)
   );
 }
-function FrameOsCard({ fo }) {
+function energySavingsText(cap, maximum = 15) {
+  if (typeof cap !== "number" || !Number.isFinite(cap) || cap < 0 || typeof maximum !== "number" || !Number.isFinite(maximum) || maximum <= 0) return "\u2014";
+  const stockMaximum = Math.min(maximum, 15);
+  return Math.round(Math.max(0, Math.min(100, 100 * (stockMaximum - cap) / stockMaximum))) + "%";
+}
+function observedEnergyText(power = {}) {
+  const current = power.observed_tdp_w != null ? power.observed_tdp_w : power.current_tdp_w;
+  const caps = [current, power.observed_fast_w].filter((v) => typeof v === "number" && Number.isFinite(v) && v >= 0);
+  const maximum = typeof power.maximum_tdp_w === "number" && Number.isFinite(power.maximum_tdp_w) && power.maximum_tdp_w > 0 ? power.maximum_tdp_w : 15;
+  return caps.length ? energySavingsText(Math.max(...caps), maximum) : "\u2014";
+}
+function FrameOsCard({ fo, power }) {
   const b = fo.benefit;
   if (!fo.enabled || !b) return null;
   const est = !!b.estimate;
@@ -646,7 +665,7 @@ function FrameOsCard({ fo }) {
       { className: "rings" },
       h(MiniRing, { value: resp, max: 50, text: resp == null ? "" : (resp >= 0 ? "\u2212" : "+") + Math.abs(Math.round(resp)) + "%", label: "Response", live: level !== "rest", estimate: est }),
       h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "\u2212") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est }),
-      h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), label: "Energy", live: level === "rest", estimate: est })
+      h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), displayText: observedEnergyText(power), label: "Energy", live: level === "rest", estimate: est })
     ),
     fo.mode === "act" ? h("div", { className: "abline" }, proofLine(fo.proof, b.measured)) : null,
     fo.mode === "act" && learnedLine(fo.game) ? h("div", { className: "abline" }, learnedLine(fo.game)) : null
@@ -685,8 +704,57 @@ function SessionRings({ ls, target }) {
       { className: "rings", style: { marginTop: 10 } },
       h(MiniRing, { value: b.response, max: 50, text: signed(b.response, "\u2212"), label: "Response", live: true, estimate: b.estimate }),
       h(MiniRing, { value: b.frames, max: 50, text: signed(b.frames, "+"), label: "Frames", live: true, estimate: b.estimate }),
-      h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "\u2212" : "") + Math.abs(Math.round(b.energy)) + "%", label: "Energy", live: true, estimate: b.estimate })
+      h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "\u2212" : "") + Math.abs(Math.round(b.energy)) + "%", displayText: energySavingsText(ls.avg_tdp_w, ls.maximum_tdp_w || 15), label: "Energy", live: true, estimate: b.estimate })
     ) : null
+  );
+}
+function FrameTimingControls({ profile, settings, refresh }) {
+  const wanted = settings || {};
+  const [features, setFeatures] = useState({ latency: wanted.latency !== false, shield: wanted.shield === true });
+  const [error, setError] = useState("");
+  const busy = useRef(false);
+  useEffect(
+    () => {
+      setFeatures({ latency: wanted.latency !== false, shield: wanted.shield === true });
+      setError("");
+    },
+    [profile, wanted.latency, wanted.shield]
+  );
+  const change = async (feature, enabled) => {
+    if (busy.current) return;
+    busy.current = true;
+    setError("");
+    try {
+      const r = await rpc.setFrameOsFeature(profile, feature, enabled);
+      if (!r || !r.success) throw new Error(r && r.error || "Could not save frame timing");
+      setFeatures(r.features || { ...features, [feature]: enabled });
+      if (refresh) refresh();
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      busy.current = false;
+    }
+  };
+  return h(
+    "div",
+    null,
+    h(
+      "div",
+      { className: "list" },
+      h(Toggle, {
+        on: features.latency,
+        title: "Frame timing",
+        sub: "Control frame-start timing in Act; active after native confirmation",
+        onChange: (v) => change("latency", v)
+      }),
+      h(Toggle, {
+        on: features.shield,
+        title: "Stall shield",
+        sub: "Avoid extra waiting after a late frame; does not remove loading or shader stalls",
+        onChange: (v) => change("shield", v)
+      })
+    ),
+    error ? h(Note, null, error) : null
   );
 }
 function ExtremeCard({ x, profile, refresh }) {
@@ -718,6 +786,7 @@ function ExtremeCard({ x, profile, refresh }) {
       h("i", { className: dot(b.state).trim() }),
       h("div", null, h("b", null, XB_TITLE[b.id] || b.id), h("span", null, boosterDetail(b)))
     ))),
+    h(FrameTimingControls, { key: profile, profile, settings: x.feature_settings, refresh }),
     up.state !== "unavailable" ? h(
       "div",
       { className: "xsharp" },
@@ -893,7 +962,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
     ),
     xt && s.enabled ? h(ExtremeCard, { x, profile, refresh }) : null,
     !xt && s.enabled && s.extreme_offer && !offerHidden ? h(ExtremeOffer, { o: s.extreme_offer, onTry: () => setMode("extreme"), onHide: () => setOfferHidden(true) }) : null,
-    s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os }) : null,
+    s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os, power: s.power }) : null,
     h(
       Focusable,
       { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? void 0 : toggle },
@@ -1288,6 +1357,7 @@ function FgPage({ back, cfg, patch }) {
     be === "gfg" ? h(
       "div",
       null,
+      h("div", { className: "list" }, h(Toggle, { on: !!(cfg && cfg.open_frame_generation), title: "GFG Open generator", sub: "Experimental colour-flow interpolation. Native 64-bit SDR games; restart after changing. No Lossless.dll needed for FG.", onChange: (v) => patch({ open_frame_generation: v }) })),
       h("div", { className: "sec" }, "SAVED MULTIPLIER"),
       h(Seg, { value: String(mult), options: [["2", "\xD72"], ["3", "\xD73"]], onChange: (v) => patch({ multiplier: Number(v) }) }),
       h(Note, { quiet: true }, "Used when the Governor is off. With the Governor on, it picks \xD71 to \xD73.75 itself (\xD74 only as a last resort) and never changes this value.")
@@ -1644,6 +1714,7 @@ function FrameOsPanel({ s, profile }) {
         }
       }
     })) : null,
+    h(FrameTimingControls, { key: profile, profile, settings: fo.feature_settings }),
     fo.game && mode === "act" ? h("div", { className: "card" }, h("div", { className: "sec", style: { marginTop: 0 } }, "THIS GAME"), h(
       "div",
       { className: "kv" },

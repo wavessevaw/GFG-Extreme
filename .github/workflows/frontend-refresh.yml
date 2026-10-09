@@ -1,0 +1,27 @@
+name: Refresh frontend
+on:
+  push:
+    branches: [develop/extreme-features]
+    paths: [frontend/src/**]
+permissions:
+  contents: write
+jobs:
+  generate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop/extreme-features
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci && npm run build
+      - name: Commit generated frontend
+        run: |
+          if ! git diff --quiet -- dist/index.js; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add dist/index.js
+            git commit -m "build: regenerate frontend for open generator control"
+            git push origin HEAD:develop/extreme-features
+          fi

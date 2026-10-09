@@ -1,0 +1,137 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "open_context.hpp"
+#include "embedded.hpp"
+#include <cmath>
+#include <iostream>
+#include <stdexcept>
+#include <functional>
+#include <vulkan/vulkan_core.h>
+namespace gfg {
+namespace {
+constexpr auto usage=VK_IMAGE_USAGE_STORAGE_BIT|VK_IMAGE_USAGE_SAMPLED_BIT;
+VkExtent2D validate(VkExtent2D e,mako::backend::FrameEncoding encoding){
+ if(encoding!=mako::backend::FrameEncoding::Sdr8)
+  throw std::runtime_error("GFG Open currently supports SDR8; use legacy FG for HDR");
+ if(!e.width||!e.height||e.width>16384||e.height>16384)
+  throw std::runtime_error("Invalid GFG Open frame extent");
+ return e;
+}
+std::vector<vk::Image> imports(const vk::Vulkan& v,ls::FileDescriptorScope& f,VkExtent2D e){
+ std::vector<vk::Image> a;a.reserve(f.size());
+ for(size_t i=0,n=f.size();i<n;i++)a.emplace_back(v,e,VK_FORMAT_R8G8B8A8_UNORM,usage,f.take());
+ return a;
+}
+vk::Barrier barrier(const vk::Image& i,VkImageLayout old=VK_IMAGE_LAYOUT_GENERAL){
+ return {.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+ .srcAccessMask=old==VK_IMAGE_LAYOUT_UNDEFINED?0u:VK_ACCESS_SHADER_WRITE_BIT,
+ .dstAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT,
+ .oldLayout=old,.newLayout=VK_IMAGE_LAYOUT_GENERAL,
+ .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+ .image=i.handle(),.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1}};
+}
+}
+OpenContext::OpenContext(const vk::Vulkan& vk,ls::FileDescriptorScope& src,
+ ls::FileDescriptorScope& dst,ls::FileDescriptorScope& sync,VkExtent2D e,mako::backend::FrameEncoding encoding)
+ :v(vk),extent(validate(e,encoding)),tiles{(e.width+7)/8,(e.height+7)/8},
+ sources{vk::Image(v,e,VK_FORMAT_R8G8B8A8_UNORM,usage,src.take()),
+         vk::Image(v,e,VK_FORMAT_R8G8B8A8_UNORM,usage,src.take())},
+ outputs(imports(v,dst,e)),
+ coarseF(v,tiles,VK_FORMAT_R32G32B32A32_SFLOAT),coarseB(v,tiles,VK_FORMAT_R32G32B32A32_SFLOAT),
+ flowF(v,tiles,VK_FORMAT_R32G32B32A32_SFLOAT),flowB(v,tiles,VK_FORMAT_R32G32B32A32_SFLOAT),
+ pyrPrevious(v,{(e.width+3)/4,(e.height+3)/4},VK_FORMAT_R32G32B32A32_SFLOAT),
+ pyrCurrent(v,{(e.width+3)/4,(e.height+3)/4},VK_FORMAT_R32G32B32A32_SFLOAT),
+ shared(v,0,sync.take()),ready(v,0),fence(v),
+ pyramidShader(v,embedded::pyramid,0,4,1,0),
+ coarseShader(v,embedded::flow,0,8,1,0),refineShader(v,embedded::refine,0,6,1,0),
+ composeShader(v,embedded::compose,0,5,1,0),
+ pool(v,{.sets=static_cast<uint32_t>(6+2*outputs.size()),
+ .uniform_buffers=static_cast<uint32_t>(6+2*outputs.size()),
+ .samplers=0,.sampled_images=0,.storage_images=static_cast<uint32_t>(36+10*outputs.size())}),
+ pairParams(v,Params{{e.width,e.height,tiles.width,tiles.height},{0,0,0,0}}){
+ if(outputs.empty())throw std::runtime_error("GFG Open requires output images");
+ outputParams.reserve(outputs.size());composeSets.resize(outputs.size());commands.resize(outputs.size());lastOutputParams.resize(outputs.size());
+ for(size_t i=0;i<outputs.size();i++)outputParams.emplace_back(v,Params{{e.width,e.height,tiles.width,tiles.height},{0,0,0,0}});
+ for(size_t phase=0;phase<2;phase++){
+  const auto& a=phase?sources.first:sources.second; // previous
+  const auto& b=phase?sources.second:sources.first; // current
+  pyramidSets[phase]=std::make_unique<vk::DescriptorSet>(v,pool,pyramidShader,
+   std::vector<ls::R<const vk::Image>>{},std::vector<ls::R<const vk::Image>>{a,b,pyrPrevious,pyrCurrent},
+   std::vector<ls::R<const vk::Sampler>>{},std::vector<ls::R<const vk::Buffer>>{pairParams});
+  coarseSets[phase]=std::make_unique<vk::DescriptorSet>(v,pool,coarseShader,
+   std::vector<ls::R<const vk::Image>>{},std::vector<ls::R<const vk::Image>>{a,b,coarseF,coarseB,flowF,flowB,pyrPrevious,pyrCurrent},
+   std::vector<ls::R<const vk::Sampler>>{},std::vector<ls::R<const vk::Buffer>>{pairParams});
+  refineSets[phase]=std::make_unique<vk::DescriptorSet>(v,pool,refineShader,
+   std::vector<ls::R<const vk::Image>>{},std::vector<ls::R<const vk::Image>>{a,b,coarseF,coarseB,flowF,flowB},
+   std::vector<ls::R<const vk::Sampler>>{},std::vector<ls::R<const vk::Buffer>>{pairParams});
+  for(size_t i=0;i<outputs.size();i++)composeSets[i][phase]=std::make_unique<vk::DescriptorSet>(v,pool,composeShader,
+   std::vector<ls::R<const vk::Image>>{},std::vector<ls::R<const vk::Image>>{a,b,flowF,flowB,outputs[i]},
+   std::vector<ls::R<const vk::Sampler>>{},std::vector<ls::R<const vk::Buffer>>{outputParams[i]});
+ }
+ // Only internal fields need a layout transition; imported transport is
+ // GENERAL under the renderer's external timeline semaphore contract.
+ vk::CommandBuffer init(v);init.begin(v);
+ std::array transitions{barrier(coarseF,VK_IMAGE_LAYOUT_UNDEFINED),barrier(coarseB,VK_IMAGE_LAYOUT_UNDEFINED),
+                       barrier(flowF,VK_IMAGE_LAYOUT_UNDEFINED),barrier(flowB,VK_IMAGE_LAYOUT_UNDEFINED),
+                       barrier(pyrPrevious,VK_IMAGE_LAYOUT_UNDEFINED),barrier(pyrCurrent,VK_IMAGE_LAYOUT_UNDEFINED)};
+ v.df().CmdPipelineBarrier(init.handle(),VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,0,nullptr,0,nullptr,transitions.size(),transitions.data());
+ init.end(v);init.submit(v);
+ std::clog<<"GFG Open: backend=color-flow-v1 tile=8 search=16 selective-refinement=3 occlusion=bidirectional history=validated encoding=sdr8\n";
+}
+void OpenContext::prepare(){
+ if(scheduled&&!fence.wait(v,250000000))throw std::runtime_error("GFG Open previous-work fence timed out");
+}
+void OpenContext::writePair(const Params& p){
+ if(!lastPairParams||*lastPairParams!=p){pairParams.write(v,p);lastPairParams=p;}
+}
+void OpenContext::writeOutput(size_t i,const Params& p){
+ if(!lastOutputParams[i]||*lastOutputParams[i]!=p){outputParams[i].write(v,p);lastOutputParams[i]=p;}
+}
+void OpenContext::record(size_t count,bool history){
+ const auto phase=frame%2;
+ if(!prepasses[phase]){
+  vk::CommandBuffer c(v);c.begin(v,0);
+  std::array inputBarriers{barrier(sources.first),barrier(sources.second),barrier(flowF),barrier(flowB)};
+  c.dispatch(v,pyramidShader,*pyramidSets[phase],inputBarriers,((extent.width+3)/4+7)/8,((extent.height+3)/4+7)/8,1);
+  std::array pyramidBarriers{barrier(pyrPrevious),barrier(pyrCurrent),barrier(flowF),barrier(flowB)};
+  c.dispatch(v,coarseShader,*coarseSets[phase],pyramidBarriers,(tiles.width+7)/8,(tiles.height+7)/8,1);
+  std::array coarseBarriers{barrier(coarseF),barrier(coarseB)};
+  c.dispatch(v,refineShader,*refineSets[phase],coarseBarriers,(tiles.width+7)/8,(tiles.height+7)/8,1);
+  c.end(v);prepasses[phase].emplace(std::move(c));
+ }
+ if(!history)for(size_t i=0;i<count;i++){
+  if(commands[i][phase])continue;
+  vk::CommandBuffer c(v);c.begin(v,0);
+  std::array flowBarriers{barrier(flowF),barrier(flowB),barrier(outputs[i])};
+  c.dispatch(v,composeShader,*composeSets[i][phase],flowBarriers,(extent.width+7)/8,(extent.height+7)/8,1);
+  c.end(v);commands[i][phase].emplace(std::move(c));
+ }
+}
+void OpenContext::submitPrepass(VkFence completion){
+ fence.reset(v);scheduled=true;
+ prepasses[frame%2]->submit(v,{},shared.handle(),idx,{},ready.handle(),idx,completion);
+ ++idx;
+}
+void OpenContext::scheduleFrames(){scheduleFrames({});}
+void OpenContext::scheduleFrames(std::span<const float> timestamps){
+ size_t count=timestamps.empty()?outputs.size():timestamps.size();
+ if(count>outputs.size())throw std::runtime_error("Too many GFG Open timestamps");
+ float previous=0;
+ for(float t:timestamps){if(!std::isfinite(t)||t<=previous||t>=1)throw std::runtime_error("Invalid GFG Open interpolation timestamp");previous=t;}
+ prepare();
+ Params params{{extent.width,extent.height,tiles.width,tiles.height},{0,frame>1?1.f:0.f,frame>0?1.f:0.f,0}};
+ writePair(params);
+ for(size_t i=0;i<count;i++){
+  params.timing={timestamps.empty()?float(i+1)/float(count+1):timestamps[i],frame>0?1.f:0.f,0,0};
+  writeOutput(i,params);
+ }
+ record(count,false);submitPrepass(VK_NULL_HANDLE);
+ for(size_t i=0;i<count;i++)commands[i][frame%2]->submit(v,{},ready.handle(),idx-1,{},shared.handle(),idx+i,i+1==count?fence.handle():VK_NULL_HANDLE);
+ idx+=count;++frame;
+}
+void OpenContext::scheduleFrameHistory(){
+ prepare();
+ writePair(Params{{extent.width,extent.height,tiles.width,tiles.height},{0,frame>1?1.f:0.f,frame>0?1.f:0.f,0}});
+ record(0,true);submitPrepass(fence.handle());++frame;
+}
+bool OpenContext::waitForIdle(uint64_t ns)const{return !scheduled||fence.wait(v,ns);}
+}
