@@ -1,6 +1,6 @@
 # Comprehensive Extreme runtime development
 
-Development branch: `develop/extreme-runtime`; draft PR #85. No release/version bump until the complete change is reviewed and validated.
+The first validated runtime foundations ship in 1.6.5 (PR #85). The remaining integration work is listed below and continues in subsequent releases.
 
 ## Acceptance criteria
 
@@ -18,7 +18,7 @@ blocked reason and pending restoration. Never label a placeholder as active.
 - Frame-generation output FPS is not real FPS or hardware input latency.
 - Ghosting claims require image comparison; timing logs cannot prove image quality.
 
-## Implemented foundations in this draft
+## Implemented foundations in 1.6.5
 
 1. Bounded PPT ownership before trials and preserved ceilings across internal replans.
 2. Native optional stall-shield policy and explicit support/active telemetry bits.
@@ -32,9 +32,9 @@ blocked reason and pending restoration. Never label a placeholder as active.
    inherited thread priority, partial failure and reused process identifiers.
 
 These resource foundations are not yet wired into the Governor or exposed as active
-boosters. Installing the draft does not enable them automatically.
+boosters. Installing 1.6.5 does not enable them automatically.
 
-## Work remaining before release
+## Remaining development
 
 - Wire resource leases to the active game, settings and confirmed booster status.
 - Implement Steam download control with verified pause/resume and persistent undo.
