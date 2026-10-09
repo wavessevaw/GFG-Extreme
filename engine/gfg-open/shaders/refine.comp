@@ -42,6 +42,16 @@ vec4 refine(bool back,ivec2 b){
    else if(d!=bestD)second=min(second,e);
   }
  }
+ // A plausible coarse match with a bad fine residual is a difficult tile.
+ // Spend the wide full-resolution search only there. Large scene cuts
+ // (bad coarse residual too) take the conservative real-frame fallback.
+ if(c.z<.10 && best>.035){
+  for(int y=-16;y<=16 && best>.001;y++)for(int x=-16;x<=16 && best>.001;x++){
+   ivec2 d=ivec2(x,y);float e=cost(back,q,d);
+   if(e<best){second=best;best=e;bestD=d;}
+   else if(d!=bestD)second=min(second,e);
+  }
+ }
  float residual=1-smoothstep(.015,.09,best);
  float unique=clamp((second-best)/max(second,.001),0,1);
  // Low uniqueness gets conservative confidence, even with low residual.

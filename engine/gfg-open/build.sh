@@ -32,4 +32,4 @@ cp "$task_build/upstream.tar.gz" "$task_output/transport-source.tar.gz"
 cp "$task_build/upstream/LICENSE.md" "$task_output/TRANSPORT_LICENSE.md"
 cp "$task_build/upstream/THIRD_PARTY_NOTICES.md" "$task_output/THIRD_PARTY_NOTICES.md"
 (cd "$task_output" && sha256sum libmako-render.so VkLayer_MAKO_render.json > SHA256SUMS)
-printf '%s\n' "GFG Open color-flow-v1; transport $task_pin; SDR8 x86_64" > "$task_output/BUILD.txt"
+printf '%s\n' "GFG Open color-flow-v1; transport $task_pin; build 4.0.0-gfg.open.1; SDR8 x86_64" > "$task_output/BUILD.txt"

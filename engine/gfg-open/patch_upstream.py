@@ -60,3 +60,5 @@ assert s.count(old)==1
 s=s.replace(old,'''            else if (!(std::getenv("GFG_OPEN_FG") && std::string(std::getenv("GFG_OPEN_FG")) == "1"))
                 dll = ls::findShaderDll();''')
 p.write_text(s)
+
+(root/"engine/VERSION").write_text("4.0.0-gfg.open.1\n")
