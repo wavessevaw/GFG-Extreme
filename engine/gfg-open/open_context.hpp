@@ -45,6 +45,9 @@ class OpenContext {
  uint64_t idx=1,frame=0;
  bool scheduled=false;
  GpuBudget budget;
+ // Retain full-compute costs while cheaper bypass frames continue.
+ double lastActiveGpuMs=0, lastActivePrepassMs=0, lastActiveCompositionMs=0;
+ double lastProbeGpuMs=0, lastFailedProbeGpuMs=0;
  VkQueryPool queries=VK_NULL_HANDLE;
  PFN_vkDestroyQueryPool destroyQueries=nullptr;
  PFN_vkGetQueryPoolResults readQueries=nullptr;

@@ -123,7 +123,13 @@ void OpenContext::publishTiming(double prepassMs,double compositionMs) const{
      <<",\"passthrough\":"<<(budget.passthrough()?"true":"false")<<",\"safety_latched\":"<<(budget.bypass?"true":"false")
      <<",\"recovery_probe\":"<<(budget.probing?"true":"false")<<",\"probe_attempts\":"<<budget.probeAttempts
      <<",\"recoveries\":"<<budget.recoveries<<",\"next_probe_frames\":"<<budget.cooldownFrames
-     <<",\"interpolation_attempted\":"<<(!budget.passthrough()?"true":"false")<<",\"samples\":"<<budget.samples
+     <<",\"interpolation_attempted\":"<<(!budget.passthrough()?"true":"false")
+     <<",\"last_active_gpu_ms\":"<<lastActiveGpuMs
+     <<",\"last_active_prepass_ms\":"<<lastActivePrepassMs
+     <<",\"last_active_composition_ms\":"<<lastActiveCompositionMs
+     <<",\"last_probe_gpu_ms\":"<<lastProbeGpuMs
+     <<",\"last_failed_probe_gpu_ms\":"<<lastFailedProbeGpuMs
+     <<",\"samples\":"<<budget.samples
      <<",\"source_resolution\":["<<extent.width<<","<<extent.height<<"]"
      <<",\"motion_tiles\":["<<tiles.width<<","<<tiles.height<<"],\"updated_unix_s\":"<<now<<"}\n";
   out.close();if(out)std::filesystem::rename(tmp,path);
@@ -141,7 +147,13 @@ void OpenContext::collectTiming(){
  for(size_t i=2;i<times.size();i+=2)ticks+=double((times[i+1]-times[i])&mask);
  const double prepassMs=double((times[1]-times[0])&mask)*double(timestampPeriod)/1e6;
  const double ms=ticks*double(timestampPeriod)/1e6;
- const bool was=budget.bypass,wasProbe=budget.probing;budget.observe(ms);
+ const bool was=budget.bypass,wasProbe=budget.probing;
+ if(!budget.passthrough()){
+  lastActiveGpuMs=ms;lastActivePrepassMs=prepassMs;lastActiveCompositionMs=ms-prepassMs;
+  if(wasProbe)lastProbeGpuMs=ms;
+ }
+ budget.observe(ms);
+ if(wasProbe&&!budget.probing&&budget.bypass)lastFailedProbeGpuMs=ms;
  if((!was&&budget.bypass)||(wasProbe&&!budget.probing)||budget.samples%120==1)publishTiming(prepassMs,ms-prepassMs);
  if(!was&&budget.bypass)std::clog<<"GFG Open: performance-fallback=real-frame reason=gpu-budget gpu_ms="<<ms<<" limit_ms="<<GpuBudget::limitMs<<"; select legacy FG and restart for interpolation\n";
  else if(wasProbe&&!budget.probing)std::clog<<"GFG Open: recovery="<<(budget.bypass?"retry-later":"interpolation-restored")<<" gpu_ms="<<ms<<" next_probe_frames="<<budget.cooldownFrames<<"\n";
