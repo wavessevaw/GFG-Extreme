@@ -64,7 +64,7 @@ class TransitionTests(unittest.TestCase):
             service = self.service(root, power)
             self.assertIsNotNone(asyncio.run(service._budget_power("Game")))
             self.assertIsNone(service._point)
-            self.assertEqual((power.status()["observed_fast_w"], power.status()["observed_tdp_w"]), (15, 15))
+            self.assertEqual((power.status()["observed_fast_w"], power.status()["observed_tdp_w"]), (20, 20))
 
     def test_replanning_in_extreme_keeps_ceiling_but_disable_restores(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -74,7 +74,7 @@ class TransitionTests(unittest.TestCase):
             asyncio.run(service._budget_power("Game"))
             asyncio.run(service._restore_power("display-mode-changed"))
             self.assertTrue(power.state.owned)
-            self.assertEqual((power.status()["observed_fast_w"], power.status()["observed_tdp_w"]), (15, 15))
+            self.assertEqual((power.status()["observed_fast_w"], power.status()["observed_tdp_w"]), (20, 20))
             service._settings["profiles"]["Game"]["enabled"] = False
             asyncio.run(service._restore_power("user-disabled"))
             self.assertFalse(power.state.owned)
