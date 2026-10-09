@@ -142,3 +142,14 @@ class FlowTests(unittest.TestCase):
                    sample=None, target=90, base_target=30)
         self.assertFalse(trial.busy)
         self.assertIsNone(trial.wanted)
+
+
+    def test_resource_ack_grace_cannot_mask_severe_output_starvation(self):
+        def starved_wait(trial, sample, now):
+            if trial.phase == "wait-b":
+                sample.update(real=15, output=45)
+        trial, requests = self.run_trial(change=starved_wait)
+        self.assertEqual(requests, [.7, .8])
+        self.assertEqual(trial.phase, "done")
+        self.assertEqual(trial.reason, "output-starved")
+        self.assertIsNone(trial.proof)

@@ -155,6 +155,14 @@ class FlowTrial:
             self.since = now
         if self.phase in {"done", "held"}:
             return None
+        if (self.busy and self.phase != "wait-restore" and sample is not None
+                and sample.get("seq") != self.last_seq):
+            # Resource recreation must not hide starvation behind the ACK or
+            # settling grace. Return Saved immediately on a fresh severe dip.
+            if any(number(sample.get(k)) is None for k in ("real", "output")):
+                return self._abort(now, event_seq, "invalid-frame-evidence")
+            if sample["real"] < .85 * base_target or sample["output"] < .85 * target:
+                return self._abort(now, event_seq, "output-starved")
         if self.phase.startswith("wait-"):
             if actual is not None and ack_seq > self.mark and abs(actual - self.wanted) < .005:
                 if self.phase in {"wait-restore", "wait-accept"}:
