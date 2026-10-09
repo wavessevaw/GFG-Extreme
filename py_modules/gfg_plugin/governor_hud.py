@@ -98,9 +98,15 @@ def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
     if preset == "minimal":
         return "  ".join(parts)
     point = status.get("active_point") or {}
-    parts.append(f"sc{int(point.get('render_scale_pct', 100))}")
-    if (status.get("extreme") or {}).get("enabled"):
+    ext = status.get("extreme") or {}
+    if ext.get("enabled"):
+        # A requested point is not renderer evidence. Keep the last confirmed scale,
+        # or show unknown while the first request is still being verified.
+        pct = (ext.get("applied") or {}).get("render_pct")
+        parts.append(f"sc{int(pct)}" if isinstance(pct, (int, float)) else "sc?")
         parts.append("EXT")
+    else:
+        parts.append(f"sc{int(point.get('render_scale_pct', 100))}")
     power = status.get("power") or {}
     tdp = power.get("observed_tdp_w")
     if tdp is None:

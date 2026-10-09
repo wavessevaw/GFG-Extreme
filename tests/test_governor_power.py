@@ -105,6 +105,70 @@ class GovernorPowerActuatorTests(unittest.TestCase):
             self.assertEqual(int((h / "power2_cap").read_text()), 15000000)
             self.assertEqual(int((h / "power1_cap").read_text()), 18000000)
 
+    def test_explicit_ceiling_clamps_fast_and_slow_without_losing_restore(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            h = self.make_hwmon(root)
+            actuator = SteamDeckPowerActuator(drm_root=root / "drm", hwmon_root=root / "hwmon")
+            actuator.discover(); actuator.claim()
+            for ceiling in (15.0, 12.9, 9.0):
+                actuator.set_ceiling_w(ceiling)
+                self.assertTrue(actuator.set_tdp_w(30)["success"])
+                for channel in ("power1_cap", "power2_cap"):
+                    self.assertEqual(int((h / channel).read_text()), round(ceiling * 1_000_000))
+            self.assertTrue(actuator.restore_if_owned()["restored"])
+            self.assertEqual(int((h / "power1_cap").read_text()), 18_000_000)
+            self.assertEqual(int((h / "power2_cap").read_text()), 15_000_000)
+
+    def test_ceiling_below_hardware_minimum_does_not_write(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            h = self.make_hwmon(root)
+            actuator = SteamDeckPowerActuator(drm_root=root / "drm", hwmon_root=root / "hwmon")
+            actuator.discover(); actuator.claim(); actuator.set_ceiling_w(2)
+            self.assertFalse(actuator.set_tdp_w(10)["success"])
+            self.assertEqual(int((h / "power1_cap").read_text()), 18_000_000)
+            self.assertEqual(int((h / "power2_cap").read_text()), 15_000_000)
+
+    def test_strict_ceiling_does_not_use_an_unverified_manager_fast_cap(self):
+        class Manager:
+            range = (3, 20)
+            def __init__(self):
+                self.calls = []
+            def probe(self):
+                return True
+            def set(self, watts):
+                self.calls.append(watts)
+                return True, ""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            h = self.make_hwmon(root)
+            manager = Manager()
+            actuator = SteamDeckPowerActuator(drm_root=root / "drm", hwmon_root=root / "hwmon",
+                                             manager=manager, helper=lambda: None)
+            actuator.discover(); actuator.claim(); actuator.set_strict_ceiling_w(12.9)
+            self.assertTrue(actuator.set_tdp_w(30)["success"])
+            self.assertEqual(manager.calls, [], "integer-only manager can transiently overshoot")
+            self.assertEqual(int((h / "power1_cap").read_text()), 12_900_000)
+            self.assertEqual(int((h / "power2_cap").read_text()), 12_900_000)
+
+    def test_manager_only_cannot_enforce_a_strict_pair_ceiling(self):
+        class Manager:
+            range = (3, 20)
+            def probe(self):
+                return True
+            def set(self, watts):
+                raise AssertionError("must not write through an unverified pair actuator")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            h = self.make_hwmon(root)
+            actuator = SteamDeckPowerActuator(drm_root=root / "drm", hwmon_root=root / "hwmon",
+                                             manager=Manager(), helper=lambda: None, access=lambda *_: False)
+            actuator.discover(); actuator.claim(); actuator.set_strict_ceiling_w(15)
+            self.assertFalse(actuator.set_tdp_w(30)["success"])
+            self.assertEqual(int((h / "power1_cap").read_text()), 18_000_000)
+            self.assertEqual(int((h / "power2_cap").read_text()), 15_000_000)
+
     def test_read_only_caps_are_reported_unavailable(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

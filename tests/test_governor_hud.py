@@ -47,9 +47,17 @@ class HudTests(unittest.TestCase):
 
     def test_status_line_marks_extreme(self):
         line = hud.status_line({"enabled": True, "active_point": {"render_scale_pct": 80},
-                                "extreme": {"enabled": True}})
+                                "extreme": {"enabled": True, "applied": {"render_pct": 80}}})
         self.assertIn("sc80  EXT", line)
         self.assertNotIn("EXT", hud.status_line({"enabled": True, "extreme": {"enabled": False}}))
+
+    def test_extreme_scale_is_confirmed_not_requested(self):
+        status = {"enabled": True, "active_point": {"render_scale_pct": 80},
+                  "extreme": {"enabled": True, "requested": {"render_pct": 80}}}
+        self.assertIn("sc?  EXT", hud.status_line(status))
+        status["extreme"]["applied"] = {"render_pct": 100}
+        self.assertIn("sc100  EXT", hud.status_line(status))
+        self.assertNotIn("sc80", hud.status_line(status))
 
     def test_status_line_without_telemetry(self):
         self.assertEqual(hud.status_line({"enabled": True, "state": "PROBE"}), "GFG  sc100  TDPn/a")

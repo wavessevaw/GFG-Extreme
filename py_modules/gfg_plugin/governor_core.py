@@ -932,6 +932,9 @@ class BudgetController:
         self.recover_interval = self.RECOVER_S
         self.rejected: Dict[str, float] = {}
         self.locked_since = now
+        # Reprobe scheduling may re-lock an unchanged point every 45 s. Act and
+        # memory need the independent duration of the actually stable point.
+        self.settled_since: Optional[float] = None
         self.reprobe_interval = self.REPROBE_S
         self.next_probe = "down"
         self.exhausted = False
@@ -1014,6 +1017,7 @@ class BudgetController:
         self.normal_max_w = self.emergency_max_w = self.ideal_max_w = ceiling
         if self.tdp is not None:
             self.tdp = ceiling  # Extreme plays the whole budget
+            self.settled_since = None  # new watts need fresh healthy evidence
         if self.last_good is not None and self.last_good[1] is not None:
             self.last_good = (self.last_good[0], min(self.last_good[1], ceiling))
 
@@ -1120,11 +1124,15 @@ class BudgetController:
             self.verifying = None  # left the inferred point before it was verified (a TDP-only move keeps it)
         if tdp is not None and self.tdp_control:
             self.tdp = round(float(tdp), 1)
+        if (self.idx, self.tdp) != self.prev:
+            self.settled_since = None
         self.good = self.bad = 0
         self.last_reason = reason
         return "move"
 
     def _lock(self, now: float, reason: str) -> str:
+        if self.phase != "locked" or self.settled_since is None:
+            self.settled_since = now
         self.phase = "locked"
         self.probe = None
         self.locked_since = now
@@ -1228,7 +1236,7 @@ class BudgetController:
         self._move("fast-raise:starved", tdp=target)
         self.last_good = (self.idx, self.tdp)   # a later failed probe never reverts below this
         self.phase = "locked"
-        self.locked_since = now
+        self.locked_since = self.settled_since = now
         self.short_since = self.stall_since = self.stall_step_at = None
         self.fast_at, self.starved_checks = now, 0
         return "move"
@@ -1325,6 +1333,8 @@ class BudgetController:
         self.good += 1
         self.request_failures = 0
         if self.phase == "locked":
+            if self.settled_since is None:
+                self.settled_since = now
             if now - self.locked_since < self._probe_delay():
                 return "hold"
             return self._reprobe(now)
