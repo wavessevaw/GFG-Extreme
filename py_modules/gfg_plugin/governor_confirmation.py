@@ -35,6 +35,7 @@ class Request:
     confirmation_mode: str = ""
     window_floor_event_seq: int = 0
     confirmed_at: float = 0.0
+    created_wall: float = 0.0  # wall clock at the write: renderer files carry unix timestamps
 
     def to_dict(self) -> Dict[str, Any]:
         return {

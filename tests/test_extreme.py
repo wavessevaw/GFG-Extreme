@@ -1,4 +1,5 @@
 """Extreme (1.6) policy: the stock-power ceiling, sharpening, renderer acknowledgement, capabilities."""
+import json
 import sys
 import tempfile
 import unittest
@@ -117,6 +118,39 @@ class EvidenceTests(unittest.TestCase):
         for _ in range(100):
             observer.consume_line(SPATIAL)
         self.assertLessEqual(len(observer.scaling_after(0)), observer.MAX_SCALING_EVIDENCE, "bounded")
+
+
+class RuntimeStateTests(unittest.TestCase):
+    def doc(self, pid, active=True, sw=1024, sh=640, updated=2_000_000_000_000):
+        return {"schema_version": 5, "pid": pid, "process_start_ticks": 1, "role": "frame-generation",
+                "updated_unix_ms": updated, "spatial_scaling": {
+                    "active": active, "activation_supported": True, "inactive_reason": None,
+                    "source_width": sw, "source_height": sh, "presentation_width": 1280,
+                    "presentation_height": 800, "requested_method": "ls1", "active_method": "ls1",
+                    "effective_factor": 1.25}}
+
+    def write(self, root, name, doc):
+        folder = Path(root) / ex.RUNTIME_STATE_DIRNAME
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_text(json.dumps(doc))
+
+    def test_only_the_games_fresh_records_count(self):
+        with tempfile.TemporaryDirectory() as temp:
+            self.write(temp, "4372-1-7.json", self.doc(4372))
+            self.write(temp, "99-1-1.json", self.doc(99, sw=640, sh=400))          # another process
+            self.write(temp, "4372-1-8.json", self.doc(4372, updated=1_000))         # before the request
+            (Path(temp) / ex.RUNTIME_STATE_DIRNAME / "broken.json").write_text("{")
+            records = ex.read_runtime_states([temp], [4372], since_unix_s=1_900_000_000)
+            self.assertEqual(len(records), 1)
+            self.assertEqual(ex.render_pct(records[0]), 80.0)
+            self.assertIsNotNone(ex.scale_acknowledged(records, 80))
+            self.assertEqual(ex.read_runtime_states([Path(temp) / "missing"], [4372]), [])
+
+    def test_an_inactive_scaler_proves_full_resolution_only(self):
+        off = ex.runtime_state_evidence(self.doc(1, active=False))
+        self.assertIsNone(ex.scale_acknowledged([off], 80))
+        self.assertIs(ex.scale_acknowledged([off], 100), off)
+        self.assertIsNone(ex.runtime_state_evidence({"pid": 1}))
 
 
 class CapabilityTests(unittest.TestCase):

@@ -117,6 +117,7 @@ def compact_extreme(extreme: Any) -> Any:
         "state": extreme.get("state"), "ceiling": extreme.get("ceiling"), "tdp_w": extreme.get("tdp_w"),
         "requested": extreme.get("requested"), "applied": extreme.get("applied"),
         "sharpness_offset": extreme.get("sharpness_offset"),
+        "renderer_scaling": extreme.get("renderer_scaling"),
         "boosters": {b.get("id"): b.get("state") for b in extreme.get("boosters") or [] if isinstance(b, dict)},
     }
 

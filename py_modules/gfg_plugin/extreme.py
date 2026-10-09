@@ -136,6 +136,79 @@ def swapchain_extent(fields: Dict[str, str]) -> Optional[Dict[str, Any]]:
             "pipeline": fields.get("spatial_pipeline")}
 
 
+RUNTIME_STATE_DIRNAME = "runtime-state"   # next to the renderer's config file (MAKO_CONFIG)
+RUNTIME_STATE_MAX_FILES = 32
+RUNTIME_STATE_MAX_BYTES = 64 * 1024
+
+
+def _int(value: Any) -> Optional[int]:
+    number = _finite(value)
+    return int(number) if number is not None and number > 0 else None
+
+
+def runtime_state_evidence(doc: Any) -> Optional[Dict[str, Any]]:
+    """The renderer's runtime-state JSON (schema 5): its ``spatial_scaling`` block as evidence.
+
+    Fields seen in the bundled renderer: pid, process_start_ticks, role, updated_unix_ms and
+    spatial_scaling {active, source_width/height, presentation_width/height, effective_factor,
+    active_method}.  Only an *active* scaler with both extents counts.
+    """
+    if not isinstance(doc, dict):
+        return None
+    spatial = doc.get("spatial_scaling")
+    if not isinstance(spatial, dict):
+        return None
+    source = (_int(spatial.get("source_width")), _int(spatial.get("source_height")))
+    output = (_int(spatial.get("presentation_width")), _int(spatial.get("presentation_height")))
+    return {
+        "kind": "runtime-state",
+        "active": spatial.get("active") is True or spatial.get("active") == 1,
+        "source": source if None not in source else None,
+        "output": output if None not in output else None,
+        "factor": None,
+        "effective_factor": _finite(spatial.get("effective_factor")),
+        "sharpness": None,
+        "method": spatial.get("active_method") or spatial.get("requested_method"),
+        "pid": _int(doc.get("pid")),
+        "updated_unix_ms": _finite(doc.get("updated_unix_ms")),
+        "reason": spatial.get("inactive_reason") or spatial.get("fallback_reason"),
+    }
+
+
+def read_runtime_states(dirs: Iterable[Any], pids: Iterable[int], since_unix_s: float = 0.0) -> List[Dict[str, Any]]:
+    """Runtime-state records of the game's processes written after ``since_unix_s``, oldest first.
+
+    Bounded: at most RUNTIME_STATE_MAX_FILES files of RUNTIME_STATE_MAX_BYTES each; anything
+    unreadable or malformed is skipped.  A record from another process never counts.
+    """
+    import json
+    from pathlib import Path
+
+    wanted = {int(p) for p in pids if isinstance(p, int) or str(p).isdigit()}
+    out: List[Dict[str, Any]] = []
+    for base in dirs:
+        folder = Path(base) / RUNTIME_STATE_DIRNAME
+        try:
+            files = sorted(folder.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)[:RUNTIME_STATE_MAX_FILES]
+        except OSError:
+            continue
+        for path in files:
+            try:
+                if path.stat().st_size > RUNTIME_STATE_MAX_BYTES:
+                    continue
+                record = runtime_state_evidence(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, ValueError, UnicodeError):
+                continue
+            if record is None or (wanted and record.get("pid") not in wanted):
+                continue
+            updated = record.get("updated_unix_ms")
+            if since_unix_s and (updated is None or updated / 1000.0 < since_unix_s):
+                continue
+            out.append(record)
+    out.sort(key=lambda r: r.get("updated_unix_ms") or 0.0)
+    return out
+
+
 def render_pct(evidence: Dict[str, Any]) -> Optional[float]:
     """Render scale (share of the presented width) an evidence record proves, or None."""
     source, output = evidence.get("source"), evidence.get("output")
@@ -153,6 +226,8 @@ def render_pct(evidence: Dict[str, Any]) -> Optional[float]:
 def scale_acknowledged(evidence: Iterable[Dict[str, Any]], pct: int) -> Optional[Dict[str, Any]]:
     """The newest evidence record that shows the game rendering at ``pct`` %."""
     for record in reversed(list(evidence)):
+        if record.get("kind") == "runtime-state" and not record.get("active"):
+            return record if float(pct) >= 100 else None  # the newest report: the scaler is off
         seen = render_pct(record)
         if seen is not None:
             return record if abs(seen - float(pct)) <= SCALE_ACK_TOLERANCE_PCT else None

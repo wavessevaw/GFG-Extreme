@@ -51,6 +51,7 @@ from .cpu_freq import CpuFreqActuator
 from .power_split import PowerSplit, Sample as SplitSample, SplitMemory, levels_khz
 from .governor_hud import HudWriter, normalize as hud_normalize, output_fps as hud_output_fps
 from .governor_overlay import (
+    OVERLAY_DIRNAME,
     OverlayRecord,
     OverlayStore,
     PointNotApplicable,
@@ -148,6 +149,8 @@ class GovernorService:
         self._extreme_ack: Optional[Dict[str, Any]] = None      # {"pct", "sharpness", "evidence"}
         self._extreme_scale_failures = 0
         self._extreme_scale_blocked: Optional[str] = None
+        self._extreme_rs: Optional[Dict[str, Any]] = None   # the renderer's last runtime-state report
+        self._extreme_rs_at = -1e9
         self.search = PowerSearch()
         self.settings_path = self.configuration.config_dir / "gfg-governor.json"
         self.events_path = self.configuration.runtime_state_dir / "governor-events.jsonl"
@@ -1338,6 +1341,9 @@ class GovernorService:
             return "ok"
         record = extreme_policy.scale_acknowledged(self.observer.scaling_after(req.event_mark), pct)
         if record is None:
+            # Second source: the renderer's runtime-state file of the game's processes.
+            record = extreme_policy.scale_acknowledged(self._extreme_runtime_states(req.created_wall), pct)
+        if record is None:
             if self._clock() - req.created <= extreme_policy.SCALE_ACK_TIMEOUT_S:
                 return "wait"
             self._extreme_scale_failures += 1
@@ -1352,6 +1358,16 @@ class GovernorService:
         self._event("extreme-scale-acknowledged", record.get("kind") or "", profile=profile, point=req.point.key,
                      render_pct=pct, source=record.get("source"), output=record.get("output"))
         return "ok"
+
+    def _extreme_runtime_states(self, since_unix_s: float = 0.0) -> list:
+        """The renderer's runtime-state records (next to the overlay and the Saved config)."""
+        base = Path(self.configuration.config_dir)
+        pids = [p for p in ((self._launch or {}).get("pids") or []) if isinstance(p, int)]
+        try:
+            return extreme_policy.read_runtime_states((base / OVERLAY_DIRNAME, base), pids, since_unix_s)
+        except Exception as error:  # diagnostics only: never disturb the Governor
+            self.log.debug("Renderer runtime state unreadable: %s", error)
+            return []
 
     async def _refresh_extreme_sharpness(self, profile: str, saved: Optional[Dict[str, Any]]) -> None:
         """A changed sharpening correction goes live on the scaled point (no new trial: same scale)."""
@@ -1437,6 +1453,17 @@ class GovernorService:
             verifying_scale=verifying, phase=budget.phase if budget is not None else None,
             restart_required=False)
         ceiling = self._extreme_ceiling or self._extreme_power_ceiling()
+        if running and self._clock() - self._extreme_rs_at >= 5.0:
+            # What the renderer itself reports about scaling (diagnostics for logs, 1 per 5 s).
+            self._extreme_rs_at = self._clock()
+            states = self._extreme_runtime_states()
+            self._extreme_rs = states[-1] if states else None
+        seen = self.observer.latest_scaling
+        renderer = {"event": {k: seen.get(k) for k in ("kind", "source", "output", "effective_factor", "sharpness")}
+                    if seen else None,
+                    "runtime_state": {k: (self._extreme_rs or {}).get(k) for k in (
+                        "active", "source", "output", "effective_factor", "method", "reason")}
+                    if self._extreme_rs else None}
         self._status["extreme"] = {
             "enabled": True,
             "state": state,
@@ -1454,6 +1481,7 @@ class GovernorService:
                         if applied_pct is not None and self._point is not None else None),
             "sharpness_offset": self._extreme_offset(profile),
             "act_consent": self._extreme_act_consent(),
+            "renderer_scaling": renderer,
             "boosters": extreme_policy.booster_states(facts),
             "gain": extreme_policy.gain_unavailable(),
         }
@@ -1819,7 +1847,7 @@ class GovernorService:
         self._request = Request(
             request_id=self._request_counter, point=point, deltas=full, previous_deltas=previous,
             revision=record.revision, created=self._clock(), event_mark=mark,
-            generation=generation, external=external,
+            generation=generation, external=external, created_wall=time.time(),
         )
         self._point_deltas_pending = full
         self._event("operating-point-requested", "ladder-trial", profile=profile, point=point.key,

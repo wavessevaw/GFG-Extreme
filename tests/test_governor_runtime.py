@@ -7,6 +7,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import types
 import unittest
 from unittest.mock import patch
@@ -1094,6 +1095,24 @@ class BudgetRuntimeTests(RuntimeBase):
         st = self.step(0.1)
         self.assertEqual(st["extreme"]["applied"]["sharpness"], 0.3)
         self.assertEqual(sha(self.cfg.config_file_path), self.saved_hash)
+
+    def test_extreme_scale_acknowledged_from_the_renderer_runtime_state(self):
+        self.start_extreme()
+        point = self.request_scaled()
+        folder = Path(self.cfg.config_dir) / "governor-overlay" / "runtime-state"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "1-2-3.json").write_text(json.dumps({
+            "schema_version": 5, "pid": 1, "updated_unix_ms": (time.time() + 1) * 1000,
+            "spatial_scaling": {"active": True, "source_width": 1024, "source_height": 640,
+                                "presentation_width": 1280, "presentation_height": 800,
+                                "effective_factor": 1.25, "active_method": "ls1"}}))
+        self.feed_adaptive(20, point.base_target_fps, 90) if point.multiplier != int(point.multiplier) \
+            else self.feed(20, point.base_target_fps, 90)
+        st = self.step()
+        self.assertEqual(st["active_point"]["key"], point.key)
+        self.assertEqual(st["extreme"]["applied"]["render_pct"], 80)
+        st = self.step(6.0)
+        self.assertEqual(st["extreme"]["renderer_scaling"]["runtime_state"]["source"], (1024, 640))
 
     def test_extreme_scale_without_acknowledgement_is_rejected_then_dropped(self):
         self.start_extreme()
