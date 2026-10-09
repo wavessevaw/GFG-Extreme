@@ -75,7 +75,13 @@ class ThemeInstaller:
                 os.replace(payload, self.destination)
             except OSError:
                 if backup is not None:
-                    os.replace(backup, self.destination)
+                    try:
+                        os.replace(backup, self.destination)
+                    except OSError as error:
+                        # Keep the only recovery copy if the filesystem also
+                        # refuses rollback; never delete it in cleanup.
+                        stage = None
+                        raise OSError(f"Theme restore failed; previous theme kept at {backup}: {error}") from error
                 raise
             return {"success": True, "installed": True, "current": True,
                     "path": str(self.destination),

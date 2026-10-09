@@ -51,6 +51,22 @@ class ThemeInstallerTests(unittest.TestCase):
         self.assertEqual((self.service.destination / "shared.css").read_text(), old)
         self.assertEqual(sorted(p.name for p in self.service.destination.parent.iterdir()), ["GFG Extreme"])
 
+    def test_failed_rollback_retains_recovery_copy(self):
+        self.service.install()
+        import gfg_plugin.theme_installer as module
+        replace = module.os.replace
+        def fail_after_backup(src, dst):
+            if Path(dst) == self.service.destination:
+                raise OSError("filesystem unavailable")
+            return replace(src, dst)
+        with patch.object(module.os, "replace", side_effect=fail_after_backup):
+            result = self.service.install()
+        self.assertFalse(result["success"])
+        self.assertIn("previous theme kept at", result["error"])
+        backups = list(self.service.destination.parent.glob(".gfg-theme-*/previous/shared.css"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_text(), "body { color: red; }")
+
     def test_symlink_destination_and_custom_file_are_rejected(self):
         target = self.root / "other"
         target.mkdir()
