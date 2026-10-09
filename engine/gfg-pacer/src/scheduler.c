@@ -186,12 +186,19 @@ int64_t gfg_sched_present(gfg_sched *s, int64_t ready_ns)
         } else {
             int64_t late = ready_ns - slot;
             int64_t k = (late + s->period_ns - 1) / s->period_ns;
-            slot += k * s->period_ns;
+            if (p->stall_shield && late >= s->period_ns)
+                slot = ready_ns;  /* a hitch has already cost a frame: do not add another wait */
+            else
+                slot += k * s->period_ns;
             s->stats.misses++;
             s->margin_ms = clamp(s->margin_ms * 1.5 + 0.5, p->min_margin_ms, p->max_margin_ms);
         }
-        if (p->pacing && slot > ready_ns)
+        if (p->pacing && slot > ready_ns) {
+            int64_t cap = (int64_t)llround(p->max_wait_ms * NS_PER_MS);
+            if (p->stall_shield && cap >= 0 && slot - ready_ns > cap)
+                slot = ready_ns + cap;  /* bound this wait and re-anchor the following slot */
             release = slot;
+        }
         s->next_slot_ns = slot + s->period_ns;
     }
     s->frame_start_ns = 0;

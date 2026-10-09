@@ -263,6 +263,25 @@ class SteamDeckPowerActuator:
                    error=result.get("error"))
         return result
 
+    def claim_at_ceiling_w(self, watts: float) -> Dict[str, Any]:
+        """Claim and lower both caps before handing an Extreme session to the controller.
+
+        Keep the player's originals for exit; inherited caps must not remain above
+        the stock/user ceiling during a renderer trial.
+        """
+        with self._lock:
+            if self._closed:
+                return {**self.status(), "success": False}
+            self.set_strict_ceiling_w(watts)
+            result = self._claim()
+            if not result.get("owned"):
+                return {**result, "success": False}
+            initial = min(self.state.initial_slow_uw, self.state.initial_fast_uw) / 1e6
+            target = min(float(watts), initial)
+            self.set_strict_ceiling_w(target)
+            result = self._set_tdp_w(target)
+            return {**self.status(), "success": bool(result.get("success"))}
+
     def _claim(self) -> Dict[str, Any]:
         if not self.state.available:
             self.discover()

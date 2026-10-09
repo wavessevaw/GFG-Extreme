@@ -1759,12 +1759,24 @@ class GovernorService:
 
     # -------------------------------------------------------------- helpers
     async def _restore_power(self, reason: str) -> None:
-        setter = getattr(self.power, "set_ceiling_w", None)
-        if callable(setter):
-            setter(None)  # budget ceiling never leaks into Quality mode
-        restored = await asyncio.to_thread(self.power.restore_if_owned)
-        if restored.get("restored"):
-            self._event("power-restored", reason)
+        profile = self._active_profile
+        continuing_extreme = (
+            profile and self._profile_enabled(profile) and self._mode(profile) == "extreme"
+            and reason in ("governor-mode-changed", "display-mode-changed", "ladder-exhausted",
+                           "not-healthy-at-ceiling", "renderer-capacity-unavailable",
+                           "renderer-capacity-request-cancelled")
+        )
+        if continuing_extreme:
+            # Replanning is not leaving Extreme: restoring a 20 W baseline here
+            # created the transition overshoots in the field recordings.
+            await self._budget_power(profile)
+        else:
+            setter = getattr(self.power, "set_ceiling_w", None)
+            if callable(setter):
+                setter(None)
+            restored = await asyncio.to_thread(self.power.restore_if_owned)
+            if restored.get("restored"):
+                self._event("power-restored", reason)
         if self.cpu.owned:                # the CPU clock goes back with the watts
             await asyncio.to_thread(self.cpu.restore)
         if self._split is not None and self._split.level:
@@ -2583,8 +2595,13 @@ class GovernorService:
                 self._external_at = None
                 self._applied_tdp = None
                 self._event("tdp-reclaim", "external-change-settled", profile=profile, attempt=self._reclaims)
-            claimed = await asyncio.to_thread(power.claim)
-            if not claimed.get("owned"):
+            bounded_claim = getattr(power, "claim_at_ceiling_w", None)
+            if self._mode(profile) == "extreme" and callable(bounded_claim):
+                claimed = await asyncio.to_thread(bounded_claim, extreme_policy.EXTREME_CEILING_W)
+            else:
+                claimed = await asyncio.to_thread(power.claim)
+            if not claimed.get("owned") or claimed.get("success") is False:
+                self._status.update({"state": "PAUSED", "reason": "extreme-ceiling-not-applied"})
                 return None
             self._applied_tdp = None  # caps were restored meanwhile: write the target again
             self._event("power-claimed", "budget-mode", profile=profile)
@@ -2612,13 +2629,34 @@ class GovernorService:
         elif callable(setter):
             setter(self._extreme_ceiling["ceiling_w"] if self._extreme_ceiling
                    else BudgetController.EMERGENCY_CEILING_W)
+        if self._extreme_ceiling:
+            ceiling_w = self._extreme_ceiling["ceiling_w"]
+            current = values.get("observed_tdp_w", values.get("current_tdp_w"))
+            fast = values.get("observed_fast_w", current)
+            if (not isinstance(current, (int, float)) or not isinstance(fast, (int, float))
+                    or max(current, fast) > ceiling_w + 0.000001):
+                result = await asyncio.to_thread(power.set_tdp_w, ceiling_w)
+                verified = power.status()
+                slow = verified.get("observed_tdp_w", verified.get("current_tdp_w"))
+                fast = verified.get("observed_fast_w", slow)
+                if (not result.get("success") or not isinstance(slow, (int, float))
+                        or not isinstance(fast, (int, float)) or max(slow, fast) > ceiling_w + 0.000001):
+                    self._status.update({"state": "PAUSED", "reason": "extreme-ceiling-not-applied"})
+                    return None
+                self._applied_tdp = None
+                self._event("extreme-ceiling-applied", "before-renderer-trial", profile=profile,
+                            watts=ceiling_w)
         return {"min": values.get("minimum_tdp_w"), "max": top}
 
     def _extreme_power_ceiling(self) -> Dict[str, Any]:
         """min(15 W, the player's own limit when GFG took the caps, the hardware maximum)."""
         state = self.power.state
-        user = getattr(state, "initial_slow_uw", None)
-        hardware = getattr(state, "slow_max_uw", None)
+        inherited = [getattr(state, key, None) for key in ("initial_slow_uw", "initial_fast_uw")]
+        inherited = [v for v in inherited if isinstance(v, (int, float)) and v > 0]
+        user = min(inherited) if inherited else None
+        maxima = [getattr(state, key, None) for key in ("slow_max_uw", "fast_max_uw")]
+        maxima = [v for v in maxima if isinstance(v, (int, float)) and v > 0]
+        hardware = min(maxima) if maxima else None
         return extreme_policy.power_ceiling(user / 1e6 if user else None, hardware / 1e6 if hardware else None)
 
     def _budget_can_scale(self, capability: Dict[str, Any]) -> bool:
