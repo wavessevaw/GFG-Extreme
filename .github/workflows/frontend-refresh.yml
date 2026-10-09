@@ -1,8 +1,8 @@
 name: Refresh frontend
 on:
   push:
-    branches: [develop/extreme-features]
-    paths: [frontend/src/**]
+    branches: [release/stable-1.6.6]
+    paths: [frontend/src/**, .github/workflows/frontend-refresh.yml]
 permissions:
   contents: write
 jobs:
@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: develop/extreme-features
+          ref: release/stable-1.6.6
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -22,6 +22,6 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add dist/index.js
-            git commit -m "build: regenerate frontend for open generator control"
-            git push origin HEAD:develop/extreme-features
+            git commit -m "build: regenerate ordinary-engine frontend"
+            git push origin HEAD:release/stable-1.6.6
           fi

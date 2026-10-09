@@ -83,10 +83,10 @@ class HudTests(unittest.TestCase):
         self.assertNotIn("\nfps\n", cfg)
         self.assertNotIn("\nframetime\n", cfg)
         self.assertIn("position=bottom-right", cfg)
-        s = {"enabled": True, "telemetry": {"snapshot": {}, "summary": {"output": {"median": 90.0}}}}
+        s = {"enabled": True, "telemetry": {"snapshot": {"sample_age_ms": 100, "latest": {"output_fps": 90}}, "summary": {"output": {"median": 90.0}}}}
         self.assertEqual(hud.output_fps(s), 90.0)
         self.assertIsNone(hud.output_fps({"enabled": True}))
-        self.assertIsNone(hud.output_fps({**s, "enabled": False}))
+        self.assertEqual(hud.output_fps({**s, "enabled": False}), 90.0)
 
     def test_writer_is_idempotent(self):
         with tempfile.TemporaryDirectory() as d:
@@ -174,10 +174,37 @@ if __name__ == "__main__":
 class FrameOsHudTests(unittest.TestCase):
     def test_frame_os_word(self):
         fo = {"enabled": True, "acting": True, "telemetry": {"live": True}, "decision": {"level": "boost", "real_hz": 45.0}}
-        self.assertEqual(hud.frame_os_word(fo), "FOS boost 45")
+        self.assertEqual(hud.frame_os_word(fo), "FOS verifying 45")
         self.assertEqual(hud.frame_os_word({**fo, "acting": False}), "FOS boost? 45")
         self.assertEqual(hud.frame_os_word({**fo, "telemetry": {"live": False}}), "")
         self.assertEqual(hud.frame_os_word({"enabled": False}), "")
         line = hud.status_line({"enabled": True, "power": {"observed_tdp_w": 9.0}, "frame_os": fo})
-        self.assertTrue(line.endswith("FOS boost 45"))
+        self.assertTrue(line.endswith("FOS verifying 45"))
         self.assertNotIn("FOS", hud.status_line({"enabled": True, "frame_os": fo}, "minimal"))
+
+class HudTelemetryRegressionTests(unittest.TestCase):
+    def test_text_uses_latest_interval_not_old_scene_medians(self):
+        status = {"enabled": True, "telemetry": {
+            "snapshot": {"sample_age_ms": 100, "latest": {"real_fps": 30, "output_fps": 60}},
+            "summary": {"real": {"median": 45}, "output": {"median": 90}}}}
+        self.assertEqual(hud.status_line(status, "minimal"), "60 FPS  x2  (30)")
+        status["telemetry"]["snapshot"]["sample_age_ms"] = 3000
+        self.assertNotIn("FPS", hud.status_line(status, "minimal"))
+        self.assertIsNone(hud.output_fps(status))
+
+    def test_hud_only_shows_live_fps_without_enabling_governor(self):
+        status = {"enabled": False, "telemetry": {"snapshot": {
+            "sample_age_ms": 100, "latest": {"real_fps": 30, "output_fps": 90}}}}
+        self.assertEqual(hud.status_line(status, "minimal"), "90 FPS  x3  (30)")
+        self.assertEqual(hud.output_fps(status), 90)
+        status["telemetry"]["snapshot"]["sample_age_ms"] = 5000
+        self.assertEqual(hud.status_line(status), "GFG off")
+
+    def test_bad_numbers_do_not_break_fallback(self):
+        for bad in (float("nan"), float("inf"), True, -1, "bad"):
+            status = {"enabled": True, "telemetry": {"real": {"median": bad}, "output": {"median": bad}},
+                      "power": {"observed_tdp_w": bad, "draw_w": bad},
+                      "battery": {"minutes_left": bad}, "effort": {"level": "unknown"},
+                      "active_point": {"render_scale_pct": bad}}
+            self.assertNotIn("FPS", hud.status_line(status))
+            self.assertIsNone(hud.output_fps(status))

@@ -2490,3 +2490,55 @@ class RingRefreshTests(unittest.TestCase):
                                    "benefit": {"ready": True, "response_pct": 50}}
         self.publish()
         self.assertNotIn("frame_os", self.writes[-1][0])
+
+class HudSessionRegressions(RingRefreshTests):
+    def test_new_game_cannot_hold_old_fps_before_refresh_due(self):
+        self.publish()
+        self.svc._launch = {"launch_key": [4, 5, 6]}
+        self.status["telemetry"]["snapshot"]["sample_age_ms"] = 9000
+        self.now += .1
+        self.publish()
+        self.assertIsNone(self.writes[-1][0]["fps"])
+
+    def test_profile_and_renderer_generation_reset_held_values(self):
+        for key, value in (("profile", "another"), ("session_generation", 2)):
+            with self.subTest(key=key):
+                self.status["telemetry"]["snapshot"]["sample_age_ms"] = 100
+                self.now += 1
+                self.publish()
+                self.status["telemetry"]["snapshot"]["sample_age_ms"] = 9000
+                if key == "profile":
+                    self.status[key] = value
+                else:
+                    self.status["telemetry"]["snapshot"][key] = value
+                self.now += .1
+                self.publish()
+                self.assertIsNone(self.writes[-1][0]["fps"])
+
+    def test_held_fps_cannot_verify_boost_after_source_is_stale(self):
+        self.settings["preset"] = "standard"
+        self.svc.frame_os = types.SimpleNamespace(executor_active=True, policy=types.SimpleNamespace(calm_real_hz=30))
+        self.status["frame_os"] = {"enabled": True, "mode": "act", "acknowledged": True,
+                                  "decision": {"level": "boost"}, "telemetry": {"live": True}}
+        self.publish()
+        self.assertTrue(self.writes[-1][0]["frame_os"]["verified_boost"])
+        self.status["telemetry"]["snapshot"]["sample_age_ms"] = 3000
+        self.now += 1
+        self.publish()
+        self.assertEqual(self.writes[-1][0]["real"], 45)
+        self.assertFalse(self.writes[-1][0]["frame_os"]["verified_boost"])
+        self.status["frame_os"]["telemetry"]["live"] = False
+        self.now += 1
+        self.publish()
+        self.assertFalse(self.writes[-1][0]["frame_os"]["active"])
+        self.assertFalse(self.writes[-1][0]["frame_os"]["verified_boost"])
+
+    def test_unknown_slider_does_not_use_initial_cap_as_device_maximum(self):
+        self.settings["preset"] = "standard"
+        self.status["power"] = {"initial_tdp_w": 12, "observed_tdp_w": 9}
+        self.publish()
+        self.assertIsNone(self.writes[-1][0]["maximum_tdp"])
+        self.status["power"].update(gamescope_max_tdp_w=float("nan"), maximum_tdp_w=20)
+        self.now += 1
+        self.publish()
+        self.assertEqual(self.writes[-1][0]["maximum_tdp"], 20)

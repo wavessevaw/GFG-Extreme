@@ -252,33 +252,30 @@ for (const [state, nav, expected] of cases) {
   await page.close();
   cases.push(["extreme-frame-preferences-error"]);
 }
-// Energy text changes, while the existing benefit arc remains 9/30.
+// Energy text is cap savings; its independent arc is the current battery charge.
 {
   for (const [slow, fast, expected] of [[15,15,"25%"],[12,12,"40%"],[12.75,12.75,"36%"],[12,20,"0%"],[null,null,"—"]]) {
-    const state = { ...STATES["home-frame-os-act"], power: { observed_tdp_w: slow, observed_fast_w: fast, maximum_tdp_w: 30, gamescope_max_tdp_w: 20 } };
+    const state = { ...STATES["home-frame-os-act"], battery: { percent: 72 }, power: { observed_tdp_w: slow, observed_fast_w: fast, maximum_tdp_w: 30, gamescope_max_tdp_w: 20 } };
     const page = await openPage(browser, state);
     const data = await page.evaluate(() => {
       const ring = [...document.querySelectorAll(".fos .mini")].find(e => e.querySelector(".mlab").textContent === "Energy");
       return { text: ring.querySelector(".mnum").textContent, offset: Number(ring.querySelector("circle:last-child").getAttribute("stroke-dashoffset")) };
     });
-    if (data.text !== expected || Math.abs(data.offset - 2 * Math.PI * 26 * .7) > .0001) {
+    if (data.text !== expected || Math.abs(data.offset - 2 * Math.PI * 26 * .28) > .0001) {
       failed++; console.error("FAIL Energy text/arc: " + JSON.stringify(data));
     }
     await page.close();
   }
-  cases.push(["energy-cap-number-preserves-arc"]);
+  cases.push(["energy-cap-number-battery-arc"]);
 }
 {
   const page = await openPage(browser, STATES["home-extreme"], ["Settings", "Frame generation backend"]);
-  await page.getByText("GFG Open generator", { exact: true }).click();
-  await page.waitForTimeout(120);
-  const calls = await page.evaluate(() => window.__patches);
-  if (!calls.some(c => c.open_frame_generation === true)) {
-    failed++; console.error("FAIL open generator control did not save");
+  if (await page.getByText("GFG Open generator", { exact: true }).count()) {
+    failed++; console.error("FAIL retired generator still selectable");
   }
-  for (const e of page.__errors) { failed++; console.error("FAIL open generator: " + e); }
+  for (const e of page.__errors) { failed++; console.error("FAIL ordinary generator: " + e); }
   await page.close();
-  cases.push(["open-generator-control"]);
+  cases.push(["ordinary-generator-only"]);
 }
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);

@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from py_modules.gfg_plugin import hud_rings
 
-SAMPLE = {"fps": 90, "real": 45, "target": 90, "tdp": 15, "limit": 15,
+SAMPLE = {"fps": 90, "real": 45, "target": 90, "tdp": 15, "limit": 15, "maximum_tdp": 15,
           "battery_min": 125, "battery_pct": 72,
           # Compare only the common CALM presentation. The new verified BOOST tag is an
           # intentional feature; pixel-equivalence against v1.2.1 cannot apply to it.
@@ -41,9 +41,9 @@ def main():
             items = original_items(data, preset)
             for item in items:
                 if item.get("label") == "ENERGY":
-                    # Only the numeric ENERGY label intentionally differs from v1.2.1.
-                    # Keep the baseline arc, opacity, colour and geometry untouched.
-                    item["text"] = "0%"
+                    # Approved ENERGY semantics intentionally differ from v1.2.1.
+                    # Everything else (glyphs, geometry, panel and other rings) is compared unchanged.
+                    item.update(text="0%", frac=.72, rgb=hud_rings.battery_color(72), opacity=1.0)
             return items
         baseline.items_for = corrected_baseline_items
     for preset in ("minimal", "detailed"):
