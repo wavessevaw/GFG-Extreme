@@ -121,7 +121,7 @@ int main(){
  fill(0,0,0);fill(1,0,255);dispatch(0);dispatch(1);dispatch(2);
  for(uint32_t y=0;y<H;y++)for(uint32_t x=0;x<W;x++)assert(pixel(6,x,y)[0]==255);
  // Initial history invalid: output must be current real frame.
- p.timing[1]=0;memcpy(params,&p,32);fill(0,0,-1);fill(1,0,17);dispatch(0);dispatch(1);dispatch(2);
+ p.timing[1]=0;p.timing[2]=0;memcpy(params,&p,32);fill(0,0,-1);fill(1,0,17);dispatch(0);dispatch(1);dispatch(2);
  for(uint32_t y=0;y<H;y++)for(uint32_t x=0;x<W;x++)assert(pixel(6,x,y)[0]==17);
  std::cout<<"GPU PASS: static, translation, fractional timestamps, occlusion, static overlay, scene-cut, initial history, odd extent\n";
  vkDeviceWaitIdle(device);vkDestroyCommandPool(device,cmdpool,nullptr);vkDestroyDescriptorPool(device,pool,nullptr);

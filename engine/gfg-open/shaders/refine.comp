@@ -50,6 +50,7 @@ vec4 refine(bool back,ivec2 b){
 void main(){
  ivec2 b=ivec2(gl_GlobalInvocationID.xy);
  if(any(greaterThanEqual(b,ivec2(p.size.zw))))return;
+ if(p.timing.z==0){imageStore(refinedForward,b,vec4(0,0,1,0));imageStore(refinedBackward,b,vec4(0,0,1,0));return;}
  imageStore(refinedForward,b,refine(false,b));
  imageStore(refinedBackward,b,refine(true,b));
 }

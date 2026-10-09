@@ -26,11 +26,12 @@ void main(){
  ivec2 pixel=ivec2(gl_GlobalInvocationID.xy);
  if(any(greaterThanEqual(pixel,ivec2(p.size.xy))))return;
  vec2 q=vec2(pixel);float t=p.timing.x;
- vec4 originalPrevious=imageLoad(previousImage,pixel);
  vec4 originalCurrent=imageLoad(currentImage,pixel);
+ if(p.timing.y==0){imageStore(outputImage,pixel,originalCurrent);return;}
+ vec4 originalPrevious=imageLoad(previousImage,pixel);
  // Unchanged pixels (including static overlay strokes) do not need a warp.
  // This is a colour equality mask, not semantic detection of game HUD.
- if(p.timing.y==0 || max(max(abs(originalPrevious.r-originalCurrent.r),
+ if(max(max(abs(originalPrevious.r-originalCurrent.r),
     abs(originalPrevious.g-originalCurrent.g)),abs(originalPrevious.b-originalCurrent.b))<.001){
   imageStore(outputImage,pixel,originalCurrent);return;
  }
@@ -48,8 +49,7 @@ void main(){
  // Occlusion/disocclusion and scene discontinuities never mix mismatched
  // contours. Single-sided reconstruction, then nearest real frame fallback.
  vec4 outColor;
- if(p.timing.y==0)outColor=sampleImage(true,q);
- else if(validA&&validB&&disagreement<.045)outColor=mix(A,B,t);
+ if(validA&&validB&&disagreement<.045)outColor=mix(A,B,t);
  else if(validA&&!validB)outColor=A;
  else if(validB&&!validA)outColor=B;
  else outColor=sampleImage(t>=.5,q);

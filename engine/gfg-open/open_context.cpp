@@ -111,7 +111,7 @@ void OpenContext::scheduleFrames(std::span<const float> timestamps){
 }
 void OpenContext::scheduleFrameHistory(){
  prepare();
- pairParams.write(v,Params{{extent.width,extent.height,tiles.width,tiles.height},{0,frame>1?1.f:0.f,0,0}});
+ pairParams.write(v,Params{{extent.width,extent.height,tiles.width,tiles.height},{0,frame>1?1.f:0.f,frame>0?1.f:0.f,0}});
  record(0,true);submitPrepass(fence.handle());++frame;
 }
 bool OpenContext::waitForIdle(uint64_t ns)const{return !scheduled||fence.wait(v,ns);}
