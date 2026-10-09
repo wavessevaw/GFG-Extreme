@@ -17,9 +17,11 @@ concurrency:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ github.token }}
+      CXX: g++-12
+      CC: gcc-12
     steps:
       - uses: actions/checkout@v4
         with:
@@ -96,7 +98,7 @@ jobs:
 
       - name: Open generator build dependencies
         if: steps.version.outputs.exists == 'false'
-        run: sudo apt-get update && sudo apt-get install -y ninja-build glslang-tools spirv-tools libvulkan-dev mesa-vulkan-drivers libxcb1-dev libx11-dev libwayland-dev vulkan-validationlayers
+        run: sudo apt-get update && sudo apt-get install -y g++-12 ninja-build glslang-tools spirv-tools libvulkan-dev mesa-vulkan-drivers libxcb1-dev libx11-dev libwayland-dev vulkan-validationlayers
 
       - name: Build zip
         if: steps.version.outputs.exists == 'false'

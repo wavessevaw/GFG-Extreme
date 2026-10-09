@@ -1,0 +1,65 @@
+name: Portable 1.6.6 native payload
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/portable-open.yml]
+permissions:
+  contents: write
+jobs:
+  repair:
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CXX: g++-12
+      CC: gcc-12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install portable build dependencies
+        run: sudo apt-get update && sudo apt-get install -y g++-12 ninja-build glslang-tools spirv-tools libvulkan-dev mesa-vulkan-drivers libxcb1-dev libx11-dev libwayland-dev
+      - name: Build portable Vulkan layer
+        run: |
+          git clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
+          VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" bash engine/gfg-open/build.sh "$RUNNER_TEMP/open-build" "$RUNNER_TEMP/open-payload"
+          readelf --version-info "$RUNNER_TEMP/open-payload/libmako-render.so" > /tmp/native-versions
+          python3 - <<'PY'
+          import re
+          s=open("/tmp/native-versions").read()
+          for prefix,maximum in (("GLIBC",(2,36)),("GLIBCXX",(3,4,30))):
+              versions={tuple(map(int,x.split("."))) for x in re.findall(r"\b"+prefix+r"_([0-9.]+)",s)}
+              print(prefix,max(versions))
+              assert max(versions)<=maximum, (prefix,versions)
+          PY
+      - name: Execute portable SPIR-V
+        run: |
+          g++-12 -std=c++20 -O2 engine/gfg-open/tests/gpu.cpp -lvulkan -o /tmp/gfg-open-gpu-test
+          VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp*.json' -print -quit)" /tmp/gfg-open-gpu-test
+      - name: Replace and verify the existing release payload
+        run: |
+          mkdir -p repair
+          gh release download v1.6.6 --pattern '*.zip' --pattern SHA256SUMS.txt --dir repair
+          (cd repair && sha256sum --check SHA256SUMS.txt)
+          python3 - "$RUNNER_TEMP/open-payload" <<'PY'
+          import sys,zipfile,pathlib
+          payload=pathlib.Path(sys.argv[1])
+          archive=pathlib.Path("repair/GFG-Extreme-v1_6_6.zip")
+          temporary=archive.with_suffix(".tmp")
+          prefix="GFG-Extreme/bin/gfg-open/"
+          with zipfile.ZipFile(archive) as source,zipfile.ZipFile(temporary,"w",zipfile.ZIP_DEFLATED) as dest:
+              for info in source.infolist():
+                  if not info.filename.startswith(prefix):
+                      dest.writestr(info,source.read(info.filename))
+              for p in payload.iterdir():
+                  if p.is_file():
+                      dest.write(p,prefix+p.name)
+          temporary.replace(archive)
+          PY
+          python3 scripts/check_release_archive.py repair/GFG-Extreme-v1_6_6.zip 1.6.6
+          (cd repair && sha256sum GFG-Extreme-v1_6_6.zip > SHA256SUMS.txt)
+          python3 - "$(cut -d' ' -f1 repair/SHA256SUMS.txt)" > /tmp/notes.md <<'PY'
+          import re,sys
+          s=open("RELEASE_DESCRIPTION_V1_6_6.md").read()
+          s=re.sub(r"\x60(<sha256>|[0-9a-f]{64})\x60", "\x60"+sys.argv[1]+"\x60", s)
+          print(s+"\nNative payload rebuilt for glibc <=2.36 and libstdc++ <=3.4.30 (Steam Runtime compatibility).\n")
+          PY
+          gh release upload v1.6.6 repair/GFG-Extreme-v1_6_6.zip repair/SHA256SUMS.txt --clobber
+          gh release edit v1.6.6 --notes-file /tmp/notes.md
