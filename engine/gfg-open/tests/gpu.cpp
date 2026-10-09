@@ -81,6 +81,7 @@ int main(){
  // Bidirectional flow must find a known 2-pixel translation.
  fill(1,2,-1);dispatch(0);dispatch(1);
  auto* forward=reinterpret_cast<float*>(static_cast<unsigned char*>(images[4].map)+images[4].layout.offset+3*images[4].layout.rowPitch+3*16);
+ std::cerr<<"translation flow: "<<forward[0]<<","<<forward[1]<<" residual="<<forward[2]<<" confidence="<<forward[3]<<"\n";
  assert(std::abs(forward[0]-2)<.1&&std::abs(forward[1])<.1);
  dispatch(2); // midpoint must match the one-pixel translated image centrally.
  int errors=0,total=0;for(uint32_t y=12;y<H-12;y++)for(uint32_t x=12;x<W-12;x++){total++;if(std::abs(int(pixel(6,x,y)[0])-int(pixel(0,x-1,y)[0]))>2)errors++;}

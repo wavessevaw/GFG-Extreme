@@ -32,6 +32,16 @@ vec4 refine(bool back,ivec2 b){
   if(e<best){second=best;best=e;bestD=d;}
   else if(d!=bestD)second=min(second,e);
  }
+ // A coarse winner can be aliased on highly detailed colour-only inputs.
+ // Always compare small local motion too; never let a bad coarse proposal
+ // prevent an exact near-zero correspondence from being found.
+ if(any(notEqual(seed,ivec2(0)))) {
+  for(int y=-3;y<=3;y++)for(int x=-3;x<=3;x++){
+   ivec2 d=ivec2(x,y);float e=cost(back,q,d);
+   if(e<best){second=best;best=e;bestD=d;}
+   else if(d!=bestD)second=min(second,e);
+  }
+ }
  float residual=1-smoothstep(.015,.09,best);
  float unique=clamp((second-best)/max(second,.001),0,1);
  // Low uniqueness gets conservative confidence, even with low residual.
