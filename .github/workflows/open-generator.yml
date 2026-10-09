@@ -48,6 +48,9 @@ jobs:
             diff -u /tmp/baseline-digest /tmp/current-digest
             echo "Pixel-equivalent to 1.6.10; grid $mode"
           done
+      - name: Investigate motion fallbacks independently of output FPS
+        run: |
+          GFG_OPEN_TEST_SWEEP=1 GFG_OPEN_TEST_TILE=16 VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp*.json' -print -quit)" /tmp/gfg-open-gpu-test
       - name: Assemble and verify actual Decky archive
         env:
           GH_TOKEN: ${{ github.token }}

@@ -166,6 +166,44 @@ int main(){
  for(uint32_t y=0;y<H;y++)for(uint32_t x=0;x<W;x++)assert(memcmp(pixel(6,x,y),pixel(1,x,y),4)==0);
  std::cout<<"OUTPUT_DIGEST "<<std::hex<<outputDigest<<std::dec<<"\n";
  std::cout<<"GPU PASS: static, translation, fractional timestamps, occlusion, static overlay, scene-cut, initial history, odd extent\n";
+ // Diagnostic sweep (not a production change): expose content fallbacks
+ // hidden by output FPS. No synthetic scene result is a Deck performance claim.
+ if(getenv("GFG_OPEN_TEST_SWEEP")){
+  auto pattern=[&](int kind,int x,int y){
+   if(kind==0)return static_cast<unsigned char>((x*37+y*53+x*y*7)&255);
+   if(kind==1)return static_cast<unsigned char>(std::clamp(128+50*std::sin(x*.18)+40*std::sin(y*.22)+25*std::sin((x+y)*.11),0.0,255.0));
+   return static_cast<unsigned char>((x>=35&&x<45&&y>=20&&y<70)?220:24);
+  };
+  for(int kind=0;kind<3;++kind)for(int shift : {6,12,18,24}){
+   for(int im=0;im<2;++im)for(uint32_t y=0;y<H;++y)for(uint32_t x=0;x<W;++x){
+    auto* px=pixel(im,x,y);px[0]=px[1]=px[2]=pattern(kind,int(x)-(im?shift:0),int(y));px[3]=255;
+   }
+   for(int im : {4,5})for(uint32_t y=0;y<TH;++y)for(uint32_t x=0;x<TW;++x){
+    auto* values=reinterpret_cast<float*>(static_cast<unsigned char*>(images[im].map)+images[im].layout.offset+y*images[im].layout.rowPitch+x*16);
+    for(int k=0;k<4;++k)values[k]=0;
+   }
+   p.timing[1]=p.timing[2]=1;p.timing[3]=0;memcpy(params,&p,32);
+   dispatch(0);dispatch(1);dispatch(2);
+   int confident=0,tilesChecked=0;
+   for(uint32_t y=1;y+1<TH;++y)for(uint32_t x=1;x+1<TW;++x){
+    auto* f=reinterpret_cast<float*>(static_cast<unsigned char*>(images[4].map)+images[4].layout.offset+y*images[4].layout.rowPitch+x*16);
+    ++tilesChecked;confident+=f[3]>.12f&&f[2]<.08f&&std::abs(f[0]-shift)<1.1f&&std::abs(f[1])<1.1f;
+   }
+   for(float time : {1.f/3.f,2.f/3.f}){
+    p.timing[0]=time;memcpy(params,&p,32);dispatch(3);
+    int moving=0,copies=0,wrong=0;int expectedShift=std::lround(time*shift);
+    for(uint32_t y=12;y+12<H;++y)for(uint32_t x=28;x+12<W;++x){
+     int a=pixel(0,x,y)[0],b=pixel(1,x,y)[0],out=pixel(6,x,y)[0];
+     if(std::abs(a-b)<=4)continue;
+     ++moving;copies+=std::abs(out-a)<=2||std::abs(out-b)<=2;
+     wrong+=std::abs(out-int(pattern(kind,int(x)-expectedShift,int(y))))>4;
+    }
+    std::cout<<"MOTION_SWEEP kind="<<kind<<" shift="<<shift<<" t="<<time<<" moving="<<moving
+             <<" source_like="<<copies<<" wrong_position="<<wrong<<" correct_flow_tiles="<<confident<<"/"<<tilesChecked<<"\n";
+   }
+  }
+ }
+
  vkDeviceWaitIdle(device);vkDestroyCommandPool(device,cmdpool,nullptr);vkDestroyDescriptorPool(device,pool,nullptr);
  for(auto pipe:pipelines)vkDestroyPipeline(device,pipe,nullptr);vkDestroyPipelineLayout(device,pl,nullptr);vkDestroyDescriptorSetLayout(device,layout,nullptr);
  vkUnmapMemory(device,bm);vkDestroyBuffer(device,buffer,nullptr);vkFreeMemory(device,bm,nullptr);
