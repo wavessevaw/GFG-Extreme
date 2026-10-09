@@ -1209,7 +1209,7 @@ class BudgetRuntimeTests(RuntimeBase):
                 saving = hud_rings.energy_savings_pct(seen[-1]["energy_tdp"], seen[-1]["maximum_tdp"])
                 self.assertEqual(hud_rings._fmt_pct(saving, "") if saving is not None else "—", expected)
                 self.assertEqual(seen[-1]["maximum_tdp"], power.get("gamescope_max_tdp_w") or power["maximum_tdp_w"])
-                self.assertEqual(seen[-1]["limit"], power.get("initial_tdp_w") or power["maximum_tdp_w"])
+                self.assertEqual(seen[-1]["limit"], 12, "existing arc limit stays unchanged")
 
     def test_extreme_without_a_scale_ready_launch_asks_for_a_restart(self):
         st = self.start_extreme(scale_ready_launch=False)

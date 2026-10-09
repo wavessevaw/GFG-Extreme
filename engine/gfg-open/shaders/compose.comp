@@ -8,7 +8,8 @@ layout(rgba32f,binding=50) readonly uniform image2D forwardFlow;
 layout(rgba32f,binding=51) readonly uniform image2D backwardFlow;
 layout(rgba8,binding=52) writeonly uniform image2D outputImage;
 vec4 flow(bool back,vec2 q){
- ivec2 b=clamp(ivec2(q)/8,ivec2(0),ivec2(p.size.zw)-1);
+ ivec2 stride=(ivec2(p.size.xy)+ivec2(p.size.zw)-1)/ivec2(p.size.zw);
+ ivec2 b=clamp(ivec2(q)/stride,ivec2(0),ivec2(p.size.zw)-1);
  return back?imageLoad(backwardFlow,b):imageLoad(forwardFlow,b);
 }
 vec4 sampleImage(bool back,vec2 q){

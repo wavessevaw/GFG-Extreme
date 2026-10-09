@@ -150,10 +150,13 @@ int64_t gfg_sched_frame_start(gfg_sched *s, int64_t now_ns)
             s->stats.last_delay_ms = 0.0;
             return 0;
         }
-        /* A slot the frame cannot make even when started now is gone: plan for the next one.
-         * Its frame would land there anyway, so starting later only removes queueing. */
-        if (slot < now_ns + cost_ns)   /* after a long idle: many slots, no loop */
-            slot += (now_ns + cost_ns - slot + s->period_ns - 1) / s->period_ns * s->period_ns;
+        /* A late/heavy frame must start now. Advancing to a future grid slot
+         * here adds a second delay on top of rendering and can halve real FPS. */
+        if (slot < now_ns + cost_ns) {
+            s->frame_start_ns = now_ns;
+            s->stats.last_delay_ms = 0.0;
+            return 0;
+        }
         s->next_slot_ns = slot;
         if (slot - plan_ns > now_ns)
             delay = slot - plan_ns - now_ns;
@@ -184,12 +187,10 @@ int64_t gfg_sched_present(gfg_sched *s, int64_t ready_ns)
             s->stats.hits++;
             s->margin_ms = clamp(s->margin_ms * 0.995, p->min_margin_ms, p->max_margin_ms);  /* slow give-back */
         } else {
-            int64_t late = ready_ns - slot;
-            int64_t k = (late + s->period_ns - 1) / s->period_ns;
-            if (p->stall_shield && late >= s->period_ns)
-                slot = ready_ns;  /* a hitch has already cost a frame: do not add another wait */
-            else
-                slot += k * s->period_ns;
+            /* Missing 33.33 ms by even 0.1 ms must not wait for 66.67 ms.
+             * Present a ready late frame immediately and re-anchor. This is
+             * basic pacing correctness, independent of the optional shield. */
+            slot = ready_ns;
             s->stats.misses++;
             s->margin_ms = clamp(s->margin_ms * 1.5 + 0.5, p->min_margin_ms, p->max_margin_ms);
         }

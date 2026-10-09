@@ -24,7 +24,8 @@ vec4 refine(bool back,ivec2 b){
  vec4 c=back?imageLoad(coarseBackward,b):imageLoad(coarseForward,b);
  // Confident/static regions take only the inexpensive transfer path.
  if(c.z<.0025 && c.w>.7)return c;
- ivec2 q=min(b*8+ivec2(4),ivec2(p.size.xy)-1);
+ ivec2 stride=(ivec2(p.size.xy)+ivec2(p.size.zw)-1)/ivec2(p.size.zw);
+ ivec2 q=min(b*stride+stride/2,ivec2(p.size.xy)-1);
  ivec2 seed=ivec2(round(c.xy)),bestD=seed;
  float best=cost(back,q,seed),second=1e10;
  for(int y=-3;y<=3;y++)for(int x=-3;x<=3;x++){

@@ -46,7 +46,8 @@ int main(){
   VkImageSubresource sub{VK_IMAGE_ASPECT_COLOR_BIT,0,0};vkGetImageSubresourceLayout(device,r.image,&sub,&r.layout);
   VkImageViewCreateInfo v{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};v.image=r.image;v.viewType=VK_IMAGE_VIEW_TYPE_2D;v.format=format;v.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};VKCHECK(vkCreateImageView(device,&v,nullptr,&r.view));return r;
  };
- constexpr uint32_t W=67,H=49,TW=(W+7)/8,TH=(H+7)/8;
+ const uint32_t tile=getenv("GFG_OPEN_TEST_TILE")?16:8;
+ const uint32_t W=tile==16?131:67,H=tile==16?99:49,TW=(W+tile-1)/tile,TH=(H+tile-1)/tile;
  std::array<Image,9> images{image(W,H,VK_FORMAT_R8G8B8A8_UNORM),image(W,H,VK_FORMAT_R8G8B8A8_UNORM),
  image(TW,TH,VK_FORMAT_R32G32B32A32_SFLOAT),image(TW,TH,VK_FORMAT_R32G32B32A32_SFLOAT),
  image(TW,TH,VK_FORMAT_R32G32B32A32_SFLOAT),image(TW,TH,VK_FORMAT_R32G32B32A32_SFLOAT),image(W,H,VK_FORMAT_R8G8B8A8_UNORM),image((W+3)/4,(H+3)/4,VK_FORMAT_R32G32B32A32_SFLOAT),image((W+3)/4,(H+3)/4,VK_FORMAT_R32G32B32A32_SFLOAT)};

@@ -32,7 +32,7 @@ vk::Barrier barrier(const vk::Image& i,VkImageLayout old=VK_IMAGE_LAYOUT_GENERAL
 }
 OpenContext::OpenContext(const vk::Vulkan& vk,ls::FileDescriptorScope& src,
  ls::FileDescriptorScope& dst,ls::FileDescriptorScope& sync,VkExtent2D e,mako::backend::FrameEncoding encoding)
- :v(vk),extent(validate(e,encoding)),tiles{(e.width+7)/8,(e.height+7)/8},
+ :v(vk),extent(validate(e,encoding)),tiles{(e.width+15)/16,(e.height+15)/16},
  sources{vk::Image(v,e,VK_FORMAT_R8G8B8A8_UNORM,usage,src.take()),
          vk::Image(v,e,VK_FORMAT_R8G8B8A8_UNORM,usage,src.take())},
  outputs(imports(v,dst,e)),
@@ -76,7 +76,7 @@ OpenContext::OpenContext(const vk::Vulkan& vk,ls::FileDescriptorScope& src,
  v.df().CmdPipelineBarrier(init.handle(),VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,0,nullptr,0,nullptr,transitions.size(),transitions.data());
  init.end(v);init.submit(v);
  initTiming();
- std::clog<<"GFG Open: backend=color-flow-v1 tile=8 search=16 selective-refinement=3 occlusion=bidirectional history=validated encoding=sdr8\n";
+ std::clog<<"GFG Open: backend=color-flow-v2 tile=16 search=16 selective-refinement=3 occlusion=bidirectional history=validated encoding=sdr8\n";
 }
 void OpenContext::initTiming(){
  auto get=v.fi().GetDeviceProcAddr;

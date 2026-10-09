@@ -141,9 +141,10 @@ static void test_long_idle_catch_up(void)
     }
     now += 3600ll * 1000000000ll;              /* an hour paused: one step, not 108000 loop turns */
     int64_t d = gfg_sched_frame_start(&s, now);
-    CHECK(s.next_slot_ns >= now + 10000000 && s.next_slot_ns < now + 10000000 + period, "slot %lld after idle",
-          (long long)(s.next_slot_ns - now));
-    CHECK(d >= 0 && d < period, "delay after idle %lld", (long long)d);
+    CHECK(d == 0, "an idle game must resume immediately, delay %lld", (long long)d);
+    int64_t ready = now + 10000000;
+    CHECK(gfg_sched_present(&s, ready) == ready, "resumed frame waited for a future grid slot");
+    CHECK(s.next_slot_ns == ready + period, "idle grid not re-anchored");
 }
 
 /* A scene that keeps changing weight: cost ramps 12 -> 24 ms and back every 240 frames (8 s at
@@ -241,8 +242,30 @@ static void test_stall_shield_caps_present_holds(void)
     }
 }
 
+static void test_slightly_late_frames_never_halve_real_fps(void)
+{
+    gfg_policy p;gfg_sched s;
+    gfg_policy_defaults(&p);
+    p.real_target_hz = 30;
+    p.tick_shaping = 0;
+    p.stall_shield = 0;  /* essential pacing safety must not require Shield */
+    gfg_sched_init(&s, &p);
+    int64_t now = 1000000000, began = now;
+    for(int i=0;i<600;i++){
+        int64_t ready = now + 34000000; /* 29.41 FPS work, just beyond 30 Hz */
+        int64_t release = gfg_sched_present(&s, ready);
+        CHECK(release == ready, "late frame held %lld ns", (long long)(release-ready));
+        now = release;
+    }
+    double fps = 600e9 / (double)(now-began);
+    CHECK(fps > 29.0, "34 ms work was quantised to %.2f real FPS", fps);
+    sim_result shaped = simulate(1, 34, 0, 30, 1000, 0);
+    CHECK(shaped.fps > 29.0, "shaping halved heavy cadence to %.2f", shaped.fps);
+}
+
 int main(void)
 {
+    test_slightly_late_frames_never_halve_real_fps();
     test_stall_shield_does_not_add_a_frame_after_a_hitch();
     test_stall_shield_caps_present_holds();
     test_tick_shaping_removes_queueing_latency();
