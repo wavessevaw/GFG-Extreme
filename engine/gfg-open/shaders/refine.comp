@@ -28,7 +28,7 @@ vec4 refine(bool back,ivec2 b){
  ivec2 q=min(b*stride+stride/2,ivec2(p.size.xy)-1);
  ivec2 seed=ivec2(round(c.xy)),bestD=seed;
  float best=cost(back,q,seed),second=1e10;
- for(int y=-2;y<=2;y++)for(int x=-2;x<=2;x++){
+ for(int y=-3;y<=3;y++)for(int x=-3;x<=3;x++){
   ivec2 d=seed+ivec2(x,y);float e=cost(back,q,d);
   if(e<best){second=best;best=e;bestD=d;}
   else if(d!=bestD)second=min(second,e);
@@ -37,9 +37,9 @@ vec4 refine(bool back,ivec2 b){
  // Always compare small local motion too; never let a bad coarse proposal
  // prevent an exact near-zero correspondence from being found.
  if(any(notEqual(seed,ivec2(0)))) {
-  for(int y=-2;y<=2;y++)for(int x=-2;x<=2;x++){
+  for(int y=-3;y<=3;y++)for(int x=-3;x<=3;x++){
    ivec2 d=ivec2(x,y);
-   if(all(lessThanEqual(abs(d-seed),ivec2(2))))continue;
+   if(all(lessThanEqual(abs(d-seed),ivec2(3))))continue;
    float e=cost(back,q,d);
    if(e<best){second=best;best=e;bestD=d;}
    else if(d!=bestD)second=min(second,e);
@@ -50,14 +50,14 @@ vec4 refine(bool back,ivec2 b){
  // (bad coarse residual too) take the conservative real-frame fallback.
  if(c.z<.10 && best>.0025){
   int comparisons=0,exactComparisons=0;
-  for(int y=-16;y<=16 && best>.001;y+=4)for(int x=-16;x<=16 && best>.001;x+=4){
+  for(int y=-16;y<=16 && best>.001;y+=2)for(int x=-16;x<=16 && best>.001;x+=2){
    ivec2 d=ivec2(x,y);
    float quick=dot(abs(fetch(back,q-ivec2(2))-fetch(!back,q-ivec2(2)+d)),vec3(.299,.587,.114));
    quick+=dot(abs(fetch(back,q+ivec2(2))-fetch(!back,q+ivec2(2)+d)),vec3(.299,.587,.114));
    if(quick*.5>best*.5+.0025)continue;
    // Bound expensive nine-sample comparisons. Reserve four probes for
    // virtually exact two-sample matches, which preserve clean translation.
-   if(comparisons>=20){
+   if(comparisons>=32){
     if(quick>.001 || exactComparisons>=4)continue;
     exactComparisons++;
    }else comparisons++;
@@ -66,7 +66,7 @@ vec4 refine(bool back,ivec2 b){
    else if(d!=bestD)second=min(second,e);
   }
  }
- // The bounded wide lattice is four pixels apart; polish its winner once.
+ // The bounded wide lattice is two pixels apart; polish its winner once.
  if(bestD!=seed && best>.001){
   ivec2 centre=bestD;
   for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){
