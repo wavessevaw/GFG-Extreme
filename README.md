@@ -209,7 +209,7 @@ Docs: [Governor architecture](docs/GFG_GOVERNOR_ARCHITECTURE.md) · [Extreme fou
 </details>
 
 ## Credits
-
+https://t.me/gfg_extreme
 GFG Extreme continues the **MAKO** and **lsfg-vk** work. It succeeds [Decky LSFG-VK Experimental](https://github.com/eugeniosegala/decky-lsfg-vk-experimental), and the bundled engine derives from the MAKO project, which brings LSFG frame generation, spatial scaling and shader effects to Linux. Thanks to their authors. GFG Extreme does not contain or distribute Lossless Scaling; upstream `mako-*` names are kept where renderer compatibility needs them.
 
 GPL-3.0-or-later · [License](LICENSE.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
