@@ -130,6 +130,7 @@ class FpsSample:
     requested_interval_stddev_ms: Optional[float] = None
     source_interval_p95_ms: Optional[float] = None
     requested_interval_p95_ms: Optional[float] = None
+    context: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -168,6 +169,7 @@ class TelemetryObserver:
         self._events: Deque[TelemetryEvent] = deque(maxlen=self.MAX_EVENTS)
         self._last_fields: Dict[str, str] = {}
         self._last_application: Dict[str, Any] = {}
+        self._flow_state: Dict[str, Any] = {}
         self._last_poll_error: Optional[str] = None
         self._session_generation = 0
         # Generated frames per real frame the renderer has resources for *right now* (2 = up to x3).
@@ -248,6 +250,7 @@ class TelemetryObserver:
         self._events.clear()
         self._last_fields = {}
         self._last_application = {}
+        self._flow_state = {}
         self._session_generation += 1
         self._generated_capacity = None
         self.game_focused = None
@@ -285,6 +288,14 @@ class TelemetryObserver:
         self._event_seq += 1
         operation = str(fields.get("operation") or "")
         self._last_fields = dict(fields)
+        if (operation == "runtime-state-applied" and fields.get("role") == "frame-generation"
+                and fields.get("context") and _number(fields.get("effective_flow_scale")) is not None):
+            flow = float(fields["effective_flow_scale"])
+            if .25 <= flow <= 1:
+                self._flow_state = {"value": flow, "context": fields["context"],
+                                    "event_seq": self._event_seq, "monotonic": now_mono,
+                                    "resources": fields.get("frame_generation_resources_available") == "1",
+                                    "lighter_model": fields.get("lighter_model")}
         if operation == "swapchain-context-create":
             self._note_scaling(swapchain_extent(fields), now_mono)
         if operation == "gamescope-focus" and fields.get("state"):
@@ -398,6 +409,7 @@ class TelemetryObserver:
             requested_interval_stddev_ms=_first_number(fields, ("requested_interval_stddev_ms",)),
             source_interval_p95_ms=_first_number(fields, ("source_interval_p95_ms",)),
             requested_interval_p95_ms=_first_number(fields, ("requested_interval_p95_ms",)),
+            context=fields.get("context"),
         )
         self._samples.append(sample)
         return sample
@@ -559,4 +571,5 @@ class TelemetryObserver:
             "last_poll_error": self._last_poll_error,
             "session_generation": self._session_generation,
             "generated_capacity": self._generated_capacity,
+            "flow": dict(self._flow_state) if self._flow_state else None,
         }

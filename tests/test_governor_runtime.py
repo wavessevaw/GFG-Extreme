@@ -2557,3 +2557,93 @@ class HudSessionRegressions(RingRefreshTests):
         self.now += 1
         self.publish()
         self.assertEqual(self.writes[-1][0]["maximum_tdp"], 20)
+
+
+class FlowRuntimeTests(unittest.TestCase):
+    setUp = RuntimeBase.setUp
+    tearDown = RuntimeBase.tearDown
+    overlay_profile = RuntimeBase.overlay_profile
+
+    def prepare_flow(self):
+        from gfg_plugin.governor_core import OperatingPoint
+        from gfg_plugin.governor_overlay import point_deltas
+        self.svc.DEFAULT_MODE = "budget"
+        point = OperatingPoint("30x3", 90, 30, 3, 100)
+        self.svc._point = point.to_dict()
+        self.svc._point_mode = "applied"
+        saved = self.cfg.get_profile_config("game")["config"]
+        self.svc._point_deltas = point_deltas(point.to_dict(), saved, scale_capable=False, scale_ready=False)
+        self.svc._write_overlay_sync("game", self.svc._point_deltas, "30x3")
+        self.svc._status.update(enabled=True, profile="game", state="LOCKED", target_output_fps=90,
+                                diagnosis={"thermal": "ok"}, sensors={"temp_c": 70, "gpu_busy_pct": 95})
+        self.svc._launch_key = (1, 1, 1)
+        self.actual = .8
+        self.ack_flow(.8)
+
+    def ack_flow(self, flow):
+        self.svc.observer.consume_line(H + f"operation=runtime-state-applied context=0xaa role=frame-generation effective_flow_scale={flow} lighter_model=0 frame_generation_resources_available=1 generated_frame_capacity=2", now=self.t["now"])
+        self.actual = flow
+
+    def flow_tick(self):
+        self.t["now"] += 1
+        self.svc.observer.consume_line(fixed_plan(30, 90) + " context=0xaa", now=self.t["now"])
+        self.svc._status["telemetry"] = {"snapshot": self.svc.observer.snapshot()}
+        self.svc._flow_sensors_at = self.t["now"]
+        self.svc.power.values["draw_w"] = 9 if self.actual < .8 else 10
+        self.svc._status["sensors"]["gpu_busy_pct"] = 87 if self.actual < .8 else 95
+        asyncio.run(self.svc._sync_flow("game"))
+        wanted = self.overlay_profile().get("flow_scale", .8)
+        if wanted != self.actual:
+            self.ack_flow(wanted)
+
+    def test_real_overlay_trial_holds_and_disable_restores_saved(self):
+        self.prepare_flow()
+        for _ in range(100):
+            self.flow_tick()
+        self.assertEqual(self.svc._flow.phase, "held")
+        self.assertEqual(self.overlay_profile()["flow_scale"], .7)
+        self.assertTrue(self.svc.set_auto_flow(False)["success"])
+        self.flow_tick()
+        self.assertEqual(self.overlay_profile()["flow_scale"], .8)
+        self.flow_tick()
+        self.assertFalse(self.svc._flow.busy)
+        self.assertIsNone(self.svc._flow.proof)
+
+    def test_new_point_and_mode_restore_the_manual_value(self):
+        self.prepare_flow()
+        for _ in range(100):
+            self.flow_tick()
+        self.assertEqual(self.overlay_profile()["flow_scale"], .7)
+        asyncio.run(self.svc._release_point("game", "governor-mode-changed"))
+        self.assertEqual(self.overlay_profile()["flow_scale"], .8)
+        self.assertIsNone(self.svc._flow.wanted)
+
+    def test_unsupported_models_and_act_never_start_a_resource_trial(self):
+        self.prepare_flow()
+        self.svc._settings["frame_os_act_unlocked"] = True
+        self.svc._settings.setdefault("profiles", {}).setdefault("game", {})["frame_os"] = "act"
+        for _ in range(40):
+            self.flow_tick()
+        self.assertEqual(self.overlay_profile()["flow_scale"], .8)
+        self.assertFalse(self.svc._flow.busy)
+
+    def test_other_context_cannot_acknowledge_requested_flow(self):
+        self.prepare_flow()
+        for _ in range(39):
+            self.flow_tick()
+        self.svc.observer.consume_line(H + "operation=runtime-state-applied context=0xbb role=frame-generation effective_flow_scale=0.7 frame_generation_resources_available=1", now=self.t["now"])
+        self.svc._status["telemetry"] = {"snapshot": self.svc.observer.snapshot()}
+        asyncio.run(self.svc._sync_flow("game"))
+        self.assertFalse(self.svc._flow.phase == "held")
+        self.assertIsNone(self.svc._flow.proof)
+
+
+    def test_stale_sensors_cannot_start_or_continue_a_probe(self):
+        self.prepare_flow()
+        self.svc._flow_sensors_at = self.t["now"] - 10
+        self.svc.observer.consume_line(fixed_plan(30, 90) + " context=0xaa", now=self.t["now"])
+        self.svc._status["telemetry"] = {"snapshot": self.svc.observer.snapshot()}
+        self.t["now"] += 1
+        asyncio.run(self.svc._sync_flow("game"))
+        self.assertIsNone(self.svc._flow.since)
+        self.assertFalse(self.svc._flow.busy)

@@ -106,6 +106,7 @@ def compact_status(status: Dict[str, Any]) -> Dict[str, Any]:
         "power_split": {k: (status.get("power_split") or {}).get(k) for k in (
             "phase", "reason", "level", "cap_khz", "ab", "pairs", "gain_pct")} if status.get("power_split") else None,
         "extreme": compact_extreme(status.get("extreme")),
+        "mode_goal": status.get("mode_goal"), "flow_control": status.get("flow_control"),
     }
 
 
@@ -506,7 +507,7 @@ class SessionRecorder:
                                  "driver": read(str(p / "scaling_driver"))}
                         for p in sorted(Path("/sys/devices/system/cpu/cpufreq").glob("policy[0-9]*"))[:16]},
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme 1.6.6 (renderer identity: see diagnostics)",
+            "plugin_version": "GFG Extreme 1.6.7 (renderer identity: see diagnostics)",
         }
 
     def _write_bundle(self) -> Path:

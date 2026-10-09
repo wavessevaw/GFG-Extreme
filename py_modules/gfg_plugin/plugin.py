@@ -1587,6 +1587,9 @@ class Plugin:
             )
         decky.logger.info("GFG Extreme unloaded")
 
+    async def set_governor_auto_flow(self, enabled: bool) -> Dict[str, Any]:
+        return self.governor_service.set_auto_flow(enabled)
+
     async def get_theme_status(self) -> Dict[str, Any]:
         async with self._theme_install_lock:
             return await asyncio.to_thread(self.theme_installer.status)

@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.6.6).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.6.7).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -34,6 +34,7 @@ from .governor_core import (
     BudgetController, EffortEstimator, OperatingPoint, OperatingPointPlanner, PowerSearch, TrialLadder,
     effort_assessment, window_verdict,
 )
+from .governor_flow import FlowTrial, number as flow_number
 from .governor_battery import BatteryEstimator, read_battery
 from .steamos_tdp import SteamOSManagerTdp
 from .game_model import GameModelStore, context_key, floor_key, game_prefix
@@ -66,7 +67,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, confirmation_evidence, matches,
 )
 
-VERSION = "1.6.6"
+VERSION = "1.6.7"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -213,6 +214,7 @@ class GovernorService:
 
     # ------------------------------------------------------------------ state
     def _reset_run_state(self) -> None:
+        self._flow = FlowTrial()
         self._point: Optional[Dict[str, Any]] = None
         self._point_mode = ""
         self._effort = getattr(self, "_effort", None) or EffortEstimator()
@@ -432,6 +434,7 @@ class GovernorService:
         """Host sensors + a one-line diagnosis. Never allowed to break the control loop."""
         try:
             sensors = self.sensors.sample()
+            self._flow_sensors_at = self._clock()
             tel = (self._status.get("telemetry") or {})
             summary = tel.get("summary") or {}
             # Only the live controller's numbers: a previous mode's feedback must not survive it.
@@ -829,6 +832,10 @@ class GovernorService:
     ) -> OverlayRecord:
         if self.overlay is None:
             raise OSError("overlay-unsupported")
+        flow = getattr(self, "_flow", None)
+        if (flow and flow.wanted is not None and flow.context and flow.context[0] == profile
+                and point_key != "base" and not released):
+            deltas = {**deltas, "flow_scale": flow.wanted}
         with self._io_lock:
             return self.overlay.write(profile, deltas, point_key=point_key, released=released)
 
@@ -837,6 +844,9 @@ class GovernorService:
     ) -> Optional[OverlayRecord]:
         if self.overlay is None:
             raise OSError("overlay-unsupported")
+        flow = getattr(self, "_flow", None)
+        if flow and flow.wanted is not None and flow.context and flow.context[0] == profile and point_key != "base":
+            deltas = {**deltas, "flow_scale": flow.wanted}
         with self._io_lock:
             return self.overlay.ensure(profile, deltas, point_key=point_key)
 
@@ -1015,6 +1025,12 @@ class GovernorService:
         self.frame_os.proof.enabled = bool(enabled)
         self._poke()
         return {"success": True, "error": None, "ab": self._frame_os_ab()}
+
+    def set_auto_flow(self, enabled: bool) -> Dict[str, Any]:
+        self._settings["auto_flow"] = bool(enabled)
+        self._save_settings()
+        self._poke()
+        return {"success": True, "enabled": bool(enabled)}
 
     def _power_split_enabled(self) -> bool:
         """Smart power split (CPU clock cap in GPU-bound games): on unless the player turned it off."""
@@ -1300,7 +1316,10 @@ class GovernorService:
                                            "available": bool(self.cpu.discover())}
             return
         # a point that changed later in this iteration has other real frames: wait for it to be live
-        eligible = bool(ready and budget is not None and budget.point.key == ready[0]
+        flow = getattr(self, "_flow", None)
+        flow_reserved = bool(flow and (flow.busy or (flow.phase == "idle" and not flow.attempted and flow.since is not None)))
+        eligible = bool(not flow_reserved
+                        and ready and budget is not None and budget.point.key == ready[0]
                         and budget.tdp_control and self.power.state.owned
                         and not self._menu_covering() and self._trusted_game_focus() is not False
                         and not self.cpu.external_change
@@ -1774,6 +1793,10 @@ class GovernorService:
                              **{k: v for k, v in self.frame_os.last.items() if k != "input"}}
         value["power_split"] = {**(self._status.get("power_split") or {}), "setting": self._power_split_enabled(),
                                 "control": self.cpu.status()}
+        value["flow_control"] = {**(self._status.get("flow_control") or {"phase": "idle", "reason": "waiting-for-eligible-context"}),
+                                 "enabled": self._settings.get("auto_flow") is not False}
+        value["mode_goal"] = {"budget": "battery-autonomy", "balanced": "stable-cadence",
+                              "quality": "motion-image-quality", "extreme": "real-frames-and-headroom"}.get(self._mode(profile or value.get("profile", "")))
         value["extreme"] = self._status.get("extreme") or {"enabled": False, "state": "OFF"}
         value["scale_blocked"] = (("game-ignores-render-scale" if self._scale_blocked == extreme_policy.GAME_IGNORES_SCALE
                                    else self._scale_blocked)
@@ -1841,6 +1864,7 @@ class GovernorService:
         self.search = PowerSearch()
 
     def _clear_point_state(self) -> None:
+        self._status.pop("flow_control", None)
         self._extreme_ack = None  # the overlay goes back to the launch scale
         self._point = None
         self._point_mode = ""
@@ -1853,6 +1877,7 @@ class GovernorService:
         self._ladder = None
         # Failures the controller found since its last drain would be lost with it.
         self._store_failures(self._budget)
+        self._flow = FlowTrial()
         self._budget = None
         self._budget_keys = None
         self._applied_tdp = None
@@ -1949,6 +1974,8 @@ class GovernorService:
         self, profile: str, saved: Dict[str, Any], point: OperatingPoint, external: bool,
         capability: Dict[str, Any],
     ) -> bool:
+        self._flow = FlowTrial()  # new points are evaluated at Saved flow
+        self._status.pop("flow_control", None)
         base = self._base_for(profile, saved)
         sharpness = None
         if self._mode(profile) == "extreme":
@@ -2199,6 +2226,15 @@ class GovernorService:
         self._update_effort()
         self._update_battery()
         await asyncio.to_thread(self._update_sensors)
+        try:
+            await self._sync_flow(profile=self._status.get("profile") or "")
+        except Exception as error:
+            self.log.warning("Flow trial failed: %s", error)
+            self._flow = FlowTrial()
+            profile = self._status.get("profile") or ""
+            if profile and self._point:
+                saved = await asyncio.to_thread(self._saved_profile_config, profile)
+                await self._rollback(profile, {**self._base_for(profile, saved), **self._point_deltas}, "flow-step-failed")
         self._sample_session()
         profile = self._status.get("profile") or ""
         try:
@@ -2219,6 +2255,82 @@ class GovernorService:
             self.log.debug("Frame OS configure failed: %s", error)
         if profile:
             await asyncio.to_thread(self._sync_hud, profile)
+
+    async def _sync_flow(self, profile: str) -> None:
+        """Rare isolated resource trials; Act, CPU probes and stale data opt out."""
+        flow = getattr(self, "_flow", None)
+        if flow is None:
+            self._flow = flow = FlowTrial()
+        if not profile or self._point is None or self.overlay is None:
+            flow.reset()
+            self._status["flow_control"] = flow.status()
+            return
+        saved = await asyncio.to_thread(self._saved_profile_config, profile)
+        if saved is None:
+            return
+        snap = ((self._status.get("telemetry") or {}).get("snapshot") or {})
+        latest = snap.get("latest") or {}
+        ack = snap.get("flow") or {}
+        sensors = self._status.get("sensors") or {}
+        power = self.power.status()
+        mode = self._mode(profile)
+        context = (profile, mode, self._point["key"], snap.get("session_generation"),
+                   str(self._launch_key), latest.get("context"), saved.get("flow_scale", .8),
+                   saved.get("performance_mode", False), saved.get("ultra_performance", False),
+                   power.get("observed_tdp_w"), power.get("observed_fast_w"),
+                   self._status.get("target_output_fps"))
+        previous = flow.context
+        if previous is not None and previous != context and flow.wanted is not None:
+            flow.reset()
+            await asyncio.to_thread(self._write_overlay_sync, profile,
+                                    {**self._base_for(profile, saved), **self._point_deltas}, self._point["key"])
+        context_matches = bool(latest.get("context") and ack.get("context") == latest.get("context"))
+        eligible = bool(self._settings.get("auto_flow") is not False
+                        and self._status.get("enabled") and self._status.get("state") == "LOCKED"
+                        and self._point.get("multiplier", 1) > 1
+                        and self._request is None and self._rollback_deltas is None
+                        and not saved.get("ultra_performance") and not saved.get("performance_mode")
+                        and self._injection is None and self._frame_os_mode(profile) != "act"
+                        and (not self.cpu.owned or flow.phase == "held")
+                        and not getattr(self.cpu, "restore_pending", False)
+                        and not self._menu_covering() and self._trusted_game_focus() is not False
+                        and flow_number(snap.get("sample_age_ms")) is not None
+                        and snap["sample_age_ms"] <= self.MAX_SAMPLE_AGE_MS
+                        and context_matches and ack.get("resources")
+                        and self._clock() - getattr(self, "_flow_sensors_at", -1e9) <= self.MAX_SAMPLE_AGE_MS / 1000
+                        and ack.get("lighter_model") == "0"
+                        and (self._status.get("diagnosis") or {}).get("thermal") == "ok"
+                        and flow_number(power.get("observed_tdp_w")) is not None
+                        and flow_number(sensors.get("temp_c")) is not None
+                        and sensors["temp_c"] < 80)
+        sample = {"seq": latest.get("seq"), "real": latest.get("real_fps"),
+                  "output": latest.get("output_fps"), "draw": power.get("draw_w"),
+                  "gpu": sensors.get("gpu_busy_pct"), "temp": sensors.get("temp_c"),
+                  "p95": latest.get("requested_interval_p95_ms")} if latest else None
+        before_busy, before_phase = flow.busy, flow.phase
+        wanted = flow.step(now=self._clock(), context=context, mode=mode, eligible=eligible,
+                           saved_flow=saved.get("flow_scale", .8), actual_flow=ack.get("value") if context_matches else None,
+                           ack_seq=ack.get("event_seq", 0) if context_matches else 0,
+                           event_seq=snap.get("event_seq", 0), sample=sample,
+                           target=self._status.get("target_output_fps") or 90,
+                           base_target=self._point["base_target_fps"])
+        if wanted is not None:
+            try:
+                await asyncio.to_thread(self._write_overlay_sync, profile,
+                                        {**self._base_for(profile, saved), **self._point_deltas, "flow_scale": wanted},
+                                        self._point["key"])
+            except (OSError, ValueError):
+                flow.reset()
+                await self._rollback(profile, {**self._base_for(profile, saved), **self._point_deltas},
+                                     "flow-write-failed")
+                raise
+        if before_busy != flow.busy:
+            self._evaluation_after_seq = self._tdp_set_seq = self.observer.sample_seq
+            self._draw_samples = []
+            self._fast_last_sample_seq = self.observer.sample_seq
+        if flow.phase != before_phase:
+            self._event("flow-scale", flow.reason, profile=profile, flow=flow.status())
+        self._status["flow_control"] = flow.status()
 
     async def _sample_passive_hud(self, profile: str) -> None:
         """Keep the 1 Hz overlay accurate without claiming TDP or changing renderer settings."""
@@ -2461,7 +2573,7 @@ class GovernorService:
                 self.WINDOW_SECONDS * 2, after_event_seq=req.window_floor_event_seq,
             )
             if self._ladder is None:  # defensive; requests are only created by the ladder
-                self._ladder = TrialLadder(external_display=external, target_output_fps=target)
+                self._ladder = TrialLadder(external_display=external, target_output_fps=target, preserve_resolution=True)
                 self._load_ladder_failures(profile, target)
             outcome = self._ladder.evaluate(
                 req.point, fresh, min_samples=self.MIN_SAMPLES, min_span_s=self.TRIAL_MIN_SPAN_SECONDS,
@@ -2524,6 +2636,14 @@ class GovernorService:
             return
         if summary.get("samples", 0) < self.MIN_SAMPLES or summary.get("sample_span_s", 0.0) < self.MIN_SAMPLE_SPAN_SECONDS:
             self._status.update({"state": "PROBE", "reason": "collecting-fresh-evidence"})
+            return
+
+        if getattr(getattr(self, "_flow", None), "busy", False):
+            if self._budget is not None and self._budget.tdp_control:
+                if await self._budget_power(profile) is None:
+                    self._status.update({"state": "PAUSED", "reason": "flow-power-ownership-lost"})
+                    return
+            self._status.update({"state": "LOCKED", "reason": "flow-scale-trial"})
             return
 
         if self._mode(profile) in self.BUDGET_MODES:
@@ -3061,6 +3181,11 @@ class GovernorService:
         if budget is None or self._budget_keys is None:
             return
         key, floor = self._budget_keys
+        if getattr(getattr(self, "_flow", None), "wanted", None) is not None:
+            budget.new_failures.clear()
+            if getattr(budget, "new_floor_failures", None):
+                budget.new_floor_failures.clear()
+            return  # resource-trial failures cannot poison a Saved-flow session
         while budget.new_failures:
             point_key, tdp = budget.new_failures.pop(0)
             try:
@@ -3077,6 +3202,8 @@ class GovernorService:
 
     def _remember_if_held(self, profile: str, target: int, budget: Any, point: Any, now: float) -> None:
         """Store the point/TDP once it has held, so the next session can start there."""
+        if getattr(getattr(self, "_flow", None), "wanted", None) is not None:
+            return  # do not warm-start a Saved-flow session from a tuned-flow power point
         if (
             budget.phase != "locked" or budget.recover is not None or budget.cap_ignored or budget.exhausted
             or getattr(budget, "verifying", None)

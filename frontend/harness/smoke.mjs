@@ -313,6 +313,20 @@ for (const fail of [false, true]) {
   await page.close();
   cases.push(["theme-installer-" + (fail ? "error" : "success")]);
 }
+for (const fail of [false, true]) {
+  const page = await openPage(browser, { ...STATES["home-extreme"], __flowFail: fail, flow_control: { enabled: true } }, ["Settings"]);
+  const row = page.locator(".row").filter({ has: page.getByText("Automatic flow scale", { exact: true }) });
+  await row.click();
+  await page.waitForTimeout(150);
+  const calls = await page.evaluate(() => window.__flowSets);
+  const on = await row.locator(".tog.on").count();
+  if (JSON.stringify(calls) !== "[false]" || on !== (fail ? 1 : 0) ||
+      (fail && !(await page.getByText("Error: Could not save flow policy", { exact: true }).count()))) {
+    failed++; console.error("FAIL automatic flow toggle: " + JSON.stringify({ fail, calls, on }));
+  }
+  await page.close();
+  cases.push(["automatic-flow-" + (fail ? "error" : "success")]);
+}
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);
 process.exit(failed ? 1 : 0);

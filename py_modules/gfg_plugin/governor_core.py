@@ -59,11 +59,16 @@ class OperatingPointPlanner:
     @classmethod
     def candidates(
         cls, *, external_display: bool = False, target_output_fps: Optional[int] = None,
+        preserve_resolution: bool = False,
     ) -> tuple[OperatingPoint, ...]:
         """Ladder for a 60 FPS target (Dock / Deck LCD) or a 90 FPS target (Deck OLED)."""
         sixty = (int(target_output_fps) == 60) if target_output_fps else bool(external_display)
         target = 60 if sixty else 90
         ladder = cls.fg_ladder(target)
+        if preserve_resolution:
+            # Quality protects the player\'s render resolution; scaled choices
+            # remain available manually and to the other modes.
+            return ladder + ((OperatingPoint("20x3-degraded", 60, 20, 3, 100, degraded=True),) if sixty else ())
         base2 = int(round(target / 2))
         # Render scale is a tool of its own: before pushing generation to x2.75/x3
         # (more artefacts, more latency) try x2 with a reduced render scale, which
@@ -191,7 +196,9 @@ class TrialLadder:
     OUTPUT_MEDIAN_RATIO = 0.94
     MAX_MISSES = 1
 
-    def __init__(self, *, external_display: bool = False, target_output_fps: Optional[int] = None) -> None:
+    def __init__(self, *, external_display: bool = False, target_output_fps: Optional[int] = None,
+                 preserve_resolution: bool = False) -> None:
+        self.preserve_resolution = preserve_resolution
         self.external_display = bool(external_display)
         self.target_output_fps = int(target_output_fps) if target_output_fps else (60 if external_display else 90)
         self.rejected: Dict[str, str] = {}
@@ -218,6 +225,7 @@ class TrialLadder:
     def candidates(self) -> tuple[OperatingPoint, ...]:
         return OperatingPointPlanner.candidates(
             external_display=self.external_display, target_output_fps=self.target_output_fps,
+            preserve_resolution=self.preserve_resolution,
         )
 
     def next_point(self, applicable: Any, now: Optional[float] = None) -> Optional[OperatingPoint]:

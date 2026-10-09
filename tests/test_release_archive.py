@@ -69,3 +69,21 @@ class ReleaseArchiveTests(unittest.TestCase):
         files["bin/gfg-open/libmako-render.so"] = b"retired"
         with self.assertRaisesRegex(ValueError, "retired generator"):
             validator.check(self.archive(files), "1.6.6")
+
+
+    def test_current_archive_requires_complete_bundled_theme(self):
+        root = Path(__file__).resolve().parents[1]
+        files = self.files()
+        for name in ("package.json", "package-lock.json", "py_modules/gfg_plugin/governor_service.py",
+                     "py_modules/gfg_plugin/log_report.py"):
+            files[name] = files[name].replace("1.6.6", "1.6.7")
+        for module in ("governor_flow.py", "theme_installer.py"):
+            files["py_modules/gfg_plugin/" + module] = "module"
+        theme = root / "themes/css-loader/GFG Extreme"
+        for file in theme.iterdir():
+            if file.is_file():
+                files[file.relative_to(root).as_posix()] = file.read_bytes()
+        validator.check(self.archive(files), "1.6.7")
+        del files["themes/css-loader/GFG Extreme/shared.css"]
+        with self.assertRaises(KeyError):
+            validator.check(self.archive(files), "1.6.7")
