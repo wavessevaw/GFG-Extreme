@@ -86,13 +86,34 @@ int main(){
  dispatch(2); // midpoint must match the one-pixel translated image centrally.
  int errors=0,total=0;for(uint32_t y=12;y<H-12;y++)for(uint32_t x=12;x<W-12;x++){total++;if(std::abs(int(pixel(6,x,y)[0])-int(pixel(0,x-1,y)[0]))>2)errors++;}
  assert(errors<total/10);
+ // Explicit quarter/three-quarter timestamps: the source is shifted 4px.
+ fill(1,4,-1);dispatch(0);dispatch(1);
+ for(float t : {.25f,.75f}){
+  p.timing[0]=t;memcpy(params,&p,32);dispatch(2);
+  int mismatch=0,checked=0;int expectedShift=int(t*4);
+  for(uint32_t y=12;y<H-12;y++)for(uint32_t x=12;x<W-12;x++){
+   checked++;if(std::abs(int(pixel(6,x,y)[0])-int(pixel(0,x-expectedShift,y)[0]))>2)mismatch++;
+  }
+  assert(mismatch<checked/10);
+ }
+ p.timing[0]=.5f;memcpy(params,&p,32);
+ // Newly visible opaque area: no grey duplicate contour across the edge.
+ fill(0,0,0);fill(1,0,0);
+ for(uint32_t y=15;y<35;y++)for(uint32_t x=23;x<44;x++)pixel(1,x,y)[0]=pixel(1,x,y)[1]=pixel(1,x,y)[2]=255;
+ dispatch(0);dispatch(1);dispatch(2);
+ for(uint32_t y=0;y<H;y++)for(uint32_t x=0;x<W;x++)assert(pixel(6,x,y)[0]==0||pixel(6,x,y)[0]==255);
+ // Unchanged overlay stroke stays at its source position during scene motion.
+ fill(0,0,-1);fill(1,2,-1);
+ for(uint32_t x=10;x<50;x++){auto* a=pixel(0,x,6);auto* b=pixel(1,x,6);a[0]=b[0]=255;a[1]=b[1]=0;a[2]=b[2]=0;}
+ dispatch(0);dispatch(1);dispatch(2);
+ for(uint32_t x=10;x<50;x++)assert(memcmp(pixel(6,x,6),pixel(1,x,6),4)==0);
  // Scene discontinuity: no half-grey blend / stale temporal trails.
  fill(0,0,0);fill(1,0,255);dispatch(0);dispatch(1);dispatch(2);
  for(uint32_t y=0;y<H;y++)for(uint32_t x=0;x<W;x++)assert(pixel(6,x,y)[0]==255);
  // Initial history invalid: output must be current real frame.
  p.timing[1]=0;memcpy(params,&p,32);fill(0,0,-1);fill(1,0,17);dispatch(0);dispatch(1);dispatch(2);
  for(uint32_t y=0;y<H;y++)for(uint32_t x=0;x<W;x++)assert(pixel(6,x,y)[0]==17);
- std::cout<<"GPU PASS: static, translation, scene-cut, initial history, odd extent\n";
+ std::cout<<"GPU PASS: static, translation, fractional timestamps, occlusion, static overlay, scene-cut, initial history, odd extent\n";
  vkDeviceWaitIdle(device);vkDestroyCommandPool(device,cmdpool,nullptr);vkDestroyDescriptorPool(device,pool,nullptr);
  for(auto pipe:pipelines)vkDestroyPipeline(device,pipe,nullptr);vkDestroyPipelineLayout(device,pl,nullptr);vkDestroyDescriptorSetLayout(device,layout,nullptr);
  vkUnmapMemory(device,bm);vkDestroyBuffer(device,buffer,nullptr);vkFreeMemory(device,bm,nullptr);
