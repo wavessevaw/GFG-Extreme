@@ -131,6 +131,11 @@ class CpuFreqActuator:
             if not self._apply(wanted, restoring=khz is None):
                 self.restore_pending = True
                 return False
+            # Commit readback: a completed cap no longer needs the previous-value
+            # candidate that only protected a crash during the partial write.
+            if not self._write_marker(wanted):
+                self.restore_pending = True
+                return False
             self.cap_khz = khz
             self._note("cpu-cap", cap_khz=khz)
             return True
@@ -184,7 +189,7 @@ class CpuFreqActuator:
                 self.owned, self.external_change, self.cap_khz = False, True, None
                 # One outside policy must not strand our caps on the other policies.
                 # The journal restores each value only while it still matches ours.
-                self._recover_stale()
+                self._recover_stale(trusted_expected=self.expected)
                 self.error = self.error or "CPU clock limit changed outside GFG; power split paused"
                 self._note("cpu-cap-external-change", policy=str(p.parent.name), expected=value,
                            found=found)
@@ -242,7 +247,7 @@ class CpuFreqActuator:
             except OSError:
                 pass
 
-    def _recover_stale(self) -> bool:
+    def _recover_stale(self, *, trusted_expected: Optional[Dict[Path, int]] = None) -> bool:
         """Restore owned policies; keep failed/read-unverified undo entries for retry."""
         if self.marker is None or not self.marker.exists():
             return False
@@ -272,8 +277,13 @@ class CpuFreqActuator:
             if found is None:
                 remaining[name] = entry
                 continue
-            if found == initial or found not in (written, previous):
-                continue  # already restored, or a different tool owns this policy
+            if found == initial:
+                continue
+            if trusted_expected is not None:
+                if found != trusted_expected.get(p) and found != self._pending_targets.get(p):
+                    continue  # live ownership is stronger than an uncommitted journal candidate
+            elif found not in (written, previous):
+                continue  # a different tool owns this policy
             try:
                 helper = self._helper()
                 if helper is not None:

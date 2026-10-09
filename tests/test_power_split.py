@@ -339,6 +339,33 @@ class CpuFreqActuatorTests(unittest.TestCase):
                 self.assertEqual(self.read(root), 3_500_000)
                 self.assertFalse(a.marker.exists())
 
+    def test_live_external_change_to_a_previous_cap_is_not_reclaimed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, a = self.make(temp)
+            a.claim(); a.set_cap_khz(2_400_000); a.set_cap_khz(2_100_000)
+            (root / "policy0" / "scaling_max_freq").write_text("2400000\n")
+            self.assertFalse(a.set_cap_khz(1_800_000))
+            self.assertEqual(self.read(root, 0), 2_400_000)
+            self.assertEqual(self.read(root, 1), 3_500_000)
+
+    def test_failed_commit_still_keeps_the_write_ahead_undo(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, a = self.make(temp)
+            a.claim()
+            original, count = Path.write_text, [0]
+            def fail_commit(path, text, *args, **kwargs):
+                if path.name == "cpu-cap.json.tmp":
+                    count[0] += 1
+                    if count[0] == 2:
+                        raise OSError("disk full during journal commit")
+                return original(path, text, *args, **kwargs)
+            with patch.object(Path, "write_text", fail_commit):
+                self.assertFalse(a.set_cap_khz(2_100_000))
+            self.assertTrue(a.marker.exists())
+            self.assertTrue(a.restore_pending)
+            self.assertTrue(a.restore())
+            self.assertEqual([self.read(root, i) for i in range(2)], [3_500_000, 3_500_000])
+
     def test_no_cpufreq(self):
         with tempfile.TemporaryDirectory() as temp:
             a = CpuFreqActuator(root=Path(temp) / "none", helper=lambda: None, access=lambda p, m: True)
