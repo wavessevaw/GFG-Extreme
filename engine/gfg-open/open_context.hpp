@@ -55,6 +55,7 @@ class OpenContext {
  size_t scheduledCount=0;
  void initTiming();
  void collectTiming();
+ void publishTiming(double prepassMs,double compositionMs) const;
  void prepare();
  void record(size_t count,bool history);
  void submitPrepass(VkFence completion);

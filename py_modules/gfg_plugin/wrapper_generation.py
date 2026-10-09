@@ -81,7 +81,7 @@ from .profile_storage import (
 )
 
 
-WRAPPER_FORMAT_VERSION = 84
+WRAPPER_FORMAT_VERSION = 85
 WRAPPER_FORMAT_MARKER = f"# mako-wrapper-format: {WRAPPER_FORMAT_VERSION}"
 HOST_COMPATIBILITY_MARKER = "# mako-host-compatibility: aarch64-passthrough-v1"
 DIAGNOSTICS_DEFAULT_MARKER = (
@@ -580,6 +580,8 @@ def script_configuration_lines(
     """Generate wrapper settings without repeating forced compatibility exports."""
     effective = effective_runtime_config(config)
     lines = get_script_generation_logic()(config)
+    if status_dir is not None:
+        lines.append("export GFG_OPEN_DIAGNOSTICS_DIR=" + shlex.quote(str(Path(status_dir) / "open-performance")))
     lines.append(f"export GFG_OPEN_FG={1 if config.get('open_frame_generation', False) and config.get('fg_backend', FG_BACKEND_GFG) == FG_BACKEND_GFG else 0}")
     if config.get("fg_backend", FG_BACKEND_GFG) != FG_BACKEND_GFG:
         # Renderer v4 already supports these environment overrides. They are the

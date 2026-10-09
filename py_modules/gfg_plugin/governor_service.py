@@ -1763,7 +1763,8 @@ class GovernorService:
                              "layer_installed": bool(self.frame_os_layer_dir and frame_os_layer.is_staged(self.frame_os_layer_dir)),
                              "layer_error": self.frame_os_layer_error,
                              **{k: v for k, v in self.frame_os.last.items() if k != "input"}}
-        value["power_split"] = {**(self._status.get("power_split") or {}), "setting": self._power_split_enabled()}
+        value["power_split"] = {**(self._status.get("power_split") or {}), "setting": self._power_split_enabled(),
+                                "control": self.cpu.status()}
         value["extreme"] = self._status.get("extreme") or {"enabled": False, "state": "OFF"}
         value["scale_blocked"] = (("game-ignores-render-scale" if self._scale_blocked == extreme_policy.GAME_IGNORES_SCALE
                                    else self._scale_blocked)

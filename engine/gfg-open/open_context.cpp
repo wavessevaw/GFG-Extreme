@@ -5,6 +5,11 @@
 #include <iostream>
 #include <stdexcept>
 #include <functional>
+#include <fstream>
+#include <iomanip>
+#include <filesystem>
+#include <chrono>
+#include <unistd.h>
 #include <vulkan/vulkan_core.h>
 namespace gfg {
 namespace {
@@ -98,8 +103,28 @@ void OpenContext::initTiming(){
  }
  if(!queries){
   budget.bypass=true;
+  publishTiming(0,0);
   std::clog<<"GFG Open: performance-fallback=real-frame reason=gpu-timing-unavailable; select legacy FG and restart for interpolation\n";
  }
+}
+void OpenContext::publishTiming(double prepassMs,double compositionMs) const{
+ const char* dir=std::getenv("GFG_OPEN_DIAGNOSTICS_DIR");
+ if(!dir||!*dir)return;
+ try{
+  std::filesystem::path base(dir);std::filesystem::create_directories(base);
+  const auto name=std::to_string(getpid())+".json";
+  const auto path=base/name,tmp=base/(name+".tmp");
+  std::ofstream out(tmp);
+  const auto now=std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+  out<<std::setprecision(17)<<"{\"backend\":\"color-flow-v2\",\"pid\":"<<getpid()
+     <<",\"timing_available\":"<<(queries?"true":"false")
+     <<",\"prepass_ms\":"<<prepassMs<<",\"composition_ms\":"<<compositionMs
+     <<",\"gpu_compute_ms\":"<<prepassMs+compositionMs<<",\"budget_ms\":"<<GpuBudget::limitMs
+     <<",\"passthrough\":"<<(budget.bypass?"true":"false")<<",\"samples\":"<<budget.samples
+     <<",\"source_resolution\":["<<extent.width<<","<<extent.height<<"]"
+     <<",\"motion_tiles\":["<<tiles.width<<","<<tiles.height<<"],\"updated_unix_s\":"<<now<<"}\n";
+  out.close();if(out)std::filesystem::rename(tmp,path);
+ }catch(...){ /* Diagnostics must never disrupt rendering. */ }
 }
 OpenContext::~OpenContext(){
  if(queries&&destroyQueries)destroyQueries(v.dev(),queries,nullptr);
@@ -111,8 +136,10 @@ void OpenContext::collectTiming(){
  const uint64_t mask=timestampBits>=64?~uint64_t(0):(uint64_t(1)<<timestampBits)-1;
  double ticks=double((times[1]-times[0])&mask);
  for(size_t i=2;i<times.size();i+=2)ticks+=double((times[i+1]-times[i])&mask);
+ const double prepassMs=double((times[1]-times[0])&mask)*double(timestampPeriod)/1e6;
  const double ms=ticks*double(timestampPeriod)/1e6;
  const bool was=budget.bypass;budget.observe(ms);
+ if((!was&&budget.bypass)||budget.samples%120==1)publishTiming(prepassMs,ms-prepassMs);
  if(!was&&budget.bypass)std::clog<<"GFG Open: performance-fallback=real-frame reason=gpu-budget gpu_ms="<<ms<<" limit_ms="<<GpuBudget::limitMs<<"; select legacy FG and restart for interpolation\n";
  else if(budget.samples%120==1)std::clog<<"GFG Open: gpu_ms="<<ms<<" limit_ms="<<GpuBudget::limitMs<<" passthrough="<<budget.bypass<<"\n";
 }
