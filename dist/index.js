@@ -634,13 +634,14 @@ function MiniRing({ value, max, text, displayText, label, live, estimate, fixed 
 }
 function energySavingsText(cap, maximum = 15) {
   if (typeof cap !== "number" || !Number.isFinite(cap) || cap < 0 || typeof maximum !== "number" || !Number.isFinite(maximum) || maximum <= 0) return "\u2014";
-  const stockMaximum = Math.min(maximum, 15);
+  const stockMaximum = maximum;
   return Math.round(Math.max(0, Math.min(100, 100 * (stockMaximum - cap) / stockMaximum))) + "%";
 }
 function observedEnergyText(power = {}) {
   const current = power.observed_tdp_w != null ? power.observed_tdp_w : power.current_tdp_w;
   const caps = [current, power.observed_fast_w].filter((v) => typeof v === "number" && Number.isFinite(v) && v >= 0);
-  const maximum = typeof power.maximum_tdp_w === "number" && Number.isFinite(power.maximum_tdp_w) && power.maximum_tdp_w > 0 ? power.maximum_tdp_w : 15;
+  const candidate = power.gamescope_max_tdp_w != null ? power.gamescope_max_tdp_w : power.maximum_tdp_w;
+  const maximum = typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0 ? candidate : 15;
   return caps.length ? energySavingsText(Math.max(...caps), maximum) : "\u2014";
 }
 function FrameOsCard({ fo, power }) {
@@ -704,7 +705,7 @@ function SessionRings({ ls, target }) {
       { className: "rings", style: { marginTop: 10 } },
       h(MiniRing, { value: b.response, max: 50, text: signed(b.response, "\u2212"), label: "Response", live: true, estimate: b.estimate }),
       h(MiniRing, { value: b.frames, max: 50, text: signed(b.frames, "+"), label: "Frames", live: true, estimate: b.estimate }),
-      h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "\u2212" : "") + Math.abs(Math.round(b.energy)) + "%", displayText: energySavingsText(ls.avg_tdp_w, ls.maximum_tdp_w || 15), label: "Energy", live: true, estimate: b.estimate })
+      h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "\u2212" : "") + Math.abs(Math.round(b.energy)) + "%", displayText: energySavingsText(ls.avg_tdp_w, ls.energy_reference_w || ls.maximum_tdp_w || 15), label: "Energy", live: true, estimate: b.estimate })
     ) : null
   );
 }
