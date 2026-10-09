@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from .governor_telemetry import TelemetryObserver
 
-CURRENT_VERSION = "1.6.3"  # kept in step by scripts/bump_version.py
+CURRENT_VERSION = "1.6.4"  # kept in step by scripts/bump_version.py
 
 
 def _percentile(values: List[float], pct: float) -> Optional[float]:
@@ -162,23 +162,35 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
 
 
 def extreme_summary(samples: List[Dict[str, Any]], events: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Extreme (1.6): ceiling, the highest TDP written, render scales the renderer confirmed."""
-    rows = [r.get("extreme") for r in samples if isinstance(r.get("extreme"), dict)]
-    if not rows:
+    """Both observed PPT channels, including transitions before a point is confirmed."""
+    samples = [r for r in samples if isinstance(r.get("extreme"), dict)]
+    if not samples:
         return None
+    rows = [r["extreme"] for r in samples]
     ceilings = [(r.get("ceiling") or {}).get("ceiling_w") for r in rows]
     ceilings = [c for c in ceilings if isinstance(c, (int, float))]
-    # Only caps GFG wrote: owned, with a live point.  Before that the cap read is the player's own
-    # (an unlocked BIOS: 20 W), which is not an Extreme write.
-    tdps = [r.get("tdp") for r in samples if isinstance(r.get("extreme"), dict) and r.get("tdp_owned")
-            and r.get("point") and isinstance(r.get("tdp"), (int, float))]
+    observed, owned = [], []
+    above = owned_above = 0
+    for sample in samples:
+        caps = [sample[k] for k in ("tdp", "tdp_fast")
+                if isinstance(sample.get(k), (int, float))]
+        observed.extend(caps)
+        if sample.get("tdp_owned"):
+            owned.extend(caps)
+        ceiling = (sample["extreme"].get("ceiling") or {}).get("ceiling_w")
+        if caps and isinstance(ceiling, (int, float)) and max(caps) > ceiling + 0.05:
+            above += 1
+            owned_above += bool(sample.get("tdp_owned"))
     applied = [r.get("applied") or {} for r in rows]
     scales = Counter(str(a.get("render_pct")) for a in applied if a.get("render_pct") is not None)
     return {
         "samples": len(rows),
         "states": dict(Counter(str(r.get("state")) for r in rows)),
         "ceiling_w": min(ceilings) if ceilings else None,
-        "max_tdp_w": max(tdps) if tdps else None,
+        "max_tdp_w": max(owned) if owned else None,
+        "max_observed_tdp_w": max(observed) if observed else None,
+        "above_ceiling_samples": above,
+        "owned_above_ceiling_samples": owned_above,
         "confirmed_scales": dict(scales),
         "acknowledged": sum(1 for e in events if e.get("event") in ("render-scale-acknowledged", "extreme-scale-acknowledged")),
         "not_acknowledged": sum(1 for e in events if e.get("event") in ("render-scale-not-acknowledged", "extreme-scale-not-acknowledged")),
@@ -303,7 +315,8 @@ def frame_os_summary(samples: List[Dict[str, Any]], processes_json: str) -> Opti
         "swapchain_recreations": max((x.get("swapchain_recreations") or 0 for x in layer), default=0),
         "levels": dict(Counter(str(r.get("level")) for r in rows if r.get("level"))),
         "input_sources": dict(Counter(str((r.get("input") or {}).get("source")) for r in rows if r.get("input"))),
-        "input_gamepads": max(((r.get("input") or {}).get("gamepads") or 0 for r in rows), default=0),
+        "input_gamepads": max(((r.get("input") or {}).get("gamepads") for r in rows
+                              if isinstance((r.get("input") or {}).get("gamepads"), (int, float))), default=None),
         "input_events": max(((r.get("input") or {}).get("events") or 0 for r in rows), default=0),
         # the in-game A/B check: the last sample holds the session's pairs so far
         "ab": next((r.get("proof") for r in reversed(rows) if isinstance(r.get("proof"), dict)), None),
@@ -431,19 +444,35 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
         parts = []
         for metric in ("response", "frames", "energy"):
             r = ab.get(metric) or {}
-            if r.get("n"):
-                interval = f" ({r['low']}..{r['high']})" if r.get("low") is not None else ""
-                parts.append(f"{metric} {r['mean']:+}%{interval} over {r['n']} pair{'s' if r['n'] != 1 else ''}")
+            if r.get("n") and isinstance(r.get("mean"), (int, float)):
+                session_n = r.get("session_n")
+                current = r.get("session")
+                if isinstance(current, dict) and current.get("n"):
+                    shown, scope = current, "current session"
+                elif session_n == 0:
+                    shown, scope = r, "historical; no pairs in this session"
+                elif isinstance(session_n, int) and session_n == r["n"]:
+                    shown, scope = r, "current session"
+                elif isinstance(session_n, int):
+                    shown, scope = r, f"history + current session; {session_n} current pairs"
+                else:
+                    shown, scope = r, "session provenance unknown"
+                interval = f" ({shown['low']}..{shown['high']})" if shown.get("low") is not None else ""
+                confidence = "; preliminary" if shown.get("measured") is False else ""
+                parts.append(f"{metric} {shown['mean']:+}%{interval} over {shown['n']} "
+                             f"pair{'s' if shown['n'] != 1 else ''} [{scope}{confidence}]")
         if parts:
-            out.append("Frame OS A/B in game (Act vs. the same moment without it): " + "; ".join(parts)
-                       + f"; control windows {round(100 * fo.get('ab_control_share', 0))}% of samples.")
+            out.append("Frame OS A/B telemetry (Act vs. control): " + "; ".join(parts)
+                       + f"; control windows {round(100 * fo.get('ab_control_share', 0), 1)}% of samples.")
+            if (ab.get("response") or {}).get("n"):
+                out.append("Frame OS response is an internal pacing/freshness metric, not independently measured input-to-display latency.")
         by_level = fo.get("by_level") or {}
         if by_level:
             parts = []
             for level in ("boost", "calm", "rest"):
                 row = by_level.get(level)
                 if row:
-                    parts.append(f"{level}: {row['samples']} s, {row['real_fps']} real, freshness "
+                    parts.append(f"{level}: {row['samples']} samples, {row['real_fps']} real, freshness "
                                  f"{row['freshness_ms']} ms, output p5 {row['output_p5']}"
                                  + (" (acting)" if row["acting_share"] >= 0.5 else ""))
             out.append("Frame OS by decision — " + "; ".join(parts) + ".")
@@ -457,7 +486,8 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
                            f"{fo.get('input_gamepads')} gamepads open): real-frame decisions stayed at rest.")
             else:
                 out.append(f"Frame OS input sensor: {fo['input_events']} gamepad events from "
-                           f"{fo.get('input_gamepads')} gamepads; decisions {fo.get('levels')}.")
+                           f"{fo.get('input_gamepads') if fo.get('input_gamepads') is not None else 'unknown number of'} "
+                           f"gamepads; decisions {fo.get('levels')}.")
     split = report.get("power_split")
     if split:
         reasons = split.get("reasons") or {}
@@ -494,9 +524,13 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
     if ext:
         text = (f"Extreme: ceiling {ext['ceiling_w']} W" if ext.get("ceiling_w") is not None else "Extreme: ceiling unknown")
         if ext.get("max_tdp_w") is not None:
-            text += f", highest cap read {ext['max_tdp_w']} W"
-            if ext.get("ceiling_w") is not None and ext["max_tdp_w"] > ext["ceiling_w"] + 0.05:
-                text += " (ABOVE THE CEILING: a bug or another tool)"
+            text += f", highest cap read while owned {ext['max_tdp_w']} W"
+            if ext.get("owned_above_ceiling_samples"):
+                text += f" (ABOVE THE CEILING in {ext['owned_above_ceiling_samples']} owned samples)"
+        if ext.get("max_observed_tdp_w") is not None:
+            text += (f"; highest observed cap {ext['max_observed_tdp_w']} W; "
+                     f"{ext['above_ceiling_samples']} samples above their contemporaneous ceiling")
+        # Readback alone does not establish who wrote a cap, even while GFG claims ownership.
         scales = ", ".join(f"{k}%" for k in sorted(ext.get("confirmed_scales") or {}, key=lambda k: -float(k)))
         text += f"; render scales confirmed by the renderer: {scales or 'none'}"
         if ext.get("not_acknowledged"):

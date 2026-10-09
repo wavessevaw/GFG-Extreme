@@ -221,3 +221,19 @@ class RunnerProofTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProofProvenanceTests(unittest.TestCase):
+    def test_current_and_prior_statistics_are_separate(self):
+        meter = proof.ProofMeter()
+        meter.load({"response": [40.0, 42.0, 44.0]})
+        result = meter.summary()["response"]
+        self.assertEqual((result["n"], result["session_n"]), (3, 0))
+        self.assertEqual(result["historical"]["mean"], 42.0)
+        self.assertIsNone(result["session"]["mean"])
+        meter.pairs["response"].append(12.0)
+        result = meter.summary()["response"]
+        self.assertEqual((result["n"], result["session_n"]), (4, 1))
+        self.assertEqual(result["session"]["mean"], 12.0)
+        self.assertFalse(result["session"]["measured"])
+        self.assertEqual(result["historical"]["mean"], 42.0)
