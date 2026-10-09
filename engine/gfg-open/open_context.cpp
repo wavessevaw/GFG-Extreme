@@ -161,7 +161,7 @@ void OpenContext::collectTiming(){
  if((!was&&budget.bypass)||(wasProbe&&!budget.probing)||budget.samples%120==1)publishTiming(prepassMs,ms-prepassMs);
  if(!was&&budget.bypass)std::clog<<"GFG Open: performance-fallback=real-frame reason=gpu-budget gpu_ms="<<ms<<" limit_ms="<<budget.currentLimitMs<<"; select legacy FG and restart for interpolation\n";
  else if(wasProbe&&!budget.probing)std::clog<<"GFG Open: recovery="<<(budget.bypass?"retry-later":"interpolation-restored")<<" gpu_ms="<<ms<<" next_probe_frames="<<budget.cooldownFrames<<"\n";
- else if(budget.samples%120==1)std::clog<<"GFG Open: gpu_ms="<<ms<<" limit_ms="<<GpuBudget::limitMs<<" passthrough="<<budget.passthrough()<<" recovery_probe="<<budget.probing<<" next_probe_frames="<<budget.cooldownFrames<<"\n";
+ else if(budget.samples%120==1)std::clog<<"GFG Open: gpu_ms="<<ms<<" limit_ms="<<budget.currentLimitMs<<" passthrough="<<budget.passthrough()<<" recovery_probe="<<budget.probing<<" next_probe_frames="<<budget.cooldownFrames<<"\n";
 }
 void OpenContext::prepare(){
  if(scheduled&&!fence.wait(v,250000000))throw std::runtime_error("GFG Open previous-work fence timed out");
