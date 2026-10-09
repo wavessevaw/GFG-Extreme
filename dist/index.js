@@ -607,7 +607,7 @@ function HeroTop({ layout, onTap, value, max, label, sub, d, wolf }) {
   return h("div", { className: "hero-col" }, tap(h(Ring, { value, max, label, sub, cls: x.trim(), wolf })), status());
 }
 var ringHue = (v, max) => v < 0 ? 0 : 25 + 115 * Math.min(1, Math.abs(v) / max);
-function MiniRing({ value, max, text, label, live, estimate, fixed }) {
+function MiniRing({ value, max, text, displayText, label, live, estimate, fixed }) {
   const r = 26, w = 4, size = 2 * (r + w), c = 2 * Math.PI * r;
   const has = value != null;
   const f = has ? Math.min(1, Math.abs(value) / max) : 0;
@@ -627,12 +627,23 @@ function MiniRing({ value, max, text, label, live, estimate, fixed }) {
         glow ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeOpacity: 0.22, strokeWidth: w + 4, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null,
         has ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeWidth: w, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null
       ),
-      h("div", { className: "mnum" + (estimate || !has ? " dim" : "") }, has ? text : "\u2014")
+      h("div", { className: "mnum" + (estimate || !has ? " dim" : "") }, displayText !== void 0 ? displayText : has ? text : "\u2014")
     ),
     h("div", { className: "mlab" }, label)
   );
 }
-function FrameOsCard({ fo }) {
+function energySavingsText(cap, maximum = 15) {
+  if (typeof cap !== "number" || !Number.isFinite(cap) || cap < 0 || typeof maximum !== "number" || !Number.isFinite(maximum) || maximum <= 0) return "\u2014";
+  const stockMaximum = Math.min(maximum, 15);
+  return Math.round(Math.max(0, Math.min(100, 100 * (stockMaximum - cap) / stockMaximum))) + "%";
+}
+function observedEnergyText(power = {}) {
+  const current = power.observed_tdp_w != null ? power.observed_tdp_w : power.current_tdp_w;
+  const caps = [current, power.observed_fast_w].filter((v) => typeof v === "number" && Number.isFinite(v) && v >= 0);
+  const maximum = typeof power.maximum_tdp_w === "number" && Number.isFinite(power.maximum_tdp_w) && power.maximum_tdp_w > 0 ? power.maximum_tdp_w : 15;
+  return caps.length ? energySavingsText(Math.max(...caps), maximum) : "\u2014";
+}
+function FrameOsCard({ fo, power }) {
   const b = fo.benefit;
   if (!fo.enabled || !b) return null;
   const est = !!b.estimate;
@@ -654,7 +665,7 @@ function FrameOsCard({ fo }) {
       { className: "rings" },
       h(MiniRing, { value: resp, max: 50, text: resp == null ? "" : (resp >= 0 ? "\u2212" : "+") + Math.abs(Math.round(resp)) + "%", label: "Response", live: level !== "rest", estimate: est }),
       h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "\u2212") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est }),
-      h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), label: "Energy", live: level === "rest", estimate: est })
+      h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), displayText: observedEnergyText(power), label: "Energy", live: level === "rest", estimate: est })
     ),
     fo.mode === "act" ? h("div", { className: "abline" }, proofLine(fo.proof, b.measured)) : null,
     fo.mode === "act" && learnedLine(fo.game) ? h("div", { className: "abline" }, learnedLine(fo.game)) : null
@@ -693,7 +704,7 @@ function SessionRings({ ls, target }) {
       { className: "rings", style: { marginTop: 10 } },
       h(MiniRing, { value: b.response, max: 50, text: signed(b.response, "\u2212"), label: "Response", live: true, estimate: b.estimate }),
       h(MiniRing, { value: b.frames, max: 50, text: signed(b.frames, "+"), label: "Frames", live: true, estimate: b.estimate }),
-      h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "\u2212" : "") + Math.abs(Math.round(b.energy)) + "%", label: "Energy", live: true, estimate: b.estimate })
+      h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "\u2212" : "") + Math.abs(Math.round(b.energy)) + "%", displayText: energySavingsText(ls.avg_tdp_w, ls.maximum_tdp_w || 15), label: "Energy", live: true, estimate: b.estimate })
     ) : null
   );
 }
@@ -951,7 +962,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
     ),
     xt && s.enabled ? h(ExtremeCard, { x, profile, refresh }) : null,
     !xt && s.enabled && s.extreme_offer && !offerHidden ? h(ExtremeOffer, { o: s.extreme_offer, onTry: () => setMode("extreme"), onHide: () => setOfferHidden(true) }) : null,
-    s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os }) : null,
+    s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os, power: s.power }) : null,
     h(
       Focusable,
       { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? void 0 : toggle },
