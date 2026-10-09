@@ -141,3 +141,42 @@ def matches(point: Dict[str, Any], summary: Dict[str, Any]) -> bool:
         and float(p5) >= float(point["base_target_fps"]) * 1.05
         and int(point["render_scale_pct"]) == 100
     )
+
+
+def confirmation_evidence(req: Request, observer: Any, *, span_s: float = 8.0) -> Dict[str, Any]:
+    """Fresh delivered cadence for a rejected request, never an explanation inferred from its name."""
+    evidence = {
+        "requested_real_fps": req.point.base_target_fps,
+        "requested_multiplier": req.point.multiplier,
+        "requested_output_fps": req.point.target_output_fps,
+        "requested_render_pct": req.point.render_scale_pct,
+        "renderer_applied": False, "samples": 0, "span_s": 0.0,
+        "delivered_real_fps": None, "delivered_output_fps": None,
+        "delivered_multiplier": None,
+    }
+    if observer.session_generation != req.generation:
+        evidence["basis"] = "telemetry-session-changed"
+        return evidence
+    applied = [event for event in observer.application_events_after(req.event_mark)
+               if event.operation in APPLIED_OPERATIONS]
+    samples = observer.samples_after_event(applied[-1].event_seq if applied else req.event_mark)
+    evidence["renderer_applied"] = bool(applied)
+    evidence["basis"] = "post-application" if applied else "post-request"
+    if not samples:
+        return evidence
+    end = samples[-1].monotonic
+    tail = [sample for sample in samples if 0 <= end - sample.monotonic <= span_s]
+    if not tail:
+        return evidence
+    evidence["samples"] = len(tail)
+    evidence["span_s"] = round(tail[-1].monotonic - tail[0].monotonic, 3)
+    from statistics import median
+    for field, attribute in (("delivered_real_fps", "real_fps"),
+                             ("delivered_output_fps", "output_fps"),
+                             ("delivered_multiplier", "effective_multiplier")):
+        values = [getattr(sample, attribute, None) for sample in tail]
+        values = [float(value) for value in values
+                  if isinstance(value, (int, float)) and math.isfinite(float(value))]
+        if values:
+            evidence[field] = round(median(values), 3)
+    return evidence

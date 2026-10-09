@@ -205,8 +205,46 @@ static void test_predictive_ignores_noise(void)
     }
 }
 
+static void test_stall_shield_does_not_add_a_frame_after_a_hitch(void)
+{
+    gfg_policy p;
+    gfg_sched s;
+    gfg_policy_defaults(&p);
+    p.real_target_hz = 30;
+    p.max_wait_ms = 5;
+    p.stall_shield = 1;
+    gfg_sched_init(&s, &p);
+    int64_t now = 1000000000;
+    gfg_sched_frame_start(&s, now);
+    now = gfg_sched_present(&s, now + 2000000);
+    int64_t ready = now + 201000000;
+    CHECK(gfg_sched_present(&s, ready) == ready, "shield added a wait after a long stall");
+    CHECK(s.next_slot_ns == ready + s.period_ns, "shield did not re-anchor");
+}
+
+static void test_stall_shield_caps_present_holds(void)
+{
+    gfg_policy p;
+    gfg_sched s;
+    gfg_policy_defaults(&p);
+    p.real_target_hz = 30;
+    p.max_wait_ms = 5;
+    p.stall_shield = 1;
+    gfg_sched_init(&s, &p);
+    int64_t now = 1000000000;
+    for (int i = 0; i < 200; i++) {
+        int64_t wait = gfg_sched_frame_start(&s, now);
+        int64_t ready = now + wait + 2000000;
+        int64_t release = gfg_sched_present(&s, ready);
+        CHECK(release >= ready && release - ready <= 5000000, "unbounded present hold");
+        now = release;
+    }
+}
+
 int main(void)
 {
+    test_stall_shield_does_not_add_a_frame_after_a_hitch();
+    test_stall_shield_caps_present_holds();
     test_tick_shaping_removes_queueing_latency();
     test_spiky_game_keeps_its_frame_rate();
     test_heavy_game_is_never_delayed();

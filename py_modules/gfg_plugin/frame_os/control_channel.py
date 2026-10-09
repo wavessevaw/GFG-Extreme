@@ -93,7 +93,7 @@ class ControlChannel:
 
     def write_policy(self, *, enabled: bool, real_hz: float, tick_shaping: bool = True, pacing: bool = True,
                      margin_ms: float = 0.0, max_wait_ms: float = 0.0, mode: str = "observe",
-                     generation: int = 0) -> bool:
+                     generation: int = 0, stall_shield: bool = False) -> bool:
         if not self.open():
             return False
         m = self._map
@@ -102,11 +102,11 @@ class ControlChannel:
             seq += 1                                    # a crashed writer left it odd
         SEQ.pack_into(m, POLICY_SEQ_OFF, (seq + 1) & 0xFFFFFFFF)
         POLICY.pack_into(m, POLICY_OFF, int(enabled), int(tick_shaping), int(pacing), MODES[mode],
-                         float(real_hz), float(margin_ms), float(max_wait_ms), int(generation) & 0xFFFFFFFF, 0,
+                         float(real_hz), float(margin_ms), float(max_wait_ms), int(generation) & 0xFFFFFFFF, int(stall_shield),
                          time.monotonic_ns())
         SEQ.pack_into(m, POLICY_SEQ_OFF, (seq + 2) & 0xFFFFFFFF)
         self._policy = dict(enabled=enabled, real_hz=real_hz, tick_shaping=tick_shaping, pacing=pacing,
-                            margin_ms=margin_ms, max_wait_ms=max_wait_ms, mode=mode, generation=generation)
+                            margin_ms=margin_ms, max_wait_ms=max_wait_ms, mode=mode, generation=generation, stall_shield=stall_shield)
         return True
 
     def heartbeat(self) -> bool:
@@ -124,7 +124,7 @@ class ControlChannel:
             values = TELEMETRY.unpack_from(m, TELEMETRY_OFF)
             if SEQ.unpack_from(m, TELEMETRY_SEQ_OFF)[0] == before:
                 (frames, hits, misses, p50, q, margin, delay, fresh, iv50, iv95, last, gen,
-                 recreations, hold, acquire_block, last_return, passthrough, _rsv, engine) = values
+                 recreations, hold, acquire_block, last_return, passthrough, features, engine) = values
                 pid = HEADER.unpack_from(m, 0)[3]
                 return {"frames": frames, "hits": hits, "misses": misses, "cost_p50_ms": p50,
                         "cost_q_ms": q, "margin_ms": margin, "avg_delay_ms": delay,
@@ -135,6 +135,9 @@ class ControlChannel:
                         "last_present_return_ns": last_return, "passthrough": bool(passthrough),
                         "engine": engine.split(b"\0", 1)[0].decode("ascii", "replace"),
                         "writer_pid": pid,
+                        "features": {"tick_shaping": bool(features & 1), "stall_shield": bool(features & 2)},
+                        "active_features": {"tick_shaping": bool(features & (1 << 16)),
+                                            "stall_shield": bool(features & (1 << 17))},
                         "live": last > 0 and abs(time.monotonic_ns() - last) <= LIVE_NS and pid_alive(pid)}
         return None
 

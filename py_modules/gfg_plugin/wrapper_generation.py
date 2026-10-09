@@ -91,6 +91,7 @@ FRAME_OS_LAYER_NAME = "VK_LAYER_GFG_pacer"
 RING_HUD_LAYER_NAME = "VK_LAYER_GFG_hud"
 
 REQUIRED_WRAPPER_EXPORTS = (
+    "export GFG_MANAGED_GAME=1",
     f"export {PRESENT_ACQUIRE_TIMEOUT_ENV}=",
     f"export {PRESENT_DIAGNOSTICS_ENV}=",
     f"export {MAKO_LAYER_ENABLE_ENV}=1",
@@ -280,6 +281,7 @@ def governor_hud_stack_lines(mangohud_manifest: str, mangohud_manifest32: str) -
 def governor_overlay_selection_lines() -> list[str]:
     """Pick the overlay only while its owner lease is alive; else use Saved."""
     return [
+        'export GFG_MANAGED_GAME=1',
         'mako_governor_overlay_active=""',
         'if [ -n "${mako_governor_overlay:-}" ] && [ -r "$mako_governor_overlay" ]; then',
         "    mako_governor_launch=\"$(sed -n 's/^# gfg-governor-launch: //p' \"$mako_governor_overlay\" 2>/dev/null | head -n 1)\"",

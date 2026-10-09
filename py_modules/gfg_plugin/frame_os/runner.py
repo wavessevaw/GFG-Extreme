@@ -63,14 +63,18 @@ class FrameOsRunner:
         self.proof = ProofMeter()
         self.ab_control: Optional[str] = None
         # per game (Frame OS memory): Act effects the A/B proof ruled out in this game
+        self.latency_enabled = True
+        self.stall_shield_enabled = False
         self.game_disabled: Dict[str, bool] = {"shaping": False, "boost": False, "rest": False}
 
     # ---------------------------------------------------------- Governor side (1 Hz)
     def configure(self, *, enabled: bool, mode: str, output_hz: float, calm_real_hz: float,
-                  max_multiplier: float, calm_w: Optional[float]) -> None:
+                  max_multiplier: float, calm_w: Optional[float],
+                  latency_enabled: bool = True, stall_shield_enabled: bool = False) -> None:
         mode = mode if mode in MODES else "observe"
         was_enabled = self.enabled
         self.enabled, self.mode = bool(enabled), mode
+        self.latency_enabled, self.stall_shield_enabled = bool(latency_enabled), bool(stall_shield_enabled)
         if not self.enabled:
             return
         if not was_enabled:
@@ -179,13 +183,14 @@ class FrameOsRunner:
             interval = telemetry.get("present_interval_p50_ms")
             self.policy.note_delivered(now, 1000.0 / interval if interval else None)
         real_hz = decision.real_hz if acting and self.executor_active else self.policy.calm_real_hz
-        shaping = control != "no-shaping" and not self.game_disabled["shaping"]
-        wanted = (self.mode, round(real_hz, 3), shaping)
+        shaping = self.latency_enabled and control != "no-shaping" and not self.game_disabled["shaping"]
+        wanted = (self.mode, round(real_hz, 3), shaping, self.stall_shield_enabled)
         if wanted != self._published:
             # Tick shaping must be able to move a frame start through most of a real-frame slot:
             # at 30 real a one-refresh cap (11 ms) leaves two thirds of the queueing in place.
             published = self.channel.write_policy(enabled=True, real_hz=real_hz, mode=self.mode,
                                       tick_shaping=shaping, pacing=True, generation=self._bump(),
+                                      stall_shield=self.stall_shield_enabled,
                                       max_wait_ms=round(0.8 * 1000.0 / real_hz, 2) if real_hz > 0 else 0.0)
             self._published = wanted if published else None
         else:
@@ -196,6 +201,7 @@ class FrameOsRunner:
             "enabled": True, "mode": self.mode, "input": inp, "scene_change": cut,
             "decision": decision.to_dict(), "acting": acting, "published_real_hz": real_hz,
             "generation": self.generation, "telemetry": telemetry,
+            "latency_enabled": self.latency_enabled, "stall_shield_enabled": self.stall_shield_enabled,
             "acknowledged": self._published is not None and bool(telemetry.get("live"))
                             and telemetry.get("applied_generation") == self.generation,
             "input_sensor": self._sensor_status(inp), "ab_control": control,
