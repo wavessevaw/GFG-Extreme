@@ -180,6 +180,7 @@ def energy_savings_pct(tdp: Any, maximum_tdp: Any) -> Optional[float]:
     return max(0.0, min(100.0, 100.0 * (maximum_tdp - tdp) / maximum_tdp))
 
 
+
 def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
     """What to draw, left to right."""
     items: List[Dict[str, Any]] = []
@@ -198,27 +199,22 @@ def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
                       "rgb": effect_color(5, 30) if low else WHITE,
                       "text": f"{mins // 60}h{mins % 60:02d}" if mins >= 60 else f"{mins}M", "style": "val",
                       "label": "BATTERY"})
-    saved = energy_savings_pct(data.get("energy_tdp", data.get("tdp")),
-                               data.get("maximum_tdp", 15.0))
-    energy = {"kind": "ring", "size": 40, "w": 3.5,
-              "frac": saved / 100.0 if saved is not None else 0,
-              "rgb": effect_color(saved, 100) if saved is not None else GREY,
-              "opacity": 1.0, "text": f"{round(saved)}%" if saved is not None else "—",
-              "style": "ben", "label": "ENERGY"}
     fos = data.get("frame_os")
     if preset != "minimal" and fos:
         items.append({"kind": "sep"})
         est, level = bool(fos.get("estimate")), fos.get("level")
         for key, full, sign, label, live in (("response", 50, "-", "RESP", level != "rest"),
-                                             ("frames", 50, "+", "FRAMES", level == "boost")):
+                                             ("frames", 50, "+", "FRAMES", level == "boost"),
+                                             ("energy", 30, "", "ENERGY", level == "rest")):
             v = fos.get(key)
+            saving = energy_savings_pct(data.get("energy_tdp", data.get("tdp")), data.get("maximum_tdp", 15))
+            text_value = saving if key == "energy" else v
             items.append({"kind": "ring", "size": 40, "w": 3.5,
                           "frac": abs(v) / full if v is not None else 0,
                           "rgb": GREY if est or v is None else effect_color(v, full),
                           "opacity": 1.0 if (live or est) else 0.45,
-                          "text": _fmt_pct(v, sign) if v is not None else "—", "style": "ben",
+                          "text": _fmt_pct(text_value, sign) if text_value is not None else "—", "style": "ben",
                           "label": label})
-        items.append(energy)
         # A visible status in Standard as well as Detailed. "BOOST" is earned:
         # a requested policy is not the same as an acknowledged real-cadence gain.
         if fos.get("active") and fos.get("ab"):
@@ -240,8 +236,6 @@ def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
             else:
                 label, colour = "CALM", (223, 230, 242)
             items.append({"kind": "tag", "text": label, "rgb": colour})
-    elif preset != "minimal":
-        items.append(energy)
     ext = data.get("extreme")
     if preset != "minimal" and isinstance(ext, dict):
         # Extreme mode; the render scale only once the renderer confirmed it.

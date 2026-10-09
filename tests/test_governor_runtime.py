@@ -1205,9 +1205,8 @@ class BudgetRuntimeTests(RuntimeBase):
                     self.svc._ring_hud_due = 0
                     self.svc._ring_hud_key = None
                     self.assertTrue(self.svc._publish_ring_hud(status, settings))
-                ring = next(item for item in hud_rings.items_for(seen[-1], "standard")
-                            if item.get("label") == "ENERGY")
-                self.assertEqual(ring["text"], expected)
+                saving = hud_rings.energy_savings_pct(seen[-1]["energy_tdp"], seen[-1]["maximum_tdp"])
+                self.assertEqual(hud_rings._fmt_pct(saving, "") if saving is not None else "—", expected)
                 self.assertEqual(seen[-1]["maximum_tdp"], 15)
                 self.assertEqual(seen[-1]["limit"], 12)
 

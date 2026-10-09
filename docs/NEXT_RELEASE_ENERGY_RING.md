@@ -1,11 +1,5 @@
-# Следующий комплексный релиз: кольцо ENERGY
+# Energy number
 
-ENERGY в стандартном и подробном HUD показывает долю сэкономленного лимита TDP относительно штатного максимума консоли:
+Only the number inside ENERGY changes. Arc, opacity, colour, placement and Frame OS visibility retain their existing behaviour.
 
-`(максимальный TDP − текущий подтверждённый TDP) / максимальный TDP × 100%`.
-
-Для Steam Deck штатный максимум — 15 Вт: 12 Вт = 20%, 9 Вт = 40%, 15 Вт = 0%. Начальный пользовательский лимит и более низкий потолок текущего режима не меняют базу сравнения. Неокруглённые лимиты учитываются до округления итогового процента; учитывается больший из подтверждённых fast/slow PPT. Значение вне штатного максимума не выдаётся за экономию.
-
-Это процент снижения лимита мощности, а не измерение расхода батареи или накопленной энергии в Вт·ч. При отсутствии корректных данных HUD показывает «—». Кольцо не зависит от A/B-пар, включения Frame OS или его состояния boost/calm/rest.
-
-Частота обновления и кэширование HUD сохранены. Изменение включается в следующий комплексный релиз; отдельный релиз для этого исправления не создаётся.
+Number = max(0, min(100, (console maximum TDP - confirmed cap) / console maximum TDP * 100)). Deck maximum is 15 W; 12 W displays 20%. Use the higher of confirmed fast/slow caps and retain precision before formatting. Unknown cap displays an em dash. This is TDP headroom saved, not independently measured battery-energy savings.
