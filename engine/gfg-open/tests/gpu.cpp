@@ -68,6 +68,7 @@ int main(){
  VkCommandPoolCreateInfo cpc{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};cpc.queueFamilyIndex=family;cpc.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;VkCommandPool cmdpool;VKCHECK(vkCreateCommandPool(device,&cpc,nullptr,&cmdpool));
  VkCommandBufferAllocateInfo ca{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};ca.commandPool=cmdpool;ca.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;ca.commandBufferCount=1;VkCommandBuffer cmd;VKCHECK(vkAllocateCommandBuffers(device,&ca,&cmd));
  bool first=true;
+ uint64_t outputDigest=1469598103934665603ULL;
  auto dispatch=[&](int stage){
   std::array<uint32_t,8> order=stage==3?std::array<uint32_t,8>{0,1,4,5,6,3,7,8}:stage==0?std::array<uint32_t,8>{0,1,7,8,4,5,2,3}:std::array<uint32_t,8>{0,1,2,3,4,5,7,8};
   VkDescriptorBufferInfo bi{buffer,0,32};std::array<VkDescriptorImageInfo,8> ii{};std::array<VkWriteDescriptorSet,9> writes{};
@@ -83,6 +84,10 @@ int main(){
   VkMemoryBarrier read{VK_STRUCTURE_TYPE_MEMORY_BARRIER};read.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;read.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
   vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&read,0,nullptr,0,nullptr);
   VKCHECK(vkEndCommandBuffer(cmd));VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};submit.commandBufferCount=1;submit.pCommandBuffers=&cmd;VKCHECK(vkQueueSubmit(queue,1,&submit,0));VKCHECK(vkQueueWaitIdle(queue));
+  if(stage==3)for(uint32_t y=0;y<H;y++)for(uint32_t x=0;x<W*4;x++){
+   auto value=*(static_cast<unsigned char*>(images[6].map)+images[6].layout.offset+y*images[6].layout.rowPitch+x);
+   outputDigest=(outputDigest^value)*1099511628211ULL;
+  }
  };
  auto pixel=[&](int imageIndex,uint32_t x,uint32_t y){return static_cast<unsigned char*>(images[imageIndex].map)+images[imageIndex].layout.offset+y*images[imageIndex].layout.rowPitch+x*4;};
  auto fill=[&](int index,int shift,int cut){for(uint32_t y=0;y<H;y++)for(uint32_t x=0;x<W;x++){auto* q=pixel(index,x,y);int xx=int(x)-shift;unsigned char val=cut>=0?cut:static_cast<unsigned char>((xx*37+int(y)*53+xx*int(y)*7)&255);q[0]=q[1]=q[2]=val;q[3]=255;}};
@@ -159,6 +164,7 @@ int main(){
  p.timing[1]=1;p.timing[2]=1;p.timing[3]=1;memcpy(params,&p,32);
  fill(0,0,-1);fill(1,2,-1);dispatch(0);dispatch(1);dispatch(2);dispatch(3);
  for(uint32_t y=0;y<H;y++)for(uint32_t x=0;x<W;x++)assert(memcmp(pixel(6,x,y),pixel(1,x,y),4)==0);
+ std::cout<<"OUTPUT_DIGEST "<<std::hex<<outputDigest<<std::dec<<"\n";
  std::cout<<"GPU PASS: static, translation, fractional timestamps, occlusion, static overlay, scene-cut, initial history, odd extent\n";
  vkDeviceWaitIdle(device);vkDestroyCommandPool(device,cmdpool,nullptr);vkDestroyDescriptorPool(device,pool,nullptr);
  for(auto pipe:pipelines)vkDestroyPipeline(device,pipe,nullptr);vkDestroyPipelineLayout(device,pl,nullptr);vkDestroyDescriptorSetLayout(device,layout,nullptr);

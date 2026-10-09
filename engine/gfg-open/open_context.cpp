@@ -81,7 +81,7 @@ OpenContext::OpenContext(const vk::Vulkan& vk,ls::FileDescriptorScope& src,
  v.df().CmdPipelineBarrier(init.handle(),VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,0,nullptr,0,nullptr,transitions.size(),transitions.data());
  init.end(v);init.submit(v);
  initTiming();
- std::clog<<"GFG Open: backend=color-flow-v2 tile=16 search=16 selective-refinement=3 occlusion=bidirectional history=validated encoding=sdr8\n";
+ std::clog<<"GFG Open: backend=color-flow-v2 reference_patch_cache=on budget=source-quarter-capped-8ms tile=16 search=16 selective-refinement=3 occlusion=bidirectional history=validated encoding=sdr8\n";
 }
 void OpenContext::initTiming(){
  auto get=v.fi().GetDeviceProcAddr;
@@ -131,6 +131,8 @@ void OpenContext::publishTiming(double prepassMs,double compositionMs) const{
      <<",\"last_failed_probe_gpu_ms\":"<<lastFailedProbeGpuMs
      <<",\"budget_policy\":\"source-period-quarter-capped-8ms\""
      <<",\"recovery_budget_ms\":"<<budget.recoveryThresholdMs()
+     <<",\"interpolation_scheduled_outputs\":"<<interpolatedOutputs
+     <<",\"real_copy_scheduled_outputs\":"<<copiedOutputs
      <<",\"samples\":"<<budget.samples
      <<",\"source_resolution\":["<<extent.width<<","<<extent.height<<"]"
      <<",\"motion_tiles\":["<<tiles.width<<","<<tiles.height<<"],\"updated_unix_s\":"<<now<<"}\n";
@@ -217,6 +219,8 @@ void OpenContext::scheduleFrames(std::span<const float> timestamps){
   params.timing={timestamps.empty()?float(i+1)/float(count+1):timestamps[i],frame>0?1.f:0.f,0,budget.passthrough()?1.f:0.f};
   writeOutput(i,params);
  }
+ if(budget.passthrough()||frame==0)copiedOutputs+=count;
+ else interpolatedOutputs+=count;
  scheduledCount=count;
  record(count,false);submitPrepass(VK_NULL_HANDLE);
  for(size_t i=0;i<count;i++)commands[i][frame%2]->submit(v,{},ready.handle(),idx-1,{},shared.handle(),idx+i,i+1==count?fence.handle():VK_NULL_HANDLE);

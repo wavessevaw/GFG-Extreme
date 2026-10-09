@@ -61,4 +61,4 @@ s=s.replace(old,'''            else if (!(std::getenv("GFG_OPEN_FG") && std::str
                 dll = ls::findShaderDll();''')
 p.write_text(s)
 
-(root/"engine/VERSION").write_text("4.0.0-gfg.open.1\n")
+(root/"engine/VERSION").write_text("4.0.0-gfg.open.2\n")

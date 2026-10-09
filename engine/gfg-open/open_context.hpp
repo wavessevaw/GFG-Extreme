@@ -58,6 +58,7 @@ class OpenContext {
  float timestampPeriod=0;
  uint32_t timestampBits=0;
  size_t scheduledCount=0;
+ uint64_t interpolatedOutputs=0,copiedOutputs=0;
  void initTiming();
  void collectTiming();
  void publishTiming(double prepassMs,double compositionMs) const;
