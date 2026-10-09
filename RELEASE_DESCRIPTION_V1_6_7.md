@@ -2,7 +2,7 @@
 
 Release status: pre-release
 
-> **IN DEVELOPMENT — NOT RECOMMENDED FOR REGULAR PLAY.** GFG Open remains experimental and may reduce real FPS or introduce image artifacts. Use this build for testing; leave GFG Open disabled for regular play. Field recovery has not yet been verified on Steam Deck.
+> **IN DEVELOPMENT — NOT RECOMMENDED FOR REGULAR PLAY.** The **Extreme mode is BETA / EXPERIMENTAL**, and GFG Open remains experimental. Both are in development and are not recommended for regular play. GFG Open may reduce real FPS or introduce image artifacts. Use this build for testing; leave GFG Open disabled for regular play. Field recovery has not yet been verified on Steam Deck.
 
 This update addresses risks exposed by the first GFG Open field recording. That recording used Witcher 3 in Battery mode and showed a substantial real-FPS shortfall. It did not isolate shader cost from pacing or other effects.
 
@@ -12,6 +12,8 @@ This update addresses risks exposed by the first GFG Open field recording. That 
 - **Energy number:** uses the upper bound of SteamOS Manager's Gamescope/QAM TDP slider, with the hardware maximum as fallback. A 15 W cap under a 20 W slider maximum displays **25%**. Existing arcs, colours and layout are preserved. The value is cap savings, not measured battery savings.
 - **CPU recovery:** accepted helper writes retain ownership candidates when immediate readback is stale, so a late own cap is not classified as an external writer. Ordered restoration covers all policies; diagnostics expose observed and pending per-policy caps.
 - **A/B provenance:** live measured benefits use this session's control pairs; earlier-session values stay in historical diagnostics.
+
+Extreme is labelled BETA in the mode selector, with BETA / EXPERIMENTAL warnings in its description, booster card and invitation. The experimental label does not mean all planned boosters are implemented or applicable in every game.
 
 GFG Open remains experimental and opt-in. Native x86_64 SDR is supported; Flatpak uses the existing generator. This release does not claim that a twofold field regression is fully resolved without a comparable device retest. Vulkan image tests establish functional behaviour, not Steam Deck performance or end-to-end latency.
 
