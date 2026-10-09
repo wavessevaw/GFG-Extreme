@@ -25,7 +25,7 @@ jobs:
               names=z.namelist()
               print('FILES',json.dumps([{'name':n,'size':z.getinfo(n).file_size} for n in names]))
               for n in names:
-                  if n.endswith(('summary.txt','profile.json','system.json','power-sensors.json')) or '/open-performance/' in n:
+                  if n.endswith(('summary.txt','profile.json','system.json','power-sensors.json')) or n.startswith('open-performance/'):
                       print('FILE',n,z.read(n).decode(errors='replace')[:24000])
                   if n.endswith('plugin.log'):
                       text=z.read(n).decode(errors='replace')
@@ -47,5 +47,6 @@ jobs:
                       lines=z.read(n).decode(errors='replace').splitlines()
                       selected=[l for l in lines if any(w in l for w in ('GFG Open:','fixed-plan','adaptive-plan','privateOrderedTransport','present-mode','ordered-acquire-quarantine','generated_frame_capacity','backend scheduling failure'))]
                       print('DIAGNOSTIC operations',dict(collections.Counter(l.split('operation=',1)[1].split()[0] for l in lines if 'operation=' in l)))
+                      print('OPEN_ENGINE_LINES','\n'.join(l for l in lines if 'GFG Open:' in l))
                       print('DIAGNOSTIC_SELECTED','\n'.join(selected)[-35000:])
           PY
