@@ -81,7 +81,7 @@ class FlowTrial:
         def median(key):
             vals = [s[key] for s in samples if number(s.get(key)) is not None]
             return statistics.median(vals) if len(vals) >= FlowTrial.MIN_SAMPLES else None
-        return {"real": min(s["real"] for s in samples),
+        return {"n": len(samples), "real": min(s["real"] for s in samples),
                 "output": min(s["output"] for s in samples),
                 "draw": median("draw"), "gpu": median("gpu"),
                 "p95": max((s["p95"] for s in samples if number(s.get("p95")) is not None), default=None),
@@ -130,7 +130,7 @@ class FlowTrial:
                           "output_floor_change_pct": round(output_gain, 1),
                           "apu_draw_change_pct": round(-energy, 1) if energy is not None else None,
                           "gpu_busy_drop_pp": round(gpu, 1) if gpu is not None else None,
-                          "samples_per_window": self.MIN_SAMPLES}
+                          "samples_per_window": {name: window["n"] for name, window in self.windows.items()}}
         return accepted, reason if accepted else "no-useful-benefit"
 
     def step(self, *, now, context, mode, eligible, saved_flow, actual_flow, ack_seq,
