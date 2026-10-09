@@ -1,4 +1,4 @@
-"""Extreme (1.6) policy: the stock-power ceiling, sharpening, renderer acknowledgement, capabilities."""
+"""Extreme (1.6) policy: the device/player ceiling, sharpening, renderer acknowledgement, capabilities."""
 import json
 import sys
 import tempfile
@@ -23,13 +23,17 @@ SWAPCHAIN = ("I MAKO Renderer: present diagnostics: operation=swapchain-context-
 
 
 class CeilingTests(unittest.TestCase):
-    def test_stock_15_w_on_any_deck(self):
-        self.assertEqual(ex.power_ceiling(None, None)["ceiling_w"], 15.0)
-        self.assertEqual(ex.power_ceiling(20.0, 20.0), {"ceiling_w": 15.0, "source": "stock-limit", "user_w": 20.0})
+    def test_device_and_player_limits_not_global_15_w(self):
+        self.assertEqual(ex.power_ceiling(None, None), {"ceiling_w": None, "source": "unavailable", "user_w": None})
+        for watts in (15.0, 20.0, 100.0):
+            self.assertEqual(ex.power_ceiling(watts, watts),
+                             {"ceiling_w": watts, "source": "your-limit", "user_w": watts})
+        self.assertEqual(ex.power_ceiling(100.0, 20.0)["ceiling_w"], 20.0)
+        self.assertEqual(ex.power_ceiling(20.0, 100.0)["ceiling_w"], 20.0)
 
     def test_a_lower_player_limit_wins_and_is_never_raised(self):
         self.assertEqual(ex.power_ceiling(12.0, 15.0), {"ceiling_w": 12.0, "source": "your-limit", "user_w": 12.0})
-        self.assertEqual(ex.power_ceiling(15.0, 15.0)["source"], "stock-limit")
+        self.assertEqual(ex.power_ceiling(15.0, 15.0)["source"], "your-limit")
         self.assertEqual(ex.power_ceiling(float("nan"), 10.0)["ceiling_w"], 10.0)
 
     def test_fractional_limits_never_round_up(self):
@@ -50,9 +54,9 @@ class CeilingTests(unittest.TestCase):
             self.assertTrue(act.discover()["available"])
             act.claim()                          # an unlocked BIOS default of 20 W
             act.set_strict_ceiling_w(ex.power_ceiling(20.0, 25.0)["ceiling_w"])
-            act.set_tdp_w(19.0)                  # e.g. an Act boost on top of 15 W
-            self.assertEqual(int((hwmon / "power2_cap").read_text()), 15_000_000)
-            self.assertEqual(int((hwmon / "power1_cap").read_text()), 15_000_000,
+            act.set_tdp_w(22.0)                  # an Act boost cannot exceed inherited 20 W
+            self.assertEqual(int((hwmon / "power2_cap").read_text()), 20_000_000)
+            self.assertEqual(int((hwmon / "power1_cap").read_text()), 20_000_000,
                              "the short-duration PPT must respect the same ceiling")
             act.restore_if_owned()
             self.assertEqual(int((hwmon / "power2_cap").read_text()), 20_000_000, "the player's value back")
