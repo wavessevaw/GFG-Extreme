@@ -716,7 +716,7 @@ EXTREME_START_REAL_FPS = 45   # and starts at x2 at 90 Hz, at the full normal bu
 def extreme_points(target_output_fps: int) -> tuple[OperatingPoint, ...]:
     """Extreme ladder: more real frames is better, resolution is the currency.
 
-    Every normal point (30 real .. native) comes at 80 %, 90 % and full render scale, ordered by
+    Every normal point (target / 4 real .. native) comes at 80 %, 90 % and full render scale, ordered by
     (real cadence, scale): ``30x3 < 36x2.5@80 < 36x2.5@90 < 36x2.5 < 45x2@80 ...``.  The upgrade
     path (idx + 1) therefore buys more real frames with a lower render resolution first and wins the
     resolution back on the next step; the guard (idx - 1) gives up resolution before real frames.
