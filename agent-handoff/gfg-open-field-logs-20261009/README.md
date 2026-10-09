@@ -6,6 +6,8 @@
 
 Steam Deck OLED: the overlay reported around **90 FPS** while the image felt like **30–40 FPS**. The owner requested an actual code fix, **not further experimental releases that depend on their repeated manual testing**. They also requested removal of the universal Extreme 15 W cap: retain device-specific, inherited fast/slow PPT and hardware safety limits (already merged in PR #90 and included in v1.6.10). Do not ask them for another log just to defer the fix.
 
+Additional field recording: **2026-10-09 23:09:50** (${name}, 123902 bytes); examine independently without assuming it proves smoothness fixed.
+
 These recordings cover versions and configurations that changed during testing; inspect `plugin.log`, `summary.txt`, `profile.json`, and `open-performance/*.json` **per individual archive** instead of attributing all records to a single stable build.
 
 ## Original ZIPs
@@ -21,6 +23,7 @@ All original files are included byte-for-byte. Every SHA-256 and Git blob SHA-1 
 | [GFG-Extreme-log-20261009-203639.zip](./GFG-Extreme-log-20261009-203639.zip) | 738165 | `671bfa53583a056659edec2783cfbfae234168f7f334a5417add7639de4a37d1` |
 | [GFG-Extreme-log-20261009-213955.zip](./GFG-Extreme-log-20261009-213955.zip) | 98124 | `3ad88386f23af46e017571cef85e3abb86bc4ec4245a3f72b51af2b870ff7533` |
 | [GFG-Extreme-log-20261009-213955(1).zip](./GFG-Extreme-log-20261009-213955(1).zip) | 98124 | `3ad88386f23af46e017571cef85e3abb86bc4ec4245a3f72b51af2b870ff7533` |
+| [GFG-Extreme-log-20261009-230950.zip](./GFG-Extreme-log-20261009-230950.zip) | 123902 | `b8f4fad63e6f5960ea1113c5b3fb2619ffe12fd3b6f9ef35fa7cf60b04a7c535` |
 
 To verify after checkout:
 ```sh
