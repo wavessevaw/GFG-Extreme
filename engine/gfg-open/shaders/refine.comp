@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#version 450
+layout(local_size_x=8,local_size_y=8) in;
+layout(std140,binding=0) uniform Params { uvec4 size; vec4 timing; } p;
+layout(rgba8,binding=48) readonly uniform image2D previousImage;
+layout(rgba8,binding=49) readonly uniform image2D currentImage;
+layout(rgba32f,binding=50) readonly uniform image2D coarseForward;
+layout(rgba32f,binding=51) readonly uniform image2D coarseBackward;
+layout(rgba32f,binding=52) writeonly uniform image2D refinedForward;
+layout(rgba32f,binding=53) writeonly uniform image2D refinedBackward;
+vec3 fetch(bool back,ivec2 q){
+ q=clamp(q,ivec2(0),ivec2(p.size.xy)-1);
+ return back?imageLoad(currentImage,q).rgb:imageLoad(previousImage,q).rgb;
+}
+float cost(bool back,ivec2 q,ivec2 d){
+ float e=0;
+ for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){
+  ivec2 a=q+ivec2(x,y)*2;
+  e+=dot(abs(fetch(back,a)-fetch(!back,a+d)),vec3(.299,.587,.114));
+ }
+ return e/9;
+}
+vec4 refine(bool back,ivec2 b){
+ vec4 c=back?imageLoad(coarseBackward,b):imageLoad(coarseForward,b);
+ // Confident/static regions take only the inexpensive transfer path.
+ if(c.z<.0025 && c.w>.7)return c;
+ ivec2 q=min(b*8+ivec2(4),ivec2(p.size.xy)-1);
+ ivec2 seed=ivec2(round(c.xy)),bestD=seed;
+ float best=cost(back,q,seed),second=1e10;
+ for(int y=-3;y<=3;y++)for(int x=-3;x<=3;x++){
+  ivec2 d=seed+ivec2(x,y);float e=cost(back,q,d);
+  if(e<best){second=best;best=e;bestD=d;}
+  else if(d!=bestD)second=min(second,e);
+ }
+ float residual=1-smoothstep(.015,.09,best);
+ float unique=clamp((second-best)/max(second,.001),0,1);
+ // Low uniqueness gets conservative confidence, even with low residual.
+ return vec4(bestD,best,residual*max(unique,.05));
+}
+void main(){
+ ivec2 b=ivec2(gl_GlobalInvocationID.xy);
+ if(any(greaterThanEqual(b,ivec2(p.size.zw))))return;
+ imageStore(refinedForward,b,refine(false,b));
+ imageStore(refinedBackward,b,refine(true,b));
+}

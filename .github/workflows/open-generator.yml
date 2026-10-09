@@ -1,0 +1,20 @@
+name: Open generator
+on:
+  push:
+    branches: [develop/extreme-features]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build glslang-tools spirv-tools libvulkan-dev mesa-vulkan-drivers libxcb1-dev libx11-dev libwayland-dev
+      - name: Compile open generator and transport
+        run: bash engine/gfg-open/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gfg-open-x86_64
+          path: bin/gfg-open
