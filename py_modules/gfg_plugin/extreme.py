@@ -1,11 +1,11 @@
-"""GFG Extreme (1.6): the stock-power contract and the render scale + sharpening policy.
+"""GFG Extreme (1.6): device-aware power and render scale + sharpening policy.
 
 First stage (P0) of ``docs/EXTREME_FOUNDATION.md``.  Pure functions; ``governor_service`` owns the
 lifecycle.  The rules this module encodes:
 
-* **One power ceiling.**  ``min(15 W, the player's own lower limit, the hardware maximum)``.  Extreme
-  never raises a player's 10-12 W to 15 and never goes above 15 W, overclocked BIOS or not.  Every
-  TDP write (the Governor's, Frame OS Act boosts, recovery) is clamped to it by the power actuator.
+* **One device-aware power ceiling.** The inherited player fast/slow PPT caps and
+  actual hardware maxima bound every write. No universal 15 W restriction.
+  Missing limits pause control, rather than guessing a device capability.
 * **Scale + sharpening are one logical point.**  The ladder is 100 -> 90 -> 80 % render scale (75 / 70
   follow after on-Deck validation of the native reference); the scaler's sharpening starts from
   ``CAS_START`` plus the player's own correction.  Saved is never written: everything goes through
@@ -25,7 +25,6 @@ import math
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
-EXTREME_CEILING_W = 15.0
 # Starting hypothesis for calibration (EXTREME_FOUNDATION.md), not a quality verdict.
 CAS_START: Dict[int, float] = {100: 0.0, 90: 0.15, 80: 0.30, 75: 0.40, 70: 0.50}
 AUTO_SCALE_STEPS = (90, 80)
@@ -53,14 +52,16 @@ def _finite(value: Any) -> Optional[float]:
 # ---------------------------------------------------------------------------- power ceiling
 def power_ceiling(user_w: Any, hardware_max_w: Any = None) -> Dict[str, Any]:
     """The one ceiling of every Extreme power write, and where it comes from."""
-    options = [(EXTREME_CEILING_W, "stock-limit")]
+    options = []
     user = _finite(user_w)
     if user is not None and user > 0:
         options.append((math.floor(user * 10.0) / 10.0, "your-limit"))
     hardware = _finite(hardware_max_w)
     if hardware is not None and hardware > 0:
         options.append((math.floor(hardware * 10.0) / 10.0, "hardware"))
-    ceiling, source = min(options, key=lambda option: option[0])  # ties: the first (stock) wins
+    if not options:
+        return {"ceiling_w": None, "source": "unavailable", "user_w": None}
+    ceiling, source = min(options, key=lambda option: option[0])
     return {"ceiling_w": ceiling, "source": source, "user_w": round(user, 1) if user else None}
 
 
