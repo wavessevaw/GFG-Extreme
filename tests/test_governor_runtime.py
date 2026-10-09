@@ -2534,6 +2534,7 @@ class HudSessionRegressions(RingRefreshTests):
         self.assertFalse(self.writes[-1][0]["frame_os"]["verified_boost"])
 
     def test_unknown_slider_does_not_use_initial_cap_as_device_maximum(self):
+        self.settings["preset"] = "standard"
         self.status["power"] = {"initial_tdp_w": 12, "observed_tdp_w": 9}
         self.publish()
         self.assertIsNone(self.writes[-1][0]["maximum_tdp"])
