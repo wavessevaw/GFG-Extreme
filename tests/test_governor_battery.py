@@ -41,6 +41,35 @@ class BatteryTests(unittest.TestCase):
         self.assertLess(first - spike, 20)  # a 2x spike moves it only slightly
         self.assertIsNone(BatteryEstimator().update({**base, "power_uw": 100_000})["minutes_left"])
 
+    def test_full_and_not_charging_follow_supply_online_on_plug_and_unplug(self):
+        with tempfile.TemporaryDirectory() as d:
+            make(d, energy_now=1, capacity=100, status="Full")
+            ac = Path(d) / "ACAD"
+            ac.mkdir()
+            (ac / "type").write_text("Mains")
+            (ac / "online").write_text("1")
+            self.assertIs(read_battery(Path(d))["external_power"], True)
+            (Path(d) / "BAT1" / "status").write_text("Not charging")
+            self.assertIs(read_battery(Path(d))["external_power"], True)
+            (ac / "online").write_text("0")
+            self.assertIs(read_battery(Path(d))["external_power"], False)
+            (ac / "online").write_text("unknown")
+            self.assertIsNone(read_battery(Path(d))["external_power"])
+
+    def test_charging_fallback_and_online_without_battery(self):
+        with tempfile.TemporaryDirectory() as d:
+            ac = Path(d) / "USBC"
+            ac.mkdir()
+            (ac / "type").write_text("USB_PD")
+            (ac / "online").write_text("1")
+            self.assertIs(read_battery(Path(d))["external_power"], True)
+            make(d, energy_now=1, status="Discharging")
+            self.assertIs(read_battery(Path(d))["external_power"], True)
+            (ac / "online").unlink()
+            self.assertIs(read_battery(Path(d))["external_power"], False)
+            (Path(d) / "BAT1" / "status").write_text("Charging")
+            self.assertIs(read_battery(Path(d))["external_power"], True)
+
     def test_format(self):
         self.assertEqual(format_minutes(125), "2h05")
         self.assertEqual(format_minutes(45), "45m")

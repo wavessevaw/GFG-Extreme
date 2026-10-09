@@ -10,6 +10,8 @@ const rpcErrors = { last: null, listeners: new Set() };
 const reportRpcError = (name, e) => { rpcErrors.last = { name, message: String((e && e.message) || e) }; rpcErrors.listeners.forEach((f) => f()); };
 const safeCallable = (name) => { const f = callable(name); return async (...a) => { try { const r = await f(...a); if (rpcErrors.last && rpcErrors.last.name === name) { rpcErrors.last = null; rpcErrors.listeners.forEach((g) => g()); } return r; } catch (e) { if (name !== "log_ui_event") reportRpcError(name, e); throw e; } }; };
 const rpc = {
+  themeStatus: safeCallable("get_theme_status"),
+  themeInstall: safeCallable("install_gfg_theme"),
   governor: safeCallable("get_governor_status"),
   setGovernor: safeCallable("set_governor_enabled"),
   setHud: safeCallable("set_governor_hud"),
@@ -893,6 +895,7 @@ function JournalPage({ back, profile, reloadCfg }) {
 function SettingsPage({ back, go, profile, s }) {
   return h(Page, { title: "Settings", onBack: back },
     h("div", { className: "list", style: { marginTop: 0 } },
+      h(Row, { icon: "filter", title: "GFG theme", sub: "Install the Steam interface theme for CSS Loader", onClick: () => go("theme") }),
       h(Row, { icon: "hud", title: "In-game overlay", sub: "FPS, ×N, TDP while playing", onClick: () => go("hud") }),
       h(Row, { icon: "user", title: "Profile", value: profile || "Default", onClick: () => go("profiles") }),
       h(Row, { icon: "play", title: "Launch command", sub: "Copy it into the game's Steam launch options", onClick: () => go("launch") }),
@@ -905,6 +908,33 @@ function SettingsPage({ back, go, profile, s }) {
       h(Row, { icon: "cog", title: "System", sub: "Engine install, Flatpak access", onClick: () => go("system") }),
       h(Row, { icon: "cog", title: "All settings", sub: "Every profile option", onClick: () => go("all") })),
     h("div", { className: "hint" }, "GFG Extreme " + ((s && s.version) || "")));
+}
+
+function ThemePage({ back }) {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  useEffect(() => { rpc.themeStatus().then(setStatus).catch((e) => setMsg(String(e))); }, []);
+  const install = async () => {
+    setBusy(true); setMsg("");
+    try {
+      const result = await rpc.themeInstall();
+      setMsg(result && result.success ? result.message : (result && result.error) || "Installation failed.");
+      setStatus(await rpc.themeStatus());
+    } catch (e) { setMsg(String(e)); }
+    finally { setBusy(false); }
+  };
+  return h(Page, { title: "GFG theme", onBack: back },
+    h(Note, { quiet: true }, "Install CSS Loader from the Decky store first. GFG copies its bundled theme to the CSS Loader themes folder."),
+    h("div", { className: "card" },
+      h("b", null, status && status.current ? "Installed and up to date" : status && status.installed ? "Update available" : "Not installed"),
+      h("div", { className: "hint", style: { textAlign: "left", wordBreak: "break-all" } }, status && status.path || "~/homebrew/themes/GFG Extreme")),
+    h("div", { className: "list" }, h(Row, { icon: "filter",
+      title: busy ? "Installing…" : status && status.installed ? "Update / reinstall theme" : "Install theme",
+      onClick: busy ? undefined : install })),
+    msg ? h(Note, { quiet: true }, msg) : null,
+    status && status.success === false ? h(Note, null, status.error) : null,
+    h(Note, { quiet: true }, "After installing, open CSS Loader, reload themes and enable GFG Extreme."));
 }
 
 function SetupCheckPage({ back, profile }) {
@@ -1168,6 +1198,7 @@ function Content() {
   else if (screen === "scaling") body = h(ScalingPage, { s, back: () => setScreen("settings"), profile, refresh });
   else if (screen === "hud") body = h(HudPage, { back: () => setScreen("settings"), s, profile, refresh });
   else if (screen === "profiles") body = h(ProfilesPage, { back: () => setScreen("settings"), profiles, current: profile, pick, reload: loadProfiles });
+  else if (screen === "theme") body = h(ThemePage, { back: () => setScreen("settings") });
   else if (screen === "settings") body = h(SettingsPage, { back, go, profile, s });
   else if (screen === "setup") body = h(SetupCheckPage, { back: () => setScreen("advanced"), profile });
   else if (screen === "launch") body = h(LaunchPage, { back: () => setScreen("settings"), launch });

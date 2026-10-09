@@ -299,6 +299,20 @@ for (const [state, nav, expected] of cases) {
   }
   cases.push(["energy-battery-colour-and-unknown-limits"]);
 }
+// Installation succeeds or fails visibly; copying is distinct from enabling CSS Loader.
+for (const fail of [false, true]) {
+  const page = await openPage(browser, { ...STATES["home-extreme"], __themeFail: fail }, ["Settings", "GFG theme"]);
+  await page.getByText("Install theme", { exact: true }).click();
+  await page.waitForTimeout(150);
+  const text = fail ? "Theme folder is read-only" : "Installed and up to date";
+  if (!(await page.getByText(text, { exact: true }).count()) ||
+      await page.evaluate(() => window.__themeCalls) !== 1) {
+    failed++; console.error("FAIL theme installer " + text);
+  }
+  for (const error of page.__errors) { failed++; console.error("FAIL theme: " + error); }
+  await page.close();
+  cases.push(["theme-installer-" + (fail ? "error" : "success")]);
+}
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);
 process.exit(failed ? 1 : 0);

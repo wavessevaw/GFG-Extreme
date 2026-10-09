@@ -40,9 +40,12 @@ def main():
         def corrected_baseline_items(data, preset):
             items = original_items(data, preset)
             for item in items:
+                if item.get("label") == "TDP":
+                    # Intentional charger/charge colour rule; geometry is unchanged.
+                    item["rgb"] = hud_rings.tdp_color(data.get("battery_pct"), data.get("external_power"))
                 if item.get("label") == "ENERGY":
                     # Approved ENERGY semantics intentionally differ from v1.2.1.
-                    # Everything else (glyphs, geometry, panel and other rings) is compared unchanged.
+                    # Everything else (glyphs, geometry and panel) is compared unchanged.
                     item.update(text="0%", frac=.72, rgb=hud_rings.battery_color(72), opacity=1.0)
             return items
         baseline.items_for = corrected_baseline_items

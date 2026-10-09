@@ -643,6 +643,7 @@ class GovernorService:
             "target": number(status.get("target_output_fps") or (status.get("device") or {}).get("target")),
             "limit": number(power.get("initial_tdp_w") or power.get("maximum_tdp_w")),
             "battery_min": number(battery.get("minutes_left")), "battery_pct": number(battery.get("percent")),
+            "external_power": battery.get("external_power"),
         }
         # ENERGY uses Steam's slider maximum, not Extreme's actuator ceiling.
         # Keep the actual cap separate from APU draw and preserve fractions.
