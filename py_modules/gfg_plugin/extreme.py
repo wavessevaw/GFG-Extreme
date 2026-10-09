@@ -56,10 +56,10 @@ def power_ceiling(user_w: Any, hardware_max_w: Any = None) -> Dict[str, Any]:
     options = [(EXTREME_CEILING_W, "stock-limit")]
     user = _finite(user_w)
     if user is not None and user > 0:
-        options.append((round(user, 1), "your-limit"))
+        options.append((math.floor(user * 10.0) / 10.0, "your-limit"))
     hardware = _finite(hardware_max_w)
     if hardware is not None and hardware > 0:
-        options.append((round(hardware, 1), "hardware"))
+        options.append((math.floor(hardware * 10.0) / 10.0, "hardware"))
     ceiling, source = min(options, key=lambda option: option[0])  # ties: the first (stock) wins
     return {"ceiling_w": ceiling, "source": source, "user_w": round(user, 1) if user else None}
 
@@ -205,24 +205,57 @@ def runtime_state_evidence(doc: Any) -> Optional[Dict[str, Any]]:
         "sharpness": None,
         "method": spatial.get("active_method") or spatial.get("requested_method"),
         "pid": _int(doc.get("pid")),
+        "process_start_ticks": _int(doc.get("process_start_ticks")),
         "updated_unix_ms": _finite(doc.get("updated_unix_ms")),
         "reason": spatial.get("inactive_reason") or spatial.get("fallback_reason"),
     }
 
 
-def read_runtime_states(dirs: Iterable[Any], pids: Iterable[int], since_unix_s: float = 0.0) -> List[Dict[str, Any]]:
-    """Runtime-state records of the game's processes written after ``since_unix_s``, oldest first.
+def _runtime_process_identities(pids: Iterable[int], proc_root: Any) -> set:
+    """Host/namespace PID plus start ticks; timestamps alone never identify a game."""
+    from pathlib import Path
 
-    Bounded: at most RUNTIME_STATE_MAX_FILES files of RUNTIME_STATE_MAX_BYTES each; anything
-    unreadable or malformed is skipped.  Records of the game's PIDs win; only when none matches
-    (a PID namespace) do other records written after ``since_unix_s`` count.
+    identities = set()
+    for pid in pids:
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+            continue
+        folder = Path(proc_root) / str(pid)
+        try:
+            # comm may contain spaces and ')'; field 22 follows the final closing parenthesis.
+            stat = (folder / "stat").read_text(encoding="utf-8")
+            ticks = int(stat.rpartition(")")[2].split()[19])
+            if ticks <= 0:
+                continue
+        except (OSError, ValueError, IndexError, UnicodeError):
+            continue
+        aliases = {pid}
+        try:
+            for line in (folder / "status").read_text(encoding="utf-8").splitlines():
+                if line.startswith("NSpid:"):
+                    aliases.update(int(value) for value in line.partition(":")[2].split())
+                    break
+        except (OSError, ValueError, UnicodeError):
+            pass
+        identities.update((alias, ticks) for alias in aliases if alias > 0)
+    return identities
+
+
+def read_runtime_states(dirs: Iterable[Any], pids: Iterable[int], since_unix_s: float = 0.0,
+                        *, proc_root: Any = "/proc") -> List[Dict[str, Any]]:
+    """Read evidence of this launch, including verified pressure-vessel PID aliases.
+
+    Both PID (host or NSpid) and process_start_ticks must match a live game process.
+    A fresh timestamp from another process is not a fallback for missing identity.
+    Bounded reads: at most RUNTIME_STATE_MAX_FILES files per directory, each limited
+    to RUNTIME_STATE_MAX_BYTES, including files that grow while being read.
     """
     import json
     from pathlib import Path
 
-    wanted = {int(p) for p in pids if isinstance(p, int) or str(p).isdigit()}
+    identities = _runtime_process_identities(pids, proc_root)
+    if not identities:
+        return []
     out: List[Dict[str, Any]] = []
-    others: List[Dict[str, Any]] = []
     for base in dirs:
         folder = Path(base) / RUNTIME_STATE_DIRNAME
         try:
@@ -233,19 +266,19 @@ def read_runtime_states(dirs: Iterable[Any], pids: Iterable[int], since_unix_s: 
             try:
                 if path.stat().st_size > RUNTIME_STATE_MAX_BYTES:
                     continue
-                record = runtime_state_evidence(json.loads(path.read_text(encoding="utf-8")))
+                with path.open("rb") as handle:
+                    payload = handle.read(RUNTIME_STATE_MAX_BYTES + 1)
+                if len(payload) > RUNTIME_STATE_MAX_BYTES:
+                    continue
+                record = runtime_state_evidence(json.loads(payload))
             except (OSError, ValueError, UnicodeError):
                 continue
-            if record is None:
+            if record is None or (record.get("pid"), record.get("process_start_ticks")) not in identities:
                 continue
             updated = record.get("updated_unix_ms")
             if since_unix_s and (updated is None or updated / 1000.0 < since_unix_s):
                 continue
-            (out if not wanted or record.get("pid") in wanted else others).append(record)
-    if not out:
-        # A game in Steam's container (pressure-vessel) may report a PID from its own namespace.
-        # Then records written after the request (or, for diagnostics, any) are the next best.
-        out = others
+            out.append(record)
     out.sort(key=lambda r: r.get("updated_unix_ms") or 0.0)
     return out
 

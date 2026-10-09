@@ -2,7 +2,7 @@
 
 The actuator is deliberately conservative.  It discovers the amdgpu hwmon PPT
 controls, snapshots the user's current caps as the session ceiling, preserves
-fast/slow PPT proportion, and refuses to overwrite caps that changed outside
+fast/slow PPT proportion within an explicit ceiling, and refuses to overwrite caps that changed outside
 Governor ownership.
 """
 from __future__ import annotations
@@ -331,6 +331,12 @@ class SteamDeckPowerActuator:
         assert self._fast_path is not None and self._slow_path is not None
         manager = self.manager if self.state.method == "steamos-manager" else None
         direct = self._direct_possible()
+        if manager is not None and not exact and self.state.ceiling_override_uw is not None:
+            # Steam's integer TdpLimit API does not promise the fastPPT cap. A strict
+            # ceiling requires control of both channels, without a transient overshoot.
+            if not direct:
+                return "write-failed", "Explicit PPT ceiling requires writable fast/slow caps"
+            manager = None
         if manager is not None and exact and direct:
             # Put Steam's own TdpLimit back too, so a later re-apply by Steam
             # (sleep, game change) does not bring our last value back.
@@ -420,7 +426,10 @@ class SteamDeckPowerActuator:
             fast = min(fast, self.state.initial_fast_uw)
         else:
             slow = min(slow, self.state.ceiling_override_uw)
-            fast = min(fast, int(round(self.state.ceiling_override_uw * ratio)))
+            fast = min(fast, self.state.ceiling_override_uw)
+        if ((self.state.slow_min_uw is not None and slow < self.state.slow_min_uw)
+                or (self.state.fast_min_uw is not None and fast < self.state.fast_min_uw)):
+            return {"success": False, "error": "PPT ceiling is below the hardware minimum", "state": self.status()}
         failure = self._apply(slow, fast)
         if failure is not None:
             kind, error = failure

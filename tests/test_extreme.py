@@ -32,6 +32,10 @@ class CeilingTests(unittest.TestCase):
         self.assertEqual(ex.power_ceiling(15.0, 15.0)["source"], "stock-limit")
         self.assertEqual(ex.power_ceiling(float("nan"), 10.0)["ceiling_w"], 10.0)
 
+    def test_fractional_limits_never_round_up(self):
+        self.assertEqual(ex.power_ceiling(12.96, 15)["ceiling_w"], 12.9)
+        self.assertEqual(ex.power_ceiling(15, 10.96)["ceiling_w"], 10.9)
+
     def test_the_actuator_clamps_every_write_to_the_ceiling(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -48,6 +52,8 @@ class CeilingTests(unittest.TestCase):
             act.set_ceiling_w(ex.power_ceiling(20.0, 25.0)["ceiling_w"])
             act.set_tdp_w(19.0)                  # e.g. an Act boost on top of 15 W
             self.assertEqual(int((hwmon / "power2_cap").read_text()), 15_000_000)
+            self.assertEqual(int((hwmon / "power1_cap").read_text()), 15_000_000,
+                             "the short-duration PPT must respect the same ceiling")
             act.restore_if_owned()
             self.assertEqual(int((hwmon / "power2_cap").read_text()), 20_000_000, "the player's value back")
 
@@ -148,8 +154,8 @@ class SwapchainPolicyTests(unittest.TestCase):
 
 
 class RuntimeStateTests(unittest.TestCase):
-    def doc(self, pid, active=True, sw=1024, sh=640, updated=2_000_000_000_000):
-        return {"schema_version": 5, "pid": pid, "process_start_ticks": 1, "role": "frame-generation",
+    def doc(self, pid, active=True, sw=1024, sh=640, updated=2_000_000_000_000, ticks=12345):
+        return {"schema_version": 5, "pid": pid, "process_start_ticks": ticks, "role": "frame-generation",
                 "updated_unix_ms": updated, "spatial_scaling": {
                     "active": active, "activation_supported": True, "inactive_reason": None,
                     "source_width": sw, "source_height": sh, "presentation_width": 1280,
@@ -161,24 +167,64 @@ class RuntimeStateTests(unittest.TestCase):
         folder.mkdir(parents=True, exist_ok=True)
         (folder / name).write_text(json.dumps(doc))
 
+    def process(self, root, pid=4372, namespace_pid=None, ticks=12345):
+        proc = Path(root) / "proc"
+        folder = proc / str(pid)
+        folder.mkdir(parents=True, exist_ok=True)
+        fields = ["S"] + ["0"] * 18 + [str(ticks)]
+        (folder / "stat").write_text(f"{pid} (game with ) spaces) " + " ".join(fields))
+        aliases = f"{pid}" + (f" {namespace_pid}" if namespace_pid is not None else "")
+        (folder / "status").write_text(f"Name: game\nNSpid: {aliases}\n")
+        return proc
+
     def test_only_the_games_fresh_records_count(self):
         with tempfile.TemporaryDirectory() as temp:
-            self.write(temp, "4372-1-7.json", self.doc(4372))
-            self.write(temp, "99-1-1.json", self.doc(99, sw=640, sh=400))          # another process
-            self.write(temp, "4372-1-8.json", self.doc(4372, updated=1_000))         # before the request
+            proc = self.process(temp)
+            self.write(temp, "4372-new.json", self.doc(4372))
+            self.write(temp, "99-new.json", self.doc(99, sw=640, sh=400))
+            self.write(temp, "4372-old.json", self.doc(4372, updated=1_000))
             (Path(temp) / ex.RUNTIME_STATE_DIRNAME / "broken.json").write_text("{")
-            records = ex.read_runtime_states([temp], [4372], since_unix_s=1_900_000_000)
+            records = ex.read_runtime_states([temp], [4372], 1_900_000_000, proc_root=proc)
             self.assertEqual(len(records), 1)
             self.assertEqual(ex.render_pct(records[0]), 80.0)
             self.assertIsNotNone(ex.scale_acknowledged(records, 80))
-            self.assertEqual(ex.read_runtime_states([Path(temp) / "missing"], [4372]), [])
+            self.assertEqual(ex.read_runtime_states([Path(temp) / "missing"], [4372], proc_root=proc), [])
 
-    def test_a_container_pid_falls_back_to_fresh_records(self):
+    def test_verified_container_pid_counts(self):
         with tempfile.TemporaryDirectory() as temp:
-            self.write(temp, "12-1-7.json", self.doc(12))                 # PID inside pressure-vessel
-            self.write(temp, "13-1-7.json", self.doc(13, updated=1_000))  # stale
-            records = ex.read_runtime_states([temp], [4372], since_unix_s=1_900_000_000)
+            proc = self.process(temp, namespace_pid=12)
+            self.write(temp, "12-new.json", self.doc(12))
+            self.write(temp, "13-other.json", self.doc(13))
+            records = ex.read_runtime_states([temp], [4372], 1_900_000_000, proc_root=proc)
             self.assertEqual([r["pid"] for r in records], [12])
+
+    def test_fresh_unrelated_record_is_not_a_namespace_fallback(self):
+        with tempfile.TemporaryDirectory() as temp:
+            proc = self.process(temp, namespace_pid=12)
+            self.write(temp, "13-other.json", self.doc(13))
+            self.assertEqual(ex.read_runtime_states([temp], [4372], 1_900_000_000, proc_root=proc), [])
+
+    def test_pid_reuse_or_missing_start_ticks_never_proves_a_scale(self):
+        with tempfile.TemporaryDirectory() as temp:
+            proc = self.process(temp, namespace_pid=12)
+            self.write(temp, "host-reused.json", self.doc(4372, ticks=12344))
+            self.write(temp, "namespace-reused.json", self.doc(12, ticks=12344))
+            doc = self.doc(4372)
+            del doc["process_start_ticks"]
+            self.write(temp, "missing-ticks.json", doc)
+            self.assertEqual(ex.read_runtime_states([temp], [4372], proc_root=proc), [])
+
+    def test_missing_game_identity_never_uses_an_arbitrary_record(self):
+        with tempfile.TemporaryDirectory() as temp:
+            self.write(temp, "13-other.json", self.doc(13))
+            for pids in ([], [4372]):
+                self.assertEqual(ex.read_runtime_states([temp], pids, proc_root=Path(temp) / "proc"), [])
+
+    def test_oversized_state_is_skipped(self):
+        with tempfile.TemporaryDirectory() as temp:
+            proc = self.process(temp)
+            self.write(temp, "large.json", {**self.doc(4372), "padding": "x" * ex.RUNTIME_STATE_MAX_BYTES})
+            self.assertEqual(ex.read_runtime_states([temp], [4372], proc_root=proc), [])
 
     def test_an_inactive_scaler_proves_full_resolution_only(self):
         off = ex.runtime_state_evidence(self.doc(1, active=False))
