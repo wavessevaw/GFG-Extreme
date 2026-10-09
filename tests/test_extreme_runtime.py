@@ -90,3 +90,19 @@ class TransitionTests(unittest.TestCase):
             service = self.service(root, power)
             self.assertIsNone(asyncio.run(service._budget_power("Game")))
             self.assertEqual(service._status["reason"], "extreme-ceiling-not-applied")
+
+    def test_failed_ceiling_never_creates_observe_only_budget(self):
+        from unittest.mock import AsyncMock
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            power = self.make_power(root)
+            service = self.service(root, power)
+            service._launch_info = AsyncMock(return_value={"running": True})
+            service._capability = lambda *args: {"overlay_active": True}
+            async def rejected(profile):
+                service._status.update(state="PAUSED", reason="extreme-ceiling-not-applied")
+                return None
+            service._budget_power = rejected
+            asyncio.run(service._budget_step("Game", False, 90))
+            self.assertIsNone(service._budget)
+            self.assertIsNone(service._request)
