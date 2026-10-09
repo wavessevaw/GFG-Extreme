@@ -1,4 +1,4 @@
-# GFG Extreme 1.6.10 — GFG Open GPU-cost experiment and device-aware Extreme power
+# GFG Extreme 1.6.10 — Device-aware Extreme power and accurate GPU recovery diagnostics
 
 Release status: pre-release
 
@@ -12,7 +12,7 @@ Release status: pre-release
 
 ### Changes
 
-- **Experimental faster color flow:** original nine-sample coarse matching retained for accuracy, 5×5 instead of 7×7 near-seed refinement, and sparser wide matching, to reduce GPU expense. Full-resolution source/output preserved.
+- **GFG Open shader correctness preserved:** performance experiments on the motion search failed large-motion Vulkan regressions and were reverted. The native search and 4 ms GPU guard remain unchanged.
 - **Honest GPU costs:** persistent full-compute and failed-recovery-probe timings in `open-performance/*.json`. Cheap passthrough samples no longer obscure why recovery failed.
 - **Extreme power:** removes global 15 W limit. Upper power bound follows inherited player fast/slow PPT and hardware-reported maxima (15, 20 or higher where supported). Power writes remain bounded and restores remain ownership-aware.
 - **CI:** candidate archive version is derived from `package.json`.
