@@ -372,6 +372,8 @@ def booster_states(facts: Dict[str, Any]) -> List[Dict[str, Any]]:
         out.append(_cap("split", "off", "power-split-setting-off"))
     elif not split.get("available", True):
         out.append(_cap("split", "unavailable", "cpu-clock-control-unavailable"))
+    elif split.get("restore_pending"):
+        out.append(_cap("split", "waiting", "cpu-restore-pending"))
     elif split.get("game_off"):
         out.append(_cap("split", "off", "no-measured-benefit-for-game"))
     elif split.get("cap_khz"):

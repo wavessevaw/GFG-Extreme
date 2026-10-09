@@ -48,6 +48,8 @@ class CpuFreqActuator:
         self.cap_khz: Optional[int] = None
         self._discovered = False
         self._closed = False
+        self.restore_pending = False
+        self._pending_targets: Dict[Path, int] = {}
 
     # ------------------------------------------------------------------ discovery
     def discover(self) -> bool:
@@ -91,6 +93,13 @@ class CpuFreqActuator:
         with self._lock:
             if self._closed or not self.discover() or not self._writable():
                 return False
+            if self.restore_pending:
+                if self.owned:
+                    self.restore()
+                else:
+                    self._recover_stale()
+                if self.restore_pending:
+                    return False
             if self.owned:
                 return True
             values = {p: _read_int(p) for p in self._policies}
@@ -105,15 +114,27 @@ class CpuFreqActuator:
     def set_cap_khz(self, khz: Optional[int]) -> bool:
         """Cap every policy at ``khz`` (None: the user's own values).  False when not in control."""
         with self._lock:
-            if self._closed or not self.owned or not self._verify():
+            if self._closed or not self.owned:
+                return False
+            if self.restore_pending:
+                self.restore()
+                return False  # resolve the failed transaction before another optimization
+            if not self._verify():
                 return False
             if khz == self.cap_khz:
                 return True
             wanted = {p: (self.initial[p] if khz is None else
                           max(info["min"], min(int(khz), self.initial[p], info["max"])))
                       for p, info in self._policies.items()}
-            self._write_marker(wanted)
-            if not self._apply(wanted):
+            if not self._write_marker(wanted):
+                return False
+            if not self._apply(wanted, restoring=khz is None):
+                self.restore_pending = True
+                return False
+            # Commit readback: a completed cap no longer needs the previous-value
+            # candidate that only protected a crash during the partial write.
+            if not self._write_marker(wanted):
+                self.restore_pending = True
                 return False
             self.cap_khz = khz
             self._note("cpu-cap", cap_khz=khz)
@@ -123,13 +144,19 @@ class CpuFreqActuator:
         """Put the user's values back (when they are still ours).  True if anything was written."""
         with self._lock:
             if not self.owned:
-                return False
+                return self._recover_stale() if self.restore_pending else False
             if not self._verify():
                 return False
-            changed = self.cap_khz is not None
-            if changed and not self._apply(dict(self.initial)):
+            # A failed multi-policy write may have changed clocks before cap_khz was
+            # committed. Late helper writes also require an explicit ordered undo.
+            changed = bool(self._pending_targets) or any(
+                self.expected.get(p) != value for p, value in self.initial.items())
+            if changed and not self._apply(dict(self.initial), restoring=True):
+                self.restore_pending = True
                 return False
             self.owned, self.cap_khz = False, None
+            self.restore_pending = False
+            self._pending_targets.clear()
             self._clear_marker()
             if changed:
                 self._note("cpu-cap-restored")
@@ -154,24 +181,35 @@ class CpuFreqActuator:
     # ------------------------------------------------------------------ internals
     def _verify(self) -> bool:
         for p, value in self.expected.items():
-            if _read_int(p) != value:
+            found = _read_int(p)
+            if found != value and p in self._pending_targets and found == self._pending_targets[p]:
+                self.expected[p] = found  # a timed-out write landed; it is still ours
+                continue
+            if found != value:
                 self.owned, self.external_change, self.cap_khz = False, True, None
-                self.error = "CPU clock limit changed outside GFG; power split paused"
-                self._clear_marker()
+                # One outside policy must not strand our caps on the other policies.
+                # The journal restores each value only while it still matches ours.
+                self._recover_stale(trusted_expected=self.expected)
+                self.error = self.error or "CPU clock limit changed outside GFG; power split paused"
                 self._note("cpu-cap-external-change", policy=str(p.parent.name), expected=value,
-                           found=_read_int(p))
+                           found=found)
                 return False
         return True
 
-    def _apply(self, wanted: Dict[Path, int]) -> bool:
+    def _apply(self, wanted: Dict[Path, int], *, restoring: bool = False) -> bool:
         for p, value in wanted.items():
             try:
                 helper = self._helper()
                 if helper is not None:
-                    helper.write(p, int(value))
+                    write = getattr(helper, "restore_cpu", helper.write) if restoring else helper.write
+                    write(p, int(value))
                 else:
                     p.write_text(f"{int(value)}\n", encoding="utf-8")
-            except (HelperTimeout, OSError) as error:
+            except HelperTimeout as error:
+                self._pending_targets[p] = value
+                self.error = str(error)
+                return False
+            except OSError as error:
                 self.error = str(error)
             read = _read_int(p)
             if read is not None:
@@ -180,20 +218,27 @@ class CpuFreqActuator:
                 self.error = self.error or f"{p.parent.name}: wrote {value}, reads {read}"
                 self._note("cpu-cap-failed", policy=p.parent.name, wanted=value, found=read, error=self.error)
                 return False
+            self._pending_targets.pop(p, None)
         self.error = None
         return True
 
-    def _write_marker(self, wanted: Dict[Path, int]) -> None:
+    def _write_marker(self, wanted: Dict[Path, int]) -> bool:
+        data = {str(p): {"initial": self.initial[p], "written": wanted[p],
+                         "previous": self.expected[p]} for p in wanted}
+        return self._save_marker(data)
+
+    def _save_marker(self, data: Dict[str, Any]) -> bool:
         if self.marker is None:
-            return
-        data = {str(p): {"initial": self.initial[p], "written": wanted[p]} for p in wanted}
+            return True
         try:
             self.marker.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.marker.with_name(self.marker.name + ".tmp")
             tmp.write_text(json.dumps(data), encoding="utf-8")
             os.replace(tmp, self.marker)
-        except OSError:
-            pass
+            return True
+        except OSError as error:
+            self.error = f"CPU recovery marker could not be saved: {error}"
+            return False  # no sysfs write without its undo record
 
     def _clear_marker(self) -> None:
         if self.marker is not None:
@@ -202,33 +247,69 @@ class CpuFreqActuator:
             except OSError:
                 pass
 
-    def _recover_stale(self) -> None:
-        """A crashed session left its cap: put the user's value back where it still reads ours."""
+    def _recover_stale(self, *, trusted_expected: Optional[Dict[Path, int]] = None) -> bool:
+        """Restore owned policies; keep failed/read-unverified undo entries for retry."""
         if self.marker is None or not self.marker.exists():
-            return
+            return False
         try:
             data = json.loads(self.marker.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            data = {}
-        restored = []
-        for name, entry in (data.items() if isinstance(data, dict) else ()):
+            if not isinstance(data, dict):
+                raise ValueError("expected a policy map")
+        except (OSError, ValueError, UnicodeError) as error:
+            self.restore_pending = True
+            self.error = f"CPU recovery marker unreadable: {error}"
+            return False
+
+        restored, remaining = [], {}
+        for name, entry in data.items():
             p = Path(name)
             if p not in self._policies or not isinstance(entry, dict):
                 continue
             initial, written = entry.get("initial"), entry.get("written")
-            if isinstance(initial, int) and isinstance(written, int) and _read_int(p) == written != initial:
-                try:
-                    helper = self._helper()
-                    if helper is not None:
-                        helper.write(p, initial)
-                    else:
-                        p.write_text(f"{initial}\n", encoding="utf-8")
-                    restored.append(p.parent.name)
-                except (HelperTimeout, OSError):
-                    pass
-        self._clear_marker()
+            previous = entry.get("previous", written)  # older journals have only written
+            if (not isinstance(initial, int) or isinstance(initial, bool) or initial <= 0
+                    or not isinstance(written, int) or isinstance(written, bool) or written <= 0
+                    or not isinstance(previous, int) or isinstance(previous, bool) or previous <= 0):
+                self.restore_pending = True
+                self.error = f"CPU recovery marker invalid for {p.parent.name}"
+                return False
+            found = _read_int(p)
+            if found is None:
+                remaining[name] = entry
+                continue
+            if found == initial:
+                continue
+            if trusted_expected is not None:
+                if found != trusted_expected.get(p) and found != self._pending_targets.get(p):
+                    continue  # live ownership is stronger than an uncommitted journal candidate
+            elif found not in (written, previous):
+                continue  # a different tool owns this policy
+            try:
+                helper = self._helper()
+                if helper is not None:
+                    getattr(helper, "restore_cpu", helper.write)(p, initial)
+                else:
+                    p.write_text(f"{initial}\n", encoding="utf-8")
+            except (HelperTimeout, OSError) as error:
+                self.error = str(error)
+            if _read_int(p) == initial:
+                restored.append(p.parent.name)
+                self._pending_targets.pop(p, None)
+            else:
+                remaining[name] = entry
+                self.initial[p] = initial  # never learn a leftover GFG cap as the user's limit
+
+        self.restore_pending = bool(remaining)
+        if remaining:
+            self.error = self.error or "CPU clock restore did not verify; recovery pending"
+            # Even if this rewrite fails, the older full journal still carries undo.
+            self._save_marker(remaining)
+        else:
+            self._clear_marker()
+            self.error = None
         if restored:
             self._note("cpu-cap-recovered", policies=restored)
+        return bool(restored)
 
     def _note(self, kind: str, **fields: Any) -> None:
         if self.journal is not None:
@@ -240,4 +321,5 @@ class CpuFreqActuator:
     def status(self) -> Dict[str, Any]:
         return {"available": bool(self._policies), "writable": self._writable() if self._policies else False,
                 "owned": self.owned, "external_change": self.external_change, "error": self.error,
+                "restore_pending": self.restore_pending,
                 "cap_khz": self.cap_khz, "max_khz": self.max_khz or None, "policies": len(self._policies)}

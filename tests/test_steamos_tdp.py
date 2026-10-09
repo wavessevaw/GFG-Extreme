@@ -77,6 +77,54 @@ class ManagerActuatorTests(unittest.TestCase):
             self.assertFalse(result["success"])
             self.assertIn("cap reads", result["error"])
 
+    def test_half_applied_manager_pair_is_not_success(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); h = self.make(root)
+            manager = FakeManager(h)
+            def only_slow(watts):
+                write(h / "power2_cap", watts * 1_000_000)
+                return True, ""
+            manager.set = only_slow
+            act = self.actuator(root, manager)
+            act.discover(); act.claim()
+            self.assertFalse(act.set_tdp_w(10)["success"])
+            self.assertIn("fast=", act.state.error)
+
+    def test_fractional_user_ceiling_is_never_rounded_up_without_root(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); h = self.make(root)
+            write(h / "power1_cap", 12_800_000); write(h / "power2_cap", 12_800_000)
+            manager = FakeManager(h)
+            act = self.actuator(root, manager)
+            act.discover(); act.claim()
+            self.assertTrue(act.set_tdp_w(20)["success"])
+            self.assertEqual(manager.calls, [12])
+            self.assertEqual(act.status()["observed_fast_w"], 12.0)
+
+    def test_fractional_ceiling_uses_direct_pair_when_available(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); h = self.make(root)
+            write(h / "power1_cap", 12_800_000); write(h / "power2_cap", 12_800_000)
+            manager = FakeManager(h)
+            act = self.actuator(root, manager, writable=True)
+            act.discover(); act.claim()
+            self.assertTrue(act.set_tdp_w(20)["success"])
+            self.assertEqual(manager.calls, [])
+            self.assertEqual(act.status()["observed_tdp_w"], 12.8)
+            self.assertTrue(act.restore_if_owned()["restored"])
+
+    def test_manager_only_does_not_claim_an_inexact_restore_succeeded(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); h = self.make(root)
+            write(h / "power1_cap", 12_800_000); write(h / "power2_cap", 12_800_000)
+            manager = FakeManager(h)
+            act = self.actuator(root, manager)
+            act.discover(); act.claim(); act.set_tdp_w(10)
+            result = act.restore_if_owned()
+            self.assertFalse(result["restored"])
+            self.assertFalse(result["success"])
+            self.assertEqual(manager.calls, [10], "never report whole watts as an exact fractional restore")
+
     def test_manager_refusal_without_direct_access_fails_cleanly(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); h = self.make(root)
