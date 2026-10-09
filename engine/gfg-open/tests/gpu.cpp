@@ -120,7 +120,7 @@ int main(){
  // Large non-grid displacement must survive coarse/detail matching.
  fill(0,0,-1);fill(1,10,-1);dispatch(0);dispatch(1);dispatch(2);
  auto* large=reinterpret_cast<float*>(static_cast<unsigned char*>(images[4].map)+images[4].layout.offset+3*images[4].layout.rowPitch+3*16);
- std::cerr<<"large motion: "<<large[0]<<","<<large[1]<<"\n";
+ std::cerr<<"large motion: "<<large[0]<<","<<large[1]<<" residual="<<large[2]<<" confidence="<<large[3]<<"\n";
  assert(std::abs(large[0]-10)<.1&&std::abs(large[1])<.1);
  dispatch(3);
  // Scene discontinuity: no half-grey blend / stale temporal trails.

@@ -45,9 +45,13 @@ vec4 refine(bool back,ivec2 b){
  // A plausible coarse match with a bad fine residual is a difficult tile.
  // Spend the wide full-resolution search only there. Large scene cuts
  // (bad coarse residual too) take the conservative real-frame fallback.
- if(c.z<.10 && best>.035){
+ if(c.z<.10 && best>.0025){
   for(int y=-16;y<=16 && best>.001;y++)for(int x=-16;x<=16 && best>.001;x++){
-   ivec2 d=ivec2(x,y);float e=cost(back,q,d);
+   ivec2 d=ivec2(x,y);
+   float quick=dot(abs(fetch(back,q-ivec2(2))-fetch(!back,q-ivec2(2)+d)),vec3(.299,.587,.114));
+   quick+=dot(abs(fetch(back,q+ivec2(2))-fetch(!back,q+ivec2(2)+d)),vec3(.299,.587,.114));
+   if(quick*.5>best*.5+.0025)continue;
+   float e=cost(back,q,d);
    if(e<best){second=best;best=e;bestD=d;}
    else if(d!=bestD)second=min(second,e);
   }
