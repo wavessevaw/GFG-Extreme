@@ -32,6 +32,7 @@ vec4 solve(bool back,ivec2 block) {
   if(old.w>.5) {
    ivec2 d=ivec2(round(old.xy));
    float e=cost(back,q,d);
+   if(old.w>.7 && e<.0025)return vec4(d,e,old.w);
    if(e<best){second=best;best=e;bestD=d;}
   }
  }
