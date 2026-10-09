@@ -1,21 +1,18 @@
-## GFG Extreme 1.6.6: native frame timing and stall-shield controls
+# GFG Extreme 1.6.6 — открытый генератор и Energy
 
-### Available in Extreme
-- **Frame timing** and **Stall shield** controls on the home booster card and Settings → Diagnostics.
-- Preferences are saved independently per game profile. Changing them republishes the native policy without resetting the operating point, power search or current cadence.
-- Frame timing retains its existing default. Shield is opt-in. Both require Frame OS Act; choosing them does not silently unlock Act.
-- Active status requires live native telemetry, matching policy acknowledgement and support/active bits. An old layer requests restart/upgrade. Paused gameplay, shadow/observe, learned timing disablement and A/B control windows are represented explicitly.
-- Failed saves keep the previous preference and show an error.
+В этой версии появился **GFG Open**: самостоятельный генератор кадров с открытыми вычислительными шейдерами. Lossless.dll для его генерации не требуется. Vulkan-транспорт остаётся на закреплённом исходном коде MAKO; алгоритм синтеза кадров написан отдельно.
 
-Frame timing adjusts when the layer starts a frame. Shield reanchors late-frame pacing instead of adding catch-up waiting. Neither status is a percentage measurement of input-to-photon latency, and shield cannot remove a game loading or shader-compilation stall.
+- Неподвижные и уверенно сопоставленные области проходят дешёвый путь.
+- Сложные области уточняются отдельно. Движение проверяется в обе стороны.
+- При перекрытиях и несовпадающих контурах используются один надёжный источник или ближайший настоящий кадр вместо смешивания следов.
+- История служит проверяемой подсказкой, а при новом контексте начинается заново. Исходное разрешение игры сохраняется.
+- **Energy:** меняется только цифра. 12 Вт из максимальных 15 Вт → **20%**. Дуга, цвет, прозрачность и расположение сохранены. Это экономия лимита TDP, а не измерение расхода батареи.
+- Сохранены новые настройки Frame timing и Stall shield из ветки 1.6.6; они работают через Frame OS Act с подтверждением нативной политики.
 
-### Validation
-Backend tests cover persistence failure, per-profile isolation, native acknowledgement, old layers, paused/A/B/game-disabled states and policy republishing. Browser tests exercise successful independent toggles and a failed save. Full CI also checks native Frame OS/HUD, ABI, build consistency, HUD cost and release packaging.
+**Включение:** Settings → Frame Generation → GFG Engine → **GFG Open generator**, затем перезапустить игру. Выбор сохраняется отдельно для каждого профиля и доступен в Extreme. В первой версии поддержаны обычные 64-битные SDR-игры. Flatpak продолжает использовать установленный прежний генератор и пишет причину возврата в журнал. Шейдеры LS1 масштабирования отдельно по-прежнему могут требовать DLL.
 
-### Remaining work
-Process/fan primitives from 1.6.5 still need Governor activation. Download pausing, memory tuning, reverse power allocation, game-specific ignored scaling, Act starvation and ghosting quality improvements remain in development.
+**Статус:** экспериментальный тракт. Проверяются сборка реального Vulkan-слоя, SPIR-V и исполнение шейдеров на тестовых изображениях, Python, нативные слои и интерфейс. Улучшение FPS, нагрузки и гостинга на Steam Deck ещё не подтверждено сравнительным игровым тестом. Поиск движения ограничен; прозрачность, TAA-следы игры и быстрые движения могут требовать возврата к настоящему кадру. Потолок Extreme остаётся 15 Вт; разгон и BIOS не используются.
 
-### Install
-Download **GFG-Extreme-v1_6_6.zip** and install through Decky Loader (Install from zip). Relaunch the game to load updated native layers. Enable Act, then select the desired controls on the Extreme card or in Diagnostics.
+Установка: **GFG-Extreme-v1_6_6.zip** через Decky Loader → Install from zip. Перезапустить игру для новых нативных компонентов.
 
-SHA-256: `<sha256>` (also in SHA256SUMS.txt).
+SHA-256: `<sha256>` (также в SHA256SUMS.txt).

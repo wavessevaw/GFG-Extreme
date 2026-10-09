@@ -34,8 +34,8 @@ void main(){
  a=q-f.xy*t;c=q-b.xy*(1-t);
  vec4 A=sampleImage(false,a),B=sampleImage(true,c);
  vec4 oppositeA=flow(true,a+f.xy),oppositeB=flow(false,c+b.xy);
- bool validA=inside(a)&&f.z<.08&&length(f.xy+oppositeA.xy)<2.5;
- bool validB=inside(c)&&b.z<.08&&length(b.xy+oppositeB.xy)<2.5;
+ bool validA=inside(a)&&f.w>.12&&f.z<.08&&length(f.xy+oppositeA.xy)<2.5;
+ bool validB=inside(c)&&b.w>.12&&b.z<.08&&length(b.xy+oppositeB.xy)<2.5;
  float disagreement=dot(abs(A.rgb-B.rgb),vec3(.299,.587,.114));
  // Occlusion/disocclusion and scene discontinuities never mix mismatched
  // contours. Single-sided reconstruction, then nearest real frame fallback.
