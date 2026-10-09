@@ -4,7 +4,7 @@ Independent GPL-3.0-or-later compute shaders. The Vulkan transport is pinned MAK
 
 ## Pipeline
 
-For each pair of real frames: classify static 8x8 tiles, bidirectional coarse colour matching at 4-pixel steps, selectively refine ambiguous/high-residual tiles at full resolution, then compose each requested intermediate timestamp. A confident tile skips expensive refinement. Previously confident motion that matches the current pair also skips the coarse search; history is never accepted without revalidation. Previous flow is only a search candidate and must pass current-pair colour matching again. Initial history is invalid; context recreation resets it. Opposing-vector consistency and warped colour agreement decide whether to blend, use a single visible source, or display the nearest real frame. Original resolution is preserved.
+For each pair of real frames: classify static 8x8 tiles, bidirectional coarse colour matching at 4-pixel steps, selectively refine ambiguous/high-residual tiles at full resolution, then compose each requested intermediate timestamp. A confident tile skips expensive refinement. Previously confident motion that matches the current pair also skips the coarse search; history is never accepted without revalidation. Previous flow is only a search candidate and must pass current-pair colour matching again. Initial history is invalid; context recreation resets it. Opposing-vector consistency and warped colour agreement decide whether to blend, use a single visible source, or display the nearest real frame. Original resolution is preserved. Descriptor sets and two source-phase command chains are cached per context; unchanged uniforms are not uploaded every frame.
 
 ## Integration
 

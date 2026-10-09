@@ -14,10 +14,12 @@
 #include <array>
 #include <vector>
 #include <span>
+#include <optional>
 namespace gfg {
 struct alignas(16) Params {
  std::array<uint32_t,4> size;
  std::array<float,4> timing;
+ bool operator==(const Params&) const = default;
 };
 class OpenContext {
  const vk::Vulkan& v;
@@ -33,8 +35,12 @@ class OpenContext {
  std::vector<vk::Buffer> outputParams;
  std::array<std::unique_ptr<vk::DescriptorSet>,2> coarseSets,refineSets;
  std::vector<std::array<std::unique_ptr<vk::DescriptorSet>,2>> composeSets;
- std::unique_ptr<vk::CommandBuffer> prepass;
- std::vector<vk::CommandBuffer> commands;
+ std::array<std::optional<vk::CommandBuffer>,2> prepasses;
+ std::vector<std::array<std::optional<vk::CommandBuffer>,2>> commands;
+ std::optional<Params> lastPairParams;
+ std::vector<std::optional<Params>> lastOutputParams;
+ void writePair(const Params&);
+ void writeOutput(size_t,const Params&);
  uint64_t idx=1,frame=0;
  bool scheduled=false;
  void prepare();

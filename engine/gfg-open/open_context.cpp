@@ -46,7 +46,7 @@ OpenContext::OpenContext(const vk::Vulkan& vk,ls::FileDescriptorScope& src,
  .samplers=0,.sampled_images=0,.storage_images=static_cast<uint32_t>(24+10*outputs.size())}),
  pairParams(v,Params{{e.width,e.height,tiles.width,tiles.height},{0,0,0,0}}){
  if(outputs.empty())throw std::runtime_error("GFG Open requires output images");
- outputParams.reserve(outputs.size());composeSets.resize(outputs.size());
+ outputParams.reserve(outputs.size());composeSets.resize(outputs.size());commands.resize(outputs.size());lastOutputParams.resize(outputs.size());
  for(size_t i=0;i<outputs.size();i++)outputParams.emplace_back(v,Params{{e.width,e.height,tiles.width,tiles.height},{0,0,0,0}});
  for(size_t phase=0;phase<2;phase++){
   const auto& a=phase?sources.first:sources.second; // previous
@@ -73,23 +73,33 @@ OpenContext::OpenContext(const vk::Vulkan& vk,ls::FileDescriptorScope& src,
 void OpenContext::prepare(){
  if(scheduled&&!fence.wait(v,250000000))throw std::runtime_error("GFG Open previous-work fence timed out");
 }
+void OpenContext::writePair(const Params& p){
+ if(!lastPairParams||*lastPairParams!=p){pairParams.write(v,p);lastPairParams=p;}
+}
+void OpenContext::writeOutput(size_t i,const Params& p){
+ if(!lastOutputParams[i]||*lastOutputParams[i]!=p){outputParams[i].write(v,p);lastOutputParams[i]=p;}
+}
 void OpenContext::record(size_t count,bool history){
- prepass=std::make_unique<vk::CommandBuffer>(v);prepass->begin(v);
- std::array inputBarriers{barrier(sources.first),barrier(sources.second),barrier(flowF),barrier(flowB)};
- prepass->dispatch(v,coarseShader,*coarseSets[frame%2],inputBarriers,(tiles.width+7)/8,(tiles.height+7)/8,1);
- std::array coarseBarriers{barrier(coarseF),barrier(coarseB)};
- prepass->dispatch(v,refineShader,*refineSets[frame%2],coarseBarriers,(tiles.width+7)/8,(tiles.height+7)/8,1);
- prepass->end(v);
- commands.clear();commands.reserve(count);
+ const auto phase=frame%2;
+ if(!prepasses[phase]){
+  vk::CommandBuffer c(v);c.begin(v,0);
+  std::array inputBarriers{barrier(sources.first),barrier(sources.second),barrier(flowF),barrier(flowB)};
+  c.dispatch(v,coarseShader,*coarseSets[phase],inputBarriers,(tiles.width+7)/8,(tiles.height+7)/8,1);
+  std::array coarseBarriers{barrier(coarseF),barrier(coarseB)};
+  c.dispatch(v,refineShader,*refineSets[phase],coarseBarriers,(tiles.width+7)/8,(tiles.height+7)/8,1);
+  c.end(v);prepasses[phase].emplace(std::move(c));
+ }
  if(!history)for(size_t i=0;i<count;i++){
-  commands.emplace_back(v);auto& c=commands.back();c.begin(v);
+  if(commands[i][phase])continue;
+  vk::CommandBuffer c(v);c.begin(v,0);
   std::array flowBarriers{barrier(flowF),barrier(flowB),barrier(outputs[i])};
-  c.dispatch(v,composeShader,*composeSets[i][frame%2],flowBarriers,(extent.width+7)/8,(extent.height+7)/8,1);c.end(v);
+  c.dispatch(v,composeShader,*composeSets[i][phase],flowBarriers,(extent.width+7)/8,(extent.height+7)/8,1);
+  c.end(v);commands[i][phase].emplace(std::move(c));
  }
 }
 void OpenContext::submitPrepass(VkFence completion){
  fence.reset(v);scheduled=true;
- prepass->submit(v,{},shared.handle(),idx,{},ready.handle(),idx,completion);
+ prepasses[frame%2]->submit(v,{},shared.handle(),idx,{},ready.handle(),idx,completion);
  ++idx;
 }
 void OpenContext::scheduleFrames(){scheduleFrames({});}
@@ -100,18 +110,18 @@ void OpenContext::scheduleFrames(std::span<const float> timestamps){
  for(float t:timestamps){if(!std::isfinite(t)||t<=previous||t>=1)throw std::runtime_error("Invalid GFG Open interpolation timestamp");previous=t;}
  prepare();
  Params params{{extent.width,extent.height,tiles.width,tiles.height},{0,frame>1?1.f:0.f,frame>0?1.f:0.f,0}};
- pairParams.write(v,params);
+ writePair(params);
  for(size_t i=0;i<count;i++){
   params.timing={timestamps.empty()?float(i+1)/float(count+1):timestamps[i],frame>0?1.f:0.f,0,0};
-  outputParams[i].write(v,params);
+  writeOutput(i,params);
  }
  record(count,false);submitPrepass(VK_NULL_HANDLE);
- for(size_t i=0;i<count;i++)commands[i].submit(v,{},ready.handle(),idx-1,{},shared.handle(),idx+i,i+1==count?fence.handle():VK_NULL_HANDLE);
+ for(size_t i=0;i<count;i++)commands[i][frame%2]->submit(v,{},ready.handle(),idx-1,{},shared.handle(),idx+i,i+1==count?fence.handle():VK_NULL_HANDLE);
  idx+=count;++frame;
 }
 void OpenContext::scheduleFrameHistory(){
  prepare();
- pairParams.write(v,Params{{extent.width,extent.height,tiles.width,tiles.height},{0,frame>1?1.f:0.f,frame>0?1.f:0.f,0}});
+ writePair(Params{{extent.width,extent.height,tiles.width,tiles.height},{0,frame>1?1.f:0.f,frame>0?1.f:0.f,0}});
  record(0,true);submitPrepass(fence.handle());++frame;
 }
 bool OpenContext::waitForIdle(uint64_t ns)const{return !scheduled||fence.wait(v,ns);}
