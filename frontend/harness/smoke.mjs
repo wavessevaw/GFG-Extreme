@@ -69,6 +69,7 @@ const cases = [
   ["home-extreme-verify", [], ["Extreme · checking", "Render 90% counts only once the engine shows", "Checking render 90%", "Limit 15 W"]],
   ["home-extreme-restart", [], ["Extreme · 12 W", "your own 12 W limit (never raised)", "Restart the game once to enable"]],
   ["home-extreme-offer", [], ["Want more real frames?", "4 W of your 15 W limit unused", "not promised", "Try Extreme", "Not now"]],
+  ["home-at-limit", [], ["At the limit · 15 W", "about 26 real frames", "lower graphics settings"]],
   ["home-scale-ignored", ["Details"], ["Lower resolution", "Off · this game always renders at full size"]],
   ["home-scale-ignored", ["Settings", "Scaling"], ["This game sets its own render size", "has no effect here"]],
   ["home-extreme", [], ["80% · sharpen 0.30"]],

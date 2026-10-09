@@ -365,6 +365,15 @@ function describe(s) {
   if (b && s.state === "OPTIMIZE_POWER") return { head: "Saving battery", body: b.probe === "up" ? "Trying fewer generated frames at " + num(b.tdp_w, 0) + " W." : "Looking for the lowest TDP that holds the target (now " + num(b.tdp_w, 0) + " W).", tone: "ok" };
   if (b && s.state === "LOCKED" && b.thermal_deferred && b.heat_limited) return { head: "Cooling \xB7 " + num(b.tdp_w, 0) + " W", body: "The Deck is " + (b.thermal === "hot" ? "hot" : b.thermal === "heating" ? "heating up" : "cooling down") + ": GFG keeps the current ratio and only tries lower watts. Fewer generated frames are tried again once it cools.", tone: "warn" };
   if (b && s.state === "LOCKED") return { head: "Adapting \xB7 " + num(b.tdp_w, 0) + " W", body: (b.warm_started ? "Started from what worked last time. " : "") + (TIER_TEXT[b.tier] || "Checks FPS every second: adds watts at once when the game falls short, tries lower watts every 45 s."), tone: b.tier === "emergency" ? "warn" : "ok" };
+  if (b && b.exhausted && s.state === "GUARD") {
+    const tel = (s.telemetry || {}).summary || s.telemetry || {};
+    const real = tel.real && tel.real.median;
+    return {
+      head: "At the limit" + (b.tdp_w != null ? " \xB7 " + num(b.tdp_w, 0) + " W" : ""),
+      body: (real != null ? "The game gives about " + num(real, 0) + " real frames here. " : "") + "GFG holds the deepest setting it has; lower graphics settings in the game would help more than anything GFG can do.",
+      tone: "warn"
+    };
+  }
   if (b && s.state === "GUARD") return { head: "Protecting", body: "A scene got heavier: more generated frames first, then more watts.", tone: "warn" };
   if (s.state === "OPTIMIZE_POWER") return { head: "Saving power", body: "Lowering TDP while holding the target.", tone: "ok" };
   if (s.state === "LOCKED") return { head: "Locked in", body: "Stable at target. GFG stays out of the way.", tone: "ok" };

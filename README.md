@@ -176,6 +176,8 @@ Every release passes an automated test suite (the Python backend, the generated 
 
 Recent versions:
 
+- **1.6.2** Frame OS Act boosts only with GPU headroom; an honest "At the limit" for games heavier than the power allows.
+- **1.6.1** Render scale counts only when the engine confirms it, in every mode; a faster guard.
 - **1.6** Extreme mode with a single power ceiling, render scale with renderer confirmation, and an honest capability list.
 - **1.5** Smart power split, filters on Home, a compact Home screen.
 - **1.3** Frame OS checks its own effects in game and remembers every game.
