@@ -115,13 +115,26 @@ starts from `CAS_START` (90 % → 0.15, 80 % → 0.30) plus the player's correct
 double sharpening) and untouched when the profile scales on its own. A sharpening correction goes
 live on the held point without a new trial.
 
-**Acknowledgement.** `TelemetryObserver` keeps bounded render-scale evidence: the
-`swapchain-context-create` event (`application_width/height` against the presented `width/height`)
-and the scaler's `spatial scaling active: source=WxH; ...; sharpness=` line. A request whose render
-scale differs from the last acknowledged one is accepted only when evidence newer than the overlay
-write shows the game rendering at that scale (±3 percentage points, uniform in both axes).
-No evidence within 20 s rejects the point (`render-scale-not-acknowledged`); two misses stop scaled
-trials for the game session. Sharpening counts as confirmed only from the scaler's own report.
+**Acknowledgement (every budget mode since 1.6.1).** `TelemetryObserver` keeps bounded render-scale
+evidence: the `swapchain-context-create` event (`application_width/height` against the presented
+`width/height`), the scaler's `spatial scaling swapchain policy` line (`advertised_source`,
+`actual_source`, `actual_presentation`, `inactive_reason`, `active`) and its `spatial scaling active`
+line (with the applied sharpening). A third source is the renderer's runtime-state JSON next to its
+config file (`<overlay dir>/runtime-state/*.json`, `spatial_scaling` block), filtered by the game's
+PIDs (falling back to records written after the request when the game runs in another PID
+namespace). A request whose render scale differs from the last acknowledged one is accepted only
+when evidence newer than the overlay write shows the game rendering at the expected share of
+native (the profile's own scaling included: `100 / scaling_factor`, ±3 points, uniform in both
+axes). An inactive report rejects the point at once; no evidence within 20 s rejects it, and two
+misses stop scaled trials for the session. A game whose swapchain ignores the advertised size
+(`application-extent-override-no-source-presentation-split`, seen on a Deck) is remembered for
+14 days in `scale_ignored_games`; *Reset what GFG learned* clears it. Sharpening counts as
+confirmed only from the scaler's own report.
+
+**Guard.** Since 1.6.1 a real stream clearly below the current cap goes straight to the highest
+point whose cap the measured real frames reach (`_measured_deeper`), or the deepest usable one:
+a field log showed three intermediate fractional points timing out in turn (75 s). Upgrades skip
+render-scale rungs the launch cannot use (`_next_up`).
 
 **Status.** `get_status().extreme` is a cached snapshot: state (OFF / DISCOVER / BASELINE / APPLY /
 VERIFY / TUNE / ACTIVE / RESTART_REQUIRED / PAUSED), ceiling and its source, requested vs applied
