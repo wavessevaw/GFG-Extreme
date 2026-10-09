@@ -267,7 +267,7 @@ var MODE_TEXT = {
   balanced: "Balanced: starts at about 45 real FPS and 12 W, never goes below 30 real FPS and never above your Deck's normal power range. A bit more battery for a steadier picture.",
   budget: "Battery: lowest TDP first, 9\u201311 W ideal. Real FPS stays at 24 or more; a deeper ratio (down to 20 real) and the highest watts your Deck allows only as a last resort.",
   quality: "Quality: fewest generated frames first, then lowers TDP. Uses more battery.",
-  extreme: "Extreme: the most real frames at your Deck's stock limit \u2014 15 W, or your own lower limit, never more, no overclock. Lowers render resolution to 90% / 80% with matched sharpening only when the engine confirms it. Uses more battery than Balanced."
+  extreme: "Extreme \u2014 BETA / EXPERIMENTAL. In development; not recommended for regular play. Uses your Deck's stock limit \u2014 15 W, or your own lower limit, never more, no overclock. Lowers render resolution to 90% / 80% with matched sharpening only when the engine confirms it. Uses more battery than Balanced."
 };
 var XB_TITLE = {
   upscale: "Upscale + sharpen",
@@ -599,7 +599,7 @@ function HeroTop({ layout, onTap, value, max, label, sub, d, wolf }) {
   return h("div", { className: "hero-col" }, tap(h(Ring, { value, max, label, sub, cls: x.trim(), wolf })), status());
 }
 var ringHue = (v, max) => v < 0 ? 0 : 25 + 115 * Math.min(1, Math.abs(v) / max);
-function MiniRing({ value, max, text, label, live, estimate, fixed }) {
+function MiniRing({ value, max, text, displayText, label, live, estimate, fixed }) {
   const r = 26, w = 4, size = 2 * (r + w), c = 2 * Math.PI * r;
   const has = value != null;
   const f = has ? Math.min(1, Math.abs(value) / max) : 0;
@@ -619,12 +619,24 @@ function MiniRing({ value, max, text, label, live, estimate, fixed }) {
         glow ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeOpacity: 0.22, strokeWidth: w + 4, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null,
         has ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeWidth: w, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null
       ),
-      h("div", { className: "mnum" + (estimate || !has ? " dim" : "") }, has ? text : "\u2014")
+      h("div", { className: "mnum" + (estimate || !has ? " dim" : "") }, displayText !== void 0 ? displayText : has ? text : "\u2014")
     ),
     h("div", { className: "mlab" }, label)
   );
 }
-function FrameOsCard({ fo }) {
+function energySavingsText(cap, maximum = 15) {
+  if (typeof cap !== "number" || !Number.isFinite(cap) || cap < 0 || typeof maximum !== "number" || !Number.isFinite(maximum) || maximum <= 0) return "\u2014";
+  const stockMaximum = maximum;
+  return Math.round(Math.max(0, Math.min(100, 100 * (stockMaximum - cap) / stockMaximum))) + "%";
+}
+function observedEnergyText(power = {}) {
+  const current = power.observed_tdp_w != null ? power.observed_tdp_w : power.current_tdp_w;
+  const caps = [current, power.observed_fast_w].filter((v) => typeof v === "number" && Number.isFinite(v) && v >= 0);
+  const candidate = power.gamescope_max_tdp_w != null ? power.gamescope_max_tdp_w : power.maximum_tdp_w;
+  const maximum = typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0 ? candidate : 15;
+  return caps.length ? energySavingsText(Math.max(...caps), maximum) : "\u2014";
+}
+function FrameOsCard({ fo, power }) {
   const b = fo.benefit;
   if (!fo.enabled || !b) return null;
   const est = !!b.estimate;
@@ -646,7 +658,7 @@ function FrameOsCard({ fo }) {
       { className: "rings" },
       h(MiniRing, { value: resp, max: 50, text: resp == null ? "" : (resp >= 0 ? "\u2212" : "+") + Math.abs(Math.round(resp)) + "%", label: "Response", live: level !== "rest", estimate: est }),
       h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "\u2212") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est }),
-      h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), label: "Energy", live: level === "rest", estimate: est })
+      h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), displayText: observedEnergyText(power), label: "Energy", live: level === "rest", estimate: est })
     ),
     fo.mode === "act" ? h("div", { className: "abline" }, proofLine(fo.proof, b.measured)) : null,
     fo.mode === "act" && learnedLine(fo.game) ? h("div", { className: "abline" }, learnedLine(fo.game)) : null
@@ -685,7 +697,7 @@ function SessionRings({ ls, target }) {
       { className: "rings", style: { marginTop: 10 } },
       h(MiniRing, { value: b.response, max: 50, text: signed(b.response, "\u2212"), label: "Response", live: true, estimate: b.estimate }),
       h(MiniRing, { value: b.frames, max: 50, text: signed(b.frames, "+"), label: "Frames", live: true, estimate: b.estimate }),
-      h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "\u2212" : "") + Math.abs(Math.round(b.energy)) + "%", label: "Energy", live: true, estimate: b.estimate })
+      h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "\u2212" : "") + Math.abs(Math.round(b.energy)) + "%", displayText: energySavingsText(ls.avg_tdp_w, ls.energy_reference_w || ls.maximum_tdp_w || 15), label: "Energy", live: true, estimate: b.estimate })
     ) : null
   );
 }
@@ -712,6 +724,7 @@ function ExtremeCard({ x, profile, refresh }) {
     "div",
     { className: "card xcard" },
     h("div", { className: "fos-head" }, h("span", null, "EXTREME BOOSTERS"), h("span", { className: "pill live" }, active + " / " + list.length + " ACTIVE")),
+    h("div", { className: "abline", role: "note" }, h("b", null, "BETA / EXPERIMENTAL"), " \xB7 In development; not recommended for regular play."),
     h("div", { className: "boost" }, list.map((b) => h(
       "div",
       { key: b.id, className: "bt" + (b.state === "unavailable" || b.state === "off" ? " na" : "") },
@@ -760,7 +773,7 @@ function ExtremeOffer({ o, onTry, onHide }) {
       "div",
       { className: "t" },
       h("b", null, "Want more real frames?"),
-      h("span", null, "This game leaves " + num(o.headroom_w, 0) + " W of your " + num(o.ceiling_w, 0) + " W limit unused. Extreme puts it into real frames \u2014 no overclock; the result is measured in game, not promised."),
+      h("span", null, "This game leaves " + num(o.headroom_w, 0) + " W of your " + num(o.ceiling_w, 0) + " W limit unused. Extreme is BETA / EXPERIMENTAL: in development and not recommended for regular play. Performance gains are not promised."),
       h("div", { className: "xbtns" }, h(Focusable, { className: "xbtn on", onClick: onTry }, "Try Extreme"), h(Focusable, { className: "xbtn", onClick: onHide }, "Not now"))
     )
   );
@@ -893,7 +906,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
     ),
     xt && s.enabled ? h(ExtremeCard, { x, profile, refresh }) : null,
     !xt && s.enabled && s.extreme_offer && !offerHidden ? h(ExtremeOffer, { o: s.extreme_offer, onTry: () => setMode("extreme"), onHide: () => setOfferHidden(true) }) : null,
-    s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os }) : null,
+    s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os, power: s.power }) : null,
     h(
       Focusable,
       { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? void 0 : toggle },
@@ -902,7 +915,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
     ),
     h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : missing ? "The GFG engine is not installed yet. One tap installs it." : "Target " + target + " FPS \xB7 " + (dev.reason || "picked automatically for this screen")),
     h("div", { className: "sec" }, "MODE"),
-    h(Seg, { cls: "four", value: s.mode || "budget", options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"], ["extreme", "EXTREME", "x"]], onChange: setMode }),
+    h(Seg, { cls: "four", value: s.mode || "budget", options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"], ["extreme", h("span", { style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2 } }, h("span", null, "EXTREME"), h("small", { style: { fontSize: 8, lineHeight: 1.1 } }, "BETA")), "x"]], onChange: setMode }),
     asking ? h(ActConsent, { onAnswer: answerAct }) : null,
     h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
     health ? h("div", { className: "hint" }, health) : null,
