@@ -26,7 +26,7 @@ jobs:
               r=json.loads(subprocess.check_output(['gh','api',f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{int(m[key])}"]))
               assert r['head_sha']==m['source_sha'] and r['conclusion']=='success' and r['name']==name,(key,r['head_sha'],r['conclusion'])
           package=json.loads(subprocess.check_output(['git','show',m['source_sha']+':package.json']))
-          assert package['version']=='1.6.11-test.1' and package['gfgPrerelease'] is True
+          assert package['version']=='1.6.11-test.2' and package['gfgPrerelease'] is True
           with open(os.environ['GITHUB_OUTPUT'],'a') as f:
               print('native_run='+str(int(m['native_run'])),file=f)
               print('source_sha='+m['source_sha'],file=f)
@@ -35,15 +35,15 @@ jobs:
         run: |
           gh run download "${{ steps.verified.outputs.native_run }}" --name gfg-extreme-candidate --dir out
           (cd out && sha256sum --check SHA256SUMS.txt)
-          python3 scripts/check_release_archive.py out/GFG-Extreme-v1_6_11-test_1.zip 1.6.11-test.1
+          python3 scripts/check_release_archive.py out/GFG-Extreme-v1_6_11-test_2.zip 1.6.11-test.2
       - name: Publish pre-release only
         run: |
           sha="$(cut -d' ' -f1 out/SHA256SUMS.txt)"
           python3 - "$sha" > /tmp/open-test-notes.md <<'PY'
           import sys
-          text=open('RELEASE_DESCRIPTION_V1_6_11-test_1.md',encoding='utf-8').read()
+          text=open('RELEASE_DESCRIPTION_V1_6_11-test_2.md',encoding='utf-8').read()
           print(text.replace('<sha256>',sys.argv[1]))
           PY
-          gh release create v1.6.11-test.1 out/*.zip out/SHA256SUMS.txt --prerelease --latest=false \
+          gh release create v1.6.11-test.2 out/*.zip out/SHA256SUMS.txt --prerelease --latest=false \
             --target "${{ steps.verified.outputs.source_sha }}" \
-            --title "GFG Extreme 1.6.11-test.1 — Open smoothness test" --notes-file /tmp/open-test-notes.md
+            --title "GFG Extreme 1.6.11-test.2 — Open smoothness and HUD test" --notes-file /tmp/open-test-notes.md

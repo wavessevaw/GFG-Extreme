@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.6.11-test.1).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.6.11-test.2).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -66,7 +66,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, confirmation_evidence, matches,
 )
 
-VERSION = "1.6.11-test.1"
+VERSION = "1.6.11-test.2"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -599,17 +599,25 @@ class GovernorService:
     def _publish_ring_hud_locked(self, status: Dict[str, Any], settings: Dict[str, Any]) -> bool:
         """Refresh at 1 Hz, skip identical pictures, and never display stale FPS."""
         now = self._clock()
+        tel = status.get("telemetry") or {}
+        snapshot = tel.get("snapshot") or {}
+        session = (status.get("profile"), tuple((self._launch or {}).get("launch_key") or ()),
+                   snapshot.get("session_generation"))
+        if session != getattr(self, "_hud_session_key", None):
+            # A fresh game/profile/renderer cannot inherit another session's FPS or BOOST.
+            self._hud_values = self._hud_fos = self._hud_tag = None
+            self._ring_hud_due = 0.0
+            self._hud_session_key = session
         if now < self._ring_hud_due:
             return self._ring_hud_key is not None
-        tel = status.get("telemetry") or {}
         summary = tel.get("summary") or tel
         snapshot = tel.get("snapshot")
         latest = (snapshot or {}).get("latest") or {}
         age = (snapshot or {}).get("sample_age_ms")
-        fresh = snapshot is None or (isinstance(age, (int, float)) and 0 <= age <= 2500)
+        fresh = snapshot is None or (hud_rings.finite_number(age, nonnegative=True) is not None and age <= 2500)
 
         def number(value):
-            return round(float(value)) if isinstance(value, (int, float)) and math.isfinite(value) and value >= 0 else None
+            return round(value) if hud_rings.finite_number(value, nonnegative=True) is not None else None
 
         # Renderer samples already summarize an interval. Avoid another 12/20-second average.
         fps = latest.get("output_fps") if snapshot is not None else (summary.get("output") or {}).get("median")
@@ -618,10 +626,12 @@ class GovernorService:
         battery = status.get("battery") or {}
         fo = status.get("frame_os") or {}
         benefit = fo.get("benefit") or {}
+        if not fo.get("enabled"):
+            self._hud_fos = self._hud_tag = None
         # Renderer samples arrive about once a second: one late sample must not blank the numbers
         # (they flipped between a value and "—").  Hold the last good ones for HUD_HOLD_S.
         if fresh and number(fps) is not None:
-            self._hud_values = (now, number(fps), number(real))
+            self._hud_values = (now - (age / 1000.0 if snapshot is not None else 0), number(fps), number(real))
         held = self._hud_values if (self._hud_values and now - self._hud_values[0] <= self.HUD_HOLD_S) else None
         data: Dict[str, Any] = {
             # HUD is independent from Governor: turning off power optimization
@@ -636,14 +646,9 @@ class GovernorService:
         }
         # ENERGY uses Steam's slider maximum, not Extreme's actuator ceiling.
         # Keep the actual cap separate from APU draw and preserve fractions.
-        maximum = power.get("gamescope_max_tdp_w")
-        if maximum is None:
-            maximum = power.get("maximum_tdp_w")
-        if (not isinstance(maximum, (int, float)) or isinstance(maximum, bool)
-                or not math.isfinite(maximum) or maximum <= 0):
-            maximum = power.get("initial_tdp_w")
-        data["maximum_tdp"] = (float(maximum) if isinstance(maximum, (int, float))
-                               and math.isfinite(maximum) and maximum > 0 else None)
+        maxima = (power.get("gamescope_max_tdp_w"), power.get("maximum_tdp_w"))
+        data["maximum_tdp"] = next((float(v) for v in maxima
+                                    if hud_rings.finite_number(v, nonnegative=True) is not None and v > 0), None)
         current = power.get("observed_tdp_w")
         if current is None:
             current = power.get("current_tdp_w")
@@ -658,7 +663,7 @@ class GovernorService:
         if fo.get("enabled") and (fo.get("telemetry") or {}).get("live"):
             def percent(key):
                 value = benefit.get(key) if benefit.get("ready") else None
-                return round(value) if isinstance(value, (int, float)) and math.isfinite(value) else None
+                return round(value) if hud_rings.finite_number(value) is not None else None
             decision = fo.get("decision") or {}
             level = decision.get("level")
             active = bool(fo.get("mode") == "act" and self.frame_os.executor_active
@@ -667,7 +672,7 @@ class GovernorService:
             measured_real = data["real"]
             measured_out = data["fps"]
             target = data.get("target")
-            delivered = bool(active and level == "boost" and measured_real is not None
+            delivered = bool(fresh and active and level == "boost" and measured_real is not None
                              and isinstance(calm, (int, float)) and calm > 0
                              and measured_real >= 1.2 * calm
                              and measured_out is not None and target
@@ -692,7 +697,7 @@ class GovernorService:
             self._hud_fos = (now, data["frame_os"])
         elif self._hud_fos and now - self._hud_fos[0] <= self.HUD_HOLD_S and fo.get("enabled"):
             # the pacer's telemetry missed a beat: keep the Frame OS rings instead of resizing
-            data["frame_os"] = self._hud_fos[1]
+            data["frame_os"] = {**self._hud_fos[1], "verified_boost": False, "active": False}
         ext = status.get("extreme") or {}
         if ext.get("enabled"):
             # Extreme: the TDP ring is drawn against the ceiling, and only a render scale the

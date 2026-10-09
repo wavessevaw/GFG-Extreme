@@ -181,40 +181,69 @@ def energy_savings_pct(tdp: Any, maximum_tdp: Any) -> Optional[float]:
 
 
 
+def finite_number(value: Any, *, nonnegative: bool = False) -> Optional[float]:
+    """Invalid telemetry is unavailable, including booleans and nonfinite values."""
+    if (isinstance(value, bool) or not isinstance(value, (int, float))
+            or not math.isfinite(value) or (nonnegative and value < 0)):
+        return None
+    return float(value)
+
+
+def battery_color(percent: Optional[float]) -> Tuple[int, int, int]:
+    """Green at/above 50%; a continuous hue towards red below 50%."""
+    if percent is None:
+        return GREY
+    hue = 140.0 * min(1.0, max(0.0, percent) / 50.0)
+    r, g, b = colorsys.hls_to_rgb(hue / 360.0, 0.55, 0.85)
+    return round(r * 255), round(g * 255), round(b * 255)
+
+
 def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
     """What to draw, left to right."""
     items: List[Dict[str, Any]] = []
-    fps, target = data.get("fps"), data.get("target") or 60
-    real = data.get("real")
+    fps = finite_number(data.get("fps"), nonnegative=True)
+    real = finite_number(data.get("real"), nonnegative=True)
+    target = finite_number(data.get("target"), nonnegative=True) or 60
     items.append({"kind": "ring", "size": 52, "w": 4.5, "frac": (fps or 0) / target, "rgb": BRAND,
                   "text": str(round(fps)) if fps is not None else "—", "style": "fps",
                   "sub": f"{round(real)} REAL" if real is not None else None, "label": "FPS"})
-    tdp, limit = data.get("tdp"), data.get("limit") or 15
+    tdp = finite_number(data.get("tdp"), nonnegative=True)
+    limit = finite_number(data.get("limit"), nonnegative=True) or 15
     items.append({"kind": "ring", "size": 46, "w": 4, "frac": (tdp or 0) / limit, "rgb": WHITE,
-                  "text": f"{round(tdp)}W" if tdp else "—", "style": "val", "label": "TDP"})
-    if preset == "detailed" and data.get("battery_min") is not None:
-        mins = int(data["battery_min"])
-        low = mins < 20
-        items.append({"kind": "ring", "size": 46, "w": 4, "frac": (data.get("battery_pct") or 0) / 100.0,
-                      "rgb": effect_color(5, 30) if low else WHITE,
-                      "text": f"{mins // 60}h{mins % 60:02d}" if mins >= 60 else f"{mins}M", "style": "val",
-                      "label": "BATTERY"})
+                  "text": f"{round(tdp)}W" if tdp is not None else "—", "style": "val", "label": "TDP"})
+    battery = finite_number(data.get("battery_pct"), nonnegative=True)
+    battery = min(100.0, battery) if battery is not None else None
+    minutes = finite_number(data.get("battery_min"), nonnegative=True)
+    if preset == "detailed" and (minutes is not None or battery is not None):
+        mins = round(minutes) if minutes is not None else None
+        text = (f"{mins // 60}h{mins % 60:02d}" if mins >= 60 else f"{mins}M") if mins is not None else f"{round(battery)}%"
+        items.append({"kind": "ring", "size": 46, "w": 4, "frac": (battery or 0) / 100.0,
+                      "rgb": effect_color(5, 30) if mins is not None and mins < 20 else WHITE,
+                      "text": text, "style": "val", "label": "BATTERY"})
     fos = data.get("frame_os")
-    if preset != "minimal" and fos:
+    fos = fos if isinstance(fos, dict) else None
+    if preset != "minimal":
         items.append({"kind": "sep"})
-        est, level = bool(fos.get("estimate")), fos.get("level")
-        for key, full, sign, label, live in (("response", 50, "-", "RESP", level != "rest"),
-                                             ("frames", 50, "+", "FRAMES", level == "boost"),
-                                             ("energy", 30, "", "ENERGY", level == "rest")):
-            v = fos.get(key)
-            saving = energy_savings_pct(data.get("energy_tdp", data.get("tdp")), data.get("maximum_tdp", 15))
-            text_value = saving if key == "energy" else v
-            items.append({"kind": "ring", "size": 40, "w": 3.5,
-                          "frac": abs(v) / full if v is not None else 0,
-                          "rgb": GREY if est or v is None else effect_color(v, full),
-                          "opacity": 1.0 if (live or est) else 0.45,
-                          "text": _fmt_pct(text_value, sign) if text_value is not None else "—", "style": "ben",
-                          "label": label})
+        if fos:
+            est, level = bool(fos.get("estimate")), fos.get("level")
+            measured = fos.get("measured") or {}
+            for key, full, sign, label, live in (("response", 50, "-", "RESP", level != "rest"),
+                                                ("frames", 50, "+", "FRAMES", level == "boost")):
+                v = finite_number(fos.get(key))
+                unmeasured = isinstance(measured, dict) and measured.get(key) is False
+                items.append({"kind": "ring", "size": 40, "w": 3.5,
+                              "frac": abs(v) / full if v is not None else 0,
+                              "rgb": GREY if est or unmeasured or v is None else effect_color(v, full),
+                              "opacity": 1.0 if (live or est) else 0.45,
+                              "text": _fmt_pct(v, sign) if v is not None else "—", "style": "ben",
+                              "label": label})
+        # ENERGY has two independent readings, neither depends on Frame OS.
+        saving = energy_savings_pct(data.get("energy_tdp", data.get("tdp")), data.get("maximum_tdp"))
+        items.append({"kind": "ring", "size": 40, "w": 3.5,
+                      "frac": (battery or 0) / 100.0, "rgb": battery_color(battery), "opacity": 1.0,
+                      "text": _fmt_pct(saving, "") if saving is not None else "—", "style": "ben",
+                      "label": "ENERGY"})
+    if preset != "minimal" and fos:
         # A visible status in Standard as well as Detailed. "BOOST" is earned:
         # a requested policy is not the same as an acknowledged real-cadence gain.
         if fos.get("active") and fos.get("ab"):
@@ -225,7 +254,7 @@ def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
                 real = fos.get("actual_real")
                 ratio = fos.get("actual_ratio")
                 suffix = ""
-                if isinstance(real, (int, float)) and isinstance(ratio, (int, float)) and ratio > 0:
+                if finite_number(real, nonnegative=True) is not None and finite_number(ratio, nonnegative=True) is not None and ratio > 0:
                     multiplier = str(round(ratio)) if abs(ratio - round(ratio)) < 0.1 else f"{ratio:.1f}"
                     suffix = f" {round(real)}R x{multiplier}"
                 label, colour = "BOOST" + suffix, (95, 240, 160)
@@ -239,7 +268,7 @@ def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
     ext = data.get("extreme")
     if preset != "minimal" and isinstance(ext, dict):
         # Extreme mode; the render scale only once the renderer confirmed it.
-        pct = ext.get("render_pct")
+        pct = finite_number(ext.get("render_pct"), nonnegative=True)
         items.append({"kind": "tag", "text": f"EXT {int(pct)}%" if pct else "EXT", "rgb": (255, 92, 70)})
     return items
 

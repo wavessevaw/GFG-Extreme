@@ -1,0 +1,28 @@
+name: HUD audit
+on:
+  push:
+    branches: [fix/open-motion-smoothness-test]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  hud:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: HUD rendering and publication regressions
+        run: python3 -m unittest discover -s tests -p 'test_hud_rings.py'
+      - name: Render reference pictures and charge-state preview
+        run: |
+          python3 -m pip install Pillow
+          python3 tools/make_hud_shots.py
+          python3 tools/hud_audit_preview.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hud-reference-preview
+          path: |
+            docs/img/hud-rings-*.png
+            hud-audit-preview.png

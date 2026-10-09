@@ -17,18 +17,18 @@ W, H = 1280, 800
 FOS = {"mode": "act", "estimate": False, "active": True, "measured": {"response": True, "frames": True}}
 SHOTS = {
     # name: (data, corner, preset).  Frame OS Act boosting in a fight, delivered: 45 real at 90 Hz.
-    "standard": ({"fps": 90, "real": 45, "target": 90, "tdp": 15, "limit": 15,
+    "standard": ({"fps": 90, "real": 45, "target": 90, "tdp": 15, "battery_pct": 72, "limit": 15, "maximum_tdp": 20,
                   "frame_os": {**FOS, "level": "boost", "response": 47, "frames": 50, "energy": 9,
                                "verified_boost": True, "actual_real": 45, "actual_ratio": 2.0}},
                  "bottom-left", "standard"),
-    "minimal": ({"fps": 88, "real": 30, "target": 90, "tdp": 9, "limit": 15}, "bottom-left", "minimal"),
+    "minimal": ({"fps": 88, "real": 30, "target": 90, "tdp": 9, "limit": 15, "maximum_tdp": 20}, "bottom-left", "minimal"),
     # A pause: Frame OS rests and saves energy.
-    "detailed": ({"fps": 90, "real": 30, "target": 90, "tdp": 11, "limit": 15, "battery_min": 125,
+    "detailed": ({"fps": 90, "real": 30, "target": 90, "tdp": 11, "limit": 15, "maximum_tdp": 20, "battery_min": 125,
                   "battery_pct": 72,
                   "frame_os": {**FOS, "level": "rest", "response": 45, "frames": 3, "energy": 14}},
                  "top-right", "detailed"),
     # An in-game A/B check running: Act's effect is briefly off, the tag says so.
-    "ab": ({"fps": 90, "real": 30, "target": 90, "tdp": 12, "limit": 15,
+    "ab": ({"fps": 90, "real": 30, "target": 90, "tdp": 12, "battery_pct": 72, "limit": 15, "maximum_tdp": 20,
             "frame_os": {**FOS, "level": "calm", "response": 46, "frames": 48, "energy": 8, "ab": True}},
            "bottom-left", "standard"),
 }
