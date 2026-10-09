@@ -98,21 +98,37 @@ def _serve_loop(requests: int, replies: int, cpu_written: dict) -> None:  # prag
             line, buffer = buffer.split(b"\n", 1)
             reply = b"err bad-request\n"
             try:
-                raw_path, raw_value = line.decode("utf-8").rsplit(" ", 1)
+                request = line.decode("utf-8")
+                restoring_cpu = request.startswith("restore-cpu ")
+                if restoring_cpu:
+                    request = request[len("restore-cpu "):]
+                raw_path, raw_value = request.rsplit(" ", 1)
                 value = int(raw_value)
                 path = allowed_cap_path(raw_path)
                 cpu = None if path else allowed_cpu_path(raw_path)
-                if path is None and cpu is None:
+                if (path is None and cpu is None) or (restoring_cpu and cpu is None):
                     reply = b"err path-not-allowed\n"
                 elif path is not None and not 0 < value <= _MAX_UW:
                     reply = b"err value-out-of-range\n"
                 elif cpu is not None and not _CPU_KHZ[0] <= value <= _CPU_KHZ[1]:
                     reply = b"err value-out-of-range\n"
                 elif cpu is not None:
-                    original = cpu_written.get(cpu, (_read_value(cpu), None))[0]
-                    _write_value(cpu, value)
-                    cpu_written[cpu] = (original, value)
-                    reply = b"ok\n"
+                    before = _read_value(cpu)
+                    prior = cpu_written.get(cpu)
+                    # An outside tool (or a new ownership session) changed this policy.
+                    # Rebase undo; never restore a previous game's higher CPU limit.
+                    original = prior[0] if prior and before == prior[1] else before
+                    if restoring_cpu and prior and before != prior[1]:
+                        reply = b"err external-cpu-change\n"
+                    else:
+                        _write_value(cpu, value)
+                        if restoring_cpu:
+                            # Undo is complete: helper exit must not undo the undo,
+                            # especially after replaying an older plugin's crash journal.
+                            cpu_written.pop(cpu, None)
+                        else:
+                            cpu_written[cpu] = (original, value)
+                        reply = b"ok\n"
                 else:
                     _write_value(path, value)
                     reply = b"ok\n"
@@ -150,10 +166,14 @@ class PrivilegedCapWriter:
             if not os.read(self._replies, 256):
                 raise OSError("TDP helper exited")
 
-    def write(self, path: Path, value: int) -> None:
+    def restore_cpu(self, path: Path, value: int) -> None:
+        self.write(path, value, restore_cpu=True)
+
+    def write(self, path: Path, value: int, *, restore_cpu: bool = False) -> None:
         with self._lock:
             self._drain_stale()
-            os.write(self._requests, f"{path} {int(value)}\n".encode())
+            prefix = "restore-cpu " if restore_cpu else ""
+            os.write(self._requests, f"{prefix}{path} {int(value)}\n".encode())
             data = b""
             deadline = time.monotonic() + self.REPLY_TIMEOUT_S
             while not data.endswith(b"\n"):

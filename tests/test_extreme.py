@@ -269,6 +269,11 @@ class CapabilityTests(unittest.TestCase):
         split = self.facts(split={"setting": True, "available": True, "game_off": True})["split"]
         self.assertEqual((split["state"], split["reason"]), ("off", "no-measured-benefit-for-game"))
 
+    def test_pending_cpu_restore_is_not_presented_as_active(self):
+        split = self.facts(split={"setting": True, "available": True, "cap_khz": 2_100_000,
+                                 "restore_pending": True})["split"]
+        self.assertEqual((split["state"], split["reason"]), ("waiting", "cpu-restore-pending"))
+
     def test_gain_has_no_number_before_proof(self):
         gain = ex.gain_unavailable()
         self.assertEqual((gain["kind"], gain["percent"], gain["baseline"]), ("unavailable", None, "balanced"))

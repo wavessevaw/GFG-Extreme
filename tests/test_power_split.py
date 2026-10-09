@@ -1,5 +1,7 @@
 """Smart power split: CPU clock cap logic, its actuator and the root helper's limits."""
 import json
+import os
+from unittest.mock import patch
 import sys
 import tempfile
 import unittest
@@ -199,6 +201,7 @@ class CpuFreqActuatorTests(unittest.TestCase):
             self.assertTrue(a.external_change)
             self.assertFalse(a.restore())
             self.assertEqual(self.read(root), 2_000_000)
+            self.assertEqual(self.read(root, 1), 3_500_000, "other owned policies must recover")
 
     def test_crashed_session_is_recovered_at_the_next_start(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -220,6 +223,121 @@ class CpuFreqActuatorTests(unittest.TestCase):
             b.discover()
             self.assertEqual(self.read(root, 0), 1_800_000)
             self.assertEqual(self.read(root, 1), 3_500_000)
+
+    def fail_policy_write(self, policy, value=None):
+        original = Path.write_text
+        def write(path, text, *args, **kwargs):
+            if path.parent.name == policy and path.name == "scaling_max_freq":
+                if value is None or str(value) == text.strip():
+                    raise OSError("CPU policy busy")
+            return original(path, text, *args, **kwargs)
+        return patch.object(Path, "write_text", write)
+
+    def test_partial_first_cap_is_restored_even_without_committed_cap(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, a = self.make(temp)
+            a.claim()
+            with self.fail_policy_write("policy1"):
+                self.assertFalse(a.set_cap_khz(2_100_000))
+            self.assertIsNone(a.cap_khz)
+            self.assertTrue(a.restore_pending)
+            self.assertEqual(self.read(root, 0), 2_100_000)
+            self.assertTrue(a.restore())
+            self.assertEqual([self.read(root, i) for i in range(2)], [3_500_000, 3_500_000])
+            self.assertFalse(a.marker.exists())
+
+    def test_crash_during_a_second_cap_recovers_both_old_and_new_values(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, a = self.make(temp)
+            a.claim(); a.set_cap_khz(2_400_000)
+            with self.fail_policy_write("policy1"):
+                self.assertFalse(a.set_cap_khz(2_100_000))
+            self.assertEqual([self.read(root, i) for i in range(2)], [2_100_000, 2_400_000])
+            b = CpuFreqActuator(root=root, helper=lambda: None, access=lambda *_: True, marker=a.marker)
+            b.discover()
+            self.assertEqual([self.read(root, i) for i in range(2)], [3_500_000, 3_500_000])
+            self.assertFalse(b.restore_pending)
+
+    def test_failed_crash_recovery_keeps_undo_and_blocks_a_new_baseline(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, a = self.make(temp)
+            a.claim(); a.set_cap_khz(2_100_000)
+            b = CpuFreqActuator(root=root, helper=lambda: None, access=lambda *_: True, marker=a.marker)
+            with self.fail_policy_write("policy1", 3_500_000):
+                b.discover()
+                self.assertTrue(b.restore_pending)
+                self.assertTrue(a.marker.exists())
+                self.assertFalse(b.claim(), "a leftover GFG cap is not the user's limit")
+            self.assertEqual(self.read(root, 0), 3_500_000)
+            self.assertEqual(self.read(root, 1), 2_100_000)
+            self.assertTrue(b.claim(), "retry completes undo before claiming")
+            self.assertEqual(b.initial[root / "policy1" / "scaling_max_freq"], 3_500_000)
+            self.assertFalse(a.marker.exists())
+
+    def test_recovery_requires_readback_not_just_a_successful_write_call(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, a = self.make(temp)
+            a.claim(); a.set_cap_khz(2_100_000)
+            b = CpuFreqActuator(root=root, helper=lambda: None, access=lambda *_: True, marker=a.marker)
+            original = Path.write_text
+            def ignored(path, text, *args, **kwargs):
+                if path.name == "scaling_max_freq":
+                    return len(text)
+                return original(path, text, *args, **kwargs)
+            with patch.object(Path, "write_text", ignored):
+                b.discover()
+                self.assertTrue(b.restore_pending)
+                self.assertTrue(a.marker.exists())
+                self.assertFalse(b.claim())
+            self.assertTrue(b.restore())
+            self.assertEqual(self.read(root), 3_500_000)
+
+    def test_no_frequency_write_without_a_saved_undo_record(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, a = self.make(temp)
+            a.claim()
+            original = Path.write_text
+            def full_disk(path, text, *args, **kwargs):
+                if path.name == "cpu-cap.json.tmp":
+                    raise OSError("disk full")
+                return original(path, text, *args, **kwargs)
+            with patch.object(Path, "write_text", full_disk):
+                self.assertFalse(a.set_cap_khz(2_100_000))
+            self.assertEqual([self.read(root, i) for i in range(2)], [3_500_000, 3_500_000])
+            self.assertIn("marker", a.error)
+
+    def test_unreadable_recovery_marker_is_preserved(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, a = self.make(temp)
+            a.marker.parent.mkdir(parents=True)
+            a.marker.write_text("{")
+            a.discover()
+            self.assertTrue(a.restore_pending)
+            self.assertFalse(a.claim())
+            self.assertEqual(a.marker.read_text(), "{")
+            self.assertEqual(self.read(root), 3_500_000)
+
+    def test_late_helper_cap_remains_ours_and_can_be_restored(self):
+        class Late:
+            once = True
+            def write(self, path, value):
+                if self.once:
+                    self.once = False
+                    raise privileged_power.HelperTimeout("reply late")
+                path.write_text(f"{value}\n")
+        with tempfile.TemporaryDirectory() as temp:
+            root, a = self.make(temp, policies=1)
+            late = Late()
+            a._helper = lambda: late
+            with patch.object(privileged_power, "allowed_cpu_path", side_effect=lambda p: p), \
+                 patch("gfg_plugin.cpu_freq.allowed_cpu_path", side_effect=lambda p: p):
+                a.claim()
+                self.assertFalse(a.set_cap_khz(2_100_000))
+                (root / "policy0" / "scaling_max_freq").write_text("2100000\n")
+                self.assertTrue(a.restore())
+                self.assertFalse(a.external_change)
+                self.assertEqual(self.read(root), 3_500_000)
+                self.assertFalse(a.marker.exists())
 
     def test_no_cpufreq(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -247,6 +365,66 @@ class HelperPathTests(unittest.TestCase):
             read=values.get, write=lambda p, v: writes.append((p, v)))
         self.assertEqual(restored, ["a"], "b was changed by someone else, c was never capped")
         self.assertEqual(writes, [("a", 3_500_000)])
+
+    def serve_cpu_requests(self, requests, values, write_fn=None, ledger=None):
+        name = "/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"
+        def write_value(path, value):
+            values[path] = value
+            if write_fn:
+                write_fn(path, value)
+        req_read, req_write = os.pipe()
+        rep_read, rep_write = os.pipe()
+        ledger = {} if ledger is None else ledger
+        try:
+            os.write(req_write, requests.encode())
+            os.close(req_write); req_write = None
+            with patch.object(privileged_power, "_read_value", side_effect=values.get), \
+                 patch.object(privileged_power, "_write_value", side_effect=write_value):
+                privileged_power._serve_loop(req_read, rep_write, ledger)
+            os.close(rep_write); rep_write = None
+            replies = os.read(rep_read, 4096).decode()
+            return ledger, replies
+        finally:
+            for fd in (req_read, req_write, rep_read, rep_write):
+                if fd is not None:
+                    os.close(fd)
+
+    def test_helper_rebases_original_after_an_outside_cpu_change(self):
+        p = "/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"
+        values = {p: 3_500_000}
+        def outside(path, value):
+            if value == 2_400_000:
+                values[path] = 2_000_000
+        ledger, replies = self.serve_cpu_requests(f"{p} 2400000\n{p} 1800000\n", values, outside)
+        self.assertEqual(replies, "ok\nok\n")
+        self.assertEqual(ledger[p], (2_000_000, 1_800_000))
+        privileged_power.restore_cpu_caps(ledger, read=values.get, write=lambda p, v: values.update({p: v}))
+        self.assertEqual(values[p], 2_000_000, "helper exit must preserve the new user's limit")
+
+    def test_helper_does_not_undo_a_replayed_crash_restore_on_exit(self):
+        p = "/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"
+        values = {p: 2_100_000}
+        ledger, replies = self.serve_cpu_requests(f"restore-cpu {p} 3500000\n", values)
+        self.assertEqual(replies, "ok\n")
+        self.assertEqual(values[p], 3_500_000)
+        self.assertEqual(ledger, {})
+        self.assertEqual(privileged_power.restore_cpu_caps(ledger, read=values.get, write=lambda *_: None), [])
+
+    def test_helper_restore_does_not_overwrite_an_outside_change(self):
+        p = "/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"
+        values = {p: 2_000_000}
+        ledger, replies = self.serve_cpu_requests(f"restore-cpu {p} 3500000\n", values,
+                                                ledger={p: (3_500_000, 2_100_000)})
+        self.assertIn("external-cpu-change", replies)
+        self.assertEqual(values[p], 2_000_000)
+
+    def test_restore_cpu_command_cannot_write_a_ppt_cap(self):
+        p = "/sys/devices/pci0000:00/0000:00:08.1/0000:04:00.0/hwmon/hwmon3/power1_cap"
+        values = {p: 15_000_000}
+        ledger, replies = self.serve_cpu_requests(f"restore-cpu {p} 20000000\n", values)
+        self.assertIn("path-not-allowed", replies)
+        self.assertEqual(values[p], 15_000_000)
+        self.assertEqual(ledger, {})
 
     def test_helper_refuses_out_of_range_cpu_values(self):
         helper = privileged_power.spawn_helper()

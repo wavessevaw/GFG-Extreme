@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.6.2).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.6.3).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -66,7 +66,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
 )
 
-VERSION = "1.6.2"
+VERSION = "1.6.3"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -1239,6 +1239,8 @@ class GovernorService:
         """Step the CPU clock cap once per iteration.  Anything but a live budget point at its
         watts (a pending point, Act, a menu, a loading screen, no game) runs uncapped."""
         ready, self._split_ready = self._split_ready, None
+        if getattr(self.cpu, "restore_pending", False):
+            await asyncio.to_thread(self.cpu.restore)
         self._sync_split_memory(profile)
         split, budget = self._split, self._budget
         if split is None:
@@ -1251,7 +1253,8 @@ class GovernorService:
         eligible = bool(ready and budget is not None and budget.point.key == ready[0]
                         and budget.tdp_control and self.power.state.owned
                         and not self._menu_covering() and self._trusted_game_focus() is not False
-                        and not self.cpu.external_change)
+                        and not self.cpu.external_change
+                        and not getattr(self.cpu, "restore_pending", False))
         if eligible and split.enabled and not self.cpu.owned:
             eligible = await asyncio.to_thread(self.cpu.claim)
         sensors = self._status.get("sensors") or {}
@@ -1479,7 +1482,8 @@ class GovernorService:
         split = {**(self._status.get("power_split") or {}), "setting": self._power_split_enabled()}
         cpu = self.cpu.status()
         split["available"] = bool(cpu.get("available") and cpu.get("writable"))
-        split["cap_khz"] = cpu.get("cap_khz") if cpu.get("owned") else None
+        split["restore_pending"] = bool(cpu.get("restore_pending"))
+        split["cap_khz"] = cpu.get("cap_khz") if cpu.get("owned") and not split["restore_pending"] else None
         fo = self.frame_os.last or {}
         act_enabled = self._frame_os_mode(profile) == "act"
         facts = {

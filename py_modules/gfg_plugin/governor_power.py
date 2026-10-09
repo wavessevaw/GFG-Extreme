@@ -349,24 +349,41 @@ class SteamDeckPowerActuator:
         if manager is not None and not (exact and direct):
             watts = max(1, int(round(slow / 1_000_000.0)))
             low, high = getattr(manager, "range", None) or (watts, watts)
-            if (watts > high or watts < low) and direct:
-                manager = None  # outside what Steam allows : hwmon directly
+            if exact:
+                if slow != fast or slow % 1_000_000 or not low <= slow // 1_000_000 <= high:
+                    return "write-failed", "Exact PPT restore requires writable fast/slow caps"
             else:
-                watts = max(low, min(high, watts))
+                ceiling = self.state.ceiling_override_uw
+                slow_limits = [v for v in (self.state.slow_max_uw,
+                              ceiling if ceiling is not None else self.state.initial_slow_uw) if v is not None]
+                fast_limits = [v for v in (self.state.fast_max_uw,
+                              ceiling if ceiling is not None else self.state.initial_fast_uw) if v is not None]
+                safe_max = min(slow_limits + fast_limits) if slow_limits or fast_limits else slow
+                if (watts > high or watts < low or watts * 1_000_000 > safe_max) and direct:
+                    manager = None  # preserve fractional limits through the verified pair writer
+                else:
+                    watts = min(watts, high, safe_max // 1_000_000)
+                    if (watts < low or watts < 1
+                            or any(v is not None and watts * 1_000_000 < v
+                                   for v in (self.state.slow_min_uw, self.state.fast_min_uw))):
+                        return "write-failed", "No SteamOS Manager watt step fits the PPT limits"
         if manager is not None and not (exact and direct):
             ok, message = manager.set(watts)
             if ok:
                 deadline = time.monotonic() + self._verify_seconds
                 while True:
                     read_slow = _read_int(self._slow_path)
-                    if read_slow is not None and abs(read_slow - watts * 1_000_000) <= 500_000:
+                    read_fast = _read_int(self._fast_path)
+                    # The manager promises an equal pair. Reading slow alone can
+                    # accept a half-applied write or leave a high short-duration cap.
+                    if read_slow == read_fast == watts * 1_000_000:
                         self.state.expected_slow_uw = read_slow
-                        self.state.expected_fast_uw = _read_int(self._fast_path)
+                        self.state.expected_fast_uw = read_fast
                         return None
                     if time.monotonic() >= deadline:
                         break
                     self._sleep(0.1)
-                return "unverified", f"steamos-manager accepted {watts} W but the cap reads {read_slow}"
+                return "unverified", f"steamos-manager accepted {watts} W but the cap reads slow={read_slow}, fast={read_fast}"
             self._note("tdp-manager-failed", error=message, requested_w=watts)
             if not direct:
                 return "write-failed", f"steamos-manager: {message}"
