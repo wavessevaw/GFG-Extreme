@@ -39,3 +39,13 @@ class ExtremeMultiplierTests(unittest.TestCase):
             if p.multiplier > 3:
                 self.assertFalse(ctl._usable(i, 0))
         self.assertEqual(ctl.point.key, "45x2")
+
+    def test_fixed_x4_is_reachable_without_scaling_or_more_watts(self):
+        ctl = BudgetController(target_output_fps=90, now=0, flavor="extreme", max_tdp_w=15)
+        ctl.current_max_multiplier = 4
+        ctl.scale_capable = False
+        ctl.idx = next(i for i, p in enumerate(ctl.points) if p.key == "24x3.75")
+        result = ctl._escalate(30, WindowVerdict(False, True, "real-below-cap", short=True), 22, 82)
+        self.assertEqual(result, "move")
+        self.assertEqual(ctl.point.key, "23x4")
+        self.assertEqual(ctl.tdp, 15)

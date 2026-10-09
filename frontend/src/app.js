@@ -357,8 +357,7 @@ function energySavingsText(cap, maximum) {
 function observedEnergyText(power = {}) {
   const current = power.observed_tdp_w != null ? power.observed_tdp_w : power.current_tdp_w;
   const caps = [current, power.observed_fast_w].filter(v => typeof v === "number" && Number.isFinite(v) && v >= 0);
-  const candidate = power.gamescope_max_tdp_w != null ? power.gamescope_max_tdp_w : power.maximum_tdp_w;
-  const maximum = typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0 ? candidate : null;
+  const maximum = [power.gamescope_max_tdp_w, power.maximum_tdp_w].find(v => typeof v === "number" && Number.isFinite(v) && v > 0);
   return caps.length ? energySavingsText(Math.max(...caps), maximum) : "—";
 }
 function EnergyRing({ battery, displayText }) {
@@ -379,8 +378,8 @@ function FrameOsCard({ fo, power, battery }) {
     h("div", { className: "fos-head" }, h("span", null, "FRAME OS"),
       h("span", { className: "pill " + (est ? "would" : ab || level || "") }, est ? "ESTIMATE" : ab ? "A/B CHECK" : (level || "").toUpperCase())),
     h("div", { className: "rings" },
-      h(MiniRing, { value: resp, max: 50, text: resp == null ? "" : (resp >= 0 ? "−" : "+") + Math.abs(Math.round(resp)) + "%", label: "Response", live: level !== "rest", estimate: est }),
-      h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "−") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est }),
+      h(MiniRing, { value: resp, max: 50, text: resp == null ? "" : (resp >= 0 ? "−" : "+") + Math.abs(Math.round(resp)) + "%", label: "Response", live: level !== "rest", estimate: est || !(b.measured && b.measured.response) }),
+      h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "−") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est || !(b.measured && b.measured.frames) }),
       h(EnergyRing, { battery, displayText: observedEnergyText(power) })),
     fo.mode === "act" ? h("div", { className: "abline" }, proofLine(fo.proof, b.measured)) : null,
     fo.mode === "act" && learnedLine(fo.game) ? h("div", { className: "abline" }, learnedLine(fo.game)) : null);

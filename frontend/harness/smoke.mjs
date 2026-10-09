@@ -277,6 +277,28 @@ for (const [state, nav, expected] of cases) {
   await page.close();
   cases.push(["ordinary-generator-only"]);
 }
+// Battery charge drives arc and colour independently of cap savings.
+{
+  for (const [charge, maximum, expectedText] of [[100,20,"25%"],[50,20,"25%"],[25,20,"25%"],[0,20,"25%"],[null,20,"25%"],[72,null,"—"]]) {
+    const state = { ...STATES["home-frame-os-act"], battery: { percent: charge },
+      power: { observed_tdp_w: 15, observed_fast_w: 15, gamescope_max_tdp_w: maximum } };
+    const page = await openPage(browser, state);
+    const data = await page.evaluate(() => {
+      const ring = [...document.querySelectorAll(".fos .mini")].find(e => e.querySelector(".mlab").textContent === "Energy");
+      const circles = ring.querySelectorAll("circle");
+      return { text: ring.querySelector(".mnum").textContent, count: circles.length,
+        offset: Number(circles[circles.length - 1].getAttribute("stroke-dashoffset")),
+        color: circles[circles.length - 1].getAttribute("stroke") };
+    });
+    const expectedColor = charge == null ? "#26262d" : "hsl(" + (120 * Math.min(1, charge / 50)) + " 80% 52%)";
+    const badArc = charge == null ? data.count !== 1 : Math.abs(data.offset - 2 * Math.PI * 26 * (1 - charge / 100)) > .0001;
+    if (data.text !== expectedText || badArc || data.color !== expectedColor) {
+      failed++; console.error("FAIL battery ENERGY " + JSON.stringify({charge, data}));
+    }
+    await page.close();
+  }
+  cases.push(["energy-battery-colour-and-unknown-limits"]);
+}
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);
 process.exit(failed ? 1 : 0);

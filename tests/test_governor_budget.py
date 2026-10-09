@@ -1101,7 +1101,7 @@ class ExtremeTests(unittest.TestCase):
         keys = [t[0] for t in trace]
         self.assertNotIn("40x2.25", keys)
         self.assertNotIn("36x2.5", keys)
-        self.assertEqual(ctl.point.key, "30x3", "straight to the deepest Extreme point")
+        self.assertEqual(ctl.point.key, "26x3.5", "straight to the highest newly unlocked point the real stream can hold")
 
     def test_unchanged_reprobes_preserve_the_stable_point_clock(self):
         ctl = self.make(scale=False)
