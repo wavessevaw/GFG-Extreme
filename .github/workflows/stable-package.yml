@@ -1,0 +1,39 @@
+name: Stable package
+on:
+  push:
+    branches: [release/stable-1.6.8]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  archive:
+    runs-on: ubuntu-22.04
+    env:
+      CC: gcc-12
+      CXX: g++-12
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble stable Decky archive
+        run: |
+          git clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
+          mkdir -p /tmp/gfg-previous /tmp/gfg-payloads
+          gh release download v1.6.5 --pattern '*.zip' --pattern 'SHA256SUMS.txt' --dir /tmp/gfg-previous
+          (cd /tmp/gfg-previous && sha256sum -c SHA256SUMS.txt)
+          unzip -q -j /tmp/gfg-previous/*.zip 'GFG-Extreme/bin/*.flatpak' -d /tmp/gfg-payloads
+          VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" bash scripts/build_release.sh 1.6.8 /tmp/gfg-payloads /tmp/gfg-output
+          python3 scripts/check_release_archive.py /tmp/gfg-output/GFG-Extreme-v1_6_8.zip 1.6.8
+          python3 - <<'PY'
+          import json, zipfile
+          with zipfile.ZipFile('/tmp/gfg-output/GFG-Extreme-v1_6_8.zip') as archive:
+              names = archive.namelist()
+              assert not any('/gfg-open/' in name for name in names), 'experimental Open payload included'
+              assert 'open_frame_generation' not in archive.read('GFG-Extreme/shared_config.py').decode()
+              package = json.loads(archive.read('GFG-Extreme/package.json'))
+              assert not package.get('gfgPrerelease'), 'stable package marked pre-release'
+          print('Stable archive: Open payload/config absent; official release metadata')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gfg-extreme-stable-candidate
+          path: /tmp/gfg-output
