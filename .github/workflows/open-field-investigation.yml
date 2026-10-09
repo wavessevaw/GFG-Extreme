@@ -11,25 +11,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: handoff/gfg-open-field-logs-20261009
-      - name: Inspect original Open recordings
+          ref: 0db5a4e5eb4a24913ea53e48a4a7cd1238d40534
+      - name: Inspect new original Deck recording
         run: |
           python3 - <<'PY'
-          import glob,zipfile,json,statistics,re,hashlib
-          for path in sorted(glob.glob('agent-handoff/gfg-open-field-logs-20261009/*20261009*.zip')):
-              if '(1)' in path: continue
-              print('\nARCHIVE',path,hashlib.sha256(open(path,'rb').read()).hexdigest())
-              with zipfile.ZipFile(path) as z:
-                  names=z.namelist()
-                  for name in names:
-                      if '/open-performance/' in name or name.startswith('open-performance/'):
-                          print('OPEN',name,z.read(name).decode())
-                  for name in names:
-                      if name.endswith('summary.txt'): print('SUMMARY',z.read(name).decode()[:9000])
-                      if name.endswith('plugin.log'):
-                          lines=z.read(name).decode(errors='replace').splitlines()
-                          print('OPEN EVENTS','\n'.join(l for l in lines if 'GFG Open:' in l)[-18000:])
-                      if name.endswith('present-diagnostics.log'):
-                          lines=z.read(name).decode(errors='replace').splitlines()
-                          print('TRANSPORT','\n'.join(l for l in lines if any(w in l for w in ['present-mode','ordered-acquire-quarantine','generated_frame_capacity','fixed-plan']))[-7000:])
+          import zipfile,json,statistics,collections,hashlib
+          path='agent-handoff/gfg-open-field-logs-20261009/GFG-Extreme-log-20261009-230950.zip'
+          raw=open(path,'rb').read()
+          digest=hashlib.sha256(raw).hexdigest()
+          assert digest=='b8f4fad63e6f5960ea1113c5b3fb2619ffe12fd3b6f9ef35fa7cf60b04a7c535'
+          print('ARCHIVE',path,'SHA256',digest)
+          with zipfile.ZipFile(path) as z:
+              names=z.namelist()
+              print('FILES',json.dumps([{'name':n,'size':z.getinfo(n).file_size} for n in names]))
+              for n in names:
+                  if n.endswith(('summary.txt','profile.json','system.json','power-sensors.json')) or '/open-performance/' in n:
+                      print('FILE',n,z.read(n).decode(errors='replace')[:24000])
+                  if n.endswith('plugin.log'):
+                      text=z.read(n).decode(errors='replace')
+                      print('PLUGIN',text[-20000:])
+                  if n.endswith('timeline.jsonl'):
+                      rows=[]
+                      for line in z.read(n).decode(errors='replace').splitlines():
+                          try: rows.append(json.loads(line))
+                          except ValueError: pass
+                      samples=[r for r in rows if 'state' in r]
+                      print('TIMELINE count',len(samples),'states',dict(collections.Counter(r.get('state') for r in samples)))
+                      for key in ('real','output','tdp','mult'):
+                          vals=sorted(r[key] for r in samples if isinstance(r.get(key),(int,float)))
+                          if vals: print('STAT',key,'median',statistics.median(vals),'min',vals[0],'max',vals[-1])
+                      print('FIRST_LAST',json.dumps(samples[:2]+samples[-2:]))
+                  if n.endswith('governor-events.jsonl'):
+                      print('GOVERNOR',z.read(n).decode(errors='replace')[-12000:])
+                  if n.endswith('present-diagnostics.log'):
+                      lines=z.read(n).decode(errors='replace').splitlines()
+                      selected=[l for l in lines if any(w in l for w in ('GFG Open:','fixed-plan','adaptive-plan','privateOrderedTransport','present-mode','ordered-acquire-quarantine','generated_frame_capacity','backend scheduling failure'))]
+                      print('DIAGNOSTIC operations',dict(collections.Counter(l.split('operation=',1)[1].split()[0] for l in lines if 'operation=' in l)))
+                      print('DIAGNOSTIC_SELECTED','\n'.join(selected)[-35000:])
           PY
