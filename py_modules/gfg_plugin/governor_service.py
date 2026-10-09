@@ -148,7 +148,8 @@ class GovernorService:
         self._extreme_ceiling: Optional[Dict[str, Any]] = None
         self._extreme_ack: Optional[Dict[str, Any]] = None      # {"pct", "sharpness", "evidence"}
         self._extreme_scale_failures = 0
-        self._extreme_scale_blocked: Optional[str] = None
+        self._extreme_scale_blocked: Optional[str] = None   # Extreme only: the profile scales itself
+        self._scale_blocked: Optional[str] = None           # every mode: the renderer refused the scale
         self._extreme_rs: Optional[Dict[str, Any]] = None   # the renderer's last runtime-state report
         self._extreme_rs_at = -1e9
         self.search = PowerSearch()
@@ -377,7 +378,7 @@ class GovernorService:
             app_id = str(last.get("app_id") or "")
         prefix = game_prefix(profile, app_id)
         if not prefix.startswith("app:"):
-            if not self.game_models.count_game(prefix):
+            if not (self.game_models.count_game(prefix) or prefix in self._scale_ignored_games()):
                 return None
             app_id = ""
         return {"profile": profile, "app_id": app_id, "game": prefix}
@@ -404,6 +405,10 @@ class GovernorService:
                 self._fo_memory = GameMemory()
                 self._fo_memory.start_session()
                 self.frame_os.apply_memory(self._fo_memory.disabled(), {})
+        if self._scale_ignored_games().pop(prefix, None) is not None:
+            forgotten += 1
+            self._save_settings_quietly()
+            self._scale_blocked = None
         if self._split_games().pop(prefix, None) is not None:
             forgotten += 1
             self._save_settings_quietly()
@@ -1325,38 +1330,83 @@ class GovernorService:
         except OSError as error:
             self.log.debug("Frame OS marker not updated: %s", error)
 
-    def _extreme_scale_gate(self, profile: str, req: Request) -> str:
-        """ok / wait / failed: a new render scale counts only once the renderer shows it."""
+    SCALE_IGNORED_TTL_S = 14 * 86400.0   # a game that ignores render scale is re-checked after this
+
+    def _scale_ignored_games(self) -> Dict[str, Any]:
+        games = self._settings.get("scale_ignored_games")
+        if not isinstance(games, dict):
+            games = self._settings["scale_ignored_games"] = {}
+        return games
+
+    def _game_ignores_scale(self, profile: str) -> Optional[str]:
+        entry = self._scale_ignored_games().get(game_prefix(profile, self._game_app_id()))
+        if isinstance(entry, dict) and time.time() - float(entry.get("at", 0)) < self.SCALE_IGNORED_TTL_S:
+            return str(entry.get("reason") or "game-ignores-render-scale")
+        return None
+
+    def _block_scale(self, profile: str, reason: str) -> None:
+        """No more render-scale trials this game session (any mode); a game that overrides the
+        swapchain size is remembered, so the next sessions skip the scaled points at once."""
+        self._scale_blocked = reason
+        if reason == extreme_policy.GAME_IGNORES_SCALE:
+            self._scale_ignored_games()[game_prefix(profile, self._game_app_id())] = {
+                "reason": "game-ignores-render-scale", "at": round(time.time())}
+            self._save_settings_quietly()
+        self._event("render-scale-blocked", reason, profile=profile)
+
+    def _scale_gate(self, profile: str, req: Request) -> str:
+        """ok / wait / failed: a new render scale counts only once the renderer shows it.
+
+        Every budget mode (since 1.6.1): a field log showed Battery "confirming" 30x3@80 on its
+        frame ratio alone while the renderer reported the scaler inactive (the game kept its
+        full-size swapchain), then buying watts up to 19 W for a resolution change that never
+        happened.
+        """
         budget = self._budget
-        if budget is None or budget.flavor != "extreme":
+        if budget is None:
             return "ok"
-        pct = int(req.point.render_scale_pct)
+        rung = int(req.point.render_scale_pct)
         sharpness = req.deltas.get("scaling_sharpness")
         last = self._extreme_ack
-        if pct == (last or {}).get("pct", 100):
-            # Same scale as before (or full resolution at launch scale): nothing new to show.
-            self._extreme_ack = {**(last or {"pct": 100, "evidence": None, "mark": req.event_mark}),
+        if rung >= 100 or rung == (last or {}).get("pct", 100):
+            # Back to full resolution, or the same scale as before: nothing new to show.
+            self._extreme_ack = {**(last or {"evidence": None, "mark": req.event_mark}), "pct": rung,
                                  "sharpness": sharpness,
                                  **({"mark": req.event_mark} if sharpness != (last or {}).get("sharpness") else {})}
+            if rung >= 100 and (last or {}).get("pct", 100) < 100:
+                self._extreme_ack["evidence"] = None
             return "ok"
-        record = extreme_policy.scale_acknowledged(self.observer.scaling_after(req.event_mark), pct)
-        if record is None:
+        factor = req.deltas.get("scaling_factor")
+        expected = (100.0 / float(factor) if isinstance(factor, (int, float)) and float(factor) > 0
+                    else float(rung))   # relative to native: the profile's own scaling counts too
+        evidence = self.observer.scaling_after(req.event_mark)
+        record = extreme_policy.scale_acknowledged(evidence, expected)
+        refused = extreme_policy.scale_refused(evidence) if record is None else None
+        if record is None and refused is None:
             # Second source: the renderer's runtime-state file of the game's processes.
-            record = extreme_policy.scale_acknowledged(self._extreme_runtime_states(req.created_wall), pct)
+            states = self._extreme_runtime_states(req.created_wall)
+            record = extreme_policy.scale_acknowledged(states, expected)
+            refused = extreme_policy.scale_refused(states) if record is None else None
         if record is None:
+            if refused is not None:
+                # The renderer says the scaler is off: no reason to wait for the timeout.
+                self._event("render-scale-refused", refused, profile=profile, point=req.point.key)
+                self._block_scale(profile, refused)
+                return "failed"
             if self._clock() - req.created <= extreme_policy.SCALE_ACK_TIMEOUT_S:
                 return "wait"
             self._extreme_scale_failures += 1
             if self._extreme_scale_failures >= extreme_policy.MAX_SCALE_ACK_FAILURES:
-                self._extreme_scale_blocked = "renderer-did-not-confirm-render-scale"
-            self._event("extreme-scale-not-acknowledged", "timeout", profile=profile, point=req.point.key,
+                self._block_scale(profile, "renderer-did-not-confirm-render-scale")
+            self._event("render-scale-not-acknowledged", "timeout", profile=profile, point=req.point.key,
                         failures=self._extreme_scale_failures)
             return "failed"
         self._extreme_scale_failures = 0
-        self._extreme_ack = {"pct": pct, "sharpness": sharpness, "mark": req.event_mark,
+        self._extreme_ack = {"pct": rung, "sharpness": sharpness, "mark": req.event_mark,
                              "evidence": {k: record.get(k) for k in ("kind", "source", "output")}}
-        self._event("extreme-scale-acknowledged", record.get("kind") or "", profile=profile, point=req.point.key,
-                     render_pct=pct, source=record.get("source"), output=record.get("output"))
+        self._event("render-scale-acknowledged", record.get("kind") or "", profile=profile, point=req.point.key,
+                     render_pct=rung, native_pct=round(expected, 1), source=record.get("source"),
+                     output=record.get("output"))
         return "ok"
 
     def _extreme_runtime_states(self, since_unix_s: float = 0.0) -> list:
@@ -1401,7 +1451,7 @@ class GovernorService:
         launch_key = self._launch_key
         if launch_key != getattr(self, "_extreme_launch", None):
             self._extreme_launch = launch_key  # a new game session: a fresh chance for the scaler
-            self._extreme_scale_failures, self._extreme_scale_blocked = 0, None
+            self._extreme_scale_failures, self._extreme_scale_blocked, self._scale_blocked = 0, None, None
         launch = self._launch or {}
         running = bool(launch.get("running"))
         capability = self._capability(profile, launch) if running else {}
@@ -1439,7 +1489,10 @@ class GovernorService:
             "sharpness_ack": sharpness_ack,
             "sharpness_reason": sharpness_reason,
             "scale_provisioned": bool(capability.get("scale_capable")),
-            "scale_blocked": self._extreme_scale_blocked or (f"scale-ready-blocked:{wsi_blocked}" if wsi_blocked else None),
+            "scale_blocked": (self._extreme_scale_blocked or self._game_ignores_scale(profile)
+                              or (self._scale_blocked if self._scale_blocked != extreme_policy.GAME_IGNORES_SCALE
+                                  else "game-ignores-render-scale")
+                              or (f"scale-ready-blocked:{wsi_blocked}" if wsi_blocked else None)),
             "cpu_bound": (self._status.get("diagnosis") or {}).get("bottleneck") == "cpu",
             "split": split,
             "act": {"consent": self._extreme_act_consent(), "enabled": act_enabled,
@@ -1659,6 +1712,9 @@ class GovernorService:
                              **{k: v for k, v in self.frame_os.last.items() if k != "input"}}
         value["power_split"] = {**(self._status.get("power_split") or {}), "setting": self._power_split_enabled()}
         value["extreme"] = self._status.get("extreme") or {"enabled": False, "state": "OFF"}
+        value["scale_blocked"] = (("game-ignores-render-scale" if self._scale_blocked == extreme_policy.GAME_IGNORES_SCALE
+                                   else self._scale_blocked)
+                                  or (self._game_ignores_scale(profile) if profile else None))
         value["power"] = self.power.status()
         value["power_search"] = self.search.status.to_dict()
         value["request"] = self._request.to_dict() if self._request else None
@@ -2312,7 +2368,7 @@ class GovernorService:
                 self._event("operating-point-confirmed", req.confirmation_mode, profile=profile,
                             point=req.point.key, revision=req.revision, request_id=req.request_id)
             if self._budget is not None:
-                gate = self._extreme_scale_gate(profile, req)
+                gate = self._scale_gate(profile, req)
                 if gate == "wait":
                     self._status.update({"state": "APPLY", "reason": "awaiting-render-scale-acknowledgement"})
                     return
@@ -2559,7 +2615,9 @@ class GovernorService:
     def _budget_can_scale(self, capability: Dict[str, Any]) -> bool:
         cpu_bound = (self._status.get("diagnosis") or {}).get("bottleneck") == "cpu"
         if self._budget is not None and self._budget.flavor == "extreme" and self._extreme_scale_blocked:
-            return False  # the profile scales on its own, or the renderer did not confirm a scale
+            return False  # the profile scales on its own
+        if self._scale_blocked or (self._active_profile and self._game_ignores_scale(self._active_profile)):
+            return False  # the renderer refused or never confirmed a scale for this game
         return bool(capability.get("scale_capable")) and not cpu_bound
 
     async def _budget_step(self, profile: str, external: bool, target: int) -> None:

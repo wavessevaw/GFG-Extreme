@@ -1405,16 +1405,30 @@ class BudgetController:
     def heat_limited(self) -> bool:
         return self.thermal in ("heating", "hot") or self._now < self._heat_until
 
+    def _next_up(self) -> Optional[int]:
+        """The next point up, skipping render-scale rungs this launch cannot use.
+
+        Without a provisioned Scaling Engine the scaled rungs are not steps at all: an upgrade
+        from below them (Battery/Balanced) or through them (Extreme) used to stop there for good.
+        A rejected or failed point still ends the climb (``_upgrade_allowed``).
+        """
+        for i in range(self.idx + 1, len(self.points)):
+            if self.points[i].render_scale_pct != 100 and not self.scale_capable:
+                continue
+            return i
+        return None
+
     def _upgrade(self, now: float) -> str:
         if self.cap_ignored and self.idx >= self.comfort_idx:
             return self._lock(now, "cap-ignored-quality-held")
-        if self._upgrade_allowed(self.idx + 1, now):
+        up = self._next_up()
+        if up is not None and self._upgrade_allowed(up, now):
             if self.heat_limited:
                 self.thermal_deferred = True
                 return self._lock(now, f"thermal-quality-held:{self._heat_word()}")
             self.thermal_deferred = False
             self.probe = "up"
-            return self._move("testing-fewer-generated-frames", idx=self.idx + 1)
+            return self._move("testing-fewer-generated-frames", idx=up)
         return self._lock(now, "most-real-frames-found" if self.flavor == "extreme" else "minimum-power-found")
 
     def _owed_quality(self) -> bool:
@@ -1434,10 +1448,11 @@ class BudgetController:
             # Extreme: spare headroom buys real frames, never fewer watts.
             if self.heat_limited:
                 return self._lock(now, f"thermal-quality-held:{self._heat_word()}")
-            if self._upgrade_allowed(self.idx + 1, now):
+            up = self._next_up()
+            if up is not None and self._upgrade_allowed(up, now):
                 self.phase, self.probe = "probe", "up"
                 self.thermal_deferred = False
-                return self._move("reprobe-more-real-frames", idx=self.idx + 1)
+                return self._move("reprobe-more-real-frames", idx=up)
             return self._lock(now, "most-real-frames-found")
         if self.heat_limited:
             kinds = ["down"]  # more real frames would mean more heat
@@ -1446,10 +1461,11 @@ class BudgetController:
                 self.phase, self.probe = "probe", "down"
                 self.next_probe = "up" if self._owed_quality() else "down"
                 return self._move("reprobe-lower-power", tdp=self.tdp - 1.0)
-            if kind == "up" and self._owed_quality() and self._upgrade_allowed(self.idx + 1, now):
+            up = self._next_up()
+            if kind == "up" and self._owed_quality() and up is not None and self._upgrade_allowed(up, now):
                 self.phase, self.probe, self.next_probe = "probe", "up", "down"
                 self.thermal_deferred = False
-                return self._move("reprobe-fewer-generated-frames", idx=self.idx + 1)
+                return self._move("reprobe-fewer-generated-frames", idx=up)
         if self.heat_limited and self._owed_quality():
             return self._lock(now, f"thermal-quality-held:{self._heat_word()}")
         return self._lock(now, "budget-point-holds")
@@ -1492,6 +1508,25 @@ class BudgetController:
             return "hold"
         return self._escalate(now, verdict, real_median, output_median)
 
+    def _measured_deeper(self, now: float, floor: int, real_median: Optional[float]) -> Optional[int]:
+        """The deeper point the measured real frames can hold, not just the next one down.
+
+        Field log 1.6.0: with ~26 real frames at 45x2 the guard tried 40x2.25, 36x2.5 and 33x2.75
+        in turn; none could hold (each needs more than 26 real) and each waited the 25 s
+        confirmation timeout: 75 s of a short output, in Balanced and again in Extreme.  When the
+        real stream is clearly below the current cap, go straight to the highest point whose cap
+        the measured real frames reach, or to the deepest usable point when none does.
+        """
+        nearest = self._deeper(now, floor)
+        if (nearest is None or not isinstance(real_median, (int, float)) or not math.isfinite(float(real_median))
+                or float(real_median) >= HOLD_REAL_RATIO * self.point.base_target_fps):
+            return nearest
+        usable = [i for i in range(max(floor, 0), self.idx) if self._usable(i, now)]
+        fits = [i for i in usable if self.points[i].base_target_fps * HOLD_REAL_RATIO <= float(real_median)]
+        if fits:
+            return max(fits)
+        return min(usable) if usable else nearest
+
     def _deeper(self, now: float, floor: int = 1) -> Optional[int]:
         """Nearest usable deeper point (>= ``floor``), skipping rejected ones.
 
@@ -1513,7 +1548,8 @@ class BudgetController:
         self.probe = None
         step = 2.0 if verdict.severe else 1.0
         # Down to ~30 real a deeper multiplier is always cheaper than watts.
-        deeper = self._deeper(now, max(1, self.comfort_idx)) if self.idx > self.comfort_idx else None
+        deeper = (self._measured_deeper(now, max(1, self.comfort_idx), real_median)
+                  if self.idx > self.comfort_idx else None)
         if deeper is not None:
             self.quality_debt = max(self.quality_debt or 0, self.idx)
             return self._move(f"guard-deeper-multiplier:{verdict.reason}", idx=deeper)
@@ -1552,7 +1588,7 @@ class BudgetController:
         if self.tdp_control and self.tdp is not None and self.tdp < self.ideal_max_w - 1e-6:
             return self._move(f"guard-more-power:{verdict.reason}", tdp=min(self.ideal_max_w, self.tdp + step))
         # Defending the 15 W budget: x3.25 .. x3.75 (real 28 .. 24) before more watts.
-        deeper = self._deeper(now) if self.idx > 1 else None
+        deeper = self._measured_deeper(now, 1, real_median) if self.idx > 1 else None
         if deeper is not None:
             return self._move(f"guard-deeper-multiplier:{verdict.reason}", idx=deeper)
         if self.tdp_control and self.tdp is not None and self.tdp < self.normal_max_w - 1e-6:

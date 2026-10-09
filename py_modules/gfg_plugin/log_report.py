@@ -156,6 +156,7 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
     if report["power_split"] and rows:
         report["power_split"]["capped_share"] = round(sum(bool(r.get("cap_khz")) for r in rows) / len(rows), 2)
     report["extreme"] = extreme_summary(samples, events)
+    report["render_scale"] = render_scale_summary(events, diag_text)
     report["findings"] = findings(report, names)
     return report
 
@@ -167,7 +168,10 @@ def extreme_summary(samples: List[Dict[str, Any]], events: List[Dict[str, Any]])
         return None
     ceilings = [(r.get("ceiling") or {}).get("ceiling_w") for r in rows]
     ceilings = [c for c in ceilings if isinstance(c, (int, float))]
-    tdps = [r.get("tdp") for r in samples if isinstance(r.get("extreme"), dict) and isinstance(r.get("tdp"), (int, float))]
+    # Only caps GFG wrote: owned, with a live point.  Before that the cap read is the player's own
+    # (an unlocked BIOS: 20 W), which is not an Extreme write.
+    tdps = [r.get("tdp") for r in samples if isinstance(r.get("extreme"), dict) and r.get("tdp_owned")
+            and r.get("point") and isinstance(r.get("tdp"), (int, float))]
     applied = [r.get("applied") or {} for r in rows]
     scales = Counter(str(a.get("render_pct")) for a in applied if a.get("render_pct") is not None)
     return {
@@ -176,9 +180,29 @@ def extreme_summary(samples: List[Dict[str, Any]], events: List[Dict[str, Any]])
         "ceiling_w": min(ceilings) if ceilings else None,
         "max_tdp_w": max(tdps) if tdps else None,
         "confirmed_scales": dict(scales),
-        "acknowledged": sum(1 for e in events if e.get("event") == "extreme-scale-acknowledged"),
-        "not_acknowledged": sum(1 for e in events if e.get("event") == "extreme-scale-not-acknowledged"),
+        "acknowledged": sum(1 for e in events if e.get("event") in ("render-scale-acknowledged", "extreme-scale-acknowledged")),
+        "not_acknowledged": sum(1 for e in events if e.get("event") in ("render-scale-not-acknowledged", "extreme-scale-not-acknowledged")),
     }
+
+
+def render_scale_summary(events: List[Dict[str, Any]], diagnostics: str) -> Optional[Dict[str, Any]]:
+    """Did the game really render at a lower resolution?  The renderer's own scaler reports."""
+    from .extreme import SWAPCHAIN_POLICY_MARKER, parse_swapchain_policy  # noqa: PLC0415
+
+    policies = [parse_swapchain_policy(line) for line in diagnostics.splitlines() if SWAPCHAIN_POLICY_MARKER in line]
+    policies = [p for p in policies if p]
+    refused = Counter(str(e.get("reason")) for e in events if e.get("event") == "render-scale-refused")
+    acked = sum(1 for e in events if e.get("event") in ("render-scale-acknowledged", "extreme-scale-acknowledged"))
+    if not policies and not refused and not acked:
+        return None
+    last = policies[-1] if policies else {}
+    return {"reports": len(policies), "active": sum(1 for p in policies if p.get("active")),
+            "last_reason": last.get("reason"), "advertised": last.get("advertised"),
+            "actual": last.get("source"), "refused": dict(refused), "acknowledged": acked}
+
+
+def _wxh(extent: Any) -> str:
+    return f"{extent[0]}x{extent[1]}" if isinstance(extent, (list, tuple)) and len(extent) == 2 else "?"
 
 
 def power_split_summary(events: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -456,6 +480,16 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
                         if split.get("mhz_pct") is not None and split.get("draw_pct") is not None else "")
                      + (f", real FPS {split['real_delta']:+}" if split.get("real_delta") is not None else "") + ".")
         out.append(text)
+    rs = report.get("render_scale")
+    if rs and rs.get("reports") and not rs.get("active"):
+        text = ("Render scale had no effect: the renderer offered the game "
+                f"{_wxh(rs.get('advertised'))} but it rendered at {_wxh(rs.get('actual'))} "
+                f"({rs.get('last_reason') or 'scaler inactive'}).")
+        if rs.get("last_reason") == "application-extent-override-no-source-presentation-split":
+            text += " This game sets its own render size, so render scale (the profile's own included) cannot work here."
+        out.append(text)
+    elif rs and rs.get("active"):
+        out.append(f"Render scale was active in {rs['active']} of {rs['reports']} scaler reports.")
     ext = report.get("extreme")
     if ext:
         text = (f"Extreme: ceiling {ext['ceiling_w']} W" if ext.get("ceiling_w") is not None else "Extreme: ceiling unknown")

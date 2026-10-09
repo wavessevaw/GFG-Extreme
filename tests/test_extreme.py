@@ -120,6 +120,33 @@ class EvidenceTests(unittest.TestCase):
         self.assertLessEqual(len(observer.scaling_after(0)), observer.MAX_SCALING_EVIDENCE, "bounded")
 
 
+# From a Deck log (1.6.0): the game kept its full-size swapchain whatever the scaler advertised.
+POLICY_OFF = ("MAKO Renderer: spatial scaling swapchain policy: role=frame-generation; requested=1280x800; "
+              "surface_current=1280x800; surface_extent_mode=fixed; supersampling=0; advertised_source=766x478; "
+              "advertised_presentation=1280x800; actual_source=1280x800; actual_presentation=1280x800; "
+              "policy_revision=2; selected_source=0x0; extent_selected=0; "
+              "inactive_reason=application-extent-override-no-source-presentation-split; admission_retry_eligible=0; "
+              "source_presentation_split=0; active=0")
+
+
+class SwapchainPolicyTests(unittest.TestCase):
+    def test_the_game_ignoring_the_scale_is_read_from_the_renderer(self):
+        record = ex.parse_swapchain_policy(POLICY_OFF)
+        self.assertEqual((record["active"], record["source"], record["advertised"]), (False, (1280, 800), (766, 478)))
+        self.assertEqual(record["reason"], ex.GAME_IGNORES_SCALE)
+        self.assertIsNone(ex.scale_acknowledged([record], 80))
+        self.assertEqual(ex.scale_refused([record]), ex.GAME_IGNORES_SCALE)
+        on = ex.parse_swapchain_policy(POLICY_OFF.replace("actual_source=1280x800", "actual_source=1024x640")
+                                       .replace("active=0", "active=1"))
+        self.assertIsNotNone(ex.scale_acknowledged([record, on], 80))
+        self.assertIsNone(ex.scale_refused([record, on]))
+
+    def test_the_observer_keeps_policy_reports(self):
+        observer = TelemetryObserver(Path("/nonexistent"), time_fn=lambda: 1.0)
+        observer.consume_line(POLICY_OFF)
+        self.assertEqual(observer.latest_scaling["kind"], "swapchain-policy")
+
+
 class RuntimeStateTests(unittest.TestCase):
     def doc(self, pid, active=True, sw=1024, sh=640, updated=2_000_000_000_000):
         return {"schema_version": 5, "pid": pid, "process_start_ticks": 1, "role": "frame-generation",
@@ -145,6 +172,13 @@ class RuntimeStateTests(unittest.TestCase):
             self.assertEqual(ex.render_pct(records[0]), 80.0)
             self.assertIsNotNone(ex.scale_acknowledged(records, 80))
             self.assertEqual(ex.read_runtime_states([Path(temp) / "missing"], [4372]), [])
+
+    def test_a_container_pid_falls_back_to_fresh_records(self):
+        with tempfile.TemporaryDirectory() as temp:
+            self.write(temp, "12-1-7.json", self.doc(12))                 # PID inside pressure-vessel
+            self.write(temp, "13-1-7.json", self.doc(13, updated=1_000))  # stale
+            records = ex.read_runtime_states([temp], [4372], since_unix_s=1_900_000_000)
+            self.assertEqual([r["pid"] for r in records], [12])
 
     def test_an_inactive_scaler_proves_full_resolution_only(self):
         off = ex.runtime_state_evidence(self.doc(1, active=False))
