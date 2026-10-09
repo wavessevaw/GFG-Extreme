@@ -668,6 +668,16 @@ class GovernorService:
         elif self._hud_fos and now - self._hud_fos[0] <= self.HUD_HOLD_S and fo.get("enabled"):
             # the pacer's telemetry missed a beat: keep the Frame OS rings instead of resizing
             data["frame_os"] = self._hud_fos[1]
+        ext = status.get("extreme") or {}
+        if ext.get("enabled"):
+            # Extreme: the TDP ring is drawn against the ceiling, and only a render scale the
+            # renderer confirmed is named (EXTREME_FOUNDATION: no requested values on screen).
+            ceiling = (ext.get("ceiling") or {}).get("ceiling_w")
+            if isinstance(ceiling, (int, float)) and ceiling > 0:
+                data["limit"] = number(ceiling)
+            applied = ext.get("applied") or {}
+            pct = applied.get("render_pct")
+            data["extreme"] = {"render_pct": int(pct) if isinstance(pct, (int, float)) and pct < 100 else None}
         scale = hud_rings.overlay_scale(self.ring_hud_extent)
         key = (hud_rings.visual_key(data, settings["preset"], settings["position"], scale),
                tuple((self._launch or {}).get("launch_key") or ()))

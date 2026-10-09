@@ -223,6 +223,11 @@ def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
             else:
                 label, colour = "CALM", (223, 230, 242)
             items.append({"kind": "tag", "text": label, "rgb": colour})
+    ext = data.get("extreme")
+    if preset != "minimal" and isinstance(ext, dict):
+        # Extreme mode; the render scale only once the renderer confirmed it.
+        pct = ext.get("render_pct")
+        items.append({"kind": "tag", "text": f"EXT {int(pct)}%" if pct else "EXT", "rgb": (255, 92, 70)})
     return items
 
 

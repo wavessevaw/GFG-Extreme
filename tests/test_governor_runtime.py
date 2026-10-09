@@ -1112,6 +1112,18 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual((up["state"], up["reason"]), ("unavailable", "renderer-did-not-confirm-render-scale"))
         self.assertFalse(self.svc._budget_can_scale({"scale_capable": True}), "no more scaled trials this session")
 
+    def test_extreme_rings_use_the_ceiling_and_the_confirmed_scale(self):
+        from gfg_plugin import hud_rings
+        self.start_extreme(user_w=12.0)
+        self.svc.power.values["initial_tdp_w"] = 20.0       # an unlocked BIOS default
+        seen = []
+        settings = {"preset": "standard", "position": "top-left"}
+        with patch.object(hud_rings, "write_overlay", lambda data, **kw: seen.append(data) or True):
+            self.svc._ring_hud_due = 0.0
+            self.svc._publish_ring_hud(self.svc.get_status("game"), settings)
+        self.assertEqual(seen[-1]["limit"], 12)
+        self.assertEqual(seen[-1]["extreme"], {"render_pct": None}, "full resolution: no number")
+
     def test_extreme_without_a_scale_ready_launch_asks_for_a_restart(self):
         st = self.start_extreme(scale_ready_launch=False)
         up = next(b for b in st["extreme"]["boosters"] if b["id"] == "upscale")
