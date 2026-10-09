@@ -2687,12 +2687,12 @@ class FlowRuntimeTests(unittest.TestCase):
 
     def test_late_starvation_restores_saved_overlay_before_more_power(self):
         self.held_flow()
-        writes = list(self.power.writes)
+        writes = list(self.svc.power.writes)
         self.inject_flow_frame(15, 45)
         self.assertEqual(self.overlay_profile()["flow_scale"], .8)
         self.assertEqual(self.svc._flow.phase, "wait-restore")
         self.assertEqual(self.svc._flow.reason, "output-starved")
-        self.assertEqual(self.power.writes, writes)
+        self.assertEqual(self.svc.power.writes, writes)
         self.assertIsNone(self.svc._flow.proof)
         self.ack_flow(.8)
         self.inject_flow_frame()

@@ -1,6 +1,6 @@
 {
   "name": "gfg-extreme-plugin",
-  "version": "1.6.7",
+  "version": "1.6.8",
   "description": "GFG Extreme pipeline orchestrator with per-profile Frame Generation backends, scaling, and shaders",
   "type": "module",
   "scripts": {
@@ -13,7 +13,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/eugeniosegala/MAKO.git"
+    "url": "git+https://github.com/wavessevaw/GFG-Extreme.git"
   },
   "keywords": [
     "decky",
@@ -32,9 +32,9 @@
   "author": "Eugenio Segala",
   "license": "GPL-3.0-or-later",
   "bugs": {
-    "url": "https://github.com/eugeniosegala/MAKO/issues"
+    "url": "https://github.com/wavessevaw/GFG-Extreme/issues"
   },
-  "homepage": "https://github.com/eugeniosegala/MAKO#readme",
+  "homepage": "https://github.com/wavessevaw/GFG-Extreme#readme",
   "devDependencies": {
     "esbuild": "^0.28.2",
     "playwright": "^1.63.0",
