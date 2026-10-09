@@ -148,3 +148,56 @@ class GeneratedCapacityTests(unittest.TestCase):
                                                    "frame_generation_resources_available=0"), now=2.0)
         self.assertEqual((observer.generated_capacity, observer.current_max_multiplier), (0, 1.0))
 
+
+
+class LayerRoleIsolationTests(unittest.TestCase):
+    def test_spatial_resource_messages_do_not_disable_generation_or_replace_application(self):
+        observer = TelemetryObserver(Path("/nonexistent"))
+        observer.consume_line(GeneratedCapacityTests.APPLIED.replace("generated_frame_capacity=2", "generated_frame_capacity=3"), now=1)
+        before = observer.snapshot(now=1)["last_application"]
+        for operation in ("runtime-state-applied", "runtime-transition-pending"):
+            observer.consume_line("MAKO Renderer: present diagnostics: "
+                                  f"operation={operation} role=spatial context=0xcc "
+                                  "frame_generation_resources_available=0 generated_frame_capacity=0 "
+                                  "available_generated_capacity=0", now=2)
+            self.assertEqual(observer.current_max_multiplier, 4)
+            application = observer.snapshot(now=2)["last_application"]
+            self.assertEqual(application["event_seq"], before["event_seq"])
+            self.assertEqual(application["fields"], before["fields"])
+
+    def test_spatial_rates_do_not_pollute_real_or_output_fps(self):
+        observer = TelemetryObserver(Path("/nonexistent"))
+        line = ("MAKO Renderer: present diagnostics: operation=fixed-plan "
+                "observed_output_fps=90 generated_per_real=2")
+        observer.consume_line(line + " role=frame-generation", now=1)
+        before = observer.sample_seq
+        self.assertIsNone(observer.consume_line(line.replace("observed_output_fps=90", "observed_output_fps=15") + " role=spatial", now=2))
+        self.assertEqual(observer.sample_seq, before)
+        snapshot = observer.snapshot(now=2)
+        self.assertEqual(snapshot["latest"]["real_fps"], 30)
+        self.assertEqual(snapshot["latest"]["output_fps"], 90)
+
+    def test_legacy_roleless_capacity_remains_supported(self):
+        observer = TelemetryObserver(Path("/nonexistent"))
+        observer.consume_line(GeneratedCapacityTests.APPLIED.replace("role=frame-generation ", ""), now=1)
+        self.assertEqual(observer.current_max_multiplier, 3)
+
+
+class DeliveryEvidenceTests(unittest.TestCase):
+    def test_measured_zero_output_is_not_replaced_with_ninety_fps_plan(self):
+        observer = TelemetryObserver(Path("/nonexistent"))
+        sample = observer.consume_line(diag("adaptive-plan", current_base_fps=30,
+            generated=2, observed_output_fps=0, source_interval_mean_ms=33.333,
+            requested_interval_mean_ms=11.111), now=1)
+        self.assertEqual(sample.output_source, "measured")
+        self.assertEqual(sample.output_fps, 0)
+        self.assertEqual(observer.summary(now=1)["output"]["median"], 0)
+        self.assertAlmostEqual(sample.real_fps, 30, places=2)
+
+    def test_explicit_zero_with_real_cadence_remains_a_fresh_shortfall(self):
+        observer = TelemetryObserver(Path("/nonexistent"))
+        sample = observer.consume_line(diag("fixed-plan", current_base_fps=30,
+                                           generated=2, observed_output_fps=0), now=1)
+        self.assertEqual(sample.real_fps, 30)
+        self.assertEqual(sample.output_fps, 0)
+        self.assertEqual(observer.sample_seq, 1)

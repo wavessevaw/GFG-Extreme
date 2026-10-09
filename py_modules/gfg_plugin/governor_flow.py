@@ -46,6 +46,7 @@ class FlowTrial:
         self.windows = {}
         self.proof = None
         self.pending_accept = False
+        self.held_misses = 0
 
     @property
     def busy(self):
@@ -137,8 +138,7 @@ class FlowTrial:
     def step(self, *, now, context, mode, eligible, saved_flow, actual_flow, ack_seq,
              event_seq, sample, target, base_target):
         actual = number(actual_flow)
-        if actual is not None:
-            self.actual = actual
+        self.actual = actual
         if context != self.context:
             # The caller restores Saved before changing profile/point/session.
             self.reset()
@@ -154,7 +154,24 @@ class FlowTrial:
             return None
         if self.since is None:
             self.since = now
-        if self.phase in {"done", "held"}:
+        if self.phase == "held":
+            # A successful trial is not a permanent exemption from cadence
+            # checks. Revert the temporary setting before probing more watts
+            # or deeper ratios when it no longer delivers a healthy stream.
+            if actual is None or abs(actual - self.wanted) >= .005:
+                return self._abort(now, event_seq, "held-flow-not-confirmed")
+            if sample is not None and sample.get("seq") != self.last_seq:
+                self.last_seq = sample.get("seq")
+                if any(number(sample.get(k)) is None for k in ("real", "output")):
+                    return self._abort(now, event_seq, "invalid-frame-evidence")
+                if sample["real"] < .85 * base_target or sample["output"] < .85 * target:
+                    return self._abort(now, event_seq, "output-starved")
+                short = sample["real"] < .94 * base_target or sample["output"] < .94 * target
+                self.held_misses = self.held_misses + 1 if short else 0
+                if self.held_misses >= 2:
+                    return self._abort(now, event_seq, "held-cadence-regression")
+            return None
+        if self.phase == "done":
             return None
         if (self.busy and self.phase != "wait-restore" and sample is not None
                 and sample.get("seq") != self.last_seq):

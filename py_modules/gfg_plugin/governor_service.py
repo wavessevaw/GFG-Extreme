@@ -625,6 +625,11 @@ class GovernorService:
         # Renderer samples already summarize an interval. Avoid another 12/20-second average.
         fps = latest.get("output_fps") if snapshot is not None else (summary.get("output") or {}).get("median")
         real = latest.get("real_fps") if snapshot is not None else (summary.get("real") or {}).get("median")
+        if latest.get("output_source") == "instant_plan":
+            # A planned multiplier is not evidence that images were delivered.
+            # Do not refresh or hold an earlier healthy rate over a plan-only sample.
+            fps = real = None
+            self._hud_values = None
         power = status.get("power") or {}
         battery = status.get("battery") or {}
         fo = status.get("frame_os") or {}
@@ -2296,7 +2301,9 @@ class GovernorService:
                         and not self._menu_covering() and self._trusted_game_focus() is not False
                         and flow_number(snap.get("sample_age_ms")) is not None
                         and snap["sample_age_ms"] <= self.MAX_SAMPLE_AGE_MS
+                        and latest.get("output_source") in {"measured", "scheduler_interval"}
                         and context_matches and ack.get("resources")
+                        and flow_number(ack.get("value")) is not None
                         and self._clock() - getattr(self, "_flow_sensors_at", -1e9) <= self.MAX_SAMPLE_AGE_MS / 1000
                         and ack.get("lighter_model") == "0"
                         and (self._status.get("diagnosis") or {}).get("thermal") == "ok"

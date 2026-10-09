@@ -169,3 +169,61 @@ class FlowTests(unittest.TestCase):
         self.assertEqual(result, .8)
         self.assertEqual(trial.phase, "wait-restore")
         self.assertTrue(trial.busy)
+
+    def held_step(self, trial, *, seq=200, real=30, output=90, actual=.7, now=200):
+        return trial.step(now=now, context=("game", "budget"), mode="budget", eligible=True,
+                          saved_flow=.8, actual_flow=actual, ack_seq=999, event_seq=1000,
+                          sample={"seq": seq, "real": real, "output": output},
+                          target=90, base_target=30)
+
+    def test_accepted_trial_reverts_immediately_on_later_severe_starvation(self):
+        trial, _ = self.run_trial()
+        self.assertEqual(self.held_step(trial, real=15, output=45), .8)
+        self.assertEqual(trial.reason, "output-starved")
+        self.assertEqual(trial.phase, "wait-restore")
+        self.assertIsNone(trial.proof)
+        self.assertFalse(trial.status()["accepted"])
+        self.assertTrue(trial.busy)
+
+    def test_held_moderate_shortfall_requires_two_distinct_consecutive_samples(self):
+        trial, _ = self.run_trial()
+        self.assertIsNone(self.held_step(trial, real=27, output=82))
+        self.assertIsNone(self.held_step(trial, real=27, output=82, now=201))
+        self.assertEqual(trial.phase, "held")  # rereading one sample is not a second failure
+        self.assertEqual(self.held_step(trial, seq=201, real=27, output=82, now=202), .8)
+        self.assertEqual(trial.reason, "held-cadence-regression")
+        self.assertIsNone(trial.proof)
+
+    def test_healthy_frame_resets_held_shortfall_counter(self):
+        trial, _ = self.run_trial()
+        self.held_step(trial, real=27, output=82)
+        self.held_step(trial, seq=201, now=201)
+        self.held_step(trial, seq=202, real=27, output=82, now=202)
+        self.assertEqual(trial.phase, "held")
+        self.assertEqual(trial.held_misses, 1)
+
+    def test_held_actual_change_or_missing_ack_invalidates_benefit(self):
+        for actual in (.8, .6, None, float("nan")):
+            trial, _ = self.run_trial()
+            self.assertEqual(self.held_step(trial, actual=actual), .8)
+            self.assertEqual(trial.reason, "held-flow-not-confirmed")
+            self.assertIsNone(trial.proof)
+            self.assertTrue(trial.busy)
+
+    def test_held_invalid_frame_evidence_cannot_retain_success(self):
+        for bad in (None, True, float("nan"), float("inf")):
+            trial, _ = self.run_trial()
+            self.assertEqual(self.held_step(trial, real=bad), .8)
+            self.assertEqual(trial.reason, "invalid-frame-evidence")
+
+    def test_incomplete_applied_flow_supersedes_previous_ack(self):
+        prefix = "MAKO Renderer: present diagnostics: "
+        for invalid in ("", " effective_flow_scale=nan", " effective_flow_scale=2"):
+            observer = TelemetryObserver(ROOT / "absent.log")
+            observer.consume_line(prefix + "operation=runtime-state-applied context=0xaa role=frame-generation effective_flow_scale=0.7 frame_generation_resources_available=1 lighter_model=0", now=1)
+            first = observer.snapshot(now=1)["flow"]["event_seq"]
+            observer.consume_line(prefix + "operation=runtime-state-applied context=0xaa role=frame-generation frame_generation_resources_available=0" + invalid, now=2)
+            flow = observer.snapshot(now=2)["flow"]
+            self.assertIsNone(flow["value"])
+            self.assertFalse(flow["resources"])
+            self.assertGreater(flow["event_seq"], first)
