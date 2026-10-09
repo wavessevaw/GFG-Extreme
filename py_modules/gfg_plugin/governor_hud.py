@@ -86,7 +86,7 @@ def output_fps(status: Dict[str, Any]) -> Optional[float]:
 
 
 def frame_os_word(frame_os: Any) -> str:
-    """``FOS boost 45`` while Frame OS acts; ``FOS boost? 45`` when it only measures (would)."""
+    """Requested boost is labelled verifying; observe-only decisions carry a question mark."""
     if not isinstance(frame_os, dict) or not frame_os.get("enabled"):
         return ""
     if not (frame_os.get("telemetry") or {}).get("live"):

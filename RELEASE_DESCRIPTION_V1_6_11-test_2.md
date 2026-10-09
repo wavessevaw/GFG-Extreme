@@ -2,7 +2,7 @@
 
 > TEST BUILD — EXPERIMENTAL. GFG Open and Extreme remain under development. This is not an official stable release.
 
-Includes the Open cadence-aware GPU guard and reference-patch reuse from test.1. Physical Steam Deck smoothness/performance still needs the user's test.
+Includes the Open cadence-aware GPU guard and reference-patch reuse from test.1. The user's test.1 report still describes 30–35 FPS motion despite the output counter. Open smoothness is therefore unresolved; this candidate does not claim an on-device fix.
 
 HUD fixes:
 - ENERGY number shows saved TDP allowance against the device's Gamescope/QAM slider maximum (hardware maximum fallback), using unrounded confirmed caps. 20 W maximum / 15 W cap = 25%. Unknown maximum is not replaced with the initial cap.

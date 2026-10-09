@@ -86,7 +86,7 @@ class HudTests(unittest.TestCase):
         s = {"enabled": True, "telemetry": {"snapshot": {"sample_age_ms": 100, "latest": {"output_fps": 90}}, "summary": {"output": {"median": 90.0}}}}
         self.assertEqual(hud.output_fps(s), 90.0)
         self.assertIsNone(hud.output_fps({"enabled": True}))
-        self.assertIsNone(hud.output_fps({**s, "enabled": False}))
+        self.assertEqual(hud.output_fps({**s, "enabled": False}), 90.0)
 
     def test_writer_is_idempotent(self):
         with tempfile.TemporaryDirectory() as d:
@@ -179,7 +179,7 @@ class FrameOsHudTests(unittest.TestCase):
         self.assertEqual(hud.frame_os_word({**fo, "telemetry": {"live": False}}), "")
         self.assertEqual(hud.frame_os_word({"enabled": False}), "")
         line = hud.status_line({"enabled": True, "power": {"observed_tdp_w": 9.0}, "frame_os": fo})
-        self.assertTrue(line.endswith("FOS boost 45"))
+        self.assertTrue(line.endswith("FOS verifying 45"))
         self.assertNotIn("FOS", hud.status_line({"enabled": True, "frame_os": fo}, "minimal"))
 
 class HudTelemetryRegressionTests(unittest.TestCase):
