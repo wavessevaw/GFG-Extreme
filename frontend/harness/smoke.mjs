@@ -225,6 +225,33 @@ for (const [state, nav, expected] of cases) {
   await page.close();
   cases.push(["extreme-sharpening"]);
 }
+// Extreme native preferences are available, saved independently and rolled back on RPC failure.
+{
+  const page = await openPage(browser, STATES["home-extreme"]);
+  await page.getByText("Stall shield", { exact: true }).first().click();
+  await page.waitForTimeout(120);
+  await page.getByText("Frame timing", { exact: true }).first().click();
+  await page.waitForTimeout(120);
+  const sets = await page.evaluate(() => (window.__featureSets || []).map(x => x.slice(1)));
+  if (JSON.stringify(sets) !== '[["shield",true],["latency",false]]') {
+    failed++; console.error("FAIL frame timing preference calls: " + JSON.stringify(sets));
+  }
+  await page.close();
+  cases.push(["extreme-frame-preferences"]);
+}
+{
+  const state = { ...STATES["home-extreme"], __featureFail: true };
+  const page = await openPage(browser, state);
+  const row = page.locator(".row").filter({ has: page.getByText("Stall shield", { exact: true }) });
+  await row.click();
+  await page.waitForTimeout(120);
+  if (!(await page.getByText("Could not save frame timing", { exact: true }).count())
+      || await row.locator(".tog.on").count()) {
+    failed++; console.error("FAIL frame timing save error kept a successful toggle");
+  }
+  await page.close();
+  cases.push(["extreme-frame-preferences-error"]);
+}
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);
 process.exit(failed ? 1 : 0);
