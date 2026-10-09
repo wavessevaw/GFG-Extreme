@@ -63,6 +63,8 @@ LIVE_FIELDS = frozenset({
     "scaling_method",
     # Extreme (1.6): the scaler's sharpening travels with its render scale (one logical point).
     "scaling_sharpness",
+    # Live private-resource rebuild, used only by confirmed flow A/B/A trials.
+    "flow_scale",
 })
 # Budget mode uses x1 .. x3.75 normally and x4 as a last resort; x5 is never chosen.
 MAX_AUTO_MULTIPLIER = 4.0
