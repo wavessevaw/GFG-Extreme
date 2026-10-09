@@ -7,7 +7,7 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "py_modules")]
 
-from gfg_plugin.governor_confirmation import Request, evaluate_confirmation
+from gfg_plugin.governor_confirmation import Request, evaluate_confirmation, confirmation_evidence
 from gfg_plugin.governor_core import OperatingPoint
 
 
@@ -58,6 +58,31 @@ class QualityConfirmationTests(unittest.TestCase):
 
     def test_requested_ratio_does_not_trigger_mismatch_guard(self):
         self.assertEqual(self.decide(StubObserver(mult=1.25))[0], "confirmed")
+
+    def test_rejection_evidence_records_requested_and_delivered_cadence(self):
+        req = self.request()
+        evidence = confirmation_evidence(req, StubObserver(output=90, mult=3))
+        self.assertEqual(evidence["requested_multiplier"], 1.25)
+        self.assertEqual(evidence["requested_real_fps"], 72)
+        self.assertEqual(evidence["delivered_multiplier"], 3)
+        self.assertEqual(evidence["delivered_real_fps"], 30)
+        self.assertEqual(evidence["delivered_output_fps"], 90)
+        self.assertTrue(evidence["renderer_applied"])
+        self.assertEqual(evidence["span_s"], 8)
+        self.assertEqual(evidence["samples"], 9)
+
+    def test_rejection_evidence_never_uses_a_previous_session(self):
+        observer = StubObserver()
+        observer.session_generation = 2
+        evidence = confirmation_evidence(self.request(), observer)
+        self.assertEqual(evidence["samples"], 0)
+        self.assertIsNone(evidence["delivered_multiplier"])
+        self.assertEqual(evidence["basis"], "telemetry-session-changed")
+
+    def test_evidence_does_not_invent_an_apply_ack(self):
+        evidence = confirmation_evidence(self.request(), StubObserver(applied=False))
+        self.assertFalse(evidence["renderer_applied"])
+        self.assertEqual(evidence["basis"], "post-request")
 
 
 if __name__ == "__main__":

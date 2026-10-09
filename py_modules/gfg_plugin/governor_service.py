@@ -63,7 +63,7 @@ from .governor_device import detect_model, target_for
 from .governor_power import SteamDeckPowerActuator
 from .governor_telemetry import TelemetryObserver
 from .governor_confirmation import (  # noqa: F401  (Request and the operation sets are re-exported)
-    APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, matches,
+    APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, confirmation_evidence, matches,
 )
 
 VERSION = "1.6.4"
@@ -1958,7 +1958,9 @@ class GovernorService:
                             "output": (recent.get("output") or {}).get("median")}
             self._budget.request_failed(self._clock(), reason, observed)
         self._event("operating-point-rejected", reason, profile=profile, point=req.point.key,
-                    revision=req.revision, request_id=req.request_id)
+                    revision=req.revision, request_id=req.request_id,
+                    cadence=confirmation_evidence(req, self.observer),
+                    bottleneck=(self._status.get("diagnosis") or {}).get("bottleneck"))
         await self._rollback(profile, req.previous_deltas, reason)
 
     async def _rollback(self, profile: str, deltas: Dict[str, Any], reason: str) -> None:
