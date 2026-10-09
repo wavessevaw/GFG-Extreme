@@ -208,6 +208,7 @@ var rpc = {
   setFrameOsFeature: safeCallable("set_governor_frame_os_feature"),
   setPowerSplit: safeCallable("set_governor_power_split"),
   setMode: safeCallable("set_governor_mode"),
+  setAutoFlow: safeCallable("set_governor_auto_flow"),
   setExtremeSharpness: safeCallable("set_governor_extreme_sharpness"),
   setExtremeActConsent: safeCallable("set_governor_extreme_act_consent"),
   forgetModel: safeCallable("forget_governor_game_model"),
@@ -376,6 +377,7 @@ function describe(s) {
   if (b && s.state === "LOCKED" && b.thermal_deferred && b.heat_limited) return { head: "Cooling \xB7 " + num(b.tdp_w, 0) + " W", body: "The Deck is " + (b.thermal === "hot" ? "hot" : b.thermal === "heating" ? "heating up" : "cooling down") + ": GFG keeps the current ratio and only tries lower watts. Fewer generated frames are tried again once it cools.", tone: "warn" };
   if (b && s.state === "LOCKED") return { head: "Adapting \xB7 " + num(b.tdp_w, 0) + " W", body: (b.warm_started ? "Started from what worked last time. " : "") + (TIER_TEXT[b.tier] || "Checks FPS every second: adds watts at once when the game falls short, tries lower watts every 45 s."), tone: b.tier === "emergency" ? "warn" : "ok" };
   if (b && s.state === "GUARD") return { head: "Protecting", body: "A scene got heavier: more generated frames first, then more watts.", tone: "warn" };
+  if (s.reason === "flow-scale-trial") return { head: "Checking efficiency", body: "Comparing generation workload at the same frame target and power cap.", tone: "ok" };
   if (s.state === "OPTIMIZE_POWER") return { head: "Saving power", body: "Lowering TDP while holding the target.", tone: "ok" };
   if (s.state === "LOCKED") return { head: "Locked in", body: "Stable at target. GFG stays out of the way.", tone: "ok" };
   if (s.state === "GUARD") return { head: "Protecting", body: "Quality dipped \u2014 restoring a safe setting.", tone: "warn" };
@@ -1533,6 +1535,37 @@ function JournalPage({ back, profile, reloadCfg }) {
     msg ? h(Note, null, msg) : null
   );
 }
+function FlowControl({ s }) {
+  const flow = s && s.flow_control || {};
+  const [on, setOn] = useState(flow.enabled !== false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    setOn(flow.enabled !== false);
+  }, [flow.enabled]);
+  const busy = ["a1", "b", "a2", "wait-a", "wait-b", "wait-accept", "wait-restore"].includes(flow.phase);
+  return h(
+    "div",
+    null,
+    h("div", { className: "sec" }, "GENERATION WORKLOAD"),
+    h("div", { className: "list" }, h(Toggle, {
+      on,
+      title: "Automatic flow scale",
+      sub: "Experimental. Rare checks with a rollback; pauses while Frame OS Act runs.",
+      onChange: async (value) => {
+        setError("");
+        try {
+          const result = await rpc.setAutoFlow(value);
+          if (!result || result.success === false) throw new Error(result && result.error || "Could not save");
+          setOn(value);
+        } catch (e) {
+          setError(String(e));
+        }
+      }
+    })),
+    h("div", { className: "hint" }, busy ? "Testing generation workload\u2026" : flow.accepted ? "Confirmed flow scale: " + num(flow.confirmed, 2) : "Keeps your saved flow scale until a change is confirmed."),
+    error ? h(Note, null, error) : null
+  );
+}
 function SettingsPage({ back, go, profile, s }) {
   return h(
     Page,
@@ -1548,6 +1581,7 @@ function SettingsPage({ back, go, profile, s }) {
       h(Row, { icon: "scale", title: "Scaling", sub: "Render scale for extra headroom", onClick: () => go("scaling") }),
       h(Row, { icon: "filter", title: "Filters", sub: "Sharpening, anti-aliasing, color looks", onClick: () => go("filters") })
     ),
+    h(FlowControl, { s }),
     h("div", { className: "sec" }, "SUPPORT"),
     h(
       "div",
