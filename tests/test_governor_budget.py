@@ -1074,6 +1074,14 @@ class ExtremeTests(unittest.TestCase):
         self.assertTrue(any(k.endswith("@90") or k.endswith("@80") for k in keys),
                         f"a lower render scale came before fewer real frames: {keys}")
 
+    def test_extreme_respects_detected_20_and_100_w_ceiling(self):
+        for watts in (20.0, 100.0):
+            ctl = self.make(max_w=watts)
+            self.assertEqual((ctl.tdp, ctl.normal_max_w, ctl.emergency_max_w),
+                             (watts, watts, watts))
+            ctl.limit_power(watts - 1.0)
+            self.assertEqual(ctl.tdp, watts - 1.0)
+
     def test_a_lower_ceiling_is_the_whole_budget(self):
         ctl = self.make(max_w=12.0)          # the player's own 12 W: never raised to 15
         self.assertEqual((ctl.tdp, ctl.normal_max_w, ctl.emergency_max_w), (12.0, 12.0, 12.0))
