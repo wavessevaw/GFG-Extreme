@@ -26,14 +26,14 @@ class OpenContext {
  VkExtent2D extent,tiles;
  std::pair<vk::Image,vk::Image> sources;
  std::vector<vk::Image> outputs;
- vk::Image coarseF,coarseB,flowF,flowB;
+ vk::Image coarseF,coarseB,flowF,flowB,pyrPrevious,pyrCurrent;
  vk::TimelineSemaphore shared,ready;
  vk::Fence fence;
- vk::Shader coarseShader,refineShader,composeShader;
+ vk::Shader pyramidShader,coarseShader,refineShader,composeShader;
  vk::DescriptorPool pool;
  vk::Buffer pairParams;
  std::vector<vk::Buffer> outputParams;
- std::array<std::unique_ptr<vk::DescriptorSet>,2> coarseSets,refineSets;
+ std::array<std::unique_ptr<vk::DescriptorSet>,2> pyramidSets,coarseSets,refineSets;
  std::vector<std::array<std::unique_ptr<vk::DescriptorSet>,2>> composeSets;
  std::array<std::optional<vk::CommandBuffer>,2> prepasses;
  std::vector<std::array<std::optional<vk::CommandBuffer>,2>> commands;

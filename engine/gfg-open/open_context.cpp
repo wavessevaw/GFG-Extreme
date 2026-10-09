@@ -38,12 +38,15 @@ OpenContext::OpenContext(const vk::Vulkan& vk,ls::FileDescriptorScope& src,
  outputs(imports(v,dst,e)),
  coarseF(v,tiles,VK_FORMAT_R32G32B32A32_SFLOAT),coarseB(v,tiles,VK_FORMAT_R32G32B32A32_SFLOAT),
  flowF(v,tiles,VK_FORMAT_R32G32B32A32_SFLOAT),flowB(v,tiles,VK_FORMAT_R32G32B32A32_SFLOAT),
+ pyrPrevious(v,{(e.width+3)/4,(e.height+3)/4},VK_FORMAT_R32G32B32A32_SFLOAT),
+ pyrCurrent(v,{(e.width+3)/4,(e.height+3)/4},VK_FORMAT_R32G32B32A32_SFLOAT),
  shared(v,0,sync.take()),ready(v,0),fence(v),
- coarseShader(v,embedded::flow,0,6,1,0),refineShader(v,embedded::refine,0,6,1,0),
+ pyramidShader(v,embedded::pyramid,0,4,1,0),
+ coarseShader(v,embedded::flow,0,8,1,0),refineShader(v,embedded::refine,0,6,1,0),
  composeShader(v,embedded::compose,0,5,1,0),
- pool(v,{.sets=static_cast<uint32_t>(4+2*outputs.size()),
- .uniform_buffers=static_cast<uint32_t>(4+2*outputs.size()),
- .samplers=0,.sampled_images=0,.storage_images=static_cast<uint32_t>(24+10*outputs.size())}),
+ pool(v,{.sets=static_cast<uint32_t>(6+2*outputs.size()),
+ .uniform_buffers=static_cast<uint32_t>(6+2*outputs.size()),
+ .samplers=0,.sampled_images=0,.storage_images=static_cast<uint32_t>(36+10*outputs.size())}),
  pairParams(v,Params{{e.width,e.height,tiles.width,tiles.height},{0,0,0,0}}){
  if(outputs.empty())throw std::runtime_error("GFG Open requires output images");
  outputParams.reserve(outputs.size());composeSets.resize(outputs.size());commands.resize(outputs.size());lastOutputParams.resize(outputs.size());
@@ -51,8 +54,11 @@ OpenContext::OpenContext(const vk::Vulkan& vk,ls::FileDescriptorScope& src,
  for(size_t phase=0;phase<2;phase++){
   const auto& a=phase?sources.first:sources.second; // previous
   const auto& b=phase?sources.second:sources.first; // current
+  pyramidSets[phase]=std::make_unique<vk::DescriptorSet>(v,pool,pyramidShader,
+   std::vector<ls::R<const vk::Image>>{},std::vector<ls::R<const vk::Image>>{a,b,pyrPrevious,pyrCurrent},
+   std::vector<ls::R<const vk::Sampler>>{},std::vector<ls::R<const vk::Buffer>>{pairParams});
   coarseSets[phase]=std::make_unique<vk::DescriptorSet>(v,pool,coarseShader,
-   std::vector<ls::R<const vk::Image>>{},std::vector<ls::R<const vk::Image>>{a,b,coarseF,coarseB,flowF,flowB},
+   std::vector<ls::R<const vk::Image>>{},std::vector<ls::R<const vk::Image>>{a,b,coarseF,coarseB,flowF,flowB,pyrPrevious,pyrCurrent},
    std::vector<ls::R<const vk::Sampler>>{},std::vector<ls::R<const vk::Buffer>>{pairParams});
   refineSets[phase]=std::make_unique<vk::DescriptorSet>(v,pool,refineShader,
    std::vector<ls::R<const vk::Image>>{},std::vector<ls::R<const vk::Image>>{a,b,coarseF,coarseB,flowF,flowB},
@@ -65,7 +71,8 @@ OpenContext::OpenContext(const vk::Vulkan& vk,ls::FileDescriptorScope& src,
  // GENERAL under the renderer's external timeline semaphore contract.
  vk::CommandBuffer init(v);init.begin(v);
  std::array transitions{barrier(coarseF,VK_IMAGE_LAYOUT_UNDEFINED),barrier(coarseB,VK_IMAGE_LAYOUT_UNDEFINED),
-                       barrier(flowF,VK_IMAGE_LAYOUT_UNDEFINED),barrier(flowB,VK_IMAGE_LAYOUT_UNDEFINED)};
+                       barrier(flowF,VK_IMAGE_LAYOUT_UNDEFINED),barrier(flowB,VK_IMAGE_LAYOUT_UNDEFINED),
+                       barrier(pyrPrevious,VK_IMAGE_LAYOUT_UNDEFINED),barrier(pyrCurrent,VK_IMAGE_LAYOUT_UNDEFINED)};
  v.df().CmdPipelineBarrier(init.handle(),VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,0,nullptr,0,nullptr,transitions.size(),transitions.data());
  init.end(v);init.submit(v);
  std::clog<<"GFG Open: backend=color-flow-v1 tile=8 search=16 selective-refinement=3 occlusion=bidirectional history=validated encoding=sdr8\n";
@@ -84,7 +91,9 @@ void OpenContext::record(size_t count,bool history){
  if(!prepasses[phase]){
   vk::CommandBuffer c(v);c.begin(v,0);
   std::array inputBarriers{barrier(sources.first),barrier(sources.second),barrier(flowF),barrier(flowB)};
-  c.dispatch(v,coarseShader,*coarseSets[phase],inputBarriers,(tiles.width+7)/8,(tiles.height+7)/8,1);
+  c.dispatch(v,pyramidShader,*pyramidSets[phase],inputBarriers,((extent.width+3)/4+7)/8,((extent.height+3)/4+7)/8,1);
+  std::array pyramidBarriers{barrier(pyrPrevious),barrier(pyrCurrent),barrier(flowF),barrier(flowB)};
+  c.dispatch(v,coarseShader,*coarseSets[phase],pyramidBarriers,(tiles.width+7)/8,(tiles.height+7)/8,1);
   std::array coarseBarriers{barrier(coarseF),barrier(coarseB)};
   c.dispatch(v,refineShader,*refineSets[phase],coarseBarriers,(tiles.width+7)/8,(tiles.height+7)/8,1);
   c.end(v);prepasses[phase].emplace(std::move(c));

@@ -4,7 +4,7 @@ Independent GPL-3.0-or-later compute shaders. The Vulkan transport is pinned MAK
 
 ## Pipeline
 
-For each pair of real frames: classify static 8x8 tiles, bidirectional coarse colour matching at 4-pixel steps, selectively refine ambiguous/high-residual tiles at full resolution, then compose each requested intermediate timestamp. A confident tile skips expensive refinement. Previously confident motion that matches the current pair also skips the coarse search; history is never accepted without revalidation. Previous flow is only a search candidate and must pass current-pair colour matching again. Initial history is invalid; context recreation resets it. Opposing-vector consistency and warped colour agreement decide whether to blend, use a single visible source, or display the nearest real frame. Original resolution is preserved. Descriptor sets and two source-phase command chains are cached per context; unchanged uniforms are not uploaded every frame.
+For each pair of real frames: classify static 8x8 tiles, 4× box-filtered colour pyramids and bidirectional coarse matching at 4-pixel steps, selectively refine ambiguous/high-residual tiles at full resolution, then compose each requested intermediate timestamp. A confident tile skips expensive refinement. Previously confident motion that matches the current pair also skips the coarse search; history is never accepted without revalidation. Previous flow is only a search candidate and must pass current-pair colour matching again. Initial history is invalid; context recreation resets it. Opposing-vector consistency and warped colour agreement decide whether to blend, use a single visible source, or display the nearest real frame. Original resolution is preserved. Descriptor sets and two source-phase command chains are cached per context; unchanged uniforms are not uploaded every frame.
 
 ## Integration
 
@@ -16,4 +16,4 @@ Search is bounded to ±16 pixels coarse plus ±3 refinement, not arbitrary motio
 
 ## Verification
 
-`bash engine/gfg-open/build.sh` compiles GLSL, validates SPIR-V and links the real Vulkan layer. `g++ -std=c++20 -O2 engine/gfg-open/tests/gpu.cpp -lvulkan -o gpu-test` executes those same shaders on Vulkan. CI uses Mesa lavapipe. Test scenes include identity, translation, fractional timestamps, occlusion, static overlay strokes, discontinuity, history warm-up and odd dimensions. This establishes functional behaviour, not Deck timing or end-to-end game compatibility.
+`bash engine/gfg-open/build.sh` compiles GLSL, validates SPIR-V and links the real Vulkan layer. `g++ -std=c++20 -O2 engine/gfg-open/tests/gpu.cpp -lvulkan -o gpu-test` executes those same shaders on Vulkan. CI uses Mesa lavapipe. Test scenes include identity, small and large translation, fractional timestamps, occlusion, static overlay strokes, discontinuity, history warm-up and odd dimensions. This establishes functional behaviour, not Deck timing or end-to-end game compatibility.

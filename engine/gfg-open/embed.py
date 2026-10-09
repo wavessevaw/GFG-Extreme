@@ -5,7 +5,7 @@ import subprocess,struct
 here=Path(__file__).resolve().parent
 out=["// Generated from GPL-3.0-or-later GLSL; do not edit.",
      "#pragma once","#include <array>","#include <cstdint>","namespace gfg::embedded {"]
-for name in ("flow","refine","compose"):
+for name in ("pyramid","flow","refine","compose"):
  spv=here/(name+".spv")
  subprocess.run(["glslangValidator","-V","--target-env","vulkan1.1","-o",str(spv),str(here/"shaders"/(name+".comp"))],check=True)
  subprocess.run(["spirv-val","--target-env","vulkan1.1",str(spv)],check=True)
