@@ -1,0 +1,342 @@
+{
+  "date": "2026-10-09",
+  "gfg_commit": "c926cbed30c452d1b0787079c2d95233de8f375e",
+  "upstream_source_pin": "edd2946bd3c4281e357bd436e0e7b80df0759576",
+  "workflow_url": "https://github.com/wavessevaw/GFG-Extreme/actions/runs/37901496427",
+  "archive_sha256": {
+    "gfg": "72ae1202f2a649f65cb75a7d1082f7aeacb7e87c8a2d6f29888343d5271c2b7c",
+    "upstream": "1258d8f73359974a4880236b1ecc5275c702960edc6e6ce0a57b27f52109ebdf"
+  },
+  "renderer_libraries": {
+    "gfg": {
+      "lib/libmako-render-scaling.so": "cb6ea949696371fd19f09128680fb4492b15ef10d27e70c88acdd6a3eb477e91",
+      "lib/libmako-render.so": "48730c1188634bffaeb5b8d84e6a74d04ce74c2970d10dd0a644f65b1e7bc9b2",
+      "lib32/libmako-render-scaling.so": "817035bb436382bf9da65c047f02aad5891586f8f6bec72a725b6fcb1e2e9b16",
+      "lib32/libmako-render.so": "1d817097fc07c7992c41d068a3dc32c6587575013a20bfa39676b073f4bb4d3a"
+    },
+    "upstream": {
+      "lib32/libmako-render-scaling.so": "817035bb436382bf9da65c047f02aad5891586f8f6bec72a725b6fcb1e2e9b16",
+      "lib32/libmako-render.so": "1d817097fc07c7992c41d068a3dc32c6587575013a20bfa39676b073f4bb4d3a",
+      "lib/libmako-render-scaling.so": "cb6ea949696371fd19f09128680fb4492b15ef10d27e70c88acdd6a3eb477e91",
+      "lib/libmako-render.so": "48730c1188634bffaeb5b8d84e6a74d04ce74c2970d10dd0a644f65b1e7bc9b2"
+    },
+    "equal": true
+  },
+  "comparison_note": "Raw workflow compared different tar iteration orders; normalized relative-path comparisons match all four renderer/scaling libraries. Source reproducibility and user DLL are not verified.",
+  "settings_reviewed": [
+    {
+      "field": "dll",
+      "effect": "Пользовательская Lossless.dll; источник закрытых FG/LS1 шейдеров.",
+      "potential": "Сама настройка FPS не повышает; версия DLL влияет на совместимость и модель."
+    },
+    {
+      "field": "allow_fp16",
+      "effect": "Разрешение FP16, по умолчанию включено.",
+      "potential": "Потенциально существенно только если фактически работал FP32; нужен лог выбранной точности и GPU-замер. Разрешение ≠ подтверждение."
+    },
+    {
+      "field": "scaling_enabled",
+      "effect": "Резервирование пути пространственного масштабирования при запуске.",
+      "potential": "Прирост возможен при реальном уменьшении игрового source extent; меняет качество и не отвечает текущему требованию."
+    },
+    {
+      "field": "scaling_method",
+      "effect": "native / открытый MAKO / лицензированный LS1 / LS1 Performance.",
+      "potential": "Разная стоимость реконструкции. Native без апскейла — базовая точка; лёгкий scaler экономит только свой участок."
+    },
+    {
+      "field": "scaling_factor",
+      "effect": "Отношение размера выхода к источнику по каждой оси.",
+      "potential": "Не доказательство уменьшения рендера. В представленном запуске Ghost of Tsushima source/output одинаковы."
+    },
+    {
+      "field": "scaling_supersampling",
+      "effect": "Увеличенный исходный рендер для качества.",
+      "potential": "Дополнительная нагрузка; не ускоритель."
+    },
+    {
+      "field": "scaling_sharpness",
+      "effect": "Резкость scaler.",
+      "potential": "Постобработка; детализацию потерянного рендера математически не возвращает."
+    },
+    {
+      "field": "frame_generation_provisioned",
+      "effect": "Создание FG-ресурсов при запуске.",
+      "potential": "Отключение освобождает путь для другого FG/no-FG; может сократить память/инициализацию, не гарантирует рост FPS."
+    },
+    {
+      "field": "frame_generation_enabled",
+      "effect": "Живое включение генерации.",
+      "potential": "Поднимает выходной FPS, потребляет GPU. Отключение нужно для измерения собственной цены FG."
+    },
+    {
+      "field": "automatic_dock_mode",
+      "effect": "Политика для внешнего дисплея.",
+      "potential": "Выбор рабочего режима; не добавляет вычислительной мощности."
+    },
+    {
+      "field": "fg_backend",
+      "effect": "gfg / optiscaler / native / off, владелец FG.",
+      "potential": "Важный кандидат: сравнение разных алгоритмов и предотвращение двойной генерации. Native/OptiScaler требуют реальной поддержки игры."
+    },
+    {
+      "field": "optiscaler_proxy",
+      "effect": "Выбор DLL-прокси.",
+      "potential": "Маршрутизация загрузки; сама по себе не ускоритель."
+    },
+    {
+      "field": "frame_generation_refresh_threshold",
+      "effect": "Приостановка FG при низкой подтверждённой частоте дисплея.",
+      "potential": "Может убрать ненужную FG-нагрузку; выходные кадры меняются."
+    },
+    {
+      "field": "base_fps_cap",
+      "effect": "Ограничитель настоящих кадров.",
+      "potential": "Снятие ошибочного лимита может дать большой прирост; если GPU физически не справляется, лимит не причина."
+    },
+    {
+      "field": "multiplier",
+      "effect": "Целый коэффициент FG 2–5.",
+      "potential": "Рост отображаемых кадров ценой нагрузки/артефактов; не равен росту настоящих кадров."
+    },
+    {
+      "field": "adaptive",
+      "effect": "Число генерируемых кадров под цель.",
+      "potential": "Потенциально сокращает ненужную генерацию. Нужен замер actual scheduled/presented."
+    },
+    {
+      "field": "adaptive_auto_base_fps_cap",
+      "effect": "Автолимит target/2.",
+      "potential": "Выбор каденции; может удерживать реальные кадры ниже доступной мощности."
+    },
+    {
+      "field": "adaptive_fractional_real_frame_priority",
+      "effect": "Явный лимит реальных кадров относительно target.",
+      "potential": "При adaptive имеет приоритет над manual base cap. Конфликт с Governor подробно ниже."
+    },
+    {
+      "field": "target_fps",
+      "effect": "Целевая частота вывода.",
+      "potential": "Политика; цель должна соответствовать экрану и доступной мощности."
+    },
+    {
+      "field": "adaptive_max_multiplier",
+      "effect": "Максимальный коэффициент adaptive.",
+      "potential": "Чем выше — тем больше допустимых FG-ресурсов/нагрузки; не источник реальных FPS."
+    },
+    {
+      "field": "adaptive_stable_cadence",
+      "effect": "Предпочтение ровной целой каденции.",
+      "potential": "Плавность может оплачиваться снижением реальной частоты; для Extreme нужны обе метрики."
+    },
+    {
+      "field": "gamescope_vrr_mode",
+      "effect": "Предпочтение VRR через Gamescope.",
+      "potential": "Только при поддержке дисплеем; встроенный экран Deck не превращается в VRR-дисплей."
+    },
+    {
+      "field": "dynamic_cadence_recovery",
+      "effect": "Проверки изменения native cadence.",
+      "potential": "Исправление несовместимости; включение обнуляет competing cap/priority. Возможны краткие заминки."
+    },
+    {
+      "field": "dynamic_cadence_probe_interval_seconds",
+      "effect": "Период проверок cadence.",
+      "potential": "Реакция против частоты проб; это не рост вычислительной эффективности."
+    },
+    {
+      "field": "ultra_performance",
+      "effect": "Preset: flow 0.7, лёгкая FG-модель, разрешение FP16, ресурсы активной политики.",
+      "potential": "Один из немногих сильных существующих кандидатов, но меняет качество FG. При provisioned scaler также выбирает LS1 Performance."
+    },
+    {
+      "field": "flow_scale",
+      "effect": "Разрешение оценки движения FG, default 0.8.",
+      "potential": "Игровой рендер остаётся прежним; снижается качество поля движения/синтетических кадров. Нельзя объявлять бесплатным ускорением."
+    },
+    {
+      "field": "performance_mode",
+      "effect": "Лёгкая FG-модель вместо quality.",
+      "potential": "Прямое уменьшение части работы; возможен существенный эффект, если FG занимает большую долю GPU. Возможны худшие артефакты."
+    },
+    {
+      "field": "pacing",
+      "effect": "В схеме только none.",
+      "potential": "Других реальных режимов этой настройки нет."
+    },
+    {
+      "field": "active_in",
+      "effect": "Сопоставление процесса и профиля.",
+      "potential": "Корректность загрузки, не алгоритм ускорения."
+    },
+    {
+      "field": "gpu",
+      "effect": "Выбор физического GPU.",
+      "potential": "На обычном Deck один GPU; отдельный вычислитель для FG не появляется."
+    },
+    {
+      "field": "disable_mako",
+      "effect": "Не загружать renderer.",
+      "potential": "Диагностическая базовая точка; отключает возможности, не оптимизирует их."
+    },
+    {
+      "field": "disable_hdr_exposure",
+      "effect": "Граница SDR при недоступном HDR.",
+      "potential": "Совместимость/цвет; не FPS booster."
+    },
+    {
+      "field": "gamescope_wsi_compatibility",
+      "effect": "Изменение цепочки WSI при запуске.",
+      "potential": "Может исправить запуск/переходы; не универсальная оптимизация GPU."
+    },
+    {
+      "field": "swapchain_image_count_compatibility",
+      "effect": "Сохранить запрошенный игрой минимум изображений.",
+      "potential": "Совместимость против запаса очереди для FG; меньше buffers не означает больше FPS."
+    },
+    {
+      "field": "external_vulkan_layer",
+      "effect": "MangoHud или vkBasalt.",
+      "potential": "Дополнительный слой; измеритель либо стоимость эффектов. Родной GFG HUD — отдельный путь."
+    },
+    {
+      "field": "vkbasalt_sharpening",
+      "effect": "none / CAS / DLS.",
+      "potential": "Увеличение резкости с GPU-ценой; не исправляет ошибочное временное движение."
+    },
+    {
+      "field": "vkbasalt_sharpness",
+      "effect": "Сила CAS/DLS.",
+      "potential": "Качество; FPS не создаёт."
+    },
+    {
+      "field": "vkbasalt_dls_denoise",
+      "effect": "Пространственное подавление шума DLS.",
+      "potential": "Не temporal anti-ghosting."
+    },
+    {
+      "field": "vkbasalt_antialiasing",
+      "effect": "none / FXAA / SMAA.",
+      "potential": "Пост-AA с дополнительной стоимостью. Заменять игровой TAA можно лишь отдельным сравнением качества."
+    },
+    {
+      "field": "vkbasalt_shader",
+      "effect": "Упорядоченная цепочка 19 эффектов.",
+      "potential": "Каждый активный эффект добавляет работу; каталог ниже."
+    },
+    {
+      "field": "disable_steamdeck_mode",
+      "effect": "SteamDeck=0 для скрытых настроек игры.",
+      "potential": "Может открыть параметры, но их изменение — изменение игрового качества/поведения."
+    },
+    {
+      "field": "enable_zink",
+      "effect": "OpenGL поверх Vulkan.",
+      "potential": "Сильный условный кандидат для некоторых OpenGL-игр; не относится к DX12/vkd3d Ghost of Tsushima."
+    },
+    {
+      "field": "force_alsa_audio",
+      "effect": "Изменение аудиопути.",
+      "potential": "Совместимость/аудиофризы; оснований обещать большой универсальный FPS нет."
+    }
+  ],
+  "shader_catalog": [
+    {
+      "id": "hdr_look",
+      "source": "FakeHDR.fx",
+      "effect": "Имитация HDR, 9 выборок при стандартной ветке; 17 при двух кольцах."
+    },
+    {
+      "id": "clarity",
+      "source": "Clarity.fx",
+      "effect": "Локальный контраст, центр + 4 соседних выборки."
+    },
+    {
+      "id": "levels_plus",
+      "source": "LevelsPlus.fx",
+      "effect": "Уровни/гамма, попиксельное преобразование."
+    },
+    {
+      "id": "vibrance",
+      "source": "Vibrance.fx",
+      "effect": "Насыщенность, попиксельное преобразование."
+    },
+    {
+      "id": "colourfulness",
+      "source": "Colourfulness.fx",
+      "effect": "Насыщенность с ограничением цветов/опциональным dithering."
+    },
+    {
+      "id": "curves",
+      "source": "Curves.fx",
+      "effect": "Контрастная кривая; стоимость зависит от формулы."
+    },
+    {
+      "id": "deband",
+      "source": "встроенный vkBasalt",
+      "effect": "Подавление ступеней цвета; не временных шлейфов. Отдельного .fx в GFG нет."
+    },
+    {
+      "id": "technicolor2",
+      "source": "Technicolor2.fx",
+      "effect": "Цветовой look."
+    },
+    {
+      "id": "dpx",
+      "source": "DPX.fx",
+      "effect": "Кинематографическая цветовая кривая, exp/pow и матрицы."
+    },
+    {
+      "id": "bleach_bypass",
+      "source": "BleachBypass.fx",
+      "effect": "Контраст/цветовой look."
+    },
+    {
+      "id": "noir",
+      "source": "Noir.fx",
+      "effect": "Монохромный look с виньеткой."
+    },
+    {
+      "id": "technicolor",
+      "source": "Technicolor.fx",
+      "effect": "Цветовой look."
+    },
+    {
+      "id": "monochrome",
+      "source": "Monochrome.fx",
+      "effect": "Монохромный look."
+    },
+    {
+      "id": "sepia",
+      "source": "Sepia.fx",
+      "effect": "Тонирование."
+    },
+    {
+      "id": "film_grain",
+      "source": "FilmGrain.fx",
+      "effect": "Процедурный шум с трансцендентными операциями."
+    },
+    {
+      "id": "vignette",
+      "source": "Vignette.fx",
+      "effect": "Затемнение краёв."
+    },
+    {
+      "id": "cartoon",
+      "source": "Cartoon.fx",
+      "effect": "Обнаружение контуров, центр + 4 соседних выборки."
+    },
+    {
+      "id": "nostalgia",
+      "source": "Nostalgia.fx",
+      "effect": "Палитра/квантизация; стоимость зависит от выбранной палитры."
+    },
+    {
+      "id": "chromatic_aberration",
+      "source": "ChromaticAberration.fx",
+      "effect": "Раздельный сдвиг RGB, 3 выборки."
+    }
+  ],
+  "hardware_benchmark_performed": false,
+  "candidates_are_unmeasured": true
+}
