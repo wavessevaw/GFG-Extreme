@@ -17,9 +17,11 @@ concurrency:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ github.token }}
+      CXX: g++-12
+      CC: gcc-12
     steps:
       - uses: actions/checkout@v4
         with:
@@ -96,7 +98,7 @@ jobs:
 
       - name: Open generator build dependencies
         if: steps.version.outputs.exists == 'false'
-        run: sudo apt-get update && sudo apt-get install -y ninja-build glslang-tools spirv-tools libvulkan-dev mesa-vulkan-drivers libxcb1-dev libx11-dev libwayland-dev vulkan-validationlayers
+        run: sudo apt-get update && sudo apt-get install -y g++-12 ninja-build glslang-tools spirv-tools libvulkan-dev mesa-vulkan-drivers libxcb1-dev libx11-dev libwayland-dev vulkan-validationlayers
 
       - name: Build zip
         if: steps.version.outputs.exists == 'false'
@@ -107,7 +109,9 @@ jobs:
       - name: Execute open generator SPIR-V
         if: steps.version.outputs.exists == 'false'
         run: |
-          g++ -std=c++20 -O2 engine/gfg-open/tests/gpu.cpp -lvulkan -o /tmp/gfg-open-gpu-test
+          g++-12 -std=c++20 -O2 engine/gfg-open/tests/budget.cpp -o /tmp/gfg-open-budget-test
+          /tmp/gfg-open-budget-test
+          g++-12 -std=c++20 -O2 engine/gfg-open/tests/gpu.cpp -lvulkan -o /tmp/gfg-open-gpu-test
           VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp*.json' -print -quit)" /tmp/gfg-open-gpu-test
 
       - name: Verify Frame OS and Rings HUD packaged in Decky zip

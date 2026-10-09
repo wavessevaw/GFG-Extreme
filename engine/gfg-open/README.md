@@ -17,3 +17,7 @@ Search is bounded to ±16 pixels coarse plus ±3 refinement, not arbitrary motio
 ## Verification
 
 `bash engine/gfg-open/build.sh` compiles GLSL, validates SPIR-V and links the real Vulkan layer. `g++ -std=c++20 -O2 engine/gfg-open/tests/gpu.cpp -lvulkan -o gpu-test` executes those same shaders on Vulkan. CI uses Mesa lavapipe. Test scenes include identity, small and large translation, fractional timestamps, occlusion, static overlay strokes, discontinuity, history warm-up and odd dimensions. This establishes functional behaviour, not Deck timing or end-to-end game compatibility.
+
+## Field-regression protection (1.6.7)
+
+Wide search scans a bounded two-pixel lattice and limits expensive full-colour comparisons to 32 plus four nearly exact candidates, followed by a 3×3 polish. Native timestamps measure prepass and each output separately. Three repeated samples above 4 ms after three warm-up samples latch real-frame passthrough for the context; unsupported GPU timing also selects passthrough. The log states this explicitly. Select legacy FG and restart to restore legacy interpolation. This is a safety fallback, not proof of a field-performance fix.

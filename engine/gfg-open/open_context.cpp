@@ -75,10 +75,50 @@ OpenContext::OpenContext(const vk::Vulkan& vk,ls::FileDescriptorScope& src,
                        barrier(pyrPrevious,VK_IMAGE_LAYOUT_UNDEFINED),barrier(pyrCurrent,VK_IMAGE_LAYOUT_UNDEFINED)};
  v.df().CmdPipelineBarrier(init.handle(),VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,0,nullptr,0,nullptr,transitions.size(),transitions.data());
  init.end(v);init.submit(v);
+ initTiming();
  std::clog<<"GFG Open: backend=color-flow-v1 tile=8 search=16 selective-refinement=3 occlusion=bidirectional history=validated encoding=sdr8\n";
+}
+void OpenContext::initTiming(){
+ auto get=v.fi().GetDeviceProcAddr;
+ auto create=reinterpret_cast<PFN_vkCreateQueryPool>(get(v.dev(),"vkCreateQueryPool"));
+ destroyQueries=reinterpret_cast<PFN_vkDestroyQueryPool>(get(v.dev(),"vkDestroyQueryPool"));
+ readQueries=reinterpret_cast<PFN_vkGetQueryPoolResults>(get(v.dev(),"vkGetQueryPoolResults"));
+ resetQueries=reinterpret_cast<PFN_vkCmdResetQueryPool>(get(v.dev(),"vkCmdResetQueryPool"));
+ writeTimestamp=reinterpret_cast<PFN_vkCmdWriteTimestamp>(get(v.dev(),"vkCmdWriteTimestamp"));
+ VkPhysicalDeviceProperties props{};v.fi().GetPhysicalDeviceProperties(v.physdev(),&props);
+ uint32_t n=0;v.fi().GetPhysicalDeviceQueueFamilyProperties(v.physdev(),&n,nullptr);
+ std::vector<VkQueueFamilyProperties> families(n);
+ v.fi().GetPhysicalDeviceQueueFamilyProperties(v.physdev(),&n,families.data());
+ if(v.queueFamilyIndex()<n)timestampBits=families[v.queueFamilyIndex()].timestampValidBits;
+ timestampPeriod=props.limits.timestampPeriod;
+ if(create&&destroyQueries&&readQueries&&resetQueries&&writeTimestamp&&timestampBits&&timestampPeriod>0){
+  VkQueryPoolCreateInfo info{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+  info.queryType=VK_QUERY_TYPE_TIMESTAMP;info.queryCount=uint32_t(2+2*outputs.size());
+  if(create(v.dev(),&info,nullptr,&queries)!=VK_SUCCESS)queries=VK_NULL_HANDLE;
+ }
+ if(!queries){
+  budget.bypass=true;
+  std::clog<<"GFG Open: performance-fallback=real-frame reason=gpu-timing-unavailable; select legacy FG and restart for interpolation\n";
+ }
+}
+OpenContext::~OpenContext(){
+ if(queries&&destroyQueries)destroyQueries(v.dev(),queries,nullptr);
+}
+void OpenContext::collectTiming(){
+ if(!queries||!scheduledCount)return;
+ std::vector<uint64_t> times(2+2*scheduledCount);
+ if(readQueries(v.dev(),queries,0,uint32_t(times.size()),times.size()*sizeof(uint64_t),times.data(),sizeof(uint64_t),VK_QUERY_RESULT_64_BIT)!=VK_SUCCESS)return;
+ const uint64_t mask=timestampBits>=64?~uint64_t(0):(uint64_t(1)<<timestampBits)-1;
+ double ticks=double((times[1]-times[0])&mask);
+ for(size_t i=2;i<times.size();i+=2)ticks+=double((times[i+1]-times[i])&mask);
+ const double ms=ticks*double(timestampPeriod)/1e6;
+ const bool was=budget.bypass;budget.observe(ms);
+ if(!was&&budget.bypass)std::clog<<"GFG Open: performance-fallback=real-frame reason=gpu-budget gpu_ms="<<ms<<" limit_ms="<<GpuBudget::limitMs<<"; select legacy FG and restart for interpolation\n";
+ else if(budget.samples%120==1)std::clog<<"GFG Open: gpu_ms="<<ms<<" limit_ms="<<GpuBudget::limitMs<<" passthrough="<<budget.bypass<<"\n";
 }
 void OpenContext::prepare(){
  if(scheduled&&!fence.wait(v,250000000))throw std::runtime_error("GFG Open previous-work fence timed out");
+ if(scheduled)collectTiming();
 }
 void OpenContext::writePair(const Params& p){
  if(!lastPairParams||*lastPairParams!=p){pairParams.write(v,p);lastPairParams=p;}
@@ -90,19 +130,23 @@ void OpenContext::record(size_t count,bool history){
  const auto phase=frame%2;
  if(!prepasses[phase]){
   vk::CommandBuffer c(v);c.begin(v,0);
+  if(queries){resetQueries(c.handle(),queries,0,uint32_t(2+2*outputs.size()));writeTimestamp(c.handle(),VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,queries,0);}
   std::array inputBarriers{barrier(sources.first),barrier(sources.second),barrier(flowF),barrier(flowB)};
   c.dispatch(v,pyramidShader,*pyramidSets[phase],inputBarriers,((extent.width+3)/4+7)/8,((extent.height+3)/4+7)/8,1);
   std::array pyramidBarriers{barrier(pyrPrevious),barrier(pyrCurrent),barrier(flowF),barrier(flowB)};
   c.dispatch(v,coarseShader,*coarseSets[phase],pyramidBarriers,(tiles.width+7)/8,(tiles.height+7)/8,1);
   std::array coarseBarriers{barrier(coarseF),barrier(coarseB)};
   c.dispatch(v,refineShader,*refineSets[phase],coarseBarriers,(tiles.width+7)/8,(tiles.height+7)/8,1);
+  if(queries)writeTimestamp(c.handle(),VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,queries,1);
   c.end(v);prepasses[phase].emplace(std::move(c));
  }
  if(!history)for(size_t i=0;i<count;i++){
   if(commands[i][phase])continue;
   vk::CommandBuffer c(v);c.begin(v,0);
+  if(queries)writeTimestamp(c.handle(),VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,queries,uint32_t(2+2*i));
   std::array flowBarriers{barrier(flowF),barrier(flowB),barrier(outputs[i])};
   c.dispatch(v,composeShader,*composeSets[i][phase],flowBarriers,(extent.width+7)/8,(extent.height+7)/8,1);
+  if(queries)writeTimestamp(c.handle(),VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,queries,uint32_t(3+2*i));
   c.end(v);commands[i][phase].emplace(std::move(c));
  }
 }
@@ -118,12 +162,13 @@ void OpenContext::scheduleFrames(std::span<const float> timestamps){
  float previous=0;
  for(float t:timestamps){if(!std::isfinite(t)||t<=previous||t>=1)throw std::runtime_error("Invalid GFG Open interpolation timestamp");previous=t;}
  prepare();
- Params params{{extent.width,extent.height,tiles.width,tiles.height},{0,frame>1?1.f:0.f,frame>0?1.f:0.f,0}};
+ Params params{{extent.width,extent.height,tiles.width,tiles.height},{0,frame>1?1.f:0.f,frame>0?1.f:0.f,budget.bypass?1.f:0.f}};
  writePair(params);
  for(size_t i=0;i<count;i++){
-  params.timing={timestamps.empty()?float(i+1)/float(count+1):timestamps[i],frame>0?1.f:0.f,0,0};
+  params.timing={timestamps.empty()?float(i+1)/float(count+1):timestamps[i],frame>0?1.f:0.f,0,budget.bypass?1.f:0.f};
   writeOutput(i,params);
  }
+ scheduledCount=count;
  record(count,false);submitPrepass(VK_NULL_HANDLE);
  for(size_t i=0;i<count;i++)commands[i][frame%2]->submit(v,{},ready.handle(),idx-1,{},shared.handle(),idx+i,i+1==count?fence.handle():VK_NULL_HANDLE);
  idx+=count;++frame;
@@ -131,6 +176,7 @@ void OpenContext::scheduleFrames(std::span<const float> timestamps){
 void OpenContext::scheduleFrameHistory(){
  prepare();
  writePair(Params{{extent.width,extent.height,tiles.width,tiles.height},{0,frame>1?1.f:0.f,frame>0?1.f:0.f,0}});
+ scheduledCount=0;
  record(0,true);submitPrepass(fence.handle());++frame;
 }
 bool OpenContext::waitForIdle(uint64_t ns)const{return !scheduled||fence.wait(v,ns);}

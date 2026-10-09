@@ -27,7 +27,7 @@ void main(){
  if(any(greaterThanEqual(pixel,ivec2(p.size.xy))))return;
  vec2 q=vec2(pixel);float t=p.timing.x;
  vec4 originalCurrent=imageLoad(currentImage,pixel);
- if(p.timing.y==0){imageStore(outputImage,pixel,originalCurrent);return;}
+ if(p.timing.y==0 || p.timing.w>0){imageStore(outputImage,pixel,originalCurrent);return;}
  vec4 originalPrevious=imageLoad(previousImage,pixel);
  // Unchanged pixels (including static overlay strokes) do not need a warp.
  // This is a colour equality mask, not semantic detection of game HUD.

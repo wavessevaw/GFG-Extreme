@@ -8,7 +8,7 @@ layout(rgba32f,binding=50)writeonly uniform image2D previousPyramid;
 layout(rgba32f,binding=51)writeonly uniform image2D currentPyramid;
 void main(){
  ivec2 q=ivec2(gl_GlobalInvocationID.xy),extent=(ivec2(p.size.xy)+3)/4;
- if(any(greaterThanEqual(q,extent)))return;
+ if(any(greaterThanEqual(q,extent)) || p.timing.w>0)return;
  vec4 a=vec4(0),b=vec4(0);
  for(int y=0;y<4;y++)for(int x=0;x<4;x++){
   ivec2 s=min(q*4+ivec2(x,y),ivec2(p.size.xy)-1);

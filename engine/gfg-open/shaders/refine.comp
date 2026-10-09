@@ -37,7 +37,9 @@ vec4 refine(bool back,ivec2 b){
  // prevent an exact near-zero correspondence from being found.
  if(any(notEqual(seed,ivec2(0)))) {
   for(int y=-3;y<=3;y++)for(int x=-3;x<=3;x++){
-   ivec2 d=ivec2(x,y);float e=cost(back,q,d);
+   ivec2 d=ivec2(x,y);
+   if(all(lessThanEqual(abs(d-seed),ivec2(3))))continue;
+   float e=cost(back,q,d);
    if(e<best){second=best;best=e;bestD=d;}
    else if(d!=bestD)second=min(second,e);
   }
@@ -46,12 +48,28 @@ vec4 refine(bool back,ivec2 b){
  // Spend the wide full-resolution search only there. Large scene cuts
  // (bad coarse residual too) take the conservative real-frame fallback.
  if(c.z<.10 && best>.0025){
-  for(int y=-16;y<=16 && best>.001;y++)for(int x=-16;x<=16 && best>.001;x++){
+  int comparisons=0,exactComparisons=0;
+  for(int y=-16;y<=16 && best>.001;y+=2)for(int x=-16;x<=16 && best>.001;x+=2){
    ivec2 d=ivec2(x,y);
    float quick=dot(abs(fetch(back,q-ivec2(2))-fetch(!back,q-ivec2(2)+d)),vec3(.299,.587,.114));
    quick+=dot(abs(fetch(back,q+ivec2(2))-fetch(!back,q+ivec2(2)+d)),vec3(.299,.587,.114));
    if(quick*.5>best*.5+.0025)continue;
+   // Bound expensive nine-sample comparisons. Reserve four probes for
+   // virtually exact two-sample matches, which preserve clean translation.
+   if(comparisons>=32){
+    if(quick>.001 || exactComparisons>=4)continue;
+    exactComparisons++;
+   }else comparisons++;
    float e=cost(back,q,d);
+   if(e<best){second=best;best=e;bestD=d;}
+   else if(d!=bestD)second=min(second,e);
+  }
+ }
+ // The bounded wide lattice is two pixels apart; polish its winner once.
+ if(bestD!=seed && best>.001){
+  ivec2 centre=bestD;
+  for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){
+   ivec2 d=centre+ivec2(x,y);float e=cost(back,q,d);
    if(e<best){second=best;best=e;bestD=d;}
    else if(d!=bestD)second=min(second,e);
   }
@@ -64,7 +82,7 @@ vec4 refine(bool back,ivec2 b){
 void main(){
  ivec2 b=ivec2(gl_GlobalInvocationID.xy);
  if(any(greaterThanEqual(b,ivec2(p.size.zw))))return;
- if(p.timing.z==0){imageStore(refinedForward,b,vec4(0,0,1,0));imageStore(refinedBackward,b,vec4(0,0,1,0));return;}
+ if(p.timing.z==0 || p.timing.w>0){imageStore(refinedForward,b,vec4(0,0,1,0));imageStore(refinedBackward,b,vec4(0,0,1,0));return;}
  imageStore(refinedForward,b,refine(false,b));
  imageStore(refinedBackward,b,refine(true,b));
 }

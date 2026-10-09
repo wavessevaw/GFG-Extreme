@@ -62,7 +62,7 @@ vec4 solve(bool back,ivec2 block) {
 void main(){
  ivec2 b=ivec2(gl_GlobalInvocationID.xy);
  if(any(greaterThanEqual(b,ivec2(p.size.zw))))return;
- if(p.timing.z==0){imageStore(forwardFlow,b,vec4(0,0,1,0));imageStore(backwardFlow,b,vec4(0,0,1,0));return;}
+ if(p.timing.z==0 || p.timing.w>0){imageStore(forwardFlow,b,vec4(0,0,1,0));imageStore(backwardFlow,b,vec4(0,0,1,0));return;}
  imageStore(forwardFlow,b,solve(false,b));
  imageStore(backwardFlow,b,solve(true,b));
 }

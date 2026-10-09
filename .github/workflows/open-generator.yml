@@ -7,18 +7,23 @@ permissions:
   contents: read
 jobs:
   native:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
+    env:
+      CXX: g++-12
+      CC: gcc-12
     steps:
       - uses: actions/checkout@v4
       - name: Dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build glslang-tools spirv-tools libvulkan-dev mesa-vulkan-drivers libxcb1-dev libx11-dev libwayland-dev vulkan-validationlayers
+        run: sudo apt-get update && sudo apt-get install -y g++-12 ninja-build glslang-tools spirv-tools libvulkan-dev mesa-vulkan-drivers libxcb1-dev libx11-dev libwayland-dev vulkan-validationlayers
       - name: Compile open generator and transport
         run: |
           git clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/open-vkh"
           VULKAN_HEADERS="$RUNNER_TEMP/open-vkh/include" bash engine/gfg-open/build.sh
       - name: Execute released SPIR-V on software Vulkan
         run: |
-          g++ -std=c++20 -O2 engine/gfg-open/tests/gpu.cpp -lvulkan -o /tmp/gfg-open-gpu-test
+          g++-12 -std=c++20 -O2 engine/gfg-open/tests/budget.cpp -o /tmp/gfg-open-budget-test
+          /tmp/gfg-open-budget-test
+          g++-12 -std=c++20 -O2 engine/gfg-open/tests/gpu.cpp -lvulkan -o /tmp/gfg-open-gpu-test
           VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp*.json' -print -quit)" /tmp/gfg-open-gpu-test
       - name: Assemble and verify actual Decky archive
         env:
@@ -28,8 +33,8 @@ jobs:
           gh release download v1.6.5 --pattern '*.zip' --pattern 'SHA256SUMS.txt' --dir /tmp/gfg-previous
           (cd /tmp/gfg-previous && sha256sum -c SHA256SUMS.txt)
           unzip -q -j /tmp/gfg-previous/*.zip 'GFG-Extreme/bin/*.flatpak' -d /tmp/gfg-payloads
-          VULKAN_HEADERS="$RUNNER_TEMP/open-vkh/include" GFG_OPEN_BUILD_DIR="$PWD/.gfg-open-build" bash scripts/build_release.sh 1.6.6 /tmp/gfg-payloads /tmp/gfg-output
-          python3 scripts/check_release_archive.py /tmp/gfg-output/GFG-Extreme-v1_6_6.zip 1.6.6
+          VULKAN_HEADERS="$RUNNER_TEMP/open-vkh/include" GFG_OPEN_BUILD_DIR="$PWD/.gfg-open-build" bash scripts/build_release.sh 1.6.7 /tmp/gfg-payloads /tmp/gfg-output
+          python3 scripts/check_release_archive.py /tmp/gfg-output/GFG-Extreme-v1_6_7.zip 1.6.7
       - uses: actions/upload-artifact@v4
         with:
           name: gfg-extreme-candidate

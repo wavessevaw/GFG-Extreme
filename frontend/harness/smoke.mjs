@@ -254,8 +254,8 @@ for (const [state, nav, expected] of cases) {
 }
 // Energy text changes, while the existing benefit arc remains 9/30.
 {
-  for (const [slow, fast, expected] of [[12,12,"20%"],[12.75,12.75,"15%"],[12,15,"0%"],[null,null,"—"]]) {
-    const state = { ...STATES["home-frame-os-act"], power: { observed_tdp_w: slow, observed_fast_w: fast, maximum_tdp_w: 20 } };
+  for (const [slow, fast, expected] of [[15,15,"25%"],[12,12,"40%"],[12.75,12.75,"36%"],[12,20,"0%"],[null,null,"—"]]) {
+    const state = { ...STATES["home-frame-os-act"], power: { observed_tdp_w: slow, observed_fast_w: fast, maximum_tdp_w: 30, gamescope_max_tdp_w: 20 } };
     const page = await openPage(browser, state);
     const data = await page.evaluate(() => {
       const ring = [...document.querySelectorAll(".fos .mini")].find(e => e.querySelector(".mlab").textContent === "Energy");

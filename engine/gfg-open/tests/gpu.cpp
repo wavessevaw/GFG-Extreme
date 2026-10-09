@@ -135,6 +135,11 @@ int main(){
  // Initial history invalid: output must be current real frame.
  p.timing[1]=0;p.timing[2]=0;memcpy(params,&p,32);fill(0,0,-1);fill(1,0,17);dispatch(0);dispatch(1);dispatch(2);dispatch(3);
  for(uint32_t y=0;y<H;y++)for(uint32_t x=0;x<W;x++)assert(pixel(6,x,y)[0]==17);
+ // Cost guard bypass must copy the real frame exactly, without previous
+ // history, motion search, stale contours, or interpolated colour.
+ p.timing[1]=1;p.timing[2]=1;p.timing[3]=1;memcpy(params,&p,32);
+ fill(0,0,-1);fill(1,2,-1);dispatch(0);dispatch(1);dispatch(2);dispatch(3);
+ for(uint32_t y=0;y<H;y++)for(uint32_t x=0;x<W;x++)assert(memcmp(pixel(6,x,y),pixel(1,x,y),4)==0);
  std::cout<<"GPU PASS: static, translation, fractional timestamps, occlusion, static overlay, scene-cut, initial history, odd extent\n";
  vkDeviceWaitIdle(device);vkDestroyCommandPool(device,cmdpool,nullptr);vkDestroyDescriptorPool(device,pool,nullptr);
  for(auto pipe:pipelines)vkDestroyPipeline(device,pipe,nullptr);vkDestroyPipelineLayout(device,pl,nullptr);vkDestroyDescriptorSetLayout(device,layout,nullptr);

@@ -183,7 +183,8 @@ class CpuFreqActuator:
         for p, value in self.expected.items():
             found = _read_int(p)
             if found != value and p in self._pending_targets and found == self._pending_targets[p]:
-                self.expected[p] = found  # a timed-out write landed; it is still ours
+                self.expected[p] = found  # an accepted/timed-out write landed; it is still ours
+                self._note("cpu-cap-delayed-applied", policy=p.parent.name, found=found)
                 continue
             if found != value:
                 self.owned, self.external_change, self.cap_khz = False, True, None
@@ -202,6 +203,7 @@ class CpuFreqActuator:
                 helper = self._helper()
                 if helper is not None:
                     write = getattr(helper, "restore_cpu", helper.write) if restoring else helper.write
+                    self._pending_targets[p] = value
                     write(p, int(value))
                 else:
                     p.write_text(f"{int(value)}\n", encoding="utf-8")
@@ -215,6 +217,10 @@ class CpuFreqActuator:
             if read is not None:
                 self.expected[p] = read           # the driver may clamp; what it reads is ours
             if read != value:
+                # A successful helper reply is not synchronous sysfs readback.
+                # Retain the accepted target so its late arrival remains ours.
+                if helper is not None:
+                    self._pending_targets[p] = value
                 self.error = self.error or f"{p.parent.name}: wrote {value}, reads {read}"
                 self._note("cpu-cap-failed", policy=p.parent.name, wanted=value, found=read, error=self.error)
                 return False
@@ -322,4 +328,6 @@ class CpuFreqActuator:
         return {"available": bool(self._policies), "writable": self._writable() if self._policies else False,
                 "owned": self.owned, "external_change": self.external_change, "error": self.error,
                 "restore_pending": self.restore_pending,
-                "cap_khz": self.cap_khz, "max_khz": self.max_khz or None, "policies": len(self._policies)}
+                "cap_khz": self.cap_khz, "max_khz": self.max_khz or None, "policies": len(self._policies),
+                "observed_policy_caps_khz": {p.parent.name: _read_int(p) for p in self._policies},
+                "pending_policy_caps_khz": {p.parent.name: value for p, value in self._pending_targets.items()}}

@@ -282,11 +282,16 @@ def apply_proof(benefit: Dict[str, Any], proof: Dict[str, Any]) -> Dict[str, Any
     out = dict(benefit)
     measured = {}
     for metric, key in (("response", "response_pct"), ("frames", "frames_pct"), ("energy", "energy_pct")):
-        result = proof.get(metric) or {}
+        combined = proof.get(metric) or {}
+        # Earlier sessions/backends remain visible in proof.historical, but
+        # only this session's controlled pairs can label a live ring measured.
+        result = combined.get("session") if "session" in combined else combined
+        result = result or {}
         measured[metric] = bool(result.get("measured"))
         if measured[metric]:
             out[key] = result.get("mean")
     out["measured"] = measured
+    out["provenance"] = {metric: ("session-ab" if measured[metric] else "model-or-telemetry") for metric in measured}
     if any(measured.values()):
         out["ready"] = True
     return out
