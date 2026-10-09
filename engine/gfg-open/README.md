@@ -12,7 +12,7 @@ Frame Generation → GFG Open generator. Opt-in per profile, applies on the next
 
 ## Limits
 
-Search is bounded to ±16 pixels coarse plus ±3 refinement, not arbitrary motion. Colour-only matching cannot recover hidden geometry, game motion vectors, TAA history, transparency or semantic HUD separation. Conservative fallbacks trade local interpolation smoothness for avoiding mismatched contour blending. GPU savings depend on the proportion of easy tiles; a busy scene may spend more on matching. No Deck power/FPS/ghosting improvement is claimed before controlled device tests.
+Search is bounded to ±16 pixels coarse plus ±3 refinement, not arbitrary motion. Colour-only matching cannot recover hidden geometry, game motion vectors, TAA history, transparency or semantic HUD separation. Conservative fallbacks trade local interpolation smoothness for avoiding mismatched contour blending. GPU savings depend on the proportion of easy tiles; a busy scene may spend more on matching. No Deck power/FPS/ghosting improvement is claimed before controlled device tests. This first open backend has fixed motion-quality parameters; the legacy neural model, flow_scale and FP16 controls apply to the legacy backend, not to these independent shaders.
 
 ## Verification
 

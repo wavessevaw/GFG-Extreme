@@ -123,6 +123,12 @@ int main(){
  std::cerr<<"large motion: "<<large[0]<<","<<large[1]<<" residual="<<large[2]<<" confidence="<<large[3]<<"\n";
  assert(std::abs(large[0]-10)<.1&&std::abs(large[1])<.1);
  dispatch(3);
+ int largeErrors=0,largeSamples=0;
+ for(uint32_t y=12;y<H-12;y++)for(uint32_t x=16;x<W-16;x++){
+  largeSamples++;if(std::abs(int(pixel(6,x,y)[0])-int(pixel(0,x-5,y)[0]))>2)largeErrors++;
+ }
+ std::cerr<<"large midpoint mismatches: "<<largeErrors<<"/"<<largeSamples<<"\n";
+ assert(largeErrors<largeSamples/10);
  // Scene discontinuity: no half-grey blend / stale temporal trails.
  fill(0,0,0);fill(1,0,255);dispatch(0);dispatch(1);dispatch(2);dispatch(3);
  for(uint32_t y=0;y<H;y++)for(uint32_t x=0;x<W;x++)assert(pixel(6,x,y)[0]==255);
