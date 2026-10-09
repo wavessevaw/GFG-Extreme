@@ -123,7 +123,7 @@ void OpenContext::publishTiming(double prepassMs,double compositionMs) const{
      <<",\"passthrough\":"<<(budget.passthrough()?"true":"false")<<",\"safety_latched\":"<<(budget.bypass?"true":"false")
      <<",\"recovery_probe\":"<<(budget.probing?"true":"false")<<",\"probe_attempts\":"<<budget.probeAttempts
      <<",\"recoveries\":"<<budget.recoveries<<",\"next_probe_frames\":"<<budget.cooldownFrames
-     <<",\"effective_interpolation\":"<<(!budget.passthrough()?"true":"false")<<",\"samples\":"<<budget.samples
+     <<",\"interpolation_attempted\":"<<(!budget.passthrough()?"true":"false")<<",\"samples\":"<<budget.samples
      <<",\"source_resolution\":["<<extent.width<<","<<extent.height<<"]"
      <<",\"motion_tiles\":["<<tiles.width<<","<<tiles.height<<"],\"updated_unix_s\":"<<now<<"}\n";
   out.close();if(out)std::filesystem::rename(tmp,path);
