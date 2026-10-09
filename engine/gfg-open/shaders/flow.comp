@@ -28,13 +28,11 @@ vec3 low(bool back,ivec2 q){
 }
 float coarseCost(bool back,ivec2 q,ivec2 d){
  float e=0;
- // Five cross samples instead of nine for each coarse motion candidate.
  for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){
-  if(abs(x)+abs(y)>1)continue;
   ivec2 a=q+ivec2(x,y);
   e+=dot(abs(low(back,a)-low(!back,a+d)),vec3(.299,.587,.114));
  }
- return e/5;
+ return e/9;
 }
 vec4 solve(bool back,ivec2 block) {
  ivec2 stride=(ivec2(p.size.xy)+ivec2(p.size.zw)-1)/ivec2(p.size.zw);
