@@ -1978,7 +1978,24 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         """The Governor has found this point's watts (Act starts only after that, field log 1.5.0)."""
         budget = self.svc._budget
         budget.phase, budget.probe = "locked", None
-        budget.locked_since = self.t["now"] - 1000.0
+        budget.locked_since = budget.settled_since = self.t["now"] - 1000.0
+
+    def test_extreme_act_starts_after_an_unchanged_45_second_reprobe(self):
+        from gfg_plugin.governor_core import BudgetController, WindowVerdict
+        budget = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3.0,
+                                  max_tdp_w=15.0, flavor="extreme")
+        budget.idx = len(budget.points) - 1
+        budget.scale_capable = False
+        budget.draw_w = 14.0
+        budget._lock(0.0, "native-holds")
+        self.svc._budget = budget
+        self.t["now"] = 45.0
+        budget.observe(45.0, WindowVerdict(True, False, "holds"), 90, 90)
+        self.assertFalse(self.svc._act_power_settled())
+        self.t["now"] = 60.0
+        self.assertTrue(self.svc._act_power_settled(), "noop reprobe must not starve Act's 60 s dwell")
+        budget._move("changed-watts", tdp=12.0)
+        self.assertFalse(self.svc._act_power_settled(), "real changes invalidate settled evidence")
 
     def test_act_waits_for_the_governor_to_settle_its_watts_and_steps_aside_to_research(self):
         self.svc.set_frame_os_act_unlock(True)

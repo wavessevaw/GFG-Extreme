@@ -1095,6 +1095,28 @@ class ExtremeTests(unittest.TestCase):
         self.assertNotIn("36x2.5", keys)
         self.assertEqual(ctl.point.key, "30x3", "straight to the deepest Extreme point")
 
+    def test_unchanged_reprobes_preserve_the_stable_point_clock(self):
+        ctl = self.make(scale=False)
+        ctl.idx = len(ctl.points) - 1  # native: there is no further upgrade to try
+        ctl.draw_w = 14.0
+        ctl._lock(10.0, "native-holds")
+        for now in (55.0, 100.0, 145.0):
+            self.assertEqual(ctl.observe(now, WindowVerdict(True, False, "holds"), 90, 90), "hold")
+            self.assertEqual(ctl.locked_since, now, "reprobe scheduling still advances")
+            self.assertEqual(ctl.settled_since, 10.0, "Act and game memory must not restart their dwell")
+
+    def test_real_point_or_power_changes_restart_the_stable_clock(self):
+        ctl = self.make(scale=False)
+        ctl._lock(10.0, "holds")
+        ctl._move("new-point", idx=ctl.idx + 1)
+        self.assertIsNone(ctl.settled_since)
+        ctl._lock(20.0, "new-point-holds")
+        self.assertEqual(ctl.settled_since, 20.0)
+        ctl.limit_power(12.0)
+        self.assertIsNone(ctl.settled_since)
+        ctl.observe(30.0, WindowVerdict(True, False, "holds"), ctl.point.base_target_fps, 90)
+        self.assertEqual(ctl.settled_since, 30.0)
+
     def test_no_last_resort_ratio(self):
         ctl = self.make()
         game = Game(fps_per_watt=1.0)        # hopeless: 15 real at 15 W

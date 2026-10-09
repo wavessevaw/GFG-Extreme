@@ -1479,6 +1479,7 @@ class GovernorService:
         split = {**(self._status.get("power_split") or {}), "setting": self._power_split_enabled()}
         cpu = self.cpu.status()
         split["available"] = bool(cpu.get("available") and cpu.get("writable"))
+        split["cap_khz"] = cpu.get("cap_khz") if cpu.get("owned") else None
         fo = self.frame_os.last or {}
         act_enabled = self._frame_os_mode(profile) == "act"
         facts = {
@@ -1497,7 +1498,8 @@ class GovernorService:
             "split": split,
             "act": {"consent": self._extreme_act_consent(), "enabled": act_enabled,
                     "pacer_live": bool((fo.get("telemetry") or {}).get("live")),
-                    "injecting": self._injection is not None},
+                    "injecting": self._injection is not None,
+                    "acknowledged": bool(fo.get("acknowledged") and self.frame_os.executor_active)},
             "warm_started": bool(budget is not None and budget.warm_started),
         }
         state = extreme_policy.session_state(
@@ -2788,8 +2790,9 @@ class GovernorService:
         budget = self._budget
         if budget is None or not budget.tdp_control:
             return True
-        return (budget.phase == "locked" and budget.probe is None
-                and self._clock() - float(getattr(budget, "locked_since", 0.0)) >= self.ACT_SETTLE_S)
+        settled_since = getattr(budget, "settled_since", getattr(budget, "locked_since", None))
+        return (budget.phase == "locked" and budget.probe is None and settled_since is not None
+                and self._clock() - float(settled_since) >= self.ACT_SETTLE_S)
 
     async def _sync_injection(self, profile: str) -> bool:
         """Write (or take back) the Act adaptive overlay; True while Act injects on this point."""
@@ -2967,7 +2970,8 @@ class GovernorService:
         if (
             budget.phase != "locked" or budget.recover is not None or budget.cap_ignored or budget.exhausted
             or getattr(budget, "verifying", None)
-            or point.degraded or now - budget.locked_since < self.HOLD_BEFORE_REMEMBER_S
+            or point.degraded or getattr(budget, "settled_since", budget.locked_since) is None
+            or now - getattr(budget, "settled_since", budget.locked_since) < self.HOLD_BEFORE_REMEMBER_S
             or (budget.tdp_control and budget.tdp != self._applied_tdp)
         ):
             return

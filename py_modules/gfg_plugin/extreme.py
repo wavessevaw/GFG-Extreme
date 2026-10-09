@@ -372,6 +372,8 @@ def booster_states(facts: Dict[str, Any]) -> List[Dict[str, Any]]:
         out.append(_cap("split", "off", "power-split-setting-off"))
     elif not split.get("available", True):
         out.append(_cap("split", "unavailable", "cpu-clock-control-unavailable"))
+    elif split.get("game_off"):
+        out.append(_cap("split", "off", "no-measured-benefit-for-game"))
     elif split.get("cap_khz"):
         out.append(_cap("split", "active", "gpu-bound-cpu-capped", cap_khz=split["cap_khz"]))
     else:
@@ -388,8 +390,10 @@ def booster_states(facts: Dict[str, Any]) -> List[Dict[str, Any]]:
         out.append(_cap("act", "off", "act-not-enabled"))
     elif running and not act.get("pacer_live"):
         out.append(_cap("act", "restart_required", "pacer-not-loaded-at-launch"))
+    elif act.get("injecting") and act.get("acknowledged"):
+        out.append(_cap("act", "active", "adaptive-cadence-active"))
     elif act.get("injecting"):
-        out.append(_cap("act", "active", "boosting-real-frames"))
+        out.append(_cap("act", "waiting", "awaiting-pacer-acknowledgement"))
     else:
         out.append(_cap("act", "waiting", "waits-for-settled-watts"))
 

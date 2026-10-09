@@ -261,7 +261,13 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(self.facts(act={"consent": True, "enabled": True, "pacer_live": False})["act"]["state"],
                          "restart_required")
         self.assertEqual(self.facts(act={"consent": True, "enabled": True, "pacer_live": True,
-                                         "injecting": True})["act"]["state"], "active")
+                                         "injecting": True, "acknowledged": True})["act"]["state"], "active")
+        self.assertEqual(self.facts(act={"consent": True, "enabled": True, "pacer_live": True,
+                                         "injecting": True, "acknowledged": False})["act"]["state"], "waiting")
+
+    def test_game_disabled_split_is_not_presented_as_ready(self):
+        split = self.facts(split={"setting": True, "available": True, "game_off": True})["split"]
+        self.assertEqual((split["state"], split["reason"]), ("off", "no-measured-benefit-for-game"))
 
     def test_gain_has_no_number_before_proof(self):
         gain = ex.gain_unavailable()
