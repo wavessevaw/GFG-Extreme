@@ -294,7 +294,8 @@ class TelemetryObserver:
             if .25 <= flow <= 1:
                 self._flow_state = {"value": flow, "context": fields["context"],
                                     "event_seq": self._event_seq, "monotonic": now_mono,
-                                    "resources": fields.get("frame_generation_resources_available") == "1"}
+                                    "resources": fields.get("frame_generation_resources_available") == "1",
+                                    "lighter_model": fields.get("lighter_model")}
         if operation == "swapchain-context-create":
             self._note_scaling(swapchain_extent(fields), now_mono)
         if operation == "gamescope-focus" and fields.get("state"):

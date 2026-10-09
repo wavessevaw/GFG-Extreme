@@ -167,6 +167,9 @@ class FlowTrial:
                 self.started = now
                 self.samples = []
             elif now - self.started > self.ACK_S:
+                if self.phase == "wait-restore" and (actual is None or abs(actual - self.original) >= .005):
+                    self.reason = "restore-not-confirmed"
+                    return self._request(self.original, "wait-restore", now, event_seq)
                 if self.phase == "wait-restore":
                     self.phase = "done"
                     self.wanted = None

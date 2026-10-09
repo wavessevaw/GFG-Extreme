@@ -11,3 +11,5 @@ Battery requires measured draw savings, Balanced requires draw/cadence benefit, 
 Power and CPU probes cannot overlap the comparison. New power/point contexts restore Saved flow; memory learned under a temporary flow change is discarded rather than reused for the Saved profile. The diagnostics timeline records requested/confirmed flow, phase and local-window evidence separately.
 
 Disable Automatic flow scale in Settings to retain the profile's manual value. Frame OS Act, lighter performance and ultra-performance profiles are excluded from automatic flow trials.
+
+Freshness applies to host sensors as well as FPS. A confirmed lighter-model flag is required. If Saved flow cannot be restored and the last confirmed value is still different, probing stays paused and the Saved value is retried at fifteen-second intervals until acknowledged or the context is released.

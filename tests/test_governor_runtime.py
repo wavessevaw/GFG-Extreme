@@ -2581,13 +2581,14 @@ class FlowRuntimeTests(unittest.TestCase):
         self.ack_flow(.8)
 
     def ack_flow(self, flow):
-        self.svc.observer.consume_line(H + f"operation=runtime-state-applied context=0xaa role=frame-generation effective_flow_scale={flow} frame_generation_resources_available=1 generated_frame_capacity=2", now=self.t["now"])
+        self.svc.observer.consume_line(H + f"operation=runtime-state-applied context=0xaa role=frame-generation effective_flow_scale={flow} lighter_model=0 frame_generation_resources_available=1 generated_frame_capacity=2", now=self.t["now"])
         self.actual = flow
 
     def flow_tick(self):
         self.t["now"] += 1
         self.svc.observer.consume_line(fixed_plan(30, 90) + " context=0xaa", now=self.t["now"])
         self.svc._status["telemetry"] = {"snapshot": self.svc.observer.snapshot()}
+        self.svc._flow_sensors_at = self.t["now"]
         self.svc.power.values["draw_w"] = 9 if self.actual < .8 else 10
         self.svc._status["sensors"]["gpu_busy_pct"] = 87 if self.actual < .8 else 95
         asyncio.run(self.svc._sync_flow("game"))
@@ -2635,3 +2636,14 @@ class FlowRuntimeTests(unittest.TestCase):
         asyncio.run(self.svc._sync_flow("game"))
         self.assertFalse(self.svc._flow.phase == "held")
         self.assertIsNone(self.svc._flow.proof)
+
+
+    def test_stale_sensors_cannot_start_or_continue_a_probe(self):
+        self.prepare_flow()
+        self.svc._flow_sensors_at = self.t["now"] - 10
+        self.svc.observer.consume_line(fixed_plan(30, 90) + " context=0xaa", now=self.t["now"])
+        self.svc._status["telemetry"] = {"snapshot": self.svc.observer.snapshot()}
+        self.t["now"] += 1
+        asyncio.run(self.svc._sync_flow("game"))
+        self.assertIsNone(self.svc._flow.since)
+        self.assertFalse(self.svc._flow.busy)

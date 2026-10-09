@@ -434,6 +434,7 @@ class GovernorService:
         """Host sensors + a one-line diagnosis. Never allowed to break the control loop."""
         try:
             sensors = self.sensors.sample()
+            self._flow_sensors_at = self._clock()
             tel = (self._status.get("telemetry") or {})
             summary = tel.get("summary") or {}
             # Only the live controller's numbers: a previous mode's feedback must not survive it.
@@ -2296,6 +2297,8 @@ class GovernorService:
                         and flow_number(snap.get("sample_age_ms")) is not None
                         and snap["sample_age_ms"] <= self.MAX_SAMPLE_AGE_MS
                         and context_matches and ack.get("resources")
+                        and self._clock() - getattr(self, "_flow_sensors_at", -1e9) <= self.MAX_SAMPLE_AGE_MS / 1000
+                        and ack.get("lighter_model") == "0"
                         and (self._status.get("diagnosis") or {}).get("thermal") == "ok"
                         and flow_number(power.get("observed_tdp_w")) is not None
                         and flow_number(sensors.get("temp_c")) is not None

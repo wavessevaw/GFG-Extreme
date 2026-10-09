@@ -121,3 +121,24 @@ class FlowTests(unittest.TestCase):
         self.assertEqual(observer.snapshot(now=3)["flow"]["value"], .8)
         observer._reset_session()
         self.assertIsNone(observer.snapshot(now=4)["flow"])
+
+
+    def test_failed_restore_keeps_probes_paused_and_retries_saved_value(self):
+        trial = FlowTrial()
+        trial.context = ("game", "budget")
+        trial.original = .8
+        trial.wanted = .8
+        trial.phase = "wait-restore"
+        trial.started = 0
+        trial.mark = 100
+        wanted = trial.step(now=16, context=trial.context, mode="budget", eligible=False,
+                            saved_flow=.8, actual_flow=.7, ack_seq=101, event_seq=102,
+                            sample=None, target=90, base_target=30)
+        self.assertEqual(wanted, .8)
+        self.assertTrue(trial.busy)
+        self.assertEqual(trial.reason, "restore-not-confirmed")
+        trial.step(now=17, context=trial.context, mode="budget", eligible=False,
+                   saved_flow=.8, actual_flow=.8, ack_seq=103, event_seq=104,
+                   sample=None, target=90, base_target=30)
+        self.assertFalse(trial.busy)
+        self.assertIsNone(trial.wanted)
