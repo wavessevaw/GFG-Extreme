@@ -41,6 +41,10 @@ jobs:
               text = re.sub(r"\n### Verify your download\n.*", "\n", text, flags=re.S)
           print(text)
           PY
-            gh release edit "$tag" --notes-file notes.md
+            flags=()
+            if grep -q 'Release status: pre-release' "$file"; then
+              flags=(--prerelease --latest=false)
+            fi
+            gh release edit "$tag" --notes-file notes.md "${flags[@]}"
             echo "$tag: notes updated"
           done

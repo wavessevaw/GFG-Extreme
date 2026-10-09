@@ -1,5 +1,9 @@
 # GFG Extreme 1.6.6 — Open frame generation and Energy
 
+Release status: pre-release
+
+> **IN DEVELOPMENT — NOT RECOMMENDED FOR REGULAR PLAY.** Field testing has exposed a significant real-FPS regression with GFG Open. Disable GFG Open generator and restart the game to use legacy FG. This build is for testing; device performance and image quality are unverified.
+
 This release introduces **GFG Open**, an independent frame generator with open compute shaders. Frame generation does not require Lossless.dll. The Vulkan transport uses pinned MAKO source; the frame synthesis algorithm is implemented separately.
 
 - Static regions and confidently matched motion use a low-cost path.
