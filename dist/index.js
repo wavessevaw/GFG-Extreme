@@ -1346,6 +1346,7 @@ function FgPage({ back, cfg, patch }) {
     be === "gfg" ? h(
       "div",
       null,
+      h("div", { className: "list" }, h(Toggle, { on: !!(cfg && cfg.open_frame_generation), title: "GFG Open generator", sub: "Experimental colour-flow interpolation. Native 64-bit SDR games; restart after changing. No Lossless.dll needed for FG.", onChange: (v) => patch({ open_frame_generation: v }) })),
       h("div", { className: "sec" }, "SAVED MULTIPLIER"),
       h(Seg, { value: String(mult), options: [["2", "\xD72"], ["3", "\xD73"]], onChange: (v) => patch({ multiplier: Number(v) }) }),
       h(Note, { quiet: true }, "Used when the Governor is off. With the Governor on, it picks \xD71 to \xD73.75 itself (\xD74 only as a last resort) and never changes this value.")
