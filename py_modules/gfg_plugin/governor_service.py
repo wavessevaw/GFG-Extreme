@@ -2326,7 +2326,7 @@ class GovernorService:
             self._draw_samples = []
             self._fast_last_sample_seq = self.observer.sample_seq
         if flow.phase != before_phase:
-            self._event("flow-scale", flow.reason, profile=profile, **flow.status())
+            self._event("flow-scale", flow.reason, profile=profile, flow=flow.status())
         self._status["flow_control"] = flow.status()
 
     async def _sample_passive_hud(self, profile: str) -> None:

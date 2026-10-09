@@ -51,7 +51,7 @@ def check(path, version):
                 raise ValueError(f"wrong library in {layer} manifest")
 
         # Both installed modules and the complete manifest-referenced theme must ship.
-        if version == "1.6.7":
+        if tuple(map(int, version.split("-")[0].split("."))) >= (1, 6, 7):
             for module in ("governor_flow.py", "theme_installer.py"):
                 if not read("py_modules/gfg_plugin/" + module):
                     raise ValueError("empty bundled module: " + module)

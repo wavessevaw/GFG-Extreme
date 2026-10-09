@@ -2619,6 +2619,7 @@ class FlowRuntimeTests(unittest.TestCase):
 
     def test_unsupported_models_and_act_never_start_a_resource_trial(self):
         self.prepare_flow()
+        self.svc._settings["frame_os_act_unlocked"] = True
         self.svc._settings.setdefault("profiles", {}).setdefault("game", {})["frame_os"] = "act"
         for _ in range(40):
             self.flow_tick()
