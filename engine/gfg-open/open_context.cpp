@@ -119,7 +119,7 @@ void OpenContext::publishTiming(double prepassMs,double compositionMs) const{
   out<<std::setprecision(17)<<"{\"backend\":\"color-flow-v2\",\"pid\":"<<getpid()
      <<",\"timing_available\":"<<(queries?"true":"false")
      <<",\"prepass_ms\":"<<prepassMs<<",\"composition_ms\":"<<compositionMs
-     <<",\"gpu_compute_ms\":"<<prepassMs+compositionMs<<",\"budget_ms\":"<<GpuBudget::limitMs
+     <<",\"gpu_compute_ms\":"<<prepassMs+compositionMs<<",\"budget_ms\":"<<budget.currentLimitMs
      <<",\"passthrough\":"<<(budget.passthrough()?"true":"false")<<",\"safety_latched\":"<<(budget.bypass?"true":"false")
      <<",\"recovery_probe\":"<<(budget.probing?"true":"false")<<",\"probe_attempts\":"<<budget.probeAttempts
      <<",\"recoveries\":"<<budget.recoveries<<",\"next_probe_frames\":"<<budget.cooldownFrames
@@ -129,6 +129,8 @@ void OpenContext::publishTiming(double prepassMs,double compositionMs) const{
      <<",\"last_active_composition_ms\":"<<lastActiveCompositionMs
      <<",\"last_probe_gpu_ms\":"<<lastProbeGpuMs
      <<",\"last_failed_probe_gpu_ms\":"<<lastFailedProbeGpuMs
+     <<",\"budget_policy\":\"source-period-quarter-capped-8ms\""
+     <<",\"recovery_budget_ms\":"<<budget.recoveryThresholdMs()
      <<",\"samples\":"<<budget.samples
      <<",\"source_resolution\":["<<extent.width<<","<<extent.height<<"]"
      <<",\"motion_tiles\":["<<tiles.width<<","<<tiles.height<<"],\"updated_unix_s\":"<<now<<"}\n";
@@ -155,7 +157,7 @@ void OpenContext::collectTiming(){
  budget.observe(ms);
  if(wasProbe&&!budget.probing&&budget.bypass)lastFailedProbeGpuMs=ms;
  if((!was&&budget.bypass)||(wasProbe&&!budget.probing)||budget.samples%120==1)publishTiming(prepassMs,ms-prepassMs);
- if(!was&&budget.bypass)std::clog<<"GFG Open: performance-fallback=real-frame reason=gpu-budget gpu_ms="<<ms<<" limit_ms="<<GpuBudget::limitMs<<"; select legacy FG and restart for interpolation\n";
+ if(!was&&budget.bypass)std::clog<<"GFG Open: performance-fallback=real-frame reason=gpu-budget gpu_ms="<<ms<<" limit_ms="<<budget.currentLimitMs<<"; select legacy FG and restart for interpolation\n";
  else if(wasProbe&&!budget.probing)std::clog<<"GFG Open: recovery="<<(budget.bypass?"retry-later":"interpolation-restored")<<" gpu_ms="<<ms<<" next_probe_frames="<<budget.cooldownFrames<<"\n";
  else if(budget.samples%120==1)std::clog<<"GFG Open: gpu_ms="<<ms<<" limit_ms="<<GpuBudget::limitMs<<" passthrough="<<budget.passthrough()<<" recovery_probe="<<budget.probing<<" next_probe_frames="<<budget.cooldownFrames<<"\n";
 }
@@ -204,6 +206,9 @@ void OpenContext::scheduleFrames(std::span<const float> timestamps){
  if(count>outputs.size())throw std::runtime_error("Too many GFG Open timestamps");
  float previous=0;
  for(float t:timestamps){if(!std::isfinite(t)||t<=previous||t>=1)throw std::runtime_error("Invalid GFG Open interpolation timestamp");previous=t;}
+ const auto sourceNow=std::chrono::steady_clock::now();
+ if(lastSourceTime)budget.sourceInterval(std::chrono::duration<double,std::milli>(sourceNow-*lastSourceTime).count());
+ lastSourceTime=sourceNow;
  prepare();
  budget.beforeFrame(); // Periodic real-work probe; bypass frames alone cannot prove recovery.
  Params params{{extent.width,extent.height,tiles.width,tiles.height},{0,frame>1?1.f:0.f,frame>0?1.f:0.f,budget.passthrough()?1.f:0.f}};

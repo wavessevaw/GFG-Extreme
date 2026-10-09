@@ -16,6 +16,7 @@
 #include <vector>
 #include <span>
 #include <optional>
+#include <chrono>
 namespace gfg {
 struct alignas(16) Params {
  std::array<uint32_t,4> size;
@@ -45,6 +46,7 @@ class OpenContext {
  uint64_t idx=1,frame=0;
  bool scheduled=false;
  GpuBudget budget;
+ std::optional<std::chrono::steady_clock::time_point> lastSourceTime;
  // Retain full-compute costs while cheaper bypass frames continue.
  double lastActiveGpuMs=0, lastActivePrepassMs=0, lastActiveCompositionMs=0;
  double lastProbeGpuMs=0, lastFailedProbeGpuMs=0;

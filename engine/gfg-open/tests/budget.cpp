@@ -32,6 +32,25 @@ int main(){
  assert(expensive.probing&&expensive.probeAttempts==2);
  expensive.observe(8);assert(expensive.cooldownFrames==1200);
  // No timestamp support is fail-closed, with no unsafe reprobes.
+ // A 30 Hz source has 33.33 ms between pairs: 7 ms synthesis must not
+ // become two copies merely because an unrelated fixed 4 ms limit fired.
+ gfg::GpuBudget paced;
+ for(int i=0;i<7;i++)paced.sourceInterval(1000.0/30);
+ assert(paced.currentLimitMs==8.0);
+ for(int i=0;i<30;i++){paced.beforeFrame();paced.observe(7.0);}
+ assert(!paced.passthrough());
+ paced.sourceInterval(5000);paced.sourceInterval(1000);
+ assert(paced.currentLimitMs==8.0);
+ paced.observe(9);paced.observe(9);paced.observe(9);
+ assert(paced.passthrough());
+ for(unsigned i=0;i<gfg::GpuBudget::initialCooldownFrames;i++)paced.beforeFrame();
+ assert(paced.probing);paced.observe(5.5);paced.observe(5.5);paced.observe(5.5);
+ assert(!paced.passthrough()&&paced.recoveries==1);
+ gfg::GpuBudget highRate;
+ for(int i=0;i<7;i++)highRate.sourceInterval(1000.0/90);
+ assert(highRate.currentLimitMs<3);
+ for(int i=0;i<6;i++)highRate.observe(3.5);
+ assert(highRate.passthrough());
  gfg::GpuBudget unavailable;
  unavailable.disableWithoutTiming();
  for(int i=0;i<10000;i++){unavailable.beforeFrame();unavailable.observe(.1);}

@@ -12,11 +12,13 @@ vec3 fetch(bool back,ivec2 q){
  q=clamp(q,ivec2(0),ivec2(p.size.xy)-1);
  return back?imageLoad(currentImage,q).rgb:imageLoad(previousImage,q).rgb;
 }
+// Reference texels are invariant across local and wide candidate searches.
+vec3 referencePatch[9];
 float cost(bool back,ivec2 q,ivec2 d){
  float e=0;
  for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){
   ivec2 a=q+ivec2(x,y)*2;
-  e+=dot(abs(fetch(back,a)-fetch(!back,a+d)),vec3(.299,.587,.114));
+  e+=dot(abs(referencePatch[(y+1)*3+x+1]-fetch(!back,a+d)),vec3(.299,.587,.114));
  }
  return e/9;
 }
@@ -26,6 +28,8 @@ vec4 refine(bool back,ivec2 b){
  if(c.z<.0025 && c.w>.7)return c;
  ivec2 stride=(ivec2(p.size.xy)+ivec2(p.size.zw)-1)/ivec2(p.size.zw);
  ivec2 q=min(b*stride+stride/2,ivec2(p.size.xy)-1);
+ for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++)
+  referencePatch[(y+1)*3+x+1]=fetch(back,q+ivec2(x,y)*2);
  ivec2 seed=ivec2(round(c.xy)),bestD=seed;
  float best=cost(back,q,seed),second=1e10;
  for(int y=-3;y<=3;y++)for(int x=-3;x<=3;x++){
@@ -52,8 +56,8 @@ vec4 refine(bool back,ivec2 b){
   int comparisons=0,exactComparisons=0;
   for(int y=-16;y<=16 && best>.001;y+=2)for(int x=-16;x<=16 && best>.001;x+=2){
    ivec2 d=ivec2(x,y);
-   float quick=dot(abs(fetch(back,q-ivec2(2))-fetch(!back,q-ivec2(2)+d)),vec3(.299,.587,.114));
-   quick+=dot(abs(fetch(back,q+ivec2(2))-fetch(!back,q+ivec2(2)+d)),vec3(.299,.587,.114));
+   float quick=dot(abs(referencePatch[0]-fetch(!back,q-ivec2(2)+d)),vec3(.299,.587,.114));
+   quick+=dot(abs(referencePatch[8]-fetch(!back,q+ivec2(2)+d)),vec3(.299,.587,.114));
    if(quick*.5>best*.5+.0025)continue;
    // Bound expensive nine-sample comparisons. Reserve four probes for
    // virtually exact two-sample matches, which preserve clean translation.

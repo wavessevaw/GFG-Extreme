@@ -1,7 +1,7 @@
 name: Open generator
 on:
   push:
-    branches: [develop/extreme-features]
+    branches: [develop/extreme-features, fix/open-motion-smoothness-test]
   pull_request:
 permissions:
   contents: read

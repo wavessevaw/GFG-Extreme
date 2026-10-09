@@ -107,6 +107,24 @@ int main(){
   }
   assert(mismatch<checked/10);
  }
+ // 30 real -> 90 nominal must contain two new positions, not current-frame copies.
+ fill(0,0,-1);fill(1,6,-1);dispatch(0);dispatch(1);dispatch(2);
+ std::vector<unsigned char> firstIntermediate;
+ for(float t : {1.0f/3.0f,2.0f/3.0f}){
+  p.timing[0]=t;memcpy(params,&p,32);dispatch(3);
+  int wrong=0,n=0,changedFromPrevious=0,changedFromCurrent=0;
+  std::vector<unsigned char> result;
+  const int shift=t<.5f?2:4;
+  for(uint32_t y=12;y<H-12;y++)for(uint32_t x=16;x<W-16;x++){
+   n++;auto value=pixel(6,x,y)[0];result.push_back(value);
+   if(std::abs(int(value)-int(pixel(0,x-shift,y)[0]))>2)wrong++;
+   changedFromPrevious+=std::abs(int(value)-int(pixel(0,x,y)[0]))>2;
+   changedFromCurrent+=std::abs(int(value)-int(pixel(1,x,y)[0]))>2;
+  }
+  assert(wrong<n/10 && changedFromPrevious>n*.8 && changedFromCurrent>n*.8);
+  if(firstIntermediate.empty())firstIntermediate=result;
+  else {int changes=0;for(size_t i=0;i<result.size();i++)changes+=std::abs(int(result[i])-int(firstIntermediate[i]))>2;assert(changes>n*.8);}
+ }
  p.timing[0]=.5f;memcpy(params,&p,32);
  // Newly visible opaque area: no grey duplicate contour across the edge.
  fill(0,0,0);fill(1,0,0);

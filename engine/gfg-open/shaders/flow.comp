@@ -26,11 +26,13 @@ vec3 low(bool back,ivec2 q){
  q=clamp(q,ivec2(0),(ivec2(p.size.xy)+3)/4-1);
  return back?imageLoad(currentPyramid,q).rgb:imageLoad(previousPyramid,q).rgb;
 }
+// Private per-invocation patch; reused for all 81 candidates and both calls.
+vec3 referencePatch[9];
 float coarseCost(bool back,ivec2 q,ivec2 d){
  float e=0;
  for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){
   ivec2 a=q+ivec2(x,y);
-  e+=dot(abs(low(back,a)-low(!back,a+d)),vec3(.299,.587,.114));
+  e+=dot(abs(referencePatch[(y+1)*3+x+1]-low(!back,a+d)),vec3(.299,.587,.114));
  }
  return e/9;
 }
@@ -41,7 +43,7 @@ vec4 solve(bool back,ivec2 block) {
  // Exact/static tiles never run the search. Textureless motion remains
  // ambiguous and will use a real frame rather than fabricate a contour.
  if(stationary<.0025) return vec4(0,0,stationary,1);
- ivec2 bestD=ivec2(0); float best=coarseCost(back,q/4,ivec2(0)),second=1e10;
+ ivec2 bestD=ivec2(0);
  if(p.timing.y>0) {
   vec4 old=back?imageLoad(historyBackward,block):imageLoad(historyForward,block);
   if(old.w>.5) {
@@ -51,6 +53,9 @@ vec4 solve(bool back,ivec2 block) {
 
   }
  }
+ for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++)
+  referencePatch[(y+1)*3+x+1]=low(back,q/4+ivec2(x,y));
+ float best=coarseCost(back,q/4,ivec2(0)),second=1e10;
  for(int y=-4;y<=4;y++) for(int x=-4;x<=4;x++){
   ivec2 d=ivec2(x,y)*4;
   float e=coarseCost(back,q/4,ivec2(x,y));
