@@ -9,8 +9,8 @@ Official maintenance release based on the ordinary GFG renderer. GFG Open is ret
 - Cached ring rendering refreshes once per second without rerendering unchanged values.
 
 ## Extreme and frame pacing
-- Includes the fixes accumulated after 1.6.5 for enforcing the 15 W Extreme ceiling during transitions, restoring CPU policies, rejecting unconfirmed render scales and separating current-session A/B evidence from historical results.
-- Keeps the Extreme fractional ladder through 4x, with 4x as a fallback, and the full settings/booster controls.
+- Includes the fixes accumulated after 1.6.5 for enforcing the inherited player/device Extreme ceiling during transitions, restoring CPU policies, rejecting unconfirmed render scales and separating current-session A/B evidence from historical results.
+- Unlocks the Extreme quarter-step fractional ladder through 4x (including 3.25x, 3.5x and 3.75x), with 4x as a fallback, and the full settings/booster controls.
 - Includes the native Frame OS late-frame pacing fix; the ordinary renderer remains the frame-generation backend.
 - Extreme and Frame OS Act retain their experimental status. Unsupported boosters are reported as unavailable rather than claimed to be active.
 

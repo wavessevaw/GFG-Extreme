@@ -9,6 +9,8 @@ import math
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Iterable, Optional
 
+from shared_config import ADAPTIVE_MINIMUM_BASE_FPS
+
 
 @dataclass(frozen=True)
 class OperatingPoint:
@@ -707,7 +709,7 @@ RENDER_SCALE_STEPS = (90, 80)   # live Scaling Engine factors the overlay allows
 SCALE_ANCHOR_REAL_FPS = 30
 
 
-EXTREME_REAL_FLOOR_FPS = 30   # Extreme: never below 30 real, like Balanced
+EXTREME_REAL_FLOOR_FPS = EMERGENCY_REAL_FLOOR_FPS  # legacy import; effective floor follows target / 4
 EXTREME_START_REAL_FPS = 45   # and starts at x2 at 90 Hz, at the full normal budget
 
 
@@ -719,10 +721,13 @@ def extreme_points(target_output_fps: int) -> tuple[OperatingPoint, ...]:
     path (idx + 1) therefore buys more real frames with a lower render resolution first and wins the
     resolution back on the next step; the guard (idx - 1) gives up resolution before real frames.
     Scaled rungs are only usable with the Scaling Engine provisioned at launch (``_usable``);
-    without it the ladder is the plain one.  Index 0 is the last-resort point, never used here.
+    without it the ladder is the plain one. Quarter-step ratios through x3.75 remain
+    available below 30 real; index 0 is fixed x4, used after normal points fail.
     """
-    base = budget_points(target_output_fps, EXTREME_REAL_FLOOR_FPS)
-    emergency, normal = base[0], base[1:]
+    floor = max(ADAPTIVE_MINIMUM_BASE_FPS, math.ceil(target_output_fps / 4))
+    base = budget_points(target_output_fps, floor)
+    emergency = OperatingPoint(f"{floor}x4", target_output_fps, floor, 4, 100, degraded=True)
+    normal = base[1:]
     rungs = []
     for p in normal:
         for pct in sorted(RENDER_SCALE_STEPS):
@@ -918,8 +923,8 @@ class BudgetController:
             start_w = self.normal_max_w
         self.tdp = min(max(start_w, self.min_w), self.normal_max_w) if self.tdp_control else None
         if balanced or extreme:
-            # No last-resort ratio and no watts beyond the Deck's normal range: Balanced trades
-            # some battery for a real-frame floor of 30 and a ceiling it never crosses.
+            # No watts beyond the inherited device/player ceiling. Balanced keeps
+            # its 30-real floor; Extreme may use deep ratios, including x4.
             self.emergency_max_w = self.normal_max_w
         self.phase = "settle"
         self.probe: Optional[str] = None
@@ -1605,7 +1610,7 @@ class BudgetController:
             return self._move(f"guard-deeper-multiplier:{verdict.reason}", idx=deeper)
         if self.tdp_control and self.tdp is not None and self.tdp < self.normal_max_w - 1e-6:
             return self._move(f"guard-more-power:{verdict.reason}", tdp=min(self.normal_max_w, self.tdp + step))
-        if self.idx == 1 and self._usable(0, now) and self.flavor == "battery":
+        if self.idx > 0 and self._usable(0, now) and self.flavor in ("battery", "extreme"):
             return self._move(f"guard-emergency-x4:{verdict.reason}", idx=0)
         # Above the normal budget only while the real stream keeps missing the
         # cap of the deepest point there is: that, not an FPS number, is what

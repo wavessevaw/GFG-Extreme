@@ -1,7 +1,6 @@
 """Release ZIP validation uses the packaged bytes, not checkout metadata."""
 import importlib.util
 import io
-import hashlib
 import json
 import unittest
 import zipfile
@@ -28,13 +27,6 @@ class ReleaseArchiveTests(unittest.TestCase):
             files[f"bin/gfg-frame-os/{library}"] = b"\x7fELF\x02\x01" + bytes(12) + b"\x3e\x00"
             files[f"bin/gfg-frame-os/VkLayer_gfg_{layer}.json"] = json.dumps(
                 {"layer": {"library_path": "./" + library}})
-        native = b"\x7fELF\x02\x01" + bytes(12) + b"\x3e\x00" + b"GFG Open: backend=color-flow-v1"
-        manifest = json.dumps({"layer": {"library_path": "./libmako-render.so"}}).encode()
-        files["bin/gfg-open/libmako-render.so"] = native
-        files["bin/gfg-open/VkLayer_MAKO_render.json"] = manifest
-        files["bin/gfg-open/SHA256SUMS"] = "\n".join(
-            hashlib.sha256(data).hexdigest() + "  " + name
-            for name, data in (("libmako-render.so", native), ("VkLayer_MAKO_render.json", manifest))) + "\n"
         return files
 
     def archive(self, files):
@@ -72,8 +64,8 @@ class ReleaseArchiveTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             validator.check(self.archive(files), "1.6.6")
 
-    def test_corrupted_open_generator(self):
+    def test_retired_generator_is_rejected(self):
         files = self.files()
-        files["bin/gfg-open/libmako-render.so"] += b"corrupt"
-        with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+        files["bin/gfg-open/libmako-render.so"] = b"retired"
+        with self.assertRaisesRegex(ValueError, "retired generator"):
             validator.check(self.archive(files), "1.6.6")

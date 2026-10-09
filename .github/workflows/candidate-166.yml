@@ -1,0 +1,131 @@
+name: Candidate 1.6.6
+
+# Every push to main whose version (package.json) has no tag yet becomes a
+# GitHub release (0.x: pre-release v0.0.N-governor; 1.0.0+: official vX.Y.Z): tests, zip for Decky, SHA-256, description
+# from RELEASE_DESCRIPTION_V<version>.md.
+on:
+  push:
+    branches: [release/stable-1.6.6]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: candidate-166
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CXX: g++-12
+      CC: gcc-12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: version
+        run: |
+          version="$(python3 -c 'import json; print(json.load(open("package.json"))["version"].split("governor.")[-1])')"
+          # v1.0.0 and later are official; experimental features do not change release status.
+          if [[ "$version" =~ ^0\. || "$version" == *-* ]]; then
+            tag="v${version}-governor"; stable=false
+          else
+            tag="v${version}"; stable=true
+          fi
+          if python3 -c 'import json,sys; sys.exit(0 if json.load(open("package.json")).get("gfgPrerelease") else 1)'; then
+            stable=false
+          fi
+          echo "stable=$stable" >> "$GITHUB_OUTPUT"
+          notes="RELEASE_DESCRIPTION_V${version//./_}.md"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "notes=$notes" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $tag already exists, nothing to release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            test -f "$notes" || { echo "::error::$notes is missing"; exit 1; }
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.version.outputs.exists == 'false'
+        with:
+          python-version: "3.13"
+
+      - name: Backend tests
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          python3 scripts/check_generated_config.py
+          python3 -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Frame OS and HUD native tests
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          VULKAN_DEPS="$RUNNER_TEMP/vk" engine/gfg-pacer/tests/setup_vulkan_deps.sh
+          make -C engine/gfg-pacer VULKAN_DEPS="$RUNNER_TEMP/vk" test layer abi integration ordering
+          make -C engine/gfg-hud VULKAN_DEPS="$RUNNER_TEMP/vk" test layer abi integration
+
+      - uses: actions/setup-node@v4
+        if: steps.version.outputs.exists == 'false'
+        with:
+          node-version: "22"
+
+      - name: Frontend build is current and passes the smoke test
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          npm ci
+          npm run build
+          git diff --exit-code dist/index.js || { echo "::error::dist/index.js is stale"; exit 1; }
+          npx playwright install --with-deps chromium
+          node frontend/harness/smoke.mjs
+
+      - name: Fetch Flatpak payloads from the previous release
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          # Newest published Governor release; other releases in the repo may carry no zip.
+          previous="$(gh release list --limit 50 --json tagName,isDraft,createdAt --jq '[.[] | select((.isDraft | not) and (.tagName | test("-governor$|^v[0-9]+\\.[0-9]+\\.[0-9]+$")))] | sort_by(.createdAt) | last | .tagName // empty')"
+          test -n "$previous" || { echo "::error::no previous Governor release to take Flatpak payloads from"; exit 1; }
+          echo "Flatpak payloads from $previous"
+          mkdir -p prev payloads
+          gh release download "$previous" --pattern '*.zip' --pattern 'SHA256SUMS.txt' --dir prev
+          (cd prev && sha256sum --check SHA256SUMS.txt)
+          unzip -tq prev/*.zip
+          unzip -q -j prev/*.zip 'GFG-Extreme/bin/*.flatpak' -d payloads
+          ls -la payloads
+
+      - name: Native build dependencies
+        if: steps.version.outputs.exists == 'false'
+        run: sudo apt-get update && sudo apt-get install -y g++-12
+
+      - name: Build zip
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
+          VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" scripts/build_release.sh "${{ steps.version.outputs.version }}" payloads out
+
+      - name: Verify Frame OS and Rings HUD packaged in Decky zip
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          if [[ "$version" =~ ^0\. ]]; then
+            zip="out/GFG-Extreme-Governor-v${version//./_}.zip"
+          else
+            zip="out/GFG-Extreme-v${version//./_}.zip"
+          fi
+          test -s "$zip"
+          python3 scripts/check_release_archive.py "$zip" "$version"
+          for payload in libVkLayer_gfg_pacer.so VkLayer_gfg_pacer.json libVkLayer_gfg_hud.so VkLayer_gfg_hud.json; do
+            unzip -Z1 "$zip" | grep -Fx "GFG-Extreme/bin/gfg-frame-os/$payload"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GFG-Extreme-1.6.6-candidate
+          path: out/*
+          retention-days: 7
