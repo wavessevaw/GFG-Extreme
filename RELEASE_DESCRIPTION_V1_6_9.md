@@ -8,7 +8,7 @@ After a real-world 1.6.7 Deck session reported 90 output FPS while feeling like 
 
 - **Guarded GPU recovery:** after 300 real-frame pairs in fallback, sample actual interpolation work. Three consecutive genuine GPU samples <=3 ms restore generation; failed probes return to pass-through with capped exponential backoff (600, 1200, 1800 source pairs). Cheap passthrough measurements never count as evidence of recovery.
 - **Fail-closed behaviour:** GPU timestamp-unavailable contexts stay in passthrough. Sustained expensive synthesis stays protected; no blind forced re-enable.
-- **Safety diagnostics:** open-performance JSON now includes `safety_latched`, `recovery_probe`, `probe_attempts`, `recoveries`, `next_probe_frames`, `effective_interpolation` and current `passthrough`. Recovery transitions log explicitly.
+- **Safety diagnostics:** open-performance JSON now includes `safety_latched`, `recovery_probe`, `probe_attempts`, `recoveries`, `next_probe_frames`, `interpolation_attempted` and current `passthrough`. Recovery transitions log explicitly.
 - **History prepass:** respects the bypass state rather than always dispatching the full history prepass.
 - **Tests:** deterministic cooldown, successful recovery, failure backoff, non-timing, and persistent fallback cases.
 
