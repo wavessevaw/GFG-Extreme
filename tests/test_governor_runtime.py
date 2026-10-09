@@ -1028,8 +1028,11 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual([b["id"] for b in ext["boosters"]],
                          ["upscale", "quiet", "split", "cooling", "act", "memory", "latency", "shield", "instant"])
         states = {b["id"]: b["state"] for b in ext["boosters"]}
-        for unverified in ("quiet", "cooling", "memory", "latency", "shield"):
+        for unverified in ("quiet", "cooling", "memory"):
             self.assertEqual(states[unverified], "unavailable", unverified)
+        self.assertEqual(states["latency"], "off", "timing is accessible but Act is not enabled")
+        self.assertEqual(states["shield"], "off", "shield is opt-in")
+        self.assertEqual(ext["feature_settings"], {"latency": True, "shield": False})
         self.assertEqual(states["upscale"], "ready", "full resolution until a scaled point is confirmed")
         self.assertEqual(ext["gain"]["kind"], "unavailable")
         self.assertIsNone(ext["gain"]["percent"], "no number without an A-B-A proof")
