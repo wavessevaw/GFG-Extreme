@@ -34,8 +34,8 @@ jobs:
           gh release download v1.6.5 --pattern '*.zip' --pattern 'SHA256SUMS.txt' --dir /tmp/gfg-previous
           (cd /tmp/gfg-previous && sha256sum -c SHA256SUMS.txt)
           unzip -q -j /tmp/gfg-previous/*.zip 'GFG-Extreme/bin/*.flatpak' -d /tmp/gfg-payloads
-          VULKAN_HEADERS="$RUNNER_TEMP/open-vkh/include" GFG_OPEN_BUILD_DIR="$PWD/.gfg-open-build" bash scripts/build_release.sh 1.6.7 /tmp/gfg-payloads /tmp/gfg-output
-          python3 scripts/check_release_archive.py /tmp/gfg-output/GFG-Extreme-v1_6_7.zip 1.6.7
+          VULKAN_HEADERS="$RUNNER_TEMP/open-vkh/include" GFG_OPEN_BUILD_DIR="$PWD/.gfg-open-build" bash scripts/build_release.sh 1.6.9 /tmp/gfg-payloads /tmp/gfg-output
+          python3 scripts/check_release_archive.py /tmp/gfg-output/GFG-Extreme-v1_6_7.zip 1.6.9
       - uses: actions/upload-artifact@v4
         with:
           name: gfg-extreme-candidate

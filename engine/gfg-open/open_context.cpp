@@ -102,7 +102,7 @@ void OpenContext::initTiming(){
   if(create(v.dev(),&info,nullptr,&queries)!=VK_SUCCESS)queries=VK_NULL_HANDLE;
  }
  if(!queries){
-  budget.bypass=true;
+  budget.disableWithoutTiming();
   publishTiming(0,0);
   std::clog<<"GFG Open: performance-fallback=real-frame reason=gpu-timing-unavailable; select legacy FG and restart for interpolation\n";
  }
@@ -120,7 +120,10 @@ void OpenContext::publishTiming(double prepassMs,double compositionMs) const{
      <<",\"timing_available\":"<<(queries?"true":"false")
      <<",\"prepass_ms\":"<<prepassMs<<",\"composition_ms\":"<<compositionMs
      <<",\"gpu_compute_ms\":"<<prepassMs+compositionMs<<",\"budget_ms\":"<<GpuBudget::limitMs
-     <<",\"passthrough\":"<<(budget.bypass?"true":"false")<<",\"samples\":"<<budget.samples
+     <<",\"passthrough\":"<<(budget.passthrough()?"true":"false")<<",\"safety_latched\":"<<(budget.bypass?"true":"false")
+     <<",\"recovery_probe\":"<<(budget.probing?"true":"false")<<",\"probe_attempts\":"<<budget.probeAttempts
+     <<",\"recoveries\":"<<budget.recoveries<<",\"next_probe_frames\":"<<budget.cooldownFrames
+     <<",\"interpolation_attempted\":"<<(!budget.passthrough()?"true":"false")<<",\"samples\":"<<budget.samples
      <<",\"source_resolution\":["<<extent.width<<","<<extent.height<<"]"
      <<",\"motion_tiles\":["<<tiles.width<<","<<tiles.height<<"],\"updated_unix_s\":"<<now<<"}\n";
   out.close();if(out)std::filesystem::rename(tmp,path);
@@ -138,10 +141,11 @@ void OpenContext::collectTiming(){
  for(size_t i=2;i<times.size();i+=2)ticks+=double((times[i+1]-times[i])&mask);
  const double prepassMs=double((times[1]-times[0])&mask)*double(timestampPeriod)/1e6;
  const double ms=ticks*double(timestampPeriod)/1e6;
- const bool was=budget.bypass;budget.observe(ms);
- if((!was&&budget.bypass)||budget.samples%120==1)publishTiming(prepassMs,ms-prepassMs);
+ const bool was=budget.bypass,wasProbe=budget.probing;budget.observe(ms);
+ if((!was&&budget.bypass)||(wasProbe&&!budget.probing)||budget.samples%120==1)publishTiming(prepassMs,ms-prepassMs);
  if(!was&&budget.bypass)std::clog<<"GFG Open: performance-fallback=real-frame reason=gpu-budget gpu_ms="<<ms<<" limit_ms="<<GpuBudget::limitMs<<"; select legacy FG and restart for interpolation\n";
- else if(budget.samples%120==1)std::clog<<"GFG Open: gpu_ms="<<ms<<" limit_ms="<<GpuBudget::limitMs<<" passthrough="<<budget.bypass<<"\n";
+ else if(wasProbe&&!budget.probing)std::clog<<"GFG Open: recovery="<<(budget.bypass?"retry-later":"interpolation-restored")<<" gpu_ms="<<ms<<" next_probe_frames="<<budget.cooldownFrames<<"\n";
+ else if(budget.samples%120==1)std::clog<<"GFG Open: gpu_ms="<<ms<<" limit_ms="<<GpuBudget::limitMs<<" passthrough="<<budget.passthrough()<<" recovery_probe="<<budget.probing<<" next_probe_frames="<<budget.cooldownFrames<<"\n";
 }
 void OpenContext::prepare(){
  if(scheduled&&!fence.wait(v,250000000))throw std::runtime_error("GFG Open previous-work fence timed out");
@@ -189,10 +193,11 @@ void OpenContext::scheduleFrames(std::span<const float> timestamps){
  float previous=0;
  for(float t:timestamps){if(!std::isfinite(t)||t<=previous||t>=1)throw std::runtime_error("Invalid GFG Open interpolation timestamp");previous=t;}
  prepare();
- Params params{{extent.width,extent.height,tiles.width,tiles.height},{0,frame>1?1.f:0.f,frame>0?1.f:0.f,budget.bypass?1.f:0.f}};
+ budget.beforeFrame(); // Periodic real-work probe; bypass frames alone cannot prove recovery.
+ Params params{{extent.width,extent.height,tiles.width,tiles.height},{0,frame>1?1.f:0.f,frame>0?1.f:0.f,budget.passthrough()?1.f:0.f}};
  writePair(params);
  for(size_t i=0;i<count;i++){
-  params.timing={timestamps.empty()?float(i+1)/float(count+1):timestamps[i],frame>0?1.f:0.f,0,budget.bypass?1.f:0.f};
+  params.timing={timestamps.empty()?float(i+1)/float(count+1):timestamps[i],frame>0?1.f:0.f,0,budget.passthrough()?1.f:0.f};
   writeOutput(i,params);
  }
  scheduledCount=count;
@@ -202,7 +207,7 @@ void OpenContext::scheduleFrames(std::span<const float> timestamps){
 }
 void OpenContext::scheduleFrameHistory(){
  prepare();
- writePair(Params{{extent.width,extent.height,tiles.width,tiles.height},{0,frame>1?1.f:0.f,frame>0?1.f:0.f,0}});
+ writePair(Params{{extent.width,extent.height,tiles.width,tiles.height},{0,frame>1?1.f:0.f,frame>0?1.f:0.f,budget.passthrough()?1.f:0.f}});
  scheduledCount=0;
  record(0,true);submitPrepass(fence.handle());++frame;
 }
