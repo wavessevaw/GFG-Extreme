@@ -2678,6 +2678,8 @@ class GovernorService:
             return
         now = self._clock()
         limits = await self._budget_power(profile)
+        if self._mode(profile) == "extreme" and self._status.get("reason") == "extreme-ceiling-not-applied":
+            return  # never convert a failed ceiling write into an observe-only renderer trial
         budget = self._budget
         if budget is None:
             budget = BudgetController(

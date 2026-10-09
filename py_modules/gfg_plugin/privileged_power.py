@@ -1,4 +1,4 @@
-"""Root-only PPT cap writer, everything else as the desktop user.
+"""Root-only resource helper, everything else as the desktop user.
 
 Steam Deck fastPPT/slowPPT hwmon caps are writable by root only, so the plugin
 is loaded with Decky's ``root`` flag.  Running the whole plugin as root would
@@ -76,18 +76,44 @@ def restore_cpu_caps(written: dict, read=_read_value, write=_write_value) -> lis
     return restored
 
 
-def _serve(requests: int, replies: int) -> None:  # pragma: no cover - runs in the forked root child
+def _serve(requests: int, replies: int, uid=None, home=None) -> None:  # pragma: no cover - runs in the forked root child
     cpu_written: dict = {}
+    processes = fan = None
+    if uid is not None and home:
+        from .extreme_resources import ProcessResources, FanResources
+        from .steamos_fan import SteamOSManagerFan
+        from .constants import CONFIG_DIR, RUNTIME_STATE_DIRNAME
+        runtime = Path(home) / CONFIG_DIR / RUNTIME_STATE_DIRNAME
+        try:
+            processes = ProcessResources(uid, marker=runtime / "extreme-process-undo.json")
+        except OSError:
+            pass  # damaged undo blocks new resource writes; PPT control remains available
+        fan = FanResources(SteamOSManagerFan(uid=uid, home=home, timeout=0.8),
+                           runtime / "extreme-fan-undo.json")
     try:
-        _serve_loop(requests, replies, cpu_written)
+        _serve_loop(requests, replies, cpu_written, processes, fan)
     finally:
         restore_cpu_caps(cpu_written)
+        for resource in (processes, fan):
+            if resource is not None:
+                try:
+                    resource.expire(force=True)
+                except OSError:
+                    pass  # persistent undo retries after the next helper start
 
 
-def _serve_loop(requests: int, replies: int, cpu_written: dict) -> None:  # pragma: no cover - root child
+def _serve_loop(requests: int, replies: int, cpu_written: dict, processes=None, fan=None) -> None:  # pragma: no cover - root child
     buffer = b""
     while True:
         try:
+            for resource in (processes, fan):
+                if resource is not None:
+                    try:
+                        resource.expire()
+                    except OSError:
+                        pass  # a failed undo must not stop PPT requests
+            if not select.select([requests], [], [], 1.0)[0]:
+                continue
             chunk = os.read(requests, 4096)
         except OSError:
             break
@@ -99,6 +125,26 @@ def _serve_loop(requests: int, replies: int, cpu_written: dict) -> None:  # prag
             reply = b"err bad-request\n"
             try:
                 request = line.decode("utf-8")
+                if request.startswith(("process-lease ", "process-release ", "fan-lease", "fan-release")):
+                    tokens = request.split()
+                    if tokens[0] == "process-lease" and len(tokens) == 5 and processes is not None:
+                        pid, ticks, priority, memory = map(int, tokens[1:])
+                        if priority not in (0, 1) or memory not in (0, 1):
+                            raise ValueError("resource flags")
+                        processes.apply(pid, ticks, bool(priority), bool(memory))
+                    elif tokens[0] == "process-release" and len(tokens) == 3 and processes is not None:
+                        owner = tuple(map(int, tokens[1:]))
+                        if not processes.restore(owner):
+                            raise OSError("process-restore-pending")
+                    elif tokens == ["fan-lease"] and fan is not None:
+                        fan.apply()
+                    elif tokens == ["fan-release"] and fan is not None:
+                        if not fan.restore():
+                            raise OSError("fan-restore-pending")
+                    else:
+                        raise OSError("resource-interface-unavailable")
+                    os.write(replies, b"ok\n")
+                    continue
                 restoring_cpu = request.startswith("restore-cpu ")
                 if restoring_cpu:
                     request = request[len("restore-cpu "):]
@@ -154,10 +200,11 @@ class PrivilegedCapWriter:
     REPLY_TIMEOUT_S = 3.0
     CLOSE_TIMEOUT_S = 2.0
 
-    def __init__(self, requests: int, replies: int, pid: int) -> None:
+    def __init__(self, requests: int, replies: int, pid: int, resources_enabled: bool = False) -> None:
         self._requests = requests
         self._replies = replies
         self.pid = pid
+        self.resources_enabled = resources_enabled
         self._lock = threading.Lock()
 
     def _drain_stale(self) -> None:
@@ -169,11 +216,10 @@ class PrivilegedCapWriter:
     def restore_cpu(self, path: Path, value: int) -> None:
         self.write(path, value, restore_cpu=True)
 
-    def write(self, path: Path, value: int, *, restore_cpu: bool = False) -> None:
+    def _request(self, request: str) -> None:
         with self._lock:
             self._drain_stale()
-            prefix = "restore-cpu " if restore_cpu else ""
-            os.write(self._requests, f"{prefix}{path} {int(value)}\n".encode())
+            os.write(self._requests, (request + "\n").encode())
             data = b""
             deadline = time.monotonic() + self.REPLY_TIMEOUT_S
             while not data.endswith(b"\n"):
@@ -187,6 +233,26 @@ class PrivilegedCapWriter:
         text = data.decode("utf-8", "replace").strip()
         if text != "ok":
             raise OSError(f"TDP helper: {text}")
+
+    def write(self, path: Path, value: int, *, restore_cpu: bool = False) -> None:
+        prefix = "restore-cpu " if restore_cpu else ""
+        self._request(f"{prefix}{path} {int(value)}")
+
+    def process_lease(self, pid: int, ticks: int, priority: bool, memory: bool) -> None:
+        if not self.resources_enabled:
+            raise OSError("resource-interface-unavailable")
+        self._request(f"process-lease {int(pid)} {int(ticks)} {int(priority)} {int(memory)}")
+
+    def process_release(self, pid: int, ticks: int) -> None:
+        self._request(f"process-release {int(pid)} {int(ticks)}")
+
+    def fan_lease(self) -> None:
+        if not self.resources_enabled:
+            raise OSError("resource-interface-unavailable")
+        self._request("fan-lease")
+
+    def fan_release(self) -> None:
+        self._request("fan-release")
 
     def close(self) -> None:
         for fd in (self._requests, self._replies):
@@ -246,7 +312,7 @@ def start_and_drop_privileges(user_home: Optional[str]) -> bool:
     if ids is None:
         return False
     uid, gid = ids
-    helper = spawn_helper()
+    helper = spawn_helper(uid=uid, home=user_home)
     try:  # Frame OS input sensor: gamepad events only, from a second root child (input_relay.py)
         from .frame_os import input_relay
         from .constants import CONFIG_DIR, RUNTIME_STATE_DIRNAME
@@ -271,7 +337,7 @@ def start_and_drop_privileges(user_home: Optional[str]) -> bool:
     return True
 
 
-def spawn_helper() -> PrivilegedCapWriter:
+def spawn_helper(uid=None, home=None) -> PrivilegedCapWriter:
     """Fork the cap-writer helper; it keeps this process's privileges and exits on EOF."""
     req_r, req_w = os.pipe()
     rep_r, rep_w = os.pipe()
@@ -285,9 +351,9 @@ def spawn_helper() -> PrivilegedCapWriter:
             os.closerange(3, keep[0])
             os.closerange(keep[0] + 1, keep[1])
             os.closerange(keep[1] + 1, 65536)
-            _serve(req_r, rep_w)
+            _serve(req_r, rep_w, uid, home)
         finally:
             os._exit(0)
     os.close(req_r)
     os.close(rep_w)
-    return PrivilegedCapWriter(req_w, rep_r, pid)
+    return PrivilegedCapWriter(req_w, rep_r, pid, resources_enabled=uid is not None and bool(home))
