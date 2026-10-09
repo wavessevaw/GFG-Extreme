@@ -122,6 +122,41 @@ def parse_spatial_active(line: str) -> Optional[Dict[str, Any]]:
     }
 
 
+SWAPCHAIN_POLICY_MARKER = "MAKO Renderer: spatial scaling swapchain policy:"
+# The game asked for its own swapchain size whatever the scaler advertised: render scale cannot
+# work in this game (seen on a Deck in 1.6.0: advertised 766x478, actual 1280x800, active=0).
+GAME_IGNORES_SCALE = "application-extent-override-no-source-presentation-split"
+
+
+def parse_swapchain_policy(line: str) -> Optional[Dict[str, Any]]:
+    """``MAKO Renderer: spatial scaling swapchain policy: ...; advertised_source=WxH;
+    actual_source=WxH; actual_presentation=WxH; ...; inactive_reason=...; active=0|1``."""
+    at = line.find(SWAPCHAIN_POLICY_MARKER)
+    if at < 0:
+        return None
+    fields: Dict[str, str] = {}
+    for part in line[at + len(SWAPCHAIN_POLICY_MARKER):].split(";"):
+        key, sep, value = part.strip().partition("=")
+        if sep and key:
+            fields[key.strip()] = value.strip()
+
+    def extent(name: str) -> Optional[tuple]:
+        found = _EXTENT_RE.fullmatch(fields.get(name, ""))
+        return (int(found.group(1)), int(found.group(2))) if found else None
+
+    active = fields.get("active")
+    reason = fields.get("inactive_reason")
+    return {
+        "kind": "swapchain-policy",
+        "active": active == "1" if active in ("0", "1") else None,
+        "source": extent("actual_source"),
+        "output": extent("actual_presentation"),
+        "advertised": extent("advertised_source"),
+        "factor": None, "effective_factor": None, "sharpness": None, "method": None,
+        "reason": reason if reason and reason not in ("none", "null") else None,
+    }
+
+
 def swapchain_extent(fields: Dict[str, str]) -> Optional[Dict[str, Any]]:
     """``swapchain-context-create``: the size the game renders vs the size that is presented."""
     try:
@@ -134,6 +169,85 @@ def swapchain_extent(fields: Dict[str, str]) -> Optional[Dict[str, Any]]:
     return {"kind": "swapchain", "source": source, "output": output, "factor": None,
             "effective_factor": None, "sharpness": None, "method": None,
             "pipeline": fields.get("spatial_pipeline")}
+
+
+RUNTIME_STATE_DIRNAME = "runtime-state"   # next to the renderer's config file (MAKO_CONFIG)
+RUNTIME_STATE_MAX_FILES = 32
+RUNTIME_STATE_MAX_BYTES = 64 * 1024
+
+
+def _int(value: Any) -> Optional[int]:
+    number = _finite(value)
+    return int(number) if number is not None and number > 0 else None
+
+
+def runtime_state_evidence(doc: Any) -> Optional[Dict[str, Any]]:
+    """The renderer's runtime-state JSON (schema 5): its ``spatial_scaling`` block as evidence.
+
+    Fields seen in the bundled renderer: pid, process_start_ticks, role, updated_unix_ms and
+    spatial_scaling {active, source_width/height, presentation_width/height, effective_factor,
+    active_method}.  Only an *active* scaler with both extents counts.
+    """
+    if not isinstance(doc, dict):
+        return None
+    spatial = doc.get("spatial_scaling")
+    if not isinstance(spatial, dict):
+        return None
+    source = (_int(spatial.get("source_width")), _int(spatial.get("source_height")))
+    output = (_int(spatial.get("presentation_width")), _int(spatial.get("presentation_height")))
+    return {
+        "kind": "runtime-state",
+        "active": spatial.get("active") is True or spatial.get("active") == 1,
+        "source": source if None not in source else None,
+        "output": output if None not in output else None,
+        "factor": None,
+        "effective_factor": _finite(spatial.get("effective_factor")),
+        "sharpness": None,
+        "method": spatial.get("active_method") or spatial.get("requested_method"),
+        "pid": _int(doc.get("pid")),
+        "updated_unix_ms": _finite(doc.get("updated_unix_ms")),
+        "reason": spatial.get("inactive_reason") or spatial.get("fallback_reason"),
+    }
+
+
+def read_runtime_states(dirs: Iterable[Any], pids: Iterable[int], since_unix_s: float = 0.0) -> List[Dict[str, Any]]:
+    """Runtime-state records of the game's processes written after ``since_unix_s``, oldest first.
+
+    Bounded: at most RUNTIME_STATE_MAX_FILES files of RUNTIME_STATE_MAX_BYTES each; anything
+    unreadable or malformed is skipped.  Records of the game's PIDs win; only when none matches
+    (a PID namespace) do other records written after ``since_unix_s`` count.
+    """
+    import json
+    from pathlib import Path
+
+    wanted = {int(p) for p in pids if isinstance(p, int) or str(p).isdigit()}
+    out: List[Dict[str, Any]] = []
+    others: List[Dict[str, Any]] = []
+    for base in dirs:
+        folder = Path(base) / RUNTIME_STATE_DIRNAME
+        try:
+            files = sorted(folder.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)[:RUNTIME_STATE_MAX_FILES]
+        except OSError:
+            continue
+        for path in files:
+            try:
+                if path.stat().st_size > RUNTIME_STATE_MAX_BYTES:
+                    continue
+                record = runtime_state_evidence(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, ValueError, UnicodeError):
+                continue
+            if record is None:
+                continue
+            updated = record.get("updated_unix_ms")
+            if since_unix_s and (updated is None or updated / 1000.0 < since_unix_s):
+                continue
+            (out if not wanted or record.get("pid") in wanted else others).append(record)
+    if not out:
+        # A game in Steam's container (pressure-vessel) may report a PID from its own namespace.
+        # Then records written after the request (or, for diagnostics, any) are the next best.
+        out = others
+    out.sort(key=lambda r: r.get("updated_unix_ms") or 0.0)
+    return out
 
 
 def render_pct(evidence: Dict[str, Any]) -> Optional[float]:
@@ -153,9 +267,19 @@ def render_pct(evidence: Dict[str, Any]) -> Optional[float]:
 def scale_acknowledged(evidence: Iterable[Dict[str, Any]], pct: int) -> Optional[Dict[str, Any]]:
     """The newest evidence record that shows the game rendering at ``pct`` %."""
     for record in reversed(list(evidence)):
+        if record.get("kind") in ("runtime-state", "swapchain-policy") and record.get("active") is False:
+            return record if float(pct) >= 100 else None  # the newest report: the scaler is off
         seen = render_pct(record)
         if seen is not None:
             return record if abs(seen - float(pct)) <= SCALE_ACK_TOLERANCE_PCT else None
+    return None
+
+
+def scale_refused(evidence: Iterable[Dict[str, Any]]) -> Optional[str]:
+    """The renderer says the scaler is off for this game: its reason, from the newest report."""
+    for record in reversed(list(evidence)):
+        if record.get("kind") in ("runtime-state", "swapchain-policy") and record.get("active") is not None:
+            return (record.get("reason") or "scaler-inactive") if record.get("active") is False else None
     return None
 
 

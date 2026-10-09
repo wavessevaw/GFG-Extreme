@@ -37,6 +37,14 @@ class RingHudTests(unittest.TestCase):
         sample["frame_os"] = {**SAMPLE["frame_os"], "level": "rest"}
         self.assertEqual(hud_rings.items_for(sample, "standard")[-1]["text"], "REST")
 
+    def test_extreme_tag_names_only_a_confirmed_render_scale(self):
+        data = {**SAMPLE, "frame_os": None, "extreme": {"render_pct": 80}}
+        self.assertEqual(hud_rings.items_for(data, "standard")[-1]["text"], "EXT 80%")
+        data["extreme"] = {"render_pct": None}             # requested or full resolution: no number
+        self.assertEqual(hud_rings.items_for(data, "standard")[-1]["text"], "EXT")
+        self.assertNotIn("tag", [i["kind"] for i in hud_rings.items_for(data, "minimal")])
+        hud_rings.render({**data, "extreme": {"render_pct": 90}}, "detailed", 1.0)
+
     def test_benefit_text_and_colour(self):
         items = {i.get("label"): i for i in hud_rings.items_for(SAMPLE, "standard")}
         self.assertEqual(items["RESP"]["text"], "−47%")
@@ -124,7 +132,8 @@ class AtlasCoverageTests(unittest.TestCase):
                     {**SAMPLE, "frame_os": {**SAMPLE["frame_os"], "actual_ratio": 2.5}},
                     {**SAMPLE, "frame_os": {**SAMPLE["frame_os"], "ab": True}},
                     {**SAMPLE, "frame_os": {**SAMPLE["frame_os"], "level": "rest"}},
-                    {**SAMPLE, "frame_os": {**SAMPLE["frame_os"], "verified_boost": False}}]
+                    {**SAMPLE, "frame_os": {**SAMPLE["frame_os"], "verified_boost": False}},
+                    {**SAMPLE, "extreme": {"render_pct": 80}}]
         for data in variants:
             for preset in ("minimal", "standard", "detailed"):
                 for item in hud_rings.items_for(data, preset):

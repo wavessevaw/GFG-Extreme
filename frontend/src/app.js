@@ -97,6 +97,7 @@ const XB_REASON = {
   "full-resolution-holds": "Full resolution holds",
   "profile-scaling": "Your profile scales itself",
   "renderer-did-not-confirm-render-scale": "Engine did not confirm it",
+  "game-ignores-render-scale": "This game keeps its full size",
   "no-supported-steam-job-api": "No safe Steam API yet",
   "power-split-setting-off": "Off in Settings",
   "cpu-clock-control-unavailable": "No CPU clock access",
@@ -710,7 +711,9 @@ function GovernorPage({ s, back, profile, refresh }) {
       h("span", null, "Step"), h("b", null, PHASE_TEXT[b.phase] || b.phase),
       h("span", null, "Start"), h("b", null, b.warm_started ? "Remembered from last session" : "Searched from scratch"),
       b.verifying ? h("span", null, "Verifying") : null, b.verifying ? h("b", null, fmtMult(String(b.verifying).split("x")[1] || 1) + " — the engine chose it, checking it holds") : null,
-      h("span", null, "Lower resolution"), h("b", null, b.scale_capable ? "On · 90% / 80% before more watts" : "Off · Settings → Scaling → Scale-ready launch, then restart the game"),
+      h("span", null, "Lower resolution"), h("b", null, s.scale_blocked === "game-ignores-render-scale" ? "Off · this game always renders at full size"
+        : s.scale_blocked ? "Off · the engine did not confirm it this session"
+        : b.scale_capable ? "On · 90% / 80% before more watts" : "Off · Settings → Scaling → Scale-ready launch, then restart the game"),
       b.thermal_deferred ? h("span", null, "Heat") : null, b.thermal_deferred ? h("b", null, b.heat_limited ? "Quality step on hold until the APU cools" : "Cooled — quality step will be retried") : null,
       b.current_max_multiplier ? h("span", null, "Engine allows") : null, b.current_max_multiplier ? h("b", null, "up to " + fmtMult(b.current_max_multiplier)) : null,
       Object.keys(b.known_failures || {}).length ? h("span", null, "Recently failed") : null,
@@ -768,7 +771,8 @@ function ScalingPage({ s, back, profile, refresh }) {
   return h(Page, { title: "Scaling", onBack: back },
     h("div", { className: "list", style: { marginTop: 0 } },
       h(Toggle, { on: ready, title: "Scale-ready launch", sub: "Provision the Scaling Engine at launch so Governor can lower render scale live without relaunching. Applies from the next game start.", onChange: async (v) => { try { await rpc.setScaleReady(profile, v); } catch (e) {} refresh(); } })),
-    h(Note, { quiet: true }, "Governor only uses 90% or 80% render scale, and only after FG alone is not enough."));
+    s.scale_blocked === "game-ignores-render-scale" ? h(Note, null, "This game sets its own render size: the engine offered a smaller one and the game kept full size. Render scale, the profile's own included, has no effect here; GFG stops trying it for this game (Reset what GFG learned tries again).") : null,
+    h(Note, { quiet: true }, "Governor only uses 90% or 80% render scale, and only after FG alone is not enough. A lower scale counts only once the engine confirms the game renders at it."));
 }
 
 function HudPage({ back, s, profile, refresh }) {

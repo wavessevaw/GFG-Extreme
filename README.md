@@ -34,7 +34,7 @@ Press **Run** on the plugin's Home screen. From then on the Governor works on it
 
 - **Target from the screen.** OLED → 90 FPS, LCD → 60 FPS, dock or external display → 60 FPS. If you lower the built-in screen's refresh rate, the target follows it.
 - **Ratio and power together.** The Governor chooses how many frames to generate (×1 to ×3.75) and the TDP limit, for this game and this scene.
-- **Every change is verified.** A new setting counts only once fresh renderer data confirms it. Otherwise it is rolled back within seconds.
+- **Every change is verified.** A new setting counts only once fresh renderer data confirms it, a lower render resolution only once the renderer reports the game really renders at it. Otherwise it is rolled back within seconds. Some games keep their full render size whatever is asked; GFG notices and stops trying lower resolutions there.
 - **It keeps adjusting.** When a scene gets heavier, the Governor adds watts or generated frames within about two seconds. While the game holds, it looks for a lower setting again.
 - **It remembers games.** The next session starts from what worked last time. **Settings → Diagnostics → Reset what GFG learned** starts one game from scratch.
 - **It explains itself.** Home shows the real and output frame rates, the ratio, the TDP, what limits the game (GPU, CPU, power or heat) and how hard GFG is working. **Details** shows every decision.

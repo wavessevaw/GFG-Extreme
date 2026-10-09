@@ -7,6 +7,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import types
 import unittest
 from unittest.mock import patch
@@ -1095,6 +1096,56 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual(st["extreme"]["applied"]["sharpness"], 0.3)
         self.assertEqual(sha(self.cfg.config_file_path), self.saved_hash)
 
+    def test_battery_scale_refused_by_the_renderer_is_dropped_and_remembered(self):
+        """Field log 1.6.0: Battery "confirmed" 30x3@80 on its ratio while the scaler was off."""
+        self.inspector.info["governor_launch"] = {"scaling": 1, "rev": 1, "owner": 1}
+        self.svc.set_scale_ready("game", True)
+        self.feed(20, 45, 90)
+        self.step()
+        self.feed(16, 30, 90)
+        self.step()
+        budget = self.svc._budget
+        budget._move("test-heavier", idx=next(i for i, p in enumerate(budget.points) if p.key == "30x3@80"))
+        for _ in range(3):
+            self.feed(12, 30, 90)
+            st = self.step()
+            if st["request"]:
+                break
+        self.assertEqual(st["request"]["point"], "30x3@80")
+        self.svc.observer.consume_line(
+            "MAKO Renderer: spatial scaling swapchain policy: role=frame-generation; advertised_source=1024x640; "
+            "actual_source=1280x800; actual_presentation=1280x800; "
+            "inactive_reason=application-extent-override-no-source-presentation-split; active=0", now=self.t["now"])
+        self.feed(20, 30, 90)
+        st = self.step()
+        self.assertIsNone(self.svc._request)
+        self.assertNotEqual((self.svc._point or {}).get("key"), "30x3@80", "never applied")
+        self.assertEqual(st["scale_blocked"], "game-ignores-render-scale")
+        self.assertFalse(self.svc._budget_can_scale({"scale_capable": True}))
+        # a new session of the same game skips the scaled points at once
+        self.svc._scale_blocked = None
+        self.assertFalse(self.svc._budget_can_scale({"scale_capable": True}))
+        self.assertTrue(self.svc.forget_game_model("game")["success"])
+        self.assertTrue(self.svc._budget_can_scale({"scale_capable": True}), "Reset what GFG learned")
+
+    def test_extreme_scale_acknowledged_from_the_renderer_runtime_state(self):
+        self.start_extreme()
+        point = self.request_scaled()
+        folder = Path(self.cfg.config_dir) / "governor-overlay" / "runtime-state"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "1-2-3.json").write_text(json.dumps({
+            "schema_version": 5, "pid": 1, "updated_unix_ms": (time.time() + 1) * 1000,
+            "spatial_scaling": {"active": True, "source_width": 1024, "source_height": 640,
+                                "presentation_width": 1280, "presentation_height": 800,
+                                "effective_factor": 1.25, "active_method": "ls1"}}))
+        self.feed_adaptive(20, point.base_target_fps, 90) if point.multiplier != int(point.multiplier) \
+            else self.feed(20, point.base_target_fps, 90)
+        st = self.step()
+        self.assertEqual(st["active_point"]["key"], point.key)
+        self.assertEqual(st["extreme"]["applied"]["render_pct"], 80)
+        st = self.step(6.0)
+        self.assertEqual(st["extreme"]["renderer_scaling"]["runtime_state"]["source"], (1024, 640))
+
     def test_extreme_scale_without_acknowledgement_is_rejected_then_dropped(self):
         self.start_extreme()
         for attempt in range(2):
@@ -1105,12 +1156,24 @@ class BudgetRuntimeTests(RuntimeBase):
             self.assertIsNone(self.svc._request, "rejected after the acknowledgement timeout")
             self.assertNotEqual(self.svc._budget.point.render_scale_pct if self.svc._point else 100, 80)
             self.svc._budget.rejected.clear()
-        self.assertEqual(self.svc._extreme_scale_blocked, "renderer-did-not-confirm-render-scale")
+        self.assertEqual(self.svc._scale_blocked, "renderer-did-not-confirm-render-scale")
         self.feed(4, 45, 90)
         st = self.step()
         up = next(b for b in st["extreme"]["boosters"] if b["id"] == "upscale")
         self.assertEqual((up["state"], up["reason"]), ("unavailable", "renderer-did-not-confirm-render-scale"))
         self.assertFalse(self.svc._budget_can_scale({"scale_capable": True}), "no more scaled trials this session")
+
+    def test_extreme_rings_use_the_ceiling_and_the_confirmed_scale(self):
+        from gfg_plugin import hud_rings
+        self.start_extreme(user_w=12.0)
+        self.svc.power.values["initial_tdp_w"] = 20.0       # an unlocked BIOS default
+        seen = []
+        settings = {"preset": "standard", "position": "top-left"}
+        with patch.object(hud_rings, "write_overlay", lambda data, **kw: seen.append(data) or True):
+            self.svc._ring_hud_due = 0.0
+            self.svc._publish_ring_hud(self.svc.get_status("game"), settings)
+        self.assertEqual(seen[-1]["limit"], 12)
+        self.assertEqual(seen[-1]["extreme"], {"render_pct": None}, "full resolution: no number")
 
     def test_extreme_without_a_scale_ready_launch_asks_for_a_restart(self):
         st = self.start_extreme(scale_ready_launch=False)

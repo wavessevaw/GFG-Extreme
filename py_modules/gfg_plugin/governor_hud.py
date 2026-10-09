@@ -99,6 +99,8 @@ def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
         return "  ".join(parts)
     point = status.get("active_point") or {}
     parts.append(f"sc{int(point.get('render_scale_pct', 100))}")
+    if (status.get("extreme") or {}).get("enabled"):
+        parts.append("EXT")
     power = status.get("power") or {}
     tdp = power.get("observed_tdp_w")
     if tdp is None:

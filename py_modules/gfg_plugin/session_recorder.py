@@ -117,6 +117,7 @@ def compact_extreme(extreme: Any) -> Any:
         "state": extreme.get("state"), "ceiling": extreme.get("ceiling"), "tdp_w": extreme.get("tdp_w"),
         "requested": extreme.get("requested"), "applied": extreme.get("applied"),
         "sharpness_offset": extreme.get("sharpness_offset"),
+        "renderer_scaling": extreme.get("renderer_scaling"),
         "boosters": {b.get("id"): b.get("state") for b in extreme.get("boosters") or [] if isinstance(b, dict)},
     }
 
@@ -505,7 +506,7 @@ class SessionRecorder:
                                  "driver": read(str(p / "scaling_driver"))}
                         for p in sorted(Path("/sys/devices/system/cpu/cpufreq").glob("policy[0-9]*"))[:16]},
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme 1.6.0 (engine 4.0.0-gfg.4)",
+            "plugin_version": "GFG Extreme 1.6.1 (engine 4.0.0-gfg.4)",
         }
 
     def _write_bundle(self) -> Path:

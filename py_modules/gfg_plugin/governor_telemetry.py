@@ -16,7 +16,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Deque, Dict, Iterable, Optional
 
-from .extreme import SPATIAL_ACTIVE_MARKER, parse_spatial_active, swapchain_extent
+from .extreme import (SPATIAL_ACTIVE_MARKER, SWAPCHAIN_POLICY_MARKER, parse_spatial_active,
+                      parse_swapchain_policy, swapchain_extent)
 
 
 _DIAGNOSTIC_MARKER = "MAKO Renderer: present diagnostics:"
@@ -274,9 +275,11 @@ class TelemetryObserver:
     def consume_line(self, line: str, *, now: Optional[float] = None) -> Optional[FpsSample]:
         fields = self.parse_fields(line)
         if fields is None:
-            if SPATIAL_ACTIVE_MARKER in line:
+            if SPATIAL_ACTIVE_MARKER in line or SWAPCHAIN_POLICY_MARKER in line:
                 self._event_seq += 1
-                self._note_scaling(parse_spatial_active(line), self.time_fn() if now is None else float(now))
+                record = (parse_spatial_active(line) if SPATIAL_ACTIVE_MARKER in line
+                          else parse_swapchain_policy(line))
+                self._note_scaling(record, self.time_fn() if now is None else float(now))
             return None
         now_mono = self.time_fn() if now is None else float(now)
         self._event_seq += 1

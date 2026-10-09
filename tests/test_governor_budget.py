@@ -1059,9 +1059,10 @@ class ExtremeTests(unittest.TestCase):
 
     def test_without_the_scaling_engine_the_plain_ladder_is_used(self):
         ctl = self.make(scale=False)
-        game = Game(fps_per_watt=4.0)
-        _, trace = run(ctl, game, 0.0, 30)
+        game = Game(fps_per_watt=5.0)        # 75 real at 15 W
+        _, trace = run(ctl, game, 0.0, 60)
         self.assertTrue(all("@" not in t[0] for t in trace))
+        self.assertGreater(ctl.point.base_target_fps, 45, "climbs past the unusable scaled rungs")
 
     def test_heavy_scene_gives_up_resolution_before_real_frames(self):
         ctl = self.make()
@@ -1083,6 +1084,16 @@ class ExtremeTests(unittest.TestCase):
         self.assertEqual((ctl.tdp, ctl.normal_max_w), (9.0, 9.0))
         _, trace = run(ctl, game, 400.0, 20)
         self.assertLessEqual(max(t[1] for t in trace), 9.0)
+
+    def test_guard_skips_points_the_real_frames_cannot_reach(self):
+        """Field log 1.6.0: 26 real at 45x2; 40x2.25, 36x2.5 and 33x2.75 each timed out (75 s)."""
+        ctl = self.make(scale=False)
+        game = Game(fps_per_watt=1.75)       # 26 real at 15 W
+        now, trace = run(ctl, game, 0.0, 3)
+        keys = [t[0] for t in trace]
+        self.assertNotIn("40x2.25", keys)
+        self.assertNotIn("36x2.5", keys)
+        self.assertEqual(ctl.point.key, "30x3", "straight to the deepest Extreme point")
 
     def test_no_last_resort_ratio(self):
         ctl = self.make()

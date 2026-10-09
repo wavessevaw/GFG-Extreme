@@ -45,6 +45,12 @@ class HudTests(unittest.TestCase):
         s = {"enabled": True, "state": "LOCKED", "battery": {"minutes_left": None}}
         self.assertEqual(hud.status_line(s), "GFG  sc100  TDPn/a")
 
+    def test_status_line_marks_extreme(self):
+        line = hud.status_line({"enabled": True, "active_point": {"render_scale_pct": 80},
+                                "extreme": {"enabled": True}})
+        self.assertIn("sc80  EXT", line)
+        self.assertNotIn("EXT", hud.status_line({"enabled": True, "extreme": {"enabled": False}}))
+
     def test_status_line_without_telemetry(self):
         self.assertEqual(hud.status_line({"enabled": True, "state": "PROBE"}), "GFG  sc100  TDPn/a")
 
