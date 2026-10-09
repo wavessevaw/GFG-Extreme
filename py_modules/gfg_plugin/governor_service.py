@@ -631,7 +631,7 @@ class GovernorService:
             "tdp": number(power.get("observed_tdp_w") if power.get("observed_tdp_w") is not None
                           else power.get("current_tdp_w")),
             "target": number(status.get("target_output_fps") or (status.get("device") or {}).get("target")),
-            "limit": number(power.get("initial_tdp_w") or power.get("maximum_tdp_w")) or 15,
+            "limit": number(power.get("initial_tdp_w") or power.get("maximum_tdp_w")),
             "battery_min": number(battery.get("minutes_left")), "battery_pct": number(battery.get("percent")),
         }
         # ENERGY uses Steam's slider maximum, not Extreme's actuator ceiling.
@@ -641,8 +641,9 @@ class GovernorService:
             maximum = power.get("maximum_tdp_w")
         if (not isinstance(maximum, (int, float)) or isinstance(maximum, bool)
                 or not math.isfinite(maximum) or maximum <= 0):
-            maximum = extreme_policy.EXTREME_CEILING_W
-        data["maximum_tdp"] = float(maximum)
+            maximum = power.get("initial_tdp_w")
+        data["maximum_tdp"] = (float(maximum) if isinstance(maximum, (int, float))
+                               and math.isfinite(maximum) and maximum > 0 else None)
         current = power.get("observed_tdp_w")
         if current is None:
             current = power.get("current_tdp_w")
@@ -1601,6 +1602,8 @@ class GovernorService:
         if (self._status.get("diagnosis") or {}).get("bottleneck") == "cpu":
             return None
         ceiling = self._extreme_power_ceiling()
+        if ceiling["ceiling_w"] is None:
+            return None
         headroom = round(ceiling["ceiling_w"] - float(budget.tdp), 1)
         if headroom < self.EXTREME_OFFER_HEADROOM_W:
             return None
@@ -2649,7 +2652,7 @@ class GovernorService:
                 self._event("tdp-reclaim", "external-change-settled", profile=profile, attempt=self._reclaims)
             bounded_claim = getattr(power, "claim_at_ceiling_w", None)
             if self._mode(profile) == "extreme" and callable(bounded_claim):
-                claimed = await asyncio.to_thread(bounded_claim, extreme_policy.EXTREME_CEILING_W)
+                claimed = await asyncio.to_thread(bounded_claim)  # derive cap from actual player/device
             else:
                 claimed = await asyncio.to_thread(power.claim)
             if not claimed.get("owned") or claimed.get("success") is False:
@@ -2668,6 +2671,9 @@ class GovernorService:
         # The actuator clamps every write (Governor, Act boost, recovery) to this ceiling.
         if self._mode(profile) == "extreme":
             ceiling = self._extreme_power_ceiling()
+            if ceiling["ceiling_w"] is None:
+                self._status.update({"state": "PAUSED", "reason": "extreme-ceiling-unavailable"})
+                return None
             if ceiling != self._extreme_ceiling:
                 self._event("extreme-power-ceiling", ceiling["source"], profile=profile, **ceiling)
             self._extreme_ceiling = ceiling
@@ -2701,15 +2707,16 @@ class GovernorService:
         return {"min": values.get("minimum_tdp_w"), "max": top}
 
     def _extreme_power_ceiling(self) -> Dict[str, Any]:
-        """min(15 W, the player's own limit when GFG took the caps, the hardware maximum)."""
+        """Use captured user fast/slow PPT caps and the reported hardware maximum."""
         state = self.power.state
         inherited = [getattr(state, key, None) for key in ("initial_slow_uw", "initial_fast_uw")]
         inherited = [v for v in inherited if isinstance(v, (int, float)) and v > 0]
-        user = min(inherited) if inherited else None
         maxima = [getattr(state, key, None) for key in ("slow_max_uw", "fast_max_uw")]
         maxima = [v for v in maxima if isinstance(v, (int, float)) and v > 0]
-        hardware = min(maxima) if maxima else None
-        return extreme_policy.power_ceiling(user / 1e6 if user else None, hardware / 1e6 if hardware else None)
+        observed = self.power.status()
+        user_w = min(inherited) / 1e6 if inherited else observed.get("initial_tdp_w")
+        hardware_w = min(maxima) / 1e6 if maxima else observed.get("maximum_tdp_w")
+        return extreme_policy.power_ceiling(user_w, hardware_w)
 
     def _budget_can_scale(self, capability: Dict[str, Any]) -> bool:
         cpu_bound = (self._status.get("diagnosis") or {}).get("bottleneck") == "cpu"
@@ -2731,7 +2738,7 @@ class GovernorService:
         now = self._clock()
         limits = await self._budget_power(profile)
         if (limits is None and self._mode(profile) == "extreme"
-                and self._status.get("reason") == "extreme-ceiling-not-applied"):
+                and self._status.get("reason") in ("extreme-ceiling-not-applied", "extreme-ceiling-unavailable")):
             return  # never convert a failed ceiling write into an observe-only renderer trial
         budget = self._budget
         if budget is None:
