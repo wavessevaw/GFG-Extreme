@@ -64,7 +64,7 @@ const cases = [
   ["home-idle-oled", ["Settings", "Diagnostics"], ["RECORD A LOG", "Record log", "FRAME OS (EXPERIMENTAL)", "Observe"]],
   ["home-locked-oled", [], ["FILTERS", "Vivid", "HDR look", "Fine-tune ›"]],
   ["home-locked-oled", ["Settings", "Filters"], ["Shader filters", "LOOKS", "SHARPENING", "ANTI-ALIASING", "EFFECTS · NONE", "Film Grain"]],
-  ["home-extreme", [], ["Extreme · 15 W", "▲ ON", "Limit 15 W · render 80% · sharpen 0.30", "Gain vs Balanced: not measured yet", "EXTREME BOOSTERS", "3 / 9 ACTIVE", "Upscale + sharpen", "80% · sharpen 0.30", "CPU capped at 2.4 GHz", "No safe Steam API yet", "Stock fan control stays", "Not applied: untested risk", "Sharpening", "EXTREME"]],
+  ["home-extreme", [], ["BETA / EXPERIMENTAL", "not recommended for regular play", "BETA", "Extreme · 15 W", "▲ ON", "Limit 15 W · render 80% · sharpen 0.30", "Gain vs Balanced: not measured yet", "EXTREME BOOSTERS", "3 / 9 ACTIVE", "Upscale + sharpen", "80% · sharpen 0.30", "CPU capped at 2.4 GHz", "No safe Steam API yet", "Stock fan control stays", "Not applied: untested risk", "Sharpening", "EXTREME"]],
   ["home-extreme", ["Details"], ["EXTREME", "Power limit", "15 W · stock limit", "1024×640 → 1280×800", "0.30 (engine confirmed)", "not measured (needs an A-B-A check)", "the whole limit: 15 W or your lower one, never above"]],
   ["home-extreme-verify", [], ["Extreme · checking", "Render 90% counts only once the engine shows", "Checking render 90%", "Limit 15 W"]],
   ["home-extreme-restart", [], ["Extreme · 12 W", "your own 12 W limit (never raised)", "Restart the game once to enable"]],

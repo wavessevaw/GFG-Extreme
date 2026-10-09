@@ -84,7 +84,7 @@ const MODE_TEXT = {
   balanced: "Balanced: starts at about 45 real FPS and 12 W, never goes below 30 real FPS and never above your Deck's normal power range. A bit more battery for a steadier picture.",
   budget: "Battery: lowest TDP first, 9–11 W ideal. Real FPS stays at 24 or more; a deeper ratio (down to 20 real) and the highest watts your Deck allows only as a last resort.",
   quality: "Quality: fewest generated frames first, then lowers TDP. Uses more battery.",
-  extreme: "Extreme: the most real frames at your Deck's stock limit — 15 W, or your own lower limit, never more, no overclock. Lowers render resolution to 90% / 80% with matched sharpening only when the engine confirms it. Uses more battery than Balanced.",
+  extreme: "Extreme — BETA / EXPERIMENTAL. In development; not recommended for regular play. Uses your Deck's stock limit — 15 W, or your own lower limit, never more, no overclock. Lowers render resolution to 90% / 80% with matched sharpening only when the engine confirms it. Uses more battery than Balanced.",
 };
 
 // ---------- Extreme (1.6)
@@ -458,6 +458,7 @@ function ExtremeCard({ x, profile, refresh }) {
   const dot = (st) => (st === "active" ? "" : st === "waiting" || st === "restart_required" || st === "ready" ? " wait" : " idle");
   return h("div", { className: "card xcard" },
     h("div", { className: "fos-head" }, h("span", null, "EXTREME BOOSTERS"), h("span", { className: "pill live" }, active + " / " + list.length + " ACTIVE")),
+    h("div", { className: "abline", role: "note" }, h("b", null, "BETA / EXPERIMENTAL"), " · In development; not recommended for regular play."),
     h("div", { className: "boost" }, list.map((b) => h("div", { key: b.id, className: "bt" + (b.state === "unavailable" || b.state === "off" ? " na" : "") },
       h("i", { className: dot(b.state).trim() }), h("div", null, h("b", null, XB_TITLE[b.id] || b.id), h("span", null, boosterDetail(b)))))),
     h(FrameTimingControls, { key: profile, profile, settings: x.feature_settings, refresh }),
@@ -484,7 +485,7 @@ function ExtremeOffer({ o, onTry, onHide }) {
   return h("div", { className: "card promo", style: { marginTop: 12 } },
     h("span", { className: "xbadge" }, "▲"),
     h("div", { className: "t" }, h("b", null, "Want more real frames?"),
-      h("span", null, "This game leaves " + num(o.headroom_w, 0) + " W of your " + num(o.ceiling_w, 0) + " W limit unused. Extreme puts it into real frames — no overclock; the result is measured in game, not promised."),
+      h("span", null, "This game leaves " + num(o.headroom_w, 0) + " W of your " + num(o.ceiling_w, 0) + " W limit unused. Extreme is BETA / EXPERIMENTAL: in development and not recommended for regular play. Performance gains are not promised."),
       h("div", { className: "xbtns" }, h(Focusable, { className: "xbtn on", onClick: onTry }, "Try Extreme"), h(Focusable, { className: "xbtn", onClick: onHide }, "Not now"))));
 }
 
@@ -566,7 +567,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
       h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 18 }), busy ? "WORKING…" : missing ? "INSTALL ENGINE" : s.enabled ? "STOP" : "RUN"),
     h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : missing ? "The GFG engine is not installed yet. One tap installs it." : "Target " + target + " FPS · " + (dev.reason || "picked automatically for this screen")),
     h("div", { className: "sec" }, "MODE"),
-    h(Seg, { cls: "four", value: s.mode || "budget", options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"], ["extreme", "EXTREME", "x"]], onChange: setMode }),
+    h(Seg, { cls: "four", value: s.mode || "budget", options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"], ["extreme", h("span", { style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2 } }, h("span", null, "EXTREME"), h("small", { style: { fontSize: 8, lineHeight: 1.1 } }, "BETA")), "x"]], onChange: setMode }),
     asking ? h(ActConsent, { onAnswer: answerAct }) : null,
     h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
     health ? h("div", { className: "hint" }, health) : null,
