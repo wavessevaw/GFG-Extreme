@@ -15,7 +15,7 @@ class RingHudTests(unittest.TestCase):
         self.assertEqual(labels("standard"), ["FPS", "TDP", "sep", "RESP", "FRAMES", "ENERGY", "BOOST 45R x2"])
         self.assertEqual(labels("detailed"), ["FPS", "TDP", "BATTERY", "sep", "RESP", "FRAMES", "ENERGY", "BOOST 45R x2"])
         self.assertEqual([i.get("label") for i in hud_rings.items_for({**SAMPLE, "frame_os": None}, "standard")],
-                         ["FPS", "TDP"])
+                         ["FPS", "TDP", "ENERGY"])
 
 
     def test_an_ab_window_is_named_instead_of_calm(self):
@@ -49,7 +49,8 @@ class RingHudTests(unittest.TestCase):
         items = {i.get("label"): i for i in hud_rings.items_for(SAMPLE, "standard")}
         self.assertEqual(items["RESP"]["text"], "−47%")
         self.assertEqual(items["FRAMES"]["text"], "+50%")
-        self.assertEqual(items["ENERGY"]["opacity"], 0.45)            # not the live benefit in boost
+        self.assertEqual(items["ENERGY"]["opacity"], 1.0)
+        self.assertEqual(items["ENERGY"]["text"], "0%")
         r, g, _b = hud_rings.effect_color(50, 50)
         self.assertGreater(g, r)                                        # full benefit is green
         r, g, _b = hud_rings.effect_color(-5, 50)
@@ -57,6 +58,28 @@ class RingHudTests(unittest.TestCase):
         est = {i.get("label"): i for i in hud_rings.items_for(
             {**SAMPLE, "frame_os": {**SAMPLE["frame_os"], "estimate": True}}, "standard")}
         self.assertEqual(est["RESP"]["rgb"], hud_rings.GREY)
+
+    def test_energy_shows_saved_tdp_percent_with_or_without_frame_os(self):
+        for fos in (None, SAMPLE["frame_os"], {**SAMPLE["frame_os"], "level": "rest", "energy": 99}):
+            data = {**SAMPLE, "tdp": 12, "limit": 12, "maximum_tdp": 15, "frame_os": fos}
+            for preset in ("standard", "detailed"):
+                ring = next(i for i in hud_rings.items_for(data, preset) if i.get("label") == "ENERGY")
+                self.assertEqual(ring["text"], "20%")
+                self.assertAlmostEqual(ring["frac"], 0.2)
+                self.assertEqual(ring["opacity"], 1.0)
+        self.assertAlmostEqual(hud_rings.energy_savings_pct(12.75, 15), 15.0)
+        self.assertEqual(hud_rings.energy_savings_pct(15, 15), 0)
+        self.assertEqual(hud_rings.energy_savings_pct(20, 15), 0)
+
+    def test_energy_missing_caps_do_not_claim_savings(self):
+        for tdp, maximum in ((None, 15), (float("nan"), 15), (-1, 15),
+                             (12, 0), (12, None), (12, float("inf")), (True, 15)):
+            self.assertIsNone(hud_rings.energy_savings_pct(tdp, maximum))
+            ring = next(i for i in hud_rings.items_for(
+                {**SAMPLE, "energy_tdp": tdp, "maximum_tdp": maximum}, "standard")
+                        if i.get("label") == "ENERGY")
+            self.assertEqual(ring["text"], "—")
+            self.assertEqual(ring["frac"], 0)
 
     def test_render_is_opaque_panel_with_transparent_corners(self):
         for scale in hud_rings.SCALES[:2]:

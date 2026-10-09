@@ -634,6 +634,20 @@ class GovernorService:
             "limit": number(power.get("initial_tdp_w") or power.get("maximum_tdp_w")) or 15,
             "battery_min": number(battery.get("minutes_left")), "battery_pct": number(battery.get("percent")),
         }
+        # ENERGY compares the current cap to stock console maximum, never the
+        # pre-search/user/Extreme ceiling. Preserve fractions and both PPT caps.
+        maximum = power.get("maximum_tdp_w")
+        if (not isinstance(maximum, (int, float)) or isinstance(maximum, bool)
+                or not math.isfinite(maximum) or maximum <= 0):
+            maximum = extreme_policy.EXTREME_CEILING_W
+        data["maximum_tdp"] = min(float(maximum), extreme_policy.EXTREME_CEILING_W)
+        current = power.get("observed_tdp_w")
+        if current is None:
+            current = power.get("current_tdp_w")
+        caps = [value for value in (current, power.get("observed_fast_w"))
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+                and math.isfinite(value) and value >= 0]
+        data["energy_tdp"] = max(caps) if caps else None
         # Display *delivered* MotionBoost, not a requested policy. A pacer ACK
         # alone is insufficient: the adaptive Render v4 overlay must also be in
         # place, and fresh renderer samples must show the real cadence increased
