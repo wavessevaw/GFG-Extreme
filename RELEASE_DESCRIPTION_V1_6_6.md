@@ -1,18 +1,20 @@
-# GFG Extreme 1.6.6 — открытый генератор и Energy
+# GFG Extreme 1.6.6 — Open frame generation and Energy
 
-В этой версии появился **GFG Open**: самостоятельный генератор кадров с открытыми вычислительными шейдерами. Lossless.dll для его генерации не требуется. Vulkan-транспорт остаётся на закреплённом исходном коде MAKO; алгоритм синтеза кадров написан отдельно.
+This release introduces **GFG Open**, an independent frame generator with open compute shaders. Frame generation does not require Lossless.dll. The Vulkan transport uses pinned MAKO source; the frame synthesis algorithm is implemented separately.
 
-- Неподвижные и уверенно сопоставленные области проходят дешёвый путь.
-- Сложные области уточняются отдельно. Движение проверяется в обе стороны.
-- При перекрытиях и несовпадающих контурах используются один надёжный источник или ближайший настоящий кадр вместо смешивания следов.
-- История служит проверяемой подсказкой, а при новом контексте начинается заново. Исходное разрешение игры сохраняется.
-- **Energy:** меняется только цифра. 12 Вт из максимальных 15 Вт → **20%**. Дуга, цвет, прозрачность и расположение сохранены. Это экономия лимита TDP, а не измерение расхода батареи.
-- Сохранены новые настройки Frame timing и Stall shield из ветки 1.6.6; они работают через Frame OS Act с подтверждением нативной политики.
+- Static regions and confidently matched motion use a low-cost path.
+- Difficult regions receive selective refinement, with motion checked in both directions.
+- Occlusions and inconsistent contours use a single reliable source or the nearest real frame instead of blending mismatched trails.
+- Motion history is revalidated against the current frame pair and reset when a new context is created. The game's source resolution is preserved.
+- **Energy:** only the number changes. A 12 W cap out of a 15 W maximum displays **20%**. The arc, colour, opacity and position remain unchanged. This represents TDP-cap savings, not measured battery-energy savings.
+- Frame timing and Stall shield controls from the 1.6.6 development branch are included. They operate through Frame OS Act with native-policy acknowledgement.
 
-**Включение:** Settings → Frame Generation → GFG Engine → **GFG Open generator**, затем перезапустить игру. Выбор сохраняется отдельно для каждого профиля и доступен в Extreme. В первой версии поддержаны обычные 64-битные SDR-игры. Flatpak продолжает использовать установленный прежний генератор и пишет причину возврата в журнал. Шейдеры LS1 масштабирования отдельно по-прежнему могут требовать DLL.
+**Enable:** Settings → Frame Generation → GFG Engine → **GFG Open generator**, then restart the game. The choice is saved per profile and is available in Extreme. This first version supports native 64-bit SDR games. Flatpak continues to use the existing generator and logs the fallback reason. LS1 scaling shaders may still require the DLL separately.
 
-**Статус:** экспериментальный тракт. Проверяются сборка реального Vulkan-слоя, SPIR-V и исполнение шейдеров на тестовых изображениях, Python, нативные слои и интерфейс. Улучшение FPS, нагрузки и гостинга на Steam Deck ещё не подтверждено сравнительным игровым тестом. Поиск движения ограничен; прозрачность, TAA-следы игры и быстрые движения могут требовать возврата к настоящему кадру. Потолок Extreme остаётся 15 Вт; разгон и BIOS не используются.
+**Status:** experimental. Validation covers the native Vulkan-layer build, SPIR-V compilation and execution on synthetic image sequences, Python tests, native layers and the interface. Improvements in FPS, GPU load and ghosting on Steam Deck have not yet been established by a controlled in-game comparison. Motion search is bounded; transparency, game-side TAA trails and fast motion may require falling back to a real frame. Extreme retains its 15 W ceiling, without overclocking or BIOS changes.
 
-Установка: **GFG-Extreme-v1_6_6.zip** через Decky Loader → Install from zip. Перезапустить игру для новых нативных компонентов.
+The native payload was rebuilt against an older system-library baseline for Steam Runtime compatibility: required symbol versions are at most GLIBC 2.34 and GLIBCXX 3.4.29.
 
-SHA-256: `<sha256>` (также в SHA256SUMS.txt).
+**Install:** download **GFG-Extreme-v1_6_6.zip** and use Decky Loader → Install from zip. Restart the game to load the new native components.
+
+SHA-256: `abe362824c52a07a7e75a47007c17a0058e2500bfa3ba3eaed9afa3bb44e7c59` (also provided in SHA256SUMS.txt).
