@@ -1,0 +1,35 @@
+name: Open field investigation
+on:
+  push:
+    branches: [fix/open-motion-smoothness-test]
+    paths: [.github/workflows/open-field-investigation.yml]
+permissions:
+  contents: read
+jobs:
+  evidence:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: handoff/gfg-open-field-logs-20261009
+      - name: Inspect original Open recordings
+        run: |
+          python3 - <<'PY'
+          import glob,zipfile,json,statistics,re,hashlib
+          for path in sorted(glob.glob('agent-handoff/gfg-open-field-logs-20261009/*20261009*.zip')):
+              if '(1)' in path: continue
+              print('\nARCHIVE',path,hashlib.sha256(open(path,'rb').read()).hexdigest())
+              with zipfile.ZipFile(path) as z:
+                  names=z.namelist()
+                  for name in names:
+                      if '/open-performance/' in name or name.startswith('open-performance/'):
+                          print('OPEN',name,z.read(name).decode())
+                  for name in names:
+                      if name.endswith('summary.txt'): print('SUMMARY',z.read(name).decode()[:9000])
+                      if name.endswith('plugin.log'):
+                          lines=z.read(name).decode(errors='replace').splitlines()
+                          print('OPEN EVENTS','\n'.join(l for l in lines if 'GFG Open:' in l)[-18000:])
+                      if name.endswith('present-diagnostics.log'):
+                          lines=z.read(name).decode(errors='replace').splitlines()
+                          print('TRANSPORT','\n'.join(l for l in lines if any(w in l for w in ['present-mode','ordered-acquire-quarantine','generated_frame_capacity','fixed-plan']))[-7000:])
+          PY
