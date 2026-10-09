@@ -13,7 +13,7 @@ cp "$payloads"/org.freedesktop.Platform.VulkanLayer.makorender-*.flatpak "$work/
 chmod 644 "$work"/GFG-Extreme/bin/*.flatpak
 (cd "$work/GFG-Extreme/bin" && sha256sum -c --quiet SHA256SUMS.txt)
 # Independent open generator and pinned transport, built from this commit.
-bash "$root/engine/gfg-open/build.sh" "$work/open-native-build" "$work/GFG-Extreme/bin/gfg-open"
+bash "$root/engine/gfg-open/build.sh" "${GFG_OPEN_BUILD_DIR:-$work/open-native-build}" "$work/GFG-Extreme/bin/gfg-open"
 # Frame OS pacer layer (64-bit), built from this commit; staged by the Governor only when a
 # profile turns Frame OS on. VULKAN_HEADERS: a Vulkan-Headers include/ directory.
 pacer="$work/GFG-Extreme/engine/gfg-pacer"

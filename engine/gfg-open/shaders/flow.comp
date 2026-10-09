@@ -52,7 +52,7 @@ vec4 solve(bool back,ivec2 block) {
  }
  for(int y=-4;y<=4;y++) for(int x=-4;x<=4;x++){
   ivec2 d=ivec2(x,y)*4;
-  float e=cost(back,q,d);
+  float e=coarseCost(back,q/4,ivec2(x,y));
   if(e<best){second=best;best=e;bestD=d;}
   else if(d!=bestD) second=min(second,e);
  }
