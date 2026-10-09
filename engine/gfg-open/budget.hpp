@@ -46,3 +46,4 @@ struct GpuBudget {
   }
  }
 };
+} // namespace gfg
