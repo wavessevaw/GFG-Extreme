@@ -106,3 +106,18 @@ class TransitionTests(unittest.TestCase):
             asyncio.run(service._budget_step("Game", False, 90))
             self.assertIsNone(service._budget)
             self.assertIsNone(service._request)
+
+    def test_successful_ceiling_retry_is_not_blocked_by_old_status_reason(self):
+        from unittest.mock import AsyncMock, patch
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            service = self.service(root, self.make_power(root))
+            service._status.update(state="PAUSED", reason="extreme-ceiling-not-applied")
+            service._launch_info = AsyncMock(return_value={"running": True})
+            service._capability = lambda *args: {"overlay_active": True}
+            service._budget_power = AsyncMock(return_value={"min": 3, "max": 15})
+            with patch("gfg_plugin.governor_service.BudgetController") as controller:
+                controller.side_effect = RuntimeError("budget-start-reached")
+                with self.assertRaisesRegex(RuntimeError, "budget-start-reached"):
+                    asyncio.run(service._budget_step("Game", False, 90))
+                controller.assert_called_once()
