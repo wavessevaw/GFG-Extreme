@@ -1,5 +1,9 @@
 # GFG Extreme 1.6.7 — GPU work limits and power accounting
 
+Release status: pre-release
+
+> **IN DEVELOPMENT — NOT RECOMMENDED FOR REGULAR PLAY.** GFG Open remains experimental and may reduce real FPS or introduce image artifacts. Use this build for testing; leave GFG Open disabled for regular play. Field recovery has not yet been verified on Steam Deck.
+
 This update addresses risks exposed by the first GFG Open field recording. That recording used Witcher 3 in Battery mode and showed a substantial real-FPS shortfall. It did not isolate shader cost from pacing or other effects.
 
 - **Late-frame pacing:** Frame OS no longer rounds a late real frame up to the next whole slot. Previously 34 ms of work under a 30 Hz policy could be paced at 66.67 ms (15 FPS). Ready late frames are now released immediately and the schedule is re-anchored, independently of Stall shield.

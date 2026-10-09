@@ -66,5 +66,6 @@
         "sha256hash": "286656b72909698055ec12fbe0999334692dad801e2f2c034f51c1293d0af97d"
       }
     }
-  ]
+  ],
+  "gfgPrerelease": true
 }

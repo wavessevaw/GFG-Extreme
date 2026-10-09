@@ -37,6 +37,9 @@ jobs:
           else
             tag="v${version}"; stable=true
           fi
+          if python3 -c 'import json,sys; sys.exit(0 if json.load(open("package.json")).get("gfgPrerelease") else 1)'; then
+            stable=false
+          fi
           echo "stable=$stable" >> "$GITHUB_OUTPUT"
           notes="RELEASE_DESCRIPTION_V${version//./_}.md"
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -143,7 +146,7 @@ jobs:
           if [ "${{ steps.version.outputs.stable }}" = true ]; then
             flags=(--latest --title "GFG Extreme ${{ steps.version.outputs.version }}")
           else
-            flags=(--prerelease --title "${{ steps.version.outputs.tag }}")
+            flags=(--prerelease --latest=false --title "${{ steps.version.outputs.tag }}")
           fi
           gh release create "${{ steps.version.outputs.tag }}" out/*.zip out/SHA256SUMS.txt \
             --target "$GITHUB_SHA" "${flags[@]}" --notes-file notes.md
