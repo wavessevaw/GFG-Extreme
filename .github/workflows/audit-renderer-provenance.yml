@@ -1,0 +1,45 @@
+name: Audit renderer provenance
+on:
+  push:
+    branches: [audit/gfg-performance-capabilities]
+    paths: [".github/workflows/audit-renderer-provenance.yml"]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare bundled renderer with upstream release
+        run: |
+          curl --fail --location --retry 2 https://github.com/eugeniosegala/MAKO/releases/download/render-v4.0.0/MAKO-Renderer-v4.0.0-linux.tar.xz --output /tmp/mako-upstream.tar.xz
+          python3 - <<'PY'
+          import hashlib, json, pathlib, re, tarfile
+          archives = {"gfg": pathlib.Path("bin/MAKO-Renderer-v4.0.0-linux.tar.xz"), "upstream": pathlib.Path("/tmp/mako-upstream.tar.xz")}
+          reports = {}
+          libraries = {}
+          for label, path in archives.items():
+              report = {"archive_sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "files": []}
+              with tarfile.open(path) as tar:
+                  for member in tar.getmembers():
+                      if not member.isfile():
+                          continue
+                      stream = tar.extractfile(member)
+                      data = stream.read()
+                      digest = hashlib.sha256(data).hexdigest()
+                      report["files"].append({"path": member.name, "size": len(data), "sha256": digest})
+                      basename = pathlib.PurePosixPath(member.name).name
+                      if basename in ("libmako-render.so", "libmako-backend.so"):
+                          libraries.setdefault(label, {}).setdefault(basename, []).append(digest)
+                          strings = re.findall(rb"[ -~]{8,}", data)
+                          clues = [s.decode("ascii") for s in strings if re.search(rb"version|commit|ultra_performance|flow_scale|precision=|model=", s, re.I)]
+                          report.setdefault("binary_clues", {})[member.name] = clues[:60]
+                      if basename.lower().startswith("readme") and len(data) <= 16000:
+                          report.setdefault("readmes", {})[member.name] = data.decode("utf-8", "replace")
+              reports[label] = report
+          reports["library_comparison"] = {"gfg": libraries.get("gfg", {}), "upstream": libraries.get("upstream", {}),
+              "equal": libraries.get("gfg", {}) == libraries.get("upstream", {})}
+          print("GFG_AUDIT_REPORT_BEGIN")
+          print(json.dumps(reports, sort_keys=True))
+          print("GFG_AUDIT_REPORT_END")
+          PY
