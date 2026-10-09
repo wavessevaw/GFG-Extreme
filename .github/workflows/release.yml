@@ -18,10 +18,11 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-22.04
+    # Build native layers against a portable runtime ABI.
     env:
       GH_TOKEN: ${{ github.token }}
-      CXX: g++-12
       CC: gcc-12
+      CXX: g++-12
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,9 +37,6 @@ jobs:
             tag="v${version}-governor"; stable=false
           else
             tag="v${version}"; stable=true
-          fi
-          if python3 -c 'import json,sys; sys.exit(0 if json.load(open("package.json")).get("gfgPrerelease") else 1)'; then
-            stable=false
           fi
           echo "stable=$stable" >> "$GITHUB_OUTPUT"
           notes="RELEASE_DESCRIPTION_V${version//./_}.md"
@@ -99,24 +97,11 @@ jobs:
           unzip -q -j prev/*.zip 'GFG-Extreme/bin/*.flatpak' -d payloads
           ls -la payloads
 
-      - name: Open generator build dependencies
-        if: steps.version.outputs.exists == 'false'
-        run: sudo apt-get update && sudo apt-get install -y g++-12 ninja-build glslang-tools spirv-tools libvulkan-dev mesa-vulkan-drivers libxcb1-dev libx11-dev libwayland-dev vulkan-validationlayers
-
       - name: Build zip
         if: steps.version.outputs.exists == 'false'
         run: |
           git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
           VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" scripts/build_release.sh "${{ steps.version.outputs.version }}" payloads out
-
-      - name: Execute open generator SPIR-V
-        if: steps.version.outputs.exists == 'false'
-        run: |
-          g++-12 -std=c++20 -O2 engine/gfg-open/tests/budget.cpp -o /tmp/gfg-open-budget-test
-          /tmp/gfg-open-budget-test
-          g++-12 -std=c++20 -O2 engine/gfg-open/tests/gpu.cpp -lvulkan -o /tmp/gfg-open-gpu-test
-          GFG_OPEN_TEST_TILE=16 VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp*.json' -print -quit)" /tmp/gfg-open-gpu-test
-          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp*.json' -print -quit)" /tmp/gfg-open-gpu-test
 
       - name: Verify Frame OS and Rings HUD packaged in Decky zip
         if: steps.version.outputs.exists == 'false'
@@ -146,7 +131,7 @@ jobs:
           if [ "${{ steps.version.outputs.stable }}" = true ]; then
             flags=(--latest --title "GFG Extreme ${{ steps.version.outputs.version }}")
           else
-            flags=(--prerelease --latest=false --title "${{ steps.version.outputs.tag }}")
+            flags=(--prerelease --title "${{ steps.version.outputs.tag }}")
           fi
           gh release create "${{ steps.version.outputs.tag }}" out/*.zip out/SHA256SUMS.txt \
             --target "$GITHUB_SHA" "${flags[@]}" --notes-file notes.md

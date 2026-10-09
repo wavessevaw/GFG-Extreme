@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.6.7).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.6.8).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -66,7 +66,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, confirmation_evidence, matches,
 )
 
-VERSION = "1.6.7"
+VERSION = "1.6.8"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -1036,31 +1036,6 @@ class GovernorService:
         self._poke()
         return {"success": True, "error": None, "act_unlocked": self._frame_os_act_unlocked()}
 
-    def frame_os_features(self, profile: str) -> Dict[str, bool]:
-        raw = self._profile_settings(profile).get("frame_os_features")
-        raw = raw if isinstance(raw, dict) else {}
-        return {"latency": raw.get("latency") is not False,
-                "shield": raw.get("shield") is True}
-
-    def set_frame_os_feature(self, profile: str, feature: str, enabled: bool) -> Dict[str, Any]:
-        profile = str(profile or "").strip()
-        if not profile or feature not in ("latency", "shield") or type(enabled) is not bool:
-            return {"success": False, "error": "Profile, latency/shield and a boolean are required"}
-        settings = self._settings.setdefault("profiles", {}).setdefault(profile, {})
-        previous = settings.get("frame_os_features")
-        features = {**self.frame_os_features(profile), feature: enabled}
-        settings["frame_os_features"] = features
-        try:
-            self._save_settings()
-        except OSError as error:
-            if previous is None:
-                settings.pop("frame_os_features", None)
-            else:
-                settings["frame_os_features"] = previous
-            return {"success": False, "error": str(error)}
-        self._poke()
-        return {"success": True, "error": None, "profile": profile, "features": features}
-
     def _frame_os_mode(self, profile: str) -> str:
         mode = str(self._profile_settings(profile).get("frame_os", "off"))
         if mode == "act" and not self._frame_os_act_unlocked():
@@ -1192,8 +1167,6 @@ class GovernorService:
             calm_real_hz=float(point.base_target_fps),
             max_multiplier=float(self.observer.current_max_multiplier or 3.0),
             calm_w=budget.tdp if budget.tdp_control else None,
-            latency_enabled=self.frame_os_features(profile)["latency"],
-            stall_shield_enabled=self.frame_os_features(profile)["shield"],
         )
         self._sync_frame_os_memory(profile)
 
@@ -1547,8 +1520,6 @@ class GovernorService:
                     "pacer_live": bool((fo.get("telemetry") or {}).get("live")),
                     "injecting": self._injection is not None,
                     "acknowledged": bool(fo.get("acknowledged") and self.frame_os.executor_active)},
-            "pacing": extreme_policy.pacing_facts(self.frame_os_features(profile), fo,
-                        mode=self._frame_os_mode(profile), paused=self._status.get("state") == "PAUSED"),
             "warm_started": bool(budget is not None and budget.warm_started),
         }
         state = extreme_policy.session_state(
@@ -1585,7 +1556,6 @@ class GovernorService:
                         if applied_pct is not None and self._point is not None else None),
             "sharpness_offset": self._extreme_offset(profile),
             "act_consent": self._extreme_act_consent(),
-            "feature_settings": self.frame_os_features(profile),
             "renderer_scaling": renderer,
             "boosters": extreme_policy.booster_states(facts),
             "gain": extreme_policy.gain_unavailable(),
@@ -1756,7 +1726,6 @@ class GovernorService:
         value["frame_os"] = {"mode": self._frame_os_mode(profile or value.get("profile", "")),
                              "act_unlocked": self._frame_os_act_unlocked(),
                              "ab": self._frame_os_ab(),
-                             "feature_settings": self.frame_os_features(profile or value.get("profile", "")),
                              "game": self._fo_memory.summary() if self._fo_memory is not None else None,
                              "starvation_yields": self._injection_starvation_yields,
                              "output_starvation_lockout": self._injection_starvation_yields >= 2,

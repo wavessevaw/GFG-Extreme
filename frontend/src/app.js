@@ -17,7 +17,6 @@ const rpc = {
   setFrameOs: safeCallable("set_governor_frame_os"),
   setFrameOsActUnlock: safeCallable("set_governor_frame_os_act_unlock"),
   setFrameOsAb: safeCallable("set_governor_frame_os_ab"),
-  setFrameOsFeature: safeCallable("set_governor_frame_os_feature"),
   setPowerSplit: safeCallable("set_governor_power_split"),
   setMode: safeCallable("set_governor_mode"),
   setExtremeSharpness: safeCallable("set_governor_extreme_sharpness"),
@@ -91,13 +90,6 @@ const MODE_TEXT = {
 const XB_TITLE = { upscale: "Upscale + sharpen", quiet: "Quiet background", split: "Power → GPU", cooling: "Cooling ahead",
   act: "Frame OS Act", memory: "Memory tuning", latency: "Low latency", shield: "Stutter shield", instant: "Instant start" };
 const XB_REASON = {
-  "pacing-setting-off": "Off in Settings",
-  "pacer-feature-upgrade-required": "Restart with the updated Frame OS layer",
-  "pacing-paused": "Waiting for gameplay",
-  "pacing-ab-control": "A/B control window",
-  "native-frame-timing-active": "Frame-start timing confirmed by the layer",
-  "native-stall-shield-active": "Late-frame recovery confirmed by the layer",
-  "awaiting-pacer-acknowledgement": "Waiting for native confirmation",
   "game-not-running": "Waiting for the game",
   "scaler-not-provisioned-at-launch": "Restart the game once to enable",
   "cpu-bound-full-resolution": "CPU-bound: full resolution kept",
@@ -415,33 +407,6 @@ function SessionRings({ ls, target }) {
 }
 
 // Extreme: the nine directions with what each really does in this session.
-function FrameTimingControls({ profile, settings, refresh }) {
-  const wanted = settings || {};
-  const [features, setFeatures] = useState({ latency: wanted.latency !== false, shield: wanted.shield === true });
-  const [error, setError] = useState("");
-  const busy = useRef(false);
-  useEffect(() => { setFeatures({ latency: wanted.latency !== false, shield: wanted.shield === true }); setError(""); },
-            [profile, wanted.latency, wanted.shield]);
-  const change = async (feature, enabled) => {
-    if (busy.current) return;
-    busy.current = true; setError("");
-    try {
-      const r = await rpc.setFrameOsFeature(profile, feature, enabled);
-      if (!r || !r.success) throw new Error((r && r.error) || "Could not save frame timing");
-      setFeatures(r.features || { ...features, [feature]: enabled });
-      if (refresh) refresh();
-    } catch (e) { setError(String(e.message || e)); }
-    finally { busy.current = false; }
-  };
-  return h("div", null,
-    h("div", { className: "list" },
-      h(Toggle, { on: features.latency, title: "Frame timing", sub: "Control frame-start timing in Act; active after native confirmation",
-                  onChange: (v) => change("latency", v) }),
-      h(Toggle, { on: features.shield, title: "Stall shield", sub: "Avoid extra waiting after a late frame; does not remove loading or shader stalls",
-                  onChange: (v) => change("shield", v) })),
-    error ? h(Note, null, error) : null);
-}
-
 function ExtremeCard({ x, profile, refresh }) {
   const list = x.boosters || [];
   if (!list.length) return null;
@@ -461,7 +426,6 @@ function ExtremeCard({ x, profile, refresh }) {
     h("div", { className: "abline", role: "note" }, h("b", null, "BETA / EXPERIMENTAL"), " · In development; not recommended for regular play."),
     h("div", { className: "boost" }, list.map((b) => h("div", { key: b.id, className: "bt" + (b.state === "unavailable" || b.state === "off" ? " na" : "") },
       h("i", { className: dot(b.state).trim() }), h("div", null, h("b", null, XB_TITLE[b.id] || b.id), h("span", null, boosterDetail(b)))))),
-    h(FrameTimingControls, { key: profile, profile, settings: x.feature_settings, refresh }),
     up.state !== "unavailable" ? h("div", { className: "xsharp" }, h("span", null, "Sharpening"),
       h("div", { className: "step" },
         h(Focusable, { className: "stepb", onClick: () => step(-0.05) }, "−"),
@@ -810,7 +774,6 @@ function FgPage({ back, cfg, patch }) {
     h(Seg, { value: be, options: [["gfg", "GFG Engine"], ["optiscaler", "OptiScaler"], ["native", "In-game"], ["off", "Off"]], onChange: (v) => patch({ fg_backend: v }) }),
     h(Note, { quiet: true }, { gfg: "GFG Engine makes the extra frames. This is the only mode the Governor controls.", optiscaler: "The game's OptiScaler makes the frames. GFG only watches.", native: "The game's own frame generation (DLSS/FSR) is used. GFG only watches.", off: "No frame generation from GFG." }[be]),
     be === "gfg" ? h("div", null,
-      h("div", { className: "list" }, h(Toggle, { on: !!(cfg && cfg.open_frame_generation), title: "GFG Open generator", sub: "IN DEVELOPMENT — not recommended for regular play. May reduce real FPS or cause artifacts. Native 64-bit SDR only; restart after changing.", onChange: (v) => patch({ open_frame_generation: v }) })),
       h("div", { className: "sec" }, "SAVED MULTIPLIER"),
       h(Seg, { value: String(mult), options: [["2", "×2"], ["3", "×3"]], onChange: (v) => patch({ multiplier: Number(v) }) }),
       h(Note, { quiet: true }, "Used when the Governor is off. With the Governor on, it picks ×1 to ×3.75 itself (×4 only as a last resort) and never changes this value.")) :
@@ -1005,7 +968,6 @@ function FrameOsPanel({ s, profile }) {
     unlocked ? h("div", { className: "list" }, h(Toggle, { on: fo.ab !== false, title: "A/B check in Act",
       sub: "Now and then a few seconds without one Act effect, to measure what Act really gives",
       onChange: async (v) => { try { await rpc.setFrameOsAb(v); } catch (e) {} } })) : null,
-    h(FrameTimingControls, { key: profile, profile, settings: fo.feature_settings }),
     fo.game && mode === "act" ? h("div", { className: "card" }, h("div", { className: "sec", style: { marginTop: 0 } }, "THIS GAME"), h("div", { className: "kv" },
       h("span", null, "Sessions with Act"), h("b", null, String(fo.game.sessions || 0)),
       ...[["response", "Frame timing"], ["frames", "Boost"], ["energy", "Rest"]].flatMap(([k, name]) => {

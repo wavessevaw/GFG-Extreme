@@ -506,7 +506,7 @@ class SessionRecorder:
                                  "driver": read(str(p / "scaling_driver"))}
                         for p in sorted(Path("/sys/devices/system/cpu/cpufreq").glob("policy[0-9]*"))[:16]},
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme 1.6.7 (renderer identity: see diagnostics)",
+            "plugin_version": "GFG Extreme 1.6.8 (engine 4.0.0-gfg.4)",
         }
 
     def _write_bundle(self) -> Path:
@@ -566,14 +566,6 @@ class SessionRecorder:
                 data = _read_range(path, start, MAX_DIAG_BYTES)
                 if data:
                     bundle.writestr(f"diagnostics-{path.name}", data)
-            try:
-                for path in sorted((self.runtime_state_dir / "open-performance").glob("*.json"))[:16]:
-                    if path.stat().st_mtime >= self.started_at - 600:
-                        data = _read_tail(path, 16 * 1024)
-                        if data:
-                            bundle.writestr(f"open-performance/{path.name}", data)
-            except OSError:
-                pass
             events = []
             try:
                 for line in self.events_path.read_text(encoding="utf-8", errors="replace").splitlines():

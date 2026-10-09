@@ -402,11 +402,9 @@ def booster_states(facts: Dict[str, Any]) -> List[Dict[str, Any]]:
     # 6. Memory (P4): no global VM tweaks without pressure/OOM/recovery tests.
     out.append(_cap("memory", "unavailable", "global-memory-tweaks-not-applied"))
     # 7. Low latency (P3): a software proxy is not input-to-photon; no Reflex claims.
-    out.append(pacing_booster("latency", facts) if "pacing" in facts else
-               _cap("latency", "unavailable", "latency-not-measured-on-hardware"))
+    out.append(_cap("latency", "unavailable", "latency-not-measured-on-hardware"))
     # 8. Stutter shield (P3): needs p99 / max-gap acceptance on a Deck.
-    out.append(pacing_booster("shield", facts) if "pacing" in facts else
-               _cap("shield", "unavailable", "not-validated-on-hardware"))
+    out.append(_cap("shield", "unavailable", "not-validated-on-hardware"))
 
     # 9. Instant start: a remembered point of this game, verified again before it counts.
     if facts.get("warm_started"):
@@ -443,45 +441,3 @@ def session_state(*, enabled: bool, running: bool, overlay_active: bool, paused:
     if phase == "locked":
         return "ACTIVE"
     return "TUNE"
-
-
-def pacing_facts(settings: Dict[str, bool], runner: Dict[str, Any], *,
-                 mode: str, paused: bool) -> Dict[str, Any]:
-    """Cached native acknowledgement, separate from any claim about input latency."""
-    telemetry = runner.get("telemetry") or {}
-    return {"settings": dict(settings), "mode": mode, "paused": paused,
-            "live": bool(telemetry.get("live")),
-            "ack": bool(runner.get("acknowledged") and runner.get("mode") == mode),
-            "support": telemetry.get("features") or {},
-            "active": telemetry.get("active_features") or {},
-            "published": {"latency": runner.get("latency_enabled"),
-                          "shield": runner.get("stall_shield_enabled")},
-            "shaping_off": bool((runner.get("game_disabled") or {}).get("shaping")),
-            "control": runner.get("ab_control")}
-
-
-def pacing_booster(feature: str, facts: Dict[str, Any]) -> Dict[str, Any]:
-    pacing = facts.get("pacing") or {}
-    setting = (pacing.get("settings") or {}).get(feature, feature == "latency")
-    if not setting:
-        return _cap(feature, "off", "pacing-setting-off")
-    if pacing.get("mode") != "act":
-        return _cap(feature, "off", "act-not-enabled")
-    if not facts.get("running"):
-        return _cap(feature, "waiting", "game-not-running")
-    if not pacing.get("live"):
-        return _cap(feature, "restart_required", "pacer-not-loaded-at-launch")
-    native = "tick_shaping" if feature == "latency" else "stall_shield"
-    if not (pacing.get("support") or {}).get(native):
-        return _cap(feature, "restart_required", "pacer-feature-upgrade-required")
-    if pacing.get("paused"):
-        return _cap(feature, "ready", "pacing-paused")
-    if feature == "latency" and pacing.get("shaping_off"):
-        return _cap(feature, "off", "no-measured-benefit-for-game")
-    if feature == "latency" and pacing.get("control") == "no-shaping":
-        return _cap(feature, "waiting", "pacing-ab-control")
-    if (pacing.get("ack") and (pacing.get("published") or {}).get(feature) is True
-            and (pacing.get("active") or {}).get(native)):
-        return _cap(feature, "active", "native-frame-timing-active" if feature == "latency"
-                    else "native-stall-shield-active")
-    return _cap(feature, "waiting", "awaiting-pacer-acknowledgement")

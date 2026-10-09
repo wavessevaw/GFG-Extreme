@@ -84,13 +84,6 @@ var callable = (n) => async (...a) => ({ get_governor_status: () => window.__sta
   set_governor_mode: (p, m) => { (window.__modes = window.__modes || []).push(m); return { success: true, mode: m }; },
   set_governor_extreme_act_consent: (allow) => { (window.__consents = window.__consents || []).push(allow); return { success: true, consent: !!allow }; },
   set_governor_extreme_sharpness: (p, v) => { (window.__sharp = window.__sharp || []).push(v); return { success: true, offset: v }; },
-  set_governor_frame_os_feature: (p, feature, enabled) => {
-    (window.__featureSets = window.__featureSets || []).push([p, feature, enabled]);
-    if (window.__state.__featureFail) return { success: false, error: "Could not save frame timing" };
-    const features = { latency: true, shield: false, ...(window.__state.extreme || {}).feature_settings, [feature]: enabled };
-    window.__state.extreme = { ...(window.__state.extreme || {}), feature_settings: features };
-    return { success: true, features };
-  },
   set_governor_frame_os_ab: (enabled) => { (window.__abSets = window.__abSets || []).push(enabled); return { success: true, ab: !!enabled }; },
   set_governor_frame_os_act_unlock: (enabled) => { (window.__actUnlocks = window.__actUnlocks || []).push(enabled); return { success: true, act_unlocked: !!enabled }; },
   set_governor_frame_os: (p, m) => (window.__state.__frameOsFail ? { success: false, error: "marker: read-only" } : { success: true, mode: m }),

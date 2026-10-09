@@ -323,13 +323,6 @@ CONFIG_SCHEMA_DEF: Dict[str, ConfigFieldDefinition] = {
         "location": "script"
     },
 
-    "open_frame_generation": {
-        "fieldType": ConfigFieldType.BOOLEAN,
-        "default": False,
-        "description": "restart-bound experimental open color-flow generator for native x86_64 SDR games",
-        "location": "script"
-    },
-
     "fg_backend": {
         "fieldType": ConfigFieldType.STRING,
         "default": FG_BACKEND_GFG,

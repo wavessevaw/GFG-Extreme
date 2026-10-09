@@ -225,33 +225,6 @@ for (const [state, nav, expected] of cases) {
   await page.close();
   cases.push(["extreme-sharpening"]);
 }
-// Extreme native preferences are available, saved independently and rolled back on RPC failure.
-{
-  const page = await openPage(browser, STATES["home-extreme"]);
-  await page.getByText("Stall shield", { exact: true }).first().click();
-  await page.waitForTimeout(120);
-  await page.getByText("Frame timing", { exact: true }).first().click();
-  await page.waitForTimeout(120);
-  const sets = await page.evaluate(() => (window.__featureSets || []).map(x => x.slice(1)));
-  if (JSON.stringify(sets) !== '[["shield",true],["latency",false]]') {
-    failed++; console.error("FAIL frame timing preference calls: " + JSON.stringify(sets));
-  }
-  await page.close();
-  cases.push(["extreme-frame-preferences"]);
-}
-{
-  const state = { ...STATES["home-extreme"], __featureFail: true };
-  const page = await openPage(browser, state);
-  const row = page.locator(".row").filter({ has: page.getByText("Stall shield", { exact: true }) });
-  await row.click();
-  await page.waitForTimeout(120);
-  if (!(await page.getByText("Could not save frame timing", { exact: true }).count())
-      || await row.locator(".tog.on").count()) {
-    failed++; console.error("FAIL frame timing save error kept a successful toggle");
-  }
-  await page.close();
-  cases.push(["extreme-frame-preferences-error"]);
-}
 // Energy text changes, while the existing benefit arc remains 9/30.
 {
   for (const [slow, fast, expected] of [[15,15,"25%"],[12,12,"40%"],[12.75,12.75,"36%"],[12,20,"0%"],[null,null,"—"]]) {
@@ -267,18 +240,6 @@ for (const [state, nav, expected] of cases) {
     await page.close();
   }
   cases.push(["energy-cap-number-preserves-arc"]);
-}
-{
-  const page = await openPage(browser, STATES["home-extreme"], ["Settings", "Frame generation backend"]);
-  await page.getByText("GFG Open generator", { exact: true }).click();
-  await page.waitForTimeout(120);
-  const calls = await page.evaluate(() => window.__patches);
-  if (!calls.some(c => c.open_frame_generation === true)) {
-    failed++; console.error("FAIL open generator control did not save");
-  }
-  for (const e of page.__errors) { failed++; console.error("FAIL open generator: " + e); }
-  await page.close();
-  cases.push(["open-generator-control"]);
 }
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);
