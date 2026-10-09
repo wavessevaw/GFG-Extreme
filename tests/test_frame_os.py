@@ -422,6 +422,33 @@ class BoostProofTests(unittest.TestCase):
         self.assertEqual((d.level, d.reason), ("calm", "boost-ineffective"))
         self.assertEqual(p.tick(t + BOOST_BACKOFF_S + 1, moving).level, "boost")
 
+    def test_short_undelivered_boosts_add_up(self):
+        """Field log 1.6.0: fight boosts of 1.5-3 s never made a continuous 3 s, so they never backed off."""
+        from gfg_plugin.frame_os.policy import InjectionPolicy
+        p = InjectionPolicy(output_hz=90, calm_real_hz=30)
+        moving, still = {"camera": 0.9, "action": 0, "idle_s": 0.0}, {"camera": 0, "action": 0, "idle_s": 0.5}
+        t, levels = 100.0, []
+        for _ in range(4):                        # four 1.5 s boosts, each with calm in between
+            for _ in range(15):
+                t += 0.1
+                levels.append(p.tick(t, moving).level)
+                p.note_delivered(t, 30.0)
+            for _ in range(30):
+                t += 0.1
+                p.tick(t, still)
+                p.note_delivered(t, 30.0)
+        d = p.tick(t + 0.1, moving)
+        self.assertEqual((d.level, d.reason), ("calm", "boost-ineffective"))
+
+    def test_no_boost_when_the_calm_cap_is_not_even_held(self):
+        from gfg_plugin.frame_os.policy import InjectionPolicy
+        p = InjectionPolicy(output_hz=90, calm_real_hz=45)
+        p.note_delivered(99.0, 26.0)              # calm: the GPU delivers 26 of 45
+        d = p.tick(100.0, {"camera": 0.9, "action": 0, "idle_s": 0.0})
+        self.assertEqual((d.level, d.reason), ("calm", "no-gpu-headroom"))
+        p.note_delivered(101.0, 44.0)             # a lighter scene: the calm cap holds again
+        self.assertEqual(p.tick(102.0, {"camera": 0.9, "action": 0, "idle_s": 0.0}).level, "boost")
+
     def test_delivered_boost_keeps_going(self):
         from gfg_plugin.frame_os.policy import InjectionPolicy
         p = InjectionPolicy(output_hz=90, calm_real_hz=30)

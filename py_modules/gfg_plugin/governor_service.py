@@ -1146,6 +1146,9 @@ class GovernorService:
             self.frame_os.draw_w = self.power.status().get("draw_w")
         except Exception:
             self.frame_os.draw_w = (self._status.get("power_feedback") or {}).get("draw_w")
+        recent = self.observer.summary(3.0)
+        real = (recent.get("real") or {}).get("median") if recent.get("samples", 0) >= 2 else None
+        self.frame_os.renderer_real_fps = float(real) if isinstance(real, (int, float)) and real > 0 else None
         self.frame_os.configure(
             enabled=True, mode=mode, output_hz=float(point.target_output_fps),
             calm_real_hz=float(point.base_target_fps),

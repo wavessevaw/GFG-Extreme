@@ -54,6 +54,9 @@ class FrameOsRunner:
         self.last: Dict[str, Any] = {}
         self._task: Optional[asyncio.Task] = None
         self.draw_w: Optional[float] = None
+        # the renderer's own real frame rate (fresh, set by the service): the pacer's present
+        # interval read ~40 Hz while the renderer measured 26 real (field log 1.6.0)
+        self.renderer_real_fps: Optional[float] = None
         self.focused: Optional[bool] = None   # Gamescope focus from the renderer (Governor sets it)
         # The Governor's executor (adaptive overlay) is in place: only then may Act move the real
         # cadence and the watts; otherwise act paces at the point's own cadence.
@@ -177,7 +180,10 @@ class FrameOsRunner:
         elif acting and self.executor_active and telemetry.get("live"):
             # without the executor the pacer gets the calm cadence: no boost can be delivered yet
             interval = telemetry.get("present_interval_p50_ms")
-            self.policy.note_delivered(now, 1000.0 / interval if interval else None)
+            real = self.renderer_real_fps
+            if real is None and interval:
+                real = 1000.0 / interval
+            self.policy.note_delivered(now, real)
         real_hz = decision.real_hz if acting and self.executor_active else self.policy.calm_real_hz
         shaping = control != "no-shaping" and not self.game_disabled["shaping"]
         wanted = (self.mode, round(real_hz, 3), shaping)

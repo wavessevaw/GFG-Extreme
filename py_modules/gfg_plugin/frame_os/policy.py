@@ -26,6 +26,11 @@ SCENE_BOOST_S = 1.0
 REST_IDLE_S = 20.0          # no input this long: pause menu, cutscene, AFK
 BOOST_PROOF_S = 3.0         # a boost that has not raised the measured real cadence by then ...
 BOOST_BACKOFF_S = 120.0     # ... is not paid for again this long (the GPU cannot feed it here)
+UNDELIVERED_FORGET_S = 60.0  # undelivered boost seconds count up across short boosts within this
+# A boost needs a delivered calm cadence: real frames already short of the calm cap (the GPU is
+# saturated) cannot rise further.  Field log 1.6.0: calm caps 45/40/36 at ~26 real, every boost
+# asked for 60 or 45 real and only cost output smoothness.
+CALM_DELIVERED_RATIO = 0.93
 WAKE_IDLE_S = 0.2
 # Predictive boost: a camera swing is announced by the stick before it is fast.  A deflection
 # rising this quickly (intensity per second) from this level starts the boost on the onset, about
@@ -117,6 +122,10 @@ class InjectionPolicy:
     history: List[str] = field(default_factory=list)
     _boost_since: Optional[float] = None
     _boost_blocked_until: float = -1e9
+    _undelivered_s: float = 0.0
+    _undelivered_at: Optional[float] = None
+    # the renderer's real frame rate measured while calm (None: unknown, boosts allowed)
+    calm_real_measured: Optional[float] = None
     # per game (Frame OS memory): effects the A/B proof ruled out in this game
     boost_allowed: bool = True
     rest_allowed: bool = True
@@ -132,16 +141,32 @@ class InjectionPolicy:
         energy bank: stop boosting for a while instead of paying watts for nothing."""
         if self.level != "boost":
             self._boost_since = None
+            if self.level == "calm" and real_fps is not None:
+                self.calm_real_measured = real_fps
             return
         if real_fps is not None and real_fps >= 0.9 * self.boost_real_hz:
             self._boost_since = None          # delivered
+            self._undelivered_s, self._undelivered_at = 0.0, None
             return
+        # Field log 1.6.0: boosts in a fight last 1.5-3 s, so a continuous 3 s never came and an
+        # undelivered boost was never backed off.  Count undelivered boost time across boosts.
+        if self._undelivered_at is not None and now - self._undelivered_at > UNDELIVERED_FORGET_S:
+            self._undelivered_s = 0.0
+        if self._undelivered_at is not None and now > self._undelivered_at:
+            self._undelivered_s += min(now - self._undelivered_at, 1.0)
+        self._undelivered_at = now
         if self._boost_since is None:
             self._boost_since = now
-        elif now - self._boost_since >= BOOST_PROOF_S:
+        if now - self._boost_since >= BOOST_PROOF_S or self._undelivered_s >= BOOST_PROOF_S:
             self._boost_blocked_until = now + BOOST_BACKOFF_S
             self._boost_since = None
+            self._undelivered_s, self._undelivered_at = 0.0, None
             self._note(f"{now:.1f}:boost-ineffective")
+
+    def calm_short(self) -> bool:
+        """The real stream does not even hold the calm cap: no headroom for a boost."""
+        return (self.calm_real_measured is not None and self.calm_real_hz > 0
+                and self.calm_real_measured < CALM_DELIVERED_RATIO * self.calm_real_hz)
 
     @property
     def boost_real_hz(self) -> float:
@@ -188,6 +213,8 @@ class InjectionPolicy:
             level, reason = "calm", "boost-off-for-game"     # measured useless or harmful here
         elif now < self._boost_until and now < self._boost_blocked_until:
             level, reason = "calm", "boost-ineffective"
+        elif now < self._boost_until and self.level != "boost" and self.calm_short():
+            level, reason = "calm", "no-gpu-headroom"
         elif now < self._boost_until and self.boost_real_hz > self.calm_real_hz:
             affordable = self.broker is None or self.broker.can_boost() or self.level == "boost"
             level, reason = ("boost", trigger or self._reason) if affordable else ("calm", "energy-bank-empty")
