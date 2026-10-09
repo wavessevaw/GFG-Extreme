@@ -203,6 +203,7 @@ var rpc = {
   setFrameOs: safeCallable("set_governor_frame_os"),
   setFrameOsActUnlock: safeCallable("set_governor_frame_os_act_unlock"),
   setFrameOsAb: safeCallable("set_governor_frame_os_ab"),
+  setFrameOsFeature: safeCallable("set_governor_frame_os_feature"),
   setPowerSplit: safeCallable("set_governor_power_split"),
   setMode: safeCallable("set_governor_mode"),
   setExtremeSharpness: safeCallable("set_governor_extreme_sharpness"),
@@ -281,6 +282,13 @@ var XB_TITLE = {
   instant: "Instant start"
 };
 var XB_REASON = {
+  "pacing-setting-off": "Off in Settings",
+  "pacer-feature-upgrade-required": "Restart with the updated Frame OS layer",
+  "pacing-paused": "Waiting for gameplay",
+  "pacing-ab-control": "A/B control window",
+  "native-frame-timing-active": "Frame-start timing confirmed by the layer",
+  "native-stall-shield-active": "Late-frame recovery confirmed by the layer",
+  "awaiting-pacer-acknowledgement": "Waiting for native confirmation",
   "game-not-running": "Waiting for the game",
   "scaler-not-provisioned-at-launch": "Restart the game once to enable",
   "cpu-bound-full-resolution": "CPU-bound: full resolution kept",
@@ -689,6 +697,55 @@ function SessionRings({ ls, target }) {
     ) : null
   );
 }
+function FrameTimingControls({ profile, settings, refresh }) {
+  const wanted = settings || {};
+  const [features, setFeatures] = useState({ latency: wanted.latency !== false, shield: wanted.shield === true });
+  const [error, setError] = useState("");
+  const busy = useRef(false);
+  useEffect(
+    () => {
+      setFeatures({ latency: wanted.latency !== false, shield: wanted.shield === true });
+      setError("");
+    },
+    [profile, wanted.latency, wanted.shield]
+  );
+  const change = async (feature, enabled) => {
+    if (busy.current) return;
+    busy.current = true;
+    setError("");
+    try {
+      const r = await rpc.setFrameOsFeature(profile, feature, enabled);
+      if (!r || !r.success) throw new Error(r && r.error || "Could not save frame timing");
+      setFeatures(r.features || { ...features, [feature]: enabled });
+      if (refresh) refresh();
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      busy.current = false;
+    }
+  };
+  return h(
+    "div",
+    null,
+    h(
+      "div",
+      { className: "list" },
+      h(Toggle, {
+        on: features.latency,
+        title: "Frame timing",
+        sub: "Control frame-start timing in Act; active after native confirmation",
+        onChange: (v) => change("latency", v)
+      }),
+      h(Toggle, {
+        on: features.shield,
+        title: "Stall shield",
+        sub: "Avoid extra waiting after a late frame; does not remove loading or shader stalls",
+        onChange: (v) => change("shield", v)
+      })
+    ),
+    error ? h(Note, null, error) : null
+  );
+}
 function ExtremeCard({ x, profile, refresh }) {
   const list = x.boosters || [];
   if (!list.length) return null;
@@ -718,6 +775,7 @@ function ExtremeCard({ x, profile, refresh }) {
       h("i", { className: dot(b.state).trim() }),
       h("div", null, h("b", null, XB_TITLE[b.id] || b.id), h("span", null, boosterDetail(b)))
     ))),
+    h(FrameTimingControls, { key: profile, profile, settings: x.feature_settings, refresh }),
     up.state !== "unavailable" ? h(
       "div",
       { className: "xsharp" },
@@ -1644,6 +1702,7 @@ function FrameOsPanel({ s, profile }) {
         }
       }
     })) : null,
+    h(FrameTimingControls, { key: profile, profile, settings: fo.feature_settings }),
     fo.game && mode === "act" ? h("div", { className: "card" }, h("div", { className: "sec", style: { marginTop: 0 } }, "THIS GAME"), h(
       "div",
       { className: "kv" },
