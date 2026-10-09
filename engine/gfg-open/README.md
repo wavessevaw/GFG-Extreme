@@ -8,7 +8,7 @@ For each pair of real frames: classify static 8x8 tiles, bidirectional coarse co
 
 ## Integration
 
-Frame Generation → GFG Open generator. Opt-in per profile, applies on the next game launch. Native x86_64 SDR8 only in this version. Flatpak uses the existing renderer and logs the fallback. Legacy mode remains available. Both backends retain the application's GPU choice, imported-FD ownership, external timeline semaphore ordering, bounded per-context fences and retirement. No BIOS, clock or TDP changes.
+Frame Generation → GFG Open generator. Opt-in per profile, applies on the next game launch. Native x86_64 SDR8 only in this version. The native library, manifest, checksums, GPL notices and exact upstream source archive are included in the release ZIP. Flatpak uses the existing renderer and logs the fallback. Legacy mode remains available. Both backends retain the application's GPU choice, imported-FD ownership, external timeline semaphore ordering, bounded per-context fences and retirement. No BIOS, clock or TDP changes.
 
 ## Limits
 

@@ -10,12 +10,22 @@
 #include <iostream>
 #include <algorithm>
 #include <stdexcept>
+static unsigned validationErrors=0;
+VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,VkDebugUtilsMessageTypeFlagsEXT,const VkDebugUtilsMessengerCallbackDataEXT* data,void*){if(severity&VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT){++validationErrors;std::cerr<<data->pMessage<<"\n";}return VK_FALSE;}
 #define VKCHECK(x) do{auto result=(x);if(result!=VK_SUCCESS)throw std::runtime_error(#x);}while(0)
 struct Image {VkImage image;VkDeviceMemory memory;VkImageView view;void* map;VkSubresourceLayout layout;};
 int main(){
  VkInstance instance;VkInstanceCreateInfo ic{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
  VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};app.apiVersion=VK_API_VERSION_1_1;ic.pApplicationInfo=&app;
+ const char* debugExt="VK_EXT_debug_utils";ic.enabledExtensionCount=1;ic.ppEnabledExtensionNames=&debugExt;
  VKCHECK(vkCreateInstance(&ic,nullptr,&instance));
+ VkDebugUtilsMessengerCreateInfoEXT debug{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
+ debug.messageSeverity=VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+ debug.messageType=VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT|VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT|VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;debug.pfnUserCallback=debugCallback;
+ VkDebugUtilsMessengerEXT messenger;
+ auto createDebug=reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(instance,"vkCreateDebugUtilsMessengerEXT"));
+ auto destroyDebug=reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(instance,"vkDestroyDebugUtilsMessengerEXT"));
+ VKCHECK(createDebug(instance,&debug,nullptr,&messenger));
  uint32_t n=1;VkPhysicalDevice physical;VKCHECK(vkEnumeratePhysicalDevices(instance,&n,&physical));
  uint32_t count=0;vkGetPhysicalDeviceQueueFamilyProperties(physical,&count,nullptr);
  std::vector<VkQueueFamilyProperties> families(count);vkGetPhysicalDeviceQueueFamilyProperties(physical,&count,families.data());
@@ -118,5 +128,6 @@ int main(){
  for(auto pipe:pipelines)vkDestroyPipeline(device,pipe,nullptr);vkDestroyPipelineLayout(device,pl,nullptr);vkDestroyDescriptorSetLayout(device,layout,nullptr);
  vkUnmapMemory(device,bm);vkDestroyBuffer(device,buffer,nullptr);vkFreeMemory(device,bm,nullptr);
  for(auto& i:images){vkUnmapMemory(device,i.memory);vkDestroyImageView(device,i.view,nullptr);vkDestroyImage(device,i.image,nullptr);vkFreeMemory(device,i.memory,nullptr);}
- vkDestroyDevice(device,nullptr);vkDestroyInstance(instance,nullptr);
+ vkDestroyDevice(device,nullptr);destroyDebug(instance,messenger,nullptr);vkDestroyInstance(instance,nullptr);
+ assert(validationErrors==0);
 }

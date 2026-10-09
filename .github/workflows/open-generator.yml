@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build glslang-tools spirv-tools libvulkan-dev mesa-vulkan-drivers libxcb1-dev libx11-dev libwayland-dev
+        run: sudo apt-get update && sudo apt-get install -y ninja-build glslang-tools spirv-tools libvulkan-dev mesa-vulkan-drivers libxcb1-dev libx11-dev libwayland-dev vulkan-validationlayers
       - name: Compile open generator and transport
         run: |
           git clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/open-vkh"
@@ -19,7 +19,7 @@ jobs:
       - name: Execute released SPIR-V on software Vulkan
         run: |
           g++ -std=c++20 -O2 engine/gfg-open/tests/gpu.cpp -lvulkan -o /tmp/gfg-open-gpu-test
-          VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp*.json' -print -quit)" /tmp/gfg-open-gpu-test
+          VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp*.json' -print -quit)" /tmp/gfg-open-gpu-test
       - uses: actions/upload-artifact@v4
         with:
           name: gfg-open-x86_64
