@@ -78,6 +78,31 @@ class RingHudTests(unittest.TestCase):
             self.assertEqual(px[mid + 3], 255)
             self.assertTrue(all(a in (0, 255) for a in px[3::4]))      # the layer does no blending
 
+    def test_tdp_charger_and_charge_colors_in_every_preset(self):
+        for preset in ("minimal", "standard", "detailed"):
+            for pct in (0, 15, 40, 65, 100, None):
+                data = {**SAMPLE, "battery_pct": pct, "external_power": True}
+                plugged = hud_rings.items_for(data, preset)[1]
+                unplugged = hud_rings.items_for({**data, "external_power": False}, preset)[1]
+                self.assertEqual(plugged["rgb"], hud_rings.battery_color(100))
+                self.assertEqual((plugged["text"], plugged["frac"]), (unplugged["text"], unplugged["frac"]))
+        low = hud_rings.tdp_color(15, False)
+        mid = hud_rings.tdp_color(40, False)
+        high = hud_rings.tdp_color(65, False)
+        self.assertGreater(low[0], low[1])
+        self.assertEqual(mid[0], mid[1])
+        self.assertGreater(high[1], high[0])
+        self.assertEqual(hud_rings.tdp_color(None, False), hud_rings.GREY)
+
+    def test_plug_event_invalidates_cached_visuals_without_changing_energy(self):
+        data = {**SAMPLE, "battery_pct": 20, "external_power": False}
+        plugged = {**data, "external_power": True}
+        self.assertNotEqual(hud_rings.visual_key(data, "standard", "top-left", 1),
+                            hud_rings.visual_key(plugged, "standard", "top-left", 1))
+        energy = lambda d: next(i for i in hud_rings.items_for(d, "standard") if i.get("label") == "ENERGY")
+        self.assertEqual(energy(data), energy(plugged))
+        self.assertNotEqual(hud_rings.render(data, "minimal")[2], hud_rings.render(plugged, "minimal")[2])
+
     def test_write_overlay_header_and_clear(self):
         with tempfile.TemporaryDirectory() as tmp:
             path, extent = Path(tmp) / "hud.raw", Path(tmp) / "hud.extent"

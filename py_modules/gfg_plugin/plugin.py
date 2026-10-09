@@ -15,6 +15,7 @@ from pathlib import Path
 
 import decky
 
+from .theme_installer import ThemeInstaller
 from .installation import InstallationService
 from .dll_detection import DllDetectionService
 from .configuration import ConfigurationService
@@ -61,6 +62,8 @@ class Plugin:
 
     def __init__(self):
         """Initialize the plugin with all necessary services"""
+        self.theme_installer = ThemeInstaller(Path(decky.DECKY_USER_HOME))
+        self._theme_install_lock = asyncio.Lock()
         self.installation_service = InstallationService()
         self.dll_detection_service = DllDetectionService()
         self.configuration_service = ConfigurationService()
@@ -1583,6 +1586,14 @@ class Plugin:
                 "for recovery on the next plugin load"
             )
         decky.logger.info("GFG Extreme unloaded")
+
+    async def get_theme_status(self) -> Dict[str, Any]:
+        async with self._theme_install_lock:
+            return await asyncio.to_thread(self.theme_installer.status)
+
+    async def install_gfg_theme(self) -> Dict[str, Any]:
+        async with self._theme_install_lock:
+            return await asyncio.to_thread(self.theme_installer.install)
 
     async def _uninstall(self):
         """

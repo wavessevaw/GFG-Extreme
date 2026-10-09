@@ -198,6 +198,20 @@ def battery_color(percent: Optional[float]) -> Tuple[int, int, int]:
     return round(r * 255), round(g * 255), round(b * 255)
 
 
+def tdp_color(percent: Any, external_power: Any) -> Tuple[int, int, int]:
+    """AC is green; on battery red <=15%, yellow at 40%, green >=65%."""
+    if external_power is True:
+        return battery_color(100)
+    percent = finite_number(percent, nonnegative=True)
+    if percent is None:
+        return GREY
+    percent = min(100.0, percent)
+    hue = (60.0 * max(0.0, percent - 15.0) / 25.0 if percent <= 40.0
+           else 60.0 + 80.0 * min(1.0, (percent - 40.0) / 25.0))
+    r, g, b = colorsys.hls_to_rgb(hue / 360.0, 0.55, 0.85)
+    return round(r * 255), round(g * 255), round(b * 255)
+
+
 def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
     """What to draw, left to right."""
     items: List[Dict[str, Any]] = []
@@ -209,7 +223,8 @@ def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
                   "sub": f"{round(real)} REAL" if real is not None else None, "label": "FPS"})
     tdp = finite_number(data.get("tdp"), nonnegative=True)
     limit = finite_number(data.get("limit"), nonnegative=True) or 15
-    items.append({"kind": "ring", "size": 46, "w": 4, "frac": (tdp or 0) / limit, "rgb": WHITE,
+    items.append({"kind": "ring", "size": 46, "w": 4, "frac": (tdp or 0) / limit,
+                  "rgb": tdp_color(data.get("battery_pct"), data.get("external_power")),
                   "text": f"{round(tdp)}W" if tdp is not None else "—", "style": "val", "label": "TDP"})
     battery = finite_number(data.get("battery_pct"), nonnegative=True)
     battery = min(100.0, battery) if battery is not None else None

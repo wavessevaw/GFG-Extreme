@@ -2492,6 +2492,21 @@ class RingRefreshTests(unittest.TestCase):
         self.assertNotIn("frame_os", self.writes[-1][0])
 
 class HudSessionRegressions(RingRefreshTests):
+    def test_charger_switch_is_projected_and_redraws_at_next_hud_tick(self):
+        self.status["battery"] = {"percent": 20, "external_power": False}
+        self.publish()
+        first = len(self.writes)
+        self.status["battery"]["external_power"] = True
+        self.now += 1
+        self.publish()
+        self.assertEqual(len(self.writes), first + 1)
+        self.assertIs(self.writes[-1][0]["external_power"], True)
+        self.status["battery"]["external_power"] = False
+        self.now += 1
+        self.publish()
+        self.assertIs(self.writes[-1][0]["external_power"], False)
+        self.assertEqual(len(self.writes), first + 2)
+
     def test_new_game_cannot_hold_old_fps_before_refresh_due(self):
         self.publish()
         self.svc._launch = {"launch_key": [4, 5, 6]}
