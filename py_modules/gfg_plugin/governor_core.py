@@ -895,8 +895,10 @@ class BudgetController:
         hw_min = float(min_tdp_w) if min_tdp_w else 0.0
         hw_max = float(max_tdp_w) if max_tdp_w else self.EMERGENCY_CEILING_W
         self.min_w = max(self.MIN_TDP_W, hw_min)
-        self.normal_max_w = min(self.NORMAL_CEILING_W, hw_max)
-        self.emergency_max_w = min(self.EMERGENCY_CEILING_W, hw_max)
+        # Extreme receives its verified player/device ceiling from the power actuator.
+        # Battery and Balanced keep their conservative normal/emergency ceilings.
+        self.normal_max_w = hw_max if extreme else min(self.NORMAL_CEILING_W, hw_max)
+        self.emergency_max_w = hw_max if extreme else min(self.EMERGENCY_CEILING_W, hw_max)
         start_real = (EXTREME_START_REAL_FPS if extreme else
                       BALANCED_START_REAL_FPS if balanced else START_REAL_FPS)
         # Start on an integer ratio: on a Deck they confirmed in ~10 s, while fractional points often
@@ -911,7 +913,7 @@ class BudgetController:
         start_w = BALANCED_START_TDP_W if balanced else self.START_TDP_W
         if extreme:
             # Every watt of the ceiling goes into frames: no search for lower watts.  The ceiling
-            # comes from the service: min(15 W, the player's own lower limit) (extreme.power_ceiling).
+            # comes from the service: min(inherited player fast/slow caps, hardware maximum).
             self.ideal_max_w = self.normal_max_w
             start_w = self.normal_max_w
         self.tdp = min(max(start_w, self.min_w), self.normal_max_w) if self.tdp_control else None
