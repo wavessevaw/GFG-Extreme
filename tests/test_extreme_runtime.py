@@ -57,14 +57,14 @@ class TransitionTests(unittest.TestCase):
         service._active_profile = "Game"
         return service
 
-    def test_no_point_trial_starts_with_the_stock_ceiling(self):
+    def test_no_point_trial_starts_above_inherited_limit(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             power = self.make_power(root)
             service = self.service(root, power)
             self.assertIsNotNone(asyncio.run(service._budget_power("Game")))
             self.assertIsNone(service._point)
-            self.assertEqual((power.status()["observed_fast_w"], power.status()["observed_tdp_w"]), (15, 15))
+            self.assertEqual((power.status()["observed_fast_w"], power.status()["observed_tdp_w"]), (20, 20))
 
     def test_replanning_in_extreme_keeps_ceiling_but_disable_restores(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -74,11 +74,25 @@ class TransitionTests(unittest.TestCase):
             asyncio.run(service._budget_power("Game"))
             asyncio.run(service._restore_power("display-mode-changed"))
             self.assertTrue(power.state.owned)
-            self.assertEqual((power.status()["observed_fast_w"], power.status()["observed_tdp_w"]), (15, 15))
+            self.assertEqual((power.status()["observed_fast_w"], power.status()["observed_tdp_w"]), (20, 20))
             service._settings["profiles"]["Game"]["enabled"] = False
             asyncio.run(service._restore_power("user-disabled"))
             self.assertFalse(power.state.owned)
             self.assertEqual((power.status()["observed_fast_w"], power.status()["observed_tdp_w"]), (24, 20))
+
+    def test_device_100_w_cap_is_preserved(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            power = self.make_power(root, fast=100, slow=100)
+            h = root / "hwmon" / "hwmon0"
+            (h / "power1_cap_max").write_text("120000000\n")
+            (h / "power2_cap_max").write_text("120000000\n")
+            power.discover()
+            service = self.service(root, power)
+            self.assertEqual(asyncio.run(service._budget_power("Game"))["max"], 100.0)
+            self.assertEqual(service._extreme_ceiling["ceiling_w"], 100.0)
+            self.assertEqual((power.status()["observed_fast_w"], power.status()["observed_tdp_w"]), (100, 100))
+            self.assertTrue(power.restore_if_owned()["restored"])
 
     def test_failed_ceiling_stops_trials(self):
         with tempfile.TemporaryDirectory() as temp:

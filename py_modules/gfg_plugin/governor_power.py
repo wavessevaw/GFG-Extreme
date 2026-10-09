@@ -8,6 +8,7 @@ Governor ownership.
 from __future__ import annotations
 
 import os
+import math
 import threading
 import time
 from dataclasses import asdict, dataclass
@@ -263,21 +264,34 @@ class SteamDeckPowerActuator:
                    error=result.get("error"))
         return result
 
-    def claim_at_ceiling_w(self, watts: float) -> Dict[str, Any]:
-        """Claim and lower both caps before handing an Extreme session to the controller.
+    def claim_at_ceiling_w(self, watts: Optional[float] = None) -> Dict[str, Any]:
+        """Claim and clamp both PPT channels to measured inherited/hardware limits.
 
-        Keep the player's originals for exit; inherited caps must not remain above
-        the stock/user ceiling during a renderer trial.
+        With no explicit watt value, derive the cap from the freshly captured
+        user fast/slow caps and hardware maximum; never impose a fixed 15 W.
+        Keep the originals for ownership-safe restoration on exit.
         """
         with self._lock:
             if self._closed:
                 return {**self.status(), "success": False}
-            self.set_strict_ceiling_w(watts)
             result = self._claim()
             if not result.get("owned"):
                 return {**result, "success": False}
-            initial = min(self.state.initial_slow_uw, self.state.initial_fast_uw) / 1e6
-            target = min(float(watts), initial)
+            candidates = [v for v in (
+                self.state.initial_slow_uw, self.state.initial_fast_uw,
+                self.state.slow_max_uw, self.state.fast_max_uw)
+                if isinstance(v, int) and v > 0]
+            if watts is not None:
+                try:
+                    numeric = float(watts)
+                except (TypeError, ValueError):
+                    numeric = float("nan")
+                if not math.isfinite(numeric) or numeric <= 0:
+                    return {**self.status(), "success": False, "error": "Invalid PPT ceiling"}
+                candidates.append(int(numeric * 1_000_000))
+            if not candidates:
+                return {**self.status(), "success": False, "error": "PPT limits unavailable"}
+            target = min(candidates) / 1_000_000.0
             self.set_strict_ceiling_w(target)
             result = self._set_tdp_w(target)
             return {**self.status(), "success": bool(result.get("success"))}
@@ -435,7 +449,7 @@ class SteamDeckPowerActuator:
             self.state.ceiling_override_uw = value
 
     def set_strict_ceiling_w(self, watts: float) -> None:
-        """Extreme's stock-power contract, separate from manager-compatible budgets."""
+        """Extreme's inherited device/player ceiling on both PPT channels."""
         self.set_ceiling_w(watts, strict=True)
 
     def set_tdp_w(self, watts: float) -> Dict[str, Any]:
