@@ -1,18 +1,18 @@
-name: Release
+name: Candidate 1.6.6
 
 # Every push to main whose version (package.json) has no tag yet becomes a
 # GitHub release (0.x: pre-release v0.0.N-governor; 1.0.0+: official vX.Y.Z): tests, zip for Decky, SHA-256, description
 # from RELEASE_DESCRIPTION_V<version>.md.
 on:
   push:
-    branches: [main]
+    branches: [release/stable-1.6.6]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: release
+  group: candidate-166
   cancel-in-progress: false
 
 jobs:
@@ -124,20 +124,8 @@ jobs:
             unzip -Z1 "$zip" | grep -Fx "GFG-Extreme/bin/gfg-frame-os/$payload"
           done
 
-      - name: Publish release
-        if: steps.version.outputs.exists == 'false'
-        run: |
-          sha="$(cut -d' ' -f1 out/SHA256SUMS.txt)"
-          python3 - "${{ steps.version.outputs.notes }}" "$sha" > notes.md <<'PY'
-          import re, sys
-          text = open(sys.argv[1], encoding="utf-8").read()
-          text = re.sub(r"`(<sha256>|[0-9a-f]{64})`", f"`{sys.argv[2]}`", text)
-          print(text)
-          PY
-          if [ "${{ steps.version.outputs.stable }}" = true ]; then
-            flags=(--latest --title "GFG Extreme ${{ steps.version.outputs.version }}")
-          else
-            flags=(--prerelease --latest=false --title "${{ steps.version.outputs.tag }}")
-          fi
-          gh release create "${{ steps.version.outputs.tag }}" out/*.zip out/SHA256SUMS.txt \
-            --target "$GITHUB_SHA" "${flags[@]}" --notes-file notes.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GFG-Extreme-1.6.6-candidate
+          path: out/*
+          retention-days: 7

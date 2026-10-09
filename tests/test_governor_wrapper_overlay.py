@@ -50,9 +50,9 @@ class WrapperOverlayTests(unittest.TestCase):
         data = json.loads(manifest.read_text()) if manifest.exists() else {}
         return values.get("MAKO_CONFIG"), data
 
-    def test_script_declares_overlay_and_format_85(self):
+    def test_script_declares_overlay_and_current_format(self):
         text = self.script.read_text()
-        self.assertIn("# mako-wrapper-format: 85", text)
+        self.assertIn(self.svc._WRAPPER_FORMAT_MARKER, text)
         self.assertIn("mako_governor_overlay=", text)
         self.assertIn("mako_governor_overlay_active=", text)
 

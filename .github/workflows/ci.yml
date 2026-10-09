@@ -24,12 +24,12 @@ jobs:
         run: |
           VULKAN_DEPS="$RUNNER_TEMP/vk" engine/gfg-pacer/tests/setup_vulkan_deps.sh
           make -C engine/gfg-pacer VULKAN_DEPS="$RUNNER_TEMP/vk" test layer abi integration ordering
-      - name: Compare late-frame pacing with 1.6.6
+      - name: Compare late-frame pacing with the archived baseline
         run: |
-          git fetch --depth=1 origin tag v1.6.6
+          git fetch --depth=1 origin cfc323f0b9b28da42c803441bfacafa29a7f32d5
           mkdir -p "$RUNNER_TEMP/old-pacer"
-          git show v1.6.6:engine/gfg-pacer/src/scheduler.c > "$RUNNER_TEMP/old-pacer/scheduler.c"
-          git show v1.6.6:engine/gfg-pacer/src/scheduler.h > "$RUNNER_TEMP/old-pacer/scheduler.h"
+          git show cfc323f0b9b28da42c803441bfacafa29a7f32d5:engine/gfg-pacer/src/scheduler.c > "$RUNNER_TEMP/old-pacer/scheduler.c"
+          git show cfc323f0b9b28da42c803441bfacafa29a7f32d5:engine/gfg-pacer/src/scheduler.h > "$RUNNER_TEMP/old-pacer/scheduler.h"
           cc -O2 tools/benchmark_late_pacing.c "$RUNNER_TEMP/old-pacer/scheduler.c" -lm -o /tmp/old-pacing
           cc -O2 tools/benchmark_late_pacing.c engine/gfg-pacer/src/scheduler.c -lm -o /tmp/new-pacing
           /tmp/old-pacing baseline

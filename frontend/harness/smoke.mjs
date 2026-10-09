@@ -36,11 +36,11 @@ const cases = [
   ["home-frame-os-learned", [], ["Boost off here: no real-frame gain measured"]],
   ["home-frame-os-learned", ["Settings", "Diagnostics"], ["THIS GAME", "no gain · off (5 A/B)", "helps (12 A/B)"]],
   ["home-frame-os-act", ["Settings", "Diagnostics"], ["A/B check in Act", "Response (A/B)", "+47% (39…55) · 5 pairs", "Energy (A/B)", "+12% · 1 pair", "THIS GAME", "Sessions with Act", "helps (5 A/B)", "helps (9 A/B)", "learning (1 A/B)"]],
-  ["home-frame-os-rest", [], ["FRAME OS", "REST", "27%"]],
-  ["home-frame-os-observe", [], ["FRAME OS", "ESTIMATE", "−44%", "+50%", "27%"]],
+  ["home-frame-os-rest", [], ["FRAME OS", "REST", "—"]],
+  ["home-frame-os-observe", [], ["FRAME OS", "ESTIMATE", "−44%", "+50%", "—"]],
   ["home-frame-os-early", [], ["FRAME OS", "Response", "—"]],
   ["frame-os-no-layer", ["Settings", "Diagnostics"], ["FRAME OS (EXPERIMENTAL)", "Frame OS layer not installed: this build does not include the Frame OS layer."]],
-  ["home-last-session-mixed", [], ["LAST SESSION", "Modes", "Battery 18m · Balanced 13m", "Energy saved", "~2.3 Wh measured · ~14 min more battery", "Frame OS", "calm 20m · boost 6m · rest 4m", "Response", "−41%", "+12%", "29%"]],
+  ["home-last-session-mixed", [], ["LAST SESSION", "Modes", "Battery 18m · Balanced 13m", "Energy saved", "~2.3 Wh measured · ~14 min more battery", "Frame OS", "calm 20m · boost 6m · rest 4m", "Response", "−41%", "+12%", "—"]],
   ["home-last-session-mixed", ["Details"], ["RECENT SESSIONS", "31 min · Battery 18m · Balanced 13m"]],
   ["home-idle-oled", ["Settings", "Diagnostics"], ["Reset what GFG learned for Sample Game", "Starts the next search from scratch"]],
   ["home-idle-oled", ["Settings", "Diagnostics", "Reset what GFG learned for Sample Game"], ["Tap again to forget", "remembered for Sample Game", "This cannot be undone"]],
@@ -252,33 +252,52 @@ for (const [state, nav, expected] of cases) {
   await page.close();
   cases.push(["extreme-frame-preferences-error"]);
 }
-// Energy text changes, while the existing benefit arc remains 9/30.
+// Energy text is cap savings; its independent arc is the current battery charge.
 {
   for (const [slow, fast, expected] of [[15,15,"25%"],[12,12,"40%"],[12.75,12.75,"36%"],[12,20,"0%"],[null,null,"—"]]) {
-    const state = { ...STATES["home-frame-os-act"], power: { observed_tdp_w: slow, observed_fast_w: fast, maximum_tdp_w: 30, gamescope_max_tdp_w: 20 } };
+    const state = { ...STATES["home-frame-os-act"], battery: { percent: 72 }, power: { observed_tdp_w: slow, observed_fast_w: fast, maximum_tdp_w: 30, gamescope_max_tdp_w: 20 } };
     const page = await openPage(browser, state);
     const data = await page.evaluate(() => {
       const ring = [...document.querySelectorAll(".fos .mini")].find(e => e.querySelector(".mlab").textContent === "Energy");
       return { text: ring.querySelector(".mnum").textContent, offset: Number(ring.querySelector("circle:last-child").getAttribute("stroke-dashoffset")) };
     });
-    if (data.text !== expected || Math.abs(data.offset - 2 * Math.PI * 26 * .7) > .0001) {
+    if (data.text !== expected || Math.abs(data.offset - 2 * Math.PI * 26 * .28) > .0001) {
       failed++; console.error("FAIL Energy text/arc: " + JSON.stringify(data));
     }
     await page.close();
   }
-  cases.push(["energy-cap-number-preserves-arc"]);
+  cases.push(["energy-cap-number-battery-arc"]);
 }
 {
   const page = await openPage(browser, STATES["home-extreme"], ["Settings", "Frame generation backend"]);
-  await page.getByText("GFG Open generator", { exact: true }).click();
-  await page.waitForTimeout(120);
-  const calls = await page.evaluate(() => window.__patches);
-  if (!calls.some(c => c.open_frame_generation === true)) {
-    failed++; console.error("FAIL open generator control did not save");
+  if (await page.getByText("GFG Open generator", { exact: true }).count()) {
+    failed++; console.error("FAIL retired generator still selectable");
   }
-  for (const e of page.__errors) { failed++; console.error("FAIL open generator: " + e); }
+  for (const e of page.__errors) { failed++; console.error("FAIL ordinary generator: " + e); }
   await page.close();
-  cases.push(["open-generator-control"]);
+  cases.push(["ordinary-generator-only"]);
+}
+// Battery charge drives arc and colour independently of cap savings.
+{
+  for (const [charge, maximum, expectedText] of [[100,20,"25%"],[50,20,"25%"],[25,20,"25%"],[0,20,"25%"],[null,20,"25%"],[72,null,"—"]]) {
+    const state = { ...STATES["home-frame-os-act"], battery: { percent: charge },
+      power: { observed_tdp_w: 15, observed_fast_w: 15, gamescope_max_tdp_w: maximum } };
+    const page = await openPage(browser, state);
+    const data = await page.evaluate(() => {
+      const ring = [...document.querySelectorAll(".fos .mini")].find(e => e.querySelector(".mlab").textContent === "Energy");
+      const circles = ring.querySelectorAll("circle");
+      return { text: ring.querySelector(".mnum").textContent, count: circles.length,
+        offset: Number(circles[circles.length - 1].getAttribute("stroke-dashoffset")),
+        color: circles[circles.length - 1].getAttribute("stroke") };
+    });
+    const expectedColor = charge == null ? "#26262d" : "hsl(" + (120 * Math.min(1, charge / 50)) + " 80% 52%)";
+    const badArc = charge == null ? data.count !== 1 : Math.abs(data.offset - 2 * Math.PI * 26 * (1 - charge / 100)) > .0001;
+    if (data.text !== expectedText || badArc || data.color !== expectedColor) {
+      failed++; console.error("FAIL battery ENERGY " + JSON.stringify({charge, data}));
+    }
+    await page.close();
+  }
+  cases.push(["energy-battery-colour-and-unknown-limits"]);
 }
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);

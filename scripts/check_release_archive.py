@@ -50,19 +50,8 @@ def check(path, version):
             if PurePosixPath(manifest["layer"]["library_path"]).name != library:
                 raise ValueError(f"wrong library in {layer} manifest")
 
-        data = read("bin/gfg-open/libmako-render.so")
-        if data[:6] != b"\x7fELF\x02\x01" or int.from_bytes(data[18:20], "little") != 62:
-            raise ValueError("not an x86_64 open generator")
-        if not any(b"GFG Open: backend=" + name in data for name in (b"color-flow-v1", b"color-flow-v2")):
-            raise ValueError("open generator implementation missing")
-        manifest = json.loads(read("bin/gfg-open/VkLayer_MAKO_render.json"))
-        if manifest["layer"]["library_path"] != "./libmako-render.so":
-            raise ValueError("wrong open generator library")
-        import hashlib
-        for line in read("bin/gfg-open/SHA256SUMS").decode().splitlines():
-            digest, name = line.split()
-            if hashlib.sha256(read("bin/gfg-open/" + name)).hexdigest() != digest:
-                raise ValueError("open generator checksum mismatch")
+        if any("/gfg-open/" in name for name in names):
+            raise ValueError("retired generator shipped in release")
         if not read("dist/index.js") or not read("main.py"):
             raise ValueError("missing frontend/backend entrypoint")
     print(f"Decky archive verified: version {version}, CRC, paths, entrypoints and native payloads")

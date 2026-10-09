@@ -1039,14 +1039,14 @@ class ExtremeTests(unittest.TestCase):
     def test_ladder_trades_resolution_for_real_frames(self):
         from gfg_plugin.governor_core import extreme_points
         keys = [p.key for p in extreme_points(90)]
-        self.assertEqual(keys[0], "23x3.913", "index 0 stays the (unused) last resort")
+        self.assertEqual(keys[0], "23x4", "fixed x4 is the Extreme last resort")
         i = keys.index
         self.assertLess(i("30x3"), i("33x2.75@80"))
         self.assertLess(i("45x2@80"), i("45x2@90"))
         self.assertLess(i("45x2@90"), i("45x2"))
         self.assertLess(i("45x2"), i("51x1.75@80"))
         self.assertEqual(keys[-1], "native90")
-        self.assertNotIn("24x3.75", keys, "never below 30 real")
+        self.assertIn("24x3.75", keys, "Extreme unlocks deeper quarter-step ratios")
 
     def test_starts_at_45_real_on_the_full_budget_and_never_searches_watts_down(self):
         ctl = self.make()
@@ -1101,7 +1101,7 @@ class ExtremeTests(unittest.TestCase):
         keys = [t[0] for t in trace]
         self.assertNotIn("40x2.25", keys)
         self.assertNotIn("36x2.5", keys)
-        self.assertEqual(ctl.point.key, "30x3", "straight to the deepest Extreme point")
+        self.assertEqual(ctl.point.key, "26x3.5", "straight to the highest newly unlocked point the real stream can hold")
 
     def test_unchanged_reprobes_preserve_the_stable_point_clock(self):
         ctl = self.make(scale=False)

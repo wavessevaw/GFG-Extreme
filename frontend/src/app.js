@@ -348,7 +348,7 @@ function MiniRing({ value, max, text, displayText, label, live, estimate, fixed 
     h("div", { className: "mlab" }, label));
 }
 
-function energySavingsText(cap, maximum = 15) {
+function energySavingsText(cap, maximum) {
   if (typeof cap !== "number" || !Number.isFinite(cap) || cap < 0 ||
       typeof maximum !== "number" || !Number.isFinite(maximum) || maximum <= 0) return "—";
   const stockMaximum = maximum;
@@ -357,11 +357,16 @@ function energySavingsText(cap, maximum = 15) {
 function observedEnergyText(power = {}) {
   const current = power.observed_tdp_w != null ? power.observed_tdp_w : power.current_tdp_w;
   const caps = [current, power.observed_fast_w].filter(v => typeof v === "number" && Number.isFinite(v) && v >= 0);
-  const candidate = power.gamescope_max_tdp_w != null ? power.gamescope_max_tdp_w : power.maximum_tdp_w;
-  const maximum = typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0 ? candidate : 15;
+  const maximum = [power.gamescope_max_tdp_w, power.maximum_tdp_w].find(v => typeof v === "number" && Number.isFinite(v) && v > 0);
   return caps.length ? energySavingsText(Math.max(...caps), maximum) : "—";
 }
-function FrameOsCard({ fo, power }) {
+function EnergyRing({ battery, displayText }) {
+  const charge = typeof battery === "number" && Number.isFinite(battery) && battery >= 0 && battery <= 100 ? battery : null;
+  const hue = charge == null ? 0 : 120 * Math.min(1, charge / 50);
+  return h(MiniRing, { value: charge, max: 100, displayText, label: "Energy", live: false,
+    fixed: charge == null ? "#5c5c66" : "hsl(" + hue + " 80% 52%)" });
+}
+function FrameOsCard({ fo, power, battery }) {
   const b = fo.benefit;
   if (!fo.enabled || !b) return null;
   const est = !!b.estimate;
@@ -373,9 +378,9 @@ function FrameOsCard({ fo, power }) {
     h("div", { className: "fos-head" }, h("span", null, "FRAME OS"),
       h("span", { className: "pill " + (est ? "would" : ab || level || "") }, est ? "ESTIMATE" : ab ? "A/B CHECK" : (level || "").toUpperCase())),
     h("div", { className: "rings" },
-      h(MiniRing, { value: resp, max: 50, text: resp == null ? "" : (resp >= 0 ? "−" : "+") + Math.abs(Math.round(resp)) + "%", label: "Response", live: level !== "rest", estimate: est }),
-      h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "−") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est }),
-      h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), displayText: observedEnergyText(power), label: "Energy", live: level === "rest", estimate: est })),
+      h(MiniRing, { value: resp, max: 50, text: resp == null ? "" : (resp >= 0 ? "−" : "+") + Math.abs(Math.round(resp)) + "%", label: "Response", live: level !== "rest", estimate: est || !(b.measured && b.measured.response) }),
+      h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "−") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est || !(b.measured && b.measured.frames) }),
+      h(EnergyRing, { battery, displayText: observedEnergyText(power) })),
     fo.mode === "act" ? h("div", { className: "abline" }, proofLine(fo.proof, b.measured)) : null,
     fo.mode === "act" && learnedLine(fo.game) ? h("div", { className: "abline" }, learnedLine(fo.game)) : null);
 }
@@ -399,7 +404,7 @@ function proofLine(proof, measured) {
 }
 
 // Last session as rings: averages for the whole game session, benefit rings when Frame OS ran.
-function SessionRings({ ls, target }) {
+function SessionRings({ ls, target, battery }) {
   const b = ls.frame_os_benefit;
   const signed = (v, good) => (v == null ? "" : (v >= 0 ? good : good === "+" ? "−" : "+") + Math.abs(Math.round(v)) + "%");
   const limit = ls.reference_w || 15;
@@ -411,7 +416,7 @@ function SessionRings({ ls, target }) {
     b ? h("div", { className: "rings", style: { marginTop: 10 } },
       h(MiniRing, { value: b.response, max: 50, text: signed(b.response, "−"), label: "Response", live: true, estimate: b.estimate }),
       h(MiniRing, { value: b.frames, max: 50, text: signed(b.frames, "+"), label: "Frames", live: true, estimate: b.estimate }),
-      h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "−" : "") + Math.abs(Math.round(b.energy)) + "%", displayText: energySavingsText(ls.avg_tdp_w, ls.energy_reference_w || ls.maximum_tdp_w || 15), label: "Energy", live: true, estimate: b.estimate })) : null);
+      h(EnergyRing, { battery, displayText: energySavingsText(ls.avg_tdp_w, ls.energy_reference_w || ls.maximum_tdp_w) })) : null);
 }
 
 // Extreme: the nine directions with what each really does in this session.
@@ -562,7 +567,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
         h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, (tdp / ((xt && x.ceiling && x.ceiling.ceiling_w) || pw.initial_tdp_w || pw.maximum_tdp_w || 15)) * 100) + "%" } }))) : null),
     xt && s.enabled ? h(ExtremeCard, { x, profile, refresh }) : null,
     !xt && s.enabled && s.extreme_offer && !offerHidden ? h(ExtremeOffer, { o: s.extreme_offer, onTry: () => setMode("extreme"), onHide: () => setOfferHidden(true) }) : null,
-    s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os, power: s.power }) : null,
+    s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os, power: s.power, battery: s.battery && s.battery.percent }) : null,
     h(Focusable, { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? undefined : toggle },
       h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 18 }), busy ? "WORKING…" : missing ? "INSTALL ENGINE" : s.enabled ? "STOP" : "RUN"),
     h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : missing ? "The GFG engine is not installed yet. One tap installs it." : "Target " + target + " FPS · " + (dev.reason || "picked automatically for this screen")),
@@ -574,7 +579,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
     h("div", { style: { height: 12 } }),
     h(FiltersCard, { profile, cfg, patch, go }),
     !s.session && s.last_session ? h("div", { className: "card" }, h("div", { className: "sec" }, "LAST SESSION"),
-      h(SessionRings, { ls: s.last_session, target }),
+      h(SessionRings, { ls: s.last_session, target, battery: s.battery && s.battery.percent }),
       h("div", { className: "kv", style: { marginTop: 12 } },
         h("span", null, "Played"), h("b", null, num(s.last_session.minutes, 0) + " min"),
         s.last_session.mode === "mixed" ? h("span", null, "Modes") : null, s.last_session.mode === "mixed" ? h("b", null, sessionModes(s.last_session)) : null,
@@ -810,7 +815,6 @@ function FgPage({ back, cfg, patch }) {
     h(Seg, { value: be, options: [["gfg", "GFG Engine"], ["optiscaler", "OptiScaler"], ["native", "In-game"], ["off", "Off"]], onChange: (v) => patch({ fg_backend: v }) }),
     h(Note, { quiet: true }, { gfg: "GFG Engine makes the extra frames. This is the only mode the Governor controls.", optiscaler: "The game's OptiScaler makes the frames. GFG only watches.", native: "The game's own frame generation (DLSS/FSR) is used. GFG only watches.", off: "No frame generation from GFG." }[be]),
     be === "gfg" ? h("div", null,
-      h("div", { className: "list" }, h(Toggle, { on: !!(cfg && cfg.open_frame_generation), title: "GFG Open generator", sub: "IN DEVELOPMENT — not recommended for regular play. May reduce real FPS or cause artifacts. Native 64-bit SDR only; restart after changing.", onChange: (v) => patch({ open_frame_generation: v }) })),
       h("div", { className: "sec" }, "SAVED MULTIPLIER"),
       h(Seg, { value: String(mult), options: [["2", "×2"], ["3", "×3"]], onChange: (v) => patch({ multiplier: Number(v) }) }),
       h(Note, { quiet: true }, "Used when the Governor is off. With the Governor on, it picks ×1 to ×3.75 itself (×4 only as a last resort) and never changes this value.")) :

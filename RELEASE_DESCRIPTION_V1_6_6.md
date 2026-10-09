@@ -1,24 +1,22 @@
-# GFG Extreme 1.6.6 — Open frame generation and Energy
+# GFG Extreme 1.6.6
 
-Release status: pre-release
+Official maintenance release based on the ordinary GFG renderer. GFG Open is retired: its generator, switch, shaders and build pipelines have been removed. Old experimental profile options are discarded and the launch wrapper is regenerated on upgrade. Restart running games after installing.
 
-> **IN DEVELOPMENT — NOT RECOMMENDED FOR REGULAR PLAY.** Field testing has exposed a significant real-FPS regression with GFG Open. Disable GFG Open generator and restart the game to use legacy FG. This build is for testing; device performance and image quality are unverified.
+## HUD corrections
+- ENERGY number shows the percentage of the device's maximum TDP allowance saved: a 20 W Gamescope/QAM maximum at a confirmed 15 W cap shows **25%**. The higher confirmed fast/slow cap is used; unknown limits show no invented saving. This is TDP headroom, not measured battery energy.
+- ENERGY arc shows the console's battery charge independently of that number: green at 50% and above, transitioning towards red below 50%. Unknown charge is empty and grey.
+- Charge, charging state, battery-time fallback, Frame OS measurement badges and presets are handled consistently. Current FPS replaces stale long-window values; brief missing samples expire, and game/profile changes reset the HUD.
+- Cached ring rendering refreshes once per second without rerendering unchanged values.
 
-This release introduces **GFG Open**, an independent frame generator with open compute shaders. Frame generation does not require Lossless.dll. The Vulkan transport uses pinned MAKO source; the frame synthesis algorithm is implemented separately.
+## Extreme and frame pacing
+- Includes the fixes accumulated after 1.6.5 for enforcing the inherited player/device Extreme ceiling during transitions, restoring CPU policies, rejecting unconfirmed render scales and separating current-session A/B evidence from historical results.
+- Unlocks the Extreme quarter-step fractional ladder through 4x (including 3.25x, 3.5x and 3.75x), with 4x as a fallback, and the full settings/booster controls.
+- Includes the native Frame OS late-frame pacing fix; the ordinary renderer remains the frame-generation backend.
+- Extreme and Frame OS Act retain their experimental status. Unsupported boosters are reported as unavailable rather than claimed to be active.
 
-- Static regions and confidently matched motion use a low-cost path.
-- Difficult regions receive selective refinement, with motion checked in both directions.
-- Occlusions and inconsistent contours use a single reliable source or the nearest real frame instead of blending mismatched trails.
-- Motion history is revalidated against the current frame pair and reset when a new context is created. The game's source resolution is preserved.
-- **Energy:** only the number changes. A 12 W cap out of a 15 W maximum displays **20%**. The arc, colour, opacity and position remain unchanged. This represents TDP-cap savings, not measured battery-energy savings.
-- Frame timing and Stall shield controls from the 1.6.6 development branch are included. They operate through Frame OS Act with native-policy acknowledgement.
+## Validation
+Backend regression tests, frontend smoke tests, native Frame OS/HUD integration checks and install-archive validation run before publication. Deck hardware image quality and game smoothness cannot be established by CI alone.
 
-**Enable:** Settings → Frame Generation → GFG Engine → **GFG Open generator**, then restart the game. The choice is saved per profile and is available in Extreme. This first version supports native 64-bit SDR games. Flatpak continues to use the existing generator and logs the fallback reason. LS1 scaling shaders may still require the DLL separately.
+Install **GFG-Extreme-v1_6_6.zip** with Decky's ZIP installer. This official 1.6.6 replaces the deleted prerelease that previously used the same version. If upgrading from a numerically newer experimental build, install this ZIP explicitly.
 
-**Status:** experimental. Validation covers the native Vulkan-layer build, SPIR-V compilation and execution on synthetic image sequences, Python tests, native layers and the interface. Improvements in FPS, GPU load and ghosting on Steam Deck have not yet been established by a controlled in-game comparison. Motion search is bounded; transparency, game-side TAA trails and fast motion may require falling back to a real frame. Extreme retains its 15 W ceiling, without overclocking or BIOS changes.
-
-The native payload was rebuilt against an older system-library baseline for Steam Runtime compatibility: required symbol versions are at most GLIBC 2.34 and GLIBCXX 3.4.29.
-
-**Install:** download **GFG-Extreme-v1_6_6.zip** and use Decky Loader → Install from zip. Restart the game to load the new native components.
-
-SHA-256: `abe362824c52a07a7e75a47007c17a0058e2500bfa3ba3eaed9afa3bb44e7c59` (also provided in SHA256SUMS.txt).
+SHA-256: `<sha256>`

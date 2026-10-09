@@ -8,6 +8,7 @@ cadence is unverified and must be confirmed on a Deck (see known limitations).
 from __future__ import annotations
 
 import os
+import math
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -51,26 +52,52 @@ def _fmt_multiplier(value: float) -> str:
 _EFFORT_SHORT = {"easy": "easy", "medium": "med", "hard": "hard", "nightmare": "nightmare"}
 
 
-def output_fps(status: Dict[str, Any]) -> Optional[float]:
-    """Displayed FPS including generated frames, when the renderer reports it."""
-    if not status.get("enabled"):
-        return None
+def _number(value: Any) -> Optional[float]:
+    return (float(value) if isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value) and value >= 0 else None)
+
+
+def telemetry_values(status: Dict[str, Any]) -> tuple:
+    """Use fresh interval samples in both HUD styles; do not average over old scenes."""
     tel = status.get("telemetry") or {}
-    tel = tel.get("summary") or tel  # service stores {"snapshot", "summary"}
-    return (tel.get("output") or {}).get("median")
+    snapshot = tel.get("snapshot")
+    if snapshot is not None:
+        age = _number(snapshot.get("sample_age_ms"))
+        latest = snapshot.get("latest") or {}
+        if age is None or age > 2500:
+            return None, None, None
+        real, out = _number(latest.get("real_fps")), _number(latest.get("output_fps"))
+        mult = out / real if real and out is not None else _number(latest.get("effective_multiplier"))
+    else:
+        summary = tel.get("summary") or tel
+        real = _number((summary.get("real") or {}).get("median"))
+        out = _number((summary.get("output") or {}).get("median"))
+        mult = out / real if real and out is not None else _number((summary.get("multiplier") or {}).get("median"))
+        if mult is None:
+            mult = _number((summary.get("latest") or {}).get("effective_multiplier"))
+    return real, out, mult
+
+
+def output_fps(status: Dict[str, Any]) -> Optional[float]:
+    """Fresh output FPS also works with a HUD-only (Governor-off) session."""
+    if not status.get("enabled") and (status.get("telemetry") or {}).get("snapshot") is None:
+        return None
+    return telemetry_values(status)[1]
 
 
 def frame_os_word(frame_os: Any) -> str:
-    """``FOS boost 45`` while Frame OS acts; ``FOS boost? 45`` when it only measures (would)."""
+    """Requested boost is labelled verifying; observe-only decisions carry a question mark."""
     if not isinstance(frame_os, dict) or not frame_os.get("enabled"):
         return ""
     if not (frame_os.get("telemetry") or {}).get("live"):
         return ""
     decision = frame_os.get("decision") or {}
-    level, real = decision.get("level"), decision.get("real_hz")
-    if not level or not isinstance(real, (int, float)):
+    level, real = decision.get("level"), _number(decision.get("real_hz"))
+    if level not in ("boost", "calm", "rest") or real is None:
         return ""
-    return f"FOS {level}{'' if frame_os.get('acting') else '?'} {int(real)}"
+    # A requested boost is not measured delivery; the ring HUD verifies it separately.
+    label = "verifying" if level == "boost" and frame_os.get("acting") else level
+    return f"FOS {label}{'' if frame_os.get('acting') else '?'} {round(real)}"
 
 
 def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
@@ -79,18 +106,9 @@ def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
     The lead number is the output FPS with generated frames; the real (rendered)
     FPS follows the multiplier in brackets.
     """
-    if not status.get("enabled"):
+    if not status.get("enabled") and output_fps(status) is None:
         return "GFG off"
-    tel = status.get("telemetry") or {}
-    tel = tel.get("summary") or tel  # service stores {"snapshot", "summary"}
-    real = (tel.get("real") or {}).get("median")
-    out = (tel.get("output") or {}).get("median")
-    # The multiplier must agree with the two medians next to it.  The latest
-    # sample alone reads x1 while a menu or pause stops generation.
-    if real and out is not None:
-        mult = out / real
-    else:
-        mult = (tel.get("multiplier") or {}).get("median") or (tel.get("latest") or {}).get("effective_multiplier")
+    real, out, mult = telemetry_values(status)
     parts = [f"{round(out)} FPS"] if out is not None else []
     parts.append(f"x{_fmt_multiplier(mult)}" if mult else "GFG")
     if real is not None and out is not None:
@@ -103,26 +121,28 @@ def status_line(status: Dict[str, Any], preset: str = "standard") -> str:
         # A requested point is not renderer evidence. Keep the last confirmed scale,
         # or show unknown while the first request is still being verified.
         pct = (ext.get("applied") or {}).get("render_pct")
-        parts.append(f"sc{int(pct)}" if isinstance(pct, (int, float)) else "sc?")
+        parts.append(f"sc{round(pct)}" if _number(pct) is not None else "sc?")
         parts.append("EXT")
     else:
-        parts.append(f"sc{int(point.get('render_scale_pct', 100))}")
+        pct = _number(point.get("render_scale_pct", 100))
+        parts.append(f"sc{round(pct)}" if pct is not None else "sc?")
     power = status.get("power") or {}
-    tdp = power.get("observed_tdp_w")
+    tdp = _number(power.get("observed_tdp_w"))
     if tdp is None:
-        tdp = power.get("current_tdp_w")
-    draw = power.get("draw_w")
+        tdp = _number(power.get("current_tdp_w"))
+    draw = _number(power.get("draw_w"))
     if tdp is not None and draw is not None:
         # Limit and measured APU draw side by side: the limit alone proves nothing.
         parts.append(f"TDP {round(tdp)}W  APU {round(draw)}W")
     else:
         parts.append(f"{round(tdp)}W" if tdp is not None else "TDPn/a")
-    left = format_minutes((status.get("battery") or {}).get("minutes_left"))
+    minutes = _number((status.get("battery") or {}).get("minutes_left"))
+    left = format_minutes(round(minutes) if minutes is not None else None)
     if left:
         parts.append(left)
     effort = (status.get("effort") or {}).get("level")
     if effort:
-        parts.append(_EFFORT_SHORT[effort])
+        parts.append(_EFFORT_SHORT.get(effort, str(effort)))
     if (status.get("diagnosis") or {}).get("thermal") == "hot":
         parts.append("HOT")
     fos = frame_os_word(status.get("frame_os"))
