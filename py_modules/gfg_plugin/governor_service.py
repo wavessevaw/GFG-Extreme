@@ -2600,7 +2600,10 @@ class GovernorService:
         else:
             self._extreme_ceiling = None
         setter = getattr(power, "set_ceiling_w", None)
-        if callable(setter):
+        strict_setter = getattr(power, "set_strict_ceiling_w", None)
+        if self._extreme_ceiling and callable(strict_setter):
+            strict_setter(self._extreme_ceiling["ceiling_w"])
+        elif callable(setter):
             setter(self._extreme_ceiling["ceiling_w"] if self._extreme_ceiling
                    else BudgetController.EMERGENCY_CEILING_W)
         return {"min": values.get("minimum_tdp_w"), "max": top}

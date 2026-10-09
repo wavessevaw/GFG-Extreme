@@ -7,7 +7,7 @@
 - Runtime-state reads remain bounded even if a file grows during the read.
 
 ### Power-control compatibility
-An explicit PPT ceiling requires a verified writer for both fast and slow caps. GFG uses its sysfs/root-helper path for these writes. A manager-only installation that cannot control both channels declines the write instead of risking a short boost above the limit.
+Extreme's strict PPT ceiling requires a verified writer for both fast and slow caps. GFG uses its sysfs/root-helper path for these writes. A manager-only installation that cannot control both channels declines Extreme's write instead of risking a short boost above the limit. Other modes retain the SteamOS Manager path.
 
 ### Validation
 Regression coverage includes fast/slow ceilings, fractional limits, restore, hardware minimums, manager-only refusal, container identity, PID reuse, unrelated runtime records and requested/applied HUD state. Automated release checks cover the backend, native Frame OS/HUD, frontend and packaged archive. Physical Deck validation is not claimed.

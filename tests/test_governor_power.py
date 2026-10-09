@@ -146,7 +146,7 @@ class GovernorPowerActuatorTests(unittest.TestCase):
             manager = Manager()
             actuator = SteamDeckPowerActuator(drm_root=root / "drm", hwmon_root=root / "hwmon",
                                              manager=manager, helper=lambda: None)
-            actuator.discover(); actuator.claim(); actuator.set_ceiling_w(12.9)
+            actuator.discover(); actuator.claim(); actuator.set_strict_ceiling_w(12.9)
             self.assertTrue(actuator.set_tdp_w(30)["success"])
             self.assertEqual(manager.calls, [], "integer-only manager can transiently overshoot")
             self.assertEqual(int((h / "power1_cap").read_text()), 12_900_000)
@@ -164,7 +164,7 @@ class GovernorPowerActuatorTests(unittest.TestCase):
             h = self.make_hwmon(root)
             actuator = SteamDeckPowerActuator(drm_root=root / "drm", hwmon_root=root / "hwmon",
                                              manager=Manager(), helper=lambda: None, access=lambda *_: False)
-            actuator.discover(); actuator.claim(); actuator.set_ceiling_w(15)
+            actuator.discover(); actuator.claim(); actuator.set_strict_ceiling_w(15)
             self.assertFalse(actuator.set_tdp_w(30)["success"])
             self.assertEqual(int((h / "power1_cap").read_text()), 18_000_000)
             self.assertEqual(int((h / "power2_cap").read_text()), 15_000_000)

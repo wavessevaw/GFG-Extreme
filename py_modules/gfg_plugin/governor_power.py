@@ -51,6 +51,7 @@ class PowerControlState:
     fast_max_uw: Optional[int] = None
     slow_max_uw: Optional[int] = None
     ceiling_override_uw: Optional[int] = None
+    strict_ceiling: bool = False
     method: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -331,7 +332,7 @@ class SteamDeckPowerActuator:
         assert self._fast_path is not None and self._slow_path is not None
         manager = self.manager if self.state.method == "steamos-manager" else None
         direct = self._direct_possible()
-        if manager is not None and not exact and self.state.ceiling_override_uw is not None:
+        if manager is not None and not exact and self.state.strict_ceiling:
             # Steam's integer TdpLimit API does not promise the fastPPT cap. A strict
             # ceiling requires control of both channels, without a transient overshoot.
             if not direct:
@@ -385,15 +386,21 @@ class SteamDeckPowerActuator:
         self.state.expected_fast_uw = fast
         return None
 
-    def set_ceiling_w(self, watts: Optional[float]) -> None:
-        """Explicit session ceiling (budget mode); None returns to the claimed caps."""
-        if watts is None:
-            self.state.ceiling_override_uw = None
-            return
-        value = int(round(float(watts) * 1_000_000.0))
-        if self.state.slow_max_uw is not None:
-            value = min(value, self.state.slow_max_uw)
-        self.state.ceiling_override_uw = value
+    def set_ceiling_w(self, watts: Optional[float], *, strict: bool = False) -> None:
+        """Budget ceiling; strict (Extreme) requires verified control of both PPT caps."""
+        with self._lock:
+            self.state.strict_ceiling = bool(strict and watts is not None)
+            if watts is None:
+                self.state.ceiling_override_uw = None
+                return
+            value = int(round(float(watts) * 1_000_000.0))
+            if self.state.slow_max_uw is not None:
+                value = min(value, self.state.slow_max_uw)
+            self.state.ceiling_override_uw = value
+
+    def set_strict_ceiling_w(self, watts: float) -> None:
+        """Extreme's stock-power contract, separate from manager-compatible budgets."""
+        self.set_ceiling_w(watts, strict=True)
 
     def set_tdp_w(self, watts: float) -> Dict[str, Any]:
         with self._lock:

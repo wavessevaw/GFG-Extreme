@@ -49,7 +49,7 @@ class CeilingTests(unittest.TestCase):
             act = SteamDeckPowerActuator(drm_root=root / "drm", hwmon_root=root / "hwmon")
             self.assertTrue(act.discover()["available"])
             act.claim()                          # an unlocked BIOS default of 20 W
-            act.set_ceiling_w(ex.power_ceiling(20.0, 25.0)["ceiling_w"])
+            act.set_strict_ceiling_w(ex.power_ceiling(20.0, 25.0)["ceiling_w"])
             act.set_tdp_w(19.0)                  # e.g. an Act boost on top of 15 W
             self.assertEqual(int((hwmon / "power2_cap").read_text()), 15_000_000)
             self.assertEqual(int((hwmon / "power1_cap").read_text()), 15_000_000,

@@ -1129,12 +1129,17 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertTrue(self.svc._budget_can_scale({"scale_capable": True}), "Reset what GFG learned")
 
     def test_extreme_scale_acknowledged_from_the_renderer_runtime_state(self):
+        # Runtime evidence belongs to a real process of this launch, not an arbitrary PID.
+        pid = os.getpid()
+        ticks = int(Path(f"/proc/{pid}/stat").read_text().rpartition(")")[2].split()[19])
+        self.inspector.info["pids"] = [pid]
         self.start_extreme()
         point = self.request_scaled()
         folder = Path(self.cfg.config_dir) / "governor-overlay" / "runtime-state"
         folder.mkdir(parents=True, exist_ok=True)
         (folder / "1-2-3.json").write_text(json.dumps({
-            "schema_version": 5, "pid": 1, "updated_unix_ms": (time.time() + 1) * 1000,
+            "schema_version": 5, "pid": pid, "process_start_ticks": ticks,
+            "updated_unix_ms": (time.time() + 1) * 1000,
             "spatial_scaling": {"active": True, "source_width": 1024, "source_height": 640,
                                 "presentation_width": 1280, "presentation_height": 800,
                                 "effective_factor": 1.25, "active_method": "ls1"}}))
