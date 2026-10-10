@@ -209,6 +209,7 @@ var rpc = {
   setPowerSplit: safeCallable("set_governor_power_split"),
   setMode: safeCallable("set_governor_mode"),
   setAutopilotPreference: safeCallable("set_governor_autopilot_preference"),
+  setAutopilotShading: safeCallable("set_governor_autopilot_shading"),
   setAutoFlow: safeCallable("set_governor_auto_flow"),
   setExtremeSharpness: safeCallable("set_governor_extreme_sharpness"),
   setExtremeActConsent: safeCallable("set_governor_extreme_act_consent"),
@@ -1002,7 +1003,15 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
         } catch (e) {
         }
         refresh();
-      } })
+      } }),
+      h(Toggle, { on: !!s.autopilot_shading_allowed, title: "Try Half Rate Shading", sub: "Optional 2\xD72 shading experiment when GPU-limited. May blur text and game details. GFG measures FPS and restores it on failure or Stop.", onChange: async (v) => {
+        try {
+          await rpc.setAutopilotShading(profile, v);
+        } catch (e) {
+        }
+        refresh();
+      } }),
+      s.autopilot_shading_allowed ? h(Note, { quiet: true }, "Shading: " + ((s.autopilot_shading || {}).mode || "unavailable") + " \xB7 Steam RADV dynamic VRS (physical Deck verification pending).") : null
     ) : null,
     health ? h("div", { className: "hint" }, health) : null,
     h("div", { style: { height: 12 } }),
