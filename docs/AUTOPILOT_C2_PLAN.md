@@ -1,17 +1,17 @@
-# C2: one tool at a time
+# C2 against the specification
 
-The coordinator names at most one of two tools.
+`coordinator.plan` is the decision entry from section 5. It is pure.
 
-Power cap steps one owned watt toward the verified ceiling, requires readback,
-then restores. It does not keep the winner. `_autopilot_power_enabled` defaults
-off.
+Step A drops candidates that exceed the verified power ceiling, go under the
+user render-scale floor, need an unconfirmed renderer capacity, boost CPU for a
+GPU limit, cut scale for a CPU limit, or start Frame OS Act without consent.
+Step B keeps the non-dominated point. A tie, or a gain that does not pay for
+its watts, is HOLD. A drop below the last verified delivery is RECOVER, not a
+new trial. Strategy changes wait out the dwell unless delivery is starving or
+the limit is thermal.
 
-Flow scale is not a new writer. The existing flow tuner is the only code that
-may change it, and only after its own locked point and ACK gates.
-`_autopilot_flow_enabled` defaults off. With no locked point it does not write.
+`explain` reports the reason and leaves confirmed gain, input latency and
+visual quality unavailable. Nothing is invented.
 
-The two flags cannot be on together. While either is on, Battery, Balanced,
-Quality and Extreme writers do not run in that iteration. A busy slot rejects
-the other tool.
-
-Neither flag is a user-facing mode. Hardware: NOT_TESTED. Checks are SIMULATED.
+The power and flow flags in the Governor remain off and are not this decision.
+They are not a user mode. Hardware: NOT_TESTED. These checks are SIMULATED.
