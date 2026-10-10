@@ -3063,7 +3063,8 @@ class GovernorService:
         if self._autopilot_power_enabled or self._autopilot_flow_enabled:
             # Keep sampling and profile restore, but do not let the old mode writers run.
             await self._poll_autopilot_observation(profile)
-            if (enabled and self._autopilot_power_enabled and not self._autopilot_flow_enabled
+            if (enabled and self._mode(profile) == "autopilot"
+                    and self._autopilot_power_enabled and not self._autopilot_flow_enabled
                     and not self.power.state.owned):
                 await self._budget_power(profile)
             return
