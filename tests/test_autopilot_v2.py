@@ -21,7 +21,8 @@ def measured(**kwargs):
 def view(**kwargs):
     base = dict(real_fps=45, output_fps=90, frametime_p95_ms=22, target_fps=90,
                 gpu_busy=40, cpu_busy=30, gpu_mhz=1200, temp_c=55, draw_w=10,
-                ceiling_w=15, fresh=True, samples=8, gpu_clock_available=True, preference="auto")
+                ceiling_w=15, fresh=True, samples=8, gpu_clock_available=True, preference="auto",
+                battery_pct=80, battery_minutes=120, tdp_readable=True)
     base.update(kwargs)
     return View(**base)
 
@@ -127,10 +128,27 @@ class HoldAndTargetTests(unittest.TestCase):
 
     def test_the_display_target_does_not_flap(self):
         policy = TargetPolicy()
-        self.assertEqual(policy.update(90, 45, 90, "auto", True), 90)
-        self.assertEqual(policy.update(90, 20, 40, "auto", True), 90)
-        self.assertEqual(policy.update(90, 20, 40, "auto", True), 90)
-        self.assertEqual(policy.update(90, 20, 40, "auto", True), 60)
+        def observe(real, output, first, last, now):
+            return policy.update(90, real, output, "auto", True,
+                                 sample_seq=last, first_sample_seq=first, span_s=4, now=now)
+        self.assertEqual(observe(45, 90, 1, 10, 0), 90)
+        self.assertEqual(observe(20, 40, 11, 20, 10), 90)
+        # Duplicate or overlapping sliding windows are not independent misses.
+        self.assertEqual(observe(20, 40, 11, 20, 11), 90)
+        self.assertEqual(observe(20, 40, 12, 21, 12), 90)
+        self.assertEqual(observe(20, 40, 22, 30, 20), 90)
+        self.assertEqual(observe(20, 40, 31, 40, 30), 60)
+        # A game delivering a steady 60 under its new cap cannot prove 90 FPS
+        # without a guarded retry. Wait 90 s, then require fresh healthy windows.
+        self.assertEqual(observe(30, 60, 41, 50, 110), 60)
+        self.assertEqual(observe(30, 60, 51, 60, 120), 60)
+        self.assertEqual(observe(30, 60, 61, 70, 130), 60)
+        self.assertEqual(observe(30, 60, 71, 80, 140), 90)
+        # A failed retry backs off; it must not immediately bounce to 90 again.
+        observe(20, 40, 81, 90, 150)
+        observe(20, 40, 91, 100, 160)
+        self.assertEqual(observe(20, 40, 101, 110, 170), 60)
+        self.assertEqual(observe(30, 60, 111, 120, 210), 60)
 
 
 class HudTests(unittest.TestCase):
@@ -152,6 +170,42 @@ class HudTests(unittest.TestCase):
         green = (46, 170, 96)
         rings = [item for item in items if item.get("kind") == "ring"]
         self.assertTrue(all(item["rgb"] == green for item in rings))
+
+
+class ColorAndModeRegressionTests(unittest.TestCase):
+    def test_smoothness_compares_real_frametime_with_real_cadence(self):
+        from gfg_plugin.autopilot.planner import decide
+        stable = view(real_fps=45, output_fps=90, target_fps=90,
+                      frametime_p95_ms=22.2, multiplier=2, multiplier_confirmed=True,
+                      preference="smoothness")
+        self.assertEqual(decide(stable).action, "HOLD")
+
+    def test_battery_and_power_tones_are_not_always_green(self):
+        self.assertEqual(tones(view(battery_pct=5))["battery"], "red")
+        self.assertEqual(tones(view(battery_pct=17))["battery"], "yellow")
+        self.assertEqual(tones(view(battery_pct=None))["battery"], "grey")
+        self.assertEqual(tones(view(tdp_external_change=True))["tdp"], "yellow")
+        self.assertEqual(tones(view(tdp_error="restore failed"))["tdp"], "red")
+        self.assertEqual(tones(view(tdp_readable=False))["tdp"], "grey")
+
+    def test_mode_switch_releases_the_autopilot_plan_lock(self):
+        import test_governor_runtime as legacy
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            svc._settings.setdefault("profiles", {}).setdefault("game", {})["enabled"] = True
+            svc.set_mode("game", "autopilot")
+            svc._active_profile = "game"
+            svc._autopilot_plan = "hold"
+            svc._status["autopilot"] = {"enabled": True, "active": True}
+            self.assertTrue(svc._autopilot_blocks_planned())
+            svc.set_mode("game", "quality")
+            self.assertFalse(svc._autopilot_blocks_planned())
+            self.assertEqual(svc._autopilot_plan, "off")
+            self.assertFalse(svc._status["autopilot"]["active"])
+        finally:
+            fixture.tearDown()
 
 
 class MigrationTests(unittest.TestCase):
@@ -243,24 +297,29 @@ class GoalAndPauseTests(unittest.TestCase):
             svc._settings.setdefault("profiles", {}).setdefault("game", {})["enabled"] = True
             svc.set_mode("game", "autopilot")
             svc._budget = BudgetController(target_output_fps=90, now=0.0)
-            held = self._summary(45, 90)
-            bad = self._summary(20, 40)
-            self.assertEqual(svc._governor_target("game", 90, held), 90)
-            self.assertEqual(svc._governor_target("game", 90, bad), 90)
-            self.assertEqual(svc._governor_target("game", 90, bad), 90)
-            self.assertEqual(svc._governor_target("game", 90, bad), 60)
-            self.assertEqual(svc._status.get("target_output_fps"), None)
-            target = svc._governor_target("game", 90, bad)
-            svc._status["target_output_fps"] = target
+            now = {"value": 0}
+            svc._clock = lambda: now["value"]
+
+            def evidence(real, output, first, last, time):
+                now["value"] = time
+                row = self._summary(real, output)
+                row["first_sample_seq"], row["last_sample_seq"] = first, last
+                return svc._governor_target("game", 90, row)
+
+            self.assertEqual(evidence(45, 90, 1, 10, 0), 90)
+            self.assertEqual(evidence(20, 40, 11, 20, 10), 90)
+            self.assertEqual(evidence(20, 40, 21, 30, 20), 90)
+            self.assertEqual(evidence(20, 40, 31, 40, 30), 60)
+            self.assertEqual(evidence(20, 40, 31, 40, 31), 60)
+            # The chosen goal is forwarded by _iteration_core into _budget_step
+            # and must replace any BudgetController made for the previous goal.
+            target = evidence(20, 40, 31, 40, 32)
             self.assertNotEqual(svc._budget.target_output_fps, target)
-            svc._evaluation_after_seq = svc.observer.sample_seq
-            svc._budget = BudgetController(target_output_fps=target, now=1.0)
+            svc._budget = BudgetController(target_output_fps=target, now=32)
             self.assertEqual(svc._budget.target_output_fps, 60)
-            self.assertEqual(svc._status["target_output_fps"], 60)
-            good = self._summary(45, 90)
-            self.assertEqual(svc._governor_target("game", 90, good), 60)
-            self.assertEqual(svc._governor_target("game", 90, good), 60)
-            self.assertEqual(svc._governor_target("game", 90, good), 90)
+            self.assertEqual(evidence(30, 60, 41, 50, 130), 60)
+            self.assertEqual(evidence(30, 60, 51, 60, 140), 60)
+            self.assertEqual(evidence(30, 60, 61, 70, 150), 90)
         finally:
             fixture.tearDown()
 
