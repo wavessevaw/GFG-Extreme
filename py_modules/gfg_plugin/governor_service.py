@@ -50,6 +50,7 @@ from .autopilot.adapters import ObservationMonitor
 from .autopilot.experiments import SingleFlight
 from .autopilot.perception import perceive
 from .autopilot.policy import decide
+from .autopilot.power_trial import PowerTrial
 from .host_sensors import HostSensors, diagnose
 from .governor_restore import power_restore_error, cpu_restore_error
 from . import extreme as extreme_policy
@@ -142,9 +143,12 @@ class GovernorService:
         self.sensors = HostSensors()
         self.autopilot_observation = ObservationMonitor()
         self._autopilot_slot = SingleFlight()
+        self._autopilot_power_enabled = False
+        self._autopilot_power_view: Dict[str, Any] = {}
         self.game_models = GameModelStore(self.configuration.config_dir / "gfg-game-models.json")
         self.power = SteamDeckPowerActuator(manager=SteamOSManagerTdp(home=os.environ.get("HOME")))
         self.power.journal = self._journal_power
+        self._autopilot_power = PowerTrial(lambda: self.power, self._autopilot_slot)
         # Smart power split (1.5): the CPU clock cap that gives a GPU-bound game's watts to the GPU
         self.cpu = CpuFreqActuator(marker=self.configuration.runtime_state_dir / "cpu-cap.json")
         self.cpu.journal = self._journal_power
@@ -2325,6 +2329,9 @@ class GovernorService:
         if self._restoration_blocked():
             self._publish_restore_pending()
             return
+        if self._autopilot_power_enabled:
+            await self._run_autopilot_power()
+            return
         try:
             await self._sync_flow(profile=self._status.get("profile") or "")
         except Exception as error:
@@ -2359,7 +2366,12 @@ class GovernorService:
             await asyncio.to_thread(self._sync_hud, profile)
 
     def _update_autopilot_observation(self) -> None:
-        """Read existing caches only; C1 never configures any actuator."""
+        """Read caches and the current power status. This method does not write."""
+        try:
+            power = self.power.status()
+        except Exception:
+            power = None
+        self._autopilot_power_view = power if isinstance(power, dict) else {}
         self.autopilot_observation.update(
             now=self._clock(), stream=self.observer.autopilot_observations,
             generation=self.observer.session_generation,
@@ -2372,22 +2384,45 @@ class GovernorService:
             runtime_state=self._status.get("state"),
             restore_pending=bool(self._restore_pending) or self._actuator_restore_blocked(),
             poll_error=((self._status.get("telemetry") or {}).get("snapshot") or {}).get("last_poll_error"),
+            power=self._autopilot_power_view,
         )
         plan = self._autopilot_plan_status()
         if plan["release_slot"] and self._autopilot_slot.busy:
             self._autopilot_slot.abort(plan["reason"])
 
     def _autopilot_plan_status(self):
-        """The C2 decision. It cannot arm a tool or write an actuator."""
+        """The C2 decision. Publishing it does not arm or write an actuator."""
         now = self._clock()
         perception = perceive(self.autopilot_observation.snapshot, now)
         slot = self._autopilot_slot
+        view = self._autopilot_power_view
+        ceiling = view.get("ceiling_tdp_w") if view.get("owned") is True else None
         return decide(
             perception, now=now,
             restore_pending=self._restoration_blocked() or perception.reason == "restore-pending",
-            flow_available=False, power_ceiling_w=None,
+            flow_available=False, power_ceiling_w=ceiling,
             slot_busy=slot.busy, slot_knob=slot.knob,
         ).public()
+
+    async def _run_autopilot_power(self) -> None:
+        """Apply at most one owned power step. Off unless the development flag is set."""
+        if not self._autopilot_power_enabled:
+            return
+        now = self._clock()
+        perception = perceive(self.autopilot_observation.snapshot, now)
+        view = self._autopilot_power_view
+        decision = decide(
+            perception, now=now, restore_pending=False, flow_available=False,
+            power_ceiling_w=view.get("ceiling_tdp_w") if view.get("owned") is True else None,
+            slot_busy=self._autopilot_slot.busy, slot_knob=self._autopilot_slot.knob,
+        )
+        latest = self.autopilot_observation.snapshot.samples[-1:]
+        window = {"output": latest[0].output_fps, "real": latest[0].real_fps} if latest else None
+        outcome = await asyncio.to_thread(self._autopilot_power.step, decision, window, now=now)
+        self._status["autopilot_power"] = outcome
+        if outcome.get("restore_failed"):
+            self._actuator_restore_errors["power"] = str(outcome.get("reason") or "power restore failed")
+            self._publish_restore_pending()
 
     async def _sync_flow(self, profile: str) -> None:
         """Rare isolated resource trials; Act, CPU probes and stale data opt out."""
@@ -2505,6 +2540,9 @@ class GovernorService:
         await self._retry_actuator_restores()
         if self._restoration_blocked():
             self._publish_restore_pending()
+            return
+        if self._autopilot_power_enabled:
+            # Exclusive: Battery/Balanced/Quality/Extreme must not write during this trial.
             return
         await asyncio.to_thread(self._standby_overlays_sync)
         profile, response = await asyncio.to_thread(self.configuration.get_current_profile_snapshot)
