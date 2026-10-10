@@ -88,13 +88,22 @@ class AuditTraceTests(unittest.TestCase):
         self.assertIsNone(sample.output_fps)
         self.assertEqual(sample.seq, 101)
 
+        # The single actual current_base_fps/current_output_fps pair in the
+        # v1.7.1 field log is from adaptive-ramp-accepted, an ignored operation.
+        before = len(stream.samples)
+        stream.consume({
+            "operation": "adaptive-ramp-accepted", "context": "sanitized-frame-stream",
+            "current_base_fps": "43.2997", "current_output_fps": "86.5994",
+        }, 101.5, 102)
+        self.assertEqual(len(stream.samples), before)
+
         stream.consume({
             "operation": "fixed-plan", "context": "sanitized-frame-stream",
             "measured_base_fps": "30.0", "observed_output_fps": "88.5",
-        }, 102.0, 102)
+        }, 102.0, 103)
         sample = stream.samples[-1]
         self.assertEqual((sample.real_fps, sample.output_fps), (30.0, 88.5))
-        self.assertEqual(sample.seq, 102)
+        self.assertEqual(sample.seq, 103)
 
     def test_session_recorder_exports_only_trace_from_the_recording(self):
         async def run(tmp):
