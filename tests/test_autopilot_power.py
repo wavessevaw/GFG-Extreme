@@ -402,3 +402,20 @@ class ServicePowerGateTests(unittest.TestCase):
             self.assertEqual(svc._mode("game"), mode)
         finally:
             fixture.tearDown()
+
+    def test_autopilot_mode_clears_a_leftover_disabled_state(self):
+        import test_governor_runtime as legacy
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            svc._settings.setdefault("profiles", {}).setdefault("game", {})["enabled"] = True
+            svc.set_mode("game", "autopilot")
+            svc._active_profile = "game"
+            svc._status.update({"state": "DISABLED", "reason": "governor-disabled"})
+            asyncio.run(svc._iteration_core())
+            self.assertEqual(svc._status["state"], "OBSERVE_ONLY")
+            self.assertEqual(svc._status["reason"], "autopilot-observe")
+            self.assertNotEqual(svc._status["state"], "DISABLED")
+        finally:
+            fixture.tearDown()

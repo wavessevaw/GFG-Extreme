@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.7.0).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.7.1).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -73,7 +73,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, confirmation_evidence, matches,
 )
 
-VERSION = "1.7.0"
+VERSION = "1.7.1"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -3061,6 +3061,13 @@ class GovernorService:
         if await self._retry_rollback(profile):
             return
         if self._autopilot_power_enabled or self._autopilot_flow_enabled:
+            # A previous Stop left DISABLED. That state blocks every receipt even
+            # after Autopilot is the selected mode and the profile is enabled.
+            if enabled and (
+                self._status.get("state") == "DISABLED"
+                or self._status.get("reason") == "governor-disabled"
+            ):
+                self._status.update({"state": "OBSERVE_ONLY", "reason": "autopilot-observe"})
             # Keep sampling and profile restore, but do not let the old mode writers run.
             await self._poll_autopilot_observation(profile)
             if (enabled and self._mode(profile) == "autopilot"
