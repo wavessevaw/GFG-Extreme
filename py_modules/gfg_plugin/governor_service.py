@@ -47,10 +47,10 @@ from .frame_os.memory import GameMemory, seed_pairs
 from .frame_os.proof import METRICS as FRAME_OS_METRICS
 from .package_paths import PLUGIN_ROOT
 from .autopilot.adapters import ObservationMonitor
+from .autopilot.apply import ScheduledPower
 from .autopilot.experiments import SingleFlight
 from .autopilot.perception import perceive
-from .autopilot.policy import Knob, decide
-from .autopilot.power_trial import PowerTrial
+from .autopilot.policy import Action, Knob, decide
 from .host_sensors import HostSensors, diagnose
 from .governor_restore import power_restore_error, cpu_restore_error
 from . import extreme as extreme_policy
@@ -149,7 +149,9 @@ class GovernorService:
         self.game_models = GameModelStore(self.configuration.config_dir / "gfg-game-models.json")
         self.power = SteamDeckPowerActuator(manager=SteamOSManagerTdp(home=os.environ.get("HOME")))
         self.power.journal = self._journal_power
-        self._autopilot_power = PowerTrial(lambda: self.power, self._autopilot_slot)
+        self._autopilot_power = ScheduledPower(lambda: self.power)
+        self._autopilot_seq = 0
+        self._autopilot_seq = 0
         # Smart power split (1.5): the CPU clock cap that gives a GPU-bound game's watts to the GPU
         self.cpu = CpuFreqActuator(marker=self.configuration.runtime_state_dir / "cpu-cap.json")
         self.cpu.journal = self._journal_power
@@ -2417,8 +2419,19 @@ class GovernorService:
             slot_busy=self._autopilot_slot.busy, slot_knob=self._autopilot_slot.knob,
         )
         latest = self.autopilot_observation.snapshot.samples[-1:]
-        window = {"output": latest[0].output_fps, "real": latest[0].real_fps} if latest else None
-        outcome = await asyncio.to_thread(self._autopilot_power.step, decision, window, now=now)
+        sample = latest[0] if latest else None
+        self._autopilot_seq += 1
+        view = self._autopilot_power_view
+        outcome = await asyncio.to_thread(
+            self._autopilot_power.step, now=now, seq=self._autopilot_seq,
+            real=None if sample is None else sample.real_fps,
+            output=None if sample is None else sample.output_fps,
+            context=self.autopilot_observation.snapshot.context or "session",
+            ceiling_w=view.get("ceiling_tdp_w") if view.get("owned") is True else None,
+            owned=view.get("owned") is True,
+            allow=decision.action is Action.TRIAL and decision.knob is Knob.POWER_CAP,
+            other_busy=self._autopilot_slot.busy and self._autopilot_slot.knob is not Knob.POWER_CAP,
+        )
         self._status["autopilot_power"] = outcome
         if outcome.get("restore_failed"):
             self._actuator_restore_errors["power"] = str(outcome.get("reason") or "power restore failed")
