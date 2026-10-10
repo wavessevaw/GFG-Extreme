@@ -2606,6 +2606,17 @@ class GovernorService:
         if self._menu_covering():
             if self._menu_since is None:
                 self._menu_since = self._clock()
+            arb = self._autopilot_arbiter
+            if arb.state in ("SETTLE", "VERIFY") and arb.tool in ("half-rate-shading", "gpu-clock"):
+                # The menu suppresses generated frames. Never evaluate an
+                # actuator on menu-contaminated measurements or retain VRS.
+                tool = arb.tool
+                arb._reject(self._clock(), "steam-menu-interrupted-trial")
+                restored = (await asyncio.to_thread(self._restore_autopilot_shading, "steam-menu-open")
+                            if tool == "half-rate-shading" else
+                            await asyncio.to_thread(self._restore_autopilot_gpu, "steam-menu-open"))
+                self._event("autopilot-trial-interrupted", "steam-menu-open",
+                            profile=profile, tool=tool, restored=restored)
             self._status.update({"state": "PAUSED", "reason": "steam-menu-open"})
             return
         if self._menu_since is not None:
@@ -3108,6 +3119,40 @@ class GovernorService:
                 self._restore_autopilot_gpu("session-change")
         self._autopilot_launch = key
 
+    def _autopilot_trial_ready(self, summary: Dict[str, Any], target: int) -> tuple[bool, str]:
+        """Require a confirmed, uninterrupted game window for actuator trials.
+
+        The Deck log of 2026-10-11 showed two Half Rate Shading trials while
+        Steam's QAM was open: 30x3 output collapsed to 42 FPS and the second
+        trial began with NO applied point. Such windows are not experiments.
+        """
+        if self._menu_since is not None or self._menu_covering():
+            return False, "steam-menu-open"
+        point = self._point
+        if self._request is not None or self._point_mode != "applied" or not isinstance(point, dict):
+            return False, "point-not-confirmed"
+        if int(point.get("target_output_fps") or 0) != int(target):
+            return False, "point-target-changed"
+        if int(summary.get("samples") or 0) < 8 or float(summary.get("sample_span_s") or 0) < 8.0:
+            return False, "baseline-too-short"
+        floor = int(self._evaluation_after_seq or 0)
+        first = summary.get("first_sample_seq")
+        if not isinstance(first, int) or first <= floor:
+            return False, "baseline-overlaps-transition"
+        real = (summary.get("real") or {}).get("median")
+        output = (summary.get("output") or {}).get("median")
+        mult = (summary.get("multiplier") or {}).get("median")
+        try:
+            base = float(point["base_target_fps"])
+            expected_mult = float(point["multiplier"])
+            if (real is None or output is None or mult is None or
+                    float(real) < base * 0.95 or float(output) < target * 0.95 or
+                    abs(float(mult) - expected_mult) > 0.1):
+                return False, "renderer-not-stable"
+        except (TypeError, ValueError, KeyError):
+            return False, "renderer-evidence-unavailable"
+        return True, "confirmed-game-cadence"
+
     async def _autopilot_tick(self, profile: str, summary: Dict[str, Any], target: int) -> bool:
         """One decision from Governor telemetry. True means do not move TDP this tick."""
         sensors = self._status.get("sensors") or {}
@@ -3186,6 +3231,16 @@ class GovernorService:
             if self._budget is not None:
                 self._budget.hold_planned = True
             return True
+        if decision.action in ("OPTIMIZE_SHADING", "OPTIMIZE_GPU_CLOCK"):
+            trial_ready, trial_reason = self._autopilot_trial_ready(summary, target)
+            if not trial_ready:
+                self._event("autopilot-actuator-skipped", trial_reason, profile=profile,
+                            tool=decision.tool, output_fps=output,
+                            point=self._point.get("key") if self._point else None)
+                self._publish_autopilot(profile, view, decision, clock)
+                # Allow the established BudgetController to improve a weak
+                # cadence, but never alter clock or shading during Steam QAM.
+                return trial_reason == "steam-menu-open"
         if decision.action == "OPTIMIZE_SHADING":
             admission = arbiter.admit(decision.action, now)
             if admission == "ok" and shading.get("mode") == "1x1":
