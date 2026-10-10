@@ -508,7 +508,7 @@ class GovernorService:
         return {"enabled": bool(raw.get("enabled", True)), "preset": preset, "position": position, "style": style}
 
     HUD_STYLES = ("rings", "text")
-    RING_HUD_PERIOD_S = 1.0
+    RING_HUD_PERIOD_S = 0.5   # twice a second; the Vulkan layer polls the picture at the same rate
     HUD_HOLD_S = 5.0          # a missing sample/telemetry for this long keeps the last picture
     HUD_TAG_MIN_S = 2.0       # a status badge stays at least this long (no flipping every second)
     _hud_values: Optional[tuple] = None
@@ -600,7 +600,7 @@ class GovernorService:
             return self._publish_ring_hud_locked(status, settings)
 
     def _publish_ring_hud_locked(self, status: Dict[str, Any], settings: Dict[str, Any]) -> bool:
-        """Refresh at 1 Hz, skip identical pictures, and never display stale FPS."""
+        """Refresh twice a second, skip identical pictures, and never display stale FPS."""
         now = self._clock()
         tel = status.get("telemetry") or {}
         snapshot = tel.get("snapshot") or {}
@@ -3365,6 +3365,32 @@ class GovernorService:
             self._event("operating-point-locked", self.search.status.reason, profile=profile, point=point,
                         tdp_w=self.search.status.current_tdp_w)
 
+    async def _refresh_hud_beat(self) -> None:
+        """One HUD publish between Governor seconds. Does not claim power or judge a point."""
+        profile = str(self._status.get("profile") or "")
+        if not profile or not self.hud_settings(profile)["enabled"]:
+            return
+        await asyncio.to_thread(self.observer.poll)
+        snapshot = self.observer.snapshot()
+        self._status["telemetry"] = {
+            "snapshot": snapshot,
+            "summary": self.observer.summary(self.WINDOW_SECONDS),
+        }
+        await asyncio.to_thread(self._sync_hud, profile)
+
+    async def _wait_governor(self, timeout: float) -> bool:
+        """Wait up to timeout. True when stop or an external wake should run a full iteration."""
+        wake = self._wake
+        waiters = [asyncio.ensure_future(self._stop.wait())]
+        if wake is not None:
+            waiters.append(asyncio.ensure_future(wake.wait()))
+        try:
+            done, _pending = await asyncio.wait(waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+            return bool(done)
+        finally:
+            for waiter in waiters:
+                waiter.cancel()
+
     async def _loop(self) -> None:
         while not self._stop.is_set():
             # Clear before the iteration: a poke that lands while it runs
@@ -3378,13 +3404,18 @@ class GovernorService:
             except Exception as error:
                 self.log.warning("Governor iteration failed: %s", error)
                 self._status.update({"state": "PAUSED", "reason": "iteration-error", "error": str(error)})
-            timeout = self.IDLE_LOOP_SECONDS if self._is_idle() else self.LOOP_SECONDS
-            wake = self._wake
-            waiters = [asyncio.ensure_future(self._stop.wait())]
-            if wake is not None:
-                waiters.append(asyncio.ensure_future(wake.wait()))
+            if self._stop.is_set():
+                break
+            if self._is_idle():
+                await self._wait_governor(self.IDLE_LOOP_SECONDS)
+                continue
+            half = self.LOOP_SECONDS / 2
+            if await self._wait_governor(half):
+                continue
             try:
-                await asyncio.wait(waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
-            finally:
-                for waiter in waiters:
-                    waiter.cancel()
+                await self._refresh_hud_beat()
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                self.log.debug("HUD refresh failed: %s", error)
+            await self._wait_governor(half)
