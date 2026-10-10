@@ -49,6 +49,7 @@ class HostSensors:
         self.clock = clock
         self._last: Dict[str, Any] = {}
         self._last_at = -1e9
+        self._sample_seq = 0
         self._cpu_prev: Optional[Tuple[int, int, Dict[str, Tuple[int, int]]]] = None
         self._temps: Deque[Tuple[float, float]] = deque(maxlen=120)
 
@@ -68,6 +69,9 @@ class HostSensors:
             **self._cpu(),
             **self._battery(),
         }
+        self._sample_seq += 1
+        value["sample_monotonic"] = now
+        value["sample_seq"] = self._sample_seq
         self._last = value
         return value
 

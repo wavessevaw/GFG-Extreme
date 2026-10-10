@@ -754,6 +754,7 @@ function GovernorPage({ s, back, profile, refresh }) {
   const dev = s.device || {}, req = s.request, pt = s.active_point, lad = s.ladder || {}, b = s.budget;
   const mode = s.mode || "budget";
   return h(Page, { title: "Details", onBack: back },
+    s.autopilot_observation ? h("div", { className: "card", "data-testid": "autopilot-observation" }, h("h3", null, "Autopilot observation (C1)"), h("p", null, "Observe only - no Autopilot control or learning"), h("p", null, s.autopilot_observation.perception.primary + " - " + s.autopilot_observation.perception.reason), h("p", null, "Real: " + (s.autopilot_observation.real_fps == null ? "unavailable" : num(s.autopilot_observation.real_fps) + " FPS") + " / Output: " + (s.autopilot_observation.output_fps == null ? "unavailable" : num(s.autopilot_observation.output_fps) + " FPS")), h("p", null, "Confidence: " + num(s.autopilot_observation.perception.confidence * 100, 0) + "% / Samples: " + s.autopilot_observation.sample_count), h("p", null, s.autopilot_observation.measurement_clock), h("p", null, s.autopilot_observation.limitation)) : null,
     mode === "extreme" && s.extreme && s.extreme.enabled ? h("div", { className: "sec" }, "EXTREME") : null,
     mode === "extreme" && s.extreme && s.extreme.enabled ? h("div", { className: "card" }, h("div", { className: "kv" },
       h("span", null, "State"), h("b", null, X_STATE[s.extreme.state] || s.extreme.state),

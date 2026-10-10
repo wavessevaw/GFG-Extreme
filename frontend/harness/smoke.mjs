@@ -327,6 +327,25 @@ for (const fail of [false, true]) {
   await page.close();
   cases.push(["automatic-flow-" + (fail ? "error" : "success")]);
 }
+// C1 observation shares the existing status RPC; zero/missing never use targets.
+for (const output of [0, null, 90]) {
+  const page = await openPage(browser, { ...STATES["home-locked-oled"], autopilot_observation: {
+    perception: { primary: "UNKNOWN", reason: "measured-fps-unavailable", confidence: 0 },
+    real_fps: null, output_fps: output, sample_count: 5,
+    measurement_clock: "log-receipt; producer age unavailable",
+    limitation: "Correlated hypotheses; no physical latency measurement."
+  } }, ["Details"]);
+  const card = page.getByTestId("autopilot-observation");
+  const text = await card.textContent();
+  const expected = output == null ? "Output: unavailable" : "Output: " + output + " FPS";
+  if (!text.includes(expected) || !text.includes("Real: unavailable") ||
+      !text.includes("no Autopilot control or learning") || !text.includes("UNKNOWN")) {
+    failed++; console.error("FAIL Autopilot observation: " + text);
+  }
+  if (page.__errors.length) { failed++; console.error("FAIL Autopilot errors: " + page.__errors); }
+  await page.close();
+  cases.push(["autopilot-observation-" + output]);
+}
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);
 process.exit(failed ? 1 : 0);

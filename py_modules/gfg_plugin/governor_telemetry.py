@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Deque, Dict, Iterable, Optional
 
+from .autopilot.observation import ObservationStream
 from .extreme import (SPATIAL_ACTIVE_MARKER, SWAPCHAIN_POLICY_MARKER, parse_spatial_active,
                       parse_swapchain_policy, swapchain_extent)
 
@@ -172,6 +173,7 @@ class TelemetryObserver:
         self._flow_state: Dict[str, Any] = {}
         self._last_poll_error: Optional[str] = None
         self._session_generation = 0
+        self.autopilot_observations = ObservationStream()
         # Generated frames per real frame the renderer has resources for *right now* (2 = up to x3).
         # It is a property of the current swapchain/resources, not of the device: the renderer
         # raises it on a natural swapchain recreation, so a later report can lift the ceiling.
@@ -252,6 +254,7 @@ class TelemetryObserver:
         self._last_application = {}
         self._flow_state = {}
         self._session_generation += 1
+        self.autopilot_observations.reset()
         self._generated_capacity = None
         self.game_focused = None
         self.game_focused_at = None
@@ -286,6 +289,7 @@ class TelemetryObserver:
             return None
         now_mono = self.time_fn() if now is None else float(now)
         self._event_seq += 1
+        self.autopilot_observations.consume(fields, now_mono, self._event_seq)
         operation = str(fields.get("operation") or "")
         self._last_fields = dict(fields)
         if (operation == "runtime-state-applied" and fields.get("role") == "frame-generation"

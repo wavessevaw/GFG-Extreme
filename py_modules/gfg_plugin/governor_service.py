@@ -46,6 +46,7 @@ from .frame_os.runner import FrameOsRunner
 from .frame_os.memory import GameMemory, seed_pairs
 from .frame_os.proof import METRICS as FRAME_OS_METRICS
 from .package_paths import PLUGIN_ROOT
+from .autopilot.adapters import ObservationMonitor
 from .host_sensors import HostSensors, diagnose
 from . import extreme as extreme_policy
 from .cpu_freq import CpuFreqActuator
@@ -135,6 +136,7 @@ class GovernorService:
         self._session_app_id = ""
         self._session_profile = ""
         self.sensors = HostSensors()
+        self.autopilot_observation = ObservationMonitor()
         self.game_models = GameModelStore(self.configuration.config_dir / "gfg-game-models.json")
         self.power = SteamDeckPowerActuator(manager=SteamOSManagerTdp(home=os.environ.get("HOME")))
         self.power.journal = self._journal_power
@@ -1772,6 +1774,7 @@ class GovernorService:
 
     def get_status(self, profile: str = "") -> Dict[str, Any]:
         value = dict(self._status)
+        value["autopilot_observation"] = self.autopilot_observation.status(self._clock(), profile)
         if profile and profile != value.get("profile"):
             value["requested_profile"] = profile
             value["enabled"] = self._profile_enabled(profile)
@@ -2226,6 +2229,7 @@ class GovernorService:
         self._update_effort()
         self._update_battery()
         await asyncio.to_thread(self._update_sensors)
+        self._update_autopilot_observation()
         try:
             await self._sync_flow(profile=self._status.get("profile") or "")
         except Exception as error:
@@ -2255,6 +2259,22 @@ class GovernorService:
             self.log.debug("Frame OS configure failed: %s", error)
         if profile:
             await asyncio.to_thread(self._sync_hud, profile)
+
+    def _update_autopilot_observation(self) -> None:
+        """Read existing caches only; C1 never configures any actuator."""
+        self.autopilot_observation.update(
+            now=self._clock(), stream=self.observer.autopilot_observations,
+            generation=self.observer.session_generation,
+            profile=self._status.get("profile") or "",
+            backend=self._status.get("observation_backend") or "unknown",
+            launch=self._launch, launch_at=self._launch_polled,
+            target=self._status.get("target_output_fps"),
+            sensors=self._status.get("sensors") or {},
+            focus=self.observer.game_focused, focus_at=self.observer.game_focused_at,
+            runtime_state=self._status.get("state"),
+            restore_pending=bool(self._restore_pending),
+            poll_error=((self._status.get("telemetry") or {}).get("snapshot") or {}).get("last_poll_error"),
+        )
 
     async def _sync_flow(self, profile: str) -> None:
         """Rare isolated resource trials; Act, CPU probes and stale data opt out."""
@@ -2369,6 +2389,8 @@ class GovernorService:
         await asyncio.to_thread(self._standby_overlays_sync)
         profile, response = await asyncio.to_thread(self.configuration.get_current_profile_snapshot)
         config = response.get("config") if isinstance(response, dict) else None
+        self._status["observation_backend"] = (config.get("fg_backend", FG_BACKEND_GFG)
+                                                if isinstance(config, dict) else "unknown")
         if not profile or not isinstance(config, dict):
             self._status.update({"state": "PAUSED", "reason": "profile-unavailable", "profile": profile or ""})
             return
