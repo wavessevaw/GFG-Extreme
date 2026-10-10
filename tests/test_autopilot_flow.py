@@ -294,3 +294,54 @@ class FlowReservationTests(unittest.TestCase):
         self.assertGreaterEqual(polls["n"], 2)
         self.assertFalse(self.svc._autopilot_flow_dirty())
         self.assertFalse(self.svc._autopilot_must_finish_first())
+
+    def test_switching_from_flow_to_power_does_not_apply_both(self):
+        from gfg_plugin.governor_flow import FlowTrial
+        self.svc._autopilot_flow_enabled = False
+        self.svc._autopilot_power_enabled = True
+        self.svc._active_profile = "game"
+        self.svc._status["profile"] = "game"
+        self.svc._flow = FlowTrial()
+        self.svc._flow.original = 0.8
+        self.svc._flow.wanted = 0.7
+        self.svc._flow.phase = "b"
+        self.svc._flow.context = ("game",)
+        self.svc._point = {"key": "x", "base_target_fps": 45, "multiplier": 2}
+        self.svc._point_deltas = {}
+        self.svc._saved_profile_config = lambda profile: {"flow_scale": 0.8}
+        self.svc._base_for = lambda profile, saved: {}
+        written = []
+        self.svc._write_overlay_sync = lambda profile, config, key: written.append(config.get("flow_scale"))
+        self.svc.overlay = object()
+        self.svc.power.claim()
+        self.svc.power.values.update(observed_tdp_w=10, ceiling_tdp_w=15, owned=True)
+        self.svc._status["telemetry"] = {"snapshot": {
+            "event_seq": 3, "latest": {"context": "game"},
+            "flow": {"context": "game", "value": 0.7, "event_seq": 3},
+        }}
+        asyncio.run(self.svc._run_autopilot_exclusive())
+        self.assertEqual(written, [0.8])
+        self.assertEqual(self.svc.power.writes, [])
+        self.assertTrue(self.svc._autopilot_flow_dirty())
+
+    def test_a_new_game_does_not_wait_for_the_ended_renderer_ack(self):
+        from gfg_plugin.governor_flow import FlowTrial
+        self.svc._autopilot_flow_enabled = True
+        self.svc._active_profile = "game"
+        self.svc._flow = FlowTrial()
+        self.svc._flow.original = 0.8
+        self.svc._flow.wanted = 0.7
+        self.svc._flow.phase = "b"
+        self.svc._flow.context = ("game",)
+        self.svc._point = {"key": "x", "base_target_fps": 45, "multiplier": 2}
+        self.svc._point_deltas = {}
+        self.svc._generation_seen = 1
+        self.svc._launch_key = [1, 1, 1]
+        self.svc.observer._session_generation = 2
+        self.svc.inspector.info["launch_key"] = [9, 9, 9]
+        self.svc._launch = None
+        self.svc._launch_polled = -1e9
+        asyncio.run(self.svc._poll_autopilot_observation("game"))
+        self.assertNotEqual(self.svc._flow.phase, "wait-restore")
+        self.assertFalse(self.svc._autopilot_flow_dirty())
+        self.assertEqual(list(self.svc._launch_key), [9, 9, 9])

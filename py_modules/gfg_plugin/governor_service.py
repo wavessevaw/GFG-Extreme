@@ -2039,6 +2039,13 @@ class GovernorService:
                 return False
         return True
 
+    async def _restore_switched_flow(self) -> bool:
+        """A direct switch onto power must not leave the flow experiment applied."""
+        profile = self._status.get("profile") or self._active_profile or ""
+        if profile and self._point is not None and self.overlay is not None:
+            await self._restore_autopilot_flow(profile)
+        return not self._autopilot_flow_dirty()
+
     async def _refresh_flow_telemetry(self) -> None:
         """A disabled trial still has to read the renderer. A cached receipt cannot finish the restore."""
         await asyncio.to_thread(self.observer.poll)
@@ -2103,6 +2110,8 @@ class GovernorService:
 
     async def _release(self, profile: str, reason: str) -> None:
         """Disable/profile-switch/unload path: restore overlay, then release ownership."""
+        if not await self._settle_autopilot_power_before_release():
+            return
         self._clear_point_state()
         error = await asyncio.to_thread(self._restore_overlay_sync, profile)
         if error:
@@ -2543,14 +2552,12 @@ class GovernorService:
                         or self._autopilot_change_outstanding()):
             if not await self._settle_autopilot_power_before_release():
                 return False
-            if self._autopilot_flow_dirty() and self._point is not None and self.overlay is not None:
-                await self._restore_autopilot_flow(profile)
-                if self._autopilot_flow_dirty():
-                    return False
-            if self._point or self._request or self._ladder or self._budget:
+            if self._point or self._request or self._ladder or self._budget or self._autopilot_flow_dirty():
                 await self._release_point(profile, "new-game-session")
-                if self._restoration_blocked():
+                if self._restoration_blocked() or self._autopilot_flow_dirty():
                     return False
+        if changed and self._restoration_blocked():
+            return False
         self._generation_seen = generation
         if launch_key is not None:
             self._launch_key = launch_key
@@ -2624,6 +2631,14 @@ class GovernorService:
             self._status["autopilot_power"] = dict(refused)
             self._status["autopilot_flow"] = {**refused, "tuner": "existing-flow-trial"}
             return True
+        if self._autopilot_power_enabled and self._autopilot_flow_dirty():
+            if not await self._restore_switched_flow():
+                return True
+        if self._autopilot_flow_enabled and (
+                self._autopilot_power.baseline_w is not None or self._autopilot_power.rollback_due
+                or self._autopilot_power.scheduler.busy):
+            if not await self._settle_autopilot_power_before_release():
+                return True
         if self._autopilot_power_enabled:
             await self._run_autopilot_power()
         else:
@@ -2891,6 +2906,8 @@ class GovernorService:
             self._status.update({"state": "PAUSED", "reason": "profile-unavailable", "profile": profile or ""})
             return
         for forced in list(self._forced_release):
+            if forced == self._active_profile and not await self._settle_autopilot_power_before_release():
+                return
             self._forced_release.discard(forced)
             if forced == self._active_profile:
                 await self._release(forced, "governor-disabled")
@@ -2914,6 +2931,8 @@ class GovernorService:
         self._status.update({"profile": profile, "enabled": enabled})
         if not enabled:
             if self.power.state.owned or self._status.get("state") != "DISABLED" or self._point or self._request:
+                if not await self._settle_autopilot_power_before_release():
+                    return
                 await self._release(profile, "governor-disabled")
             # 1.2.2 ships with Rings on by default. The HUD is independent of
             # Governor power control: continue reading passive renderer FPS even

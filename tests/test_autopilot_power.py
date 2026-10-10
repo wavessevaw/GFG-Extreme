@@ -345,3 +345,40 @@ class ServicePowerGateTests(unittest.TestCase):
             self.assertFalse(svc._point and list(svc._launch_key) == [9, 9, 9])
         finally:
             fixture.tearDown()
+
+    def test_forced_disable_restores_the_trial_cap_before_releasing_ownership(self):
+        import test_governor_runtime as legacy
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            svc._autopilot_power_enabled = True
+            svc._active_profile = "game"
+            svc.power.claim()
+            svc.power.values.update(observed_tdp_w=11, initial_tdp_w=8, owned=True)
+            svc._autopilot_power.baseline_w = 10
+            svc._autopilot_power.scheduler.start(Knob.POWER_CAP, fixture.t["now"], "scene", None)
+            svc._forced_release.add("game")
+            order = []
+            original_set = svc.power.set_tdp_w
+            original_restore = svc.power.restore_if_owned
+
+            def set_tdp(value):
+                order.append(("set", value, svc.power.state.owned))
+                return original_set(value)
+
+            def restore():
+                order.append(("release", svc.power.state.owned))
+                return original_restore()
+
+            svc.power.set_tdp_w = set_tdp
+            svc.power.restore_if_owned = restore
+            asyncio.run(svc._iteration_core())
+            set_at = next(index for index, item in enumerate(order) if item[:2] == ("set", 10))
+            release_at = next(index for index, item in enumerate(order) if item[0] == "release")
+            self.assertLess(set_at, release_at)
+            self.assertTrue(order[set_at][2])
+            self.assertFalse(svc.power.state.owned)
+            self.assertNotIn("game", svc._forced_release)
+        finally:
+            fixture.tearDown()
