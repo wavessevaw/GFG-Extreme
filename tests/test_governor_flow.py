@@ -78,8 +78,9 @@ class FlowTests(unittest.TestCase):
 
     def test_stale_ack_and_duplicate_samples_do_not_prove_a_change(self):
         trial, requests = self.run_trial(stale_ack=True)
-        self.assertEqual(requests, [.7, .8])
-        self.assertEqual(trial.phase, "done")
+        self.assertEqual(requests[0], .7)
+        self.assertIn(.8, requests)
+        self.assertEqual(trial.phase, "wait-restore")
         self.assertIsNone(trial.proof)
         trial, requests = self.run_trial(change=lambda t, s, n: s.update(seq=1))
         self.assertEqual(requests, [])
@@ -102,6 +103,28 @@ class FlowTests(unittest.TestCase):
                    saved_flow=.8, actual_flow=.8, ack_seq=1001, event_seq=1001,
                    sample=None, target=90, base_target=30)
         self.assertEqual(trial.phase, "done")
+
+    def test_context_change_keeps_the_trial_until_saved_scale_is_acked(self):
+        trial = FlowTrial()
+        trial.original = 0.8
+        trial.wanted = 0.7
+        trial.phase = "b"
+        trial.context = ("old",)
+        wanted = trial.step(now=10, context=("new",), mode="balanced", eligible=True,
+                            saved_flow=0.8, actual_flow=0.7, ack_seq=1, event_seq=2,
+                            sample=None, target=90, base_target=30)
+        self.assertEqual(wanted, 0.8)
+        self.assertEqual(trial.phase, "wait-restore")
+        self.assertEqual(trial.context, ("old",))
+        trial.step(now=11, context=("old",), mode="balanced", eligible=False,
+                   saved_flow=0.8, actual_flow=0.8, ack_seq=3, event_seq=3,
+                   sample=None, target=90, base_target=30)
+        self.assertEqual(trial.phase, "done")
+        trial.step(now=12, context=("new",), mode="balanced", eligible=False,
+                   saved_flow=0.8, actual_flow=0.8, ack_seq=4, event_seq=4,
+                   sample=None, target=90, base_target=30)
+        self.assertEqual(trial.context, ("new",))
+        self.assertFalse(trial.change_outstanding())
 
     def test_quality_preserves_resolution_and_other_ladders_keep_scale_tools(self):
         for target in (60, 90):

@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Deque, Dict, Iterable, Optional
 
+from .autopilot.observation import ObservationStream
 from .extreme import (SPATIAL_ACTIVE_MARKER, SWAPCHAIN_POLICY_MARKER, parse_spatial_active,
                       parse_swapchain_policy, swapchain_extent)
 
@@ -172,6 +173,7 @@ class TelemetryObserver:
         self._flow_state: Dict[str, Any] = {}
         self._last_poll_error: Optional[str] = None
         self._session_generation = 0
+        self.autopilot_observations = ObservationStream()
         # Generated frames per real frame the renderer has resources for *right now* (2 = up to x3).
         # It is a property of the current swapchain/resources, not of the device: the renderer
         # raises it on a natural swapchain recreation, so a later report can lift the ceiling.
@@ -252,6 +254,7 @@ class TelemetryObserver:
         self._last_application = {}
         self._flow_state = {}
         self._session_generation += 1
+        self.autopilot_observations.reset()
         self._generated_capacity = None
         self.game_focused = None
         self.game_focused_at = None
@@ -275,7 +278,8 @@ class TelemetryObserver:
             return None
         return {match.group(1): match.group(2) for match in _FIELD_RE.finditer(line)}
 
-    def consume_line(self, line: str, *, now: Optional[float] = None) -> Optional[FpsSample]:
+    def consume_line(self, line: str, *, now: Optional[float] = None,
+                     observation_time: Optional[float] = None) -> Optional[FpsSample]:
         fields = self.parse_fields(line)
         if fields is None:
             if SPATIAL_ACTIVE_MARKER in line or SWAPCHAIN_POLICY_MARKER in line:
@@ -286,6 +290,8 @@ class TelemetryObserver:
             return None
         now_mono = self.time_fn() if now is None else float(now)
         self._event_seq += 1
+        self.autopilot_observations.consume(
+            fields, now_mono if observation_time is None else observation_time, self._event_seq)
         operation = str(fields.get("operation") or "")
         self._last_fields = dict(fields)
         role = fields.get("role")
@@ -430,8 +436,10 @@ class TelemetryObserver:
         lines = (self._partial + data).split(b"\n")
         self._partial = lines.pop()
         samples = 0
+        observation_time = self.time_fn() if now is None else float(now)
         for raw in lines:
-            if self.consume_line(raw.decode("utf-8", errors="ignore"), now=now) is not None:
+            if self.consume_line(raw.decode("utf-8", errors="ignore"), now=now,
+                                 observation_time=observation_time) is not None:
                 samples += 1
         return samples
 

@@ -140,7 +140,8 @@ class FlowTrial:
         actual = number(actual_flow)
         self.actual = actual
         if context != self.context:
-            # The caller restores Saved before changing profile/point/session.
+            if self.change_outstanding():
+                return self.request_saved_restore(now, event_seq)
             self.reset()
             self.context = context
             self.mode = mode
@@ -193,15 +194,9 @@ class FlowTrial:
                 self.started = now
                 self.samples = []
             elif now - self.started > self.ACK_S:
-                if self.phase == "wait-restore" and (actual is None or abs(actual - self.original) >= .005):
+                if self.phase == "wait-restore":
                     self.reason = "restore-not-confirmed"
                     return self._request(self.original, "wait-restore", now, event_seq)
-                if self.phase == "wait-restore":
-                    self.phase = "done"
-                    self.wanted = None
-                    self.reason = "restore-not-confirmed"
-                    self.attempted = True
-                    return None
                 return self._abort(now, event_seq, "flow-change-not-confirmed")
             else:
                 return None
@@ -255,3 +250,25 @@ class FlowTrial:
         self.wanted = None
         self.attempted = True
         return None
+
+    def request_saved_restore(self, now, event_seq, reason="saved-restore"):
+        """Ask for the Saved scale. The caller writes it and waits for renderer ACK.
+
+        A repeat while the ACK is pending does not move the mark.
+        """
+        if self.original is None or self.phase == "done":
+            return None
+        if self.phase == "wait-restore":
+            return self.wanted
+        changed = self.busy or self.phase == "held" or (
+            self.wanted is not None and abs(self.wanted - self.original) >= 0.005)
+        if not changed:
+            return None
+        return self._abort(now, event_seq, reason)
+
+    def change_outstanding(self):
+        if self.original is None:
+            return False
+        if self.busy or self.phase == "held":
+            return True
+        return self.wanted is not None and abs(self.wanted - self.original) >= 0.005

@@ -509,15 +509,20 @@ function useGovernor(profile) {
   const [s, setS] = useState(null);
   const alive = useRef(true);
   const busy = useRef(false);
+  const requested = useRef(profile);
+  requested.current = profile;
   const refresh = useCallback(async () => {
     if (busy.current) return;
     busy.current = true;
+    const timer = setTimeout(() => reportRpcError("get_governor_status", new Error("status call timed out")), 1e4);
     try {
-      const r = await Promise.race([rpc.governor(profile || ""), new Promise((_, rej) => setTimeout(() => rej(new Error("status call timed out")), 1e4))]);
-      if (alive.current) setS(r);
+      const r = await rpc.governor(profile || "");
+      if (alive.current && requested.current === profile) setS(r);
     } catch (e) {
+    } finally {
+      clearTimeout(timer);
+      busy.current = false;
     }
-    busy.current = false;
   }, [profile]);
   useEffect(() => {
     alive.current = true;
@@ -1259,6 +1264,7 @@ function GovernorPage({ s, back, profile, refresh }) {
   return h(
     Page,
     { title: "Details", onBack: back },
+    s.autopilot_observation ? h("div", { className: "card", "data-testid": "autopilot-observation" }, h("h3", null, "Autopilot observation (C1)"), h("p", null, "Observe only - no Autopilot control or learning"), h("p", null, s.autopilot_observation.perception.primary + " - " + s.autopilot_observation.perception.reason), h("p", null, "Real: " + (s.autopilot_observation.real_fps == null ? "unavailable" : num(s.autopilot_observation.real_fps) + " FPS") + " / Output: " + (s.autopilot_observation.output_fps == null ? "unavailable" : num(s.autopilot_observation.output_fps) + " FPS")), h("p", null, "Confidence: " + num(s.autopilot_observation.perception.confidence * 100, 0) + "% / Samples: " + s.autopilot_observation.sample_count), h("p", null, s.autopilot_observation.measurement_clock), h("p", null, s.autopilot_observation.limitation)) : null,
     mode === "extreme" && s.extreme && s.extreme.enabled ? h("div", { className: "sec" }, "EXTREME") : null,
     mode === "extreme" && s.extreme && s.extreme.enabled ? h("div", { className: "card" }, h(
       "div",

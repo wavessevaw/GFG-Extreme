@@ -72,7 +72,7 @@ window.__patches = [];
 window.appStore = { GetAppOverviewByAppID: (id) => (id === 292030 ? { display_name: "Sample Game" } : null) };
 window.__state = ${JSON.stringify(state)};
 window.__cfg = ${JSON.stringify(extra.cfg || { fg_backend: "gfg", multiplier: 2, })};
-var callable = (n) => async (...a) => ({ get_governor_status: () => window.__state, get_profiles: () => ({ profiles: ["Default", "Sample Game", "Another Game"], current_profile: "Sample Game" }),
+var callable = (n) => async (...a) => ({ get_governor_status: () => { window.__governorCalls = (window.__governorCalls || 0) + 1; return window.__state.__hangGovernor ? new Promise(() => {}) : window.__state; }, get_profiles: () => ({ profiles: ["Default", "Sample Game", "Another Game"], current_profile: "Sample Game" }),
   get_profile_config: () => ({ config: window.__cfg }), get_pipeline_inspector: () => ({ saved: { fg_backend: "gfg", multiplier: 2, scaling: "off" }, effective: { fg_backend: "gfg", multiplier: 2, scaling: "off" }, actual: { renderer: "loaded", multiplier: 2, ...(window.__state.__actual || {}) } }),
   get_theme_status: () => ({ success: true, installed: !!window.__themeInstalled, current: !!window.__themeInstalled, path: "/home/deck/homebrew/themes/GFG Extreme" }),
   install_gfg_theme: () => { window.__themeCalls = (window.__themeCalls || 0) + 1;
