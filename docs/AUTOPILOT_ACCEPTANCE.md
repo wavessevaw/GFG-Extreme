@@ -16,4 +16,20 @@ Previous package: `v2.0.0` at `0e770b8` (superseded; do not use it for this fix)
 | Regression | PASS | Local discover: 1030 tests. Two `os.chown(65534)` errors are this sandbox. GitHub CI is the confirmation. | |
 | CI / ZIP | PASS | Code `6765fecffd621876ceb78046390e118299739581`. CI push https://github.com/wavessevaw/GFG-Extreme/actions/runs/38061085826. CI PR https://github.com/wavessevaw/GFG-Extreme/actions/runs/38061088788. Release https://github.com/wavessevaw/GFG-Extreme/actions/runs/38061085831. Zip `GFG-Extreme-v2_0_1.zip`, sha256 `c2ee5d95db7bf27315ba39e3f98103bb1ce7ffe588447c737cdd2aa73cb0a7a5`. Prerelease, not latest. `v2.0.0` is the older package. | |
 
-Status: READY FOR DEVICE VALIDATION. Hardware and GPU-clock actuation remain NOT_TESTED. Do not enable clock writes on the Deck yet.
+## Independent code-review corrections
+
+Verified source commit: `275760e209ba3e1057dfb961586e9b1dad06f05a` (subsequent documentation-only commits do not change runtime).
+
+| Finding | Correction | Regression evidence |
+| --- | --- | --- |
+| Smoothness confused real-frame time with generated output budget | `autopilot/planner.py` evaluates real-frame time against verified real-cadence goal (or real median when multiplier unknown) | `ColorAndModeRegressionTests.test_smoothness_compares_real_frametime_with_real_cadence` |
+| 90→60 transitions counted the same sliding FPS window multiple times, and 60 could get stuck | `TargetPolicy` requires disjoint, sequenced windows; cautious 90 Hz recovery probe after 90 seconds and longer 240-second backoff after failed retry | `HoldAndTargetTests.test_the_display_target_does_not_flap`, `GoalAndPauseTests.test_a_sustained_miss_becomes_the_governor_target` |
+| Autopilot HOLD could freeze Flow in Quality or Balanced | Mode-owned plan lock; clear Autopilot plan, controller probe flags and HUD state on active profile mode change or Stop | `ColorAndModeRegressionTests.test_mode_switch_releases_the_autopilot_plan_lock` |
+| Battery and TDP rings showed green despite low battery, missing cap or power-control error | Battery thresholds, low-runtime warning, observed TDP/error/override color semantics | `ColorAndModeRegressionTests.test_battery_and_power_tones_are_not_always_green` |
+| Old green metrics remained visible on stale FPS samples | Renderer-dependent ring tones forced gray when telemetry snapshot is stale | `governor_service.py::_publish_ring_hud_locked` |
+
+CI on source commit: https://github.com/wavessevaw/GFG-Extreme/actions/runs/38062335037 , completed successfully, 1033 Python tests (one skipped) and frontend smoke. Hardware verification: NOT_TESTED. The published `v2.0.1` ZIP still targets `6765fec` and **does not contain these follow-up fixes**; build a new pre-release from the corrected source before distributing it.
+
+**Remaining hardware concerns:** verify the behavior of a 60 FPS output goal on a physical 90 Hz OLED display (mixed cadence may stutter); GPU Clock real writes are disabled and remain NOT_VERIFIED on device.
+
+Status: READY FOR CONTROLLED DEVICE VALIDATION (source only; refreshed installable package required). Hardware and GPU-clock actuation remain NOT_TESTED. Do not enable clock writes on the Deck yet.
