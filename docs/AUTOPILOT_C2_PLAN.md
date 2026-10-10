@@ -1,13 +1,17 @@
-# C2 plan slice: one unarmed decision, then one power step
+# C2: one tool at a time
 
-The coordinator may name at most one of two tools, the power cap or flow scale.
-Flow is not connected. Power is connected only behind `_autopilot_power_enabled`,
-which defaults off and is not a user mode. While it is on, the Governor loop does
-not also run Battery, Balanced, Quality or Extreme writers.
+The coordinator names at most one of two tools.
 
-A power trial claims nothing itself. It steps one watt toward the owned ceiling,
-requires readback, then restores. It does not write the trial winner back.
-Pending restore, a missing ACK, or a second tool clears the slot. A1/A2 drift is
-INCONCLUSIVE and is not learned.
+Power cap steps one owned watt toward the verified ceiling, requires readback,
+then restores. It does not keep the winner. `_autopilot_power_enabled` defaults
+off.
 
-Hardware: NOT_TESTED. Checks are SIMULATED.
+Flow scale is not a new writer. The existing flow tuner is the only code that
+may change it, and only after its own locked point and ACK gates.
+`_autopilot_flow_enabled` defaults off. With no locked point it does not write.
+
+The two flags cannot be on together. While either is on, Battery, Balanced,
+Quality and Extreme writers do not run in that iteration. A busy slot rejects
+the other tool.
+
+Neither flag is a user-facing mode. Hardware: NOT_TESTED. Checks are SIMULATED.
