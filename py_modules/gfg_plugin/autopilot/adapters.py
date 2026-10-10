@@ -16,7 +16,7 @@ class ObservationMonitor:
 
     def update(self, *, now, stream, generation, profile, backend, launch,
                launch_at, target, sensors, focus, focus_at, runtime_state,
-               restore_pending=False, poll_error=None):
+               restore_pending=False, poll_error=None, power=None):
         launch_key = launch.get("launch_key")
         identity_ok = (isinstance(launch_key, (tuple, list)) and len(launch_key) >= 3
                        and all(isinstance(x, (str, int, float)) and not isinstance(x, bool)
@@ -61,9 +61,15 @@ class ObservationMonitor:
         host = None
         at = number(sensors.get("sample_monotonic"))
         seq = sensors.get("sample_seq")
+        draw = cap = None
+        if isinstance(power, dict) and power.get("owned") is True:
+            draw, cap = number(power.get("draw_w")), number(power.get("ceiling_tdp_w"))
+            if draw is None or cap is None or cap <= 0:
+                draw = cap = None
         if at is not None and isinstance(seq, int) and seq > 0:
             host = Host(at, seq, number(sensors.get("gpu_busy_pct")),
-                        number(sensors.get("cpu_top_core_pct")), number(sensors.get("temp_c")))
+                        number(sensors.get("cpu_top_core_pct")), number(sensors.get("temp_c")),
+                        apu_draw_w=draw, verified_cap_w=cap)
         session = json.dumps(key, ensure_ascii=True, separators=(",", ":"))
         self.snapshot = Snapshot(session, now, tuple(independent.values()), host,
                                  tuple(p for p in stream.pressure if p[0] > self.after_seq),
