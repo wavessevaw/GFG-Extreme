@@ -48,6 +48,7 @@ from .frame_os.proof import METRICS as FRAME_OS_METRICS
 from .package_paths import PLUGIN_ROOT
 from .autopilot.adapters import ObservationMonitor
 from .host_sensors import HostSensors, diagnose
+from .governor_restore import power_restore_error, cpu_restore_error
 from . import extreme as extreme_policy
 from .cpu_freq import CpuFreqActuator
 from .power_split import PowerSplit, Sample as SplitSample, SplitMemory, levels_khz
@@ -196,6 +197,8 @@ class GovernorService:
         self._io_lock = threading.RLock()
         self._forced_release: set[str] = set()
         self._restore_pending: Dict[str, str] = {}
+        self._actuator_restore_errors: Dict[str, str] = {}
+        self._actuator_restore_at = -1e9
         self._status: Dict[str, Any] = self._base_status()
         self._stop = asyncio.Event()
         self._wake: Optional[asyncio.Event] = None
@@ -789,7 +792,7 @@ class GovernorService:
         profile = self._current_hud_profile()
         hud_on = bool(profile and self.hud_settings(profile)["enabled"])
         return not (self._any_profile_enabled() or hud_on or self._restore_pending or self._forced_release
-                    or self._point or self._request)
+                    or self._point or self._request or self._actuator_restore_blocked())
 
     def _any_profile_enabled(self) -> bool:
         profiles = self._settings.get("profiles", {})
@@ -1760,22 +1763,14 @@ class GovernorService:
         for profile in names:
             error = await asyncio.to_thread(self._restore_overlay_sync, profile, True)
             if error:
+                self._restore_pending[profile] = "plugin-stop"
                 self.log.error("Governor could not restore overlay for %s on unload: %s", profile, error)
                 self._event("overlay-restore-failed", "plugin-stop", profile=profile, error=error)
         self._reset_run_state()
-        try:
-            # shutdown(): waits for a write still running in a worker thread, then restores and
-            # refuses later writes, so a slow write cannot land after the restore.
-            shutdown = getattr(self.power, "shutdown", None)
-            result = await asyncio.to_thread(shutdown if callable(shutdown) else self.power.restore_if_owned)
-            if result.get("restored"):
-                self._event("power-restored", "plugin-stop")
-        except Exception as error:
-            self.log.warning("Governor could not restore owned TDP: %s", error)
-        try:
-            await asyncio.to_thread(self.cpu.shutdown)
-        except Exception as error:
-            self.log.warning("Governor could not restore the CPU clock limit: %s", error)
+        # shutdown serializes undo after any outstanding writer and closes later writes.
+        await self._restore_tdp("plugin-stop", shutdown=True)
+        await self._restore_cpu(shutdown=True)
+        self._publish_restore_pending()
 
     def get_status(self, profile: str = "") -> Dict[str, Any]:
         value = dict(self._status)
@@ -1819,6 +1814,12 @@ class GovernorService:
         value["budget"] = self._budget.status() if self._budget else None
         if self._restore_pending:
             value["restore_pending"] = dict(self._restore_pending)
+        if self._actuator_restore_blocked():
+            errors = self._actuator_restore_details()
+            value.update(state="RESTORE_PENDING", reason="actuator-restore-failed",
+                         actuator_restore_pending=errors)
+            value["restore_pending"] = {**value.get("restore_pending", {}),
+                                        **{"actuator:" + k: v for k, v in errors.items()}}
         return value
 
     def _display_probe(self) -> Dict[str, Any]:
@@ -1857,32 +1858,96 @@ class GovernorService:
         Restoring inherited caps there reopened the higher fastPPT channel the ceiling had clamped.
         """
         if self.power.state.owned and not self._extreme_session(profile):
-            await asyncio.to_thread(self.power.restore_if_owned)
+            await self._restore_tdp("release-caps")
 
-    async def _restore_power(self, reason: str) -> None:
+    def _restoration_blocked(self) -> bool:
+        return bool(self._restore_pending) or self._actuator_restore_blocked()
+
+    def _actuator_restore_blocked(self) -> bool:
+        return bool(self._actuator_restore_errors or getattr(self.cpu, "restore_pending", False))
+
+    def _actuator_restore_details(self) -> Dict[str, str]:
+        errors = dict(self._actuator_restore_errors)
+        if getattr(self.cpu, "restore_pending", False):
+            errors.setdefault("cpu", str(self.cpu.error or "CPU recovery pending"))
+        return errors
+
+    def _publish_restore_pending(self) -> None:
+        if self._restore_pending:
+            self.frame_os.executor_active = False
+            self._status.update(state="PAUSED", reason="overlay-restore-failed")
+        if self._actuator_restore_blocked():
+            self.frame_os.executor_active = False
+            self._status.update(state="RESTORE_PENDING", reason="actuator-restore-failed",
+                                error="; ".join(self._actuator_restore_details().values()))
+
+    async def _restore_tdp(self, reason: str, *, shutdown: bool = False) -> bool:
+        self._actuator_restore_at = self._clock()
+        try:
+            operation = getattr(self.power, "shutdown", None) if shutdown else None
+            result = await asyncio.to_thread(operation if callable(operation) else self.power.restore_if_owned)
+            error = power_restore_error(result)
+            if isinstance(result, dict) and result.get("restored"):
+                self._event("power-restored", reason)
+        except Exception as exc:
+            error = str(exc)
+        if error:
+            self._actuator_restore_errors["power"] = error
+        else:
+            self._actuator_restore_errors.pop("power", None)
+        self._publish_restore_pending()
+        return error is None
+
+    async def _restore_cpu(self, *, shutdown: bool = False) -> bool:
+        self._actuator_restore_at = self._clock()
+        try:
+            # False is a valid no-op/external takeover result, not a failure.
+            if shutdown:
+                await asyncio.to_thread(self.cpu.shutdown)
+            elif self.cpu.owned or getattr(self.cpu, "restore_pending", False) or "cpu" in self._actuator_restore_errors:
+                await asyncio.to_thread(self.cpu.restore)
+            error = cpu_restore_error(self.cpu.status())
+        except Exception as exc:
+            error = str(exc)
+        if error:
+            self._actuator_restore_errors["cpu"] = error
+        else:
+            self._actuator_restore_errors.pop("cpu", None)
+        self._publish_restore_pending()
+        return error is None
+
+    async def _restore_power(self, reason: str) -> bool:
         profile = self._active_profile
         continuing_extreme = (
-            self._extreme_session(profile)
+            not self._actuator_restore_blocked() and self._extreme_session(profile)
             and reason in ("governor-mode-changed", "display-mode-changed", "ladder-exhausted",
                            "not-healthy-at-ceiling", "renderer-capacity-unavailable",
                            "renderer-capacity-request-cancelled", "new-game-session")
         )
         if continuing_extreme:
-            # Replanning is not leaving Extreme: restoring a 20 W baseline here
-            # created the transition overshoots in the field recordings.
+            # Preserve the existing Extreme ceiling during a normal replan.
             await self._budget_power(profile)
         else:
             setter = getattr(self.power, "set_ceiling_w", None)
             if callable(setter):
                 setter(None)
-            restored = await asyncio.to_thread(self.power.restore_if_owned)
-            if restored.get("restored"):
-                self._event("power-restored", reason)
-        if self.cpu.owned:                # the CPU clock goes back with the watts
-            await asyncio.to_thread(self.cpu.restore)
+            await self._restore_tdp(reason)
+        await self._restore_cpu()
         if self._split is not None and self._split.level:
             self._split.step(self._clock(), False, SplitSample(None, 0.0, None, None, None, None, None))
         self.search = PowerSearch()
+        return not self._actuator_restore_blocked()
+
+    async def _retry_actuator_restores(self) -> None:
+        if not self._actuator_restore_blocked() or self._restore_pending:
+            return
+        self._publish_restore_pending()
+        if self._clock() - self._actuator_restore_at < self.ROLLBACK_RETRY_SECONDS:
+            return
+        self._clear_point_state()
+        if await self._restore_power("actuator-restore-retry"):
+            self._status.pop("error", None)
+            self._status.update(state="PLAN", reason="actuator-restore-recovered")
 
     def _clear_point_state(self) -> None:
         self._status.pop("flow_control", None)
@@ -1921,9 +1986,9 @@ class GovernorService:
         """Drop the applied point: overlay back to base (lease kept), power restored."""
         had_runtime = bool(self._point or self._request or self._point_deltas)
         self._clear_point_state()
-        await self._restore_power(reason)
+        restored = await self._restore_power(reason)
         if not had_runtime or self.overlay is None or not self.overlay.exists(profile):
-            return True
+            return restored
         saved = await asyncio.to_thread(self._saved_profile_config, profile)
         try:
             await asyncio.to_thread(self._write_overlay_sync, profile, self._base_for(profile, saved), "base")
@@ -1933,8 +1998,9 @@ class GovernorService:
             self._status.update({"state": "PAUSED", "reason": "overlay-restore-failed", "error": str(error)})
             self._event("overlay-restore-failed", reason, profile=profile, error=str(error))
             return False
-        self._event("operating-point-released", reason, profile=profile)
-        return True
+        self._event("operating-point-released" if restored else "operating-point-restore-pending",
+                    reason, profile=profile)
+        return restored
 
     async def _release(self, profile: str, reason: str) -> None:
         """Disable/profile-switch/unload path: restore overlay, then release ownership."""
@@ -1946,7 +2012,8 @@ class GovernorService:
             self._event("overlay-restore-failed", reason, profile=profile, error=error)
             return  # ownership is NOT released until Saved is restored
         self._restore_pending.pop(profile, None)
-        await self._restore_power(reason)
+        if not await self._restore_power(reason):
+            return
         self._evaluation_after_seq = self.observer.sample_seq
         self._status.update({
             "state": "DISABLED", "reason": reason, "recommended_point": None,
@@ -1995,6 +2062,8 @@ class GovernorService:
         self, profile: str, saved: Dict[str, Any], point: OperatingPoint, external: bool,
         capability: Dict[str, Any],
     ) -> bool:
+        if self._restoration_blocked():
+            return False
         self._flow = FlowTrial()  # new points are evaluated at Saved flow
         self._status.pop("flow_control", None)
         base = self._base_for(profile, saved)
@@ -2248,6 +2317,9 @@ class GovernorService:
         self._update_battery()
         await asyncio.to_thread(self._update_sensors)
         self._update_autopilot_observation()
+        if self._restoration_blocked():
+            self._publish_restore_pending()
+            return
         try:
             await self._sync_flow(profile=self._status.get("profile") or "")
         except Exception as error:
@@ -2263,7 +2335,10 @@ class GovernorService:
             await self._sync_power_split(profile)
         except Exception as error:  # never disturb the Governor; the cap goes back
             self.log.warning("Power split step failed: %s", error)
-            await asyncio.to_thread(self.cpu.restore)
+            await self._restore_cpu()
+        if self._restoration_blocked():
+            self._publish_restore_pending()
+            return
         try:
             saved = (await asyncio.to_thread(self._saved_profile_config, profile)
                      if profile and self._mode(profile) == "extreme" else None)
@@ -2290,7 +2365,7 @@ class GovernorService:
             sensors=self._status.get("sensors") or {},
             focus=self.observer.game_focused, focus_at=self.observer.game_focused_at,
             runtime_state=self._status.get("state"),
-            restore_pending=bool(self._restore_pending),
+            restore_pending=bool(self._restore_pending) or self._actuator_restore_blocked(),
             poll_error=((self._status.get("telemetry") or {}).get("snapshot") or {}).get("last_poll_error"),
         )
 
@@ -2406,6 +2481,11 @@ class GovernorService:
         })
 
     async def _iteration_core(self) -> None:
+        await self._retry_restores()
+        await self._retry_actuator_restores()
+        if self._restoration_blocked():
+            self._publish_restore_pending()
+            return
         await asyncio.to_thread(self._standby_overlays_sync)
         profile, response = await asyncio.to_thread(self.configuration.get_current_profile_snapshot)
         config = response.get("config") if isinstance(response, dict) else None
@@ -2414,11 +2494,12 @@ class GovernorService:
         if not profile or not isinstance(config, dict):
             self._status.update({"state": "PAUSED", "reason": "profile-unavailable", "profile": profile or ""})
             return
-        await self._retry_restores()
         for forced in list(self._forced_release):
             self._forced_release.discard(forced)
             if forced == self._active_profile:
                 await self._release(forced, "governor-disabled")
+        if self._restoration_blocked():
+            return
         if profile != self._active_profile:
             old = self._active_profile
             if old:
@@ -2426,6 +2507,8 @@ class GovernorService:
             else:
                 self._clear_point_state()
                 await self._restore_power("profile-changed")
+            if self._restoration_blocked():
+                return
             self._active_profile = profile
             self._reset_run_state()
             self._evaluation_after_seq = self.observer.sample_seq
@@ -2729,10 +2812,13 @@ class GovernorService:
             else:
                 self._status.update({"state": "PLAN", "reason": "operating-point-recommended-not-yet-applied"})
             if self.power.state.owned:
-                await asyncio.to_thread(self.power.restore_if_owned)
+                await self._restore_tdp("plan-without-overlay")
+            return
+        if self._restoration_blocked():
             return
         if self.power.state.owned:
-            await asyncio.to_thread(self.power.restore_if_owned)
+            if not await self._restore_tdp("plan-trial"):
+                return
         launch = await self._launch_info(profile)
         capability = self._capability(profile, launch)
         self._status["capability"] = capability
@@ -2804,6 +2890,8 @@ class GovernorService:
 
     async def _budget_power(self, profile: str) -> Optional[Dict[str, Any]]:
         """Own the PPT caps for budget mode.  Returns limits, or None when observe-only on TDP."""
+        if self._restoration_blocked():
+            return None
         power = self.power
         if not power.state.available and not await self._rediscover_power():
             return None
@@ -3268,6 +3356,8 @@ class GovernorService:
             self.log.debug("Game model not stored: %s", error)
 
     async def _apply_budget_tdp(self, profile: str) -> bool:
+        if self._restoration_blocked():
+            return False
         budget = self._budget
         if budget is None or not budget.tdp_control or budget.tdp is None or not self.power.state.owned:
             return True
@@ -3313,6 +3403,8 @@ class GovernorService:
         return bool(self.power.state.available)
 
     async def _power_step(self, profile: str, summary: Dict[str, Any]) -> None:
+        if self._restoration_blocked():
+            return
         point = self._point
         assert point is not None
         health_ratio = self.CAP_BOUND_HEALTH_RATIO if self._point_mode == "applied" else self.UNCAPPED_HEALTH_RATIO
