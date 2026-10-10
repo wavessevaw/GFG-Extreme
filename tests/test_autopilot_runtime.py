@@ -210,6 +210,13 @@ class ServiceIntegrationTests(unittest.TestCase):
                 value = svc.get_status("game")["autopilot_observation"]
                 self.assertFalse(value["control_enabled"])
                 self.assertEqual(value["action"], "OBSERVE")
+                plan = svc.get_status("game")["autopilot_plan"]
+                self.assertFalse(plan["armed"])
+                self.assertFalse(plan["control_enabled"])
+                svc._actuator_restore_errors["power"] = "readback mismatch"
+                svc._update_autopilot_observation()
+                self.assertEqual(svc.get_status("game")["autopilot_plan"]["action"], "RESTORE")
+                self.assertFalse(svc._autopilot_slot.busy)
             self.assertEqual(json.dumps(svc._settings, sort_keys=True), before_settings)
             self.assertEqual(svc.MODES, ("budget", "balanced", "quality", "extreme"))
         finally:
