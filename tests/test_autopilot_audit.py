@@ -65,6 +65,7 @@ class AuditTraceTests(unittest.TestCase):
             recorder._system_info = lambda: {"device_verified": False}
             started = await recorder.start("synthetic-game")
             self.assertTrue(started["success"])
+            await asyncio.sleep(0)  # let the initial 1 Hz sample be captured
             trace.write("during", seq=2, phase="restore-a")
             ended = await recorder.stop()
             self.assertTrue(ended["success"], ended)
