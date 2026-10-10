@@ -3,6 +3,12 @@
 **Status:** Synthetic CI passed. The first physical Steam Deck **telemetry-only capture** was analyzed on 2026-10-10; no valid measured FPS was received and no Autopilot A/B/A actuator trial ran. Hardware PPT/Flow rollback is still NOT tested. See `docs/field-audit/20261010-first-deck/REPORT.md`.
 **Target:** draft PR #115 over the consolidated Autopilot PR #114. Neither enables the development flags.
 
+## Field log follow-up, 23:20 local time on 2026-10-10
+
+A **second Steam Deck OLED capture on pre-alpha v1.7.1** has now confirmed that the renderer and the *legacy* Governor work: 74 fixed and 58 adaptive plan events, and legacy Governor power operations 20→12→13 W before restoration. **Autopilot itself is still blocked**: 439 independent observation ticks, zero verified real-FPS evidence, zero A/B/A trials or Autopilot actuator writes. The producer emits `base_fps`, which the strict C1 reader intentionally does not treat as verified `current_base_fps`. Do not synthesize evidence from planner FPS. Full privacy-sanitized numerical report: `docs/field-audit/20261010-second-deck/REPORT.md`. The original full ZIP remains private.
+
+The earlier first physical log (v1.7.0) failed even to produce a renderer FPS stream. **Neither physical run verifies Autopilot actuator restoration.**
+
 ## Evidence chain
 
 One recording must preserve cause and effect rather than only a displayed FPS number:
