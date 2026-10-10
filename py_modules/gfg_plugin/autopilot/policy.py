@@ -41,6 +41,8 @@ class Decision:
     evidence_ids: Tuple[str, ...] = ()
     armed: bool = False
     release_slot: bool = False
+    candidate_value: Optional[float] = None
+    rejected: Tuple[Tuple, ...] = ()
 
     def public(self):
         return {
