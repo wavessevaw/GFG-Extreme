@@ -377,6 +377,52 @@ class GoalAndPauseTests(unittest.TestCase):
         finally:
             fixture.tearDown()
 
+    def test_steam_menu_and_unconfirmed_point_block_all_gpu_trials(self):
+        import test_governor_runtime as legacy
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            svc._active_profile = "game"
+            svc.set_mode("game", "autopilot")
+            svc._point = {"key": "30x3", "base_target_fps": 30, "multiplier": 3,
+                          "target_output_fps": 90}
+            svc._point_mode = "applied"
+            svc._request = None
+            svc._evaluation_after_seq = 10
+            svc._menu_covering = lambda: False
+            stable = {"samples": 9, "sample_span_s": 9.0,
+                      "first_sample_seq": 11, "last_sample_seq": 20,
+                      "real": {"median": 30}, "output": {"median": 90},
+                      "multiplier": {"median": 3}}
+            self.assertEqual(svc._autopilot_trial_ready(stable, 90),
+                             (True, "confirmed-game-cadence"))
+            svc._menu_covering = lambda: True
+            self.assertEqual(svc._autopilot_trial_ready(stable, 90)[1],
+                             "steam-menu-open")
+            svc._menu_covering = lambda: False
+            svc._menu_since = 10.0
+            self.assertEqual(svc._autopilot_trial_ready(stable, 90)[1],
+                             "steam-menu-open")
+            svc._menu_since = None
+            # The first physical test dipped from 90 to 42 Output when
+            # Gamescope opened the Steam menu; it must never trial VRS.
+            dipped = {**stable, "output": {"median": 42.674},
+                      "multiplier": {"median": 1.45}}
+            self.assertEqual(svc._autopilot_trial_ready(dipped, 90)[1],
+                             "renderer-not-stable")
+            svc._point = None
+            # The second log trial started BEFORE point 30x3 was confirmed.
+            self.assertEqual(svc._autopilot_trial_ready(stable, 90)[1],
+                             "point-not-confirmed")
+            svc._point = {"key": "30x3", "base_target_fps": 30, "multiplier": 3,
+                          "target_output_fps": 90}
+            resumed = {**stable, "first_sample_seq": 10}
+            self.assertEqual(svc._autopilot_trial_ready(resumed, 90)[1],
+                             "baseline-overlaps-transition")
+        finally:
+            fixture.tearDown()
+
     def test_stop_clears_the_autopilot_hud_session(self):
         import test_governor_runtime as legacy
         fixture = legacy.RuntimeBase()
