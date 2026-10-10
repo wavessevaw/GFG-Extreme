@@ -20,7 +20,7 @@ class Arbiter:
 
     @property
     def freeze_tdp(self) -> bool:
-        return self.tool == "gpu-clock" and self.state in ("SETTLE", "VERIFY", "ROLLBACK", "RESTORE_PENDING")
+        return self.tool in ("gpu-clock", "half-rate-shading") and self.state in ("SETTLE", "VERIFY", "ROLLBACK", "RESTORE_PENDING")
 
     @property
     def blocks_planned(self) -> bool:
@@ -92,7 +92,7 @@ class Arbiter:
 
     def mark_restore_pending(self, reason: str) -> None:
         self.state = "RESTORE_PENDING"
-        self.tool = "gpu-clock"
+        self.tool = self.tool or "gpu-clock"
         self.reason = reason
 
     def note(self, action: str, reason: str) -> None:
@@ -103,9 +103,9 @@ class Arbiter:
         self.tool = "budget" if action == "OPTIMIZE_POWER" else None
 
     def _reject(self, now: float, reason: str) -> None:
-        self.blocked_until["OPTIMIZE_GPU_CLOCK"] = now + self.REJECT_S
+        action = "OPTIMIZE_SHADING" if self.tool == "half-rate-shading" else "OPTIMIZE_GPU_CLOCK"
+        self.blocked_until[action] = now + self.REJECT_S
         self.state = "ROLLBACK"
-        self.tool = "gpu-clock"
         self.reason = reason
         self.cooldown_until = now + self.COOLDOWN_S
 
