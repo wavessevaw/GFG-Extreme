@@ -165,7 +165,9 @@ def confirmation_evidence(req: Request, observer: Any, *, span_s: float = 8.0) -
     if not samples:
         return evidence
     end = samples[-1].monotonic
-    tail = [sample for sample in samples if 0 <= end - sample.monotonic <= span_s]
+    tail = [sample for sample in samples
+            if 0 <= end - sample.monotonic <= span_s
+            and getattr(sample, "output_source", None) != "instant_plan"]
     if not tail:
         return evidence
     evidence["samples"] = len(tail)

@@ -1503,7 +1503,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Extreme 1.6.8 started")
+        decky.logger.info("GFG Extreme 1.6.9 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""

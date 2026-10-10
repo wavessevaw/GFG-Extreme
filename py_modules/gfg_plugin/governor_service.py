@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.6.8).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.6.9).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -67,7 +67,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, confirmation_evidence, matches,
 )
 
-VERSION = "1.6.8"
+VERSION = "1.6.9"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -3072,7 +3072,8 @@ class GovernorService:
             floor = 0.8 * float(self._budget.point.target_output_fps)
             recent = [sample.output_fps for sample in self.observer.samples_since(
                 self.observer.time_fn() - self.FAST_CHECK_SECONDS,
-                after_seq=self._injection_seq)][-self.STARVATION_RUN:]
+                after_seq=self._injection_seq)
+                      if getattr(sample, "output_source", None) != "instant_plan"][-self.STARVATION_RUN:]
             lasting = (len(recent) >= self.STARVATION_RUN
                        and all(isinstance(v, (int, float)) and v < floor for v in recent))
             starved = (settled and lasting and isinstance(output, (int, float))
