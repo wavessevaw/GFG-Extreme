@@ -857,6 +857,10 @@ class Plugin:
         """Auto, Battery or Smoothness. One policy, not a second controller."""
         return await asyncio.to_thread(self.governor_service.set_autopilot_preference, profile_name, preference)
 
+    async def set_governor_autopilot_shading(self, profile_name: str, allowed: bool) -> Dict[str, Any]:
+        """Consent to visual-quality-changing Half Rate Shading GPU experiments."""
+        return await asyncio.to_thread(self.governor_service.set_autopilot_shading, profile_name, allowed)
+
     async def get_governor_game_model_target(self, profile_name: str) -> Dict[str, Any]:
         """Settings -> Diagnostics: which game "Reset what GFG learned" would reset (None: unknown)."""
         return {"success": True, "target": self.governor_service.game_model_target(profile_name)}
