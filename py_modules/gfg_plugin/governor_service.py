@@ -47,6 +47,9 @@ from .frame_os.memory import GameMemory, seed_pairs
 from .frame_os.proof import METRICS as FRAME_OS_METRICS
 from .package_paths import PLUGIN_ROOT
 from .autopilot.adapters import ObservationMonitor
+from .autopilot.experiments import SingleFlight
+from .autopilot.perception import perceive
+from .autopilot.policy import decide
 from .host_sensors import HostSensors, diagnose
 from .governor_restore import power_restore_error, cpu_restore_error
 from . import extreme as extreme_policy
@@ -138,6 +141,7 @@ class GovernorService:
         self._session_profile = ""
         self.sensors = HostSensors()
         self.autopilot_observation = ObservationMonitor()
+        self._autopilot_slot = SingleFlight()
         self.game_models = GameModelStore(self.configuration.config_dir / "gfg-game-models.json")
         self.power = SteamDeckPowerActuator(manager=SteamOSManagerTdp(home=os.environ.get("HOME")))
         self.power.journal = self._journal_power
@@ -1775,6 +1779,7 @@ class GovernorService:
     def get_status(self, profile: str = "") -> Dict[str, Any]:
         value = dict(self._status)
         value["autopilot_observation"] = self.autopilot_observation.status(self._clock(), profile)
+        value["autopilot_plan"] = self._autopilot_plan_status()
         if profile and profile != value.get("profile"):
             value["requested_profile"] = profile
             value["enabled"] = self._profile_enabled(profile)
@@ -2368,6 +2373,21 @@ class GovernorService:
             restore_pending=bool(self._restore_pending) or self._actuator_restore_blocked(),
             poll_error=((self._status.get("telemetry") or {}).get("snapshot") or {}).get("last_poll_error"),
         )
+        plan = self._autopilot_plan_status()
+        if plan["release_slot"] and self._autopilot_slot.busy:
+            self._autopilot_slot.abort(plan["reason"])
+
+    def _autopilot_plan_status(self):
+        """The C2 decision. It cannot arm a tool or write an actuator."""
+        now = self._clock()
+        perception = perceive(self.autopilot_observation.snapshot, now)
+        slot = self._autopilot_slot
+        return decide(
+            perception, now=now,
+            restore_pending=self._restoration_blocked() or perception.reason == "restore-pending",
+            flow_available=False, power_ceiling_w=None,
+            slot_busy=slot.busy, slot_knob=slot.knob,
+        ).public()
 
     async def _sync_flow(self, profile: str) -> None:
         """Rare isolated resource trials; Act, CPU probes and stale data opt out."""
