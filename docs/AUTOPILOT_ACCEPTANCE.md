@@ -33,3 +33,22 @@ CI on source commit: https://github.com/wavessevaw/GFG-Extreme/actions/runs/3806
 **Remaining hardware concerns:** verify the behavior of a 60 FPS output goal on a physical 90 Hz OLED display (mixed cadence may stutter); GPU Clock real writes are disabled and remain NOT_VERIFIED on device.
 
 Status: READY FOR CONTROLLED DEVICE VALIDATION (source only; refreshed installable package required). Hardware and GPU-clock actuation remain NOT_TESTED. Do not enable clock writes on the Deck yet.
+
+
+
+## Autopilot 2.0.2 experimental release gate
+
+This supersedes the old 2.0.1 rows above specifically for the two new, explicitly
+requested resource actuators. Do not report the old 2.0.1 release ZIP as
+containing the new code.
+
+| Feature | Software status | Hardware status |
+| --- | --- | --- |
+| GPU Clock SteamOSManager (QAM) | Implemented using session D-Bus `GpuPerformanceLevel1` with `steamosctl` fallback; mock property read/write, previous manual value + Auto restore, external manual override, missing-interface fallback exercised by `tests/test_steamos_gpu.py`. | **NOT TESTED on Deck**. Underlying SteamOSManager presence and safe manual clock behavior vary by firmware. |
+| Half Rate Shading | Steam `RADV_FORCE_VRS_CONFIG_FILE` live 1x1/2x2 integration; explicit per-profile opt-in, single arbiter, rollback, receipt-based recovery, `tests/test_half_rate_autopilot.py`. | **NOT TESTED on Deck**. RADV/VRS game compatibility and legibility must be evaluated visually; FPS readings alone cannot measure image-quality loss. |
+| CPU/GPU/FPS/temp/power efficiency | Existing Linux CPU/GPU sensor sampler and Governor renderer FPS/frametime samples linked to decisions, thermal and watt readings logged. | Values sourced from system/renderer telemetry; this does **not** scrape pixels of the Steam Performance Overlay. |
+| Other Steam QAM controls | Allow Tearing remains untouched. | No automatic control or hardware testing. |
+| Release | Version 2.0.2 with `gfgPrerelease` true. Publish only after all CI, native, frontend and packaging checks succeed, and include exact release SHA and SHA-256. | Device validation is separate from successful CI. |
+
+**Status:** experimental software implementation; hardware ready-for-testing is not
+a claim of measured performance, restore reliability or visual correctness.
