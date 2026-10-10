@@ -62,12 +62,28 @@ def tones(view, critical: bool = False) -> dict:
         return "green"
 
     def battery():
+        level = view.battery_pct
+        if level is None or not isinstance(level, (int, float)) or not 0 <= level <= 100:
+            return "grey"
+        # Even a plugged-in Deck should never display 5% as 'all green'.
+        if level <= 10:
+            return "red"
+        if level <= 20 or (view.battery_minutes is not None and view.battery_minutes < 20
+                           and view.external_power is not True):
+            return "yellow"
         return "green"
 
-    def energy():
-        return "green" if view.fresh else "grey"
+    def tdp():
+        if view.tdp_error:
+            return "red"
+        if view.tdp_external_change:
+            return "yellow"
+        return "green" if view.tdp_readable else "grey"
 
-    named = {"fps": fps(), "tdp": "green" if view.fresh else "grey",
+    def energy():
+        return "green" if view.draw_w is not None and view.fresh else "grey"
+
+    named = {"fps": fps(), "tdp": tdp(),
              "gpu": gpu(), "cpu": cpu(), "temp": thermal(), "frame": frame(),
              "battery": battery() if view.fresh else "grey", "energy": energy()}
     if critical:
