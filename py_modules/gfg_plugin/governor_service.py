@@ -142,6 +142,9 @@ class GovernorService:
         self._session_profile = ""
         self.sensors = HostSensors()
         self.autopilot_observation = ObservationMonitor()
+        from .autopilot.trace import AutopilotTrace
+        self.autopilot_trace_path = self.configuration.runtime_state_dir / "autopilot-trace.jsonl"
+        self.autopilot_trace = AutopilotTrace(self.autopilot_trace_path)
         self._autopilot_slot = SingleFlight()
         self._autopilot_power_enabled = False
         self._autopilot_flow_enabled = False
@@ -1787,6 +1790,18 @@ class GovernorService:
         value = dict(self._status)
         value["autopilot_observation"] = self.autopilot_observation.status(self._clock(), profile)
         value["autopilot_plan"] = self._autopilot_plan_status()
+        slot, trial = self._autopilot_slot, self._autopilot_power
+        value["autopilot_debug"] = {
+            "power_flag": self._autopilot_power_enabled,
+            "flow_flag": self._autopilot_flow_enabled,
+            "slot_phase": slot.phase, "slot_knob": getattr(slot.knob, "value", None),
+            "scheduler_phase": trial.scheduler.phase,
+            "scheduler_awaiting": trial.scheduler._awaiting,
+            "scheduler_restore_pending": trial.scheduler.restore_pending,
+            "baseline_w": trial.baseline_w, "baseline_fast_w": trial.baseline_fast_w,
+            "rollback_due": trial.rollback_due, "last_renderer_seq": self._autopilot_seen_seq,
+            "trace_failures": self.autopilot_trace.failures,
+        }
         if profile and profile != value.get("profile"):
             value["requested_profile"] = profile
             value["enabled"] = self._profile_enabled(profile)
@@ -2488,6 +2503,38 @@ class GovernorService:
         slot = self._autopilot_slot
         if plan["release_slot"] and slot.busy and not self._autopilot_hold_for_restore(slot):
             slot.abort(plan["reason"])
+        snapshot = self.autopilot_observation.snapshot
+        sample = snapshot.samples[-1] if snapshot.samples else None
+        power_state = self._autopilot_power_view
+        self.autopilot_trace.write(
+            "observation",
+            profile=self._status.get("profile"), backend=self._status.get("observation_backend"),
+            enabled={"power": self._autopilot_power_enabled, "flow": self._autopilot_flow_enabled},
+            governor={"state": self._status.get("state"), "reason": self._status.get("reason"),
+                      "restore_pending": self._restoration_blocked()},
+            source={"seq": getattr(sample, "seq", None),
+                    "receipt_mono": getattr(sample, "timestamp_mono", None),
+                    "real_fps": getattr(sample, "real_fps", None),
+                    "output_fps": getattr(sample, "output_fps", None),
+                    "context": snapshot.context,
+                    "blocked_reason": snapshot.blocked_reason},
+            perception=plan,
+            flow=self._flow.status(),
+            slot={"phase": slot.phase, "knob": getattr(slot.knob, "value", None)},
+            scheduler={"phase": self._autopilot_power.scheduler.phase,
+                       "awaiting": self._autopilot_power.scheduler._awaiting,
+                       "restore_pending": self._autopilot_power.scheduler.restore_pending,
+                       "baseline_w": self._autopilot_power.baseline_w,
+                       "baseline_fast_w": self._autopilot_power.baseline_fast_w,
+                       "rollback_due": self._autopilot_power.rollback_due},
+            watts={"slow": power_state.get("observed_tdp_w"),
+                   "fast": power_state.get("observed_fast_w"),
+                   "draw": power_state.get("draw_w"),
+                   "ceiling": power_state.get("ceiling_tdp_w"),
+                   "owned": power_state.get("owned")},
+            sensors={k: (self._status.get("sensors") or {}).get(k)
+                     for k in ("temp_c", "gpu_busy_pct", "cpu_top_core_pct", "sample_seq")},
+        )
 
     def _autopilot_evidence(self):
         """One renderer receipt once. A repeated poll is not a new sample."""
@@ -2593,6 +2640,9 @@ class GovernorService:
                 restore_pending=True, evidence=evidence,
             )
             self._status["autopilot_power"] = outcome
+            self.autopilot_trace.write("power-control", outcome=outcome,
+                                       phase=self._autopilot_power.scheduler.phase,
+                                       seq=seq, fresh=evidence, restore_blocked=True)
             return
         now = self._clock()
         perception = perceive(self.autopilot_observation.snapshot, now)
@@ -2616,6 +2666,9 @@ class GovernorService:
             slot=self._autopilot_slot, evidence=evidence,
         )
         self._status["autopilot_power"] = outcome
+        self.autopilot_trace.write("power-control", outcome=outcome,
+                                   phase=self._autopilot_power.scheduler.phase,
+                                   seq=seq, fresh=evidence, restore_blocked=False)
         if outcome.get("restore_failed"):
             self._actuator_restore_errors["power"] = str(outcome.get("reason") or "power restore failed")
             self._actuator_restore_at = self._clock()
@@ -2643,6 +2696,15 @@ class GovernorService:
             await self._run_autopilot_power()
         else:
             await self._run_autopilot_flow()
+        self.autopilot_trace.write(
+            "exclusive-control",
+            mode="power" if self._autopilot_power_enabled else "flow",
+            power=self._status.get("autopilot_power"),
+            flow=self._status.get("autopilot_flow"),
+            flow_state=self._flow.status(),
+            slot={"phase": self._autopilot_slot.phase,
+                  "knob": getattr(self._autopilot_slot.knob, "value", None)},
+        )
         return True
 
     async def _run_autopilot_flow(self) -> None:
