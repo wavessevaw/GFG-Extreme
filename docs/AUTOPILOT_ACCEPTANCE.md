@@ -20,8 +20,8 @@ PR: #117
 | Profile migration | PASS | `MigrationTests`. | |
 | Diagnostics | PASS | Decisions go through Governor `_event` JSONL and the timeline `autopilot` field. | |
 | Regression | PASS | Local `unittest discover`: 1025 tests. Two `os.chown(65534)` errors are this sandbox rejecting that uid. They are not Autopilot failures. GitHub CI is the confirmation. One fingerprint test now changes multiplier to 4, because 3 was already the saved value and the file did not change. | |
-| Decky build | NOT_TESTED | Release workflow on this commit. | |
-| CI | NOT_TESTED | Previous runs 38058805574 and 38058808662 failed because the smoke needle was `AUTOPILOT` while the button text is `Autopilot`. | Re-run on the commit that contains this fix. |
+| Decky build | PASS | Release run on code commit `0e770b85496f9a6d75ce828eb32765a0bed83310`: https://github.com/wavessevaw/GFG-Extreme/actions/runs/38059744675. Asset `GFG-Extreme-v2_0_0.zip`, sha256 `f6279cbff229f0336215f35800c5c720b5680ad368a8f38724b58878b7957e47`. Prerelease, not latest. | This docs commit does not change the package. |
+| CI | PASS | Push https://github.com/wavessevaw/GFG-Extreme/actions/runs/38059745004 and PR https://github.com/wavessevaw/GFG-Extreme/actions/runs/38059748801 on `0e770b8`. The earlier failure was the smoke needle `AUTOPILOT`; the selector text is `Autopilot`. | Reconfirm this docs commit on its own CI run. |
 | Steam Deck | NOT_TESTED | No device here. | Do not enable GPU clock writes for that run. |
 
-Status: SOFTWARE READY / HARDWARE NOT VERIFIED, only after the GitHub checks on this commit are green. GPU clock actuation on hardware remains BLOCKED.
+Status: SOFTWARE READY / HARDWARE NOT VERIFIED on code `0e770b8`. GPU clock actuation on hardware remains BLOCKED.
