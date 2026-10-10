@@ -37,7 +37,10 @@
     "plan_base_fps_fields": 133,
     "plan_current_base_fps_fields": 1,
     "plan_measured_base_fps_fields": 0,
-    "plan_observed_output_fps_fields": 74
+    "plan_observed_output_fps_fields": 74,
+    "only_current_base_fps_operation": "adaptive-ramp-accepted",
+    "only_current_base_fps_accepted_by_observation_stream": false,
+    "note": "All 74 fixed-plan + 58 adaptive-plan operations lack a verified measured real-FPS field; strict parser ignores the lone adaptive-ramp-accepted pair."
   },
   "autopilot": {
     "trace_observations": 439,
