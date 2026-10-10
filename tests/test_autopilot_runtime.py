@@ -218,7 +218,7 @@ class ServiceIntegrationTests(unittest.TestCase):
                 self.assertEqual(svc.get_status("game")["autopilot_plan"]["action"], "RESTORE")
                 self.assertFalse(svc._autopilot_slot.busy)
             self.assertEqual(json.dumps(svc._settings, sort_keys=True), before_settings)
-            self.assertEqual(svc.MODES, ("budget", "balanced", "quality", "extreme"))
+            self.assertEqual(svc.MODES, ("budget", "balanced", "quality", "autopilot", "extreme"))
         finally:
             fixture.tearDown()
 

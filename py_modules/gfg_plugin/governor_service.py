@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.6.9).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.7.0).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -73,7 +73,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, confirmation_evidence, matches,
 )
 
-VERSION = "1.6.9"
+VERSION = "1.7.0"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -105,7 +105,7 @@ class GovernorService:
     CEILING_REJECT_TTL_S = 600.0
     # Budget mode (default): lowest TDP first, then fewer generated frames.
     DEFAULT_MODE = "budget"
-    MODES = ("budget", "balanced", "quality", "extreme")
+    MODES = ("budget", "balanced", "quality", "autopilot", "extreme")
     BUDGET_MODES = ("budget", "balanced", "extreme")   # run by the BudgetController
     FLAVORS = {"budget": "battery", "balanced": "balanced", "extreme": "extreme"}
     BUDGET_WINDOW_SECONDS = 8.0
@@ -201,6 +201,8 @@ class GovernorService:
         self.ring_hud_layer_error: Optional[str] = None
         self.frame_os_registry_dir: Optional[Path] = getattr(self.configuration, "user_vulkan_layer_dir", None)
         self._settings = self._load_settings()
+        if self._replace_saved_extreme_mode():
+            self._save_settings()
         builder = getattr(self.configuration, "build_governor_overlay_text", None)
         self.overlay: Optional[OverlayStore] = (
             OverlayStore(self.configuration.config_dir, builder) if callable(builder) else None
@@ -320,6 +322,15 @@ class GovernorService:
             pass
         return {"schema": 1, "profiles": {}}
 
+    def _replace_saved_extreme_mode(self) -> bool:
+        """This pre-alpha build opens a saved Extreme profile as Autopilot."""
+        changed = False
+        for settings in (self._settings.get("profiles") or {}).values():
+            if isinstance(settings, dict) and settings.get("mode") == "extreme":
+                settings["mode"] = "autopilot"
+                changed = True
+        return changed
+
     _settings_lock = threading.Lock()
 
     def _save_settings(self) -> None:
@@ -368,18 +379,22 @@ class GovernorService:
         was = self._mode(profile)
         self._settings.setdefault("profiles", {}).setdefault(profile, {})["mode"] = mode
         self._save_settings()
-        overlay_error = None
-        if "extreme" in (mode, was) and mode != was:
-            # Extreme renders below full resolution when that buys real frames: the Scaling Engine
-            # is provisioned from the next launch on (process-static), like a scale-ready launch.
-            overlay_error = self._ensure_base_overlay_sync(profile)
-            self._extreme_act_switch(profile, entering=mode == "extreme")
-            self._save_settings()
         if profile == self._active_profile:
             self._forced_mode_change = True
-        self._poke()
+        self.set_autopilot_test(mode == "autopilot" and self._profile_enabled(profile))
         return {"success": True, "error": None, "profile": profile, "mode": mode,
-                **({"overlay_error": overlay_error} if overlay_error else {})}
+                "previous_mode": was}
+
+    def set_autopilot_test(self, enabled: bool) -> Dict[str, Any]:
+        """The Autopilot mode arms one power trial. Flow stays off."""
+        self._autopilot_power_enabled = bool(enabled)
+        self._autopilot_flow_enabled = False
+        self._poke()
+        return {"success": True, "error": None, "enabled": self._autopilot_power_enabled, "tool": "power"}
+
+    def _arm_autopilot_mode(self, enabled: bool) -> None:
+        self._autopilot_power_enabled = bool(enabled)
+        self._autopilot_flow_enabled = False
 
     def game_model_target(self, profile: str) -> Optional[Dict[str, Any]]:
         """Which game "Reset what GFG learned" would reset for ``profile``, or None.
@@ -3019,6 +3034,10 @@ class GovernorService:
             self._evaluation_after_seq = self.observer.sample_seq
         enabled = self._profile_enabled(profile)
         self._status.update({"profile": profile, "enabled": enabled})
+        self._arm_autopilot_mode(enabled and self._mode(profile) == "autopilot")
+        if not (self._autopilot_power_enabled or self._autopilot_flow_enabled) and self._autopilot_change_outstanding():
+            if not await self._withdraw_exclusive_tool():
+                return
         if not enabled:
             if self.power.state.owned or self._status.get("state") != "DISABLED" or self._point or self._request:
                 if not await self._settle_autopilot_power_before_release():
@@ -3041,6 +3060,9 @@ class GovernorService:
         if self._autopilot_power_enabled or self._autopilot_flow_enabled:
             # Keep sampling and profile restore, but do not let the old mode writers run.
             await self._poll_autopilot_observation(profile)
+            if (enabled and self._autopilot_power_enabled and not self._autopilot_flow_enabled
+                    and not self.power.state.owned):
+                await self._budget_power(profile)
             return
         await self._sync_overlay(profile, config)
 

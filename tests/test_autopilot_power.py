@@ -382,3 +382,23 @@ class ServicePowerGateTests(unittest.TestCase):
             self.assertNotIn("game", svc._forced_release)
         finally:
             fixture.tearDown()
+
+    def test_the_pre_alpha_button_arms_only_the_power_trial(self):
+        import test_governor_runtime as legacy
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            mode = svc._mode("game")
+            svc._settings.setdefault("profiles", {}).setdefault("game", {})["mode"] = "extreme"
+            self.assertEqual(svc._mode("game"), "extreme")
+            result = svc.set_mode("game", "autopilot")
+            self.assertTrue(result["success"])
+            self.assertTrue(svc._autopilot_power_enabled)
+            self.assertFalse(svc._autopilot_flow_enabled)
+            self.assertEqual(svc._mode("game"), "autopilot")
+            svc.set_mode("game", mode)
+            self.assertFalse(svc._autopilot_power_enabled)
+            self.assertEqual(svc._mode("game"), mode)
+        finally:
+            fixture.tearDown()

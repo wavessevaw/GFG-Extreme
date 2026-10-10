@@ -60,7 +60,7 @@ const rpc = {
 const num = (v, d = 1) => (v == null || isNaN(v) ? "–" : Number(v).toFixed(d).replace(/\.0$/, ""));
 const MODE_NAME = { oled: "Steam Deck OLED", lcd: "Steam Deck LCD", dock: "Dock", external: "Dock", unknown: "Display" };
 const fmtMult = (m) => { const q = Math.round(Number(m) * 4) / 4; return "×" + (Number.isInteger(q) ? q : String(q)); };
-const MODE_LABEL = { budget: "Battery", balanced: "Balanced", quality: "Quality", extreme: "Extreme" };
+const MODE_LABEL = { budget: "Battery", balanced: "Balanced", quality: "Quality", extreme: "Extreme", autopilot: "Autopilot" };
 // review 1.1.x: a session switched between modes reads "Battery 18m · Balanced 13m", not just its last mode.
 const frameOsMinutes = (m) => Object.entries(m || {}).map(([k, v]) => k + " " + num(v, 0) + "m").join(" · ");
 const sessionModes = (x) => (x && x.mode === "mixed" && x.modes ? Object.entries(x.modes).map(([m, v]) => (MODE_LABEL[m] || m) + " " + num(v, 0) + "m").join(" · ") : (MODE_LABEL[x && x.mode] || "–"));
@@ -88,6 +88,7 @@ const MODE_TEXT = {
   budget: "Battery: lowest TDP first, 9–11 W ideal. Real FPS stays at 24 or more; a deeper ratio (down to 20 real) and the highest watts your Deck allows only as a last resort.",
   quality: "Quality: fewest generated frames first, then lowers TDP. Uses more battery.",
   extreme: "Extreme — BETA / EXPERIMENTAL. In development; not recommended for regular play. Uses your Deck's stock limit — 15 W, or your own lower limit, never more, no overclock. Lowers render resolution to 90% / 80% with matched sharpening only when the engine confirms it. Uses more battery than Balanced.",
+  autopilot: "Autopilot — PRE-ALPHA. Replaces Extreme in this test build. One power trial under your current limit. It does not change flow scale. Not for regular play. No FPS or latency number is claimed.",
 };
 
 // ---------- Extreme (1.6)
@@ -516,7 +517,6 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
   const [asking, setAsking] = useState(false);
   const [offerHidden, setOfferHidden] = useState(false);
   const setMode = async (v) => {
-    if (v === "extreme" && x.act_consent == null && !asking) { setAsking(true); return; }
     setAsking(false);
     try { await rpc.setMode(profile, v); } catch (e) {}
     refresh();
@@ -579,13 +579,13 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
         !xt && pw.owned && pw.initial_tdp_w && pw.initial_tdp_w - tdp >= 1 ? h("div", { className: "r" }, h("span", null, "SAVING"), h("span", null, num(pw.initial_tdp_w - tdp, 0) + " W under your " + num(pw.initial_tdp_w, 0) + " W limit")) : null,
         h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, (tdp / ((xt && x.ceiling && x.ceiling.ceiling_w) || pw.initial_tdp_w || pw.maximum_tdp_w || 15)) * 100) + "%" } }))) : null),
     xt && s.enabled ? h(ExtremeCard, { x, profile, refresh }) : null,
-    !xt && s.enabled && s.extreme_offer && !offerHidden ? h(ExtremeOffer, { o: s.extreme_offer, onTry: () => setMode("extreme"), onHide: () => setOfferHidden(true) }) : null,
+    !xt && s.mode !== "autopilot" && s.enabled && s.extreme_offer && !offerHidden ? h(ExtremeOffer, { o: s.extreme_offer, onTry: () => setMode("autopilot"), onHide: () => setOfferHidden(true) }) : null,
     s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os, power: s.power, battery: s.battery && s.battery.percent }) : null,
     h(Focusable, { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? undefined : toggle },
       h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 18 }), busy ? "WORKING…" : missing ? "INSTALL ENGINE" : s.enabled ? "STOP" : "RUN"),
     h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : missing ? "The GFG engine is not installed yet. One tap installs it." : "Target " + target + " FPS · " + (dev.reason || "picked automatically for this screen")),
     h("div", { className: "sec" }, "MODE"),
-    h(Seg, { cls: "four", value: s.mode || "budget", options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"], ["extreme", h("span", { style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2 } }, h("span", null, "EXTREME"), h("small", { style: { fontSize: 8, lineHeight: 1.1 } }, "BETA")), "x"]], onChange: setMode }),
+    h(Seg, { cls: "four", value: s.mode || "budget", options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"], ["autopilot", h("span", { style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2 } }, h("span", null, "AUTOPILOT"), h("small", { style: { fontSize: 8, lineHeight: 1.1 } }, "PRE-ALPHA")), "x"]], onChange: setMode }),
     asking ? h(ActConsent, { onAnswer: answerAct }) : null,
     h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
     health ? h("div", { className: "hint" }, health) : null,

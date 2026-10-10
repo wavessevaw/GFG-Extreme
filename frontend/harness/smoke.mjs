@@ -200,20 +200,16 @@ for (const [state, nav, expected] of cases) {
   await other.close();
   cases.push(["extreme-wolf"]);
 }
-// First switch to Extreme asks about Frame OS Act once, then switches with the answer.
+// Autopilot replaces Extreme in the selector and does not ask the Act question.
 {
   const page = await openPage(browser, STATES["home-extreme-consent"]);
-  await page.getByText("EXTREME", { exact: true }).first().click();
-  await page.waitForTimeout(120);
-  const before = await page.evaluate(() => window.__modes || []);
-  if (before.length) { failed++; console.error(`FAIL extreme switched before the Act question: ${JSON.stringify(before)}`); }
-  if (!(await page.getByText("Let Frame OS Act join Extreme?", { exact: true }).count())) { failed++; console.error("FAIL no Act question"); }
-  await page.getByText("Without Act", { exact: true }).first().click();
+  await page.getByText("AUTOPILOT", { exact: true }).first().click();
   await page.waitForTimeout(150);
   const r = await page.evaluate(() => ({ modes: window.__modes || [], consents: window.__consents || [] }));
-  if (JSON.stringify(r) !== JSON.stringify({ modes: ["extreme"], consents: [false] })) { failed++; console.error(`FAIL extreme consent flow: ${JSON.stringify(r)}`); }
+  if (JSON.stringify(r) !== JSON.stringify({ modes: ["autopilot"], consents: [] })) { failed++; console.error(`FAIL autopilot switch: ${JSON.stringify(r)}`); }
+  if (await page.getByText("Let Frame OS Act join Extreme?", { exact: true }).count()) { failed++; console.error("FAIL Act question still shown for Autopilot"); }
   await page.close();
-  cases.push(["extreme-consent"]);
+  cases.push(["autopilot-replaces-extreme"]);
 }
 // The sharpening correction goes to the backend in 0.05 steps.
 {

@@ -852,7 +852,7 @@ class Plugin:
         )
 
     async def set_governor_mode(self, profile_name: str, mode: str) -> Dict[str, Any]:
-        """Battery, Balanced, Quality or Extreme (the whole stock power limit into real frames)."""
+        """Battery, Balanced, Quality or Autopilot. Autopilot replaces Extreme in this build."""
         return await asyncio.to_thread(self.governor_service.set_mode, profile_name, mode)
 
     async def get_governor_game_model_target(self, profile_name: str) -> Dict[str, Any]:
@@ -1505,7 +1505,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Extreme 1.6.9 started")
+        decky.logger.info("GFG Extreme 1.7.0 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""
