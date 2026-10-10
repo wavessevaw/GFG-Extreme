@@ -156,7 +156,7 @@ class FlowReservationTests(unittest.TestCase):
         self.assertFalse(self.svc._flow.change_outstanding())
         self.assertNotIn(0.7, written)
 
-    def test_a_profile_switch_does_not_write_the_old_scale_onto_the_new_profile(self):
+    def test_a_profile_switch_restores_the_old_overlay_instead_of_waiting_for_an_unreachable_ack(self):
         from gfg_plugin.governor_flow import FlowTrial
         self.svc._flow = FlowTrial()
         self.svc._flow.original = 0.8
@@ -165,28 +165,27 @@ class FlowReservationTests(unittest.TestCase):
         self.svc._flow.context = ("game-a", "balanced", "point")
         self.svc._point = {"key": "x", "base_target_fps": 45, "multiplier": 2}
         self.svc._point_deltas = {}
-        self.svc.overlay = object()
         saved = {"game-a": {"flow_scale": 0.8}, "game-b": {"flow_scale": 1.0}}
         self.svc._saved_profile_config = lambda profile: saved[profile]
         self.svc._base_for = lambda profile, config: {"flow_scale": config["flow_scale"]}
-        written = []
+        ensured = []
 
-        def write(profile, config, key):
-            written.append((profile, config.get("flow_scale")))
+        class Overlay:
+            def exists(self, profile):
+                return True
 
-        self.svc._write_overlay_sync = write
+            def ensure(self, profile, config, point_key="base"):
+                ensured.append((profile, config.get("flow_scale"), point_key))
+
+        self.svc.overlay = Overlay()
         self.svc._status["telemetry"] = {"snapshot": {"event_seq": 2, "latest": {}, "flow": {}}}
         asyncio.run(self.svc._sync_flow("game-b"))
-        self.assertEqual(written, [("game-a", 0.8)])
-        self.assertEqual(self.svc._flow.phase, "wait-restore")
-        self.assertEqual(self.svc._flow.context[0], "game-a")
-        self.fixture.t["now"] += 20
-        asyncio.run(self.svc._sync_flow("game-b"))
-        self.assertEqual(self.svc._flow.phase, "wait-restore")
-        self.assertNotEqual(self.svc._flow.phase, "done")
-        self.assertFalse(any(profile == "game-b" for profile, _scale in written))
+        self.assertEqual(ensured, [("game-a", 0.8, "base")])
+        self.assertNotEqual(self.svc._flow.phase, "wait-restore")
+        self.assertFalse(self.svc._flow.change_outstanding())
+        self.assertNotIn("game-a", self.svc._restore_pending)
 
-    def test_a_missing_saved_profile_does_not_drop_the_flow_barrier(self):
+    def test_a_missing_saved_profile_keeps_the_overlay_restore_barrier(self):
         from gfg_plugin.governor_flow import FlowTrial
         self.svc._flow = FlowTrial()
         self.svc._flow.original = 0.8
@@ -195,13 +194,52 @@ class FlowReservationTests(unittest.TestCase):
         self.svc._flow.context = ("game-a", "balanced", "point")
         self.svc._point = {"key": "new", "base_target_fps": 45, "multiplier": 2}
         self.svc._point_deltas = {"flow_scale": 0.7}
-        self.svc.overlay = object()
         self.svc._saved_profile_config = lambda profile: {"flow_scale": 1.0} if profile == "game-b" else None
-        written = []
-        self.svc._write_overlay_sync = lambda *args: written.append(args)
+        self.svc._base_for = lambda profile, config: {"flow_scale": config["flow_scale"]}
+
+        class Overlay:
+            def exists(self, profile):
+                return True
+
+            def ensure(self, profile, config, point_key="base"):
+                raise AssertionError("missing Saved profile must not be written")
+
+        self.svc.overlay = Overlay()
         self.svc._status["telemetry"] = {"snapshot": {"event_seq": 2, "latest": {}, "flow": {}}}
         asyncio.run(self.svc._sync_flow("game-b"))
-        self.assertEqual(written, [])
-        self.assertEqual(self.svc._flow.context[0], "game-a")
-        self.assertEqual(self.svc._flow.phase, "b")
-        self.assertEqual(self.svc._flow.reason, "saved-profile-missing")
+        self.assertEqual(self.svc._restore_pending.get("game-a"), "profile-changed")
+        self.assertEqual(self.svc._status["flow_control"]["reason"], "restore-not-confirmed")
+
+    def test_the_second_flag_restores_a_dirty_flow_before_it_holds(self):
+        from gfg_plugin.governor_flow import FlowTrial
+        self.svc._autopilot_flow_enabled = True
+        self.svc._flow = FlowTrial()
+        self.svc._flow.original = 0.8
+        self.svc._flow.wanted = 0.7
+        self.svc._flow.phase = "b"
+        self.svc._flow.context = ("game",)
+        self.svc._point = {"key": "x", "base_target_fps": 45, "multiplier": 2}
+        self.svc._point_deltas = {}
+        self.svc._status["profile"] = "game"
+        self.svc._saved_profile_config = lambda profile: {"flow_scale": 0.8}
+        self.svc._base_for = lambda profile, saved: {}
+        written = []
+        self.svc._write_overlay_sync = lambda profile, config, key: written.append(config.get("flow_scale"))
+        self.svc.overlay = object()
+        self.svc._status["telemetry"] = {"snapshot": {
+            "event_seq": 3, "latest": {"context": "game"},
+            "flow": {"context": "game", "value": 0.7, "event_seq": 3},
+        }}
+        self.svc._autopilot_slot.start(Knob.FLOW_SCALE, self.fixture.t["now"])
+        self.svc._autopilot_power_enabled = True
+        asyncio.run(self.svc._run_autopilot_exclusive())
+        self.assertEqual(written, [0.8])
+        self.assertTrue(self.svc._autopilot_flow_dirty())
+        self.assertNotEqual(self.svc._status["autopilot_flow"]["reason"], "two-tools-requested")
+        self.svc._status["telemetry"] = {"snapshot": {
+            "event_seq": 4, "latest": {"context": "game"},
+            "flow": {"context": "game", "value": 0.8, "event_seq": 4},
+        }}
+        asyncio.run(self.svc._run_autopilot_exclusive())
+        self.assertFalse(self.svc._autopilot_flow_dirty())
+        self.assertEqual(self.svc._status["autopilot_flow"]["reason"], "two-tools-requested")

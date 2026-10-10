@@ -64,8 +64,28 @@ The three later comments are fixed on this tip as well:
   healthy stream does not become `launch-probe-stale` after six seconds.
 - A failed Autopilot rollback retries the pre-trial cap and keeps ownership.
   It does not call `restore_if_owned` and does not put back the user's original PPT.
-- A profile switch writes the old profile's Saved flow and keeps that context
-  until a fresh ACK. A missing Saved profile does not drop the barrier.
+- A profile switch restores the old profile through the verified overlay
+  release. It does not wait for a renderer ACK the new profile cannot send.
+
+The four comments after that are fixed on this tip as well:
+
+- A profile change verifies the pre-trial cap while power is still owned,
+  and only then releases the user's original PPT.
+- Turning on the second flag restores the tool that already wrote. It does
+  not leave that change in place.
+- A cross-profile flow change uses that same verified overlay release.
+- Flags on from a cold start are documented below as not a usable controller.
+
+## Flags on are not a usable Autopilot
+
+The owner asked for a sleeping merge. With either development flag set on a
+fresh service, Autopilot still has no power lease and no locked point. The
+flag path returns before the old planner claims either, so power stays
+unowned and flow reports `no-locked-point`. That is not a controller.
+
+Do not add a UI switch. Do not turn the flags on in a user build. A later
+change that wants a real session must claim the ceiling and establish one
+point itself, then prove it from a clean startup. This pull request does not.
 
 ## Merge this, and nothing else
 

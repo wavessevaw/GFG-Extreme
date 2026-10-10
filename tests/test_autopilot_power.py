@@ -233,3 +233,65 @@ class ServicePowerGateTests(unittest.TestCase):
             self.assertEqual(svc.power.writes, [10])
         finally:
             fixture.tearDown()
+
+    def test_a_profile_switch_verifies_the_trial_cap_before_the_user_cap(self):
+        import test_governor_runtime as legacy
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            svc._autopilot_power_enabled = True
+            svc._active_profile = "game"
+            svc.power.claim()
+            svc.power.values.update(observed_tdp_w=11, initial_tdp_w=8, owned=True)
+            svc._autopilot_power.baseline_w = 10
+            svc._autopilot_power.scheduler.start(Knob.POWER_CAP, fixture.t["now"], "scene", None)
+            svc._settings.setdefault("profiles", {}).setdefault("other", {})["enabled"] = True
+            order = []
+            original_set = svc.power.set_tdp_w
+            original_restore = svc.power.restore_if_owned
+
+            def set_tdp(value):
+                order.append(("set", value, svc.power.state.owned))
+                return original_set(value)
+
+            def restore():
+                order.append(("release", svc.power.values.get("observed_tdp_w"), svc.power.state.owned))
+                return original_restore()
+
+            svc.power.set_tdp_w = set_tdp
+            svc.power.restore_if_owned = restore
+            svc.configuration.get_current_profile_snapshot = lambda: (
+                "other", {"config": {"fg_backend": "gfg"}})
+            asyncio.run(svc._iteration_core())
+            set_at = next(index for index, item in enumerate(order) if item[:2] == ("set", 10))
+            release_at = next(index for index, item in enumerate(order) if item[0] == "release")
+            self.assertLess(set_at, release_at)
+            self.assertTrue(order[set_at][2])
+            self.assertFalse(any(item[0] == "set" and item[2] is False for item in order))
+            self.assertFalse(svc.power.state.owned)
+            self.assertFalse(svc._restoration_blocked())
+            self.assertEqual(svc.power.values["observed_tdp_w"], 10)
+        finally:
+            fixture.tearDown()
+
+    def test_the_second_flag_puts_back_an_applied_watt_before_it_holds(self):
+        import test_governor_runtime as legacy
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            svc._autopilot_power_enabled = True
+            svc.power.claim()
+            svc.power.values.update(observed_tdp_w=11, initial_tdp_w=8, owned=True)
+            svc._autopilot_power.baseline_w = 10
+            svc._autopilot_power.scheduler.start(Knob.POWER_CAP, fixture.t["now"], "scene", None)
+            svc._autopilot_flow_enabled = True
+            asyncio.run(svc._run_autopilot_exclusive())
+            self.assertEqual(svc.power.writes, [10])
+            self.assertEqual(svc.power.values["observed_tdp_w"], 10)
+            self.assertTrue(svc.power.state.owned)
+            self.assertEqual(svc._status["autopilot_power"]["reason"], "two-tools-requested")
+            self.assertIsNone(svc._autopilot_power.baseline_w)
+        finally:
+            fixture.tearDown()
