@@ -53,6 +53,28 @@ class HalfRateTests(unittest.TestCase):
             self.assertTrue(actor.restore()["restored"])
             self.assertEqual(p.read_text(), "1x1")
 
+    def test_restart_recovers_only_the_same_steam_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            p = root / "radv_vrs.test"
+            receipt = root / "receipt.json"
+            p.write_text("1x1")
+            p.chmod(0o600)
+            first = HalfRateShading(SteamVrsBackend(fixed_path=p), receipt_path=receipt)
+            self.assertTrue(first.enable_trial()["applied"])
+            self.assertTrue(receipt.exists())
+            second = HalfRateShading(SteamVrsBackend(fixed_path=p), receipt_path=receipt)
+            self.assertEqual(second.phase, "restore-pending")
+            self.assertTrue(second.restore()["restored"])
+            self.assertEqual(p.read_text(), "1x1")
+            self.assertFalse(receipt.exists())
+            p.write_text("2x2")
+            p.chmod(0o600)
+            receipt.write_text('{"original":"1x1","session_path":"/tmp/a-previous-session"}')
+            third = HalfRateShading(SteamVrsBackend(fixed_path=p), receipt_path=receipt)
+            self.assertFalse(third.owned)
+            self.assertEqual(p.read_text(), "2x2")
+
     def test_user_enabled_shading_is_not_modified(self):
         backend = StaticBackend("2x2")
         actor = HalfRateShading(backend)
