@@ -12,6 +12,8 @@ import os
 import re
 from pathlib import Path
 
+from .steamos_gpu import SteamOSGpuBackend
+
 
 STEP_MHZ = 100
 _RANGE = re.compile(r"SCLK:\s*(\d+)\s*Mhz\s*(\d+)\s*Mhz", re.I)
@@ -87,11 +89,14 @@ class FileBackend:
 
 class GpuClock:
     def __init__(self, backend=None, writes_enabled: bool = False, receipt_path: Path | None = None) -> None:
-        self.backend = backend or FileBackend()
+        # Only the SteamOSManager/QAM interface is used in production.
+        # Never fall back to low-level AMDGPU OverDrive writes.
+        self.backend = backend if backend is not None else SteamOSGpuBackend(home=os.environ.get("HOME"))
         self.writes_enabled = bool(writes_enabled)
         self.receipt_path = Path(receipt_path) if receipt_path else None
         self.phase = "idle"
         self.saved_level = None
+        self.saved_manual = None
         self.saved_max = None
         self.applied_max = None
         self.last_error = ""
@@ -117,6 +122,8 @@ class GpuClock:
         clocks = [int(item[1]) for item in _LEVEL.findall(table)]
         high = int(found.group(2))
         return {**base, "available": True, "reason": "ready", "level": level,
+                "backend": type(self.backend).__name__,
+                "manual_clock_mhz": getattr(self.backend, "manual_clock_mhz", None),
                 "min_mhz": int(found.group(1)), "max_mhz": high,
                 "current_limit_mhz": clocks[-1] if clocks else high}
 
@@ -128,11 +135,19 @@ class GpuClock:
         info = self.status()
         if not info.get("available"):
             return {"applied": False, "reason": info.get("reason") or "GPU_CLOCK_UNAVAILABLE"}
+        # Never override the user's manual Steam GPU clock setting.
+        if self.phase == "idle" and info.get("level") != "auto":
+            return {"applied": False, "reason": "user-manual-clock"}
+        if self.phase == "owned" and (info.get("level") != "manual"
+                                       or info.get("current_limit_mhz") != self.applied_max):
+            self._clear()
+            return {"applied": False, "reason": "external-change"}
         target = int(info["current_limit_mhz"]) - STEP_MHZ
         if target < int(info["min_mhz"]):
             return {"applied": False, "reason": "no-headroom"}
         if self.phase == "idle":
             self.saved_level = info.get("level") or "auto"
+            self.saved_manual = info.get("manual_clock_mhz")
             self.saved_max = int(info["current_limit_mhz"])
         self.phase = "partial"
         self._save()
@@ -158,7 +173,8 @@ class GpuClock:
         info = self.status()
         if self.phase == "owned" and info.get("available"):
             current = info.get("current_limit_mhz")
-            if current not in (self.applied_max, self.saved_max):
+            if (info.get("level") != "manual"
+                    or current not in (self.applied_max, self.saved_max)):
                 self._clear()
                 return {"restored": False, "reason": "external-change", "yielded": True}
         if not info.get("available"):
@@ -167,7 +183,7 @@ class GpuClock:
             return {"restored": False, "reason": "GPU_CLOCK_UNAVAILABLE"}
         try:
             if self.saved_max is not None:
-                self.backend.write_table(f"s 1 {int(self.saved_max)}")
+                self.backend.write_table(f"s 1 {int(self.saved_manual if self.saved_manual is not None else self.saved_max)}")
                 self.backend.write_table("c")
             self.backend.write_level(self.saved_level or "auto")
         except OSError as error:
@@ -177,7 +193,10 @@ class GpuClock:
             return {"restored": False, "reason": "restore-failed"}
         after = self.status()
         level_ok = after.get("level") == (self.saved_level or "auto")
-        max_ok = self.saved_max is None or after.get("current_limit_mhz") == self.saved_max
+        if self.saved_manual is not None:
+            max_ok = after.get("manual_clock_mhz") == self.saved_manual
+        else:
+            max_ok = self.saved_max is None or after.get("current_limit_mhz") == self.saved_max
         if not (level_ok and max_ok):
             self.phase = "restore-pending"
             self._save()
@@ -195,6 +214,7 @@ class GpuClock:
     def _clear(self) -> None:
         self.phase = "idle"
         self.saved_level = None
+        self.saved_manual = None
         self.saved_max = None
         self.applied_max = None
         self._save()
@@ -206,7 +226,9 @@ class GpuClock:
             self.receipt_path.unlink(missing_ok=True)
             return
         payload = {"phase": self.phase, "saved_level": self.saved_level,
-                   "saved_max": self.saved_max, "applied_max": self.applied_max}
+                   "saved_manual": self.saved_manual,
+                   "saved_max": self.saved_max, "applied_max": self.applied_max,
+                   "backend": type(self.backend).__name__}
         self.receipt_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.receipt_path.with_suffix(".tmp")
         temporary.write_text(json.dumps(payload), encoding="utf-8")
@@ -223,5 +245,6 @@ class GpuClock:
             return
         self.phase = payload["phase"]
         self.saved_level = payload.get("saved_level")
+        self.saved_manual = payload.get("saved_manual")
         self.saved_max = payload.get("saved_max")
         self.applied_max = payload.get("applied_max")
