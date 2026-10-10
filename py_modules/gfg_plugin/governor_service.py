@@ -2548,13 +2548,21 @@ class GovernorService:
         """One renderer receipt once. A repeated poll is not a new sample."""
         from .autopilot.contracts import Config
         clock = self._clock()
-        latest = self.autopilot_observation.snapshot.samples[-1:]
+        snapshot = self.autopilot_observation.snapshot
+        latest = snapshot.samples[-1:]
         sample = latest[0] if latest else None
-        fresh = sample is not None and 0 <= clock - sample.timestamp_mono <= Config().max_age_s
-        if fresh and sample.seq != self._autopilot_seen_seq:
-            self._autopilot_seen_seq = sample.seq
+        fresh = (
+            not snapshot.blocked_reason and bool(snapshot.session_key)
+            and snapshot.backend == "gfg"
+            and 0 <= clock - snapshot.timestamp_mono <= Config().max_age_s
+            and sample is not None and sample.context == snapshot.context
+            and 0 <= clock - sample.timestamp_mono <= Config().max_age_s
+        )
+        receipt = (snapshot.session_key, sample.seq) if sample is not None else None
+        if fresh and receipt != self._autopilot_seen_seq:
+            self._autopilot_seen_seq = receipt
             return sample.seq, sample.timestamp_mono, True, sample
-        return 0, clock, False, sample
+        return 0, clock, False, sample if fresh else None
 
     async def _poll_autopilot_observation(self, profile: str) -> None:
         await asyncio.to_thread(self.observer.poll)
@@ -2651,7 +2659,7 @@ class GovernorService:
                 self._autopilot_power.step, now=now, seq=seq,
                 real=None if sample is None else sample.real_fps,
                 output=None if sample is None else sample.output_fps,
-                context=self.autopilot_observation.snapshot.context or "session",
+                context=self.autopilot_observation.snapshot.session_key,
                 ceiling_w=None, owned=False, allow=False, slot=self._autopilot_slot,
                 restore_pending=True, evidence=evidence,
             )
@@ -2674,7 +2682,7 @@ class GovernorService:
             self._autopilot_power.step, now=stamp, seq=seq,
             real=None if sample is None else sample.real_fps,
             output=None if sample is None else sample.output_fps,
-            context=self.autopilot_observation.snapshot.context or "session",
+            context=self.autopilot_observation.snapshot.session_key,
             ceiling_w=view.get("ceiling_tdp_w") if view.get("owned") is True else None,
             owned=view.get("owned") is True,
             allow=decision.action is Action.TRIAL and decision.knob is Knob.POWER_CAP,
