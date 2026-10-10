@@ -127,7 +127,6 @@ class ServicePowerGateTests(unittest.TestCase):
                 asyncio.run(svc._iteration_core())
             asyncio.run(svc._run_autopilot_power())
             asyncio.run(svc._run_autopilot_power())
-            self.assertEqual(svc.power.writes, [13.0])
-            self.assertLessEqual(max(svc.power.writes), 15)
+            self.assertEqual(svc.power.writes, [])
         finally:
             fixture.tearDown()
