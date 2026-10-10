@@ -94,3 +94,37 @@ def decide(view: View) -> Decision:
 
 def _has_power_headroom(draw, ceiling):
     return draw is not None and ceiling is not None and draw + 2 <= ceiling
+
+
+class TargetPolicy:
+    """Pick one display-sized goal and keep it until the miss is repeated."""
+
+    def __init__(self) -> None:
+        self.target = None
+        self.pending = None
+        self.pending_n = 0
+
+    def update(self, display_hz, real_fps, output_fps, preference, fresh) -> int:
+        hz = 90 if _num(display_hz) and display_hz >= 90 else 60
+        want = hz
+        real, output = _num(real_fps), _num(output_fps)
+        if fresh and real is not None and output is not None:
+            struggling = real < 28 or output < hz * 0.85
+            if preference == "battery" and struggling and hz == 90:
+                want = 60
+            elif preference == "auto" and real < 28 and hz == 90:
+                want = 60
+        if self.target is None:
+            self.target = want
+            return self.target
+        if want == self.target or not fresh:
+            self.pending, self.pending_n = None, 0
+            return self.target
+        if self.pending != want:
+            self.pending, self.pending_n = want, 1
+        else:
+            self.pending_n += 1
+        if self.pending_n >= 3:
+            self.target, self.pending, self.pending_n = want, None, 0
+        return self.target
+

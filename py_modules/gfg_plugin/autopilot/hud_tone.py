@@ -51,8 +51,15 @@ def tones(view, critical: bool = False) -> dict:
             return "yellow"
         return "green"
 
+    def battery():
+        return "green"
+
+    def energy():
+        return "green" if view.fresh else "grey"
+
     named = {"fps": fps(), "tdp": "green" if view.fresh else "grey",
-             "gpu": gpu(), "cpu": cpu(), "temp": thermal(), "frame": frame()}
+             "gpu": gpu(), "cpu": cpu(), "temp": thermal(), "frame": frame(),
+             "battery": battery() if view.fresh else "grey", "energy": energy()}
     if critical:
         named["temp"] = "red"
     return named

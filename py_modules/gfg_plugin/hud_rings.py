@@ -290,8 +290,11 @@ def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
         palette = {"green": (46, 170, 96), "yellow": (214, 176, 42), "red": (214, 64, 54), "grey": (92, 92, 102)}
         named = auto.get("tones") if isinstance(auto.get("tones"), dict) else {}
         for item in items:
-            if item.get("kind") == "ring" and item.get("label") in ("FPS", "TDP"):
-                item["rgb"] = palette.get(named.get(item["label"].lower(), "grey"), palette["grey"])
+            if item.get("kind") != "ring":
+                continue
+            key = {"FPS": "fps", "TDP": "tdp", "BATTERY": "battery", "ENERGY": "energy",
+                   "RESP": "frame", "FRAMES": "frame"}.get(item.get("label"))
+            item["rgb"] = palette.get(named.get(key, "grey"), palette["grey"])
         extra = []
         if preset != "minimal":
             gpu = finite_number(auto.get("gpu_mhz"), nonnegative=True)

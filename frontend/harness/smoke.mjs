@@ -68,7 +68,7 @@ const cases = [
   ["home-extreme", ["Details"], ["EXTREME", "Power limit", "15 W · stock limit", "1024×640 → 1280×800", "0.30 (engine confirmed)", "not measured (needs an A-B-A check)", "the whole limit: 15 W or your lower one, never above"]],
   ["home-extreme-verify", [], ["Extreme · checking", "Render 90% counts only once the engine shows", "Checking render 90%", "Limit 15 W"]],
   ["home-extreme-restart", [], ["Extreme · 12 W", "your own 12 W limit (never raised)", "Restart the game once to enable"]],
-  ["home-extreme-offer", [], ["MODE", "AUTOPILOT", "Battery"]],
+  ["home-extreme-offer", [], ["MODE", "Autopilot", "Battery"]],
   ["home-scale-ignored", ["Details"], ["Lower resolution", "Off · this game always renders at full size"]],
   ["home-scale-ignored", ["Settings", "Scaling"], ["This game sets its own render size", "has no effect here"]],
   ["home-extreme", [], ["80% · sharpen 0.30"]],

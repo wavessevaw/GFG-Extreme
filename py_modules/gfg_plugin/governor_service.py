@@ -52,7 +52,7 @@ from .autopilot.arbiter import Arbiter
 from .autopilot.gpu_clock import GpuClock
 from .autopilot.hud_tone import hold as hold_tones
 from .autopilot.hud_tone import tones as autopilot_tones
-from .autopilot.planner import View, decide as autopilot_decide
+from .autopilot.planner import TargetPolicy, View, decide as autopilot_decide
 from .cpu_freq import CpuFreqActuator
 from .power_split import PowerSplit, Sample as SplitSample, SplitMemory, levels_khz
 from .governor_hud import HudWriter, normalize as hud_normalize, output_fps as hud_output_fps
@@ -192,7 +192,12 @@ class GovernorService:
         if self._migrate_extreme_mode():
             self._save_settings()
         self._autopilot_arbiter = Arbiter()
-        self._autopilot_gpu = GpuClock()
+        self._autopilot_gpu = GpuClock(
+            writes_enabled=False,
+            receipt_path=self.configuration.config_dir / "autopilot-gpu-receipt.json",
+        )
+        self._autopilot_targets = TargetPolicy()
+        self._autopilot_launch = None
         self._autopilot_tones = None
         self._autopilot_tone_since = 0.0
         builder = getattr(self.configuration, "build_governor_overlay_text", None)
@@ -396,9 +401,9 @@ class GovernorService:
             self._save_settings()
         if profile == self._active_profile:
             self._forced_mode_change = True
-        if was == "autopilot" and mode != "autopilot":
-            self._autopilot_gpu.restore()
-            self._autopilot_arbiter = Arbiter()
+        if self._autopilot_gpu.owned and mode != "autopilot":
+            if self._restore_autopilot_gpu("mode-switch"):
+                self._autopilot_arbiter = Arbiter()
         self._poke()
         return {"success": True, "error": None, "profile": profile, "mode": mode,
                 **({"overlay_error": overlay_error} if overlay_error else {})}
@@ -1364,7 +1369,7 @@ class GovernorService:
         ready, self._split_ready = self._split_ready, None
         if getattr(self.cpu, "restore_pending", False):
             await asyncio.to_thread(self.cpu.restore)
-        if (self._mode(profile) == "autopilot" and self._autopilot_arbiter.freeze_tdp):
+        if self._mode(profile) == "autopilot" and self._autopilot_blocks_planned():
             self._status["power_split"] = {"enabled": self._power_split_enabled(), "phase": "frozen",
                                            "reason": "gpu-clock-trial", "available": bool(self.cpu.discover())}
             return
@@ -1817,6 +1822,7 @@ class GovernorService:
                 self.log.error("Governor could not restore overlay for %s on unload: %s", profile, error)
                 self._event("overlay-restore-failed", "plugin-stop", profile=profile, error=error)
         self._reset_run_state()
+        self._restore_autopilot_gpu("plugin-stop")
         try:
             # shutdown(): waits for a write still running in a worker thread, then restores and
             # refuses later writes, so a slow write cannot land after the restore.
@@ -1992,6 +1998,7 @@ class GovernorService:
 
     async def _release(self, profile: str, reason: str) -> None:
         """Disable/profile-switch/unload path: restore overlay, then release ownership."""
+        await asyncio.to_thread(self._restore_autopilot_gpu, reason)
         self._clear_point_state()
         error = await asyncio.to_thread(self._restore_overlay_sync, profile)
         if error:
@@ -2296,6 +2303,7 @@ class GovernorService:
 
     async def _iteration(self) -> None:
         await asyncio.to_thread(self._cap_diagnostics_log)
+        await asyncio.to_thread(self._autopilot_maintain)
         await self._iteration_core()
         self._journal_transitions()
         self._update_effort()
@@ -2333,6 +2341,11 @@ class GovernorService:
 
     async def _sync_flow(self, profile: str) -> None:
         """Rare isolated resource trials; Act, CPU probes and stale data opt out."""
+        if self._autopilot_blocks_planned():
+            flow = getattr(self, "_flow", None)
+            self._status["flow_control"] = {**(flow.status() if flow is not None else {}),
+                                            "phase": "frozen", "reason": "autopilot-hold"}
+            return
         flow = getattr(self, "_flow", None)
         if flow is None:
             self._flow = flow = FlowTrial()
@@ -2932,6 +2945,41 @@ class GovernorService:
             return False  # the renderer refused or never confirmed a scale for this game
         return bool(capability.get("scale_capable")) and not cpu_bound
 
+    def _autopilot_blocks_planned(self) -> bool:
+        if self._autopilot_arbiter.blocks_planned:
+            return True
+        return bool(self._budget is not None and getattr(self._budget, "hold_planned", False)
+                    and self._mode(self._active_profile or "") == "autopilot")
+
+    def _restore_autopilot_gpu(self, reason: str) -> bool:
+        result = self._autopilot_gpu.restore()
+        if result.get("restored") or result.get("yielded"):
+            if self._autopilot_arbiter.state in ("ROLLBACK", "RESTORE_PENDING", "SETTLE", "VERIFY"):
+                self._autopilot_arbiter.finish_rollback()
+            self._event("autopilot-gpu-restored", result.get("reason") or "restored", why=reason)
+            return True
+        self._autopilot_arbiter.mark_restore_pending(result.get("reason") or "restore-failed")
+        self._event("autopilot-gpu-restore-failed", result.get("reason") or "restore-failed", why=reason)
+        return False
+
+    def _autopilot_maintain(self) -> None:
+        profile = self._active_profile
+        mode = self._mode(profile) if profile else ""
+        if self._autopilot_gpu.phase == "restore-pending":
+            self._restore_autopilot_gpu("retry")
+            return
+        if mode != "autopilot" and self._autopilot_gpu.owned:
+            self._restore_autopilot_gpu("mode-exit")
+            return
+        launch = self._launch or {}
+        if launch.get("running") is False and launch.get("reason") != "no-inspector" and self._autopilot_gpu.owned:
+            self._restore_autopilot_gpu("game-exit")
+            return
+        key = self._launch_key
+        if self._autopilot_launch is not None and key != self._autopilot_launch and self._autopilot_gpu.owned:
+            self._restore_autopilot_gpu("session-change")
+        self._autopilot_launch = key
+
     async def _autopilot_tick(self, profile: str, summary: Dict[str, Any], target: int) -> bool:
         """One decision from Governor telemetry. True means do not move TDP this tick."""
         sensors = self._status.get("sensors") or {}
@@ -2952,39 +3000,57 @@ class GovernorService:
             preference=self._autopilot_preference(profile),
         )
         decision = autopilot_decide(view)
+        chosen = self._autopilot_targets.update(
+            target, real, output, view.preference, fresh)
+        if chosen != target:
+            view = View(**{**view.__dict__, "target_fps": chosen})
+            decision = autopilot_decide(view)
+            if self._budget is not None and self._budget.target_output_fps != chosen:
+                self._budget = None
         arbiter = self._autopilot_arbiter
         now = self._clock()
-        if arbiter.freeze_tdp:
-            verdict = arbiter.judge(now, real, output)
+        evidence = {
+            "real": real, "output": output, "sample_seq": summary.get("last_sample_seq") or 0,
+            "frametime_p95": view.frametime_p95_ms, "draw_w": view.draw_w, "temp_c": view.temp_c,
+        }
+        clock_ready = bool(clock.get("available") and clock.get("writes_enabled"))
+        if not clock_ready and decision.action == "OPTIMIZE_GPU_CLOCK":
+            decision = autopilot_decide(View(**{**view.__dict__, "gpu_clock_available": False}))
+        if arbiter.freeze_tdp and arbiter.state in ("SETTLE", "VERIFY"):
+            verdict = arbiter.judge(now, evidence)
             if verdict == "rollback":
-                restored = await asyncio.to_thread(self._autopilot_gpu.restore)
-                arbiter.finish_rollback()
-                self._event("autopilot-rollback", arbiter.reason, profile=profile, restored=restored)
+                restored = self._restore_autopilot_gpu("rollback")
+                if restored:
+                    self._event("autopilot-rollback", arbiter.reason, profile=profile, restored=True)
+                else:
+                    self._event("autopilot-rollback", "restore-unconfirmed", profile=profile, restored=False)
             elif verdict == "accept":
-                self._event("autopilot-accept", "verified", profile=profile, real_fps=real, output_fps=output)
+                self._event("autopilot-accept", "verified-gain", profile=profile, real_fps=real, output_fps=output)
             self._publish_autopilot(profile, view, decision, clock)
             if self._budget is not None:
-                self._budget.hold_probes = True
-            return arbiter.freeze_tdp or verdict in ("rollback", "wait", "accept")
-        if decision.action == "OPTIMIZE_GPU_CLOCK" and arbiter.admit(decision.action, now) == "ok":
+                self._budget.hold_planned = True
+            return True
+        if decision.action == "OPTIMIZE_GPU_CLOCK" and arbiter.admit(decision.action, now) == "ok" and clock_ready:
             result = await asyncio.to_thread(self._autopilot_gpu.lower_ceiling)
             if result.get("applied"):
-                arbiter.begin("gpu-clock", decision.reason, now, (real, output))
+                arbiter.begin("gpu-clock", decision.reason, now, evidence)
                 self._event("autopilot-apply", decision.reason, profile=profile, limit_mhz=result.get("limit_mhz"))
                 self._publish_autopilot(profile, view, decision, self._autopilot_gpu.status())
                 if self._budget is not None:
-                    self._budget.hold_probes = True
+                    self._budget.hold_planned = True
                 return True
             self._event("autopilot-gpu-skipped", result.get("reason") or "GPU_CLOCK_UNAVAILABLE", profile=profile)
         elif decision.action == "OPTIMIZE_GPU_CLOCK":
             self._event("autopilot-gpu-skipped", arbiter.admit(decision.action, now), profile=profile)
             if self._budget is not None:
-                self._budget.hold_probes = True
+                self._budget.hold_planned = True
             arbiter.note("HOLD", arbiter.admit(decision.action, now))
             self._publish_autopilot(profile, view, decision, clock)
             return arbiter.freeze_tdp
+        holding = decision.action in ("HOLD", "PAUSE") or now < arbiter.cooldown_until
         if self._budget is not None:
-            self._budget.hold_probes = decision.action == "HOLD"
+            self._budget.hold_planned = holding
+            self._budget.hold_probes = holding
         arbiter.note(decision.action, decision.reason)
         self._publish_autopilot(profile, view, decision, clock)
         self._event("autopilot-decide", decision.reason, profile=profile, action=decision.action,
