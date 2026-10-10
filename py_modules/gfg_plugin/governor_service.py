@@ -193,7 +193,11 @@ class GovernorService:
             self._save_settings()
         self._autopilot_arbiter = Arbiter()
         self._autopilot_gpu = GpuClock(
-            writes_enabled=False,
+            # SteamOSManager GpuPerformanceLevel1 is the same manual-clock
+            # interface as the Quick Access Menu, not AMDGPU OverDrive.
+            # On unsupported firmware the adapter reports UNAVAILABLE and
+            # performs no writes; manual QAM overrides are respected.
+            writes_enabled=True,
             receipt_path=self.configuration.config_dir / "autopilot-gpu-receipt.json",
         )
         self._autopilot_targets = TargetPolicy()
@@ -3050,7 +3054,7 @@ class GovernorService:
         sensors = self._status.get("sensors") or {}
         power = self.power.status() if hasattr(self.power, "status") else {}
         battery = self._status.get("battery") or {}
-        clock = self._autopilot_gpu.status()
+        clock = await asyncio.to_thread(self._autopilot_gpu.status)
         real = (summary.get("real") or {}).get("median")
         output = (summary.get("output") or {}).get("median")
         samples = int(summary.get("samples") or 0)
@@ -3082,13 +3086,21 @@ class GovernorService:
         evidence = self._autopilot_evidence(summary, session)
         evidence["draw_w"] = power.get("draw_w")
         evidence["temp_c"] = sensors.get("temp_c")
-        clock_ready = bool(clock.get("available") and clock.get("writes_enabled"))
+        evidence["cpu_busy_pct"] = sensors.get("cpu_top_core_pct")
+        evidence["gpu_busy_pct"] = sensors.get("gpu_busy_pct")
+        evidence["gpu_clock_mhz"] = sensors.get("gpu_clock_mhz")
+        clock_ready = bool(clock.get("available") and clock.get("writes_enabled")
+                           and clock.get("level") in ("auto", "manual")
+                           and (clock.get("level") == "auto" or self._autopilot_gpu.owned))
         if not clock_ready and decision.action == "OPTIMIZE_GPU_CLOCK":
             decision = autopilot_decide(View(**{**view.__dict__, "gpu_clock_available": False}))
         if arbiter.freeze_tdp and arbiter.state in ("SETTLE", "VERIFY"):
             measured = self.observer.summary(self.WINDOW_SECONDS, after_seq=arbiter.after_seq)
             verdict = arbiter.judge(now, {**self._autopilot_evidence(measured, session),
-                                           "draw_w": power.get("draw_w"), "temp_c": sensors.get("temp_c")})
+                                           "draw_w": power.get("draw_w"), "temp_c": sensors.get("temp_c"),
+                                           "cpu_busy_pct": sensors.get("cpu_top_core_pct"),
+                                           "gpu_busy_pct": sensors.get("gpu_busy_pct"),
+                                           "gpu_clock_mhz": sensors.get("gpu_clock_mhz")})
             if verdict == "rollback":
                 restored = self._restore_autopilot_gpu("rollback")
                 if restored:
@@ -3096,7 +3108,9 @@ class GovernorService:
                 else:
                     self._event("autopilot-rollback", "restore-unconfirmed", profile=profile, restored=False)
             elif verdict == "accept":
-                self._event("autopilot-accept", "verified-gain", profile=profile, real_fps=real, output_fps=output)
+                self._event("autopilot-accept", "verified-gain", profile=profile,
+                            before=arbiter.baseline,
+                            after=self._autopilot_evidence(measured, session))
             self._publish_autopilot(profile, view, decision, clock)
             self._autopilot_plan = "hold"
             if self._budget is not None:
@@ -3106,8 +3120,11 @@ class GovernorService:
             result = await asyncio.to_thread(self._autopilot_gpu.lower_ceiling)
             if result.get("applied"):
                 arbiter.begin("gpu-clock", decision.reason, now, evidence)
-                self._event("autopilot-apply", decision.reason, profile=profile, limit_mhz=result.get("limit_mhz"))
-                self._publish_autopilot(profile, view, decision, self._autopilot_gpu.status())
+                self._event("autopilot-apply", decision.reason, profile=profile,
+                            gpu_manual_mhz=result.get("limit_mhz"), backend="SteamOSManager/QAM",
+                            baseline=evidence)
+                self._publish_autopilot(profile, view, decision,
+                                        await asyncio.to_thread(self._autopilot_gpu.status))
                 if self._budget is not None:
                     self._budget.hold_planned = True
                 return True
@@ -3127,7 +3144,13 @@ class GovernorService:
         arbiter.note(decision.action, decision.reason)
         self._publish_autopilot(profile, view, decision, clock)
         self._event("autopilot-decide", decision.reason, profile=profile, action=decision.action,
-                    real_fps=real, output_fps=output)
+                    real_fps=real, output_fps=output,
+                    gpu_busy_pct=sensors.get("gpu_busy_pct"),
+                    cpu_busy_pct=sensors.get("cpu_top_core_pct"),
+                    gpu_clock_mhz=sensors.get("gpu_clock_mhz"),
+                    temp_c=sensors.get("temp_c"), draw_w=power.get("draw_w"),
+                    frametime_p95_ms=view.frametime_p95_ms,
+                    clock_backend=clock.get("backend"), clock_level=clock.get("level"))
         return False
 
     def _publish_autopilot(self, profile: str, view, decision, clock: Dict[str, Any]) -> None:
