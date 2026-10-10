@@ -57,6 +57,24 @@ class ExperimentReceiptTests(unittest.TestCase):
                 self.assertFalse(fresh)
                 self.assertIsNone(sample)
 
+    def test_existing_cpu_and_frame_os_owners_block_new_experiments(self):
+        from types import SimpleNamespace
+        from gfg_plugin.autopilot.policy import Action, Knob
+        self.svc._autopilot_power_enabled = True
+        decision = SimpleNamespace(action=Action.TRIAL, knob=Knob.POWER_CAP)
+        for owner in ("cpu", "frame-os", "request"):
+            with self.subTest(owner=owner):
+                self.svc.cpu.owned = owner == "cpu"
+                self.svc.frame_os.enabled = owner == "frame-os"
+                self.svc.frame_os.mode = "act"
+                self.svc._request = object() if owner == "request" else None
+                with patch("gfg_plugin.governor_service.decide", return_value=decision), \
+                     patch.object(self.svc._autopilot_power, "step",
+                                  return_value={"wrote": False}) as step:
+                    asyncio.run(self.svc._run_autopilot_power())
+                self.assertFalse(step.call_args.kwargs["allow"])
+                self.assertTrue(self.svc._autopilot_conflicting_executor())
+
     def test_power_adapter_receives_full_session_identity(self):
         self.svc._autopilot_power_enabled = True
         with patch.object(self.svc._autopilot_power, "step",

@@ -2648,6 +2648,17 @@ class GovernorService:
             slot_busy=slot.busy, slot_knob=slot.knob,
         ).public()
 
+    def _autopilot_conflicting_executor(self) -> str:
+        """Admission only: preserve consent and let existing owners release themselves."""
+        if getattr(self.cpu, "owned", False) or getattr(self.cpu, "restore_pending", False):
+            return "cpu-owner-active"
+        if self._injection is not None or (
+                self.frame_os.enabled and self.frame_os.mode == "act"):
+            return "frame-os-act-active"
+        if self._request is not None:
+            return "renderer-request-active"
+        return ""
+
     async def _run_autopilot_power(self) -> None:
         """Apply at most one owned power step. Off unless the development flag is set."""
         if not self._autopilot_power_enabled or self._autopilot_flow_enabled:
@@ -2685,7 +2696,8 @@ class GovernorService:
             context=self.autopilot_observation.snapshot.session_key,
             ceiling_w=view.get("ceiling_tdp_w") if view.get("owned") is True else None,
             owned=view.get("owned") is True,
-            allow=decision.action is Action.TRIAL and decision.knob is Knob.POWER_CAP,
+            allow=(decision.action is Action.TRIAL and decision.knob is Knob.POWER_CAP
+                   and not self._autopilot_conflicting_executor()),
             other_busy=self._autopilot_slot.busy and self._autopilot_slot.knob is not Knob.POWER_CAP,
             slot=self._autopilot_slot, evidence=evidence,
         )
@@ -2745,13 +2757,15 @@ class GovernorService:
         )
         slot = self._autopilot_slot
         profile = self._status.get("profile") or ""
-        if decision.action is not Action.TRIAL or decision.knob is not Knob.FLOW_SCALE or decision.release_slot:
+        if (decision.action is not Action.TRIAL or decision.knob is not Knob.FLOW_SCALE
+                or decision.release_slot or self._autopilot_conflicting_executor()):
             if self._autopilot_flow_dirty() and profile and self._point is not None and self.overlay is not None:
                 await self._restore_autopilot_flow(profile)
                 return
             if slot.busy and slot.knob is Knob.FLOW_SCALE and not self._autopilot_hold_for_restore(slot):
                 slot.abort(decision.reason)
-            reason = "restore-before-release" if self._autopilot_flow_dirty() else decision.reason
+            reason = ("restore-before-release" if self._autopilot_flow_dirty()
+                      else self._autopilot_conflicting_executor() or decision.reason)
             self._status["autopilot_flow"] = self._flow_report(False, decision.action.value, reason)
             return
         if slot.busy and slot.knob is not Knob.FLOW_SCALE:
