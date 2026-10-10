@@ -151,6 +151,7 @@ class GovernorService:
         self.power.journal = self._journal_power
         self._autopilot_power = ScheduledPower(lambda: self.power)
         self._autopilot_seq = 0
+        self._autopilot_seen_seq = None
         # Smart power split (1.5): the CPU clock cap that gives a GPU-bound game's watts to the GPU
         self.cpu = CpuFreqActuator(marker=self.configuration.runtime_state_dir / "cpu-cap.json")
         self.cpu.journal = self._journal_power
@@ -2392,6 +2393,26 @@ class GovernorService:
         if plan["release_slot"] and slot.busy and not self._autopilot_hold_for_restore(slot):
             slot.abort(plan["reason"])
 
+    def _autopilot_evidence(self):
+        """One renderer receipt once. A repeated poll is not a new sample."""
+        from .autopilot.contracts import Config
+        clock = self._clock()
+        latest = self.autopilot_observation.snapshot.samples[-1:]
+        sample = latest[0] if latest else None
+        fresh = sample is not None and 0 <= clock - sample.timestamp_mono <= Config().max_age_s
+        if fresh and sample.seq != self._autopilot_seen_seq:
+            self._autopilot_seen_seq = sample.seq
+            return sample.seq, sample.timestamp_mono, True, sample
+        return 0, clock, False, sample
+
+    async def _poll_autopilot_observation(self) -> None:
+        await asyncio.to_thread(self.observer.poll)
+        snapshot = self.observer.snapshot()
+        self._status["telemetry"] = {
+            "snapshot": snapshot,
+            "summary": self.observer.summary(self.WINDOW_SECONDS),
+        }
+
     def _autopilot_plan_status(self):
         """The C2 decision. Publishing it does not arm or write an actuator."""
         now = self._clock()
@@ -2412,15 +2433,14 @@ class GovernorService:
             return
         if self._restoration_blocked():
             now = self._clock()
-            latest = self.autopilot_observation.snapshot.samples[-1:]
-            sample = latest[0] if latest else None
-            self._autopilot_seq += 1
+            seq, _stamp, evidence, sample = self._autopilot_evidence()
             outcome = await asyncio.to_thread(
-                self._autopilot_power.step, now=now, seq=self._autopilot_seq,
+                self._autopilot_power.step, now=now, seq=seq,
                 real=None if sample is None else sample.real_fps,
                 output=None if sample is None else sample.output_fps,
                 context=self.autopilot_observation.snapshot.context or "session",
-                ceiling_w=None, owned=False, allow=False, slot=self._autopilot_slot, restore_pending=True,
+                ceiling_w=None, owned=False, allow=False, slot=self._autopilot_slot,
+                restore_pending=True, evidence=evidence,
             )
             self._status["autopilot_power"] = outcome
             return
@@ -2432,12 +2452,10 @@ class GovernorService:
             power_ceiling_w=view.get("ceiling_tdp_w") if view.get("owned") is True else None,
             slot_busy=self._autopilot_slot.busy, slot_knob=self._autopilot_slot.knob,
         )
-        latest = self.autopilot_observation.snapshot.samples[-1:]
-        sample = latest[0] if latest else None
-        self._autopilot_seq += 1
+        seq, stamp, evidence, sample = self._autopilot_evidence()
         view = self._autopilot_power_view
         outcome = await asyncio.to_thread(
-            self._autopilot_power.step, now=now, seq=self._autopilot_seq,
+            self._autopilot_power.step, now=stamp, seq=seq,
             real=None if sample is None else sample.real_fps,
             output=None if sample is None else sample.output_fps,
             context=self.autopilot_observation.snapshot.context or "session",
@@ -2445,7 +2463,7 @@ class GovernorService:
             owned=view.get("owned") is True,
             allow=decision.action is Action.TRIAL and decision.knob is Knob.POWER_CAP,
             other_busy=self._autopilot_slot.busy and self._autopilot_slot.knob is not Knob.POWER_CAP,
-            slot=self._autopilot_slot,
+            slot=self._autopilot_slot, evidence=evidence,
         )
         self._status["autopilot_power"] = outcome
         if outcome.get("restore_failed"):
@@ -2590,24 +2608,34 @@ class GovernorService:
         if previous is not None and previous != context and flow.change_outstanding():
             now = self._clock()
             event_seq = snap.get("event_seq") or 0
-            wanted = flow.request_saved_restore(now, event_seq)
-            if wanted is not None:
-                await asyncio.to_thread(self._write_overlay_sync, profile,
-                                        {**self._base_for(profile, saved), **self._point_deltas, "flow_scale": wanted},
-                                        self._point["key"])
-            context_matches = bool(latest.get("context") and ack.get("context") == latest.get("context"))
-            flow.step(
-                now=now, context=previous, mode=flow.mode or mode, eligible=False,
-                saved_flow=flow.original if flow.original is not None else saved.get("flow_scale", .8),
-                actual_flow=ack.get("value") if context_matches else None,
-                ack_seq=ack.get("event_seq", 0) if context_matches else 0,
-                event_seq=event_seq, sample=None,
-                target=self._status.get("target_output_fps") or 90,
-                base_target=self._point.get("base_target_fps") or 45,
-            )
-            self._status["flow_control"] = flow.status()
-            if flow.change_outstanding():
-                return
+            switched = isinstance(previous, tuple) and len(previous) > 1 and previous[0] != profile
+            if switched:
+                old_saved = await asyncio.to_thread(self._saved_profile_config, previous[0])
+                if flow.original is not None and isinstance(old_saved, dict):
+                    await asyncio.to_thread(
+                        self._write_overlay_sync, previous[0],
+                        {**self._base_for(previous[0], old_saved), **self._point_deltas, "flow_scale": flow.original},
+                        self._point["key"])
+                flow.reset()
+            else:
+                wanted = flow.request_saved_restore(now, event_seq)
+                if wanted is not None:
+                    await asyncio.to_thread(self._write_overlay_sync, profile,
+                                            {**self._base_for(profile, saved), **self._point_deltas, "flow_scale": wanted},
+                                            self._point["key"])
+                context_matches = bool(latest.get("context") and ack.get("context") == latest.get("context"))
+                flow.step(
+                    now=now, context=previous, mode=flow.mode or mode, eligible=False,
+                    saved_flow=flow.original if flow.original is not None else saved.get("flow_scale", .8),
+                    actual_flow=ack.get("value") if context_matches else None,
+                    ack_seq=ack.get("event_seq", 0) if context_matches else 0,
+                    event_seq=event_seq, sample=None,
+                    target=self._status.get("target_output_fps") or 90,
+                    base_target=self._point.get("base_target_fps") or 45,
+                )
+                self._status["flow_control"] = flow.status()
+                if flow.change_outstanding():
+                    return
         context_matches = bool(latest.get("context") and ack.get("context") == latest.get("context"))
         eligible = bool(self._settings.get("auto_flow") is not False
                         and self._status.get("enabled") and self._status.get("state") == "LOCKED"
@@ -2697,10 +2725,8 @@ class GovernorService:
         if self._restoration_blocked():
             self._publish_restore_pending()
             return
-        if self._autopilot_power_enabled or self._autopilot_flow_enabled:
-            # Exclusive: the other mode writers must not run beside an Autopilot tool.
-            return
-        await asyncio.to_thread(self._standby_overlays_sync)
+        if not (self._autopilot_power_enabled or self._autopilot_flow_enabled):
+            await asyncio.to_thread(self._standby_overlays_sync)
         profile, response = await asyncio.to_thread(self.configuration.get_current_profile_snapshot)
         config = response.get("config") if isinstance(response, dict) else None
         self._status["observation_backend"] = (config.get("fg_backend", FG_BACKEND_GFG)
@@ -2740,8 +2766,14 @@ class GovernorService:
             if self._point or self._request or self.power.state.owned:
                 await self._release_point(profile, "external-fg-backend")
             self._status.update({"state": "OBSERVE_ONLY", "reason": "external-fg-backend"})
+            if self._autopilot_power_enabled or self._autopilot_flow_enabled:
+                await self._poll_autopilot_observation()
             return
         if await self._retry_rollback(profile):
+            return
+        if self._autopilot_power_enabled or self._autopilot_flow_enabled:
+            # Keep sampling and profile restore, but do not let the old mode writers run.
+            await self._poll_autopilot_observation()
             return
         await self._sync_overlay(profile, config)
 

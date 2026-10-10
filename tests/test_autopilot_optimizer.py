@@ -114,3 +114,12 @@ class OptimizerAcceptanceTests(unittest.TestCase):
         safe = plan(seen(B.POWER_LIMITED), (broken,), CURRENT, now=10, ceiling_w=20, capabilities=CAPS, ack_ok=True)
         self.assertEqual(safe.action, Action.HOLD)
         self.assertIn(("power_cap", 14, "nonfinite-metric"), safe.rejected)
+
+    def test_low_fidelity_does_not_delete_a_safe_candidate(self):
+        safe = point("flow_scale", 0.8, real=48, fidelity=1.0)
+        ugly = point("flow_scale", 0.7, real=50, fidelity=0.2)
+        for points in ((safe, ugly), (ugly, safe)):
+            decision = plan(seen(B.GPU_LIMITED), points, CURRENT, now=10, capabilities=CAPS, ack_ok=True)
+            self.assertEqual(decision.action, Action.TRIAL)
+            self.assertEqual(decision.knob, Knob.FLOW_SCALE)
+            self.assertEqual(decision.candidate_value, 0.8)

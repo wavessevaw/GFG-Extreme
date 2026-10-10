@@ -249,6 +249,19 @@ class Scheduler:
             self.needs_restore = False
         return self.phase
 
+    def observe_clock(self, now):
+        """Advance deadlines without counting a repeated or stale renderer receipt."""
+        if not self.busy:
+            return None
+        if self._deadline is not None and now > self._deadline:
+            return self._invalidate("ack-missing")
+        if self.phase in ("settle", "settle-a2"):
+            if now < self._settle_until:
+                return None
+            self.phase = "test-b" if self.phase == "settle" else "baseline-a2"
+            self._windows[self.phase] = _Window()
+        return None
+
     def restored(self, ok):
         if ok:
             self.needs_restore = False

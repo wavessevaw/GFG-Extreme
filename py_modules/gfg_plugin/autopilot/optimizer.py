@@ -50,21 +50,21 @@ def _better(left, right, config):
     """True when left strictly dominates right outside the tie band."""
     if abs(left.real_delivery - right.real_delivery) <= config.tie_fps \
             and abs(left.output_stability - right.output_stability) <= config.tie_fps \
-            and abs(left.render_fidelity - right.render_fidelity) <= config.tie_fps \
+            and abs(left.render_fidelity - right.render_fidelity) <= config.tie_fidelity \
             and abs(left.power_draw - right.power_draw) <= config.tie_w \
             and abs(left.transition_cost - right.transition_cost) <= config.tie_w:
         return False
     not_worse = (
         left.real_delivery + config.tie_fps >= right.real_delivery
         and left.output_stability + config.tie_fps >= right.output_stability
-        and left.render_fidelity + config.tie_fps >= right.render_fidelity
+        and left.render_fidelity + config.tie_fidelity >= right.render_fidelity
         and left.power_draw <= right.power_draw + config.tie_w
         and left.transition_cost <= right.transition_cost + config.tie_w
     )
     strictly = (
         left.real_delivery > right.real_delivery + config.tie_fps
         or left.output_stability > right.output_stability + config.tie_fps
-        or left.render_fidelity > right.render_fidelity + config.tie_fps
+        or left.render_fidelity > right.render_fidelity + config.tie_fidelity
         or left.power_draw + config.tie_w < right.power_draw
         or left.transition_cost + config.tie_w < right.transition_cost
     )

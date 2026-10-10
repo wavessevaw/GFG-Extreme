@@ -122,9 +122,7 @@ class ServicePowerGateTests(unittest.TestCase):
             with patch.object(svc.power, "set_tdp_w", side_effect=AssertionError("power write")):
                 asyncio.run(svc._run_autopilot_power())
             svc._autopilot_power_enabled = True
-            with patch.object(svc.configuration, "get_current_profile_snapshot",
-                              side_effect=AssertionError("other mode ran")):
-                asyncio.run(svc._iteration_core())
+            asyncio.run(svc._iteration_core())
             asyncio.run(svc._run_autopilot_power())
             asyncio.run(svc._run_autopilot_power())
             self.assertEqual(svc.power.writes, [])
@@ -132,5 +130,31 @@ class ServicePowerGateTests(unittest.TestCase):
             asyncio.run(svc._run_autopilot_power())
             self.assertEqual(svc.power.writes, [])
             self.assertEqual(svc._status["autopilot_power"]["reason"], "restore-pending")
+        finally:
+            fixture.tearDown()
+
+    def test_the_flag_still_polls_and_follows_a_profile_change(self):
+        import test_governor_runtime as legacy
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            svc._autopilot_power_enabled = True
+            svc._settings.setdefault("profiles", {}).setdefault("other", {})["enabled"] = True
+            svc._settings["profiles"]["other"]["mode"] = "quality"
+            polls = []
+            original = svc.observer.poll
+
+            def poll():
+                polls.append(1)
+                return original()
+
+            svc.observer.poll = poll
+            svc.configuration.get_current_profile_snapshot = lambda: (
+                "other", {"config": {"fg_backend": "gfg"}})
+            asyncio.run(svc._iteration_core())
+            self.assertTrue(polls)
+            self.assertEqual(svc._active_profile, "other")
+            self.assertEqual(svc.power.writes, [])
         finally:
             fixture.tearDown()

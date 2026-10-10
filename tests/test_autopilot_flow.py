@@ -53,9 +53,7 @@ class FlowReservationTests(unittest.TestCase):
         self.svc._autopilot_power_enabled = True
         self.svc._autopilot_flow_enabled = True
         with patch.object(self.svc.power, "set_tdp_w", side_effect=AssertionError("power write")), \
-             patch.object(self.svc, "_sync_flow", new=AsyncMock(side_effect=AssertionError("flow write"))), \
-             patch.object(self.svc.configuration, "get_current_profile_snapshot",
-                          side_effect=AssertionError("other mode ran")):
+             patch.object(self.svc, "_sync_flow", new=AsyncMock(side_effect=AssertionError("flow write"))):
             asyncio.run(self.svc._iteration_core())
             asyncio.run(self.svc._run_autopilot_exclusive())
         self.assertEqual(self.svc._status["autopilot_flow"]["reason"], "two-tools-requested")
@@ -157,3 +155,27 @@ class FlowReservationTests(unittest.TestCase):
         asyncio.run(self.svc._sync_flow("game"))
         self.assertFalse(self.svc._flow.change_outstanding())
         self.assertNotIn(0.7, written)
+
+    def test_a_profile_switch_does_not_write_the_old_scale_onto_the_new_profile(self):
+        from gfg_plugin.governor_flow import FlowTrial
+        self.svc._flow = FlowTrial()
+        self.svc._flow.original = 0.8
+        self.svc._flow.wanted = 0.7
+        self.svc._flow.phase = "b"
+        self.svc._flow.context = ("game-a", "balanced", "point")
+        self.svc._point = {"key": "x", "base_target_fps": 45, "multiplier": 2}
+        self.svc._point_deltas = {}
+        self.svc.overlay = object()
+        saved = {"game-a": {"flow_scale": 0.8}, "game-b": {"flow_scale": 1.0}}
+        self.svc._saved_profile_config = lambda profile: saved[profile]
+        self.svc._base_for = lambda profile, config: {"flow_scale": config["flow_scale"]}
+        written = []
+
+        def write(profile, config, key):
+            written.append((profile, config.get("flow_scale")))
+
+        self.svc._write_overlay_sync = write
+        self.svc._status["telemetry"] = {"snapshot": {"event_seq": 2, "latest": {}, "flow": {}}}
+        asyncio.run(self.svc._sync_flow("game-b"))
+        self.assertEqual(written, [("game-a", 0.8)])
+        self.assertFalse(any(profile == "game-b" and scale == 0.8 for profile, scale in written))

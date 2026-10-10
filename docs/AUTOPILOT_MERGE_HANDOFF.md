@@ -21,6 +21,17 @@ That script writes `package.json`, `package-lock.json`, `VERSION` in
 label, and `CURRENT_VERSION` in `log_report.py`. Do not edit those by hand.
 Do not tag or publish the ZIP until the owner asks for the release.
 
+## Review on PR #114
+
+The six comments on that pull request are fixed on this tip:
+
+- A raised power cap stays through the treatment window. It is not undone on the next tick.
+- Returning to the first baseline calls the scheduler ACK, so the second baseline can run.
+- With a flag on, the service still polls the renderer and still follows a profile change before it skips the old mode writers.
+- A repeated poll does not count as a new sample. The sample's own sequence and time are used.
+- A profile switch writes the old profile's Saved flow back to that profile. It does not copy that scale onto the new profile. A stale matching receipt does not finish a restore.
+- Pareto fidelity uses the fidelity tolerance, so a low-fidelity point cannot erase a safe one.
+
 ## Merge this, and nothing else
 
 Open one draft pull request from this branch to `main`. Intermediate drafts

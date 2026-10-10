@@ -119,3 +119,27 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(cap.restores, 0)
         self.assertTrue(cap.owned)
         self.assertFalse(undone["restore_failed"])
+
+    def test_a_confirmed_step_stays_up_through_treatment_then_restores_for_a2(self):
+        cap = Cap(15, 10)
+        run = ScheduledPower(cap)
+
+        def tick(index, real=30):
+            return run.step(now=index * 1.5, seq=index + 1, real=real, output=60, context="scene",
+                            ceiling_w=15, owned=True, allow=True)
+
+        for index in range(5):
+            tick(index)
+        self.assertEqual(cap.writes, [11])
+        for index in range(5, 10):
+            tick(index, real=34)
+            self.assertEqual(cap.current, 11, index)
+        tick(10, real=34)
+        self.assertEqual(cap.current, 10)
+        self.assertEqual(run.scheduler.phase, "settle-a2")
+        for index in range(11, 20):
+            tick(index, real=30)
+        self.assertEqual(run.scheduler.phase, "verdict")
+        self.assertEqual(run.scheduler.result.verdict, "REJECT")
+        self.assertEqual(cap.restores, 0)
+        self.assertTrue(cap.owned)

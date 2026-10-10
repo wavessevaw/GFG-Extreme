@@ -78,8 +78,9 @@ class FlowTests(unittest.TestCase):
 
     def test_stale_ack_and_duplicate_samples_do_not_prove_a_change(self):
         trial, requests = self.run_trial(stale_ack=True)
-        self.assertEqual(requests, [.7, .8])
-        self.assertEqual(trial.phase, "done")
+        self.assertEqual(requests[0], .7)
+        self.assertIn(.8, requests)
+        self.assertEqual(trial.phase, "wait-restore")
         self.assertIsNone(trial.proof)
         trial, requests = self.run_trial(change=lambda t, s, n: s.update(seq=1))
         self.assertEqual(requests, [])
