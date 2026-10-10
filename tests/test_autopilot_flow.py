@@ -178,4 +178,30 @@ class FlowReservationTests(unittest.TestCase):
         self.svc._status["telemetry"] = {"snapshot": {"event_seq": 2, "latest": {}, "flow": {}}}
         asyncio.run(self.svc._sync_flow("game-b"))
         self.assertEqual(written, [("game-a", 0.8)])
-        self.assertFalse(any(profile == "game-b" and scale == 0.8 for profile, scale in written))
+        self.assertEqual(self.svc._flow.phase, "wait-restore")
+        self.assertEqual(self.svc._flow.context[0], "game-a")
+        self.fixture.t["now"] += 20
+        asyncio.run(self.svc._sync_flow("game-b"))
+        self.assertEqual(self.svc._flow.phase, "wait-restore")
+        self.assertNotEqual(self.svc._flow.phase, "done")
+        self.assertFalse(any(profile == "game-b" for profile, _scale in written))
+
+    def test_a_missing_saved_profile_does_not_drop_the_flow_barrier(self):
+        from gfg_plugin.governor_flow import FlowTrial
+        self.svc._flow = FlowTrial()
+        self.svc._flow.original = 0.8
+        self.svc._flow.wanted = 0.7
+        self.svc._flow.phase = "b"
+        self.svc._flow.context = ("game-a", "balanced", "point")
+        self.svc._point = {"key": "new", "base_target_fps": 45, "multiplier": 2}
+        self.svc._point_deltas = {"flow_scale": 0.7}
+        self.svc.overlay = object()
+        self.svc._saved_profile_config = lambda profile: {"flow_scale": 1.0} if profile == "game-b" else None
+        written = []
+        self.svc._write_overlay_sync = lambda *args: written.append(args)
+        self.svc._status["telemetry"] = {"snapshot": {"event_seq": 2, "latest": {}, "flow": {}}}
+        asyncio.run(self.svc._sync_flow("game-b"))
+        self.assertEqual(written, [])
+        self.assertEqual(self.svc._flow.context[0], "game-a")
+        self.assertEqual(self.svc._flow.phase, "b")
+        self.assertEqual(self.svc._flow.reason, "saved-profile-missing")

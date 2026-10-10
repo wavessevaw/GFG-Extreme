@@ -17,6 +17,7 @@ class ScheduledPower:
         self.scheduler = scheduler or Scheduler(ExperimentConfig())
         self.requested = None
         self.baseline_w = None
+        self.baseline_fast_w = None
         self.rollback_due = False
         self._slot = None
 
@@ -83,6 +84,7 @@ class ScheduledPower:
         if target > ceiling or target <= current:
             return self._restore("ceiling-blocks-step")
         self.baseline_w = current
+        self.baseline_fast_w = _watts(status.get("observed_fast_w"))
         result = self.power.set_tdp_w(target)
         self.requested = target
         state = result.get("state") if isinstance(result, dict) else None
@@ -105,16 +107,21 @@ class ScheduledPower:
         result = self.power.set_tdp_w(self.baseline_w)
         state = result.get("state") if isinstance(result, dict) else None
         observed = _watts((state or {}).get("observed_tdp_w"))
+        observed_fast = _watts((state or {}).get("observed_fast_w"))
+        fast_ok = self.baseline_fast_w is None or (
+            observed_fast is not None and abs(observed_fast - self.baseline_fast_w) <= self.ACK_W)
         matched = isinstance(result, dict) and result.get("success") is True and observed is not None \
-            and abs(observed - self.baseline_w) <= self.ACK_W
+            and abs(observed - self.baseline_w) <= self.ACK_W and fast_ok
         if matched and self.scheduler._awaiting == "restore-ack" and now is not None:
             self.scheduler.ack(now, True)
             self.rollback_due = False
             self.baseline_w = None
+            self.baseline_fast_w = None
         elif matched:
             self.scheduler.restored(True)
             self.rollback_due = False
             self.baseline_w = None
+            self.baseline_fast_w = None
         else:
             self.rollback_due = True
             self.scheduler.restored(False)

@@ -1956,10 +1956,30 @@ class GovernorService:
         self._publish_restore_pending()
         if self._clock() - self._actuator_restore_at < self.ROLLBACK_RETRY_SECONDS:
             return
+        if self._autopilot_power.rollback_due and self._autopilot_power.baseline_w is not None:
+            await self._retry_autopilot_power_baseline()
+            if self._autopilot_power.rollback_due or not self._actuator_restore_blocked():
+                return
         self._clear_point_state()
         if await self._restore_power("actuator-restore-retry"):
             self._status.pop("error", None)
             self._status.update(state="PLAN", reason="actuator-restore-recovered")
+
+    async def _retry_autopilot_power_baseline(self) -> None:
+        """Put back the pre-trial cap. Do not release the lease or the user's original PPT."""
+        outcome = await asyncio.to_thread(
+            self._autopilot_power.step, now=self._clock(), seq=0, real=None, output=None,
+            context="autopilot-baseline", ceiling_w=None, owned=True, allow=False, evidence=False,
+        )
+        self._actuator_restore_at = self._clock()
+        if outcome.get("restore_failed"):
+            self._actuator_restore_errors["power"] = str(outcome.get("reason") or "baseline-restore-failed")
+        else:
+            self._actuator_restore_errors.pop("power", None)
+            if not self._actuator_restore_blocked():
+                self._status.pop("error", None)
+                self._status.update(state="PLAN", reason="actuator-restore-recovered")
+        self._publish_restore_pending()
 
     def _clear_point_state(self) -> None:
         self._status.pop("flow_control", None)
@@ -2405,13 +2425,34 @@ class GovernorService:
             return sample.seq, sample.timestamp_mono, True, sample
         return 0, clock, False, sample
 
-    async def _poll_autopilot_observation(self) -> None:
+    async def _poll_autopilot_observation(self, profile: str) -> None:
         await asyncio.to_thread(self.observer.poll)
         snapshot = self.observer.snapshot()
         self._status["telemetry"] = {
             "snapshot": snapshot,
             "summary": self.observer.summary(self.WINDOW_SECONDS),
         }
+        launch = await self._launch_info(profile)
+        launch_key = launch.get("launch_key") if isinstance(launch, dict) and launch.get("running") else None
+        self._generation_seen = snapshot.get("session_generation")
+        if launch_key is not None:
+            self._launch_key = launch_key
+        display = await self._display_info()
+        external = bool(display.get("external", False))
+        if self._device is None:
+            self._device = await asyncio.to_thread(detect_model)
+        policy = target_for(self._device["model"], external=external, valid_rates=display.get("valid_rates"),
+                            current_hz=display.get("current_refresh_hz"))
+        self._status.update({
+            "target_output_fps": int(policy["target"]),
+            "device": {**self._device, "mode": policy["mode"], "target_reason": policy["reason"]},
+            "display": {
+                "external": external,
+                "internal": bool(display.get("internal", not external)),
+                "valid_rates": display.get("valid_rates", []),
+                "current_refresh_hz": display.get("current_refresh_hz"),
+            },
+        })
 
     def _autopilot_plan_status(self):
         """The C2 decision. Publishing it does not arm or write an actuator."""
@@ -2468,6 +2509,7 @@ class GovernorService:
         self._status["autopilot_power"] = outcome
         if outcome.get("restore_failed"):
             self._actuator_restore_errors["power"] = str(outcome.get("reason") or "power restore failed")
+            self._actuator_restore_at = self._clock()
             self._publish_restore_pending()
 
     async def _run_autopilot_exclusive(self) -> bool:
@@ -2581,6 +2623,35 @@ class GovernorService:
             return
         self._status["autopilot_flow"] = self._flow_report(True, "RESTORE", "restore-before-release", flow.phase)
 
+    async def _restore_flow_on_old_profile(self, flow, previous, now, event_seq) -> None:
+        """Write the old profile's Saved scale and wait. Do not adopt the new context."""
+        old_profile = previous[0]
+        old_saved = await asyncio.to_thread(self._saved_profile_config, old_profile)
+        point_key = previous[2] if len(previous) > 2 and previous[2] else "base"
+        if flow.original is None or not isinstance(old_saved, dict):
+            flow.reason = "saved-profile-missing"
+            self._status["flow_control"] = flow.status()
+            return
+        wanted = flow.request_saved_restore(now, event_seq)
+        if wanted is not None:
+            try:
+                await asyncio.to_thread(
+                    self._write_overlay_sync, old_profile,
+                    {**self._base_for(old_profile, old_saved), "flow_scale": wanted},
+                    point_key)
+            except (OSError, ValueError) as error:
+                flow.reason = "restore-not-confirmed"
+                self._status["flow_control"] = flow.status()
+                self._status.update({"error": str(error)})
+                return
+        flow.step(
+            now=now, context=previous, mode=flow.mode or (previous[1] if len(previous) > 1 else ""),
+            eligible=False, saved_flow=flow.original, actual_flow=None, ack_seq=0,
+            event_seq=event_seq, sample=None,
+            target=self._status.get("target_output_fps") or 90, base_target=45,
+        )
+        self._status["flow_control"] = flow.status()
+
     async def _sync_flow(self, profile: str) -> None:
         """Rare isolated resource trials; Act, CPU probes and stale data opt out."""
         flow = getattr(self, "_flow", None)
@@ -2610,32 +2681,26 @@ class GovernorService:
             event_seq = snap.get("event_seq") or 0
             switched = isinstance(previous, tuple) and len(previous) > 1 and previous[0] != profile
             if switched:
-                old_saved = await asyncio.to_thread(self._saved_profile_config, previous[0])
-                if flow.original is not None and isinstance(old_saved, dict):
-                    await asyncio.to_thread(
-                        self._write_overlay_sync, previous[0],
-                        {**self._base_for(previous[0], old_saved), **self._point_deltas, "flow_scale": flow.original},
-                        self._point["key"])
-                flow.reset()
-            else:
-                wanted = flow.request_saved_restore(now, event_seq)
-                if wanted is not None:
-                    await asyncio.to_thread(self._write_overlay_sync, profile,
-                                            {**self._base_for(profile, saved), **self._point_deltas, "flow_scale": wanted},
-                                            self._point["key"])
-                context_matches = bool(latest.get("context") and ack.get("context") == latest.get("context"))
-                flow.step(
-                    now=now, context=previous, mode=flow.mode or mode, eligible=False,
-                    saved_flow=flow.original if flow.original is not None else saved.get("flow_scale", .8),
-                    actual_flow=ack.get("value") if context_matches else None,
-                    ack_seq=ack.get("event_seq", 0) if context_matches else 0,
-                    event_seq=event_seq, sample=None,
-                    target=self._status.get("target_output_fps") or 90,
-                    base_target=self._point.get("base_target_fps") or 45,
-                )
-                self._status["flow_control"] = flow.status()
-                if flow.change_outstanding():
-                    return
+                await self._restore_flow_on_old_profile(flow, previous, now, event_seq)
+                return
+            wanted = flow.request_saved_restore(now, event_seq)
+            if wanted is not None:
+                await asyncio.to_thread(self._write_overlay_sync, profile,
+                                        {**self._base_for(profile, saved), **self._point_deltas, "flow_scale": wanted},
+                                        self._point["key"])
+            context_matches = bool(latest.get("context") and ack.get("context") == latest.get("context"))
+            flow.step(
+                now=now, context=previous, mode=flow.mode or mode, eligible=False,
+                saved_flow=flow.original if flow.original is not None else saved.get("flow_scale", .8),
+                actual_flow=ack.get("value") if context_matches else None,
+                ack_seq=ack.get("event_seq", 0) if context_matches else 0,
+                event_seq=event_seq, sample=None,
+                target=self._status.get("target_output_fps") or 90,
+                base_target=self._point.get("base_target_fps") or 45,
+            )
+            self._status["flow_control"] = flow.status()
+            if flow.change_outstanding():
+                return
         context_matches = bool(latest.get("context") and ack.get("context") == latest.get("context"))
         eligible = bool(self._settings.get("auto_flow") is not False
                         and self._status.get("enabled") and self._status.get("state") == "LOCKED"
@@ -2767,13 +2832,13 @@ class GovernorService:
                 await self._release_point(profile, "external-fg-backend")
             self._status.update({"state": "OBSERVE_ONLY", "reason": "external-fg-backend"})
             if self._autopilot_power_enabled or self._autopilot_flow_enabled:
-                await self._poll_autopilot_observation()
+                await self._poll_autopilot_observation(profile)
             return
         if await self._retry_rollback(profile):
             return
         if self._autopilot_power_enabled or self._autopilot_flow_enabled:
             # Keep sampling and profile restore, but do not let the old mode writers run.
-            await self._poll_autopilot_observation()
+            await self._poll_autopilot_observation(profile)
             return
         await self._sync_overlay(profile, config)
 

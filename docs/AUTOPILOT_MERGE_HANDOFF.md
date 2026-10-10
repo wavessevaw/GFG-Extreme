@@ -58,6 +58,15 @@ The six comments on that pull request are fixed on this tip:
 - A profile switch writes the old profile's Saved flow back to that profile. It does not copy that scale onto the new profile. A stale matching receipt does not finish a restore.
 - Pareto fidelity uses the fidelity tolerance, so a low-fidelity point cannot erase a safe one.
 
+The three later comments are fixed on this tip as well:
+
+- The flag-on path refreshes the launch probe and the display target, so a
+  healthy stream does not become `launch-probe-stale` after six seconds.
+- A failed Autopilot rollback retries the pre-trial cap and keeps ownership.
+  It does not call `restore_if_owned` and does not put back the user's original PPT.
+- A profile switch writes the old profile's Saved flow and keeps that context
+  until a fresh ACK. A missing Saved profile does not drop the barrier.
+
 ## Merge this, and nothing else
 
 Open one draft pull request from this branch to `main`. Intermediate drafts

@@ -158,3 +158,78 @@ class ServicePowerGateTests(unittest.TestCase):
             self.assertEqual(svc.power.writes, [])
         finally:
             fixture.tearDown()
+
+    def test_a_flag_on_refreshes_the_launch_probe_before_six_seconds(self):
+        import test_governor_runtime as legacy
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            svc._autopilot_power_enabled = True
+            svc._launch_polled = fixture.t["now"] - 7
+            svc.observer.consume_line(legacy.fixed_plan(30, 60), now=fixture.t["now"])
+            asyncio.run(svc._iteration_core())
+            self.assertLessEqual(fixture.t["now"] - svc._launch_polled, 6)
+            self.assertEqual(svc._status.get("target_output_fps"), 90)
+            fixture.t["now"] += 7
+            svc.observer.consume_line(legacy.fixed_plan(30, 60), now=fixture.t["now"])
+            asyncio.run(svc._iteration_core())
+            svc.observer.game_focused = True
+            svc.observer.game_focused_at = fixture.t["now"]
+            svc._update_autopilot_observation()
+            self.assertLessEqual(fixture.t["now"] - svc._launch_polled, 6)
+            self.assertNotEqual(svc.autopilot_observation.snapshot.blocked_reason, "launch-probe-stale")
+        finally:
+            fixture.tearDown()
+
+    def test_a_failed_trial_rollback_retries_the_pretrial_cap_without_releasing_ownership(self):
+        import test_governor_runtime as legacy
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            svc._autopilot_power_enabled = True
+            svc._active_profile = "game"
+            svc.power.claim()
+            svc.power.values.update(observed_tdp_w=11, initial_tdp_w=8, owned=True)
+            svc._autopilot_power.baseline_w = 10
+            svc._autopilot_power.rollback_due = True
+            svc._actuator_restore_errors["power"] = "baseline-restore-failed"
+            svc._actuator_restore_at = fixture.t["now"]
+            restores = []
+            original_restore = svc.power.restore_if_owned
+
+            def restore():
+                restores.append("user-ppt")
+                return original_restore()
+
+            original_set = svc.power.set_tdp_w
+            fails = {"left": 1}
+
+            def set_tdp(value):
+                if fails["left"]:
+                    fails["left"] -= 1
+                    return {"success": False, "error": "write failed", "state": svc.power.status()}
+                return original_set(value)
+
+            svc.power.restore_if_owned = restore
+            svc.power.set_tdp_w = set_tdp
+            asyncio.run(svc._iteration_core())
+            self.assertEqual(svc.power.writes, [])
+            self.assertEqual(restores, [])
+            fixture.t["now"] += 6
+            asyncio.run(svc._iteration_core())
+            self.assertEqual(restores, [])
+            self.assertTrue(svc.power.state.owned)
+            self.assertTrue(svc._restoration_blocked())
+            fixture.t["now"] += 6
+            asyncio.run(svc._iteration_core())
+            self.assertEqual(svc.power.writes, [10])
+            self.assertEqual(restores, [])
+            self.assertTrue(svc.power.state.owned)
+            self.assertFalse(svc._restoration_blocked())
+            self.assertEqual(svc.power.values["observed_tdp_w"], 10)
+            asyncio.run(svc._iteration_core())
+            self.assertEqual(svc.power.writes, [10])
+        finally:
+            fixture.tearDown()
