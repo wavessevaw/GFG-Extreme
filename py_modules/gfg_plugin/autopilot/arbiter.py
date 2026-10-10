@@ -90,9 +90,9 @@ class Arbiter:
         self.state = "COOLDOWN"
         self.tool = None
 
-    def mark_restore_pending(self, reason: str) -> None:
+    def mark_restore_pending(self, reason: str, tool: str | None = None) -> None:
         self.state = "RESTORE_PENDING"
-        self.tool = self.tool or "gpu-clock"
+        self.tool = tool or self.tool or "gpu-clock"
         self.reason = reason
 
     def note(self, action: str, reason: str) -> None:
