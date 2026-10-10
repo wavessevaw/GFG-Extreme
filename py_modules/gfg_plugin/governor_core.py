@@ -1350,6 +1350,8 @@ class BudgetController:
         if self.phase == "locked":
             if self.settled_since is None:
                 self.settled_since = now
+            if getattr(self, "hold_probes", False):
+                return "hold"
             if now - self.locked_since < self._probe_delay():
                 return "hold"
             return self._reprobe(now)

@@ -208,6 +208,7 @@ var rpc = {
   setFrameOsFeature: safeCallable("set_governor_frame_os_feature"),
   setPowerSplit: safeCallable("set_governor_power_split"),
   setMode: safeCallable("set_governor_mode"),
+  setAutopilotPreference: safeCallable("set_governor_autopilot_preference"),
   setAutoFlow: safeCallable("set_governor_auto_flow"),
   setExtremeSharpness: safeCallable("set_governor_extreme_sharpness"),
   setExtremeActConsent: safeCallable("set_governor_extreme_act_consent"),
@@ -247,7 +248,7 @@ var fmtMult = (m) => {
   const q = Math.round(Number(m) * 4) / 4;
   return "\xD7" + (Number.isInteger(q) ? q : String(q));
 };
-var MODE_LABEL = { budget: "Battery", balanced: "Balanced", quality: "Quality", extreme: "Extreme" };
+var MODE_LABEL = { budget: "Battery", balanced: "Balanced", quality: "Quality", extreme: "Extreme", autopilot: "Autopilot" };
 var frameOsMinutes = (m) => Object.entries(m || {}).map(([k, v]) => k + " " + num(v, 0) + "m").join(" \xB7 ");
 var sessionModes = (x) => x && x.mode === "mixed" && x.modes ? Object.entries(x.modes).map(([m, v]) => (MODE_LABEL[m] || m) + " " + num(v, 0) + "m").join(" \xB7 ") : MODE_LABEL[x && x.mode] || "\u2013";
 var POINT_LABEL = (p) => p ? (p.multiplier > 1 ? fmtMult(p.multiplier) : "Native") + (p.render_scale_pct < 100 ? " \xB7 " + p.render_scale_pct + "%" : "") : "\u2013";
@@ -271,7 +272,8 @@ var MODE_TEXT = {
   balanced: "Balanced: starts at about 45 real FPS and 12 W, never goes below 30 real FPS and never above your Deck's normal power range. A bit more battery for a steadier picture.",
   budget: "Battery: lowest TDP first, 9\u201311 W ideal. Real FPS stays at 24 or more; a deeper ratio (down to 20 real) and the highest watts your Deck allows only as a last resort.",
   quality: "Quality: fewest generated frames first, then lowers TDP. Uses more battery.",
-  extreme: "Extreme \u2014 BETA / EXPERIMENTAL. In development; not recommended for regular play. Uses your Deck's stock limit \u2014 15 W, or your own lower limit, never more, no overclock. Lowers render resolution to 90% / 80% with matched sharpening only when the engine confirms it. Uses more battery than Balanced."
+  extreme: "Extreme \u2014 BETA / EXPERIMENTAL. In development; not recommended for regular play. Uses your Deck's stock limit \u2014 15 W, or your own lower limit, never more, no overclock. Lowers render resolution to 90% / 80% with matched sharpening only when the engine confirms it. Uses more battery than Balanced.",
+  autopilot: "Autopilot chooses the steady frame rate and the lowest power that holds it. It uses Governor for TDP. A GPU clock change is one step, then checked. If the frames get worse, the previous setting comes back."
 };
 var XB_TITLE = {
   upscale: "Upscale + sharpen",
@@ -837,20 +839,6 @@ function ActConsent({ onAnswer }) {
     )
   );
 }
-function ExtremeOffer({ o, onTry, onHide }) {
-  return h(
-    "div",
-    { className: "card promo", style: { marginTop: 12 } },
-    h("span", { className: "xbadge" }, "\u25B2"),
-    h(
-      "div",
-      { className: "t" },
-      h("b", null, "Want more real frames?"),
-      h("span", null, "This game leaves " + num(o.headroom_w, 0) + " W of your " + num(o.ceiling_w, 0) + " W limit unused. Extreme is BETA / EXPERIMENTAL: in development and not recommended for regular play. Performance gains are not promised."),
-      h("div", { className: "xbtns" }, h(Focusable, { className: "xbtn on", onClick: onTry }, "Try Extreme"), h(Focusable, { className: "xbtn", onClick: onHide }, "Not now"))
-    )
-  );
-}
 function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch }) {
   const [busy, setBusy] = useState(false);
   const missing = inst && inst.installed === false;
@@ -978,7 +966,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
       ) : null
     ),
     xt && s.enabled ? h(ExtremeCard, { x, profile, refresh }) : null,
-    !xt && s.enabled && s.extreme_offer && !offerHidden ? h(ExtremeOffer, { o: s.extreme_offer, onTry: () => setMode("extreme"), onHide: () => setOfferHidden(true) }) : null,
+    !xt && s.mode !== "autopilot" && s.enabled && s.extreme_offer && !offerHidden ? null : null,
     s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os, power: s.power, battery: s.battery && s.battery.percent }) : null,
     h(
       Focusable,
@@ -988,9 +976,34 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
     ),
     h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : missing ? "The GFG engine is not installed yet. One tap installs it." : "Target " + target + " FPS \xB7 " + (dev.reason || "picked automatically for this screen")),
     h("div", { className: "sec" }, "MODE"),
-    h(Seg, { cls: "four", value: s.mode || "budget", options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"], ["extreme", h("span", { style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2 } }, h("span", null, "EXTREME"), h("small", { style: { fontSize: 8, lineHeight: 1.1 } }, "BETA")), "x"]], onChange: setMode }),
+    h(Seg, { cls: "four", value: s.mode === "extreme" ? "autopilot" : s.mode || "budget", options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"], ["autopilot", "Autopilot"]], onChange: setMode }),
     asking ? h(ActConsent, { onAnswer: answerAct }) : null,
     h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
+    s.mode === "autopilot" ? h(
+      "div",
+      { className: "card" },
+      h("div", { className: "sec" }, "AUTOPILOT"),
+      h(
+        "div",
+        { className: "kv" },
+        h("span", null, "State"),
+        h("b", null, s.autopilot && s.autopilot.state || "OBSERVE"),
+        h("span", null, "Real"),
+        h("b", null, s.autopilot && s.autopilot.real_fps != null ? num(s.autopilot.real_fps, 0) : "\u2013"),
+        h("span", null, "Output"),
+        h("b", null, s.autopilot && s.autopilot.output_fps != null ? num(s.autopilot.output_fps, 0) : "\u2013"),
+        h("span", null, "GPU clock"),
+        h("b", null, s.autopilot && s.autopilot.gpu_clock && s.autopilot.gpu_clock.available ? (s.autopilot.gpu_clock.limit_mhz || s.autopilot.gpu_clock.current_limit_mhz) + " MHz" : "Unavailable")
+      ),
+      h(Note, { quiet: true }, s.autopilot && s.autopilot.message || "Waiting for measured frames."),
+      h(Seg, { value: s.autopilot && s.autopilot.preference || "auto", options: [["auto", "Auto"], ["battery", "Battery"], ["smoothness", "Smoothness"]], onChange: async (v) => {
+        try {
+          await rpc.setAutopilotPreference(profile, v);
+        } catch (e) {
+        }
+        refresh();
+      } })
+    ) : null,
     health ? h("div", { className: "hint" }, health) : null,
     h("div", { style: { height: 12 } }),
     h(FiltersCard, { profile, cfg, patch, go }),
