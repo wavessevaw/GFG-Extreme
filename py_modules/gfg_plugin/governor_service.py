@@ -151,7 +151,6 @@ class GovernorService:
         self.power.journal = self._journal_power
         self._autopilot_power = ScheduledPower(lambda: self.power)
         self._autopilot_seq = 0
-        self._autopilot_seq = 0
         # Smart power split (1.5): the CPU clock cap that gives a GPU-bound game's watts to the GPU
         self.cpu = CpuFreqActuator(marker=self.configuration.runtime_state_dir / "cpu-cap.json")
         self.cpu.journal = self._journal_power
@@ -2410,6 +2409,20 @@ class GovernorService:
         """Apply at most one owned power step. Off unless the development flag is set."""
         if not self._autopilot_power_enabled or self._autopilot_flow_enabled:
             return
+        if self._restoration_blocked():
+            now = self._clock()
+            latest = self.autopilot_observation.snapshot.samples[-1:]
+            sample = latest[0] if latest else None
+            self._autopilot_seq += 1
+            outcome = await asyncio.to_thread(
+                self._autopilot_power.step, now=now, seq=self._autopilot_seq,
+                real=None if sample is None else sample.real_fps,
+                output=None if sample is None else sample.output_fps,
+                context=self.autopilot_observation.snapshot.context or "session",
+                ceiling_w=None, owned=False, allow=False, slot=self._autopilot_slot, restore_pending=True,
+            )
+            self._status["autopilot_power"] = outcome
+            return
         now = self._clock()
         perception = perceive(self.autopilot_observation.snapshot, now)
         view = self._autopilot_power_view
@@ -2431,6 +2444,7 @@ class GovernorService:
             owned=view.get("owned") is True,
             allow=decision.action is Action.TRIAL and decision.knob is Knob.POWER_CAP,
             other_busy=self._autopilot_slot.busy and self._autopilot_slot.knob is not Knob.POWER_CAP,
+            slot=self._autopilot_slot,
         )
         self._status["autopilot_power"] = outcome
         if outcome.get("restore_failed"):
