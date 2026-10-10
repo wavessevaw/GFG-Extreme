@@ -509,15 +509,20 @@ function useGovernor(profile) {
   const [s, setS] = useState(null);
   const alive = useRef(true);
   const busy = useRef(false);
+  const requested = useRef(profile);
+  requested.current = profile;
   const refresh = useCallback(async () => {
     if (busy.current) return;
     busy.current = true;
+    const timer = setTimeout(() => reportRpcError("get_governor_status", new Error("status call timed out")), 1e4);
     try {
-      const r = await Promise.race([rpc.governor(profile || ""), new Promise((_, rej) => setTimeout(() => rej(new Error("status call timed out")), 1e4))]);
-      if (alive.current) setS(r);
+      const r = await rpc.governor(profile || "");
+      if (alive.current && requested.current === profile) setS(r);
     } catch (e) {
+    } finally {
+      clearTimeout(timer);
+      busy.current = false;
     }
-    busy.current = false;
   }, [profile]);
   useEffect(() => {
     alive.current = true;

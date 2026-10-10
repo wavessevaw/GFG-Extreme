@@ -269,12 +269,21 @@ function useGovernor(profile) {
   const [s, setS] = useState(null);
   const alive = useRef(true);
   const busy = useRef(false);
-  // One status call at a time: a slow backend must not pile up requests every 1.5 s.
+  const requested = useRef(profile);
+  requested.current = profile;
+  // A UI timeout cannot cancel Decky RPC. Keep the slot until it really settles.
   const refresh = useCallback(async () => {
     if (busy.current) return;
     busy.current = true;
-    try { const r = await Promise.race([rpc.governor(profile || ""), new Promise((_, rej) => setTimeout(() => rej(new Error("status call timed out")), 10000))]); if (alive.current) setS(r); } catch (e) {}
-    busy.current = false;
+    const timer = setTimeout(() => reportRpcError("get_governor_status", new Error("status call timed out")), 10000);
+    try {
+      const r = await rpc.governor(profile || "");
+      if (alive.current && requested.current === profile) setS(r);
+    } catch (e) {
+    } finally {
+      clearTimeout(timer);
+      busy.current = false;
+    }
   }, [profile]);
   useEffect(() => { alive.current = true; refresh(); const t = setInterval(refresh, 1500); return () => { alive.current = false; clearInterval(t); }; }, [refresh]);
   return [s, refresh];

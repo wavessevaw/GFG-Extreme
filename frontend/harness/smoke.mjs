@@ -346,6 +346,17 @@ for (const output of [0, null, 90]) {
   await page.close();
   cases.push(["autopilot-observation-" + output]);
 }
+// Timeout is visible, but an unresolved transport must retain its single-flight slot.
+{
+  const page = await openPage(browser, { ...STATES["home-locked-oled"], __hangGovernor: true });
+  await page.getByText(/status call timed out/).waitFor({ timeout: 12000 });
+  await page.waitForTimeout(1800);
+  if (await page.evaluate(() => window.__governorCalls) !== 1) {
+    failed++; console.error("FAIL unresolved Governor RPC was polled concurrently");
+  }
+  await page.close();
+  cases.push(["autopilot-status-timeout-single-flight"]);
+}
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);
 process.exit(failed ? 1 : 0);
