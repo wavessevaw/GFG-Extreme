@@ -103,6 +103,28 @@ class FlowTests(unittest.TestCase):
                    sample=None, target=90, base_target=30)
         self.assertEqual(trial.phase, "done")
 
+    def test_context_change_keeps_the_trial_until_saved_scale_is_acked(self):
+        trial = FlowTrial()
+        trial.original = 0.8
+        trial.wanted = 0.7
+        trial.phase = "b"
+        trial.context = ("old",)
+        wanted = trial.step(now=10, context=("new",), mode="balanced", eligible=True,
+                            saved_flow=0.8, actual_flow=0.7, ack_seq=1, event_seq=2,
+                            sample=None, target=90, base_target=30)
+        self.assertEqual(wanted, 0.8)
+        self.assertEqual(trial.phase, "wait-restore")
+        self.assertEqual(trial.context, ("old",))
+        trial.step(now=11, context=("old",), mode="balanced", eligible=False,
+                   saved_flow=0.8, actual_flow=0.8, ack_seq=3, event_seq=3,
+                   sample=None, target=90, base_target=30)
+        self.assertEqual(trial.phase, "done")
+        trial.step(now=12, context=("new",), mode="balanced", eligible=False,
+                   saved_flow=0.8, actual_flow=0.8, ack_seq=4, event_seq=4,
+                   sample=None, target=90, base_target=30)
+        self.assertEqual(trial.context, ("new",))
+        self.assertFalse(trial.change_outstanding())
+
     def test_quality_preserves_resolution_and_other_ladders_keep_scale_tools(self):
         for target in (60, 90):
             quality = TrialLadder(target_output_fps=target, preserve_resolution=True)

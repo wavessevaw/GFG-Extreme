@@ -2539,7 +2539,7 @@ class GovernorService:
         ack = snap.get("flow") or {}
         now = self._clock()
         event_seq = snap.get("event_seq") or 0
-        wanted = flow.request_saved_restore(now, event_seq)
+        wanted = flow.request_saved_restore(now, event_seq, "autopilot-withdrew")
         if wanted is not None:
             saved = await asyncio.to_thread(self._saved_profile_config, profile)
             if saved is not None:
@@ -2587,10 +2587,27 @@ class GovernorService:
                    power.get("observed_tdp_w"), power.get("observed_fast_w"),
                    self._status.get("target_output_fps"))
         previous = flow.context
-        if previous is not None and previous != context and flow.wanted is not None:
-            flow.reset()
-            await asyncio.to_thread(self._write_overlay_sync, profile,
-                                    {**self._base_for(profile, saved), **self._point_deltas}, self._point["key"])
+        if previous is not None and previous != context and flow.change_outstanding():
+            now = self._clock()
+            event_seq = snap.get("event_seq") or 0
+            wanted = flow.request_saved_restore(now, event_seq)
+            if wanted is not None:
+                await asyncio.to_thread(self._write_overlay_sync, profile,
+                                        {**self._base_for(profile, saved), **self._point_deltas, "flow_scale": wanted},
+                                        self._point["key"])
+            context_matches = bool(latest.get("context") and ack.get("context") == latest.get("context"))
+            flow.step(
+                now=now, context=previous, mode=flow.mode or mode, eligible=False,
+                saved_flow=flow.original if flow.original is not None else saved.get("flow_scale", .8),
+                actual_flow=ack.get("value") if context_matches else None,
+                ack_seq=ack.get("event_seq", 0) if context_matches else 0,
+                event_seq=event_seq, sample=None,
+                target=self._status.get("target_output_fps") or 90,
+                base_target=self._point.get("base_target_fps") or 45,
+            )
+            self._status["flow_control"] = flow.status()
+            if flow.change_outstanding():
+                return
         context_matches = bool(latest.get("context") and ack.get("context") == latest.get("context"))
         eligible = bool(self._settings.get("auto_flow") is not False
                         and self._status.get("enabled") and self._status.get("state") == "LOCKED"
