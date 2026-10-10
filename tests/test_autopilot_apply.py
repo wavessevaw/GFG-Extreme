@@ -87,3 +87,21 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(outcome["reason"], "other-tool-busy")
         self.assertFalse(run.scheduler.busy)
         self.assertNotEqual(run.scheduler.knob, Knob.FLOW_SCALE)
+
+    def test_a_measurement_does_not_claim_a_gain_and_holds_the_one_slot(self):
+        from gfg_plugin.autopilot.experiments import SingleFlight
+        cap = Cap(15, 12)
+        slot = SingleFlight()
+        run = ScheduledPower(cap)
+        first = run.step(now=0, seq=1, real=30, output=60, context="scene", ceiling_w=15,
+                         owned=True, allow=True, slot=slot)
+        self.assertFalse(first["wrote"])
+        self.assertTrue(slot.busy)
+        self.assertEqual(slot.knob, Knob.POWER_CAP)
+        self.assertEqual(slot.start(Knob.FLOW_SCALE, 1), "slot-busy")
+        self.assertFalse(run.scheduler._claims)
+        blocked = run.step(now=2, seq=2, real=30, output=60, context="scene", ceiling_w=15,
+                           owned=True, allow=True, slot=slot, restore_pending=True)
+        self.assertEqual(blocked["reason"], "restore-pending")
+        self.assertEqual(cap.writes, [])
+        self.assertFalse(slot.busy)

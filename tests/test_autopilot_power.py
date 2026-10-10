@@ -128,5 +128,9 @@ class ServicePowerGateTests(unittest.TestCase):
             asyncio.run(svc._run_autopilot_power())
             asyncio.run(svc._run_autopilot_power())
             self.assertEqual(svc.power.writes, [])
+            svc._restore_pending = True
+            asyncio.run(svc._run_autopilot_power())
+            self.assertEqual(svc.power.writes, [])
+            self.assertEqual(svc._status["autopilot_power"]["reason"], "restore-pending")
         finally:
             fixture.tearDown()

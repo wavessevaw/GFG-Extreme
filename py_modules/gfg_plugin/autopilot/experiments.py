@@ -149,6 +149,7 @@ class Scheduler:
         self._deadline = None
         self._floor = None
         self.result = None
+        self._claims = False
 
     @property
     def busy(self):
@@ -159,8 +160,12 @@ class Scheduler:
             return "restore-pending"
         if self.busy:
             return "slot-busy"
-        if expected_gain < self.config.min_expected_gain:
+        if expected_gain is None:
+            claimed = False
+        elif expected_gain < self.config.min_expected_gain:
             return "expected-gain-too-small"
+        else:
+            claimed = True
         if self.used.get(context, 0) >= self.config.max_trials:
             return "trial-budget-spent"
         self.phase = "baseline-a1"
@@ -173,6 +178,7 @@ class Scheduler:
         self._floor = None
         self.needs_restore = False
         self.result = None
+        self._claims = claimed
         self._opened = now
         return None
 
@@ -241,6 +247,17 @@ class Scheduler:
         self._close("ABORTED", "restore-failed")
         return "restore-pending"
 
+    def cancel(self, reason):
+        """Drop a trial that never wrote. It must not block the next one."""
+        if self.context in self.used:
+            self.used[self.context] = max(0, self.used[self.context] - 1)
+        self.phase = "idle"
+        self.knob = None
+        self.needs_restore = False
+        self._claims = False
+        self.result = TrialResult("ABORTED", None, None, None, (), None, {"reason": reason}, reason)
+        return reason
+
     def crash(self, reason):
         self.needs_restore = True
         self.restore_pending = True
@@ -277,9 +294,10 @@ class Scheduler:
             self._close("REJECT", "delivery-regression", first, treatment, second)
             return "delivery-regression"
         gain = treatment["real"] - max(first["real"], second["real"])
-        if gain < self.config.min_expected_gain:
-            self._close("REJECT", "no-useful-benefit", first, treatment, second)
-            return "no-useful-benefit"
+        if gain < self.config.min_expected_gain or not self._claims:
+            reason = "no-useful-benefit" if self._claims else "benefit-not-claimed"
+            self._close("REJECT", reason, first, treatment, second)
+            return reason
         self._close("ACCEPT", "benefit-held", first, treatment, second)
         return "benefit-held"
 

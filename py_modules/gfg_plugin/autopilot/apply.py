@@ -22,18 +22,23 @@ class ScheduledPower:
     def power(self):
         return self._power() if callable(self._power) else self._power
 
-    def step(self, *, now, seq, real, output, context, ceiling_w, owned, allow, other_busy=False):
-        if other_busy:
-            return self._idle("other-tool-busy")
-        if self.scheduler.restore_pending:
+    def step(self, *, now, seq, real, output, context, ceiling_w, owned, allow, other_busy=False,
+             slot=None, restore_pending=False):
+        if restore_pending or self.scheduler.restore_pending:
+            if self.scheduler.busy:
+                return self._restore("restore-pending", slot)
+            self._release(slot, "restore-pending")
             return self._idle("restore-pending", "RESTORE")
+        self._slot = slot
+        if other_busy or self._slot_taken(slot):
+            return self._idle("other-tool-busy")
         if not allow:
             if self.scheduler.busy:
-                return self._restore("trial-withdrawn")
+                return self._restore("trial-withdrawn", slot)
             return self._idle("not-a-power-trial")
         if owned is not True:
             if self.scheduler.busy:
-                return self._restore("external-ownership")
+                return self._restore("external-ownership", slot)
             return self._idle("power-not-owned")
         ceiling = _watts(ceiling_w)
         if ceiling is None:
@@ -42,14 +47,22 @@ class ScheduledPower:
             current = _watts((self.power.status() or {}).get("observed_tdp_w"))
             if current is None or current + self.STEP_W > ceiling + 1e-9:
                 return self._idle("already-at-ceiling")
-            error = self.scheduler.start(Knob.POWER_CAP, now, context, expected_gain=self.scheduler.config.min_expected_gain)
+            # No predicted FPS is invented. None means a measurement, not a claimed gain.
+            error = self.scheduler.start(Knob.POWER_CAP, now, context, expected_gain=None)
             if error:
                 return self._idle(error)
+            if slot is not None:
+                refused = slot.start(Knob.POWER_CAP, now)
+                if refused:
+                    self.scheduler.cancel(refused)
+                    return self._idle(refused)
         signal = self.scheduler.observe(seq, now, real, output, None, context)
         if signal == "apply":
             return self._apply(ceiling, now)
         if signal in ("restore", "ack-missing", "delivery-dropped", "scene-or-context-changed") or self.scheduler.needs_restore:
-            return self._restore(signal or "restore")
+            return self._restore(signal or "restore", slot)
+        if self.scheduler.phase == "verdict":
+            self._release(slot, "verdict")
         return self._idle(signal or self.scheduler.phase, "TRIAL" if self.scheduler.busy else "HOLD", armed=self.scheduler.busy)
 
     def _apply(self, ceiling, now):
@@ -68,16 +81,24 @@ class ScheduledPower:
             and abs(observed - target) <= self.ACK_W and observed <= ceiling + self.ACK_W
         self.scheduler.ack(now, matched)
         if not matched:
-            return self._restore("power-ack-missing")
+            return self._restore("power-ack-missing", self._slot)
         return {"wrote": True, "armed": True, "action": "TRIAL", "reason": "ack",
                 "requested_w": target, "observed_w": observed}
 
-    def _restore(self, reason):
+    def _restore(self, reason, slot=None):
         error = power_restore_error(self.power.restore_if_owned())
         self.scheduler.restored(error is None)
+        self._release(slot, reason)
         self.requested = None
         return {"wrote": False, "armed": False, "action": "RESTORE" if error else "HOLD",
                 "reason": error or reason, "restore_failed": error is not None}
+
+    def _slot_taken(self, slot):
+        return slot is not None and slot.busy and slot.knob is not Knob.POWER_CAP
+
+    def _release(self, slot, reason):
+        if slot is not None and slot.busy and slot.knob is Knob.POWER_CAP:
+            slot.abort(reason)
 
     def _idle(self, reason, action="HOLD", armed=False):
         return {"wrote": False, "armed": armed, "action": action, "reason": reason}

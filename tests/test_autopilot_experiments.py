@@ -80,6 +80,18 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(slot.result.next_action, "HOLD")
         self.assertEqual(slot.result.observed_metrics["confidence_interval"], "not-computed")
 
+    def test_unknown_expected_gain_cannot_become_a_win(self):
+        slot = Scheduler()
+        self.assertIsNone(slot.start(Knob.POWER_CAP, 0, "scene", expected_gain=None))
+        self.assertEqual(drive(slot, 0, 1, 90, 45), "apply")
+        slot.ack(7, True)
+        self.assertEqual(drive(slot, 10, 6, 90, 48), "restore")
+        slot.ack(17, True)
+        verdict = drive(slot, 20, 11, 90, 45)
+        self.assertEqual(verdict, "benefit-not-claimed")
+        self.assertEqual(slot.result.verdict, "REJECT")
+        self.assertFalse(slot.result.learned)
+
     def test_second_controller_ack_loss_and_failed_restore(self):
         slot = Scheduler()
         self.assertEqual(slot.start(Knob.FLOW_SCALE, 0, "scene", expected_gain=0.5), "expected-gain-too-small")
