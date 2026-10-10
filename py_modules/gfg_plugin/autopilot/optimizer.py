@@ -18,10 +18,11 @@ class OptimizerConfig:
     min_scale: float = 0.90
     tie_fps: float = 1.0
     tie_w: float = 0.5
+    tie_fidelity: float = 0.05
 
     def __post_init__(self):
         values = (self.min_real_gain, self.max_w_per_real_fps, self.min_draw_save_w,
-                  self.min_scale, self.tie_fps, self.tie_w)
+                  self.min_scale, self.tie_fps, self.tie_w, self.tie_fidelity)
         if any(number(v) is None or v < 0 for v in values) or not 0 < self.min_scale <= 1:
             raise ValueError("invalid optimizer thresholds")
 
@@ -72,8 +73,10 @@ def _better(left, right, config):
 
 def feasible(candidate, *, ceiling_w, user_min_scale, allow_scale_80, capabilities,
              user_scale_locked, frame_os_allowed, ack_ok, gpu_bound, cpu_bound):
-    if not candidate.measured or number(candidate.real_delivery) is None or number(candidate.output_stability) is None:
-        return "unmeasured"
+    if not candidate.measured or any(number(value) is None for value in (
+            candidate.real_delivery, candidate.output_stability, candidate.power_draw,
+            candidate.render_fidelity, candidate.transition_cost, candidate.value)):
+        return "nonfinite-metric"
     if candidate.knob == "frame_os_act" and not frame_os_allowed:
         return "frame-os-act-not-consented"
     if candidate.knob not in capabilities:
@@ -102,7 +105,7 @@ def feasible(candidate, *, ceiling_w, user_min_scale, allow_scale_80, capabiliti
 
 def select(points, current, *, perception, ceiling_w=None, user_min_scale=0.90,
            allow_scale_80=False, capabilities=(), user_scale_locked=False,
-           frame_os_allowed=False, ack_ok=True, config=OptimizerConfig()):
+           frame_os_allowed=False, ack_ok=False, config=OptimizerConfig()):
     """Return (action, strategy, chosen, rejected, reason). chosen is None on HOLD."""
     gpu_bound = perception.primary is B.GPU_LIMITED or B.GPU_LIMITED in perception.secondary
     cpu_bound = perception.primary is B.CPU_LIMITED or B.CPU_LIMITED in perception.secondary
@@ -135,7 +138,7 @@ def select(points, current, *, perception, ceiling_w=None, user_min_scale=0.90,
         extra_w = point.power_draw - current.power_draw
         fidelity_loss = current.render_fidelity - point.render_fidelity
         stability_loss = current.output_stability - point.output_stability
-        if fidelity_loss > config.tie_fps or stability_loss > config.tie_fps:
+        if fidelity_loss > config.tie_fidelity or stability_loss > config.tie_fps:
             rejected.append((point.knob, point.value, "quality-or-stability-regression"))
             continue
         if extra_w > config.tie_w and (real_gain < config.min_real_gain
@@ -152,6 +155,10 @@ def select(points, current, *, perception, ceiling_w=None, user_min_scale=0.90,
         strategy = Strategy.THERMAL_STABILITY if thermal else Strategy.CRUISE
         return Action.HOLD, strategy, None, tuple(rejected), "tie-or-no-benefit"
     chosen = others[0]
+    if chosen.knob not in (Knob.POWER_CAP.value, Knob.FLOW_SCALE.value):
+        rejected.append((chosen.knob, chosen.value, "tool-not-executable"))
+        strategy = Strategy.THERMAL_STABILITY if thermal else Strategy.CRUISE
+        return Action.HOLD, strategy, None, tuple(rejected), "tool-not-executable"
     if chosen.power_draw + config.tie_w < current.power_draw:
         strategy = Strategy.EFFICIENCY
     elif thermal:

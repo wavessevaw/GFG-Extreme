@@ -6,7 +6,6 @@ claim power, edit Saved, or touch flow.
 """
 from .experiments import ExperimentConfig, Scheduler
 from .policy import Knob
-from ..governor_restore import power_restore_error
 
 
 class ScheduledPower:
@@ -17,6 +16,8 @@ class ScheduledPower:
         self._power = power
         self.scheduler = scheduler or Scheduler(ExperimentConfig())
         self.requested = None
+        self.baseline_w = None
+        self._slot = None
 
     @property
     def power(self):
@@ -24,6 +25,8 @@ class ScheduledPower:
 
     def step(self, *, now, seq, real, output, context, ceiling_w, owned, allow, other_busy=False,
              slot=None, restore_pending=False):
+        if self.baseline_w is not None:
+            return self._restore("baseline-restore-failed", slot)
         if restore_pending or self.scheduler.restore_pending:
             if self.scheduler.busy:
                 return self._restore("restore-pending", slot)
@@ -73,6 +76,7 @@ class ScheduledPower:
         target = min(ceiling, current + self.STEP_W)
         if target > ceiling or target <= current:
             return self._restore("ceiling-blocks-step")
+        self.baseline_w = current
         result = self.power.set_tdp_w(target)
         self.requested = target
         state = result.get("state") if isinstance(result, dict) else None
@@ -86,12 +90,24 @@ class ScheduledPower:
                 "requested_w": target, "observed_w": observed}
 
     def _restore(self, reason, slot=None):
-        error = power_restore_error(self.power.restore_if_owned())
-        self.scheduler.restored(error is None)
+        slot = self._slot if slot is None else slot
+        if self.baseline_w is None:
+            if self.scheduler.busy:
+                self.scheduler.cancel(reason)
+            self._release(slot, reason)
+            return self._idle(reason, "RESTORE" if self.scheduler.restore_pending else "HOLD")
+        result = self.power.set_tdp_w(self.baseline_w)
+        state = result.get("state") if isinstance(result, dict) else None
+        observed = _watts((state or {}).get("observed_tdp_w"))
+        matched = isinstance(result, dict) and result.get("success") is True and observed is not None \
+            and abs(observed - self.baseline_w) <= self.ACK_W
+        self.scheduler.restored(matched)
         self._release(slot, reason)
         self.requested = None
-        return {"wrote": False, "armed": False, "action": "RESTORE" if error else "HOLD",
-                "reason": error or reason, "restore_failed": error is not None}
+        if matched:
+            self.baseline_w = None
+        return {"wrote": False, "armed": False, "action": "RESTORE" if not matched else "HOLD",
+                "reason": reason if matched else "baseline-restore-failed", "restore_failed": not matched}
 
     def _slot_taken(self, slot):
         return slot is not None and slot.busy and slot.knob is not Knob.POWER_CAP

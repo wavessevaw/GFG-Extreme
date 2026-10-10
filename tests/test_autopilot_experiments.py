@@ -129,3 +129,18 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(slot.crash("helper-restart").verdict, "ABORTED")
         self.assertEqual(slot.start(Knob.FLOW_SCALE, 5, "scene", expected_gain=3), "restore-pending")
 
+    def test_review_notes_late_ack_missing_sample_and_second_start(self):
+        slot = Scheduler()
+        slot.start(Knob.POWER_CAP, 0, "scene", expected_gain=3)
+        self.assertEqual(drive(slot, 0, 1, 90, 45), "apply")
+        self.assertEqual(slot.ack(100, True), "ack-missing")
+        self.assertNotEqual(slot.phase, "settle")
+        self.assertEqual(slot.start(Knob.FLOW_SCALE, 101, "other", expected_gain=3), "restore-pending")
+        other = Scheduler()
+        other.start(Knob.POWER_CAP, 0, "scene", expected_gain=3)
+        drive(other, 0, 1, 90, 45)
+        other.ack(7, True)
+        self.assertEqual(other.observe(6, 11, None, None, None, "scene"), "measurement-unavailable")
+        self.assertNotEqual(other.result.verdict, "ACCEPT")
+        self.assertEqual(other.start(Knob.FLOW_SCALE, 12, "scene", expected_gain=3), "restore-pending")
+

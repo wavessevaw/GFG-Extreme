@@ -14,6 +14,13 @@ _PHASES = ("prepare", "baseline-a1", "apply", "ack", "settle", "test-b",
            "restore-a", "baseline-a2", "verdict")
 
 
+def _measurement(real, output, temp, now, seq):
+    from .contracts import number
+    if number(now) is None or number(seq) is None or number(real) is None or number(output) is None:
+        return False
+    return temp is None or number(temp) is not None
+
+
 def _drift(left, right):
     for key in ("output", "real"):
         a, b = left.get(key), right.get(key)
@@ -156,7 +163,7 @@ class Scheduler:
         return self.phase not in ("idle", "verdict")
 
     def start(self, knob, now, context, expected_gain):
-        if self.restore_pending:
+        if self.restore_pending or self.needs_restore:
             return "restore-pending"
         if self.busy:
             return "slot-busy"
@@ -185,6 +192,11 @@ class Scheduler:
     def observe(self, seq, now, real, output, temp, context):
         if not self.busy:
             return None
+        if not _measurement(real, output, temp, now, seq):
+            if self.phase == "baseline-a1":
+                self._close("ABORTED", "measurement-unavailable")
+                return "measurement-unavailable"
+            return self._invalidate("measurement-unavailable")
         if context != self.context:
             return self._invalidate("scene-or-context-changed")
         if self._floor is not None and output < self._floor * self.config.starvation_ratio:
@@ -225,9 +237,9 @@ class Scheduler:
     def ack(self, now, matched):
         if self._awaiting is None:
             return None
+        if self._deadline is not None and now > self._deadline:
+            return self._invalidate("ack-missing")
         if not matched:
-            if now > self._deadline:
-                return self._invalidate("ack-missing")
             return None
         self._deadline = None
         self._awaiting = None
@@ -272,7 +284,10 @@ class Scheduler:
         return any(seq in earlier for seq in seqs)
 
     def _invalidate(self, reason):
-        self.needs_restore = True
+        applied = self.phase not in ("idle", "baseline-a1")
+        self.needs_restore = applied
+        if applied:
+            self.restore_pending = True
         verdict = "INCONCLUSIVE" if reason in ("scene-or-context-changed", "control-window-drift", "temperature-drift") else "ABORTED"
         self._close(verdict, reason)
         return reason

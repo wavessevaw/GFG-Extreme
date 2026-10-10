@@ -72,12 +72,15 @@ class ApplyTests(unittest.TestCase):
         run = ScheduledPower(cap)
         outcome = feed(run, 15)
         self.assertEqual(outcome["restore_failed"], True)
-        self.assertEqual(cap.writes, [13])
+        self.assertEqual(cap.writes, [13, 12])
+        self.assertEqual(cap.restores, 0)
+        self.assertTrue(cap.owned)
         again = run.step(now=30, seq=20, real=30, output=60, context="scene",
                          ceiling_w=15, owned=True, allow=True)
         self.assertFalse(again["wrote"])
-        self.assertEqual(again["reason"], "restore-pending")
-        self.assertEqual(cap.writes, [13])
+        self.assertEqual(again["restore_failed"], True)
+        self.assertTrue(all(value <= 12 for value in cap.writes[1:]))
+        self.assertLessEqual(max(cap.writes), 13)
 
     def test_ac15_flow_slot_blocks_the_power_write(self):
         cap = Cap(20, 12)
@@ -105,3 +108,14 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(blocked["reason"], "restore-pending")
         self.assertEqual(cap.writes, [])
         self.assertFalse(slot.busy)
+
+    def test_undo_returns_the_working_cap_without_releasing_ownership(self):
+        cap = Cap(15, 10)
+        run = ScheduledPower(cap)
+        self.assertEqual(feed(run, 15)["requested_w"], 11)
+        undone = run.step(now=20, seq=9, real=30, output=60, context="scene",
+                          ceiling_w=15, owned=True, allow=False)
+        self.assertEqual(cap.writes, [11, 10])
+        self.assertEqual(cap.restores, 0)
+        self.assertTrue(cap.owned)
+        self.assertFalse(undone["restore_failed"])
