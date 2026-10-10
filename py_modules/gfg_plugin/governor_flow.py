@@ -255,3 +255,18 @@ class FlowTrial:
         self.wanted = None
         self.attempted = True
         return None
+
+    def request_saved_restore(self, now, event_seq):
+        """Ask for the Saved scale. The caller writes it and waits for renderer ACK.
+
+        A repeat while the ACK is pending does not move the mark.
+        """
+        if self.original is None or self.phase == "done":
+            return None
+        if self.phase == "wait-restore":
+            return self.wanted
+        changed = self.busy or self.phase == "held" or (
+            self.wanted is not None and abs(self.wanted - self.original) >= 0.005)
+        if not changed:
+            return None
+        return self._abort(now, event_seq, "autopilot-withdrew")

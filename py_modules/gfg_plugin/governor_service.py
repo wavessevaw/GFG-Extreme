@@ -2479,7 +2479,11 @@ class GovernorService:
             slot_busy=self._autopilot_slot.busy, slot_knob=self._autopilot_slot.knob,
         )
         slot = self._autopilot_slot
-        if decision.knob is not Knob.FLOW_SCALE:
+        profile = self._status.get("profile") or ""
+        if decision.action is not Action.TRIAL or decision.knob is not Knob.FLOW_SCALE or decision.release_slot:
+            if self._autopilot_flow_dirty() and profile and self._point is not None and self.overlay is not None:
+                await self._restore_autopilot_flow(profile)
+                return
             if slot.busy and slot.knob is Knob.FLOW_SCALE and not self._autopilot_hold_for_restore(slot):
                 slot.abort(decision.reason)
             reason = "restore-before-release" if self._autopilot_flow_dirty() else decision.reason
@@ -2525,11 +2529,39 @@ class GovernorService:
         if phase is not None:
             value["phase"] = phase
         return value
-        value = {"wrote": False, "armed": armed, "action": action, "reason": reason,
-                 "tuner": "existing-flow-trial"}
-        if phase is not None:
-            value["phase"] = phase
-        return value
+
+    async def _restore_autopilot_flow(self, profile: str) -> None:
+        """Write the Saved flow scale and keep the slot until the renderer ACK arrives."""
+        flow = self._flow
+        slot = self._autopilot_slot
+        snap = ((self._status.get("telemetry") or {}).get("snapshot") or {})
+        latest = snap.get("latest") or {}
+        ack = snap.get("flow") or {}
+        now = self._clock()
+        event_seq = snap.get("event_seq") or 0
+        wanted = flow.request_saved_restore(now, event_seq)
+        if wanted is not None:
+            saved = await asyncio.to_thread(self._saved_profile_config, profile)
+            if saved is not None:
+                await asyncio.to_thread(
+                    self._write_overlay_sync, profile,
+                    {**self._base_for(profile, saved), **self._point_deltas, "flow_scale": wanted},
+                    self._point["key"])
+        context_matches = bool(latest.get("context") and ack.get("context") == latest.get("context"))
+        flow.step(
+            now=now, context=flow.context, mode=flow.mode or "balanced", eligible=False,
+            saved_flow=flow.original, actual_flow=ack.get("value") if context_matches else None,
+            ack_seq=ack.get("event_seq", 0) if context_matches else 0,
+            event_seq=event_seq, sample=None,
+            target=self._status.get("target_output_fps") or 90,
+            base_target=(self._point or {}).get("base_target_fps") or 45,
+        )
+        if flow.phase == "done" and not self._autopilot_flow_dirty():
+            if slot.busy and slot.knob is Knob.FLOW_SCALE:
+                slot.abort("flow-restored")
+            self._status["autopilot_flow"] = self._flow_report(False, "HOLD", "flow-restored", flow.phase)
+            return
+        self._status["autopilot_flow"] = self._flow_report(True, "RESTORE", "restore-before-release", flow.phase)
 
     async def _sync_flow(self, profile: str) -> None:
         """Rare isolated resource trials; Act, CPU probes and stale data opt out."""
