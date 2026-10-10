@@ -10,9 +10,11 @@ File writes are never an assertion that the game actually used VRS.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import stat
+import time
 from pathlib import Path
 
 _VAR = b"RADV_FORCE_VRS_CONFIG_FILE="
@@ -25,6 +27,7 @@ class SteamVrsBackend:
         self.fixed_path = Path(fixed_path) if fixed_path is not None else None
         self._found: Path | None = None
         self._owner: int | None = None
+        self._missing_at = -1e10
 
     def _checked(self, path: Path, uid: int | None = None) -> Path | None:
         # Steam creates /tmp/radv_vrs.XXXXXXXX and exports its exact name.
@@ -45,12 +48,21 @@ class SteamVrsBackend:
             return None
         return path
 
+    def path(self) -> Path | None:
+        return self._discover()
+
     def _discover(self) -> Path | None:
         if self.fixed_path is not None:
             return self._checked(self.fixed_path)
         if self._found is not None and self._checked(self._found, self._owner):
             return self._found
         self._found = None
+        # A negative /proc sweep can be expensive when the Steam client is
+        # absent. Cache misses briefly, but never cache a positive stale inode.
+        now = time.monotonic()
+        if now - self._missing_at < 4:
+            return None
+        self._missing_at = now
         try:
             processes = list(self.proc_root.iterdir())
         except OSError:
@@ -77,6 +89,7 @@ class SteamVrsBackend:
                     continue
                 if self._checked(path, uid):
                     self._owner, self._found = uid, path
+                    self._missing_at = -1e10
                     return path
         return None
 
@@ -98,21 +111,31 @@ class SteamVrsBackend:
             raise OSError("Steam RADV VRS file unavailable")
         # In-place write is deliberate: Mesa watches the existing inode using
         # inotify, so os.replace() risks disconnecting the live game notifier.
-        flags = os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        flags = os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(path, flags)
         try:
-            os.write(fd, value.encode("ascii"))
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > 16
+                    or (self._owner is not None and info.st_uid != self._owner)):
+                raise OSError("Steam VRS file changed during acquisition")
+            os.ftruncate(fd, 0)
+            written = os.write(fd, value.encode("ascii"))
+            if written != 3:
+                raise OSError("short VRS write")
             os.fsync(fd)
         finally:
             os.close(fd)
 
 
 class HalfRateShading:
-    def __init__(self, backend=None) -> None:
+    def __init__(self, backend=None, receipt_path: Path | None = None) -> None:
         self.backend = backend if backend is not None else SteamVrsBackend()
+        self.receipt_path = Path(receipt_path) if receipt_path else None
         self.original: str | None = None
         self.phase = "idle"
         self.reason = "not-tested"
+        self._owned_path: str | None = None
+        self._load()
 
     @property
     def owned(self) -> bool:
@@ -131,7 +154,9 @@ class HalfRateShading:
         if original != "1x1":
             return {"applied": False, "reason": "already-on-or-unavailable"}
         self.original = original
+        self._owned_path = str(self.backend.path()) if hasattr(self.backend, "path") else None
         self.phase = "partial"
+        self._save()
         try:
             self.backend.write("2x2")
             if self.backend.read() != "2x2":
@@ -143,6 +168,7 @@ class HalfRateShading:
                     "restored": restored.get("restored", False)}
         self.phase = "owned"
         self.reason = "trial-enabled"
+        self._save()
         return {"applied": True, "reason": self.reason}
 
     def restore(self) -> dict:
@@ -150,14 +176,19 @@ class HalfRateShading:
             return {"restored": True, "reason": "not-owned"}
         current = self.backend.read()
         if current is None:
+            # The temporary Gamescope session file has disappeared: we cannot
+            # and must not write to a different session's file.
+            if (self._owned_path and hasattr(self.backend, "path")
+                    and str(self.backend.path()) != self._owned_path):
+                self._clear("old-steam-session-ended")
+                return {"restored": False, "yielded": True, "reason": self.reason}
             self.phase = "restore-pending"
             self.reason = "vrs-unavailable"
+            self._save()
             return {"restored": False, "reason": self.reason}
         if self.phase == "owned" and current != "2x2":
             # User/QAM took control. Never change their own setting.
-            self.phase = "idle"
-            self.reason = "external-change"
-            self.original = None
+            self._clear("external-change")
             return {"restored": False, "yielded": True, "reason": self.reason}
         if self.original is None:
             self.phase = "restore-pending"
@@ -170,6 +201,45 @@ class HalfRateShading:
         except OSError:
             self.phase = "restore-pending"
             self.reason = "restore-unconfirmed"
+            self._save()
             return {"restored": False, "reason": self.reason}
-        self.phase, self.original, self.reason = "idle", None, "restored"
+        self._clear("restored")
         return {"restored": True, "reason": self.reason}
+
+    def _clear(self, reason: str) -> None:
+        self.phase, self.original, self.reason, self._owned_path = "idle", None, reason, None
+        self._save()
+
+    def _save(self) -> None:
+        if self.receipt_path is None:
+            return
+        if self.phase == "idle":
+            self.receipt_path.unlink(missing_ok=True)
+            return
+        self.receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        path = self.receipt_path.with_suffix(".tmp")
+        path.write_text(json.dumps({"phase": self.phase, "original": self.original,
+                                    "session_path": self._owned_path}), encoding="utf-8")
+        os.replace(path, self.receipt_path)
+
+    def _load(self) -> None:
+        if self.receipt_path is None or not self.receipt_path.is_file():
+            return
+        try:
+            saved = json.loads(self.receipt_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if not isinstance(saved, dict) or saved.get("original") != "1x1":
+            return
+        expected = saved.get("session_path")
+        actual = str(self.backend.path()) if hasattr(self.backend, "path") else None
+        if not expected or expected != actual:
+            # A reboot creates a *new* RADV file. Never apply the old receipt
+            # to another Steam game session.
+            self._clear("previous-steam-session")
+            return
+        self.original, self._owned_path = "1x1", expected
+        if self.backend.read() == "2x2":
+            self.phase, self.reason = "restore-pending", "unclosed-trial-recovered"
+        else:
+            self._clear("already-reset")
