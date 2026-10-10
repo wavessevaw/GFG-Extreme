@@ -1,0 +1,242 @@
+{
+  "schema": "gfg-field-audit-v2",
+  "privacy": "Raw ZIP withheld from public repository; numerical aggregates and relative-time state transitions only",
+  "source": {
+    "filename": "GFG-Extreme-log-20261010-232030.zip",
+    "sha256": "efc5920c9457508185f4a107dfe7695768f81864395bb6dc8b4a70150bbb207d",
+    "bytes": 119298,
+    "private_original": true
+  },
+  "environment": {
+    "date": "2026-10-10",
+    "time_zone": "UTC+10",
+    "duration_seconds": 454.89,
+    "hardware": "Steam Deck OLED/Galileo",
+    "steamos": "3.8.28",
+    "plugin": "1.7.1 pre-alpha",
+    "release_tag": "v1.7.1",
+    "release_commit": "67fb4dc583da9acc214d9070b27b347c2847dc72"
+  },
+  "integrity": {
+    "setup_passed": 17,
+    "setup_total": 17,
+    "timeline_samples": 451,
+    "trace_events": 966,
+    "renderer_log_lines": 228,
+    "governor_events": 21,
+    "trace_failures": 0
+  },
+  "renderer": {
+    "fixed_plans": 74,
+    "adaptive_plans": 58,
+    "present_breakdown": 34,
+    "present_total": 33,
+    "legacy_median_real_fps": 43.536,
+    "legacy_median_output_fps": 87.941,
+    "target_fps": 90,
+    "plan_base_fps_fields": 133,
+    "plan_current_base_fps_fields": 1,
+    "plan_measured_base_fps_fields": 0,
+    "plan_observed_output_fps_fields": 74,
+    "only_current_base_fps_operation": "adaptive-ramp-accepted",
+    "only_current_base_fps_accepted_by_observation_stream": false,
+    "note": "All 74 fixed-plan + 58 adaptive-plan operations lack a verified measured real-FPS field; strict parser ignores the lone adaptive-ramp-accepted pair."
+  },
+  "autopilot": {
+    "trace_observations": 439,
+    "power_control": 263,
+    "exclusive_control": 263,
+    "session_changes": 1,
+    "power_flag_true_observations": 263,
+    "flow_flag_true_observations": 0,
+    "source_real_fps_observations": 0,
+    "source_output_fps_observations": 34,
+    "monitor_primary_unknown": 451,
+    "decision_observe": 439,
+    "ab_trials": 0,
+    "trial_power_writes": 0,
+    "trial_power_reasons": {
+      "not-a-power-trial": 263
+    },
+    "scheduler_phase_idle": 439,
+    "C2_reasons": {
+      "measured-fps-unavailable": 211,
+      "runtime-not-observing": 139,
+      "focus-unconfirmed-or-menu": 36,
+      "baseline-incomplete": 29,
+      "launch-identity-unavailable": 21,
+      "insufficient-evidence": 3
+    }
+  },
+  "governor": {
+    "state_counts": {
+      "OBSERVE_ONLY": 221,
+      "DISABLED": 83,
+      "PAUSED": 54,
+      "APPLY": 49,
+      "GUARD": 23,
+      "PROBE": 7,
+      "LOCKED": 7,
+      "OPTIMIZE_POWER": 6,
+      "PLAN": 1
+    },
+    "legacy_operating_points_confirmed": 3,
+    "legacy_tdp_writes": 2,
+    "legacy_power_restores": 2,
+    "reported_ppt_values_w": [
+      12,
+      13,
+      20
+    ],
+    "disabled_samples_owned": 0,
+    "temperature_c": {
+      "min": 44,
+      "median": 72,
+      "max": 82
+    },
+    "historical_frame_os_gain_not_current_trial": true
+  },
+  "timeline_state_changes_relative_seconds": [
+    [
+      0,
+      "OBSERVE_ONLY",
+      true,
+      20,
+      true
+    ],
+    [
+      222.1,
+      "PAUSED",
+      false,
+      20,
+      true
+    ],
+    [
+      225.1,
+      "PROBE",
+      false,
+      20,
+      true
+    ],
+    [
+      232.2,
+      "APPLY",
+      false,
+      20,
+      true
+    ],
+    [
+      241.4,
+      "OPTIMIZE_POWER",
+      false,
+      12,
+      true
+    ],
+    [
+      247.5,
+      "LOCKED",
+      false,
+      13,
+      true
+    ],
+    [
+      254.6,
+      "GUARD",
+      false,
+      13,
+      true
+    ],
+    [
+      255.6,
+      "APPLY",
+      false,
+      13,
+      true
+    ],
+    [
+      274.9,
+      "PLAN",
+      false,
+      13,
+      true
+    ],
+    [
+      275.9,
+      "APPLY",
+      false,
+      13,
+      true
+    ],
+    [
+      287,
+      "GUARD",
+      false,
+      13,
+      true
+    ],
+    [
+      302.1,
+      "APPLY",
+      false,
+      13,
+      true
+    ],
+    [
+      312.2,
+      "GUARD",
+      false,
+      13,
+      true
+    ],
+    [
+      319.3,
+      "PAUSED",
+      false,
+      13,
+      true
+    ],
+    [
+      323.4,
+      "PAUSED",
+      true,
+      13,
+      true
+    ],
+    [
+      370.8,
+      "DISABLED",
+      true,
+      20,
+      false
+    ],
+    [
+      372.8,
+      "OBSERVE_ONLY",
+      true,
+      20,
+      true
+    ],
+    [
+      373.8,
+      "DISABLED",
+      true,
+      20,
+      false
+    ],
+    [
+      374.9,
+      "DISABLED",
+      false,
+      20,
+      false
+    ]
+  ],
+  "status": {
+    "device_rendering": "confirmed",
+    "legacy_governor": "confirmed",
+    "autopilot_experiment": "not_started",
+    "autopilot_rollback": "not_tested",
+    "release_gate": "block"
+  },
+  "safety_note": "Do not auto-promote base_fps/target_fps to measured independent real FPS; add verified renderer-measured source with provenance and test."
+}

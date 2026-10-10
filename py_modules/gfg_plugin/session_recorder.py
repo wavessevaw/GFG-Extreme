@@ -20,6 +20,7 @@ from .privileged_power import writer as privileged_writer
 
 MAX_TIMELINE_BYTES = 24 * 1024 * 1024
 MAX_DIAG_BYTES = 12 * 1024 * 1024
+MAX_AUTOPILOT_TRACE_BYTES = 8 * 1024 * 1024
 MAX_FILE_BYTES = 1024 * 1024
 SAMPLE_SECONDS = 1.0
 DESKTOP_DIRNAME = "Desktop"
@@ -107,6 +108,13 @@ def compact_status(status: Dict[str, Any]) -> Dict[str, Any]:
             "phase", "reason", "level", "cap_khz", "ab", "pairs", "gain_pct")} if status.get("power_split") else None,
         "extreme": compact_extreme(status.get("extreme")),
         "mode_goal": status.get("mode_goal"), "flow_control": status.get("flow_control"),
+        "autopilot": {
+            "observation": status.get("autopilot_observation"),
+            "decision": status.get("autopilot_plan"),
+            "power": status.get("autopilot_power"),
+            "flow": status.get("autopilot_flow"),
+            "debug": status.get("autopilot_debug"),
+        },
     }
 
 
@@ -259,6 +267,7 @@ class SessionRecorder:
         saved_config_path: Path,
         layer_files: Dict[str, Path],
         plugin_log: Optional[Path] = None,
+        autopilot_trace_path: Optional[Path] = None,
         logger: Any = None,
         clock: Callable[[], float] = time.time,
         hud_enabled: Optional[Callable[[str], bool]] = None,
@@ -280,6 +289,8 @@ class SessionRecorder:
         self.saved_config_path = Path(saved_config_path)
         self.layer_files = {k: Path(v) for k, v in layer_files.items()}
         self.plugin_log = Path(plugin_log) if plugin_log else None
+        self.autopilot_trace_path = Path(autopilot_trace_path) if autopilot_trace_path else None
+        self._autopilot_trace_start = 0
         self.log = logger
         self.clock = clock
         self.hud_enabled = hud_enabled
@@ -323,6 +334,11 @@ class SessionRecorder:
             self.last_error = f"cannot-create-recording: {error}"
             return {"success": False, "error": self.last_error, **self.status()}
         self._offsets = {}
+        if self.autopilot_trace_path is not None:
+            try:
+                self._autopilot_trace_start = self.autopilot_trace_path.stat().st_size
+            except OSError:
+                self._autopilot_trace_start = 0
         for path in self.diagnostics_paths:
             try:
                 self._offsets[path] = path.stat().st_size
@@ -543,6 +559,8 @@ class SessionRecorder:
                 "system.json      device, kernel, gamescope\n"
                 "diagnostics-*.log renderer diagnostics appended during the recording\n"
                 "governor-events.jsonl  Governor decisions during the recording\n"
+                "autopilot-trace.jsonl  per-tick evidence, gate, power/flow and ACK decisions\n"
+                "                     (bounded, best effort; independent of flags)\n"
                 "activity.jsonl   your actions (UI clicks, game launches/exits), Governor states, TDP writes;\n"
                 "                 starts 30 min before the recording\n"
                 "launch-wrapper.sh the generated launcher\n"
@@ -578,6 +596,16 @@ class SessionRecorder:
             except OSError:
                 pass
             bundle.writestr("governor-events.jsonl", "\n".join(events) + ("\n" if events else ""))
+            if self.autopilot_trace_path is not None:
+                trace = _read_range(self.autopilot_trace_path, self._autopilot_trace_start,
+                                    MAX_AUTOPILOT_TRACE_BYTES)
+                bundle.writestr("autopilot-trace.jsonl", trace)
+                bundle.writestr("autopilot-trace-meta.json", json.dumps({
+                    "schema": 1, "bytes": len(trace), "start_offset": self._autopilot_trace_start,
+                    "limit_bytes": MAX_AUTOPILOT_TRACE_BYTES,
+                    "available": self.autopilot_trace_path.is_file(),
+                    "note": "Source is bounded and may rotate. Empty trace means no Autopilot tick was captured.",
+                }, indent=2))
             if self.activity is not None:
                 # Include what happened before Record was pressed (game launch, Run).
                 actions = self.activity.since(self.started_at - ACTIVITY_LOOKBACK_S)
