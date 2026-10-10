@@ -4,6 +4,23 @@ Date: 2026-10-10. Tip: `autopilot/merge-ready-20261010`.
 Base: `main` at `9c94cea` (release 1.6.9). Main had no newer commits at handoff.
 This document is the merge instruction. Do not merge the intermediate draft PRs.
 
+## Next version is 2.0.0
+
+The owner marked this for the merging agent: the next published version is
+**2.0.0**. Do not name it 1.6.10, 1.7.0, or any other 1.x number.
+
+This pull request does not bump the version. `main` stays 1.6.9 until the
+release commit. When that release is cut, set it with:
+
+```sh
+python3 scripts/bump_version.py 2.0.0
+```
+
+That script writes `package.json`, `package-lock.json`, `VERSION` in
+`governor_service.py`, the startup line in `plugin.py`, the session recorder
+label, and `CURRENT_VERSION` in `log_report.py`. Do not edit those by hand.
+Do not tag or publish the ZIP until the owner asks for the release.
+
 ## Merge this, and nothing else
 
 Open one draft pull request from this branch to `main`. Intermediate drafts
@@ -11,8 +28,10 @@ Open one draft pull request from this branch to `main`. Intermediate drafts
 them alone, or merging them out of order, duplicates commits or drops the
 later fixes. Do not merge `handoff/gfg-open-field-logs-20261009` (data only).
 
-Do not bump the plugin version, tag a release, or publish a Decky ZIP.
+Do not tag a release or publish a Decky ZIP in this merge.
 The owner has not accepted a release. Device verification is `NOT_TESTED`.
+When a release is accepted, its version is 2.0.0, set only through
+`scripts/bump_version.py`.
 
 ## What stays off after merge
 
@@ -68,8 +87,9 @@ passing on this tip. A sandbox cannot `chown` and may fail
 `test_governor_wrapper_diagnostics` for that reason; CI on GitHub is the
 authority for that one test.
 
-Confirm the diff against `main` does not change the mode list, the version
-in `plugin.json`, or the default of either Autopilot flag.
+Confirm the diff against `main` does not change the mode list or the default
+of either Autopilot flag. This merge stays on 1.6.9. The following release
+is 2.0.0 and is a separate commit.
 
 ## Do not do this in the merge
 
