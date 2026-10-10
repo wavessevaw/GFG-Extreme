@@ -28,14 +28,22 @@ def plan(perception, points, current, *, now, restore_pending=False, dwell_s=30.
     if perception.reason == "external-backend-observe-only" or perception.primary is B.UNKNOWN or perception.stale:
         return Decision(Action.OBSERVE, Strategy.OBSERVE_ONLY,
                         perception.reason or "insufficient-evidence", evidence_ids=evidence)
-    if memory is not None and memory.blocks(current):
-        return Decision(Action.HOLD, Strategy.CRUISE, "backed-off", evidence_ids=evidence)
+    hidden = []
+    if memory is not None:
+        visible = []
+        for point in points:
+            if memory.blocks(point):
+                hidden.append((point.knob, point.value, "backed-off"))
+            else:
+                visible.append(point)
+        points = tuple(visible)
     verified = None if memory is None else memory.last_verified
     if verified is not None and current.output_stability + config.tie_fps < verified.output_stability:
         return Decision(Action.RECOVER, Strategy.RECOVERY, "delivery-below-last-verified",
                         evidence_ids=evidence, candidate_value=verified.value, release_slot=True)
     action, strategy, chosen, rejected, reason = select(
         points, current, perception=perception, config=config, **limits)
+    rejected = hidden + list(rejected)
     if memory is not None and memory.strategy is not None and not starvation \
             and perception.primary is not B.THERMAL_LIMITED \
             and number(memory.strategy_at) is not None and 0 <= now - memory.strategy_at < dwell_s \
