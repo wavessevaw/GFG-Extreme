@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 2.0.0).
+"""Live orchestration service for GFG Governor (GFG Extreme 2.0.1).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -72,7 +72,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, confirmation_evidence, matches,
 )
 
-VERSION = "2.0.0"
+VERSION = "2.0.1"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -197,6 +197,7 @@ class GovernorService:
             receipt_path=self.configuration.config_dir / "autopilot-gpu-receipt.json",
         )
         self._autopilot_targets = TargetPolicy()
+        self._autopilot_plan = "off"
         self._autopilot_launch = None
         self._autopilot_tones = None
         self._autopilot_tone_since = 0.0
@@ -764,7 +765,7 @@ class GovernorService:
             pct = applied.get("render_pct")
             data["extreme"] = {"render_pct": int(pct) if isinstance(pct, (int, float)) and pct < 100 else None}
         pilot = status.get("autopilot") or {}
-        if status.get("mode") == "autopilot" or pilot.get("enabled"):
+        if status.get("enabled") and status.get("mode") == "autopilot" and pilot.get("active"):
             sensors = status.get("sensors") or {}
             data["autopilot"] = {
                 "active": True,
@@ -1822,6 +1823,7 @@ class GovernorService:
                 self.log.error("Governor could not restore overlay for %s on unload: %s", profile, error)
                 self._event("overlay-restore-failed", "plugin-stop", profile=profile, error=error)
         self._reset_run_state()
+        self._clear_autopilot_session("plugin-stop")
         self._restore_autopilot_gpu("plugin-stop")
         try:
             # shutdown(): waits for a write still running in a worker thread, then restores and
@@ -2480,6 +2482,7 @@ class GovernorService:
         enabled = self._profile_enabled(profile)
         self._status.update({"profile": profile, "enabled": enabled})
         if not enabled:
+            self._clear_autopilot_session("governor-disabled")
             if self.power.state.owned or self._status.get("state") != "DISABLED" or self._point or self._request:
                 await self._release(profile, "governor-disabled")
             # 1.2.2 ships with Rings on by default. The HUD is independent of
@@ -2505,7 +2508,8 @@ class GovernorService:
             self._device = await asyncio.to_thread(detect_model)
         policy = target_for(self._device["model"], external=external, valid_rates=display.get("valid_rates"),
                             current_hz=display.get("current_refresh_hz"))
-        target = int(policy["target"])
+        display_target = int(policy["target"])
+        target = self._governor_target(profile, display_target, summary)
         self._status.update({
             "target_output_fps": target,
             "device": {**self._device, "mode": policy["mode"], "target_reason": policy["reason"]},
@@ -2530,6 +2534,7 @@ class GovernorService:
             or (self._launch_key is not None and launch_key is not None and launch_key != self._launch_key)
         )
         if new_game_session:
+            self._clear_autopilot_session("new-game-session")
             # A failed Act executor belongs to the old game/telemetry session.
             # Never carry the lockout to a different game.
             self._injection_starvation_yields = 0
@@ -2552,6 +2557,8 @@ class GovernorService:
                 self._point_external is not None and external != self._point_external
             ) else "new-game-session"
             await self._release_point(profile, reason)
+            if target_changed and self._mode(profile) == "autopilot":
+                self._evaluation_after_seq = self.observer.sample_seq
             self._status.update({"state": "PLAN", "reason": reason})
             return
 
@@ -2948,8 +2955,50 @@ class GovernorService:
     def _autopilot_blocks_planned(self) -> bool:
         if self._autopilot_arbiter.blocks_planned:
             return True
-        return bool(self._budget is not None and getattr(self._budget, "hold_planned", False)
-                    and self._mode(self._active_profile or "") == "autopilot")
+        return self._autopilot_plan in ("pause", "hold")
+
+    def _governor_target(self, profile: str, display_target: int, summary: Dict[str, Any]) -> int:
+        """The FPS goal Governor will actually chase. Autopilot may choose a lower one."""
+        if self._mode(profile) != "autopilot" or not self._profile_enabled(profile):
+            return int(display_target)
+        real = (summary.get("real") or {}).get("median")
+        output = (summary.get("output") or {}).get("median")
+        fresh = int(summary.get("samples") or 0) >= 5 and real is not None and output is not None
+        chosen = int(self._autopilot_targets.update(
+            display_target, real, output, self._autopilot_preference(profile), fresh))
+        if display_target < 90:
+            chosen = min(chosen, int(display_target))
+        return chosen
+
+    @staticmethod
+    def _autopilot_evidence(summary: Dict[str, Any], session) -> Dict[str, Any]:
+        frame = summary.get("frametime") or {}
+        return {
+            "real": (summary.get("real") or {}).get("median"),
+            "output": (summary.get("output") or {}).get("median"),
+            "sample_seq": summary.get("last_sample_seq") or 0,
+            "samples": int(summary.get("samples") or 0),
+            "span_s": float(summary.get("sample_span_s") or 0),
+            "frametime_p95": frame.get("p95_ms"),
+            "draw_w": None,
+            "temp_c": None,
+            "session": session,
+        }
+
+    def _clear_autopilot_session(self, reason: str) -> None:
+        current = self._status.get("autopilot") or {}
+        if self._autopilot_plan == "off" and not current.get("active"):
+            self._status["autopilot"] = {"enabled": False, "active": False, "reason": reason}
+            return
+        self._autopilot_plan = "off"
+        self._autopilot_tones = None
+        self._autopilot_tone_since = 0.0
+        self._autopilot_targets = TargetPolicy()
+        if self._autopilot_arbiter.state != "RESTORE_PENDING":
+            self._autopilot_arbiter = Arbiter()
+        if self._budget is not None:
+            self._budget.hold_planned = False
+        self._status["autopilot"] = {"enabled": False, "active": False, "reason": reason}
 
     def _restore_autopilot_gpu(self, reason: str) -> bool:
         result = self._autopilot_gpu.restore()
@@ -2989,35 +3038,34 @@ class GovernorService:
         output = (summary.get("output") or {}).get("median")
         samples = int(summary.get("samples") or 0)
         fresh = samples >= 5 and real is not None and output is not None
+        frame = summary.get("frametime") or {}
+        mult = (summary.get("multiplier") or {}).get("median")
         view = View(
             real_fps=real, output_fps=output,
-            frametime_p95_ms=(summary.get("frametime") or {}).get("p95_ms") or summary.get("real_interval_p95_ms"),
+            frametime_p95_ms=frame.get("p95_ms") or summary.get("real_interval_p95_ms"),
             target_fps=target, gpu_busy=sensors.get("gpu_busy_pct"),
             cpu_busy=sensors.get("cpu_top_core_pct"), gpu_mhz=sensors.get("gpu_clock_mhz"),
             temp_c=sensors.get("temp_c"), draw_w=power.get("draw_w"),
             ceiling_w=power.get("ceiling_tdp_w") or power.get("initial_tdp_w"),
             fresh=fresh, samples=samples, gpu_clock_available=bool(clock.get("available")),
             preference=self._autopilot_preference(profile),
+            multiplier=mult, multiplier_confirmed=bool(fresh and mult),
+            frametime_p99_ms=frame.get("p99_ms"), frametime_jitter_ms=frame.get("jitter_ms"),
         )
         decision = autopilot_decide(view)
-        chosen = self._autopilot_targets.update(
-            target, real, output, view.preference, fresh)
-        if chosen != target:
-            view = View(**{**view.__dict__, "target_fps": chosen})
-            decision = autopilot_decide(view)
-            if self._budget is not None and self._budget.target_output_fps != chosen:
-                self._budget = None
         arbiter = self._autopilot_arbiter
         now = self._clock()
-        evidence = {
-            "real": real, "output": output, "sample_seq": summary.get("last_sample_seq") or 0,
-            "frametime_p95": view.frametime_p95_ms, "draw_w": view.draw_w, "temp_c": view.temp_c,
-        }
+        session = (profile, str(self._launch_key), ((self._status.get("telemetry") or {}).get("snapshot") or {}).get("session_generation"))
+        evidence = self._autopilot_evidence(summary, session)
+        evidence["draw_w"] = power.get("draw_w")
+        evidence["temp_c"] = sensors.get("temp_c")
         clock_ready = bool(clock.get("available") and clock.get("writes_enabled"))
         if not clock_ready and decision.action == "OPTIMIZE_GPU_CLOCK":
             decision = autopilot_decide(View(**{**view.__dict__, "gpu_clock_available": False}))
         if arbiter.freeze_tdp and arbiter.state in ("SETTLE", "VERIFY"):
-            verdict = arbiter.judge(now, evidence)
+            measured = self.observer.summary(self.WINDOW_SECONDS, after_seq=arbiter.after_seq)
+            verdict = arbiter.judge(now, {**self._autopilot_evidence(measured, session),
+                                           "draw_w": power.get("draw_w"), "temp_c": sensors.get("temp_c")})
             if verdict == "rollback":
                 restored = self._restore_autopilot_gpu("rollback")
                 if restored:
@@ -3027,6 +3075,7 @@ class GovernorService:
             elif verdict == "accept":
                 self._event("autopilot-accept", "verified-gain", profile=profile, real_fps=real, output_fps=output)
             self._publish_autopilot(profile, view, decision, clock)
+            self._autopilot_plan = "hold"
             if self._budget is not None:
                 self._budget.hold_planned = True
             return True
@@ -3048,9 +3097,10 @@ class GovernorService:
             self._publish_autopilot(profile, view, decision, clock)
             return arbiter.freeze_tdp
         holding = decision.action in ("HOLD", "PAUSE") or now < arbiter.cooldown_until
+        self._autopilot_plan = "pause" if decision.action == "PAUSE" else ("hold" if holding else "run")
         if self._budget is not None:
-            self._budget.hold_planned = holding
-            self._budget.hold_probes = holding
+            self._budget.hold_planned = self._autopilot_plan in ("pause", "hold")
+            self._budget.hold_probes = self._budget.hold_planned
         arbiter.note(decision.action, decision.reason)
         self._publish_autopilot(profile, view, decision, clock)
         self._event("autopilot-decide", decision.reason, profile=profile, action=decision.action,
@@ -3063,7 +3113,7 @@ class GovernorService:
         shown, since = hold_tones(self._autopilot_tones, proposed, now, self._autopilot_tone_since)
         self._autopilot_tones, self._autopilot_tone_since = shown, since
         self._status["autopilot"] = {
-            "enabled": True, "state": self._autopilot_arbiter.state,
+            "enabled": True, "active": True, "state": self._autopilot_arbiter.state,
             "action": decision.action, "reason": decision.reason, "message": decision.message,
             "tool": self._autopilot_arbiter.tool or decision.tool,
             "preference": self._autopilot_preference(profile),

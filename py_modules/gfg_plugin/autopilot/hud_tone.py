@@ -27,12 +27,22 @@ def tones(view, critical: bool = False) -> dict:
         return "green"
 
     def frame():
-        if not view.fresh or view.frametime_p95_ms is None or not view.target_fps:
+        # p95 is the real-frame interval. Compare it with the real cadence of the
+        # confirmed multiplier, not with the output-frame budget.
+        if not view.fresh or view.frametime_p95_ms is None or not view.multiplier_confirmed:
             return "grey"
-        budget = 1000.0 / view.target_fps
-        if view.frametime_p95_ms > budget * 1.8:
+        if not view.multiplier or view.multiplier <= 0 or not view.target_fps:
+            return "grey"
+        real_hz = view.target_fps / view.multiplier
+        if real_hz <= 0:
+            return "grey"
+        budget = 1000.0 / real_hz
+        p95 = view.frametime_p95_ms
+        p99 = view.frametime_p99_ms
+        jitter = view.frametime_jitter_ms
+        if p95 > budget * 1.8 or (p99 is not None and p99 > budget * 2.2):
             return "red"
-        if view.frametime_p95_ms > budget * 1.45:
+        if p95 > budget * 1.35 or (jitter is not None and jitter > budget * 0.35):
             return "yellow"
         return "green"
 

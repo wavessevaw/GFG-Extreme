@@ -12,6 +12,12 @@ from gfg_plugin.autopilot.planner import TargetPolicy, View, decide
 from gfg_plugin import hud_rings
 
 
+def measured(**kwargs):
+    row = {"samples": 6, "span_s": 3.0, "session": None}
+    row.update(kwargs)
+    return row
+
+
 def view(**kwargs):
     base = dict(real_fps=45, output_fps=90, frametime_p95_ms=22, target_fps=90,
                 gpu_busy=40, cpu_busy=30, gpu_mhz=1200, temp_c=55, draw_w=10,
@@ -51,7 +57,7 @@ class ArbiterTests(unittest.TestCase):
         arbiter = Arbiter()
         arbiter.begin("gpu-clock", "probable-cpu-bottleneck", 0, {"real": 40, "output": 80, "sample_seq": 1})
         self.assertEqual(arbiter.admit("OPTIMIZE_POWER", 1), "busy")
-        self.assertEqual(arbiter.judge(1, {"real": 30, "output": 60, "sample_seq": 2}), "rollback")
+        self.assertEqual(arbiter.judge(1, measured(real=30, output=60, sample_seq=2)), "rollback")
         self.assertTrue(arbiter.freeze_tdp)
         arbiter.finish_rollback()
         self.assertFalse(arbiter.freeze_tdp)
@@ -59,16 +65,16 @@ class ArbiterTests(unittest.TestCase):
     def test_no_measurable_gain_rolls_back(self):
         arbiter = Arbiter()
         arbiter.begin("gpu-clock", "check", 0, {"real": 40, "output": 80, "sample_seq": 1, "frametime_p95": 22})
-        arbiter.judge(3, {"real": 39, "output": 79, "sample_seq": 2, "frametime_p95": 22})
-        self.assertEqual(arbiter.judge(12, {"real": 39, "output": 79, "sample_seq": 4, "frametime_p95": 22}), "rollback")
+        arbiter.judge(3, measured(real=39, output=79, sample_seq=2, frametime_p95=22))
+        self.assertEqual(arbiter.judge(12, measured(real=39, output=79, sample_seq=4, frametime_p95=22)), "rollback")
         self.assertEqual(arbiter.reason, "no-measurable-gain")
 
     def test_a_real_gain_needs_a_sample_from_after_the_change(self):
         arbiter = Arbiter()
         arbiter.begin("gpu-clock", "check", 0, {"real": 30, "output": 60, "sample_seq": 5, "frametime_p95": 30})
-        self.assertEqual(arbiter.judge(20, {"real": 40, "output": 80, "sample_seq": 5, "frametime_p95": 25}), "wait")
-        arbiter.judge(3, {"real": 36, "output": 72, "sample_seq": 6, "frametime_p95": 28})
-        self.assertEqual(arbiter.judge(12, {"real": 36, "output": 72, "sample_seq": 7, "frametime_p95": 28}), "accept")
+        self.assertEqual(arbiter.judge(20, measured(real=40, output=80, sample_seq=5, frametime_p95=25)), "wait")
+        arbiter.judge(3, measured(real=36, output=72, sample_seq=6, frametime_p95=28))
+        self.assertEqual(arbiter.judge(12, measured(real=36, output=72, sample_seq=7, frametime_p95=28)), "accept")
 
 
 class GpuClockTests(unittest.TestCase):
@@ -129,7 +135,7 @@ class HoldAndTargetTests(unittest.TestCase):
 
 class HudTests(unittest.TestCase):
     def test_autopilot_uses_one_palette_and_does_not_duplicate_fps(self):
-        calm = tones(view(frametime_p95_ms=11))
+        calm = tones(view(frametime_p95_ms=22.2, multiplier=2, multiplier_confirmed=True))
         self.assertEqual(calm["fps"], "green")
         self.assertEqual(calm["battery"], "green")
         self.assertEqual(tones(view(fresh=False, real_fps=None, output_fps=None))["fps"], "grey")
@@ -194,7 +200,7 @@ class LifecycleTests(unittest.TestCase):
             svc._autopilot_gpu = GpuClock(backend=backend, writes_enabled=True)
             svc._autopilot_gpu.lower_ceiling()
             svc._autopilot_arbiter.begin("gpu-clock", "check", 0, {"real": 40, "output": 80, "sample_seq": 1})
-            svc._autopilot_arbiter.judge(1, {"real": 20, "output": 40, "sample_seq": 2})
+            svc._autopilot_arbiter.judge(1, measured(real=20, output=40, sample_seq=2))
             backend.fail_at = "level"
             self.assertFalse(svc._restore_autopilot_gpu("rollback"))
             self.assertEqual(svc._autopilot_arbiter.state, "RESTORE_PENDING")
@@ -203,5 +209,130 @@ class LifecycleTests(unittest.TestCase):
             fixture.tearDown()
 
 
+class FrameToneTests(unittest.TestCase):
+    def test_real_frametime_follows_the_confirmed_multiplier(self):
+        stable_x2 = tones(view(real_fps=45, output_fps=90, target_fps=90, frametime_p95_ms=22.2,
+                                multiplier=2, multiplier_confirmed=True))
+        stable_x3 = tones(view(real_fps=30, output_fps=90, target_fps=90, frametime_p95_ms=33.3,
+                                multiplier=3, multiplier_confirmed=True))
+        uneven = tones(view(real_fps=45, output_fps=90, target_fps=90, frametime_p95_ms=22.2,
+                            frametime_jitter_ms=12, multiplier=2, multiplier_confirmed=True))
+        dropped = tones(view(real_fps=45, output_fps=90, target_fps=90, frametime_p95_ms=50,
+                             multiplier=2, multiplier_confirmed=True))
+        unknown = tones(view(frametime_p95_ms=22.2, multiplier=2, multiplier_confirmed=False))
+        self.assertEqual(stable_x2["frame"], "green")
+        self.assertEqual(stable_x3["frame"], "green")
+        self.assertEqual(uneven["frame"], "yellow")
+        self.assertEqual(dropped["frame"], "red")
+        self.assertEqual(unknown["frame"], "grey")
+
+
+class GoalAndPauseTests(unittest.TestCase):
+    def _summary(self, real, output):
+        return {"samples": 8, "sample_span_s": 4, "last_sample_seq": 9,
+                "real": {"median": real}, "output": {"median": output},
+                "multiplier": {"median": 2}, "frametime": {"p95_ms": 22, "p99_ms": 24, "jitter_ms": 1}}
+
+    def test_a_sustained_miss_becomes_the_governor_target(self):
+        import test_governor_runtime as legacy
+        from gfg_plugin.governor_core import BudgetController
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            svc._settings.setdefault("profiles", {}).setdefault("game", {})["enabled"] = True
+            svc.set_mode("game", "autopilot")
+            svc._budget = BudgetController(target_output_fps=90, now=0.0)
+            held = self._summary(45, 90)
+            bad = self._summary(20, 40)
+            self.assertEqual(svc._governor_target("game", 90, held), 90)
+            self.assertEqual(svc._governor_target("game", 90, bad), 90)
+            self.assertEqual(svc._governor_target("game", 90, bad), 90)
+            self.assertEqual(svc._governor_target("game", 90, bad), 60)
+            self.assertEqual(svc._status.get("target_output_fps"), None)
+            target = svc._governor_target("game", 90, bad)
+            svc._status["target_output_fps"] = target
+            self.assertNotEqual(svc._budget.target_output_fps, target)
+            svc._evaluation_after_seq = svc.observer.sample_seq
+            svc._budget = BudgetController(target_output_fps=target, now=1.0)
+            self.assertEqual(svc._budget.target_output_fps, 60)
+            self.assertEqual(svc._status["target_output_fps"], 60)
+            good = self._summary(45, 90)
+            self.assertEqual(svc._governor_target("game", 90, good), 60)
+            self.assertEqual(svc._governor_target("game", 90, good), 60)
+            self.assertEqual(svc._governor_target("game", 90, good), 90)
+        finally:
+            fixture.tearDown()
+
+    def test_pause_blocks_a_planned_power_probe(self):
+        import asyncio
+        import test_governor_runtime as legacy
+        from gfg_plugin.governor_core import BudgetController, WindowVerdict
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            svc._settings.setdefault("profiles", {}).setdefault("game", {})["enabled"] = True
+            svc.set_mode("game", "autopilot")
+            svc._active_profile = "game"
+            svc._status["sensors"] = {"temp_c": 92}
+            svc._budget = BudgetController(target_output_fps=90, now=0.0)
+            svc._budget.phase = "locked"
+            svc._budget.locked_since = 0.0
+            seen = {}
+
+            def summary(window, after_seq=0, **kwargs):
+                seen["after_seq"] = after_seq
+                return {"samples": 0, "sample_span_s": 0, "last_sample_seq": after_seq}
+
+            svc.observer.summary = summary
+            asyncio.run(svc._autopilot_tick("game", self._summary(45, 90), 90))
+            self.assertEqual(svc._autopilot_plan, "pause")
+            self.assertTrue(svc._budget.hold_planned)
+            self.assertTrue(svc._autopilot_blocks_planned())
+            self.assertEqual(svc._budget.observe(1000.0, WindowVerdict(True, False, "ok"), 45, 90), "hold")
+        finally:
+            fixture.tearDown()
+
+    def test_a_clock_check_asks_for_samples_after_the_change(self):
+        import asyncio
+        import test_governor_runtime as legacy
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            svc._settings.setdefault("profiles", {}).setdefault("game", {})["enabled"] = True
+            svc.set_mode("game", "autopilot")
+            svc._autopilot_arbiter.begin("gpu-clock", "check", 0, measured(real=30, output=60, sample_seq=4, session=("game", "None", None)))
+            seen = {}
+
+            def summary(window, after_seq=0, **kwargs):
+                seen["after_seq"] = after_seq
+                return {"samples": 6, "sample_span_s": 3, "last_sample_seq": after_seq + 1,
+                        "real": {"median": 36}, "output": {"median": 72},
+                        "frametime": {"p95_ms": 28}}
+
+            svc.observer.summary = summary
+            asyncio.run(svc._autopilot_tick("game", self._summary(30, 60), 90))
+            self.assertEqual(seen["after_seq"], 4)
+        finally:
+            fixture.tearDown()
+
+    def test_stop_clears_the_autopilot_hud_session(self):
+        import test_governor_runtime as legacy
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            svc._autopilot_plan = "hold"
+            svc._status["autopilot"] = {"enabled": True, "active": True, "tones": {"fps": "green"}}
+            svc._clear_autopilot_session("governor-disabled")
+            self.assertFalse(svc._status["autopilot"]["active"])
+            self.assertEqual(svc._autopilot_plan, "off")
+        finally:
+            fixture.tearDown()
+
+
 if __name__ == "__main__":
     unittest.main()
+

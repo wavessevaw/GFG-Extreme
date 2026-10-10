@@ -1,27 +1,19 @@
-# Autopilot 2.0.0 acceptance
+# Autopilot 2.0.1 acceptance
 
 Branch: `feature/autopilot-2.0.0`
-Base: `9c94cea` (GFG Extreme 1.6.9)
 PR: #117
+Previous package: `v2.0.0` at `0e770b8` (superseded; do not use it for this fix)
 
-| Criterion | Result | Evidence | What is not claimed |
+| Criterion | Result | Evidence | Limit |
 | --- | --- | --- | --- |
-| Autopilot mode | PASS | Selector is Battery / Balanced / Quality / Autopilot. Saved `extreme` migrates to `autopilot`. BudgetController still owns TDP. | Not a Deck session. |
-| Planner | PASS | `tests/test_autopilot_v2.py`: a target is not measured FPS; unknown limit holds; heat pauses; display goal changes only after three fresh misses. | Does not retune the screen refresh. |
-| Resource arbiter | PASS | GPU-clock settle/verify blocks planned TDP admission, Flow and CPU split. A healthy HOLD does not start a new budget probe. Protective unhealthy budget path is unchanged. | Not a concurrent-thread stress test on device. |
-| TDP | PASS | Autopilot does not write watts itself. | No measured watt change. |
-| GPU clock writes | BLOCKED | `GpuClock.writes_enabled` is false in the service. `lower_ceiling` returns `writes-disabled` and does not touch sysfs. Mock backend covers partial write, failed restore, user override and receipt reload. | Real amdgpu writes stay off until a Deck proves restore. Reading the files is implemented. |
-| GPU clock restore | PASS | Unit/integration: Stop, mode switch, game exit and a failed read-back keep or clear ownership as specified. Unconfirmed restore stays `RESTORE_PENDING` and blocks a new experiment. | Not verified against a live amdgpu node. |
-| CPU power split | PASS | Planned split step is skipped while Autopilot blocks planned work. | Not a Deck CPU-cap trial. |
-| FPS source | PASS | Planner uses Governor summary fields only. `instant` targets are not accepted as Real FPS. | The 1.7.x field log still had no renderer receipts. A game must actually draw frames. |
-| Rollback | PASS | No measurable gain rolls back. Rollback does not clear the lock unless restore returns restored or yielded. | Hardware restore NOT_TESTED. |
-| HUD | PASS | Detailed Autopilot rings: one FPS, one TDP, one BATTERY, plus GPU, CPU, TEMP, FRAME. All rings use green/yellow/red/grey. A bad frametime is not green. | 1280×800 placement NOT_TESTED. |
-| Extreme removal | PASS | The mode control no longer offers Extreme. Extreme code remains for old tests. | |
-| Profile migration | PASS | `MigrationTests`. | |
-| Diagnostics | PASS | Decisions go through Governor `_event` JSONL and the timeline `autopilot` field. | |
-| Regression | PASS | Local `unittest discover`: 1025 tests. Two `os.chown(65534)` errors are this sandbox rejecting that uid. They are not Autopilot failures. GitHub CI is the confirmation. One fingerprint test now changes multiplier to 4, because 3 was already the saved value and the file did not change. | |
-| Decky build | PASS | Release run on code commit `0e770b85496f9a6d75ce828eb32765a0bed83310`: https://github.com/wavessevaw/GFG-Extreme/actions/runs/38059744675. Asset `GFG-Extreme-v2_0_0.zip`, sha256 `f6279cbff229f0336215f35800c5c720b5680ad368a8f38724b58878b7957e47`. Prerelease, not latest. | This docs commit does not change the package. |
-| CI | PASS | Push https://github.com/wavessevaw/GFG-Extreme/actions/runs/38059745004 and PR https://github.com/wavessevaw/GFG-Extreme/actions/runs/38059748801 on `0e770b8`. The earlier failure was the smoke needle `AUTOPILOT`; the selector text is `Autopilot`. | Reconfirm this docs commit on its own CI run. |
-| Steam Deck | NOT_TESTED | No device here. | Do not enable GPU clock writes for that run. |
+| Autopilot goal reaches Governor | PASS | `GoalAndPauseTests.test_a_sustained_miss_becomes_the_governor_target`. ` _governor_target` replaces `target_for` before the budget step. A held 90 moves to 60 only after three fresh misses, then back after three good windows. | Display refresh is not changed. |
+| FRAME ring | PASS | `FrameToneTests`: 45×2 at 22 ms and 30×3 at 33 ms are green. Jitter warns. An unconfirmed multiplier is grey. A doubled real interval is red. | On-screen placement NOT_TESTED. |
+| HUD session clears on Stop | PASS | `test_stop_clears_the_autopilot_hud_session`. The ring payload is active only when the Governor is enabled, the mode is autopilot, and the session is active. | Device screenshot NOT_TESTED. |
+| Post-change measurements | PASS | `test_a_clock_check_asks_for_samples_after_the_change` records `summary(..., after_seq=baseline)`. Judge refuses a window under 5 samples or 2 seconds. | Hardware clock writes BLOCKED. |
+| PAUSE and HOLD | PASS | `test_pause_blocks_a_planned_power_probe`: plan is `pause`, a healthy budget window returns `hold`, and planned Flow/CPU admission is blocked. | Protective unhealthy path remains in BudgetController. |
+| GPU clock writes | BLOCKED | Service constructs `GpuClock(writes_enabled=False)`. | Deck restore NOT_TESTED. |
+| Restore lock | PASS | Unconfirmed restore stays `RESTORE_PENDING` and rejects a new clock experiment. | Live amdgpu NOT_TESTED. |
+| Regression | PASS | Local discover: 1030 tests. Two `os.chown(65534)` errors are this sandbox. GitHub CI is the confirmation. | |
+| CI / ZIP | NOT_TESTED | Filled in after the 2.0.1 release run. | |
 
-Status: SOFTWARE READY / HARDWARE NOT VERIFIED on code `0e770b8`. GPU clock actuation on hardware remains BLOCKED.
+Status: READY FOR DEVICE VALIDATION only after the 2.0.1 CI and Release runs are green. Hardware and GPU-clock actuation remain unverified.

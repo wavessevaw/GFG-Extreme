@@ -24,6 +24,10 @@ class View:
     samples: int
     gpu_clock_available: bool
     preference: str = "auto"
+    multiplier: float | None = None
+    multiplier_confirmed: bool = False
+    frametime_p99_ms: float | None = None
+    frametime_jitter_ms: float | None = None
 
 
 @dataclass(frozen=True)

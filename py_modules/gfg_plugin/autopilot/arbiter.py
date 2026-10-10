@@ -48,6 +48,14 @@ class Arbiter:
     def judge(self, now: float, evidence: dict) -> str | None:
         if self.state not in ("SETTLE", "VERIFY"):
             return None
+        if evidence.get("session") != self.baseline.get("session"):
+            self._reject(now, "context-changed")
+            return "rollback"
+        if int(evidence.get("samples") or 0) < 5 or float(evidence.get("span_s") or 0) < 2.0:
+            if now - self.since > self.SETTLE_S + self.VERIFY_S + 8:
+                self._reject(now, "measurement-lost")
+                return "rollback"
+            return "wait"
         if int(evidence.get("sample_seq") or 0) <= self.after_seq:
             return "wait"
         if evidence.get("real") is None or evidence.get("output") is None:

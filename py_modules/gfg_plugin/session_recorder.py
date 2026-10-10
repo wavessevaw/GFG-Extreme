@@ -519,7 +519,7 @@ class SessionRecorder:
                                  "driver": read(str(p / "scaling_driver"))}
                         for p in sorted(Path("/sys/devices/system/cpu/cpufreq").glob("policy[0-9]*"))[:16]},
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme 2.0.0 (renderer identity: see diagnostics)",
+            "plugin_version": "GFG Extreme 2.0.1 (renderer identity: see diagnostics)",
         }
 
     def _write_bundle(self) -> Path:
