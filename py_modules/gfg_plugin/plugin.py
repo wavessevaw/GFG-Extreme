@@ -766,7 +766,9 @@ class Plugin:
                 "MangoHud layer manifest": home / MANGOHUD_LAYER_DIR / MANGOHUD_MANIFEST_FILENAME_64,
                 "MAKO root": home / MAKO_ROOT,
             },
-            plugin_log=Path(plugin_log) if plugin_log else None, logger=decky.logger,
+            plugin_log=Path(plugin_log) if plugin_log else None,
+            autopilot_trace_path=self.governor_service.autopilot_trace_path,
+            logger=decky.logger,
             hud_enabled=lambda profile: bool(self.governor_service.hud_settings(profile)["enabled"]),
             activity=self.activity,
         )
