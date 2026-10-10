@@ -174,6 +174,13 @@ class HalfRateShading:
     def restore(self) -> dict:
         if not self.owned:
             return {"restored": True, "reason": "not-owned"}
+        # Restore only the Steam config file we captured when the trial began.
+        # A game/session switch can replace it with a new QAM file containing
+        # the user's OWN shading value. Never write our saved value there.
+        current_path = (str(self.backend.path()) if hasattr(self.backend, "path") else None)
+        if self._owned_path is not None and current_path != self._owned_path:
+            self._clear("steam-session-changed")
+            return {"restored": False, "yielded": True, "reason": self.reason}
         current = self.backend.read()
         if current is None:
             # The temporary Gamescope session file has disappeared: we cannot
