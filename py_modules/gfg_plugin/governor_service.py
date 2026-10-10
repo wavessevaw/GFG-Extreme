@@ -49,7 +49,7 @@ from .package_paths import PLUGIN_ROOT
 from .autopilot.adapters import ObservationMonitor
 from .autopilot.experiments import SingleFlight
 from .autopilot.perception import perceive
-from .autopilot.policy import decide
+from .autopilot.policy import Knob, decide
 from .autopilot.power_trial import PowerTrial
 from .host_sensors import HostSensors, diagnose
 from .governor_restore import power_restore_error, cpu_restore_error
@@ -144,6 +144,7 @@ class GovernorService:
         self.autopilot_observation = ObservationMonitor()
         self._autopilot_slot = SingleFlight()
         self._autopilot_power_enabled = False
+        self._autopilot_flow_enabled = False
         self._autopilot_power_view: Dict[str, Any] = {}
         self.game_models = GameModelStore(self.configuration.config_dir / "gfg-game-models.json")
         self.power = SteamDeckPowerActuator(manager=SteamOSManagerTdp(home=os.environ.get("HOME")))
@@ -2329,8 +2330,7 @@ class GovernorService:
         if self._restoration_blocked():
             self._publish_restore_pending()
             return
-        if self._autopilot_power_enabled:
-            await self._run_autopilot_power()
+        if await self._run_autopilot_exclusive():
             return
         try:
             await self._sync_flow(profile=self._status.get("profile") or "")
@@ -2400,13 +2400,13 @@ class GovernorService:
         return decide(
             perception, now=now,
             restore_pending=self._restoration_blocked() or perception.reason == "restore-pending",
-            flow_available=False, power_ceiling_w=ceiling,
+            flow_available=self._autopilot_flow_enabled and not self._autopilot_power_enabled, power_ceiling_w=ceiling,
             slot_busy=slot.busy, slot_knob=slot.knob,
         ).public()
 
     async def _run_autopilot_power(self) -> None:
         """Apply at most one owned power step. Off unless the development flag is set."""
-        if not self._autopilot_power_enabled:
+        if not self._autopilot_power_enabled or self._autopilot_flow_enabled:
             return
         now = self._clock()
         perception = perceive(self.autopilot_observation.snapshot, now)
@@ -2423,6 +2423,63 @@ class GovernorService:
         if outcome.get("restore_failed"):
             self._actuator_restore_errors["power"] = str(outcome.get("reason") or "power restore failed")
             self._publish_restore_pending()
+
+    async def _run_autopilot_exclusive(self) -> bool:
+        if not (self._autopilot_power_enabled or self._autopilot_flow_enabled):
+            return False
+        if self._autopilot_power_enabled and self._autopilot_flow_enabled:
+            refused = {"wrote": False, "armed": False, "action": "HOLD", "reason": "two-tools-requested"}
+            self._status["autopilot_power"] = dict(refused)
+            self._status["autopilot_flow"] = {**refused, "tuner": "existing-flow-trial"}
+            return True
+        if self._autopilot_power_enabled:
+            await self._run_autopilot_power()
+        else:
+            await self._run_autopilot_flow()
+        return True
+
+    async def _run_autopilot_flow(self) -> None:
+        """Reserve the one slot and let the existing flow tuner write, if it accepts."""
+        if not self._autopilot_flow_enabled or self._autopilot_power_enabled:
+            return
+        now = self._clock()
+        perception = perceive(self.autopilot_observation.snapshot, now)
+        view = self._autopilot_power_view
+        decision = decide(
+            perception, now=now, restore_pending=False, flow_available=True,
+            power_ceiling_w=view.get("ceiling_tdp_w") if view.get("owned") is True else None,
+            slot_busy=self._autopilot_slot.busy, slot_knob=self._autopilot_slot.knob,
+        )
+        slot = self._autopilot_slot
+        if decision.knob is not Knob.FLOW_SCALE:
+            if slot.busy and slot.knob is Knob.FLOW_SCALE:
+                slot.abort(decision.reason)
+            self._status["autopilot_flow"] = self._flow_report(False, decision.action.value, decision.reason)
+            return
+        if slot.busy and slot.knob is not Knob.FLOW_SCALE:
+            self._status["autopilot_flow"] = self._flow_report(False, "HOLD", "slot-busy")
+            return
+        profile = self._status.get("profile") or ""
+        if self._point is None or self.overlay is None or not profile:
+            self._status["autopilot_flow"] = self._flow_report(False, "HOLD", "no-locked-point")
+            return
+        if not slot.busy:
+            error = slot.start(Knob.FLOW_SCALE, now)
+            if error:
+                self._status["autopilot_flow"] = self._flow_report(False, "HOLD", error)
+                return
+        await self._sync_flow(profile)
+        if not self._flow.busy and slot.phase == "prepare":
+            slot.abort("flow-tuner-declined")
+        self._status["autopilot_flow"] = self._flow_report(
+            bool(self._flow.busy), "TRIAL" if self._flow.busy else "HOLD", self._flow.reason, self._flow.phase)
+
+    def _flow_report(self, armed, action, reason, phase=None):
+        value = {"wrote": False, "armed": armed, "action": action, "reason": reason,
+                 "tuner": "existing-flow-trial"}
+        if phase is not None:
+            value["phase"] = phase
+        return value
 
     async def _sync_flow(self, profile: str) -> None:
         """Rare isolated resource trials; Act, CPU probes and stale data opt out."""
@@ -2541,8 +2598,8 @@ class GovernorService:
         if self._restoration_blocked():
             self._publish_restore_pending()
             return
-        if self._autopilot_power_enabled:
-            # Exclusive: Battery/Balanced/Quality/Extreme must not write during this trial.
+        if self._autopilot_power_enabled or self._autopilot_flow_enabled:
+            # Exclusive: the other mode writers must not run beside an Autopilot tool.
             return
         await asyncio.to_thread(self._standby_overlays_sync)
         profile, response = await asyncio.to_thread(self.configuration.get_current_profile_snapshot)
