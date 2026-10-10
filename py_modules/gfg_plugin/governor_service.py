@@ -2026,11 +2026,19 @@ class GovernorService:
             self._forget_autopilot_power_trial("profile-changed-after-release")
             self._actuator_restore_errors.pop("power", None)
             return True
+        self.autopilot_trace.write(
+            "power-restore-request",
+            baseline_w=trial.baseline_w, baseline_fast_w=trial.baseline_fast_w,
+            owned=getattr(self.power.state, "owned", False),
+            scheduler_phase=trial.scheduler.phase, slot_phase=self._autopilot_slot.phase)
         outcome = await asyncio.to_thread(
             trial.step, now=self._clock(), seq=0, real=None, output=None,
             context="profile-changed", ceiling_w=None, owned=True, allow=False,
             slot=self._autopilot_slot, evidence=False,
         )
+        self.autopilot_trace.write(
+            "power-restore-result", outcome=outcome, scheduler_phase=trial.scheduler.phase,
+            rollback_due=trial.rollback_due, baseline_w=trial.baseline_w)
         if outcome.get("restore_failed") or trial.baseline_w is not None:
             self._actuator_restore_errors["power"] = str(outcome.get("reason") or "baseline-restore-failed")
             self._actuator_restore_at = self._clock()
@@ -2595,6 +2603,14 @@ class GovernorService:
             (self._generation_seen is not None and generation != self._generation_seen)
             or (self._launch_key is not None and launch_key is not None and launch_key != self._launch_key)
         )
+        if changed:
+            self.autopilot_trace.write(
+                "session-change-detected", profile=profile,
+                previous_generation=self._generation_seen, new_generation=generation,
+                previous_launch=self._launch_key, new_launch=launch_key,
+                point=(self._point or {}).get("key"),
+                flow_dirty=self._autopilot_flow_dirty(),
+                power_trial=self._autopilot_power.baseline_w is not None)
         if changed and (self._point or self._request or self._ladder or self._budget
                         or self._autopilot_change_outstanding()):
             if not await self._settle_autopilot_power_before_release():
@@ -2781,6 +2797,12 @@ class GovernorService:
         now = self._clock()
         event_seq = snap.get("event_seq") or 0
         wanted = flow.request_saved_restore(now, event_seq, "autopilot-withdrew")
+        self.autopilot_trace.write(
+            "flow-restore-request", profile=profile, wanted=wanted,
+            original=flow.original, candidate=flow.candidate,
+            phase=flow.phase, mark=flow.mark, event_seq=event_seq,
+            ack_seq=ack.get("event_seq"), ack_value=ack.get("value"),
+            ack_context=ack.get("context"), renderer_context=latest.get("context"))
         if wanted is not None:
             saved = await asyncio.to_thread(self._saved_profile_config, profile)
             if saved is not None:
@@ -2797,6 +2819,12 @@ class GovernorService:
             target=self._status.get("target_output_fps") or 90,
             base_target=(self._point or {}).get("base_target_fps") or 45,
         )
+        self.autopilot_trace.write(
+            "flow-restore-result", profile=profile, phase=flow.phase,
+            reason=flow.reason, original=flow.original, requested=flow.wanted,
+            ack_seq=ack.get("event_seq"), ack_value=ack.get("value"),
+            renderer_context=latest.get("context"),
+            barrier=self._autopilot_flow_dirty())
         if flow.phase == "done" and not self._autopilot_flow_dirty():
             if slot.busy and slot.knob is Knob.FLOW_SCALE:
                 slot.abort("flow-restored")
