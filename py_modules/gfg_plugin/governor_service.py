@@ -405,7 +405,7 @@ class GovernorService:
         if self._autopilot_gpu.owned and mode != "autopilot":
             if self._restore_autopilot_gpu("mode-switch"):
                 self._autopilot_arbiter = Arbiter()
-        if was == "autopilot" and mode != "autopilot":
+        if profile == self._active_profile and was == "autopilot" and mode != "autopilot":
             self._clear_autopilot_session("mode-switch")
         self._poke()
         return {"success": True, "error": None, "profile": profile, "mode": mode,
@@ -3013,6 +3013,7 @@ class GovernorService:
             self._autopilot_arbiter = Arbiter()
         if self._budget is not None:
             self._budget.hold_planned = False
+            self._budget.hold_probes = False
         self._status["autopilot"] = {"enabled": False, "active": False, "reason": reason}
 
     def _restore_autopilot_gpu(self, reason: str) -> bool:
