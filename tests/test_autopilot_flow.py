@@ -243,3 +243,54 @@ class FlowReservationTests(unittest.TestCase):
         asyncio.run(self.svc._run_autopilot_exclusive())
         self.assertFalse(self.svc._autopilot_flow_dirty())
         self.assertEqual(self.svc._status["autopilot_flow"]["reason"], "two-tools-requested")
+
+    def test_disabling_the_flag_keeps_reading_until_the_saved_scale_is_confirmed(self):
+        from gfg_plugin.governor_flow import FlowTrial
+        self.svc._autopilot_flow_enabled = False
+        self.svc._autopilot_power_enabled = False
+        self.svc._active_profile = "game"
+        self.svc._flow = FlowTrial()
+        self.svc._flow.original = 0.8
+        self.svc._flow.wanted = 0.7
+        self.svc._flow.phase = "b"
+        self.svc._flow.context = ("game",)
+        self.svc._point = {"key": "x", "base_target_fps": 45, "multiplier": 2}
+        self.svc._point_deltas = {}
+        self.svc._status["profile"] = "game"
+        self.svc._saved_profile_config = lambda profile: {"flow_scale": 0.8}
+        self.svc._base_for = lambda profile, saved: {}
+        self.svc._write_overlay_sync = lambda profile, config, key: None
+        self.svc._status["telemetry"] = {"snapshot": {
+            "event_seq": 3, "latest": {"context": "game"},
+            "flow": {"context": "game", "value": 0.7, "event_seq": 3},
+        }}
+        shots = [
+            {"event_seq": 3, "latest": {"context": "game"},
+             "flow": {"context": "game", "value": 0.7, "event_seq": 3}},
+            {"event_seq": 4, "latest": {"context": "game"},
+             "flow": {"context": "game", "value": 0.8, "event_seq": 4}},
+        ]
+        polls = {"n": 0}
+        real_poll = self.svc.observer.poll
+        real_snapshot = self.svc.observer.snapshot
+
+        def poll():
+            polls["n"] += 1
+            if polls["n"] > 2:
+                return real_poll()
+
+        def snapshot():
+            if polls["n"] > 2:
+                return real_snapshot()
+            return shots[0 if polls["n"] <= 1 else 1]
+
+        self.svc.observer.poll = poll
+        self.svc.observer.snapshot = snapshot
+        asyncio.run(self.svc._iteration_core())
+        self.assertEqual(polls["n"], 1)
+        self.assertTrue(self.svc._autopilot_flow_dirty())
+        self.assertTrue(self.svc._autopilot_must_finish_first())
+        asyncio.run(self.svc._iteration_core())
+        self.assertGreaterEqual(polls["n"], 2)
+        self.assertFalse(self.svc._autopilot_flow_dirty())
+        self.assertFalse(self.svc._autopilot_must_finish_first())

@@ -77,8 +77,11 @@ The four comments after that are fixed on this tip as well:
 - Flags on from a cold start are documented below as not a usable controller.
 
 Turning the flags off restores an applied watt before the ordinary Governor
-runs. A new game session is stored only after the previous point is released,
-so an old configuration is not treated as current for the next game.
+runs. A flow scale put back to Saved keeps reading the renderer until that
+receipt arrives, so a cached sample cannot leave the Governor blocked after
+the renderer has already applied 0.8. A new game session is stored only after
+the previous point is released, so an old configuration is not treated as
+current for the next game. This restore path is not device-verified.
 
 ## Flags on are not a usable Autopilot
 

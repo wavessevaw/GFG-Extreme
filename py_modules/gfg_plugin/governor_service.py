@@ -2032,10 +2032,21 @@ class GovernorService:
         if self._autopilot_flow_dirty():
             profile = self._status.get("profile") or self._active_profile or ""
             if profile and self._point is not None and self.overlay is not None:
+                if not (self._autopilot_power_enabled or self._autopilot_flow_enabled):
+                    await self._refresh_flow_telemetry()
                 await self._restore_autopilot_flow(profile)
             if self._autopilot_flow_dirty():
                 return False
         return True
+
+    async def _refresh_flow_telemetry(self) -> None:
+        """A disabled trial still has to read the renderer. A cached receipt cannot finish the restore."""
+        await asyncio.to_thread(self.observer.poll)
+        snapshot = self.observer.snapshot()
+        self._status["telemetry"] = {
+            "snapshot": snapshot,
+            "summary": self.observer.summary(self.WINDOW_SECONDS),
+        }
 
     def _clear_point_state(self) -> None:
         self._status.pop("flow_control", None)
