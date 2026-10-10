@@ -420,7 +420,7 @@ class GovernorService:
             self._save_settings()
         if profile == self._active_profile:
             self._forced_mode_change = True
-        if profile == self._active_profile and mode != "autopilot":
+        if (profile == self._active_profile or self._active_profile is None) and mode != "autopilot":
             if self._autopilot_half_rate.owned:
                 self._restore_autopilot_shading("mode-switch")
             if self._autopilot_gpu.owned:
