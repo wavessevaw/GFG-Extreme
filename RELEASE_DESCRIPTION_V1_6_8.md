@@ -15,7 +15,12 @@ ENERGY retains saved TDP allowance in its centre and battery charge in its arc. 
 
 The startup log now identifies the installed version correctly. Repeated builds can reuse a cached previous-release archive instead of downloading it again; archive checksums and ZIP CRC are still verified on every build. Initial cache misses still count as GitHub asset downloads.
 
+## Extreme ceiling and HUD rate
+- While Extreme stays enabled, a new game session, a missing overlay or a gap in FPS telemetry keeps both PPT channels at the clamped ceiling. Those paths used to restore the higher inherited fastPPT for one Governor tick. Turning Extreme off, changing profile or any real exit still restores the original caps.
+- A failed power claim outside Extreme is no longer labelled `extreme-ceiling-not-applied`.
+- The in-game HUD is published twice a second, the same rate the Vulkan layer already polls. Governor power decisions stay once a second. The MangoHud config file is still rewritten at most once every 5 seconds.
+
 ## Validation and limits
-Backend regression tests cover held-flow starvation, duplicate samples, healthy recovery, unexpected and incomplete acknowledgements, role isolation, measured zero output, plan-only HUD data and real overlay rollback. Native Frame OS/HUD integration, HUD pixels, frontend smoke cases and the final Decky archive are checked before publication.
+Backend regression tests cover held-flow starvation, duplicate samples, healthy recovery, unexpected and incomplete acknowledgements, role isolation, measured zero output, plan-only HUD data, real overlay rollback, Extreme ceiling handoff and the half-second HUD publish. Native Frame OS/HUD integration, HUD pixels, frontend smoke cases and the final Decky archive are checked before publication.
 
 Extreme, Frame OS Act and automatic flow tuning remain experimental features inside an official release. GFG Open remains retired. These fixes prevent invalid optimization and misleading evidence; they do not claim a measured on-device FPS, latency or ghosting improvement.
