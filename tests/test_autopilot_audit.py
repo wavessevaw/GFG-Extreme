@@ -65,6 +65,37 @@ class AuditTraceTests(unittest.TestCase):
         finally:
             fixture.tearDown()
 
+    def test_second_deck_log_schema_is_output_only_not_measured_real_fps(self):
+        """Field 1.7.1: base_fps is ambiguous; do not quietly turn it into C1 evidence."""
+        from gfg_plugin.autopilot.observation import ObservationStream
+        stream = ObservationStream()
+        stream.consume({
+            "operation": "fixed-plan", "context": "sanitized-frame-stream",
+            "base_fps": "29.9983", "multiplier": "3",
+            "generated_per_real": "2", "observed_output_fps": "82.9954",
+        }, 100.0, 100)
+        sample = stream.samples[-1]
+        self.assertIsNone(sample.real_fps)
+        self.assertAlmostEqual(sample.output_fps, 82.9954)
+        self.assertEqual(sample.seq, 100)
+
+        stream.consume({
+            "operation": "adaptive-plan", "context": "sanitized-frame-stream",
+            "base_fps": "29.9888", "target_fps": "90", "generated": "2",
+        }, 101.0, 101)
+        sample = stream.samples[-1]
+        self.assertIsNone(sample.real_fps)
+        self.assertIsNone(sample.output_fps)
+        self.assertEqual(sample.seq, 101)
+
+        stream.consume({
+            "operation": "fixed-plan", "context": "sanitized-frame-stream",
+            "measured_base_fps": "30.0", "observed_output_fps": "88.5",
+        }, 102.0, 102)
+        sample = stream.samples[-1]
+        self.assertEqual((sample.real_fps, sample.output_fps), (30.0, 88.5))
+        self.assertEqual(sample.seq, 102)
+
     def test_session_recorder_exports_only_trace_from_the_recording(self):
         async def run(tmp):
             home = Path(tmp) / "home"
