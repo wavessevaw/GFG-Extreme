@@ -14,6 +14,6 @@ Previous package: `v2.0.0` at `0e770b8` (superseded; do not use it for this fix)
 | GPU clock writes | BLOCKED | Service constructs `GpuClock(writes_enabled=False)`. | Deck restore NOT_TESTED. |
 | Restore lock | PASS | Unconfirmed restore stays `RESTORE_PENDING` and rejects a new clock experiment. | Live amdgpu NOT_TESTED. |
 | Regression | PASS | Local discover: 1030 tests. Two `os.chown(65534)` errors are this sandbox. GitHub CI is the confirmation. | |
-| CI / ZIP | NOT_TESTED | Filled in after the 2.0.1 release run. | |
+| CI / ZIP | PASS | Code `6765fecffd621876ceb78046390e118299739581`. CI push https://github.com/wavessevaw/GFG-Extreme/actions/runs/38061085826. CI PR https://github.com/wavessevaw/GFG-Extreme/actions/runs/38061088788. Release https://github.com/wavessevaw/GFG-Extreme/actions/runs/38061085831. Zip `GFG-Extreme-v2_0_1.zip`, sha256 `c2ee5d95db7bf27315ba39e3f98103bb1ce7ffe588447c737cdd2aa73cb0a7a5`. Prerelease, not latest. `v2.0.0` is the older package. | |
 
-Status: READY FOR DEVICE VALIDATION only after the 2.0.1 CI and Release runs are green. Hardware and GPU-clock actuation remain unverified.
+Status: READY FOR DEVICE VALIDATION. Hardware and GPU-clock actuation remain NOT_TESTED. Do not enable clock writes on the Deck yet.
