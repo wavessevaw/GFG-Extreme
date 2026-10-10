@@ -21,6 +21,32 @@ That script writes `package.json`, `package-lock.json`, `VERSION` in
 label, and `CURRENT_VERSION` in `log_report.py`. Do not edit those by hand.
 Do not tag or publish the ZIP until the owner asks for the release.
 
+## HUD when Autopilot is enabled
+
+The owner marked this for the merging agent. Do not build it in this pull
+request, and do not enable either Autopilot flag to preview it.
+
+When Autopilot is actually switched on, the ordinary HUD must be replaced by
+an Autopilot HUD. The same switch applies to the ring HUD. Both have to show
+the primary readings, not the current Governor layout.
+
+The two publishers today are:
+
+- Text HUD: `GovernorService._sync_hud` and the HudWriter path. This is the
+  standard HUD.
+- Rings: `hud_rings.items_for` and `GovernorService._publish_ring_hud`.
+  The picture is redrawn twice a second (`RING_HUD_PERIOD_S = 0.5`).
+
+While the flags stay false, both stay exactly as they are. A user who did not
+turn Autopilot on must not see the new layout.
+
+The Autopilot layout, on both the text HUD and the rings, leads with the
+primary readings: measured real FPS, measured output FPS, and power draw
+against the verified ceiling. Unavailable stays unavailable. Do not put a
+planned FPS, a copied-frame count, or an uncomputed confidence interval in
+those primary slots. The current decision (HOLD, TRIAL, or RESTORE) and its
+reason are secondary, not a substitute for the three readings.
+
 ## Review on PR #114
 
 The six comments on that pull request are fixed on this tip:
