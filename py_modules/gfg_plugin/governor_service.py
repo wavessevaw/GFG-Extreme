@@ -2388,8 +2388,9 @@ class GovernorService:
             power=self._autopilot_power_view,
         )
         plan = self._autopilot_plan_status()
-        if plan["release_slot"] and self._autopilot_slot.busy:
-            self._autopilot_slot.abort(plan["reason"])
+        slot = self._autopilot_slot
+        if plan["release_slot"] and slot.busy and not self._autopilot_hold_for_restore(slot):
+            slot.abort(plan["reason"])
 
     def _autopilot_plan_status(self):
         """The C2 decision. Publishing it does not arm or write an actuator."""
@@ -2479,9 +2480,10 @@ class GovernorService:
         )
         slot = self._autopilot_slot
         if decision.knob is not Knob.FLOW_SCALE:
-            if slot.busy and slot.knob is Knob.FLOW_SCALE:
+            if slot.busy and slot.knob is Knob.FLOW_SCALE and not self._autopilot_hold_for_restore(slot):
                 slot.abort(decision.reason)
-            self._status["autopilot_flow"] = self._flow_report(False, decision.action.value, decision.reason)
+            reason = "restore-before-release" if self._autopilot_flow_dirty() else decision.reason
+            self._status["autopilot_flow"] = self._flow_report(False, decision.action.value, reason)
             return
         if slot.busy and slot.knob is not Knob.FLOW_SCALE:
             self._status["autopilot_flow"] = self._flow_report(False, "HOLD", "slot-busy")
@@ -2501,7 +2503,28 @@ class GovernorService:
         self._status["autopilot_flow"] = self._flow_report(
             bool(self._flow.busy), "TRIAL" if self._flow.busy else "HOLD", self._flow.reason, self._flow.phase)
 
+    def _autopilot_flow_dirty(self) -> bool:
+        flow = getattr(self, "_flow", None)
+        if flow is None:
+            return False
+        if flow.busy:
+            return True
+        original, wanted = getattr(flow, "original", None), getattr(flow, "wanted", None)
+        return original is not None and wanted is not None and abs(wanted - original) >= 0.005
+
+    def _autopilot_hold_for_restore(self, slot) -> bool:
+        if slot.knob is Knob.POWER_CAP and (
+                self._autopilot_power.scheduler.busy or self._autopilot_power.scheduler.needs_restore
+                or self._autopilot_power.baseline_w is not None):
+            return True
+        return slot.knob is Knob.FLOW_SCALE and self._autopilot_flow_dirty()
+
     def _flow_report(self, armed, action, reason, phase=None):
+        value = {"wrote": False, "armed": armed, "action": action, "reason": reason,
+                 "tuner": "existing-flow-trial"}
+        if phase is not None:
+            value["phase"] = phase
+        return value
         value = {"wrote": False, "armed": armed, "action": action, "reason": reason,
                  "tuner": "existing-flow-trial"}
         if phase is not None:

@@ -26,7 +26,7 @@ class OptimizerAcceptanceTests(unittest.TestCase):
     def test_ac01_stable_delivery_does_not_spend_four_watts_for_two_fps(self):
         expensive = point("power_cap", 16, real=47, draw=16, cost=1)
         decision = plan(seen(B.STABLE), (expensive,), CURRENT, now=10,
-                        ceiling_w=25, capabilities=CAPS)
+                        ceiling_w=25, capabilities=CAPS, ack_ok=True)
         self.assertEqual(decision.action, Action.HOLD)
         self.assertIn(("power_cap", 16, "watts-not-worth-the-gain"), decision.rejected)
         self.assertIsNone(explain(decision)["confirmed_gain"])
@@ -34,7 +34,7 @@ class OptimizerAcceptanceTests(unittest.TestCase):
     def test_ac02_gpu_bound_rejects_a_cpu_boost(self):
         boost = point("cpu_cap", 3500, real=50, cost=1)
         flow = point("flow_scale", 0.7, real=49, draw=12, cost=0.2)
-        decision = plan(seen(B.GPU_LIMITED), (boost, flow), CURRENT, now=10, capabilities=CAPS)
+        decision = plan(seen(B.GPU_LIMITED), (boost, flow), CURRENT, now=10, capabilities=CAPS, ack_ok=True)
         self.assertEqual(decision.knob, Knob.FLOW_SCALE)
         self.assertIn(("cpu_cap", 3500, "cpu-boost-not-gpu-relevant"), decision.rejected)
 
@@ -93,7 +93,24 @@ class OptimizerAcceptanceTests(unittest.TestCase):
     def test_hysteresis_blocks_a_strategy_change_but_not_a_repeat(self):
         better = point("flow_scale", 0.7, real=49)
         memory = MemoryView(strategy=Strategy.CRUISE, strategy_at=0)
-        held = plan(seen(B.GPU_LIMITED), (better,), CURRENT, now=10, capabilities=CAPS, memory=memory)
+        held = plan(seen(B.GPU_LIMITED), (better,), CURRENT, now=10, capabilities=CAPS, memory=memory, ack_ok=True)
         self.assertEqual(held.reason, "hysteresis")
-        later = plan(seen(B.GPU_LIMITED), (better,), CURRENT, now=40, capabilities=CAPS, memory=memory)
+        later = plan(seen(B.GPU_LIMITED), (better,), CURRENT, now=40, capabilities=CAPS, memory=memory, ack_ok=True)
         self.assertEqual(later.knob, Knob.FLOW_SCALE)
+
+    def test_review_notes_ack_fidelity_and_unsupported_tool(self):
+        omitted = plan(seen(B.GPU_LIMITED), (point("flow_scale", 0.7, real=49),), CURRENT, now=10, capabilities=CAPS)
+        self.assertEqual(omitted.action, Action.HOLD)
+        self.assertIn(("flow_scale", 0.7, "renderer-ack-missing"), omitted.rejected)
+        ugly = point("flow_scale", 0.7, real=49, fidelity=0.2)
+        decision = plan(seen(B.GPU_LIMITED), (ugly,), CURRENT, now=10, capabilities=CAPS, ack_ok=True)
+        self.assertEqual(decision.action, Action.HOLD)
+        self.assertIn(("flow_scale", 0.7, "quality-or-stability-regression"), decision.rejected)
+        scale = point("render_scale", 0.9, real=49)
+        held = plan(seen(B.GPU_LIMITED), (scale,), CURRENT, now=10, capabilities=CAPS, ack_ok=True)
+        self.assertEqual(held.action, Action.HOLD)
+        self.assertIsNone(held.knob)
+        broken = point("power_cap", 14, real=49, draw=float("nan"))
+        safe = plan(seen(B.POWER_LIMITED), (broken,), CURRENT, now=10, ceiling_w=20, capabilities=CAPS, ack_ok=True)
+        self.assertEqual(safe.action, Action.HOLD)
+        self.assertIn(("power_cap", 14, "nonfinite-metric"), safe.rejected)

@@ -54,7 +54,8 @@ def plan(perception, points, current, *, now, restore_pending=False, dwell_s=30.
         try:
             knob = Knob(chosen.knob)
         except ValueError:
-            knob = None
+            return Decision(Action.HOLD, Strategy.CRUISE, "tool-not-executable",
+                            evidence_ids=evidence, rejected=tuple(rejected) + ((chosen.knob, chosen.value, "tool-not-executable"),))
     return Decision(action, strategy, reason, knob=knob, confidence=perception.confidence,
                     evidence_ids=evidence, candidate_value=None if chosen is None else chosen.value,
                     rejected=rejected)
