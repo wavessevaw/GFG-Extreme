@@ -2659,10 +2659,28 @@ class GovernorService:
             return "renderer-request-active"
         return ""
 
+    def _autopilot_saved_revision(self, saved):
+        if not isinstance(saved, dict):
+            return None
+        import hashlib
+        import json
+        body = json.dumps(saved, sort_keys=True, default=str).encode()
+        return hashlib.sha256(body).hexdigest()[:16]
+
+    def _autopilot_power_context(self, ceiling_w, saved):
+        """A trial belongs to one session, one Saved revision and one verified ceiling."""
+        ceiling = None
+        if isinstance(ceiling_w, (int, float)) and not isinstance(ceiling_w, bool):
+            ceiling = round(float(ceiling_w), 3)
+        return (self.autopilot_observation.snapshot.session_key,
+                self._autopilot_saved_revision(saved), ceiling)
+
     async def _run_autopilot_power(self) -> None:
         """Apply at most one owned power step. Off unless the development flag is set."""
         if not self._autopilot_power_enabled or self._autopilot_flow_enabled:
             return
+        profile = self._status.get("profile") or ""
+        saved = await asyncio.to_thread(self._saved_profile_config, profile) if profile else None
         if self._restoration_blocked():
             now = self._clock()
             seq, _stamp, evidence, sample = self._autopilot_evidence()
@@ -2670,7 +2688,7 @@ class GovernorService:
                 self._autopilot_power.step, now=now, seq=seq,
                 real=None if sample is None else sample.real_fps,
                 output=None if sample is None else sample.output_fps,
-                context=self.autopilot_observation.snapshot.session_key,
+                context=self._autopilot_power_context(None, saved),
                 ceiling_w=None, owned=False, allow=False, slot=self._autopilot_slot,
                 restore_pending=True, evidence=evidence,
             )
@@ -2689,12 +2707,13 @@ class GovernorService:
         )
         seq, stamp, evidence, sample = self._autopilot_evidence()
         view = self._autopilot_power_view
+        ceiling = view.get("ceiling_tdp_w") if view.get("owned") is True else None
         outcome = await asyncio.to_thread(
             self._autopilot_power.step, now=stamp, seq=seq,
             real=None if sample is None else sample.real_fps,
             output=None if sample is None else sample.output_fps,
-            context=self.autopilot_observation.snapshot.session_key,
-            ceiling_w=view.get("ceiling_tdp_w") if view.get("owned") is True else None,
+            context=self._autopilot_power_context(ceiling, saved),
+            ceiling_w=ceiling,
             owned=view.get("owned") is True,
             allow=(decision.action is Action.TRIAL and decision.knob is Knob.POWER_CAP
                    and not self._autopilot_conflicting_executor()),

@@ -37,6 +37,8 @@ class ScheduledPower:
         self._slot = slot
         if other_busy or self._slot_taken(slot):
             return self._idle("other-tool-busy")
+        if self.scheduler.busy and context != self.scheduler.context:
+            return self._restore("scene-or-context-changed", slot, now)
         if not allow:
             if self.scheduler.busy:
                 return self._restore("trial-withdrawn", slot, now)

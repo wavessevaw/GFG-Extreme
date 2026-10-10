@@ -80,7 +80,46 @@ class ExperimentReceiptTests(unittest.TestCase):
         with patch.object(self.svc._autopilot_power, "step",
                           return_value={"wrote": False}) as step:
             asyncio.run(self.svc._run_autopilot_power())
-        self.assertEqual(step.call_args.kwargs["context"], self.snapshot.session_key)
+        self.assertEqual(step.call_args.kwargs["context"][0], self.snapshot.session_key)
+        self.assertEqual(len(step.call_args.kwargs["context"]), 3)
+
+    def test_saved_revision_and_ceiling_belong_to_the_trial(self):
+        bound = self.svc._autopilot_power_context(15, {"flow_scale": 0.8})
+        self.assertEqual(bound, self.svc._autopilot_power_context(15.0, {"flow_scale": 0.8}))
+        self.assertNotEqual(bound, self.svc._autopilot_power_context(14, {"flow_scale": 0.8}))
+        self.assertNotEqual(bound, self.svc._autopilot_power_context(15, {"flow_scale": 0.7}))
+
+    def test_a_changed_ceiling_or_saved_revision_restores_the_open_trial(self):
+        from gfg_plugin.autopilot.apply import ScheduledPower
+        from gfg_plugin.autopilot.experiments import ExperimentConfig, Scheduler
+        from gfg_plugin.autopilot.policy import Knob
+
+        class Cap:
+            def __init__(self):
+                self.writes = []
+                self.current = 12
+
+            def status(self):
+                return {"observed_tdp_w": self.current, "observed_fast_w": self.current}
+
+            def set_tdp_w(self, watts):
+                self.writes.append(watts)
+                self.current = watts
+                return {"success": True, "state": self.status()}
+
+        for changed in (("session", "other-saved", 15.0), ("session", "saved", 14.0)):
+            with self.subTest(changed=changed):
+                cap = Cap()
+                trial = ScheduledPower(cap, Scheduler(ExperimentConfig()))
+                original = ("session", "saved", 15.0)
+                self.assertIsNone(trial.scheduler.start(Knob.POWER_CAP, self.now, original, None))
+                trial.baseline_w = 12
+                outcome = trial.step(
+                    now=self.now, seq=8, real=30, output=60, context=changed,
+                    ceiling_w=changed[2], owned=True, allow=True, evidence=False)
+                self.assertEqual(outcome["reason"], "scene-or-context-changed")
+                self.assertEqual(cap.writes, [12])
+                self.assertIsNone(trial.baseline_w)
 
 
 if __name__ == "__main__":
