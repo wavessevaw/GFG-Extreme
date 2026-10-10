@@ -28,6 +28,12 @@ class View:
     multiplier_confirmed: bool = False
     frametime_p99_ms: float | None = None
     frametime_jitter_ms: float | None = None
+    battery_pct: float | None = None
+    battery_minutes: float | None = None
+    external_power: bool | None = None
+    tdp_readable: bool = False
+    tdp_error: str | None = None
+    tdp_external_change: bool = False
 
 
 @dataclass(frozen=True)
@@ -69,7 +75,13 @@ def decide(view: View) -> Decision:
 
     meeting = target is None or output >= target * 0.92
     frame = _num(view.frametime_p95_ms)
-    frame_ok = frame is None or target is None or target <= 0 or frame <= (1000.0 / target) * 1.6
+    # Governor frametime is measured from *real* frames, not generated output.
+    # The output FPS goal must never be used as the real-frame time budget.
+    multiplier = _num(view.multiplier)
+    expected_real = (target / multiplier if view.multiplier_confirmed and multiplier and multiplier > 0
+                     and target is not None else real)
+    frame_ok = (frame is not None and expected_real is not None and expected_real > 0
+                and frame <= (1000.0 / expected_real) * 1.6)
     cpu, gpu = _num(view.cpu_busy), _num(view.gpu_busy)
     ceiling, draw = _num(view.ceiling_w), _num(view.draw_w)
     power_bound = ceiling is not None and draw is not None and draw >= ceiling - 1.2
@@ -101,34 +113,93 @@ def _has_power_headroom(draw, ceiling):
 
 
 class TargetPolicy:
-    """Pick one display-sized goal and keep it until the miss is repeated."""
+    """Choose an achievable goal from fresh, non-overlapping evidence windows.
+
+    A lower output goal is a *trial*, not a permanent trap: after sustained
+    healthy play at the lower goal, cautiously retry the display goal.
+    Rejected retries are backed off to avoid 60/90 flapping.
+    """
+
+    RECOVERY_S = 90.0
+    RETRY_BACKOFF_S = 240.0
+    MIN_GOAL_SPAN_S = 2.0
 
     def __init__(self) -> None:
         self.target = None
         self.pending = None
         self.pending_n = 0
+        self.last_seq = 0
+        self.next_recovery_at = 0.0
+        self.recovery_attempted = False
+        self.display_goal = None
+        self._fallback_time = 0.0
 
-    def update(self, display_hz, real_fps, output_fps, preference, fresh) -> int:
+    def update(self, display_hz, real_fps, output_fps, preference, fresh,
+               *, sample_seq=None, first_sample_seq=None, span_s=None, now=None) -> int:
+        # now/seq are passed by Governor in production; the optional arguments
+        # keep this pure policy usable from independent unit tests.
+        if now is None:
+            self._fallback_time += 30.0
+            now = self._fallback_time
         hz = 90 if _num(display_hz) and display_hz >= 90 else 60
-        want = hz
-        real, output = _num(real_fps), _num(output_fps)
-        if fresh and real is not None and output is not None:
-            struggling = real < 28 or output < hz * 0.85
-            if preference == "battery" and struggling and hz == 90:
-                want = 60
-            elif preference == "auto" and real < 28 and hz == 90:
-                want = 60
-        if self.target is None:
-            self.target = want
+        if self.display_goal != hz:
+            self.display_goal = hz
+            self.target = hz
+            self.pending = None
+            self.pending_n = 0
+            self.next_recovery_at = 0.0
+            self.recovery_attempted = False
+            self.last_seq = 0
+        if not fresh:
+            self.pending = None
+            self.pending_n = 0
             return self.target
-        if want == self.target or not fresh:
-            self.pending, self.pending_n = None, 0
+
+        # Ignore a repeated or overlapping sliding window. Three calls on the
+        # same sample must never be interpreted as three independent misses.
+        if sample_seq is not None:
+            if (isinstance(sample_seq, bool) or not isinstance(sample_seq, int)
+                    or sample_seq <= self.last_seq
+                    or not isinstance(first_sample_seq, int)
+                    or first_sample_seq <= self.last_seq
+                    or span_s is None or span_s < self.MIN_GOAL_SPAN_S):
+                return self.target
+            self.last_seq = sample_seq
+
+        real, output = _num(real_fps), _num(output_fps)
+        if real is None or output is None or real <= 0:
+            self.pending = None
+            self.pending_n = 0
+            return self.target
+
+        if self.target == hz:
+            struggling = real < 28 or output < hz * 0.85
+            want = (60 if hz == 90 and struggling
+                    and ((preference == "battery") or (preference == "auto" and real < 28))
+                    else hz)
+        else:
+            # At a 60 FPS cap the measured output need not reach 90, even if
+            # the game now has headroom. Trial an upgrade only after sustained
+            # stability and a long cooldown, not by testing for 90 at a 60 cap.
+            stable = output >= self.target * 0.95 and real >= self.target / 3.0
+            want = hz if stable and now >= self.next_recovery_at else self.target
+
+        if want == self.target:
+            self.pending = None
+            self.pending_n = 0
             return self.target
         if self.pending != want:
             self.pending, self.pending_n = want, 1
         else:
             self.pending_n += 1
-        if self.pending_n >= 3:
-            self.target, self.pending, self.pending_n = want, None, 0
-        return self.target
+        if self.pending_n < 3:
+            return self.target
 
+        previous = self.target
+        self.target, self.pending, self.pending_n = want, None, 0
+        if want < previous:
+            self.next_recovery_at = now + (
+                self.RETRY_BACKOFF_S if self.recovery_attempted else self.RECOVERY_S)
+        elif want > previous:
+            self.recovery_attempted = True
+        return self.target
