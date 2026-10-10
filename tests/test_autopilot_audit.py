@@ -43,6 +43,28 @@ class AuditTraceTests(unittest.TestCase):
         self.assertEqual(snap["flow"]["phase"], "wait-restore")
         self.assertEqual(snap["debug"]["last_renderer_seq"], 91)
 
+    def test_live_governor_observation_reaches_trace_without_enabling_flags(self):
+        import test_governor_runtime as legacy
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            self.assertFalse(svc._autopilot_power_enabled)
+            self.assertFalse(svc._autopilot_flow_enabled)
+            svc._update_autopilot_observation()
+            path = svc.autopilot_trace_path
+            self.assertTrue(path.is_file())
+            entries = [json.loads(line) for line in path.read_text().splitlines()]
+            events = [item for item in entries if item.get("event") == "observation"]
+            self.assertTrue(events)
+            self.assertIn("perception", events[-1])
+            self.assertIn("source", events[-1])
+            self.assertIn("watts", events[-1])
+            self.assertIn("scheduler", events[-1])
+            self.assertEqual(events[-1]["enabled"], {"power": False, "flow": False})
+        finally:
+            fixture.tearDown()
+
     def test_session_recorder_exports_only_trace_from_the_recording(self):
         async def run(tmp):
             home = Path(tmp) / "home"
