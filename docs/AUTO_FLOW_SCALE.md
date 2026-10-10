@@ -13,3 +13,16 @@ Power and CPU probes cannot overlap the comparison. New power/point contexts res
 Disable Automatic flow scale in Settings to retain the profile's manual value. Frame OS Act, lighter performance and ultra-performance profiles are excluded from automatic flow trials.
 
 Freshness applies to host sensors as well as FPS. A confirmed lighter-model flag is required. If Saved flow cannot be restored and the last confirmed value is still different, probing stays paused and the Saved value is retried at fifteen-second intervals until acknowledged or the context is released.
+
+
+A held choice remains monitored. A fresh severe drop below 85% of the point's
+real cadence or output target restores Saved immediately. Two consecutive
+distinct samples below 94% also restore it; a healthy sample clears the counter.
+An unexpected applied flow value, incomplete applied state, menu entry or stale
+data removes the success claim and restores Saved. A failed trial is not
+repeated within the same context. Rollback still requires the renderer's ACK.
+
+Plan-only FPS does not start or validate flow trials. A measured zero output
+with a valid real cadence is preserved as a shortfall instead of being replaced
+by the planned multiplier. Spatial-layer messages cannot replace the game's
+generation capacity or FPS.

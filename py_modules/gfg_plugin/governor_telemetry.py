@@ -288,36 +288,48 @@ class TelemetryObserver:
         self._event_seq += 1
         operation = str(fields.get("operation") or "")
         self._last_fields = dict(fields)
-        if (operation == "runtime-state-applied" and fields.get("role") == "frame-generation"
-                and fields.get("context") and _number(fields.get("effective_flow_scale")) is not None):
-            flow = float(fields["effective_flow_scale"])
-            if .25 <= flow <= 1:
-                self._flow_state = {"value": flow, "context": fields["context"],
-                                    "event_seq": self._event_seq, "monotonic": now_mono,
-                                    "resources": fields.get("frame_generation_resources_available") == "1",
-                                    "lighter_model": fields.get("lighter_model")}
+        role = fields.get("role")
+        generation_role = role in (None, "frame-generation")
+        if operation == "runtime-state-applied" and role == "frame-generation":
+            # Each applied snapshot supersedes the old one, even if the new
+            # payload omits flow or reports unavailable resources. Retaining
+            # a previous successful ACK would falsely confirm the old state.
+            flow = _number(fields.get("effective_flow_scale"))
+            self._flow_state = {
+                "value": flow if flow is not None and .25 <= flow <= 1 else None,
+                "context": fields.get("context"),
+                "event_seq": self._event_seq, "monotonic": now_mono,
+                "resources": fields.get("frame_generation_resources_available") == "1",
+                "lighter_model": fields.get("lighter_model"),
+            }
         if operation == "swapchain-context-create":
             self._note_scaling(swapchain_extent(fields), now_mono)
         if operation == "gamescope-focus" and fields.get("state"):
             self.game_focused = fields.get("state") == "game"
             self.game_focused_at = now_mono
-        if operation == "runtime-state-applied" and fields.get("frame_generation_resources_available") == "0":
+        if generation_role and operation == "runtime-state-applied" and fields.get("frame_generation_resources_available") == "0":
             self._note_capacity(0)  # no frame-generation resources at all: native only
-        elif operation == "runtime-state-applied" and "generated_frame_capacity" in fields:
+        elif generation_role and operation == "runtime-state-applied" and "generated_frame_capacity" in fields:
             self._note_capacity(fields.get("generated_frame_capacity"))
-        elif operation == "runtime-transition-pending" and "available_generated_capacity" in fields:
+        elif generation_role and operation == "runtime-transition-pending" and "available_generated_capacity" in fields:
             self._note_capacity(fields.get("available_generated_capacity"))
         self._events.append(TelemetryEvent(
             self._event_seq, now_mono, operation,
             dict(fields) if operation in APPLICATION_OPERATIONS else None,
         ))
-        if operation in APPLICATION_OPERATIONS:
+        if generation_role and operation in APPLICATION_OPERATIONS:
             self._last_application = {
                 "event_seq": self._event_seq,
                 "monotonic": now_mono,
                 "operation": operation,
                 "fields": dict(fields),
             }
+
+        # Spatial layers can report their own rate and zero FG slots. These
+        # are not the game's generated cadence or its generation capacity.
+        # Old diagnostics without role remain supported.
+        if not generation_role:
+            return None
 
         base = _first_number(fields, (
             "current_base_fps",
@@ -367,7 +379,7 @@ class TelemetryObserver:
         ):
             base = measured_output / (fixed_ratio + 1.0)
         real = interval_real if interval_real is not None else base
-        if measured_output is not None and measured_output > 0:
+        if measured_output is not None and measured_output >= 0:
             output = measured_output
             output_source = "measured"
         elif interval_output is not None:
@@ -377,7 +389,7 @@ class TelemetryObserver:
             output = planned_output
             output_source = "instant_plan"
 
-        if real is None or output is None or real <= 0 or output <= 0:
+        if real is None or output is None or real <= 0 or output < 0:
             return None
 
         if output_source == "scheduler_interval" and interval_multiplier is not None:

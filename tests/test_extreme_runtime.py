@@ -75,6 +75,9 @@ class TransitionTests(unittest.TestCase):
             asyncio.run(service._restore_power("display-mode-changed"))
             self.assertTrue(power.state.owned)
             self.assertEqual((power.status()["observed_fast_w"], power.status()["observed_tdp_w"]), (20, 20))
+            asyncio.run(service._restore_power("new-game-session"))
+            self.assertTrue(power.state.owned)
+            self.assertEqual((power.status()["observed_fast_w"], power.status()["observed_tdp_w"]), (20, 20))
             service._settings["profiles"]["Game"]["enabled"] = False
             asyncio.run(service._restore_power("user-disabled"))
             self.assertFalse(power.state.owned)
@@ -135,3 +138,31 @@ class TransitionTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "budget-start-reached"):
                     asyncio.run(service._budget_step("Game", False, 90))
                 controller.assert_called_once()
+
+    def test_inactive_overlay_keeps_extreme_ceiling_and_releases_other_modes(self):
+        from unittest.mock import AsyncMock
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            power = self.make_power(root)
+            service = self.service(root, power)
+            self.assertIsNotNone(asyncio.run(service._budget_power("Game")))
+            service._launch_info = AsyncMock(return_value={"running": False})
+            service._capability = lambda *args: {"overlay_active": False, "reason": "not-running"}
+            asyncio.run(service._budget_step("Game", False, 90))
+            self.assertTrue(power.state.owned)
+            self.assertEqual((power.status()["observed_fast_w"], power.status()["observed_tdp_w"]), (20, 20))
+            service._settings["profiles"]["Game"]["mode"] = "budget"
+            asyncio.run(service._budget_step("Game", False, 90))
+            self.assertFalse(power.state.owned)
+            self.assertEqual((power.status()["observed_fast_w"], power.status()["observed_tdp_w"]), (24, 20))
+
+    def test_failed_claim_outside_extreme_is_not_labelled_as_a_ceiling_miss(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            power = self.make_power(root)
+            service = self.service(root, power)
+            service._settings["profiles"]["Game"]["mode"] = "budget"
+            service._status["reason"] = "probe"
+            power.claim = lambda: {"owned": False}
+            self.assertIsNone(asyncio.run(service._budget_power("Game")))
+            self.assertEqual(service._status["reason"], "probe")
