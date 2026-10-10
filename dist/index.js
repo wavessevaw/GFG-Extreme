@@ -1004,13 +1004,18 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
         }
         refresh();
       } }),
-      h(Toggle, { on: !!s.autopilot_shading_allowed, title: "Try Half Rate Shading", sub: "Optional 2\xD72 shading experiment when GPU-limited. May blur text and game details. GFG measures FPS and restores it on failure or Stop.", onChange: async (v) => {
-        try {
-          await rpc.setAutopilotShading(profile, v);
-        } catch (e) {
+      h(Toggle, {
+        on: !!s.autopilot_shading_allowed,
+        title: "Try Half Rate Shading",
+        sub: "Optional 2\xD72 shading experiment when GPU-limited. May blur text and game details. GFG measures FPS and restores it on failure or Stop.",
+        onChange: async (v) => {
+          try {
+            await rpc.setAutopilotShading(profile, v);
+          } catch (e) {
+          }
+          refresh();
         }
-        refresh();
-      } }),
+      }),
       s.autopilot_shading_allowed ? h(Note, { quiet: true }, "Shading: " + ((s.autopilot_shading || {}).mode || "unavailable") + " \xB7 Steam RADV dynamic VRS (physical Deck verification pending).") : null
     ) : null,
     health ? h("div", { className: "hint" }, health) : null,
