@@ -34,6 +34,9 @@ class View:
     tdp_readable: bool = False
     tdp_error: str | None = None
     tdp_external_change: bool = False
+    shading_available: bool = False
+    shading_consent: bool = False
+    shading_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -96,6 +99,11 @@ def decide(view: View) -> Decision:
         if cpu is not None and gpu is not None and cpu >= 85 and gpu <= 70 and view.gpu_clock_available:
             return done("OPTIMIZE_GPU_CLOCK", "probable-cpu-bottleneck", "gpu-clock",
                         "increase_real_fps", "CPU looks limiting. Checking one lower GPU clock ceiling.")
+        if (gpu is not None and gpu >= 90 and view.shading_consent
+                and view.shading_available and not view.shading_enabled):
+            return done("OPTIMIZE_SHADING", "gpu-shader-limited", "half-rate-shading",
+                        "reduce_gpu_fragment_cost",
+                        "Testing Steam Half Rate Shading. Image quality may decrease.")
         if power_bound or (gpu is not None and gpu >= 90):
             return done("OPTIMIZE_POWER", "power-or-gpu-limited", "budget",
                         "increase_real_fps", "The GPU needs the power Governor can safely give.")
