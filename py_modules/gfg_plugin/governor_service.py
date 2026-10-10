@@ -2405,7 +2405,7 @@ class GovernorService:
         self._update_battery()
         await asyncio.to_thread(self._update_sensors)
         self._update_autopilot_observation()
-        if self._restoration_blocked():
+        if self._restoration_blocked() or self._autopilot_must_finish_first():
             self._publish_restore_pending()
             return
         if await self._run_autopilot_exclusive():
@@ -2490,9 +2490,8 @@ class GovernorService:
         }
         launch = await self._launch_info(profile)
         launch_key = launch.get("launch_key") if isinstance(launch, dict) and launch.get("running") else None
-        self._generation_seen = snapshot.get("session_generation")
-        if launch_key is not None:
-            self._launch_key = launch_key
+        if not await self._note_session_identity(profile, snapshot.get("session_generation"), launch_key):
+            return
         display = await self._display_info()
         external = bool(display.get("external", False))
         if self._device is None:
@@ -2509,6 +2508,42 @@ class GovernorService:
                 "current_refresh_hz": display.get("current_refresh_hz"),
             },
         })
+
+    def _autopilot_change_outstanding(self) -> bool:
+        trial = self._autopilot_power
+        if trial.baseline_w is not None or trial.rollback_due or trial.scheduler.busy:
+            return True
+        if self._autopilot_slot.busy:
+            return True
+        return self._autopilot_flow_dirty()
+
+    def _autopilot_must_finish_first(self) -> bool:
+        """The ordinary Governor must not run beside an unfinished experiment."""
+        return (not (self._autopilot_power_enabled or self._autopilot_flow_enabled)
+                and self._autopilot_change_outstanding())
+
+    async def _note_session_identity(self, profile: str, generation, launch_key) -> bool:
+        """Remember a new game only after the previous point has been released."""
+        changed = (
+            (self._generation_seen is not None and generation != self._generation_seen)
+            or (self._launch_key is not None and launch_key is not None and launch_key != self._launch_key)
+        )
+        if changed and (self._point or self._request or self._ladder or self._budget
+                        or self._autopilot_change_outstanding()):
+            if not await self._settle_autopilot_power_before_release():
+                return False
+            if self._autopilot_flow_dirty() and self._point is not None and self.overlay is not None:
+                await self._restore_autopilot_flow(profile)
+                if self._autopilot_flow_dirty():
+                    return False
+            if self._point or self._request or self._ladder or self._budget:
+                await self._release_point(profile, "new-game-session")
+                if self._restoration_blocked():
+                    return False
+        self._generation_seen = generation
+        if launch_key is not None:
+            self._launch_key = launch_key
+        return True
 
     def _autopilot_plan_status(self):
         """The C2 decision. Publishing it does not arm or write an actuator."""
@@ -2833,6 +2868,9 @@ class GovernorService:
             self._publish_restore_pending()
             return
         if not (self._autopilot_power_enabled or self._autopilot_flow_enabled):
+            if self._autopilot_change_outstanding():
+                if not await self._withdraw_exclusive_tool():
+                    return
             await asyncio.to_thread(self._standby_overlays_sync)
         profile, response = await asyncio.to_thread(self.configuration.get_current_profile_snapshot)
         config = response.get("config") if isinstance(response, dict) else None

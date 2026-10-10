@@ -295,3 +295,53 @@ class ServicePowerGateTests(unittest.TestCase):
             self.assertIsNone(svc._autopilot_power.baseline_w)
         finally:
             fixture.tearDown()
+
+    def test_turning_the_flag_off_restores_eleven_watts_before_the_governor(self):
+        import test_governor_runtime as legacy
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            svc._active_profile = "game"
+            svc.power.claim()
+            svc.power.values.update(observed_tdp_w=11, owned=True)
+            svc._autopilot_power.baseline_w = 10
+            svc._autopilot_power.scheduler.start(Knob.POWER_CAP, fixture.t["now"], "scene", None)
+            svc._autopilot_power_enabled = False
+            seen = []
+
+            async def sync(profile, config):
+                seen.append((svc._autopilot_power.baseline_w, svc.power.values["observed_tdp_w"],
+                             svc._autopilot_power.scheduler.busy))
+
+            svc._sync_overlay = sync
+            asyncio.run(svc._iteration())
+            self.assertEqual(svc.power.writes[0], 10)
+            self.assertEqual(seen[0], (None, 10, False))
+            self.assertFalse(svc._autopilot_change_outstanding())
+        finally:
+            fixture.tearDown()
+
+    def test_a_new_game_is_not_adopted_while_the_old_point_is_still_applied(self):
+        import test_governor_runtime as legacy
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            svc._autopilot_power_enabled = True
+            svc._active_profile = "game"
+            svc._point = {"key": "30x3", "multiplier": 3, "base_target_fps": 30}
+            svc._point_deltas = {}
+            svc.observer._session_generation = 1
+            svc._generation_seen = 1
+            svc._launch_key = [1, 1, 1]
+            svc.inspector.info["launch_key"] = [9, 9, 9]
+            svc._launch = None
+            svc._launch_polled = -1e9
+            asyncio.run(svc._iteration_core())
+            self.assertFalse(svc._point and list(svc._launch_key) == [9, 9, 9])
+            svc._autopilot_power_enabled = False
+            asyncio.run(svc._iteration())
+            self.assertFalse(svc._point and list(svc._launch_key) == [9, 9, 9])
+        finally:
+            fixture.tearDown()

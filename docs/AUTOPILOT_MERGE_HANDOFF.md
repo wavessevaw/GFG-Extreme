@@ -76,6 +76,10 @@ The four comments after that are fixed on this tip as well:
 - A cross-profile flow change uses that same verified overlay release.
 - Flags on from a cold start are documented below as not a usable controller.
 
+Turning the flags off restores an applied watt before the ordinary Governor
+runs. A new game session is stored only after the previous point is released,
+so an old configuration is not treated as current for the next game.
+
 ## Flags on are not a usable Autopilot
 
 The owner asked for a sleeping merge. With either development flag set on a
