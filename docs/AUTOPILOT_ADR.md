@@ -46,7 +46,9 @@ make old samples fresh.
 The adapter invalidates on profile/backend/launch identity (including PID start
 identity), renderer generation/context, target changes, menu/focus uncertainty,
 clock gaps and pending restoration. It conservatively requires a recent launch
-probe and focus evidence. After invalidation, old samples cannot form a new
+probe and focus evidence bound to the current uninterrupted context. Positive
+focus is a transition event, not a heartbeat: it remains authoritative until a
+contrary event or context/time discontinuity. After invalidation, old samples cannot form a new
 baseline. Coalesced log reads count once per receipt timestamp, not once per line.
 Pure perception requires increasing sequences/times, a minimum duration and
 sample count, current renderer and host data, and corroborating evidence.
@@ -65,8 +67,8 @@ the C1 runtime adapter cannot supply that provenance and leaves them unavailable
   Initial backlog is skipped by the existing observer; multiple lines received
   together cannot establish a sustained window. Delayed writer buffering still
   cannot prove current producer age. Therefore **C1 evidence cannot authorize control**.
-* Existing focus reports may be sparse; UNKNOWN is expected once confidence in
-  current focus expires. Do not weaken freshness merely to make the card look active.
+* A context/time discontinuity requires new focus evidence; old pre-suspend focus
+  must not certify a resumed session. Normal continuous play needs no heartbeat.
 * A context-bearing event is required. Older diagnostics with no renderer context,
   or only reconstructed real cadence, yield unavailable/UNKNOWN.
 * No reliable scene/cutscene/loading detector exists. Changing scenes can produce

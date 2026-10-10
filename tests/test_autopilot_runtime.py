@@ -109,6 +109,34 @@ class ObservationTests(unittest.TestCase):
         self.assertEqual(self.stream.context, "r")
         self.assertEqual(len(self.stream.samples), 49)
 
+    def test_single_focus_transition_remains_valid_within_continuous_session(self):
+        self.feed(100, 1)
+        self.update(100, focus_at=100)
+        for i in range(1, 9):
+            self.feed(100+i*2, i+1)
+            result = self.update(100+i*2, focus_at=100)
+        self.assertEqual(result["perception"]["primary"], "STABLE")
+        self.assertEqual(self.update(140, focus_at=100)["sample_count"], 0)
+
+    def test_real_poll_uses_one_receipt_timestamp_for_a_batch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "renderer.log"
+            path.write_text("")
+            tick = [100.0]
+            def clock():
+                tick[0] += .001
+                return tick[0]
+            observer = TelemetryObserver(path, time_fn=clock)
+            observer.poll()
+            event = line({"operation": "adaptive-plan", "context": "r",
+                          "current_base_fps": "45", "current_output_fps": "90"}) + "\n"
+            with path.open("a") as handle:
+                handle.write(event * 8)
+            observer.poll()
+            times = {s.timestamp_mono for s in observer.autopilot_observations.samples}
+            self.assertEqual(len(times), 1)
+            self.assertEqual(len(observer.autopilot_observations.samples), 8)
+
     def test_bounded_stream_and_reset(self):
         for i in range(200):
             self.feed(i, i+1)
@@ -163,6 +191,8 @@ class ServiceIntegrationTests(unittest.TestCase):
             svc._launch_polled = fixture.t["now"]
             svc.observer.game_focused = True
             svc.observer.game_focused_at = fixture.t["now"]
+            # Legacy get_status lazily initializes its scale_ignored_games map.
+            svc.get_status("game")
             before_settings = json.dumps(svc._settings, sort_keys=True)
             with patch.object(svc.power, "set_tdp_w", side_effect=AssertionError("power write")), \
                  patch.object(svc.cpu, "restore", side_effect=AssertionError("CPU restore")), \

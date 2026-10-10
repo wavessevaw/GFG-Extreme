@@ -278,7 +278,8 @@ class TelemetryObserver:
             return None
         return {match.group(1): match.group(2) for match in _FIELD_RE.finditer(line)}
 
-    def consume_line(self, line: str, *, now: Optional[float] = None) -> Optional[FpsSample]:
+    def consume_line(self, line: str, *, now: Optional[float] = None,
+                     observation_time: Optional[float] = None) -> Optional[FpsSample]:
         fields = self.parse_fields(line)
         if fields is None:
             if SPATIAL_ACTIVE_MARKER in line or SWAPCHAIN_POLICY_MARKER in line:
@@ -289,7 +290,8 @@ class TelemetryObserver:
             return None
         now_mono = self.time_fn() if now is None else float(now)
         self._event_seq += 1
-        self.autopilot_observations.consume(fields, now_mono, self._event_seq)
+        self.autopilot_observations.consume(
+            fields, now_mono if observation_time is None else observation_time, self._event_seq)
         operation = str(fields.get("operation") or "")
         self._last_fields = dict(fields)
         if (operation == "runtime-state-applied" and fields.get("role") == "frame-generation"
@@ -422,8 +424,10 @@ class TelemetryObserver:
         lines = (self._partial + data).split(b"\n")
         self._partial = lines.pop()
         samples = 0
+        observation_time = self.time_fn() if now is None else float(now)
         for raw in lines:
-            if self.consume_line(raw.decode("utf-8", errors="ignore"), now=now) is not None:
+            if self.consume_line(raw.decode("utf-8", errors="ignore"), now=now,
+                                 observation_time=observation_time) is not None:
                 samples += 1
         return samples
 

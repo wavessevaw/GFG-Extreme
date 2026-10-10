@@ -11,6 +11,7 @@ class ObservationMonitor:
         self.key = None
         self.after_seq = 0
         self.last_tick = None
+        self.focus_epoch = 0.0
         self.snapshot = Snapshot("", 0.0, blocked_reason="waiting-for-session")
 
     def update(self, *, now, stream, generation, profile, backend, launch,
@@ -26,6 +27,7 @@ class ObservationMonitor:
                        and not 0 <= now - self.last_tick <= self.config.max_gap_s)
         if key != self.key or interrupted:
             self.after_seq = stream.seq
+            self.focus_epoch = now
         self.key, self.last_tick = key, now
         reason = ""
         if backend != "gfg":
@@ -42,7 +44,7 @@ class ObservationMonitor:
             reason = "restore-pending"
         elif runtime_state in ("PAUSED", "DISABLED", "RESTORING", "RESTORE_PENDING"):
             reason = "runtime-not-observing"
-        elif focus is not True or number(focus_at) is None or not 0 <= now - focus_at <= 6.0:
+        elif focus is not True or number(focus_at) is None or not self.focus_epoch <= focus_at <= now:
             reason = "focus-unconfirmed-or-menu"
         if reason:
             # Returning from menus/disabled/external state requires a new window.
