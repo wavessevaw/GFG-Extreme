@@ -201,3 +201,20 @@ class DeliveryEvidenceTests(unittest.TestCase):
         self.assertEqual(sample.real_fps, 30)
         self.assertEqual(sample.output_fps, 0)
         self.assertEqual(observer.sample_seq, 1)
+
+    def test_plan_only_samples_do_not_enter_a_decision_window(self):
+        observer = TelemetryObserver(Path("/nonexistent"))
+        for index in range(8):
+            observer.consume_line(diag("adaptive-plan", current_base_fps=30, generated=2), now=float(index))
+        planned = observer.summary(20, now=8)
+        self.assertEqual(planned["samples"], 0)
+        self.assertEqual(planned["plan_samples"], 8)
+        self.assertIsNone(planned["output"]["median"])
+        self.assertIsNone(planned["real"]["median"])
+        self.assertIsNone(planned["last_sample_seq"])
+        observer.consume_line(diag("adaptive-plan", current_base_fps=30, current_output_fps=60, generated=2), now=9)
+        mixed = observer.summary(20, now=9)
+        self.assertEqual(mixed["samples"], 1)
+        self.assertEqual(mixed["plan_samples"], 8)
+        self.assertEqual(mixed["output"]["median"], 60)
+        self.assertEqual(mixed["real"]["median"], 30)

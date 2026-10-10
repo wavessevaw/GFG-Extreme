@@ -64,7 +64,7 @@ def telemetry_values(status: Dict[str, Any]) -> tuple:
     if snapshot is not None:
         age = _number(snapshot.get("sample_age_ms"))
         latest = snapshot.get("latest") or {}
-        if age is None or age > 2500:
+        if age is None or age > 2500 or latest.get("output_source") == "instant_plan":
             return None, None, None
         real, out = _number(latest.get("real_fps")), _number(latest.get("output_fps"))
         mult = out / real if real and out is not None else _number(latest.get("effective_multiplier"))

@@ -522,9 +522,12 @@ class TelemetryObserver:
         samples = self.samples_since(cutoff, after_seq=after_seq)
         if after_event_seq:
             samples = [sample for sample in samples if sample.event_seq > int(after_event_seq)]
-        real_stats = robust_stats(sample.real_fps for sample in samples)
-        output_stats = robust_stats(sample.output_fps for sample in samples)
-        multiplier_stats = robust_stats(sample.effective_multiplier for sample in samples)
+        # A planned multiplier is not a delivered frame. Keep it out of every
+        # median the controller, the guard and the session summary can act on.
+        delivered = [sample for sample in samples if sample.output_source != "instant_plan"]
+        real_stats = robust_stats(sample.real_fps for sample in delivered)
+        output_stats = robust_stats(sample.output_fps for sample in delivered)
+        multiplier_stats = robust_stats(sample.effective_multiplier for sample in delivered)
         events = self._events_since(cutoff)
         if after_event_seq:
             events = [event for event in events if event.event_seq > int(after_event_seq)]
@@ -539,20 +542,21 @@ class TelemetryObserver:
                 events = []
         operations = [event.operation for event in events]
         latest = samples[-1] if samples else (self._samples[-1] if self._samples else None)
-        span = (samples[-1].monotonic - samples[0].monotonic) if len(samples) >= 2 else 0.0
+        span = (delivered[-1].monotonic - delivered[0].monotonic) if len(delivered) >= 2 else 0.0
         # Frame pacing inside each renderer interval (means hide single long frames).
-        p95s = [sample.source_interval_p95_ms for sample in samples
+        p95s = [sample.source_interval_p95_ms for sample in delivered
                 if sample.source_interval_p95_ms is not None and sample.source_interval_p95_ms > 0]
         return {
-            "samples": len(samples),
+            "samples": len(delivered),
+            "plan_samples": len(samples) - len(delivered),
             "sample_span_s": round(max(0.0, span), 3),
             "real_interval_p95_ms": round(float(statistics.median(p95s)), 3) if p95s else None,
-            "first_sample_seq": samples[0].seq if samples else None,
-            "last_sample_seq": samples[-1].seq if samples else self._sample_seq,
+            "first_sample_seq": delivered[0].seq if delivered else None,
+            "last_sample_seq": delivered[-1].seq if delivered else None,
             "real": real_stats,
             "output": output_stats,
             "multiplier": multiplier_stats,
-            "frametime": frametime_stats(sample.real_fps for sample in samples),
+            "frametime": frametime_stats(sample.real_fps for sample in delivered),
             "misses": sum(operation in MISS_OPERATIONS for operation in operations),
             "hard_pressure": sum(operation in HARD_PRESSURE_OPERATIONS for operation in operations),
             "bypasses": sum(operation in BYPASS_OPERATIONS for operation in operations),

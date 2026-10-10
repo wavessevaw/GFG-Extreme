@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from .governor_telemetry import TelemetryObserver
 
-CURRENT_VERSION = "1.6.8"  # kept in step by scripts/bump_version.py
+CURRENT_VERSION = "1.6.9"  # kept in step by scripts/bump_version.py
 
 
 def _percentile(values: List[float], pct: float) -> Optional[float]:
@@ -144,6 +144,23 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
         "caps_w": sorted({e["cap_w"] for e in not_bound if isinstance(e.get("cap_w"), (int, float))}),
     }
     report["rejected_points"] = sorted({str(e.get("point")) for e in events if e.get("event") == "operating-point-rejected"})
+    cadence = []
+    for event in events:
+        if event.get("event") != "operating-point-rejected":
+            continue
+        evidence = event.get("cadence") if isinstance(event.get("cadence"), dict) else {}
+        delivered_out, delivered_real = evidence.get("delivered_output_fps"), evidence.get("delivered_real_fps")
+        if delivered_out is None and delivered_real is None:
+            continue
+        cadence.append({
+            "point": str(event.get("point")),
+            "reason": str(event.get("reason") or ""),
+            "delivered_output_fps": delivered_out,
+            "delivered_real_fps": delivered_real,
+            "requested_output_fps": evidence.get("requested_output_fps"),
+            "requested_real_fps": evidence.get("requested_real_fps"),
+        })
+    report["rejection_cadence"] = cadence
     report["failed_checks"] = [c for c in self_test if not c.get("ok")]
     report["overlay_burst_before_exit"] = overlay_burst_before_exit(_jsonl(_read(bundle, "activity.jsonl")))
     report["frame_os"] = frame_os_summary(samples, _read(bundle, "game-processes.json"))
@@ -393,8 +410,15 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
                    f"the cap (median draw {held.get('draw_w_median')} W at {caps}): the shortfall was not power "
                    "(CPU, streaming or hitches).")
     if report.get("rejected_points"):
-        out.append("Operating points the renderer did not confirm or that failed their trial: "
-                   + ", ".join(report["rejected_points"]) + ".")
+        sentence = ("Operating points the renderer did not confirm or that failed their trial: "
+                    + ", ".join(report["rejected_points"]) + ".")
+        shown = report.get("rejection_cadence") or []
+        if shown:
+            bits = [f"{row['point']} delivered output {row['delivered_output_fps']} / real {row['delivered_real_fps']}"
+                    f" (asked output {row['requested_output_fps']}, real {row['requested_real_fps']})"
+                    for row in shown]
+            sentence += " Measured cadence, not the planned multiplier: " + "; ".join(bits) + "."
+        out.append(sentence)
     target, out_med = report.get("target"), (report.get("output") or {}).get("median")
     if target and out_med is not None and out_med < 0.9 * target:
         out.append(f"Median output FPS {out_med:.0f} is below the {target} FPS target.")
