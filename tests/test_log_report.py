@@ -93,6 +93,17 @@ class ReportTests(unittest.TestCase):
         self.assertIn("50% of the session waiting", joined)
         self.assertIn("switched 1 times", joined)
 
+    def test_rejection_cadence_is_the_measured_rate_not_the_plan(self):
+        events = [{"event": "operating-point-rejected", "reason": "confirmation-timeout", "point": "30x3",
+                   "cadence": {"delivered_output_fps": 48.0, "delivered_real_fps": 22.0,
+                               "requested_output_fps": 90, "requested_real_fps": 30}}]
+        rep = analyze(bundle({"timeline.jsonl": timeline(self.rows()), "governor-events.jsonl": timeline(events)}))
+        joined = "\n".join(rep["findings"])
+        self.assertIn("30x3", joined)
+        self.assertIn("output 48.0", joined)
+        self.assertIn("real 22.0", joined)
+        self.assertIn("asked output 90", joined)
+
     def test_heat_and_stutter_are_reported(self):
         rows = self.rows(10) + self.rows(10, reason="thermal-quality-held:heating",
                                          diagnosis={"thermal": "heating", "smoothness": "stuttering"})

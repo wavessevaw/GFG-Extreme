@@ -19,6 +19,18 @@ Work branch: `autopilot/c1-observation-20261010`, based on freshly read main.
 No version bump, mode-selector migration, actuator change, release trigger,
 main merge, tag or publication is part of C1.
 
+## Ref refresh before C2
+
+At the next owner instruction to continue, refs were fetched again.
+Main is now `9c94cea9661b880580b41bf6b83b192318dbec8b` (merged PR #101,
+1.6.9). PR #97 was merged by the owner at 2026-10-10T05:53:33Z, final head
+`8347b18cdf65eaa4df5ce7174a9f6a5398b5bb00`.
+C1 was reconciled forward onto current main, preserving all main changes.
+The only overlapping hunk was the raw observation tap adjacent to the new
+role/ACK handling; the tap remains before legacy processing without changing
+that processing. Historical main defects below describe the initial audit,
+not claims that accepted upstream fixes are missing in current main.
+
 ## Decision
 
 Use separate immutable contracts, deterministic perception, a bounded raw-event

@@ -294,36 +294,48 @@ class TelemetryObserver:
             fields, now_mono if observation_time is None else observation_time, self._event_seq)
         operation = str(fields.get("operation") or "")
         self._last_fields = dict(fields)
-        if (operation == "runtime-state-applied" and fields.get("role") == "frame-generation"
-                and fields.get("context") and _number(fields.get("effective_flow_scale")) is not None):
-            flow = float(fields["effective_flow_scale"])
-            if .25 <= flow <= 1:
-                self._flow_state = {"value": flow, "context": fields["context"],
-                                    "event_seq": self._event_seq, "monotonic": now_mono,
-                                    "resources": fields.get("frame_generation_resources_available") == "1",
-                                    "lighter_model": fields.get("lighter_model")}
+        role = fields.get("role")
+        generation_role = role in (None, "frame-generation")
+        if operation == "runtime-state-applied" and role == "frame-generation":
+            # Each applied snapshot supersedes the old one, even if the new
+            # payload omits flow or reports unavailable resources. Retaining
+            # a previous successful ACK would falsely confirm the old state.
+            flow = _number(fields.get("effective_flow_scale"))
+            self._flow_state = {
+                "value": flow if flow is not None and .25 <= flow <= 1 else None,
+                "context": fields.get("context"),
+                "event_seq": self._event_seq, "monotonic": now_mono,
+                "resources": fields.get("frame_generation_resources_available") == "1",
+                "lighter_model": fields.get("lighter_model"),
+            }
         if operation == "swapchain-context-create":
             self._note_scaling(swapchain_extent(fields), now_mono)
         if operation == "gamescope-focus" and fields.get("state"):
             self.game_focused = fields.get("state") == "game"
             self.game_focused_at = now_mono
-        if operation == "runtime-state-applied" and fields.get("frame_generation_resources_available") == "0":
+        if generation_role and operation == "runtime-state-applied" and fields.get("frame_generation_resources_available") == "0":
             self._note_capacity(0)  # no frame-generation resources at all: native only
-        elif operation == "runtime-state-applied" and "generated_frame_capacity" in fields:
+        elif generation_role and operation == "runtime-state-applied" and "generated_frame_capacity" in fields:
             self._note_capacity(fields.get("generated_frame_capacity"))
-        elif operation == "runtime-transition-pending" and "available_generated_capacity" in fields:
+        elif generation_role and operation == "runtime-transition-pending" and "available_generated_capacity" in fields:
             self._note_capacity(fields.get("available_generated_capacity"))
         self._events.append(TelemetryEvent(
             self._event_seq, now_mono, operation,
             dict(fields) if operation in APPLICATION_OPERATIONS else None,
         ))
-        if operation in APPLICATION_OPERATIONS:
+        if generation_role and operation in APPLICATION_OPERATIONS:
             self._last_application = {
                 "event_seq": self._event_seq,
                 "monotonic": now_mono,
                 "operation": operation,
                 "fields": dict(fields),
             }
+
+        # Spatial layers can report their own rate and zero FG slots. These
+        # are not the game's generated cadence or its generation capacity.
+        # Old diagnostics without role remain supported.
+        if not generation_role:
+            return None
 
         base = _first_number(fields, (
             "current_base_fps",
@@ -373,7 +385,7 @@ class TelemetryObserver:
         ):
             base = measured_output / (fixed_ratio + 1.0)
         real = interval_real if interval_real is not None else base
-        if measured_output is not None and measured_output > 0:
+        if measured_output is not None and measured_output >= 0:
             output = measured_output
             output_source = "measured"
         elif interval_output is not None:
@@ -383,7 +395,7 @@ class TelemetryObserver:
             output = planned_output
             output_source = "instant_plan"
 
-        if real is None or output is None or real <= 0 or output <= 0:
+        if real is None or output is None or real <= 0 or output < 0:
             return None
 
         if output_source == "scheduler_interval" and interval_multiplier is not None:
@@ -518,9 +530,12 @@ class TelemetryObserver:
         samples = self.samples_since(cutoff, after_seq=after_seq)
         if after_event_seq:
             samples = [sample for sample in samples if sample.event_seq > int(after_event_seq)]
-        real_stats = robust_stats(sample.real_fps for sample in samples)
-        output_stats = robust_stats(sample.output_fps for sample in samples)
-        multiplier_stats = robust_stats(sample.effective_multiplier for sample in samples)
+        # A planned multiplier is not a delivered frame. Keep it out of every
+        # median the controller, the guard and the session summary can act on.
+        delivered = [sample for sample in samples if sample.output_source != "instant_plan"]
+        real_stats = robust_stats(sample.real_fps for sample in delivered)
+        output_stats = robust_stats(sample.output_fps for sample in delivered)
+        multiplier_stats = robust_stats(sample.effective_multiplier for sample in delivered)
         events = self._events_since(cutoff)
         if after_event_seq:
             events = [event for event in events if event.event_seq > int(after_event_seq)]
@@ -535,20 +550,21 @@ class TelemetryObserver:
                 events = []
         operations = [event.operation for event in events]
         latest = samples[-1] if samples else (self._samples[-1] if self._samples else None)
-        span = (samples[-1].monotonic - samples[0].monotonic) if len(samples) >= 2 else 0.0
+        span = (delivered[-1].monotonic - delivered[0].monotonic) if len(delivered) >= 2 else 0.0
         # Frame pacing inside each renderer interval (means hide single long frames).
-        p95s = [sample.source_interval_p95_ms for sample in samples
+        p95s = [sample.source_interval_p95_ms for sample in delivered
                 if sample.source_interval_p95_ms is not None and sample.source_interval_p95_ms > 0]
         return {
-            "samples": len(samples),
+            "samples": len(delivered),
+            "plan_samples": len(samples) - len(delivered),
             "sample_span_s": round(max(0.0, span), 3),
             "real_interval_p95_ms": round(float(statistics.median(p95s)), 3) if p95s else None,
-            "first_sample_seq": samples[0].seq if samples else None,
-            "last_sample_seq": samples[-1].seq if samples else self._sample_seq,
+            "first_sample_seq": delivered[0].seq if delivered else None,
+            "last_sample_seq": delivered[-1].seq if delivered else None,
             "real": real_stats,
             "output": output_stats,
             "multiplier": multiplier_stats,
-            "frametime": frametime_stats(sample.real_fps for sample in samples),
+            "frametime": frametime_stats(sample.real_fps for sample in delivered),
             "misses": sum(operation in MISS_OPERATIONS for operation in operations),
             "hard_pressure": sum(operation in HARD_PRESSURE_OPERATIONS for operation in operations),
             "bypasses": sum(operation in BYPASS_OPERATIONS for operation in operations),

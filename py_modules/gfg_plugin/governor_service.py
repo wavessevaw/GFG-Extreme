@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 1.6.7).
+"""Live orchestration service for GFG Governor (GFG Extreme 1.6.9).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -68,7 +68,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, confirmation_evidence, matches,
 )
 
-VERSION = "1.6.7"
+VERSION = "1.6.9"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -510,7 +510,7 @@ class GovernorService:
         return {"enabled": bool(raw.get("enabled", True)), "preset": preset, "position": position, "style": style}
 
     HUD_STYLES = ("rings", "text")
-    RING_HUD_PERIOD_S = 1.0
+    RING_HUD_PERIOD_S = 0.5   # twice a second; the Vulkan layer polls the picture at the same rate
     HUD_HOLD_S = 5.0          # a missing sample/telemetry for this long keeps the last picture
     HUD_TAG_MIN_S = 2.0       # a status badge stays at least this long (no flipping every second)
     _hud_values: Optional[tuple] = None
@@ -602,7 +602,7 @@ class GovernorService:
             return self._publish_ring_hud_locked(status, settings)
 
     def _publish_ring_hud_locked(self, status: Dict[str, Any], settings: Dict[str, Any]) -> bool:
-        """Refresh at 1 Hz, skip identical pictures, and never display stale FPS."""
+        """Refresh twice a second, skip identical pictures, and never display stale FPS."""
         now = self._clock()
         tel = status.get("telemetry") or {}
         snapshot = tel.get("snapshot") or {}
@@ -627,6 +627,11 @@ class GovernorService:
         # Renderer samples already summarize an interval. Avoid another 12/20-second average.
         fps = latest.get("output_fps") if snapshot is not None else (summary.get("output") or {}).get("median")
         real = latest.get("real_fps") if snapshot is not None else (summary.get("real") or {}).get("median")
+        if latest.get("output_source") == "instant_plan":
+            # A planned multiplier is not evidence that images were delivered.
+            # Do not refresh or hold an earlier healthy rate over a plan-only sample.
+            fps = real = None
+            self._hud_values = None
         power = status.get("power") or {}
         battery = status.get("battery") or {}
         fo = status.get("frame_os") or {}
@@ -1841,13 +1846,26 @@ class GovernorService:
         return self._last_display
 
     # -------------------------------------------------------------- helpers
+    def _extreme_session(self, profile: Optional[str] = None) -> bool:
+        """Enabled Extreme still owns both PPT channels. Leaving the mode restores them."""
+        profile = self._active_profile if profile is None else profile
+        return bool(profile and self._profile_enabled(profile) and self._mode(profile) == "extreme")
+
+    async def _release_caps_unless_extreme(self, profile: str) -> None:
+        """A missing overlay or a telemetry gap is not an exit from Extreme.
+
+        Restoring inherited caps there reopened the higher fastPPT channel the ceiling had clamped.
+        """
+        if self.power.state.owned and not self._extreme_session(profile):
+            await asyncio.to_thread(self.power.restore_if_owned)
+
     async def _restore_power(self, reason: str) -> None:
         profile = self._active_profile
         continuing_extreme = (
-            profile and self._profile_enabled(profile) and self._mode(profile) == "extreme"
+            self._extreme_session(profile)
             and reason in ("governor-mode-changed", "display-mode-changed", "ladder-exhausted",
                            "not-healthy-at-ceiling", "renderer-capacity-unavailable",
-                           "renderer-capacity-request-cancelled")
+                           "renderer-capacity-request-cancelled", "new-game-session")
         )
         if continuing_extreme:
             # Replanning is not leaving Extreme: restoring a 20 W baseline here
@@ -2316,7 +2334,9 @@ class GovernorService:
                         and not self._menu_covering() and self._trusted_game_focus() is not False
                         and flow_number(snap.get("sample_age_ms")) is not None
                         and snap["sample_age_ms"] <= self.MAX_SAMPLE_AGE_MS
+                        and latest.get("output_source") in {"measured", "scheduler_interval"}
                         and context_matches and ack.get("resources")
+                        and flow_number(ack.get("value")) is not None
                         and self._clock() - getattr(self, "_flow_sensors_at", -1e9) <= self.MAX_SAMPLE_AGE_MS / 1000
                         and ack.get("lighter_model") == "0"
                         and (self._status.get("diagnosis") or {}).get("thermal") == "ok"
@@ -2626,8 +2646,7 @@ class GovernorService:
 
         sample_age_ms = snapshot.get("sample_age_ms")
         if not snapshot.get("available") or sample_age_ms is None or sample_age_ms > self.MAX_SAMPLE_AGE_MS:
-            if self.power.state.owned:
-                await asyncio.to_thread(self.power.restore_if_owned)
+            await self._release_caps_unless_extreme(profile)
             telemetry_reason = "waiting-for-fps-events"
             path = str(snapshot.get("path") or "")
             # A game launched before Governor was enabled has neither renderer
@@ -2801,11 +2820,13 @@ class GovernorService:
             bounded_claim = getattr(power, "claim_at_ceiling_w", None)
             if self._mode(profile) == "extreme" and callable(bounded_claim):
                 claimed = await asyncio.to_thread(bounded_claim)  # derive cap from actual player/device
+                if not claimed.get("owned") or claimed.get("success") is False:
+                    self._status.update({"state": "PAUSED", "reason": "extreme-ceiling-not-applied"})
+                    return None
             else:
                 claimed = await asyncio.to_thread(power.claim)
-            if not claimed.get("owned") or claimed.get("success") is False:
-                self._status.update({"state": "PAUSED", "reason": "extreme-ceiling-not-applied"})
-                return None
+                if not claimed.get("owned"):
+                    return None
             self._applied_tdp = None  # caps were restored meanwhile: write the target again
             self._event("power-claimed", "budget-mode", profile=profile)
         else:
@@ -2879,8 +2900,8 @@ class GovernorService:
         capability = self._capability(profile, launch)
         self._status["capability"] = capability
         if not capability["overlay_active"]:
-            if self.power.state.owned and self._budget is None:
-                await asyncio.to_thread(self.power.restore_if_owned)
+            if self._budget is None:
+                await self._release_caps_unless_extreme(profile)
             self._status.update({"state": "PLAN", "reason": capability["reason"]})
             return
         now = self._clock()
@@ -3073,7 +3094,8 @@ class GovernorService:
             floor = 0.8 * float(self._budget.point.target_output_fps)
             recent = [sample.output_fps for sample in self.observer.samples_since(
                 self.observer.time_fn() - self.FAST_CHECK_SECONDS,
-                after_seq=self._injection_seq)][-self.STARVATION_RUN:]
+                after_seq=self._injection_seq)
+                      if getattr(sample, "output_source", None) != "instant_plan"][-self.STARVATION_RUN:]
             lasting = (len(recent) >= self.STARVATION_RUN
                        and all(isinstance(v, (int, float)) and v < floor for v in recent))
             starved = (settled and lasting and isinstance(output, (int, float))
@@ -3366,6 +3388,32 @@ class GovernorService:
             self._event("operating-point-locked", self.search.status.reason, profile=profile, point=point,
                         tdp_w=self.search.status.current_tdp_w)
 
+    async def _refresh_hud_beat(self) -> None:
+        """One HUD publish between Governor seconds. Does not claim power or judge a point."""
+        profile = str(self._status.get("profile") or "")
+        if not profile or not self.hud_settings(profile)["enabled"]:
+            return
+        await asyncio.to_thread(self.observer.poll)
+        snapshot = self.observer.snapshot()
+        self._status["telemetry"] = {
+            "snapshot": snapshot,
+            "summary": self.observer.summary(self.WINDOW_SECONDS),
+        }
+        await asyncio.to_thread(self._sync_hud, profile)
+
+    async def _wait_governor(self, timeout: float) -> bool:
+        """Wait up to timeout. True when stop or an external wake should run a full iteration."""
+        wake = self._wake
+        waiters = [asyncio.ensure_future(self._stop.wait())]
+        if wake is not None:
+            waiters.append(asyncio.ensure_future(wake.wait()))
+        try:
+            done, _pending = await asyncio.wait(waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+            return bool(done)
+        finally:
+            for waiter in waiters:
+                waiter.cancel()
+
     async def _loop(self) -> None:
         while not self._stop.is_set():
             # Clear before the iteration: a poke that lands while it runs
@@ -3379,13 +3427,18 @@ class GovernorService:
             except Exception as error:
                 self.log.warning("Governor iteration failed: %s", error)
                 self._status.update({"state": "PAUSED", "reason": "iteration-error", "error": str(error)})
-            timeout = self.IDLE_LOOP_SECONDS if self._is_idle() else self.LOOP_SECONDS
-            wake = self._wake
-            waiters = [asyncio.ensure_future(self._stop.wait())]
-            if wake is not None:
-                waiters.append(asyncio.ensure_future(wake.wait()))
+            if self._stop.is_set():
+                break
+            if self._is_idle():
+                await self._wait_governor(self.IDLE_LOOP_SECONDS)
+                continue
+            half = self.LOOP_SECONDS / 2
+            if await self._wait_governor(half):
+                continue
             try:
-                await asyncio.wait(waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
-            finally:
-                for waiter in waiters:
-                    waiter.cancel()
+                await self._refresh_hud_beat()
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                self.log.debug("HUD refresh failed: %s", error)
+            await self._wait_governor(half)

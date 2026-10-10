@@ -192,6 +192,14 @@ class HudTelemetryRegressionTests(unittest.TestCase):
         self.assertNotIn("FPS", hud.status_line(status, "minimal"))
         self.assertIsNone(hud.output_fps(status))
 
+    def test_text_hud_does_not_show_a_planned_multiplier_as_fps(self):
+        status = {"enabled": True, "telemetry": {"snapshot": {
+            "sample_age_ms": 100,
+            "latest": {"real_fps": 30, "output_fps": 90, "output_source": "instant_plan",
+                       "effective_multiplier": 3}}}}
+        self.assertNotIn("FPS", hud.status_line(status, "minimal"))
+        self.assertIsNone(hud.output_fps(status))
+
     def test_hud_only_shows_live_fps_without_enabling_governor(self):
         status = {"enabled": False, "telemetry": {"snapshot": {
             "sample_age_ms": 100, "latest": {"real_fps": 30, "output_fps": 90}}}}

@@ -2314,6 +2314,34 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
             self.assertEqual(self.svc.power.writes[-1], min(self.svc._budget.normal_max_w, self.svc._budget.tdp + 4.0))
 
 
+class HudCadenceTests(unittest.TestCase):
+    def test_loop_publishes_hud_halfway_between_governor_seconds(self):
+        svc = GovernorService.__new__(GovernorService)
+        svc.LOOP_SECONDS = 1.0
+        svc.IDLE_LOOP_SECONDS = 5.0
+        svc._stop = asyncio.Event()
+        svc._wake = asyncio.Event()
+        svc.log = logging.getLogger("hud-cadence")
+        svc._is_idle = lambda: False
+        calls = []
+
+        async def iteration():
+            calls.append(("gov", time.monotonic()))
+            if sum(kind == "gov" for kind, _when in calls) >= 2:
+                svc._stop.set()
+
+        async def hud():
+            calls.append(("hud", time.monotonic()))
+
+        svc._iteration = iteration
+        svc._refresh_hud_beat = hud
+        asyncio.run(svc._loop())
+        self.assertEqual([kind for kind, _when in calls], ["gov", "hud", "gov"])
+        gap = calls[1][1] - calls[0][1]
+        self.assertGreaterEqual(gap, 0.45)
+        self.assertLess(gap, 0.75)
+
+
 class RingRefreshTests(unittest.TestCase):
     """Use real publication logic and fake only the rasterizer/clock."""
     def setUp(self):
@@ -2354,16 +2382,36 @@ class RingRefreshTests(unittest.TestCase):
     def publish(self):
         return self.svc._publish_ring_hud(self.status, self.settings)
 
-    def test_one_second_refresh_and_latest_fps(self):
+    def test_half_second_refresh_and_latest_fps(self):
         self.assertTrue(self.publish())
         self.assertEqual(self.writes[-1][0]["fps"], 90)
         self.status["telemetry"]["snapshot"]["latest"]["output_fps"] = 70
         self.now += 0.5
         self.publish()
-        self.assertEqual(len(self.writes), 1)
-        self.now += 0.5
-        self.publish()
         self.assertEqual(self.writes[-1][0]["fps"], 70)
+        self.assertEqual(len(self.writes), 2)
+
+
+    def test_plan_only_rate_blanks_hud_instead_of_holding_previous_ninety(self):
+        self.publish()
+        self.status["telemetry"]["snapshot"]["latest"].update(output_source="instant_plan", output_fps=90, real_fps=30)
+        self.now += 1
+        self.publish()
+        self.assertIsNone(self.writes[-1][0]["fps"])
+        self.assertIsNone(self.writes[-1][0]["real"])
+        self.assertIsNone(self.svc._hud_values)
+        self.status["telemetry"]["snapshot"]["latest"].update(output_source="measured", output_fps=88, real_fps=29.3)
+        self.now += 1
+        self.publish()
+        self.assertEqual(self.writes[-1][0]["fps"], 88)
+
+    def test_measured_zero_output_replaces_previous_rate_in_hud(self):
+        self.publish()
+        self.status["telemetry"]["snapshot"]["latest"].update(output_source="measured", output_fps=0, real_fps=30)
+        self.now += 1
+        self.publish()
+        self.assertEqual(self.writes[-1][0]["fps"], 0)
+        self.assertEqual(self.writes[-1][0]["real"], 30)
 
     def test_identical_visible_data_skips_render_and_write(self):
         self.publish()
@@ -2647,3 +2695,72 @@ class FlowRuntimeTests(unittest.TestCase):
         asyncio.run(self.svc._sync_flow("game"))
         self.assertIsNone(self.svc._flow.since)
         self.assertFalse(self.svc._flow.busy)
+
+
+    def held_flow(self):
+        self.prepare_flow()
+        for _ in range(100):
+            self.flow_tick()
+        self.assertEqual(self.svc._flow.phase, "held")
+        self.assertEqual(self.overlay_profile()["flow_scale"], .7)
+
+    def inject_flow_frame(self, real=30, output=90):
+        self.t["now"] += 1
+        self.svc.observer.consume_line(adaptive_plan(real, output) + " context=0xaa", now=self.t["now"])
+        self.svc._status["telemetry"] = {"snapshot": self.svc.observer.snapshot()}
+        self.svc._flow_sensors_at = self.t["now"]
+        asyncio.run(self.svc._sync_flow("game"))
+
+    def test_late_starvation_restores_saved_overlay_before_more_power(self):
+        self.held_flow()
+        writes = list(self.svc.power.writes)
+        self.inject_flow_frame(15, 45)
+        self.assertEqual(self.overlay_profile()["flow_scale"], .8)
+        self.assertEqual(self.svc._flow.phase, "wait-restore")
+        self.assertEqual(self.svc._flow.reason, "output-starved")
+        self.assertEqual(self.svc.power.writes, writes)
+        self.assertIsNone(self.svc._flow.proof)
+        self.ack_flow(.8)
+        self.inject_flow_frame()
+        self.assertEqual(self.svc._flow.phase, "done")
+        for _ in range(40):
+            self.flow_tick()
+        self.assertEqual(self.overlay_profile()["flow_scale"], .8)  # no retry loop
+
+    def test_later_renderer_state_change_clears_success_and_requires_restore_ack(self):
+        self.held_flow()
+        self.ack_flow(.6)
+        self.inject_flow_frame()
+        self.assertEqual(self.overlay_profile()["flow_scale"], .8)
+        self.assertEqual(self.svc._flow.reason, "held-flow-not-confirmed")
+        self.assertTrue(self.svc._flow.busy)
+        self.assertIsNone(self.svc._flow.proof)
+
+    def test_incomplete_renderer_ack_cannot_leave_old_flow_accepted(self):
+        self.held_flow()
+        self.svc.observer.consume_line(H + "operation=runtime-state-applied context=0xaa role=frame-generation frame_generation_resources_available=1 generated_frame_capacity=2 lighter_model=0", now=self.t["now"])
+        self.inject_flow_frame()
+        self.assertEqual(self.overlay_profile()["flow_scale"], .8)
+        self.assertTrue(self.svc._flow.busy)
+        self.assertIsNone(self.svc._flow.proof)
+
+    def test_spatial_ack_does_not_interrupt_healthy_flow_or_limit_extreme_ratios(self):
+        self.held_flow()
+        self.svc.observer.consume_line(H + "operation=runtime-state-applied context=0xcc role=spatial frame_generation_resources_available=0 generated_frame_capacity=0 effective_flow_scale=0.3 observed_output_fps=15 current_base_fps=15", now=self.t["now"])
+        self.inject_flow_frame()
+        self.assertEqual(self.overlay_profile()["flow_scale"], .7)
+        self.assertEqual(self.svc._flow.phase, "held")
+        self.assertEqual(self.svc.observer.current_max_multiplier, 3)
+
+
+    def test_plan_only_output_cannot_start_a_flow_benefit_trial(self):
+        self.prepare_flow()
+        for _ in range(45):
+            self.t["now"] += 1
+            self.svc.observer.consume_line(H + "operation=adaptive-plan context=0xaa base_fps=30 generated=2", now=self.t["now"])
+            self.svc._status["telemetry"] = {"snapshot": self.svc.observer.snapshot()}
+            self.svc._flow_sensors_at = self.t["now"]
+            asyncio.run(self.svc._sync_flow("game"))
+        self.assertEqual(self.overlay_profile()["flow_scale"], .8)
+        self.assertEqual(self.svc._flow.phase, "idle")
+        self.assertIsNone(self.svc._flow.proof)
