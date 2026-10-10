@@ -140,7 +140,8 @@ class FlowTrial:
         actual = number(actual_flow)
         self.actual = actual
         if context != self.context:
-            # The caller restores Saved before changing profile/point/session.
+            if self.change_outstanding():
+                return self.request_saved_restore(now, event_seq)
             self.reset()
             self.context = context
             self.mode = mode
@@ -256,7 +257,7 @@ class FlowTrial:
         self.attempted = True
         return None
 
-    def request_saved_restore(self, now, event_seq):
+    def request_saved_restore(self, now, event_seq, reason="saved-restore"):
         """Ask for the Saved scale. The caller writes it and waits for renderer ACK.
 
         A repeat while the ACK is pending does not move the mark.
@@ -269,4 +270,11 @@ class FlowTrial:
             self.wanted is not None and abs(self.wanted - self.original) >= 0.005)
         if not changed:
             return None
-        return self._abort(now, event_seq, "autopilot-withdrew")
+        return self._abort(now, event_seq, reason)
+
+    def change_outstanding(self):
+        if self.original is None:
+            return False
+        if self.busy or self.phase == "held":
+            return True
+        return self.wanted is not None and abs(self.wanted - self.original) >= 0.005
