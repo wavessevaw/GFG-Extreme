@@ -14,8 +14,10 @@ permissions:
   contents: write
 
 concurrency:
-  group: release
-  cancel-in-progress: false
+  # Main and the experimental PR branch must never serialize each other's
+  # releases. Superseded feature commits are cancelled; main is never cancelled.
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   release:
