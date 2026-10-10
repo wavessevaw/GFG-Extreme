@@ -379,11 +379,19 @@ class GovernorService:
         was = self._mode(profile)
         self._settings.setdefault("profiles", {}).setdefault(profile, {})["mode"] = mode
         self._save_settings()
+        overlay_error = None
+        if "extreme" in (mode, was) and mode != was:
+            overlay_error = self._ensure_base_overlay_sync(profile)
+            self._extreme_act_switch(profile, entering=mode == "extreme")
+            self._save_settings()
         if profile == self._active_profile:
             self._forced_mode_change = True
-        self.set_autopilot_test(mode == "autopilot" and self._profile_enabled(profile))
+        if mode == "autopilot" or was == "autopilot":
+            self.set_autopilot_test(mode == "autopilot" and self._profile_enabled(profile))
+        else:
+            self._poke()
         return {"success": True, "error": None, "profile": profile, "mode": mode,
-                "previous_mode": was}
+                "previous_mode": was, **({"overlay_error": overlay_error} if overlay_error else {})}
 
     def set_autopilot_test(self, enabled: bool) -> Dict[str, Any]:
         """The Autopilot mode arms one power trial. Flow stays off."""
@@ -391,10 +399,6 @@ class GovernorService:
         self._autopilot_flow_enabled = False
         self._poke()
         return {"success": True, "error": None, "enabled": self._autopilot_power_enabled, "tool": "power"}
-
-    def _arm_autopilot_mode(self, enabled: bool) -> None:
-        self._autopilot_power_enabled = bool(enabled)
-        self._autopilot_flow_enabled = False
 
     def game_model_target(self, profile: str) -> Optional[Dict[str, Any]]:
         """Which game "Reset what GFG learned" would reset for ``profile``, or None.
@@ -3034,10 +3038,9 @@ class GovernorService:
             self._evaluation_after_seq = self.observer.sample_seq
         enabled = self._profile_enabled(profile)
         self._status.update({"profile": profile, "enabled": enabled})
-        self._arm_autopilot_mode(enabled and self._mode(profile) == "autopilot")
-        if not (self._autopilot_power_enabled or self._autopilot_flow_enabled) and self._autopilot_change_outstanding():
-            if not await self._withdraw_exclusive_tool():
-                return
+        if enabled and self._mode(profile) == "autopilot":
+            self._autopilot_power_enabled = True
+            self._autopilot_flow_enabled = False
         if not enabled:
             if self.power.state.owned or self._status.get("state") != "DISABLED" or self._point or self._request:
                 if not await self._settle_autopilot_power_before_release():
