@@ -75,6 +75,22 @@ class HalfRateTests(unittest.TestCase):
             self.assertFalse(third.owned)
             self.assertEqual(p.read_text(), "2x2")
 
+    def test_rollback_never_changes_the_next_steam_session(self):
+        with tempfile.TemporaryDirectory() as d:
+            old = Path(d) / "radv_vrs.old"
+            newer = Path(d) / "radv_vrs.new"
+            for path, mode in ((old, "1x1"), (newer, "2x2")):
+                path.write_text(mode)
+                path.chmod(0o600)
+            backend = SteamVrsBackend(fixed_path=old)
+            actor = HalfRateShading(backend)
+            self.assertTrue(actor.enable_trial()["applied"])
+            backend.fixed_path = newer  # Gamescope/Steam switched its VRS file
+            result = actor.restore()
+            self.assertTrue(result.get("yielded"))
+            self.assertEqual(newer.read_text(), "2x2")
+            self.assertFalse(actor.owned)
+
     def test_user_enabled_shading_is_not_modified(self):
         backend = StaticBackend("2x2")
         actor = HalfRateShading(backend)
