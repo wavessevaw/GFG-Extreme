@@ -201,7 +201,9 @@ class GovernorService:
             writes_enabled=True,
             receipt_path=self.configuration.config_dir / "autopilot-gpu-receipt.json",
         )
-        self._autopilot_half_rate = HalfRateShading()
+        self._autopilot_half_rate = HalfRateShading(
+            receipt_path=self.configuration.config_dir / "autopilot-vrs-receipt.json")
+        self._autopilot_shading_yielded = False
         self._autopilot_targets = TargetPolicy()
         self._autopilot_plan = "off"
         self._autopilot_launch = None
@@ -358,6 +360,8 @@ class GovernorService:
             return {"success": False, "error": "Valid profile and boolean required"}
         self._settings.setdefault("profiles", {}).setdefault(profile, {})["autopilot_shading"] = allowed
         self._save_settings()
+        if allowed and profile == self._active_profile:
+            self._autopilot_shading_yielded = False
         if not allowed and profile == self._active_profile and self._autopilot_half_rate.owned:
             self._restore_autopilot_shading("consent-revoked")
         self._poke()
@@ -3032,6 +3036,7 @@ class GovernorService:
             self._status["autopilot"] = {"enabled": False, "active": False, "reason": reason}
             return
         self._autopilot_plan = "off"
+        self._autopilot_shading_yielded = False
         self._autopilot_tones = None
         self._autopilot_tone_since = 0.0
         self._autopilot_targets = TargetPolicy()
@@ -3067,6 +3072,12 @@ class GovernorService:
         return False
 
     def _autopilot_maintain(self) -> None:
+        if (self._autopilot_half_rate.owned
+                and self._autopilot_half_rate.phase == "owned"
+                and self._autopilot_half_rate.status().get("mode") != "2x2"):
+            # Steam's QAM override wins; do not fight the user's choice.
+            self._autopilot_shading_yielded = True
+            self._restore_autopilot_shading("external-quick-menu-override")
         profile = self._active_profile
         mode = self._mode(profile) if profile else ""
         if self._autopilot_half_rate.phase == "restore-pending":
@@ -3128,7 +3139,8 @@ class GovernorService:
             tdp_error=power.get("error"),
             tdp_external_change=bool(power.get("external_change")),
             shading_available=bool(shading.get("available")),
-            shading_consent=bool(self._profile_settings(profile).get("autopilot_shading", False)),
+            shading_consent=(bool(self._profile_settings(profile).get("autopilot_shading", False))
+                             and not self._autopilot_shading_yielded),
             shading_enabled=bool(shading.get("enabled")),
         )
         decision = autopilot_decide(view)
@@ -3246,6 +3258,7 @@ class GovernorService:
             "target_fps": view.target_fps, "confidence": decision.confidence,
             "gpu_clock": clock, "half_rate_shading": self._autopilot_half_rate.status(),
             "shading_consent": bool(self._profile_settings(profile).get("autopilot_shading", False)),
+            "shading_yielded_to_steam": self._autopilot_shading_yielded,
             "tones": shown,
             "frametime_p95_ms": view.frametime_p95_ms,
             "freeze_tdp": self._autopilot_arbiter.freeze_tdp,
