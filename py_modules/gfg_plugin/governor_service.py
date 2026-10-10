@@ -50,6 +50,7 @@ from .host_sensors import HostSensors, diagnose
 from . import extreme as extreme_policy
 from .autopilot.arbiter import Arbiter
 from .autopilot.gpu_clock import GpuClock
+from .autopilot.half_rate import HalfRateShading
 from .autopilot.hud_tone import hold as hold_tones
 from .autopilot.hud_tone import tones as autopilot_tones
 from .autopilot.planner import TargetPolicy, View, decide as autopilot_decide
@@ -200,6 +201,7 @@ class GovernorService:
             writes_enabled=True,
             receipt_path=self.configuration.config_dir / "autopilot-gpu-receipt.json",
         )
+        self._autopilot_half_rate = HalfRateShading()
         self._autopilot_targets = TargetPolicy()
         self._autopilot_plan = "off"
         self._autopilot_launch = None
@@ -349,6 +351,18 @@ class GovernorService:
         self._poke()
         return {"success": True, "preference": preference}
 
+    def set_autopilot_shading(self, profile: str, allowed: bool) -> Dict[str, Any]:
+        """Explicit informed consent for visual-quality-changing VRS trials."""
+        profile = str(profile or "").strip()
+        if not profile or type(allowed) is not bool:
+            return {"success": False, "error": "Valid profile and boolean required"}
+        self._settings.setdefault("profiles", {}).setdefault(profile, {})["autopilot_shading"] = allowed
+        self._save_settings()
+        if not allowed and profile == self._active_profile and self._autopilot_half_rate.owned:
+            self._restore_autopilot_shading("consent-revoked")
+        self._poke()
+        return {"success": True, "allowed": allowed}
+
     _settings_lock = threading.Lock()
 
     def _save_settings(self) -> None:
@@ -406,9 +420,12 @@ class GovernorService:
             self._save_settings()
         if profile == self._active_profile:
             self._forced_mode_change = True
-        if self._autopilot_gpu.owned and mode != "autopilot":
-            if self._restore_autopilot_gpu("mode-switch"):
-                self._autopilot_arbiter = Arbiter()
+        if profile == self._active_profile and mode != "autopilot":
+            if self._autopilot_half_rate.owned:
+                self._restore_autopilot_shading("mode-switch")
+            if self._autopilot_gpu.owned:
+                if self._restore_autopilot_gpu("mode-switch"):
+                    self._autopilot_arbiter = Arbiter()
         if profile == self._active_profile and was == "autopilot" and mode != "autopilot":
             self._clear_autopilot_session("mode-switch")
         self._poke()
@@ -1836,6 +1853,7 @@ class GovernorService:
                 self._event("overlay-restore-failed", "plugin-stop", profile=profile, error=error)
         self._reset_run_state()
         self._clear_autopilot_session("plugin-stop")
+        self._restore_autopilot_shading("plugin-stop")
         self._restore_autopilot_gpu("plugin-stop")
         try:
             # shutdown(): waits for a write still running in a worker thread, then restores and
@@ -1890,6 +1908,9 @@ class GovernorService:
         value["active_point_mode"] = self._point_mode
         value["ladder"] = self._ladder.status() if self._ladder else None
         value["mode"] = self._mode(profile or value.get("profile", ""))
+        gp = profile or value.get("profile", "")
+        value["autopilot_shading_allowed"] = bool(self._profile_settings(gp).get("autopilot_shading", False))
+        value["autopilot_shading"] = self._autopilot_half_rate.status()
         value["budget"] = self._budget.status() if self._budget else None
         if self._restore_pending:
             value["restore_pending"] = dict(self._restore_pending)
@@ -2012,6 +2033,7 @@ class GovernorService:
 
     async def _release(self, profile: str, reason: str) -> None:
         """Disable/profile-switch/unload path: restore overlay, then release ownership."""
+        await asyncio.to_thread(self._restore_autopilot_shading, reason)
         await asyncio.to_thread(self._restore_autopilot_gpu, reason)
         self._clear_point_state()
         error = await asyncio.to_thread(self._restore_overlay_sync, profile)
@@ -3020,6 +3042,19 @@ class GovernorService:
             self._budget.hold_probes = False
         self._status["autopilot"] = {"enabled": False, "active": False, "reason": reason}
 
+    def _restore_autopilot_shading(self, reason: str) -> bool:
+        result = self._autopilot_half_rate.restore()
+        if result.get("restored") or result.get("yielded"):
+            if (self._autopilot_arbiter.tool == "half-rate-shading"
+                    and self._autopilot_arbiter.state in ("ROLLBACK", "RESTORE_PENDING", "SETTLE", "VERIFY")):
+                self._autopilot_arbiter.finish_rollback()
+            self._event("autopilot-shading-restored", result.get("reason") or "restored", why=reason)
+            return True
+        self._autopilot_arbiter.mark_restore_pending(result.get("reason") or "shading-restore-failed",
+                                                    tool="half-rate-shading")
+        self._event("autopilot-shading-restore-failed", result.get("reason") or "restore-failed", why=reason)
+        return False
+
     def _restore_autopilot_gpu(self, reason: str) -> bool:
         result = self._autopilot_gpu.restore()
         if result.get("restored") or result.get("yielded"):
@@ -3034,19 +3069,32 @@ class GovernorService:
     def _autopilot_maintain(self) -> None:
         profile = self._active_profile
         mode = self._mode(profile) if profile else ""
+        if self._autopilot_half_rate.phase == "restore-pending":
+            self._restore_autopilot_shading("retry")
+            return
         if self._autopilot_gpu.phase == "restore-pending":
             self._restore_autopilot_gpu("retry")
+            return
+        if self._autopilot_half_rate.owned and mode != "autopilot":
+            self._restore_autopilot_shading("mode-exit")
             return
         if mode != "autopilot" and self._autopilot_gpu.owned:
             self._restore_autopilot_gpu("mode-exit")
             return
         launch = self._launch or {}
-        if launch.get("running") is False and launch.get("reason") != "no-inspector" and self._autopilot_gpu.owned:
-            self._restore_autopilot_gpu("game-exit")
-            return
+        if launch.get("running") is False and launch.get("reason") != "no-inspector":
+            if self._autopilot_half_rate.owned:
+                self._restore_autopilot_shading("game-exit")
+                return
+            if self._autopilot_gpu.owned:
+                self._restore_autopilot_gpu("game-exit")
+                return
         key = self._launch_key
-        if self._autopilot_launch is not None and key != self._autopilot_launch and self._autopilot_gpu.owned:
-            self._restore_autopilot_gpu("session-change")
+        if self._autopilot_launch is not None and key != self._autopilot_launch:
+            if self._autopilot_half_rate.owned:
+                self._restore_autopilot_shading("session-change")
+            if self._autopilot_gpu.owned:
+                self._restore_autopilot_gpu("session-change")
         self._autopilot_launch = key
 
     async def _autopilot_tick(self, profile: str, summary: Dict[str, Any], target: int) -> bool:
@@ -3055,6 +3103,7 @@ class GovernorService:
         power = self.power.status() if hasattr(self.power, "status") else {}
         battery = self._status.get("battery") or {}
         clock = await asyncio.to_thread(self._autopilot_gpu.status)
+        shading = await asyncio.to_thread(self._autopilot_half_rate.status)
         real = (summary.get("real") or {}).get("median")
         output = (summary.get("output") or {}).get("median")
         samples = int(summary.get("samples") or 0)
@@ -3078,6 +3127,9 @@ class GovernorService:
                              for k in ("observed_tdp_w", "current_tdp_w")),
             tdp_error=power.get("error"),
             tdp_external_change=bool(power.get("external_change")),
+            shading_available=bool(shading.get("available")),
+            shading_consent=bool(self._profile_settings(profile).get("autopilot_shading", False)),
+            shading_enabled=bool(shading.get("enabled")),
         )
         decision = autopilot_decide(view)
         arbiter = self._autopilot_arbiter
@@ -3094,6 +3146,10 @@ class GovernorService:
                            and (clock.get("level") == "auto" or self._autopilot_gpu.owned))
         if not clock_ready and decision.action == "OPTIMIZE_GPU_CLOCK":
             decision = autopilot_decide(View(**{**view.__dict__, "gpu_clock_available": False}))
+        if arbiter.state == "RESTORE_PENDING":
+            self._publish_autopilot(profile, view, decision, clock)
+            self._autopilot_plan = "pause"
+            return True
         if arbiter.freeze_tdp and arbiter.state in ("SETTLE", "VERIFY"):
             measured = self.observer.summary(self.WINDOW_SECONDS, after_seq=arbiter.after_seq)
             verdict = arbiter.judge(now, {**self._autopilot_evidence(measured, session),
@@ -3102,7 +3158,9 @@ class GovernorService:
                                            "gpu_busy_pct": sensors.get("gpu_busy_pct"),
                                            "gpu_clock_mhz": sensors.get("gpu_clock_mhz")})
             if verdict == "rollback":
-                restored = self._restore_autopilot_gpu("rollback")
+                restored = (self._restore_autopilot_shading("rollback")
+                            if arbiter.tool == "half-rate-shading"
+                            else self._restore_autopilot_gpu("rollback"))
                 if restored:
                     self._event("autopilot-rollback", arbiter.reason, profile=profile, restored=True)
                 else:
@@ -3115,6 +3173,27 @@ class GovernorService:
             self._autopilot_plan = "hold"
             if self._budget is not None:
                 self._budget.hold_planned = True
+            return True
+        if decision.action == "OPTIMIZE_SHADING":
+            admission = arbiter.admit(decision.action, now)
+            if admission == "ok" and shading.get("mode") == "1x1":
+                result = await asyncio.to_thread(self._autopilot_half_rate.enable_trial)
+                if result.get("applied"):
+                    arbiter.begin("half-rate-shading", decision.reason, now, evidence)
+                    self._autopilot_plan = "hold"
+                    self._event("autopilot-shading-apply", "opt-in-vrs-2x2-trial", profile=profile,
+                                baseline=evidence)
+                    if self._budget is not None:
+                        self._budget.hold_planned = self._budget.hold_probes = True
+                    self._publish_autopilot(profile, view, decision, clock)
+                    return True
+                if not result.get("restored", True):
+                    arbiter.mark_restore_pending("shading-restore-unconfirmed", tool="half-rate-shading")
+                    return True
+                self._event("autopilot-shading-skipped", result.get("reason"), profile=profile)
+            else:
+                self._event("autopilot-shading-skipped", admission, profile=profile)
+            self._autopilot_plan = "hold"
             return True
         if decision.action == "OPTIMIZE_GPU_CLOCK" and arbiter.admit(decision.action, now) == "ok" and clock_ready:
             result = await asyncio.to_thread(self._autopilot_gpu.lower_ceiling)
@@ -3165,7 +3244,9 @@ class GovernorService:
             "preference": self._autopilot_preference(profile),
             "real_fps": decision.measured_real_fps, "output_fps": decision.measured_output_fps,
             "target_fps": view.target_fps, "confidence": decision.confidence,
-            "gpu_clock": clock, "tones": shown,
+            "gpu_clock": clock, "half_rate_shading": self._autopilot_half_rate.status(),
+            "shading_consent": bool(self._profile_settings(profile).get("autopilot_shading", False)),
+            "tones": shown,
             "frametime_p95_ms": view.frametime_p95_ms,
             "freeze_tdp": self._autopilot_arbiter.freeze_tdp,
         }
