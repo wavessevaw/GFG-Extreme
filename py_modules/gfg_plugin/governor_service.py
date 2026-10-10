@@ -1838,13 +1838,26 @@ class GovernorService:
         return self._last_display
 
     # -------------------------------------------------------------- helpers
+    def _extreme_session(self, profile: Optional[str] = None) -> bool:
+        """Enabled Extreme still owns both PPT channels. Leaving the mode restores them."""
+        profile = self._active_profile if profile is None else profile
+        return bool(profile and self._profile_enabled(profile) and self._mode(profile) == "extreme")
+
+    async def _release_caps_unless_extreme(self, profile: str) -> None:
+        """A missing overlay or a telemetry gap is not an exit from Extreme.
+
+        Restoring inherited caps there reopened the higher fastPPT channel the ceiling had clamped.
+        """
+        if self.power.state.owned and not self._extreme_session(profile):
+            await asyncio.to_thread(self.power.restore_if_owned)
+
     async def _restore_power(self, reason: str) -> None:
         profile = self._active_profile
         continuing_extreme = (
-            profile and self._profile_enabled(profile) and self._mode(profile) == "extreme"
+            self._extreme_session(profile)
             and reason in ("governor-mode-changed", "display-mode-changed", "ladder-exhausted",
                            "not-healthy-at-ceiling", "renderer-capacity-unavailable",
-                           "renderer-capacity-request-cancelled")
+                           "renderer-capacity-request-cancelled", "new-game-session")
         )
         if continuing_extreme:
             # Replanning is not leaving Extreme: restoring a 20 W baseline here
@@ -2604,8 +2617,7 @@ class GovernorService:
 
         sample_age_ms = snapshot.get("sample_age_ms")
         if not snapshot.get("available") or sample_age_ms is None or sample_age_ms > self.MAX_SAMPLE_AGE_MS:
-            if self.power.state.owned:
-                await asyncio.to_thread(self.power.restore_if_owned)
+            await self._release_caps_unless_extreme(profile)
             telemetry_reason = "waiting-for-fps-events"
             path = str(snapshot.get("path") or "")
             # A game launched before Governor was enabled has neither renderer
@@ -2779,11 +2791,13 @@ class GovernorService:
             bounded_claim = getattr(power, "claim_at_ceiling_w", None)
             if self._mode(profile) == "extreme" and callable(bounded_claim):
                 claimed = await asyncio.to_thread(bounded_claim)  # derive cap from actual player/device
+                if not claimed.get("owned") or claimed.get("success") is False:
+                    self._status.update({"state": "PAUSED", "reason": "extreme-ceiling-not-applied"})
+                    return None
             else:
                 claimed = await asyncio.to_thread(power.claim)
-            if not claimed.get("owned") or claimed.get("success") is False:
-                self._status.update({"state": "PAUSED", "reason": "extreme-ceiling-not-applied"})
-                return None
+                if not claimed.get("owned"):
+                    return None
             self._applied_tdp = None  # caps were restored meanwhile: write the target again
             self._event("power-claimed", "budget-mode", profile=profile)
         else:
@@ -2857,8 +2871,8 @@ class GovernorService:
         capability = self._capability(profile, launch)
         self._status["capability"] = capability
         if not capability["overlay_active"]:
-            if self.power.state.owned and self._budget is None:
-                await asyncio.to_thread(self.power.restore_if_owned)
+            if self._budget is None:
+                await self._release_caps_unless_extreme(profile)
             self._status.update({"state": "PLAN", "reason": capability["reason"]})
             return
         now = self._clock()
