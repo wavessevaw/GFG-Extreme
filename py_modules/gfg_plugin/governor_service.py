@@ -405,6 +405,8 @@ class GovernorService:
         if self._autopilot_gpu.owned and mode != "autopilot":
             if self._restore_autopilot_gpu("mode-switch"):
                 self._autopilot_arbiter = Arbiter()
+        if was == "autopilot" and mode != "autopilot":
+            self._clear_autopilot_session("mode-switch")
         self._poke()
         return {"success": True, "error": None, "profile": profile, "mode": mode,
                 **({"overlay_error": overlay_error} if overlay_error else {})}
@@ -769,7 +771,11 @@ class GovernorService:
             sensors = status.get("sensors") or {}
             data["autopilot"] = {
                 "active": True,
-                "tones": pilot.get("tones") or {},
+                # A paused/expired renderer sample must not leave old green
+                # performance rings glowing until the next Autopilot tick.
+                "tones": ({**(pilot.get("tones") or {}),
+                           **({k: "grey" for k in ("fps", "gpu", "cpu", "frame", "energy")}
+                              if not fresh else {})}),
                 "gpu_mhz": sensors.get("gpu_clock_mhz"),
                 "cpu_pct": sensors.get("cpu_top_core_pct"),
                 "temp_c": sensors.get("temp_c"),
@@ -1039,6 +1045,8 @@ class GovernorService:
             if overlay_error is None:
                 self._status.pop("capability", None)
         else:
+            if profile == self._active_profile and self._mode(profile) == "autopilot":
+                self._clear_autopilot_session("user-disabled")
             # Invariant: restore overlay to Saved (verified) BEFORE ownership is
             # released.  The live loop then clears point/power state.
             overlay_error = self._restore_overlay_sync(profile)
@@ -2953,6 +2961,10 @@ class GovernorService:
         return bool(capability.get("scale_capable")) and not cpu_bound
 
     def _autopilot_blocks_planned(self) -> bool:
+        # The selected mode is part of the lock's ownership. A stale Autopilot
+        # HOLD cannot freeze Flow or Power Split after changing to Quality.
+        if not self._active_profile or self._mode(self._active_profile) != "autopilot":
+            return False
         if self._autopilot_arbiter.blocks_planned:
             return True
         return self._autopilot_plan in ("pause", "hold")
@@ -2965,7 +2977,10 @@ class GovernorService:
         output = (summary.get("output") or {}).get("median")
         fresh = int(summary.get("samples") or 0) >= 5 and real is not None and output is not None
         chosen = int(self._autopilot_targets.update(
-            display_target, real, output, self._autopilot_preference(profile), fresh))
+            display_target, real, output, self._autopilot_preference(profile), fresh,
+            sample_seq=summary.get("last_sample_seq"),
+            first_sample_seq=summary.get("first_sample_seq"),
+            span_s=summary.get("sample_span_s"), now=self._clock()))
         if display_target < 90:
             chosen = min(chosen, int(display_target))
         return chosen
@@ -3033,6 +3048,7 @@ class GovernorService:
         """One decision from Governor telemetry. True means do not move TDP this tick."""
         sensors = self._status.get("sensors") or {}
         power = self.power.status() if hasattr(self.power, "status") else {}
+        battery = self._status.get("battery") or {}
         clock = self._autopilot_gpu.status()
         real = (summary.get("real") or {}).get("median")
         output = (summary.get("output") or {}).get("median")
@@ -3051,6 +3067,12 @@ class GovernorService:
             preference=self._autopilot_preference(profile),
             multiplier=mult, multiplier_confirmed=bool(fresh and mult),
             frametime_p99_ms=frame.get("p99_ms"), frametime_jitter_ms=frame.get("jitter_ms"),
+            battery_pct=battery.get("percent"), battery_minutes=battery.get("minutes_left"),
+            external_power=battery.get("external_power"),
+            tdp_readable=any(isinstance(power.get(k), (int, float))
+                             for k in ("observed_tdp_w", "current_tdp_w")),
+            tdp_error=power.get("error"),
+            tdp_external_change=bool(power.get("external_change")),
         )
         decision = autopilot_decide(view)
         arbiter = self._autopilot_arbiter
