@@ -1,22 +1,29 @@
 name: Release
 
+# Main releases stay unchanged. A one-off feature-branch push may publish
+# v2.0.2 as an EXPERIMENTAL prerelease, without merging PR #117 to main.
 # Every push to main whose version (package.json) has no tag yet becomes a
 # GitHub release (0.x: pre-release v0.0.N-governor; 1.0.0+: official vX.Y.Z): tests, zip for Decky, SHA-256, description
 # from RELEASE_DESCRIPTION_V<version>.md.
 on:
   push:
-    branches: [main]
+    branches: [main, feature/autopilot-2.0.0]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: release
-  cancel-in-progress: false
+  # Main and the experimental PR branch must never serialize each other's
+  # releases. Superseded feature commits are cancelled; main is never cancelled.
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   release:
+    # Never publish a stable release from the feature branch. The branch is
+    # exclusively permitted for this one hardware-unverified prerelease.
+    if: github.ref == 'refs/heads/main' || (github.ref == 'refs/heads/feature/autopilot-2.0.0' && github.event_name == 'push')
     runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ github.token }}

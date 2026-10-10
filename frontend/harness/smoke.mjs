@@ -68,7 +68,7 @@ const cases = [
   ["home-extreme", ["Details"], ["EXTREME", "Power limit", "15 W · stock limit", "1024×640 → 1280×800", "0.30 (engine confirmed)", "not measured (needs an A-B-A check)", "the whole limit: 15 W or your lower one, never above"]],
   ["home-extreme-verify", [], ["Extreme · checking", "Render 90% counts only once the engine shows", "Checking render 90%", "Limit 15 W"]],
   ["home-extreme-restart", [], ["Extreme · 12 W", "your own 12 W limit (never raised)", "Restart the game once to enable"]],
-  ["home-extreme-offer", [], ["Want more real frames?", "4 W of your 15 W limit unused", "not promised", "Try Extreme", "Not now"]],
+  ["home-extreme-offer", [], ["MODE", "Autopilot", "Battery"]],
   ["home-scale-ignored", ["Details"], ["Lower resolution", "Off · this game always renders at full size"]],
   ["home-scale-ignored", ["Settings", "Scaling"], ["This game sets its own render size", "has no effect here"]],
   ["home-extreme", [], ["80% · sharpen 0.30"]],
@@ -200,20 +200,16 @@ for (const [state, nav, expected] of cases) {
   await other.close();
   cases.push(["extreme-wolf"]);
 }
-// First switch to Extreme asks about Frame OS Act once, then switches with the answer.
+// Autopilot replaces Extreme in the selector and does not ask the Act question.
 {
   const page = await openPage(browser, STATES["home-extreme-consent"]);
-  await page.getByText("EXTREME", { exact: true }).first().click();
-  await page.waitForTimeout(120);
-  const before = await page.evaluate(() => window.__modes || []);
-  if (before.length) { failed++; console.error(`FAIL extreme switched before the Act question: ${JSON.stringify(before)}`); }
-  if (!(await page.getByText("Let Frame OS Act join Extreme?", { exact: true }).count())) { failed++; console.error("FAIL no Act question"); }
-  await page.getByText("Without Act", { exact: true }).first().click();
+  await page.getByText("Autopilot", { exact: true }).first().click();
   await page.waitForTimeout(150);
   const r = await page.evaluate(() => ({ modes: window.__modes || [], consents: window.__consents || [] }));
-  if (JSON.stringify(r) !== JSON.stringify({ modes: ["extreme"], consents: [false] })) { failed++; console.error(`FAIL extreme consent flow: ${JSON.stringify(r)}`); }
+  if (JSON.stringify(r.modes) !== JSON.stringify(["autopilot"])) { failed++; console.error(`FAIL autopilot switch: ${JSON.stringify(r)}`); }
+  if (r.consents.length) { failed++; console.error("FAIL Act question still used for Autopilot"); }
   await page.close();
-  cases.push(["extreme-consent"]);
+  cases.push(["autopilot-replaces-extreme"]);
 }
 // The sharpening correction goes to the backend in 0.05 steps.
 {

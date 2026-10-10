@@ -850,8 +850,16 @@ class Plugin:
         )
 
     async def set_governor_mode(self, profile_name: str, mode: str) -> Dict[str, Any]:
-        """Battery, Balanced, Quality or Extreme (the whole stock power limit into real frames)."""
+        """Battery, Balanced, Quality, Autopilot, or the internal Extreme path."""
         return await asyncio.to_thread(self.governor_service.set_mode, profile_name, mode)
+
+    async def set_governor_autopilot_preference(self, profile_name: str, preference: str) -> Dict[str, Any]:
+        """Auto, Battery or Smoothness. One policy, not a second controller."""
+        return await asyncio.to_thread(self.governor_service.set_autopilot_preference, profile_name, preference)
+
+    async def set_governor_autopilot_shading(self, profile_name: str, allowed: bool) -> Dict[str, Any]:
+        """Consent to visual-quality-changing Half Rate Shading GPU experiments."""
+        return await asyncio.to_thread(self.governor_service.set_autopilot_shading, profile_name, allowed)
 
     async def get_governor_game_model_target(self, profile_name: str) -> Dict[str, Any]:
         """Settings -> Diagnostics: which game "Reset what GFG learned" would reset (None: unknown)."""
@@ -1503,7 +1511,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Extreme 1.6.9 started")
+        decky.logger.info("GFG Extreme 2.0.1 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""

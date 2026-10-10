@@ -1340,6 +1340,9 @@ class BudgetController:
             elif self.short_since is None:
                 self.short_since = now
         if verdict.healthy:
+            if getattr(self, "hold_planned", False):
+                self.bad = 0
+                return "hold"
             return self._healthy(now)
         return self._unhealthy(now, verdict, real_median, output_median)
 
@@ -1350,6 +1353,8 @@ class BudgetController:
         if self.phase == "locked":
             if self.settled_since is None:
                 self.settled_since = now
+            if getattr(self, "hold_probes", False):
+                return "hold"
             if now - self.locked_since < self._probe_delay():
                 return "hold"
             return self._reprobe(now)
