@@ -1,0 +1,40 @@
+name: Autopilot audit (synthetic evidence)
+
+on:
+  push:
+    branches:
+      - audit/autopilot-first-run-20261010
+  pull_request:
+    branches:
+      - autopilot/merge-ready-20261010
+    paths:
+      - 'py_modules/gfg_plugin/autopilot/**'
+      - 'py_modules/gfg_plugin/governor_service.py'
+      - 'py_modules/gfg_plugin/session_recorder.py'
+      - 'py_modules/gfg_plugin/plugin.py'
+      - 'tests/test_autopilot_*.py'
+      - 'scripts/autopilot_audit_run.py'
+      - '.github/workflows/autopilot-audit.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Run first Autopilot simulation and collect per-test logs
+        run: python3 scripts/autopilot_audit_run.py --outdir artifacts/autopilot-first-run
+      - name: Upload evidence even when tests fail
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autopilot-first-run-${{ github.sha }}
+          path: artifacts/autopilot-first-run/
+          if-no-files-found: error
+          retention-days: 30
