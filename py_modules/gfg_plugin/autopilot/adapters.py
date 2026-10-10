@@ -27,7 +27,10 @@ class ObservationMonitor:
                        and not 0 <= now - self.last_tick <= self.config.max_gap_s)
         if key != self.key or interrupted:
             self.after_seq = stream.seq
-            self.focus_epoch = now
+            # Focus is parsed before the monitor runs in the same iteration.
+            # Use the previous receipt boundary, not the later monitor time.
+            self.focus_epoch = (self.last_tick if self.last_tick is not None and not interrupted
+                                else max(0.0, now - self.config.max_age_s))
         self.key, self.last_tick = key, now
         reason = ""
         if backend != "gfg":

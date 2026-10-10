@@ -118,6 +118,15 @@ class ObservationTests(unittest.TestCase):
         self.assertEqual(result["perception"]["primary"], "STABLE")
         self.assertEqual(self.update(140, focus_at=100)["sample_count"], 0)
 
+    def test_focus_received_before_monitor_in_same_iteration_is_valid(self):
+        self.feed(100, 1)
+        self.update(100.01, focus_at=100)
+        for i in range(1, 9):
+            self.feed(100+i*2, i+1)
+            result = self.update(100+i*2+.01, focus_at=100)
+        self.assertEqual(result["perception"]["primary"], "STABLE")
+        self.assertEqual(self.update(150, focus_at=100)["sample_count"], 0)
+
     def test_real_poll_uses_one_receipt_timestamp_for_a_batch(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "renderer.log"

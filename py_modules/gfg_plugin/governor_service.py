@@ -1860,6 +1860,9 @@ class GovernorService:
         if self.power.state.owned and not self._extreme_session(profile):
             await self._restore_tdp("release-caps")
 
+    def _restoration_blocked(self) -> bool:
+        return bool(self._restore_pending) or self._actuator_restore_blocked()
+
     def _actuator_restore_blocked(self) -> bool:
         return bool(self._actuator_restore_errors or getattr(self.cpu, "restore_pending", False))
 
@@ -1870,6 +1873,9 @@ class GovernorService:
         return errors
 
     def _publish_restore_pending(self) -> None:
+        if self._restore_pending:
+            self.frame_os.executor_active = False
+            self._status.update(state="PAUSED", reason="overlay-restore-failed")
         if self._actuator_restore_blocked():
             self.frame_os.executor_active = False
             self._status.update(state="RESTORE_PENDING", reason="actuator-restore-failed",
@@ -2056,7 +2062,7 @@ class GovernorService:
         self, profile: str, saved: Dict[str, Any], point: OperatingPoint, external: bool,
         capability: Dict[str, Any],
     ) -> bool:
-        if self._actuator_restore_blocked():
+        if self._restoration_blocked():
             return False
         self._flow = FlowTrial()  # new points are evaluated at Saved flow
         self._status.pop("flow_control", None)
@@ -2311,7 +2317,7 @@ class GovernorService:
         self._update_battery()
         await asyncio.to_thread(self._update_sensors)
         self._update_autopilot_observation()
-        if self._actuator_restore_blocked():
+        if self._restoration_blocked():
             self._publish_restore_pending()
             return
         try:
@@ -2329,7 +2335,10 @@ class GovernorService:
             await self._sync_power_split(profile)
         except Exception as error:  # never disturb the Governor; the cap goes back
             self.log.warning("Power split step failed: %s", error)
-            await asyncio.to_thread(self.cpu.restore)
+            await self._restore_cpu()
+        if self._restoration_blocked():
+            self._publish_restore_pending()
+            return
         try:
             saved = (await asyncio.to_thread(self._saved_profile_config, profile)
                      if profile and self._mode(profile) == "extreme" else None)
@@ -2474,7 +2483,7 @@ class GovernorService:
     async def _iteration_core(self) -> None:
         await self._retry_restores()
         await self._retry_actuator_restores()
-        if self._actuator_restore_blocked():
+        if self._restoration_blocked():
             self._publish_restore_pending()
             return
         await asyncio.to_thread(self._standby_overlays_sync)
@@ -2489,7 +2498,7 @@ class GovernorService:
             self._forced_release.discard(forced)
             if forced == self._active_profile:
                 await self._release(forced, "governor-disabled")
-        if self._actuator_restore_blocked():
+        if self._restoration_blocked():
             return
         if profile != self._active_profile:
             old = self._active_profile
@@ -2498,7 +2507,7 @@ class GovernorService:
             else:
                 self._clear_point_state()
                 await self._restore_power("profile-changed")
-            if self._actuator_restore_blocked():
+            if self._restoration_blocked():
                 return
             self._active_profile = profile
             self._reset_run_state()
@@ -2805,7 +2814,7 @@ class GovernorService:
             if self.power.state.owned:
                 await self._restore_tdp("plan-without-overlay")
             return
-        if self._actuator_restore_blocked():
+        if self._restoration_blocked():
             return
         if self.power.state.owned:
             if not await self._restore_tdp("plan-trial"):
@@ -2881,7 +2890,7 @@ class GovernorService:
 
     async def _budget_power(self, profile: str) -> Optional[Dict[str, Any]]:
         """Own the PPT caps for budget mode.  Returns limits, or None when observe-only on TDP."""
-        if self._actuator_restore_blocked():
+        if self._restoration_blocked():
             return None
         power = self.power
         if not power.state.available and not await self._rediscover_power():
@@ -3347,7 +3356,7 @@ class GovernorService:
             self.log.debug("Game model not stored: %s", error)
 
     async def _apply_budget_tdp(self, profile: str) -> bool:
-        if self._actuator_restore_blocked():
+        if self._restoration_blocked():
             return False
         budget = self._budget
         if budget is None or not budget.tdp_control or budget.tdp is None or not self.power.state.owned:
@@ -3394,7 +3403,7 @@ class GovernorService:
         return bool(self.power.state.available)
 
     async def _power_step(self, profile: str, summary: Dict[str, Any]) -> None:
-        if self._actuator_restore_blocked():
+        if self._restoration_blocked():
             return
         point = self._point
         assert point is not None

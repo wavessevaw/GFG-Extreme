@@ -122,6 +122,35 @@ class RestoreBarrierTests(unittest.TestCase):
         self.assertEqual(self.svc._active_profile, "game")
         self.assertEqual(self.svc.get_status()["state"], "RESTORE_PENDING")
 
+    def test_cpu_restore_failure_during_split_blocks_later_writers(self):
+        async def failed_split(profile):
+            self.svc.cpu.restore_pending = True
+            self.svc.cpu.error = "late split restore failed"
+        async def no_core():
+            pass
+        with patch.object(self.svc, "_iteration_core", side_effect=no_core), \
+             patch.object(self.svc, "_sync_flow"), \
+             patch.object(self.svc, "_sync_power_split", side_effect=failed_split), \
+             patch.object(self.svc, "_refresh_extreme_sharpness", side_effect=AssertionError("overlay write")), \
+             patch.object(self.svc, "_configure_frame_os", side_effect=AssertionError("Act configuration")):
+            self.run_async(self.svc._iteration())
+        self.assertEqual(self.svc.get_status()["state"], "RESTORE_PENDING")
+        self.assertFalse(self.svc.frame_os.executor_active)
+
+    def test_profile_switch_waits_for_old_overlay_undo(self):
+        self.assertTrue(self.fixture.cfg.create_profile("other", "mako")["success"])
+        self.assertTrue(self.fixture.cfg.set_current_profile("other")["success"])
+        self.fixture.saved_hash = legacy.sha(self.fixture.cfg.config_file_path)
+        with patch.object(self.svc, "_restore_overlay_sync", return_value="overlay readback failed"):
+            self.run_async(self.svc._iteration())
+            self.assertEqual(self.svc._active_profile, "game")
+            self.assertIn("game", self.svc._restore_pending)
+            self.assertIsNone(self.run_async(self.svc._budget_power("other")))
+            self.assertFalse(self.run_async(self.svc._apply_budget_tdp("other")))
+            self.run_async(self.svc._iteration())
+        self.assertEqual(self.svc._active_profile, "game")
+        self.assertFalse(self.svc.power.writes)
+
     def test_shutdown_reports_restore_failure(self):
         with patch.object(self.svc.power, "restore_if_owned",
                           return_value={"success": False, "error": "shutdown restore failed"}):

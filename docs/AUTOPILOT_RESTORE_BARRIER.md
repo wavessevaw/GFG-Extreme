@@ -15,7 +15,8 @@ in place; the Extreme ceiling is retained during a successful normal replan.
 No new actuator interface, sysfs writer, mode migration or release is added.
 This fixes a lifecycle prerequisite; it does not connect the Autopilot policy or
 experiment engine. Renderer restore ACK and durable power crash recovery remain
-separate integration gates. Overlay failure semantics remain the existing ones.
+separate integration gates. Overlay failure retains its existing status, but now blocks profile transitions
+and new optimization until the original profile is restored.
 
 Validation: fault-injected real Governor lifecycle tests, temporary CPU sysfs
 tree, unchanged full repository CI. The tests are SIMULATED, not DEVICE-VERIFIED.
