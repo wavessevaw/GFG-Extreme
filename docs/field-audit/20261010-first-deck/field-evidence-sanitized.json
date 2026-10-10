@@ -1,0 +1,111 @@
+{
+  "schema": "gfg-autopilot-field-v1",
+  "source": {
+    "filename": "GFG-Extreme-log-20261010-223112.zip",
+    "sha256": "449c3523753792b994ef1ab2b87c26f7e5f45780ab3c5f46c2e41bb3d08f17d1",
+    "bytes": 38594,
+    "uploaded_to_public_repo": false,
+    "redaction": "Raw game launch manifests, Steam/game IDs, process PIDs, command lines and user paths intentionally withheld"
+  },
+  "collection": {
+    "date": "2026-10-10",
+    "duration_s": 166.6,
+    "device": "Steam Deck OLED / Galileo",
+    "steam_os": "3.8.28",
+    "plugin_reported": "1.7.0",
+    "audited_repo_code": "1.6.9-era PR #114; physical build SHA unverified"
+  },
+  "integrity": {
+    "setup_passed": 17,
+    "setup_total": 17,
+    "timeline_state_samples": 166,
+    "trace_jsonl": 490,
+    "trace_json_errors": 0,
+    "recorded_governor_events": 0,
+    "activity_events_including_pre_recording": 45,
+    "trace_recorded_bytes": 327657,
+    "trace_failures": 0
+  },
+  "autopilot": {
+    "flags": {
+      "power": true,
+      "flow": false
+    },
+    "observation_ticks": 163,
+    "power_control_ticks": 163,
+    "exclusive_control_ticks": 163,
+    "session_changes": 1,
+    "governor_state": {
+      "DISABLED": 166
+    },
+    "governor_reason": {
+      "governor-disabled": 166
+    },
+    "enabled_projection": {
+      "true": 166
+    },
+    "C2_actions": {
+      "OBSERVE": 163
+    },
+    "blockers": {
+      "launch-identity-unavailable": 18,
+      "runtime-not-observing": 145
+    },
+    "power_outcomes": {
+      "not-a-power-trial": 163
+    },
+    "power_writes_by_autopilot": 0,
+    "trial_count": 0,
+    "renderer_fps_samples": 0,
+    "baseline_fps_samples": 0,
+    "ack_count": 0,
+    "scheduler_phase": {
+      "idle": 163
+    }
+  },
+  "renderer": {
+    "log_lines": 136,
+    "operation_events": {
+      "process-identity": 3
+    },
+    "helper_process_identifications": 3,
+    "verified_main_game_frames": false,
+    "fps_receipts": 0,
+    "frame_os_layer_libraries_seen_in_helpers": true,
+    "live_frame_reports": 0
+  },
+  "host": {
+    "target_fps": 90,
+    "slow_ppt_w": {
+      "min": 20,
+      "max": 20
+    },
+    "fast_ppt_w": {
+      "min": 20,
+      "max": 20
+    },
+    "power_lease_owned_in_timeline": true,
+    "apu_draw_w": {
+      "min": 2.11,
+      "median": 8.045,
+      "max": 13.13
+    },
+    "temp_c": {
+      "min": 39,
+      "median": 49,
+      "max": 52
+    },
+    "gpu_busy_pct": {
+      "min": 0,
+      "max": 100
+    }
+  },
+  "verdict": {
+    "recording": "PASS",
+    "autopilot_control": "NOT TESTED",
+    "fps_provenance": "FAIL",
+    "root_cause": "Undetermined; renderer only emitted process identity events; Governor DISABLED gate; build parity mismatch",
+    "release_gate": "BLOCK",
+    "steam_deck_hardware_present": true
+  }
+}
