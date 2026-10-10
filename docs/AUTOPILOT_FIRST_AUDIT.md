@@ -1,6 +1,6 @@
 # Autopilot: first audit and diagnostic capture protocol
 
-**Status:** synthetic CI run only; Steam Deck, Gamescope and hardware PPT not yet tested.
+**Status:** Synthetic CI passed. The first physical Steam Deck **telemetry-only capture** was analyzed on 2026-10-10; no valid measured FPS was received and no Autopilot A/B/A actuator trial ran. Hardware PPT/Flow rollback is still NOT tested. See `docs/field-audit/20261010-first-deck/REPORT.md`.
 **Target:** draft PR #115 over the consolidated Autopilot PR #114. Neither enables the development flags.
 
 ## Evidence chain
@@ -53,7 +53,7 @@ python3 scripts/autopilot_audit_run.py --outdir artifacts/autopilot-first-run
 
 The dedicated GitHub Actions job runs the Autopilot, Governor Flow, restore barrier, runtime and SessionRecorder test suites. It always uploads `summary.json`, `test-run.log`, `test-events.jsonl`, `README.txt` (even on test failure). `summary.json` includes the SHA, duration, environment, test count and explicit `hardware_verified=false`.
 
-A **successful CI run** means only that the synthetic regression tests passed. It is not evidence that Autopilot was activated or that a physical Steam Deck performed the treatment and restore.
+A **successful CI run** means only that the synthetic regression tests passed. The first physical field log proves the instrumentation emitted 490 JSONL records over ~166 seconds, but still had zero game FPS samples, zero A/B/A trials and zero Autopilot actuator writes. It is not evidence that a physical Steam Deck performed a treatment and restore.
 
 ## Privacy and evidence integrity
 
@@ -61,4 +61,4 @@ The standard bundle contains system paths, a game/process inventory, launcher an
 
 ## Audit conclusion / release gate
 
-The implementation is an **instrumented, disabled-by-default scaffold**, not a working production Autopilot. Do not merge as a 2.0.0 release or expose a UI switch on the basis of synthetic CI. Require a documented on-device rollback/ACK matrix, the real ZIP, and no unresolved P0 safety findings.
+The implementation is an **instrumented scaffold**, not a working production Autopilot. The uploaded physical 1.7.0 build had power flag ON and Flow flag OFF, but Governor was DISABLED throughout; do not conflate this with the default flags of PR #115 source, which remain OFF. Identify the exact deployed build/commit before investigating source parity. Do not merge as a 2.0.0 release or expose a UI switch on the basis of synthetic CI. Require a documented on-device rollback/ACK matrix, the real ZIP, and no unresolved P0 safety findings.
