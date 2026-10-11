@@ -388,10 +388,10 @@ class FastRaiseTests(unittest.TestCase):
     def test_a_failing_lower_power_probe_reverts_within_seconds(self):
         ctl, now = self.locked_at_10()
         tdp = ctl.tdp
-        ctl.observe(now + 400, WindowVerdict(True, False, "holds"), 30)   # reprobe: -1 W
+        ctl.observe(now + ctl.FLOOR_BACKOFF_MAX_S + 5, WindowVerdict(True, False, "holds"), 30)   # reprobe: -1 W
         self.assertEqual((ctl.probe, ctl.tdp), ("down", tdp - 1))
-        ctl.fast_check(now + 401, 27.0, tdp - 1)
-        ctl.fast_check(now + 402, 27.0, tdp - 1)
+        ctl.fast_check(now + ctl.FLOOR_BACKOFF_MAX_S + 6, 27.0, tdp - 1)
+        ctl.fast_check(now + ctl.FLOOR_BACKOFF_MAX_S + 7, 27.0, tdp - 1)
         self.assertEqual((ctl.probe, ctl.tdp), (None, tdp))
 
     def test_deck_log_2026_10_06_resume_at_6_watts(self):
@@ -901,9 +901,14 @@ class FloorMemoryTests(unittest.TestCase):
         self.assertLessEqual(failed, 4)   # 12 before 1.0.5
         self.assertEqual(ctl.point.key, "30x3")
 
-    def test_backoff_doubles_per_repeat_and_is_capped(self):
+    def test_repeated_failed_floor_is_blocked_for_thirty_minutes(self):
         ctl = BudgetController(target_output_fps=90, now=0.0)
-        self.assertEqual([ctl._floor_backoff(n) for n in (1, 2, 3, 4, 9)], [120.0, 240.0, 480.0, 600.0, 600.0])
+        self.assertEqual([ctl._floor_backoff(n) for n in (1, 2, 3, 4, 9)],
+                         [300.0, 1800.0, 1800.0, 1800.0, 1800.0])
+        ctl.floor_failures[ctl.idx] = (9.0, 100.0, 2)
+        ctl.draw_w = 7.0  # One noisy draw sample cannot override repeat failures.
+        self.assertTrue(ctl._floor_blocked(9.0, 1000.0))
+        self.assertFalse(ctl._floor_blocked(9.0, 1900.0))
 
     def test_lighter_scene_lifts_the_block(self):
         ctl = BudgetController(target_output_fps=90, now=0.0)

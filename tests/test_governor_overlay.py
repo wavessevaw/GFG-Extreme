@@ -191,7 +191,7 @@ class OverlayTests(unittest.TestCase):
 
     def test_saved_fingerprint_changes_when_saved_changes(self):
         before = self.svc.saved_config_fingerprint()
-        self.svc.update_profile_config_fields("game", {"multiplier": 3})
+        self.svc.update_profile_config_fields("game", {"multiplier": 4})
         self.assertNotEqual(self.svc.saved_config_fingerprint(), before)
 
 

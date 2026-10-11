@@ -22,6 +22,8 @@ const rpc = {
   setFrameOsFeature: safeCallable("set_governor_frame_os_feature"),
   setPowerSplit: safeCallable("set_governor_power_split"),
   setMode: safeCallable("set_governor_mode"),
+  setAutopilotPreference: safeCallable("set_governor_autopilot_preference"),
+  setAutopilotShading: safeCallable("set_governor_autopilot_shading"),
   setAutoFlow: safeCallable("set_governor_auto_flow"),
   setExtremeSharpness: safeCallable("set_governor_extreme_sharpness"),
   setExtremeActConsent: safeCallable("set_governor_extreme_act_consent"),
@@ -60,7 +62,7 @@ const rpc = {
 const num = (v, d = 1) => (v == null || isNaN(v) ? "–" : Number(v).toFixed(d).replace(/\.0$/, ""));
 const MODE_NAME = { oled: "Steam Deck OLED", lcd: "Steam Deck LCD", dock: "Dock", external: "Dock", unknown: "Display" };
 const fmtMult = (m) => { const q = Math.round(Number(m) * 4) / 4; return "×" + (Number.isInteger(q) ? q : String(q)); };
-const MODE_LABEL = { budget: "Battery", balanced: "Balanced", quality: "Quality", extreme: "Extreme" };
+const MODE_LABEL = { budget: "Battery", balanced: "Balanced", quality: "Quality", extreme: "Extreme", autopilot: "Autopilot" };
 // review 1.1.x: a session switched between modes reads "Battery 18m · Balanced 13m", not just its last mode.
 const frameOsMinutes = (m) => Object.entries(m || {}).map(([k, v]) => k + " " + num(v, 0) + "m").join(" · ");
 const sessionModes = (x) => (x && x.mode === "mixed" && x.modes ? Object.entries(x.modes).map(([m, v]) => (MODE_LABEL[m] || m) + " " + num(v, 0) + "m").join(" · ") : (MODE_LABEL[x && x.mode] || "–"));
@@ -88,6 +90,7 @@ const MODE_TEXT = {
   budget: "Battery: lowest TDP first, 9–11 W ideal. Real FPS stays at 24 or more; a deeper ratio (down to 20 real) and the highest watts your Deck allows only as a last resort.",
   quality: "Quality: fewest generated frames first, then lowers TDP. Uses more battery.",
   extreme: "Extreme — BETA / EXPERIMENTAL. In development; not recommended for regular play. Uses your Deck's stock limit — 15 W, or your own lower limit, never more, no overclock. Lowers render resolution to 90% / 80% with matched sharpening only when the engine confirms it. Uses more battery than Balanced.",
+  autopilot: "Autopilot chooses the steady frame rate and the lowest power that holds it. It uses Governor for TDP. A GPU clock change is one step, then checked. If the frames get worse, the previous setting comes back.",
 };
 
 // ---------- Extreme (1.6)
@@ -570,15 +573,28 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
         !xt && pw.owned && pw.initial_tdp_w && pw.initial_tdp_w - tdp >= 1 ? h("div", { className: "r" }, h("span", null, "SAVING"), h("span", null, num(pw.initial_tdp_w - tdp, 0) + " W under your " + num(pw.initial_tdp_w, 0) + " W limit")) : null,
         h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, (tdp / ((xt && x.ceiling && x.ceiling.ceiling_w) || pw.initial_tdp_w || pw.maximum_tdp_w || 15)) * 100) + "%" } }))) : null),
     xt && s.enabled ? h(ExtremeCard, { x, profile, refresh }) : null,
-    !xt && s.enabled && s.extreme_offer && !offerHidden ? h(ExtremeOffer, { o: s.extreme_offer, onTry: () => setMode("extreme"), onHide: () => setOfferHidden(true) }) : null,
+    !xt && s.mode !== "autopilot" && s.enabled && s.extreme_offer && !offerHidden ? null : null,
     s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os, power: s.power, battery: s.battery && s.battery.percent }) : null,
     h(Focusable, { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? undefined : toggle },
       h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 18 }), busy ? "WORKING…" : missing ? "INSTALL ENGINE" : s.enabled ? "STOP" : "RUN"),
     h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : missing ? "The GFG engine is not installed yet. One tap installs it." : "Target " + target + " FPS · " + (dev.reason || "picked automatically for this screen")),
     h("div", { className: "sec" }, "MODE"),
-    h(Seg, { cls: "four", value: s.mode || "budget", options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"], ["extreme", h("span", { style: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2 } }, h("span", null, "EXTREME"), h("small", { style: { fontSize: 8, lineHeight: 1.1 } }, "BETA")), "x"]], onChange: setMode }),
+    h(Seg, { cls: "four", value: s.mode === "extreme" ? "autopilot" : (s.mode || "budget"), options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"], ["autopilot", "Autopilot"]], onChange: setMode }),
     asking ? h(ActConsent, { onAnswer: answerAct }) : null,
     h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
+    s.mode === "autopilot" ? h("div", { className: "card" },
+      h("div", { className: "sec" }, "AUTOPILOT"),
+      h("div", { className: "kv" },
+        h("span", null, "State"), h("b", null, (s.autopilot && s.autopilot.state) || "OBSERVE"),
+        h("span", null, "Real"), h("b", null, s.autopilot && s.autopilot.real_fps != null ? num(s.autopilot.real_fps, 0) : "–"),
+        h("span", null, "Output"), h("b", null, s.autopilot && s.autopilot.output_fps != null ? num(s.autopilot.output_fps, 0) : "–"),
+        h("span", null, "GPU clock"), h("b", null, s.autopilot && s.autopilot.gpu_clock && s.autopilot.gpu_clock.available ? ((s.autopilot.gpu_clock.limit_mhz || s.autopilot.gpu_clock.current_limit_mhz) + " MHz") : "Unavailable")),
+      h(Note, { quiet: true }, (s.autopilot && s.autopilot.message) || "Waiting for measured frames."),
+      h(Seg, { value: (s.autopilot && s.autopilot.preference) || "auto", options: [["auto", "Auto"], ["battery", "Battery"], ["smoothness", "Smoothness"]], onChange: async (v) => { try { await rpc.setAutopilotPreference(profile, v); } catch (e) {} refresh(); } }),
+      h(Toggle, { on: !!s.autopilot_shading_allowed, title: "Try Half Rate Shading",
+        sub: "Optional 2×2 shading experiment when GPU-limited. May blur text and game details. GFG measures FPS and restores it on failure or Stop.",
+        onChange: async (v) => { try { await rpc.setAutopilotShading(profile, v); } catch (e) {} refresh(); } }),
+      s.autopilot_shading_allowed ? h(Note, { quiet: true }, "Shading: " + ((s.autopilot_shading || {}).mode || "unavailable") + " · Steam RADV dynamic VRS (physical Deck verification pending).") : null) : null,
     health ? h("div", { className: "hint" }, health) : null,
     h("div", { style: { height: 12 } }),
     h(FiltersCard, { profile, cfg, patch, go }),

@@ -106,8 +106,20 @@ def compact_status(status: Dict[str, Any]) -> Dict[str, Any]:
         "power_split": {k: (status.get("power_split") or {}).get(k) for k in (
             "phase", "reason", "level", "cap_khz", "ab", "pairs", "gain_pct")} if status.get("power_split") else None,
         "extreme": compact_extreme(status.get("extreme")),
+        "autopilot": compact_autopilot(status.get("autopilot")),
         "mode_goal": status.get("mode_goal"), "flow_control": status.get("flow_control"),
     }
+
+
+def compact_autopilot(value: Any) -> Any:
+    if not isinstance(value, dict) or not value.get("enabled"):
+        return None
+    clock = value.get("gpu_clock") if isinstance(value.get("gpu_clock"), dict) else {}
+    return {k: value.get(k) for k in (
+        "state", "action", "reason", "tool", "preference", "real_fps", "output_fps",
+        "target_fps", "freeze_tdp", "message")} | {
+        "gpu_available": clock.get("available"), "gpu_limit_mhz": clock.get("limit_mhz"),
+        "tones": value.get("tones")}
 
 
 def compact_extreme(extreme: Any) -> Any:
@@ -507,7 +519,7 @@ class SessionRecorder:
                                  "driver": read(str(p / "scaling_driver"))}
                         for p in sorted(Path("/sys/devices/system/cpu/cpufreq").glob("policy[0-9]*"))[:16]},
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme 1.6.9 (renderer identity: see diagnostics)",
+            "plugin_version": "GFG Extreme 2.0.0 (renderer identity: see diagnostics)",
         }
 
     def _write_bundle(self) -> Path:

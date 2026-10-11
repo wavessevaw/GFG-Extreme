@@ -285,6 +285,31 @@ def items_for(data: Dict[str, Any], preset: str) -> List[Dict[str, Any]]:
         # Extreme mode; the render scale only once the renderer confirmed it.
         pct = finite_number(ext.get("render_pct"), nonnegative=True)
         items.append({"kind": "tag", "text": f"EXT {int(pct)}%" if pct else "EXT", "rgb": (255, 92, 70)})
+    auto = data.get("autopilot")
+    if isinstance(auto, dict) and auto.get("active"):
+        palette = {"green": (46, 170, 96), "yellow": (214, 176, 42), "red": (214, 64, 54), "grey": (92, 92, 102)}
+        named = auto.get("tones") if isinstance(auto.get("tones"), dict) else {}
+        for item in items:
+            if item.get("kind") != "ring":
+                continue
+            key = {"FPS": "fps", "TDP": "tdp", "BATTERY": "battery", "ENERGY": "energy",
+                   "RESP": "frame", "FRAMES": "frame"}.get(item.get("label"))
+            item["rgb"] = palette.get(named.get(key, "grey"), palette["grey"])
+        extra = []
+        if preset != "minimal":
+            gpu = finite_number(auto.get("gpu_mhz"), nonnegative=True)
+            cpu = finite_number(auto.get("cpu_pct"), nonnegative=True)
+            temp = finite_number(auto.get("temp_c"), nonnegative=True)
+            extra.append(("GPU", f"{round(gpu)}" if gpu is not None else "—", (gpu or 0) / 1600.0, "gpu"))
+            extra.append(("CPU", f"{round(cpu)}%" if cpu is not None else "—", (cpu or 0) / 100.0, "cpu"))
+            extra.append(("TEMP", f"{round(temp)}°" if temp is not None else "—", (temp or 0) / 100.0, "temp"))
+        if preset == "detailed":
+            frame = finite_number(auto.get("frametime_ms"), nonnegative=True)
+            extra.append(("FRAME", f"{round(frame)}" if frame is not None else "—", min(1.0, (frame or 0) / 50.0), "frame"))
+        for label, text, frac, key in extra:
+            items.append({"kind": "ring", "size": 40, "w": 3.5, "frac": frac,
+                          "rgb": palette.get(named.get(key, "grey"), palette["grey"]),
+                          "text": text, "style": "val", "label": label})
     return items
 
 

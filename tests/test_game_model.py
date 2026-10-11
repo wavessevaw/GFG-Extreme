@@ -189,7 +189,7 @@ class FloorMemoryTests(unittest.TestCase):
             first = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
             first.tdp = 9.0
             first._note_floor_failure(0.0)
-            first._note_floor_failure(1.0)                   # second failure at 9 W: back-off 240 s
+            first._note_floor_failure(1.0)                   # second failure at 9 W: back-off 1800 s
             store = GameModelStore(path, clock=lambda: wall["t"])
             for point, tdp, count in first.new_floor_failures:
                 store.record_floor_failure(key, point, tdp, count)
@@ -199,9 +199,9 @@ class FloorMemoryTests(unittest.TestCase):
             c = BudgetController(target_output_fps=90, now=7.0, min_tdp_w=3, max_tdp_w=20)
             c.load_floor_failures(failures, 7.0)
             self.assertEqual(c.point.key, "30x3")
-            self.assertTrue(c._floor_blocked(9.0, 7.0), "not anchored at the reload: 140 s are left")
-            self.assertTrue(c._floor_blocked(9.0, 7.0 + 139))
-            self.assertFalse(c._floor_blocked(9.0, 7.0 + 141), "expired at the original 240 s")
+            self.assertTrue(c._floor_blocked(9.0, 7.0), "remaining interval belongs to the original failure")
+            self.assertTrue(c._floor_blocked(9.0, 7.0 + 1699))
+            self.assertFalse(c._floor_blocked(9.0, 7.0 + 1701), "expired 1800 s after the original failure")
             c.tdp = 10.0
             self.assertFalse(c._can_lower(), "the 9 W probe is not repeated by the new controller")
 
