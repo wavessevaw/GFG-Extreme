@@ -1,29 +1,24 @@
 name: Release
 
-# Main releases stay unchanged. A one-off feature-branch push may publish
-# v2.0.2 as an EXPERIMENTAL prerelease, without merging PR #117 to main.
+# Only main may publish official releases. The experimental feature branch uses CI only.
 # Every push to main whose version (package.json) has no tag yet becomes a
 # GitHub release (0.x: pre-release v0.0.N-governor; 1.0.0+: official vX.Y.Z): tests, zip for Decky, SHA-256, description
 # from RELEASE_DESCRIPTION_V<version>.md.
 on:
   push:
-    branches: [main, feature/autopilot-2.0.0]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  # Main and the experimental PR branch must never serialize each other's
-  # releases. Superseded feature commits are cancelled; main is never cancelled.
   group: release-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: false
 
 jobs:
   release:
-    # Never publish a stable release from the feature branch. The branch is
-    # exclusively permitted for this one hardware-unverified prerelease.
-    if: github.ref == 'refs/heads/main' || (github.ref == 'refs/heads/feature/autopilot-2.0.0' && github.event_name == 'push')
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ github.token }}
@@ -168,3 +163,17 @@ jobs:
           fi
           gh release create "${{ steps.version.outputs.tag }}" out/*.zip out/SHA256SUMS.txt \
             --target "$GITHUB_SHA" "${flags[@]}" --notes-file notes.md
+
+      - name: Retire superseded Autopilot prereleases after official 2.0.0 is verified
+        if: success() && steps.version.outputs.tag == 'v2.0.0'
+        run: |
+          # Do not delete a single fallback build until the official release
+          # exists with its Decky ZIP and checksum asset.
+          gh release view v2.0.0 --json isPrerelease,assets --jq \
+            'select(.isPrerelease == false and ([.assets[].name | select(endswith(".zip"))] | length) >= 1 and ([.assets[].name | select(. == "SHA256SUMS.txt")] | length) == 1) | .assets | length' \
+            | grep -Eq '^[2-9][0-9]*
+          for tag in v2.0.1 v2.0.3 v2.0.4; do
+            if gh release view "$tag" --json isPrerelease --jq '.isPrerelease' 2>/dev/null | grep -qx true; then
+              gh release delete "$tag" --yes --cleanup-tag
+            fi
+          done
