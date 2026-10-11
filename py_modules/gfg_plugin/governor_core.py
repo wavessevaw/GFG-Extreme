@@ -882,8 +882,11 @@ class BudgetController:
     # A lower level that just failed is not tried again at once, even after a guard raise and a
     # successful walk back down (Field log: 9 W failed nine times in 29 min with this
     # point, each failure a visible dip).  The wait doubles with every repeat at the same level.
-    FLOOR_BACKOFF_S = 120.0
-    FLOOR_BACKOFF_MAX_S = 600.0
+    # Field replay: three failed 9 W probes in a half-hour are not useful
+    # exploration. Let one failure cool down 5 min, two failures 30 min;
+    # an externally lighter scene can still clear a single failure early.
+    FLOOR_BACKOFF_S = 300.0
+    FLOOR_BACKOFF_MAX_S = 1800.0
     FAILURE_TTL_S = REJECT_TTL_S  # failures loaded from game memory expire like in-session rejections
     MAX_REQUEST_FAILURES = 4
 
@@ -1273,7 +1276,8 @@ class BudgetController:
         )
 
     def _floor_backoff(self, count: int) -> float:
-        return min(self.FLOOR_BACKOFF_S * (2.0 ** max(0, count - 1)), self.FLOOR_BACKOFF_MAX_S)
+        return min(self.FLOOR_BACKOFF_S * (6.0 ** min(max(0, count - 1), 2)),
+                   self.FLOOR_BACKOFF_MAX_S)
 
     def _floor_blocked(self, level: float, now: float) -> bool:
         """``level`` (or a higher one) failed recently with this point: do not probe it yet."""
