@@ -1,0 +1,66 @@
+name: Update README screenshots
+
+# Temporary documentation-branch helper. GitHub Actions renders PNGs from
+# the actual shipped frontend/HUD code and commits binary assets to this branch.
+on:
+  push:
+    branches:
+      - docs/autopilot-readme-2-0-0
+    paths:
+      - ".github/workflows/readme-screenshots.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install screenshot dependencies
+        run: |
+          npm ci
+          python3 -m pip install pillow
+          npx playwright install --with-deps chromium
+      - name: Render current 2.0.0 UI and HUD
+        run: |
+          node frontend/harness/shot.mjs
+          python3 tools/make_hud_shots.py
+      - name: Validate actual PNG outputs
+        run: |
+          python3 - <<'PY'
+          from PIL import Image
+          from pathlib import Path
+          items = ['card-overview', 'card-modes', 'card-autopilot',
+                   'card-power-split', 'card-frame-os', 'card-filters',
+                   'card-session', 'card-help',
+                   'hud-rings-standard', 'hud-rings-detailed']
+          for name in items:
+              path = Path('docs/img') / (name + '.png')
+              assert path.is_file() and path.stat().st_size > 5000, path
+              with Image.open(path) as image:
+                  image.verify()
+              with Image.open(path) as image:
+                  assert image.width >= 300 and image.height >= 100, (path, image.size)
+              print(name, path.stat().st_size)
+          PY
+      - name: Commit updated screenshots
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/img/card-overview.png docs/img/card-modes.png docs/img/card-autopilot.png \
+            docs/img/card-power-split.png docs/img/card-frame-os.png docs/img/card-filters.png \
+            docs/img/card-session.png docs/img/card-help.png docs/img/hud-rings-*.png
+          if ! git diff --cached --quiet; then
+            git commit -m "docs(images): refresh real Autopilot 2.0.0 UI and HUD screenshots"
+            git push origin HEAD:docs/autopilot-readme-2-0-0
+          fi
