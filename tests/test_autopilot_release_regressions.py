@@ -91,6 +91,42 @@ class RuntimeAdmissionTests(unittest.TestCase):
         self.assertEqual(self.svc._autopilot_arbiter.tool, "half-rate-shading")
         self.assertEqual(self.svc._autopilot_arbiter.state, "SETTLE")
 
+    def test_preferences_switch_without_losing_power_or_pause_protection(self):
+        row = self.prepare()
+        svc = self.svc
+        svc._status["sensors"] = {"cpu_top_core_pct": 40, "gpu_busy_pct": 50, "temp_c": 65}
+        for preference, expected in (("smoothness", "hold"), ("battery", "run"),
+                                     ("auto", "hold"), ("battery", "run")):
+            with self.subTest(preference=preference):
+                self.assertTrue(svc.set_autopilot_preference("game", preference)["success"])
+                asyncio.run(svc._autopilot_tick("game", row, 90))
+                self.assertEqual(svc._autopilot_plan, expected)
+                svc._status["sensors"]["temp_c"] = 92
+                asyncio.run(svc._autopilot_tick("game", row, 90))
+                self.assertEqual(svc._autopilot_plan, "pause")
+                self.assertTrue(svc._autopilot_blocks_planned())
+                svc._status["sensors"]["temp_c"] = 65
+                asyncio.run(svc._autopilot_tick("game", {"samples": 0}, 90))
+                self.assertEqual(svc._autopilot_plan, "pause")
+                self.assertFalse(svc._autopilot_gpu.owned)
+                self.assertFalse(svc._autopilot_half_rate.owned)
+
+    def test_mode_switch_restores_both_owned_actuators(self):
+        self.prepare()
+        for mode in ("budget", "balanced", "quality"):
+            with self.subTest(mode=mode):
+                svc = self.svc
+                svc.set_mode("game", "autopilot")
+                gpu = MemoryBackend()
+                shading = StaticBackend()
+                svc._autopilot_gpu = GpuClock(backend=gpu, writes_enabled=True)
+                svc._autopilot_half_rate = HalfRateShading(shading)
+                self.assertTrue(svc._autopilot_gpu.lower_ceiling(1200)["applied"])
+                self.assertTrue(svc._autopilot_half_rate.enable_trial()["applied"])
+                svc.set_mode("game", mode)
+                self.assertEqual((gpu.level, gpu.maximum, shading.mode), ("auto", 1600, "1x1"))
+                self.assertFalse(svc._autopilot_blocks_planned())
+
     def test_flow_trial_blocks_resource_actuator(self):
         row = self.prepare()
         self.svc._flow.phase = "b"
