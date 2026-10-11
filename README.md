@@ -6,9 +6,9 @@
 
 # GFG Extreme
 
-**Frame generation and adaptive power management for Steam Deck**
+**Coordinated frame generation, performance and power management for Steam Deck**
 
-A Decky Loader plugin that measures real and generated frame cadence, adjusts the Governor's TDP budget, and explains what the active game is doing.
+A Decky Loader plugin that coordinates the frame generator, CPU/GPU resources, rendering workload and power limits. Autopilot observes each game and chooses measurable, reversible adjustments rather than changing only TDP.
 
 [**Download 2.0.0**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v2.0.0) · [Install](#installation) · [Autopilot](#autopilot) · [Diagnostics](#diagnostics)
 
@@ -23,22 +23,70 @@ A Decky Loader plugin that measures real and generated frame cadence, adjusts th
 
 </div>
 
-## What is new in 2.0.0?
+## Autopilot: more than a power governor
 
-**Autopilot replaces the old Extreme mode.** Saved profiles formerly using Extreme are migrated to Autopilot; their saved renderer settings are not overwritten.
+**Autopilot in GFG Extreme 2.0.0 is not an automatic TDP slider.** It is an orchestration mode that balances frame pacing, genuinely rendered frames, generated output, visual workload, APU power and temperature. Watts are only one of its tools.
 
-- **One decision-maker.** Autopilot plans; the existing Governor alone controls TDP. No competing power writer.
-- **Evidence-based frame targets.** The goal follows the display (up to 90 Hz on OLED, 60 Hz on LCD; external displays follow detected capabilities). On a 90 Hz panel, Autopilot can provisionally switch its output target from 90 to 60 when fresh, non-overlapping measurements prove it cannot hold 90, and cautiously retry later.
-- **Measured power search.** The Governor tries a lower wattage only with sufficient evidence, verifies the renderer and rolls back a failed point. Repeated failed TDP floors can be blocked for up to **30 minutes**, including after a restart.
-- **Steam GPU Clock trials.** For a probable CPU bottleneck, Autopilot may try a small reduction to the manual GPU clock ceiling through the SteamOSManager Quick Access Menu interface. It checks read-back and FPS/frametime/power measurements; it does not overwrite a player's manual clock, and restores GFG-owned settings.
-- **Optional Half Rate Shading.** Per-game opt-in tests Steam's RADV 2×2 VRS setting where supported, comparing fresh measurements and restoring it if the trial fails. This can blur text, HUD and fine details. It affects game shading, **not only generated intermediate frames**.
-- **One experiment at a time.** GPU Clock and shading do not start while the Steam menu covers the game, without a confirmed operating point, or during another active trial. A *proposed* experiment is not shown as *applied*.
-- **Clear telemetry.** Real FPS, output FPS, CPU/GPU activity, temperature, GPU MHz, APU draw and real frametime inform decisions and the HUD. Output FPS is a renderer estimate, **not proof of distinct frames actually displayed**.
+The existing Governor handles a *rendering operating point*: the required real-frame cadence, generation multiplier, and available power. **Autopilot sits above the Governor.** It inspects the game, selects a promising type of intervention, reserves that resource for an isolated trial, and checks whether the result was worthwhile. It avoids adjusting several unrelated knobs simultaneously and then pretending to know which one helped.
+
+### What it can control and coordinate
+
+| Resource / tool | Purpose | What actually changes |
+| --- | --- | --- |
+| **Target FPS** | Choose an achievable output goal rather than endlessly chasing unreachable 90 FPS | On a 90 Hz display, may provisionally lower the software output target to 60 using fresh, non-overlapping evidence windows, then cautiously retry 90 |
+| **Frame generation** | Balance the share of real and generated frames | Via Governor, selects operating points and multipliers typically from ×1 to ×3.75, with ×4 reserved for emergency fallback |
+| **APU power / TDP** | Preserve cadence at lower energy or help a heavier scene | Governor searches, confirms and rolls back power limits. Repeated failing lower-power steps can be blocked for up to 30 minutes |
+| **Steam GPU Clock** | Test whether the GPU ceiling is unhelpful when the CPU appears to be the bottleneck | Attempts one downward GPU clock-ceiling step via SteamOSManager, confirms read-back and checks fresh performance data |
+| **CPU/GPU power split** | Reallocate shared APU headroom toward a busy GPU | The separate Smart Power Split module may trial a CPU maximum-frequency cap with measured rollback; Autopilot coordinates pauses to prevent conflicting resource trials |
+| **Render Scale / Flow Scale** | Reduce game-rendering or generated-frame workload where supported | Governor can use renderer-confirmed 90% / 80% scale steps; the separate experimental automatic Flow controller can trial generator workload when no conflicting intervention is active |
+| **Half Rate Shading** | Trial a lower cost for GPU shading | Only after per-game consent, changes Steam RADV VRS from 1×1 to 2×2, measures and rolls back when the experiment fails |
+| **Thermal/ownership guard** | Avoid unsafe or misleading changes | Pauses on high temperature, missing data or Steam QAM/manual overrides, and blocks overlapping experiments |
+| **Telemetry and HUD** | Expose what is measured and why action is taken | Shows Real/Output FPS, CPU/GPU utilization, GPU MHz, real-frame timing, temperature, TDP and trial state |
+
+**Important distinction:** Smart Power Split, Flow Scale and Frame OS are existing GFG subsystems, not extra secret switches that Autopilot automatically activates. It runs alongside them and freezes incompatible trials when necessary. **Frame OS Act** needs its own explicit unlock; its separate input-responsive pacing and power interventions are not yet proven beneficial across games. Autopilot also does not decide to enable vkBasalt shader looks on its own.
+
+### How its decision loop works
+
+1. **Observe the actual game.** Collect fresh Real FPS and Output FPS, p95/p99 *real*-frame timing, GPU MHz and load, the busiest CPU core, temperature, APU draw and power-cap status. An Output FPS reading of 90 does not prove 90 real frames or 90 distinct optically verified screen updates.
+2. **Choose the goal and operating point.** Account for refresh rate, renderer capabilities, the real-frame cadence needed by the chosen multiplier and the power available. When a scene becomes harder, Governor can choose a deeper generation step before simply spending more watts.
+3. **Diagnose the likely constraint.** A saturated GPU points toward the power budget or an explicitly permitted shading trial. High CPU utilization with lower GPU utilization may justify a GPU ceiling trial. If the bottleneck is uncertain, **HOLD** is safer than a random adjustment.
+4. **Change one thing at a time.** Capture the baseline, verify the current rendering point, make one supported actuator change and wait for clean new samples. During GPU Clock/VRS validation, Governor TDP probes and overlapping resource experiments are paused.
+5. **Accept or roll back.** Compare *new* Real/Output FPS, real-frame p95, power draw and thermal conditions against the baseline. A rejected trial restores the previous policy; an unconfirmed restore blocks further experiments.
+6. **Learn and revisit.** After healthy play, test whether an operating point can become more efficient or whether a previously lowered FPS goal can be raised again. Repeated bad watt floors are remembered and progressively backed off, even across plugin restarts.
+
+### A typical example
+
+Imagine a Steam Deck OLED set to 90 Hz. The game consistently renders **30 real FPS**, while generation produces approximately **90 output FPS** at **×3**. Autopilot does not automatically increase TDP just because the GPU is 99% busy. If that operating point is confirmed and useful, it can keep the current settings and consider an efficiency check later.
+
+In a tougher scene, real-frame delivery begins to fall. Governor can alter its generation operating point or the power limit. Under the right policy and after several independent windows, Autopilot may choose a **60 output FPS** goal rather than repeatedly missing 90, then attempt recovery later. This is a **software target change**, not a guarantee of evenly paced 60 FPS on a physical 90 Hz panel. Display cadence still needs device testing.
+
+If the GPU appears shader-limited, Autopilot can consider Half Rate Shading, but **it never enables it without your consent**. When evidence does not identify a helpful action, it waits.
+
+*These figures demonstrate decision-making, not measured battery, latency or FPS improvements.*
+
+### Three preferences
+
+The mode's Home screen offers:
+
+- **Auto:** balance consistency and efficiency; hold a good configuration when evidence does not justify an intervention.
+- **Battery:** give more weight to lowering power and allow an achievable lower output target under sustained constraints.
+- **Smoothness:** prioritize a consistent real-frame cadence, using Governor's smoother operating-point preference and fewer speculative changes.
+
+The separate **Try Half Rate Shading** toggle permits VRS experiments for the active game profile only. It is off by default. Enabling it does not guarantee that the feature will actually activate.
+
+### Deliberate pauses, restoration and limitations
+
+GPU Clock and VRS trials cannot begin while Steam's Quick Access Menu (QAM) is open, during scene transitions, without a confirmed renderer point, on stale or insufficient telemetry, at critical temperature, on an unsupported system or while an earlier change awaits rollback. Steam's manual settings take precedence over GFG-owned changes.
+
+On **Stop**, game exit or a mode change, GFG attempts to restore only the controls it owns. **HOLD**, **PAUSE**, **Testing**, **Rollback** and **Restore pending** mean different things. A *proposed* optimization is not evidence that a write was applied.
+
+**2.0.0 hardware caveat:** mock backend tests pass, but real-device operation of dynamic GPU Clock and Half Rate Shading has not been validated on Steam Deck LCD/OLED. **Allow Tearing is not automatically controlled.** VRS 2×2 changes game shading generally, **not only generated intermediate frames**, and can blur text and fine details.
 
 <div align="center">
-<img src="docs/img/card-autopilot.png" alt="Actual Autopilot card with a confirmed and a deferred decision" width="800">
-<sub>Autopilot's actual cards. Sample values; no FPS or battery-life gain implied.</sub>
+<img src="docs/img/card-autopilot.png" alt="Autopilot's confirmed configuration and skipped trial states" width="800">
+<sub>Actual 2.0.0 Autopilot cards using illustrative measurements: a verified operating point and a deferred experiment with no hardware write.</sub>
 </div>
+
 
 ## Modes
 
@@ -49,7 +97,7 @@ A Decky Loader plugin that measures real and generated frame cadence, adjusts th
 | **Battery** | Efficiency | Searches lower TDP first; targets at least 24 real FPS in normal operating points where achievable |
 | **Balanced** | Consistency | Starts near 12 W and normally targets at least 30 real FPS |
 | **Quality** | Real-frame quality | Prefers fewer generated frames, then looks for watt savings |
-| **Autopilot** | Adaptive balance | Selects a realistic output target, keeps Governor TDP control, and selectively evaluates GPU Clock / opt-in shading |
+| **Autopilot** | Whole-system orchestration | Coordinates output targets, frame generation, power, GPU Clock, compatible rendering trials and independent CPU/Flow modules |
 
 Performance depends on the game, scene, rendering backend, refresh rate and power limits. These are strategies, not guaranteed frame-rate floors.
 
