@@ -1493,6 +1493,8 @@ class BudgetRuntimeTests(RuntimeBase):
 
     def test_delivered_deeper_ratio_is_resolved_in_seconds_not_25(self):
         """Field log: 36x2.5 / 33x2.75 requests each waited the full 25 s."""
+        # This x3 renderer cannot run Battery's cheaper x3.75 economy trial.
+        self.svc.observer.consume_line(self.applied_line(30, 3), now=self.t["now"])
         self.feed(20, 45, 90)
         self.step()
         self.feed(16, 30, 90)
@@ -1514,6 +1516,7 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual(st["budget"]["point"], "30x3")
 
     def test_no_early_decision_without_a_renderer_application(self):
+        self.svc.observer.consume_line(self.applied_line(30, 3), now=self.t["now"])
         self.feed(20, 45, 90)
         self.step()
         self.feed(16, 30, 90)
@@ -1568,6 +1571,7 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual(st["last_session"]["profile"], "game")
 
     def test_failed_lower_power_restores_and_guard_reacts_after_lock(self):
+        self.svc.observer.consume_line(self.applied_line(30, 3), now=self.t["now"])
         self.feed(20, 45, 90)
         self.step()
         self.feed(16, 30, 90)
