@@ -1,0 +1,5 @@
+{"source_line":1136,"reason":"generated-image-timeout","context":"21230023344131","acquire_total_ms":50.7731,"acquire_max_ms":47.0348,"requested_generated":2,"presented_generated":1,"frame":33131,"sequence":93652}
+{"source_line":1420,"reason":"generated-image-timeout","context":"21230023344131","acquire_total_ms":52.5218,"acquire_max_ms":32.7206,"requested_generated":2,"presented_generated":1,"frame":34419,"sequence":97180}
+{"source_line":50661,"reason":"generated-image-timeout","context":"21230023344135","acquire_total_ms":51.8759,"acquire_max_ms":43.9617,"requested_generated":2,"presented_generated":1,"frame":10621,"sequence":30189}
+{"source_line":51407,"reason":"generated-image-timeout","context":"21230023344135","acquire_total_ms":51.1352,"acquire_max_ms":40.6784,"requested_generated":2,"presented_generated":1,"frame":11226,"sequence":31973}
+{"source_line":51431,"reason":"generated-image-timeout","context":"21230023344135","acquire_total_ms":51.5253,"acquire_max_ms":30.8552,"requested_generated":2,"presented_generated":1,"frame":11365,"sequence":32364}
