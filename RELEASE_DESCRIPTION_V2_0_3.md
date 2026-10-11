@@ -1,32 +1,17 @@
-# GFG Extreme 2.0.3 | Autopilot GPU + Half Rate Shading
+# GFG Extreme 2.0.3
 
-Release status: **experimental prerelease; Steam Deck hardware not validated**.
+Fixes control conflicts found in the original Steam Deck log recorded on 2.0.1 at 2026-10-12 00:34:41.
 
-This package is built from Draft PR #117 on `feature/autopilot-2.0.0`; it is **not merged to main** and is **not the latest stable release**.
+- Autopilot now separates actual renderer/power transitions from ordinary consumed Budget windows. Healthy eight-second baselines can reach opted-in Half Rate Shading and GPU clock trials; real settings changes, Steam menus, stale telemetry and concurrent resource experiments still block admission.
+- Output-goal decisions use independent evidence windows. Collecting the next window no longer erases preceding misses. Sustained shortfall can trigger the existing achievable-goal policy, and display changes remain honored during collection.
+- Emergency TDP increases remain temporary. Once safe measurements permit a power search, Auto's ordinary HOLD and new clock/shading trials cannot freeze emergency watts. Lower-cap failures restore the confirmed working setting.
+- Frame OS Act cannot take or keep the adaptive overlay at an emergency cap in the economy modes. Normal Act yields for power research every five minutes instead of ten. Extreme continues to honor the user's performance ceiling.
+- An explicit game override of render resolution is recognized before requesting scaled points. The refusal is remembered for that game; resetting learned data allows a new trial without immediately replaying the old refusal.
 
-## Autopilot changes
+Fourteen focused regressions accompany the existing software checks, including actual loop execution, actuator admission, TDP rollback, display/menu protection and scaling refusal. The release workflow runs backend, native Vulkan/HUD and frontend checks and verifies the Decky archive before publishing.
 
-- The official SteamOSManager **GpuPerformanceLevel1** session-bus properties replace direct AMDGPU OverDrive for GPU clock trials. CPU-limited workloads can trial a small change via Steam's manual GPU clock setting, verify read-back, compare real/output FPS, CPU/GPU utilisation, frametime, temperature, and APU power, then keep or revert the trial. A user-controlled manual clock is never overwritten. If SteamOSManager is unavailable, GPU control fails closed.
-- **Half Rate Shading (RADV VRS 2x2)** can be enabled as an **opt-in per-game experiment** in Autopilot. The Steam/Gamescope session's own `RADV_FORCE_VRS_CONFIG_FILE` is toggled in place, with restore receipt, and the existing arbiter evaluates fresh FPS/frametime/power samples. Unsupported games keep their original settings. The feature may noticeably blur text, HUD, and small objects.
-- GPU clock and Half Rate Shading trials are serialized with one arbiter; no simultaneous experimental TDP, CPU split, Flow or GPU changes. Protective controls and rollback retain priority.
-- The original Steam QAM setting and automatic mode are restored on Stop, mode switch, game exit or rollback. Source-side regression tests cover manual overrides, missing interfaces, file changes, failed and pending restores.
-- Real FPS, Output FPS, GPU/CPU load percentage, APU temperature, GPU MHz, APU watts and real frametime are included in optimization decision logs. These come from the Governor's existing Linux/system and renderer telemetry, **not optical capture of the Steam performance overlay**.
+The source recording tested Balanced and Autopilot Auto on 2.0.1, not Battery or Quality on 2.0.2. These fixes retain the 2.0.2 mode objectives. They do not promise a specific minimum wattage or measured battery/FPS gains. The upstream renderer is unchanged; a game that ignores spatial scaling is not forced into an unsupported resolution.
 
-## Additional 2.0.3 safety fix
+Install using Decky Loader -> Install from zip -> `GFG-Extreme-v2_0_3.zip`, then restart the game.
 
-- Half Rate Shading restore now verifies the exact originating Steam VRS file. A subsequent game's own Half Rate Shading choice is never overwritten by a previous session's rollback; covered by a regression test.
-
-## Known limits and safety
-
-- Real GPU clock writes and dynamic Half Rate Shading have **not yet been verified on Steam Deck LCD/OLED hardware**; the install is for controlled testing only. Never treat successful sysfs or D-Bus read-back as proof of frame delivery or image quality.
-- The shading option is **off by default** and requires opt-in; it works only with RADV/Mesa games that actually support the SteamOS dynamic VRS config file.
-- Half Rate Shading changes shader precision across rendered output, **not selectively on generated intermediate frames**.
-- Experimental GPU clock changes use the SteamOSManager interface when available. On firmware without that interface, the control is unavailable and TDP optimization continues.
-- The Adaptive target switch 60/90 on OLED still needs physical smoothness checks. No hardware FPS gain, latency gain or watt savings are claimed.
-- Allow Tearing is **not automatically changed** by this release.
-
-## Diagnostics
-
-Settings → Diagnostics → Record log; stop recording to export a ZIP. Verify recovery to prior GPU and VRS settings when testing.
-
-Do not mark this release stable or merge it to `main` without explicit authorization.
+SHA-256: `<sha256>` (also in `SHA256SUMS.txt`).

@@ -427,6 +427,7 @@ class GoalAndPauseTests(unittest.TestCase):
             svc._point_mode = "applied"
             svc._request = None
             svc._evaluation_after_seq = 10
+            svc._autopilot_transition_seq = 10
             svc._menu_covering = lambda: False
             stable = {"samples": 9, "sample_span_s": 9.0,
                       "first_sample_seq": 11, "last_sample_seq": 20,

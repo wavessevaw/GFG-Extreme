@@ -63,6 +63,7 @@ class RuntimeAdmissionTests(unittest.TestCase):
         svc._menu_covering = lambda: False
         svc._clock = lambda: 50
         svc._evaluation_after_seq = 10
+        svc._autopilot_transition_seq = 10
         svc._point_mode = "applied"
         svc._point = {"key": "30x3", "base_target_fps": 30, "multiplier": 3,
                       "target_output_fps": 90}
@@ -198,7 +199,7 @@ class RuntimeAdmissionTests(unittest.TestCase):
                                    "target_output_fps": 90} if event["point"] else None)
                 replay = {**row, "output": {"median": event["output_fps"]}}
                 if event["reason"] == "baseline-overlaps-transition":
-                    replay["first_sample_seq"] = self.svc._evaluation_after_seq
+                    replay["first_sample_seq"] = self.svc._autopilot_transition_seq
                 self.assertFalse(self.svc._autopilot_trial_ready(replay, 90)[0])
 
     def test_ineffective_boost_releases_governor_point(self):
