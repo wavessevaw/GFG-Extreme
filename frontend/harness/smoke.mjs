@@ -48,7 +48,7 @@ const cases = [
   ["home-no-model-game", ["Settings", "Diagnostics"], ["Reset what GFG learned for this game", "No game identified yet"]],
   ["home-cap-ignored", [], ["TDP limit overridden", "17.4 W", "another tool"]],
   ["home-quality-oled", ["Details"], ["×1 to ×3, steps of 0.25", "never above your own"]],
-  ["home-quality-oled", [], ["fewest generated frames first"]],
+  ["home-quality-oled", [], ["keeps your render resolution", "fewest generated frames that hold"]],
   ["home-locked-oled", ["Settings", "Frame generation backend"], ["BACKEND", "GFG", "OptiScaler"]],
   ["home-locked-oled", ["Settings", "Scaling"], ["Scale-ready launch"]],
   ["home-locked-oled", ["Settings", "In-game overlay"], ["Show overlay in game", "STYLE", "Rings", "Text", "Rings refresh once a second", "Minimal", "Detailed", "Bottom left"]],
