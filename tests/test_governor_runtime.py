@@ -333,8 +333,8 @@ class BottleneckAwareLadderTests(RuntimeBase):
         self.step()
         skipped = (self.svc.get_status("game").get("ladder") or {}).get("skipped", {})
         scaled = {k: v for k, v in skipped.items() if "-s9" in k or "-s8" in k}
-        self.assertTrue(scaled, skipped)
-        self.assertTrue(all(v == "cpu-bound-render-scale-does-not-help" for v in scaled.values()), skipped)
+        self.assertFalse(scaled, "Quality excludes automatic render-scale reductions entirely")
+        self.assertTrue(all(p.render_scale_pct == 100 for p in ladder.candidates()))
 
 
 class TrialFlowTests(RuntimeBase):
@@ -443,7 +443,7 @@ class TrialFlowTests(RuntimeBase):
         self.assertIn("45x2", ladder.rejected)
         ladder.next_point(lambda p: None, now=self.svc._clock() + self.svc.CEILING_REJECT_TTL_S + 1)
         self.assertNotIn("45x2", ladder.rejected)
-        self.assertIn("native90", ladder.rejected)  # other rejections stay
+        self.assertNotIn("native90", ladder.rejected)  # Quality may recover after its failure cooldown
 
     def test_fractional_x15_is_tried_before_x2_and_confirmed_on_real_ratio(self):
         self.prime_not_matching()
