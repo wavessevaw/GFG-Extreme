@@ -208,6 +208,43 @@ class ColorAndModeRegressionTests(unittest.TestCase):
             fixture.tearDown()
 
 
+class DeferredActuatorUiTests(unittest.TestCase):
+    def test_an_unconfirmed_trial_never_claims_shading_was_applied(self):
+        import test_governor_runtime as legacy
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            decision = decide(view(real_fps=25, output_fps=50, gpu_busy=99,
+                                   shading_available=True, shading_consent=True))
+            self.assertEqual(decision.action, "OPTIMIZE_SHADING")
+            svc._publish_autopilot("game", view(), decision, {"available": True},
+                                    deferred_reason="baseline-overlaps-transition")
+            status = svc._status["autopilot"]
+            self.assertEqual(status["action"], "HOLD")
+            self.assertEqual(status["reason"], "baseline-overlaps-transition")
+            self.assertEqual(status["tool"], "none")
+            self.assertIn("No GPU or shading change was applied", status["message"])
+        finally:
+            fixture.tearDown()
+
+    def test_menu_covering_the_game_displays_pause_not_trial(self):
+        import test_governor_runtime as legacy
+        fixture = legacy.RuntimeBase()
+        fixture.setUp()
+        try:
+            svc = fixture.svc
+            decision = decide(view(real_fps=25, output_fps=50, gpu_busy=99,
+                                   shading_available=True, shading_consent=True))
+            svc._publish_autopilot("game", view(), decision, {},
+                                    deferred_reason="steam-menu-open")
+            status = svc._status["autopilot"]
+            self.assertEqual(status["action"], "PAUSE")
+            self.assertIn("Steam menu is open", status["message"])
+        finally:
+            fixture.tearDown()
+
+
 class MigrationTests(unittest.TestCase):
     def test_saved_extreme_opens_as_autopilot(self):
         import test_governor_runtime as legacy
