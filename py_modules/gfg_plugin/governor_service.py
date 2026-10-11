@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 2.0.1).
+"""Live orchestration service for GFG Governor (GFG Extreme 2.0.2).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -73,7 +73,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, confirmation_evidence, matches,
 )
 
-VERSION = "2.0.1"
+VERSION = "2.0.2"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -103,6 +103,7 @@ class GovernorService:
     # A point failing at the user's TDP may have met a cutscene or loading screen:
     # drop it for a while, not for the rest of the session.
     CEILING_REJECT_TTL_S = 600.0
+    QUALITY_REPROBE_S = 300.0
     # Budget mode (default): lowest TDP first, then fewer generated frames.
     DEFAULT_MODE = "budget"
     MODES = ("budget", "balanced", "quality", "extreme", "autopilot")
@@ -1996,6 +1997,7 @@ class GovernorService:
         self.frame_os.executor_active = False
         self._request = None
         self._ladder = None
+        self._quality_next_probe_at = 0.0
         # Failures the controller found since its last drain would be lost with it.
         self._store_failures(self._budget)
         self._flow = FlowTrial()
@@ -2156,7 +2158,9 @@ class GovernorService:
         if req is None:
             return
         if self._ladder is not None:
-            self._ladder.reject(req.point.key, reason)
+            self._ladder.reject(req.point.key, reason,
+                                until=(self._clock() + self.CEILING_REJECT_TTL_S
+                                       if self._budget is None else None))
             if self._budget is None and reason not in self.TRANSIENT_FAILURES:
                 self._remember_ladder_failure(profile, req.point)
         if self._budget is not None:
@@ -2759,6 +2763,7 @@ class GovernorService:
             self._event("operating-point-applied", outcome.reason, profile=profile, point=self._point,
                         revision=req.revision, confirmation=req.confirmation_mode)
             self.search = PowerSearch()
+            self._quality_next_probe_at = self._clock() + self.QUALITY_REPROBE_S
             self._status.update({"state": "PLAN", "reason": "operating-point-confirmed",
                                  "recommended_point": self._point, "recommendation_proven": True,
                                  "active_point_matches": True})
@@ -2819,6 +2824,7 @@ class GovernorService:
                 target_output_fps=target,
                 observed_p5_fps=(summary.get("real") or {}).get("p5"),
                 observed_multiplier=(summary.get("multiplier") or {}).get("median"),
+                preserve_resolution=self._mode(profile) == "quality",
             )
             candidate = decision.point.to_dict() if decision.point else None
             adopt = bool(candidate and decision.proven and matches(candidate, summary))
@@ -2836,6 +2842,7 @@ class GovernorService:
                 self._point_external = external
                 self._evaluation_after_seq = self.observer.sample_seq
                 self._event("operating-point-adopted", decision.reason, profile=profile, point=candidate)
+                self._quality_next_probe_at = self._clock() + self.QUALITY_REPROBE_S
             else:
                 await self._plan_trial(profile, config, external, target)
                 return
@@ -2862,7 +2869,8 @@ class GovernorService:
             self._status.update({"state": "PLAN", "reason": capability["reason"]})
             return
         if self._ladder is None:
-            self._ladder = TrialLadder(external_display=external, target_output_fps=target)
+            self._ladder = TrialLadder(external_display=external, target_output_fps=target,
+                                       preserve_resolution=self._mode(profile) == "quality")
             self._load_ladder_failures(profile, target)
 
         saved = await asyncio.to_thread(self._saved_profile_config, profile) or config
@@ -3437,6 +3445,9 @@ class GovernorService:
                 target_output_fps=target, now=now,
                 min_tdp_w=(limits or {}).get("min"), max_tdp_w=(limits or {}).get("max"),
                 tdp_control=limits is not None,
+                minimize_tdp=(self._mode(profile) == "budget" or
+                              (self._mode(profile) == "autopilot"
+                               and self._autopilot_preference(profile) == "battery")),
                 flavor=("balanced" if self._mode(profile) == "autopilot"
                         and self._autopilot_preference(profile) == "smoothness"
                         else self.FLAVORS.get(self._mode(profile), "battery")),
@@ -3842,6 +3853,59 @@ class GovernorService:
             return False
         return bool(self.power.state.available)
 
+    async def _quality_reprobe(self, profile: str, fresh: Dict[str, Any]) -> bool:
+        """After sustained clean play, trial one finer ratio at saved resolution."""
+        if self._mode(profile) != "quality" or self._point_mode != "applied" or self._ladder is None:
+            return False
+        now = self._clock()
+        point = OperatingPoint(**self._point)
+        thermal = (self._status.get("sensors") or {}).get("temp_c")
+        healthy = window_verdict(fresh, point).healthy
+        if (not healthy or self.search.status.state != "locked"
+                or (isinstance(thermal, (int, float)) and thermal >= 85)
+                or self._flow.busy or self.cpu.owned or getattr(self.cpu, "restore_pending", False)):
+            self._quality_next_probe_at = now + self.QUALITY_REPROBE_S
+            return False
+        due = getattr(self, "_quality_next_probe_at", 0.0)
+        if not due:
+            self._quality_next_probe_at = now + self.QUALITY_REPROBE_S
+            return False
+        if now < due:
+            return False
+        self._quality_next_probe_at = now + self.QUALITY_REPROBE_S
+        launch = await self._launch_info(profile)
+        capability = self._capability(profile, launch)
+        if not capability.get("overlay_active"):
+            return False
+        saved = await asyncio.to_thread(self._saved_profile_config, profile)
+        if saved is None:
+            return False
+
+        def applicable(candidate):
+            maximum = self.observer.current_max_multiplier
+            if maximum is not None and candidate.multiplier > maximum + 1e-6:
+                return "renderer-generated-capacity"
+            try:
+                point_deltas(candidate.to_dict(), saved, scale_capable=False,
+                             scale_ready=self._scale_ready(profile))
+            except PointNotApplicable as error:
+                return error.reason
+            return None
+
+        candidate = self._ladder.next_upgrade(point.key, applicable, now)
+        if candidate is None:
+            return False
+        # The point trial needs the player's full saved budget, not the lower
+        # cap found for the old ratio. A failed trial rolls back the old overlay.
+        await self._restore_power("quality-reprobe")
+        self._ladder.attempts = 0  # a bounded new search epoch; retain all rejection TTLs
+        self._evaluation_after_seq = self.observer.sample_seq
+        begun = await self._begin_request(profile, saved, candidate, bool(self._point_external), capability)
+        if begun:
+            self._event("quality-reprobe", "fewer-generated-frames", profile=profile,
+                        before=point.key, after=candidate.key)
+        return begun
+
     async def _power_step(self, profile: str, summary: Dict[str, Any]) -> None:
         point = self._point
         assert point is not None
@@ -3914,6 +3978,8 @@ class GovernorService:
             self._event("tdp-set", self.search.status.reason, watts=target_w, profile=profile)
         state = _power_state_name(self.search.status.state)
         self._status.update({"state": state, "reason": self.search.status.reason})
+        if await self._quality_reprobe(profile, fresh):
+            return
         if state == "LOCKED":
             self._event("operating-point-locked", self.search.status.reason, profile=profile, point=point,
                         tdp_w=self.search.status.current_tdp_w)

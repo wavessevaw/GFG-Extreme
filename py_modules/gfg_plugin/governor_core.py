@@ -118,6 +118,7 @@ class OperatingPointPlanner:
         observed_p5_fps: Optional[float],
         observed_multiplier: Optional[float],
         target_output_fps: Optional[int] = None,
+        preserve_resolution: bool = False,
     ) -> PlannerDecision:
         if not isinstance(observed_p5_fps, (int, float)) or not math.isfinite(float(observed_p5_fps)):
             return PlannerDecision(None, False, "insufficient-capacity-evidence", None, None)
@@ -127,7 +128,8 @@ class OperatingPointPlanner:
             if isinstance(observed_multiplier, (int, float)) and math.isfinite(float(observed_multiplier))
             else None
         )
-        candidates = self.candidates(external_display=external_display, target_output_fps=target_output_fps)
+        candidates = self.candidates(external_display=external_display, target_output_fps=target_output_fps,
+                                     preserve_resolution=preserve_resolution)
 
         # Native capacity is only positively proven while the observed cadence
         # is effectively native.  An active 2x/3x scheduler can intentionally
@@ -235,11 +237,7 @@ class TrialLadder:
         expressed (for example a scaled point on a process launched without the
         Scaling Engine); such points are skipped and reported, not rejected.
         """
-        if now is not None:
-            for key, until in list(self._reject_until.items()):
-                if now >= until:
-                    self._reject_until.pop(key)
-                    self.rejected.pop(key, None)
+        self._expire_rejections(now)
         if self.attempts >= self.MAX_ATTEMPTS:
             return None
         self.skipped = {}
@@ -262,6 +260,30 @@ class TrialLadder:
                 continue
             return point
         return None
+
+    def _expire_rejections(self, now: Optional[float]) -> None:
+        if now is not None:
+            for key, until in list(self._reject_until.items()):
+                if now >= until:
+                    self._reject_until.pop(key)
+                    self.rejected.pop(key, None)
+
+    def next_upgrade(self, current_key: str, applicable: Any, now: float) -> Optional[OperatingPoint]:
+        """One adjacent quality recovery trial, retaining failure cooldowns.
+
+        A capped old native measurement cannot disprove today's headroom.
+        This returns a trial, never a positive capacity claim.
+        """
+        self._expire_rejections(now)
+        choices = self.candidates()
+        current = next((i for i, p in enumerate(choices) if p.key == current_key), None)
+        if current is None:
+            return None
+        candidate = next((p for p in reversed(choices[:current]) if p.render_scale_pct == 100), None)
+        # Failure of the adjacent finer cadence is not a reason to try an
+        # even more demanding cadence. Wait for that candidate's cooldown.
+        return (candidate if candidate is not None and candidate.key not in self.rejected
+                and not applicable(candidate) else None)
 
     def mark_attempt(self) -> None:
         self.attempts += 1
@@ -893,11 +915,12 @@ class BudgetController:
     def __init__(
         self, *, target_output_fps: int, now: float,
         min_tdp_w: Optional[float] = None, max_tdp_w: Optional[float] = None,
-        tdp_control: bool = True, flavor: str = "battery",
+        tdp_control: bool = True, flavor: str = "battery", minimize_tdp: bool = False,
     ) -> None:
         self.flavor = flavor if flavor in ("balanced", "extreme") else "battery"
         balanced = self.flavor == "balanced"
         extreme = self.flavor == "extreme"
+        self.minimize_tdp = bool(minimize_tdp and self.flavor == "battery")
         self.target_output_fps = int(target_output_fps)
         if extreme:
             self.points = extreme_points(self.target_output_fps)
@@ -910,7 +933,10 @@ class BudgetController:
         self.tdp_control = bool(tdp_control)
         hw_min = float(min_tdp_w) if min_tdp_w else 0.0
         hw_max = float(max_tdp_w) if max_tdp_w else self.EMERGENCY_CEILING_W
-        self.min_w = max(self.MIN_TDP_W, hw_min)
+        # Battery may search the device's reported range; the old fixed 6 W
+        # comfort floor is retained when the minimum is unknown or for other goals.
+        self.min_w = min(hw_max, hw_min if self.minimize_tdp and hw_min > 0
+                         else max(self.MIN_TDP_W, hw_min))
         # Extreme receives its verified player/device ceiling from the power actuator.
         # Battery and Balanced keep their conservative normal/emergency ceilings.
         self.normal_max_w = hw_max if extreme else min(self.NORMAL_CEILING_W, hw_max)
@@ -1226,9 +1252,13 @@ class BudgetController:
         return self._fast_raise(now)
 
     def _fast_raise(self, now: float) -> str:
-        if self.probe == "down" and self.last_good is not None:
+        if self.probe in ("down", "economy") and self.last_good is not None:
             # The lower level did not hold: back to the one that did, at once.
-            self._note_floor_failure(now)
+            if self.probe == "down":
+                self._note_floor_failure(now)
+            else:
+                self.rejected[self.point.key] = now
+                self._note_failure(self.point, now)
             idx, tdp = self.last_good
             from_phase = self.phase
             self.probe = None
@@ -1279,9 +1309,9 @@ class BudgetController:
         return min(self.FLOOR_BACKOFF_S * (6.0 ** min(max(0, count - 1), 2)),
                    self.FLOOR_BACKOFF_MAX_S)
 
-    def _floor_blocked(self, level: float, now: float) -> bool:
+    def _floor_blocked(self, level: float, now: float, *, idx: Optional[int] = None) -> bool:
         """``level`` (or a higher one) failed recently with this point: do not probe it yet."""
-        known = self.floor_failures.get(self.idx)
+        known = self.floor_failures.get(self.idx if idx is None else idx)
         if known is None:
             return False
         failed_w, when, count = known
@@ -1381,7 +1411,7 @@ class BudgetController:
         if self.phase == "probe":
             # The scene got lighter: keep going the same way until it fails.
             self.reprobe_interval = self.REPROBE_S
-            self.phase = "search_down" if was == "down" else "upgrade"
+            self.phase = "search_down" if was in ("down", "economy") else "upgrade"
         if self.phase in ("settle", "search_down"):
             if self._can_lower() and self.flavor != "extreme":
                 self.phase = "search_down"
@@ -1452,7 +1482,25 @@ class BudgetController:
             return i
         return None
 
+    def _economy_candidate(self, now: float) -> Optional[int]:
+        """A legal cheaper cadence/scale to test before declaring a Battery floor.
+
+        The candidate must be confirmed and judged at the current known-good
+        watts before another power step. Never retry a point whose lower cap
+        already failed recently, or claim savings when caps are ignored.
+        """
+        if (not self.minimize_tdp or not self.tdp_control or self.cap_ignored
+                or self.tdp is None or self.tdp - 1 < self.min_w - 1e-6):
+            return None
+        return next((i for i in range(1, self.idx)
+                     if self._upgrade_allowed(i, now)
+                     and not self._floor_blocked(self.tdp - 1, now, idx=i)), None)
+
     def _upgrade(self, now: float) -> str:
+        economy = self._economy_candidate(now)
+        if economy is not None:
+            self.phase, self.probe = "probe", "economy"
+            return self._move("testing-cheaper-cadence-for-power", idx=economy)
         if self.cap_ignored and self.idx >= self.comfort_idx:
             return self._lock(now, "cap-ignored-quality-held")
         up = self._next_up()
@@ -1495,8 +1543,13 @@ class BudgetController:
                 self.phase, self.probe = "probe", "down"
                 self.next_probe = "up" if self._owed_quality() else "down"
                 return self._move("reprobe-lower-power", tdp=self.tdp - 1.0)
+            economy = self._economy_candidate(now)
+            if kind == "down" and economy is not None:
+                self.phase, self.probe = "probe", "economy"
+                return self._move("reprobe-cheaper-cadence-for-power", idx=economy)
             up = self._next_up()
-            if kind == "up" and self._owed_quality() and up is not None and self._upgrade_allowed(up, now):
+            quality_due = self._owed_quality() or (self.flavor == "balanced" and not self._can_lower())
+            if kind == "up" and quality_due and up is not None and self._upgrade_allowed(up, now):
                 self.phase, self.probe, self.next_probe = "probe", "up", "down"
                 self.thermal_deferred = False
                 return self._move("reprobe-fewer-generated-frames", idx=up)
@@ -1509,7 +1562,7 @@ class BudgetController:
         self.good = 0
         if self.probe is not None and self.last_good is not None:
             failed = self.points[self.idx]
-            if self.probe == "up":
+            if self.probe in ("up", "economy"):
                 self.rejected[failed.key] = now
                 self._note_failure(failed, now)
             elif self.probe == "down":
@@ -1662,7 +1715,7 @@ class BudgetController:
         """
         failed = self.points[self.idx]
         self.rejected[failed.key] = now
-        if self.probe == "up":
+        if self.probe in ("up", "economy"):
             self._note_failure(failed, now)  # an upgrade the renderer could not deliver at this TDP
         delivered = self._delivered_point(observed, failed, now)
         if delivered is not None:
@@ -1733,6 +1786,7 @@ class BudgetController:
             "cap_ignored": self.cap_ignored,
             "warm_started": self.warm_started,
             "flavor": self.flavor,
+            "goal": "minimum-feasible-tdp" if self.minimize_tdp else "cadence-and-power",
             "verifying": self.verifying,
             "current_max_multiplier": self.current_max_multiplier,
             "capacity_resume_point": (

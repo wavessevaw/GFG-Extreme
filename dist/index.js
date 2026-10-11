@@ -271,8 +271,8 @@ var TIER_TEXT = {
 var PHASE_TEXT = { settle: "Starting at 10 W", search_down: "Lowering TDP", upgrade: "Fewer generated frames", probe: "Re-checking", locked: "Watching", guard: "Protecting" };
 var MODE_TEXT = {
   balanced: "Balanced: starts at about 45 real FPS and 12 W, never goes below 30 real FPS and never above your Deck's normal power range. A bit more battery for a steadier picture.",
-  budget: "Battery: lowest TDP first, 9\u201311 W ideal. Real FPS stays at 24 or more; a deeper ratio (down to 20 real) and the highest watts your Deck allows only as a last resort.",
-  quality: "Quality: fewest generated frames first, then lowers TDP. Uses more battery.",
+  budget: "Battery: the lowest TDP that holds steady frames, down to this Deck's measured minimum. Tests cheaper frame ratios before keeping extra watts. Real FPS stays at 24 or more; deeper only as a last resort.",
+  quality: "Quality: keeps your render resolution and uses the fewest generated frames that hold. Then lowers TDP; rechecks finer frame ratios after stable play. Uses more battery.",
   extreme: "Extreme \u2014 BETA / EXPERIMENTAL. In development; not recommended for regular play. Uses your Deck's stock limit \u2014 15 W, or your own lower limit, never more, no overclock. Lowers render resolution to 90% / 80% with matched sharpening only when the engine confirms it. Uses more battery than Balanced.",
   autopilot: "Autopilot chooses the steady frame rate and the lowest power that holds it. It uses Governor for TDP. A GPU clock change is one step, then checked. If the frames get worse, the previous setting comes back."
 };
@@ -359,9 +359,9 @@ function describeExtreme(s, d) {
 }
 var budgetRule = (b) => {
   const lim = b && b.limits_w || {};
-  if (lim.normal == null) return "9\u201311 W ideal, then what your Deck allows";
+  if (lim.normal == null) return "Lowest stable TDP within this Deck's limits";
   const last = lim.emergency > lim.normal ? ", " + num(lim.emergency, 0) + " W last resort" : " (this Deck's maximum)";
-  return "9\u201311 W ideal, " + num(lim.normal, 0) + " W max" + last;
+  return "Lowest stable TDP" + (lim.min != null ? ", " + num(lim.min, 1) + " W device floor" : "") + ", " + num(lim.normal, 0) + " W max" + last;
 };
 function describe(s) {
   const cap = s.capability && s.capability.reason || "";

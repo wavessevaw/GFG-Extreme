@@ -333,8 +333,8 @@ class BottleneckAwareLadderTests(RuntimeBase):
         self.step()
         skipped = (self.svc.get_status("game").get("ladder") or {}).get("skipped", {})
         scaled = {k: v for k, v in skipped.items() if "-s9" in k or "-s8" in k}
-        self.assertTrue(scaled, skipped)
-        self.assertTrue(all(v == "cpu-bound-render-scale-does-not-help" for v in scaled.values()), skipped)
+        self.assertFalse(scaled, "Quality excludes automatic render-scale reductions entirely")
+        self.assertTrue(all(p.render_scale_pct == 100 for p in ladder.candidates()))
 
 
 class TrialFlowTests(RuntimeBase):
@@ -443,7 +443,7 @@ class TrialFlowTests(RuntimeBase):
         self.assertIn("45x2", ladder.rejected)
         ladder.next_point(lambda p: None, now=self.svc._clock() + self.svc.CEILING_REJECT_TTL_S + 1)
         self.assertNotIn("45x2", ladder.rejected)
-        self.assertIn("native90", ladder.rejected)  # other rejections stay
+        self.assertNotIn("native90", ladder.rejected)  # Quality may recover after its failure cooldown
 
     def test_fractional_x15_is_tried_before_x2_and_confirmed_on_real_ratio(self):
         self.prime_not_matching()
@@ -1493,6 +1493,8 @@ class BudgetRuntimeTests(RuntimeBase):
 
     def test_delivered_deeper_ratio_is_resolved_in_seconds_not_25(self):
         """Field log: 36x2.5 / 33x2.75 requests each waited the full 25 s."""
+        # This x3 renderer cannot run Battery's cheaper x3.75 economy trial.
+        self.svc.observer.consume_line(self.applied_line(30, 3), now=self.t["now"])
         self.feed(20, 45, 90)
         self.step()
         self.feed(16, 30, 90)
@@ -1514,6 +1516,7 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual(st["budget"]["point"], "30x3")
 
     def test_no_early_decision_without_a_renderer_application(self):
+        self.svc.observer.consume_line(self.applied_line(30, 3), now=self.t["now"])
         self.feed(20, 45, 90)
         self.step()
         self.feed(16, 30, 90)
@@ -1568,6 +1571,7 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual(st["last_session"]["profile"], "game")
 
     def test_failed_lower_power_restores_and_guard_reacts_after_lock(self):
+        self.svc.observer.consume_line(self.applied_line(30, 3), now=self.t["now"])
         self.feed(20, 45, 90)
         self.step()
         self.feed(16, 30, 90)
