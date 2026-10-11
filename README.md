@@ -23,7 +23,7 @@ A Decky Loader plugin that coordinates the frame generator, CPU/GPU resources, r
 
 </div>
 
-## Autopilot: more than a power governor
+## Autopilot
 
 **Autopilot in GFG Extreme 2.0.0 is not an automatic TDP slider.** It is an orchestration mode that balances frame pacing, genuinely rendered frames, generated output, visual workload, APU power and temperature. Watts are only one of its tools.
 
