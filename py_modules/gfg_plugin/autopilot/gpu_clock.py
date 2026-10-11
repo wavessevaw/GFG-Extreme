@@ -100,6 +100,7 @@ class GpuClock:
         self.saved_manual = None
         self.saved_max = None
         self.applied_max = None
+        self.restore_manual_started = False
         self.last_error = ""
         self._load()
 
@@ -162,8 +163,14 @@ class GpuClock:
         self.phase = "partial"
         self._save()
         try:
-            self.backend.write_level("manual")
-            self.backend.write_table(f"s 1 {target}")
+            if getattr(self.backend, "manual_is_fixed", False):
+                # Program the stored QAM frequency while still in Auto, then
+                # enable Manual; never briefly activate the old saved frequency.
+                self.backend.write_table(f"s 1 {target}")
+                self.backend.write_level("manual")
+            else:
+                self.backend.write_level("manual")
+                self.backend.write_table(f"s 1 {target}")
             self.backend.write_table("c")
         except OSError as error:
             self.last_error = str(error)
@@ -181,15 +188,18 @@ class GpuClock:
         if self.phase == "idle":
             return {"restored": True, "reason": "not-owned"}
         info = self.status()
-        if self.phase in ("owned", "restore-pending") and info.get("available"):
+        if (self.phase in ("owned", "restore-pending") and info.get("available")
+                and self.applied_max is not None):
             if (info.get("level") == self.saved_level
                     and (self.saved_manual is None or info.get("manual_clock_mhz") == self.saved_manual)
                     and info.get("current_limit_mhz") == self.saved_max):
                 self._clear()
                 return {"restored": True, "reason": "already-restored"}
             current = info.get("current_limit_mhz")
+            allowed = (self.applied_max, self.saved_max,
+                       self.saved_manual if self.restore_manual_started else None)
             if (info.get("level") != "manual"
-                    or current not in (self.applied_max, self.saved_max)):
+                    or current not in allowed):
                 self._clear()
                 return {"restored": False, "reason": "external-change", "yielded": True}
         if not info.get("available"):
@@ -198,6 +208,8 @@ class GpuClock:
             return {"restored": False, "reason": "GPU_CLOCK_UNAVAILABLE"}
         try:
             if self.saved_max is not None:
+                self.restore_manual_started = True
+                self._save()
                 self.backend.write_table(f"s 1 {int(self.saved_manual if self.saved_manual is not None else self.saved_max)}")
                 self.backend.write_table("c")
             self.backend.write_level(self.saved_level or "auto")
@@ -232,6 +244,7 @@ class GpuClock:
         self.saved_manual = None
         self.saved_max = None
         self.applied_max = None
+        self.restore_manual_started = False
         self._save()
 
     def _save(self) -> None:
@@ -243,6 +256,7 @@ class GpuClock:
         payload = {"phase": self.phase, "saved_level": self.saved_level,
                    "saved_manual": self.saved_manual,
                    "saved_max": self.saved_max, "applied_max": self.applied_max,
+                   "restore_manual_started": self.restore_manual_started,
                    "backend": type(self.backend).__name__}
         self.receipt_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.receipt_path.with_suffix(".tmp")
@@ -265,3 +279,4 @@ class GpuClock:
         self.saved_manual = payload.get("saved_manual")
         self.saved_max = payload.get("saved_max")
         self.applied_max = payload.get("applied_max")
+        self.restore_manual_started = bool(payload.get("restore_manual_started"))

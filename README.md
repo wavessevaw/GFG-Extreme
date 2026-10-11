@@ -130,7 +130,7 @@ GFG Extreme 2.0.0 still includes the earlier Governor work, alongside the new Au
 
 Requires [Decky Loader](https://decky.xyz/) and [Lossless Scaling on Steam](https://store.steampowered.com/app/993090/Lossless_Scaling/) for the supported GFG generation setup.
 
-1. Download [**GFG-Extreme-v2_0_0.zip**](https://github.com/wavessevaw/GFG-Extreme/releases/download/v2.0.0/GFG-Extreme-v2_0_0.zip). Use Decky's **Install from zip** feature and approve the requested permissions for supported power controls.
+1. Download [**GFG-Extreme-v2_0_1.zip**](https://github.com/wavessevaw/GFG-Extreme/releases/download/v2.0.1/GFG-Extreme-v2_0_1.zip). Use Decky's **Install from zip** feature and approve the requested permissions for supported power controls.
 2. Open GFG Extreme and select **Install engine** if it is not installed.
 3. For a Steam game, open **Properties → Launch Options** and add:
 

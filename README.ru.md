@@ -128,7 +128,7 @@
 
 Нужны [Decky Loader](https://decky.xyz/) и [Lossless Scaling в Steam](https://store.steampowered.com/app/993090/Lossless_Scaling/) для поддерживаемой схемы генерации GFG.
 
-1. Скачайте [**GFG-Extreme-v2_0_0.zip**](https://github.com/wavessevaw/GFG-Extreme/releases/download/v2.0.0/GFG-Extreme-v2_0_0.zip). В Decky выберите **Install from zip** и подтвердите необходимые разрешения на работу с управлением мощностью.
+1. Скачайте [**GFG-Extreme-v2_0_1.zip**](https://github.com/wavessevaw/GFG-Extreme/releases/download/v2.0.1/GFG-Extreme-v2_0_1.zip). В Decky выберите **Install from zip** и подтвердите необходимые разрешения на работу с управлением мощностью.
 2. Откройте GFG Extreme, при необходимости нажмите **Install engine**.
 3. В Steam зайдите в **Свойства игры → Параметры запуска** и добавьте:
 

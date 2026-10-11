@@ -1,12 +1,14 @@
 """Regression cases from the 2.0.0 control-path audit, without hardware claims."""
 import asyncio
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
 from test_autopilot_v2 import Arbiter, GpuClock, MemoryBackend, measured, view, decide
 from test_half_rate_autopilot import HalfRateShading, StaticBackend
 import test_governor_runtime as legacy
+import test_steamos_gpu as gpu_tests
 from gfg_plugin.frame_os.policy import InjectionPolicy, BOOST_BACKOFF_S
 
 
@@ -181,6 +183,36 @@ class RuntimeAdmissionTests(unittest.TestCase):
 
 
 class ClockRecoveryTests(unittest.TestCase):
+    def test_retry_finishes_auto_restore_after_manual_value_was_restored(self):
+        class Bus(gpu_tests.FakeBus):
+            fail_auto = False
+
+            def __call__(self, argv):
+                if self.fail_auto and "set-property" in argv and argv[-3:] == ["GpuPerformanceLevel", "s", "auto"]:
+                    return False, "simulated restore failure"
+                return super().__call__(argv)
+
+        bus = Bus()
+        actor = GpuClock(backend=gpu_tests.SteamOSGpuTests.backend(self, bus), writes_enabled=True)
+        actor.lower_ceiling(1200)
+        bus.fail_auto = True
+        self.assertFalse(actor.restore()["restored"])
+        self.assertEqual((bus.level, bus.manual), ("manual", 1100))
+        bus.fail_auto = False
+        self.assertTrue(actor.restore()["restored"])
+        self.assertEqual((bus.level, bus.manual), ("auto", 1100))
+
+    def test_restart_restores_unjudged_clock_instead_of_retaining_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "receipt.json"
+            backend = MemoryBackend()
+            actor = GpuClock(backend=backend, writes_enabled=True, receipt_path=path)
+            actor.lower_ceiling(1200)
+            restarted = GpuClock(backend=backend, writes_enabled=True, receipt_path=path)
+            self.assertEqual(restarted.phase, "restore-pending")
+            self.assertTrue(restarted.restore()["restored"])
+            self.assertEqual(backend.level, "auto")
+
     def test_manual_step_never_raises_a_lightly_loaded_auto_gpu(self):
         actor = GpuClock(backend=MemoryBackend(), writes_enabled=True)
         self.assertTrue(actor.lower_ceiling(700)["applied"])

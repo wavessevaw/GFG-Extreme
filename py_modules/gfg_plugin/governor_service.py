@@ -3116,7 +3116,7 @@ class GovernorService:
                 self._autopilot_arbiter.finish_rollback()
             self._event("autopilot-gpu-restored", result.get("reason") or "restored", why=reason)
             return True
-        self._autopilot_arbiter.mark_restore_pending(result.get("reason") or "restore-failed")
+        self._autopilot_arbiter.mark_restore_pending(result.get("reason") or "restore-failed", tool="gpu-clock")
         self._event("autopilot-gpu-restore-failed", result.get("reason") or "restore-failed", why=reason)
         return False
 
