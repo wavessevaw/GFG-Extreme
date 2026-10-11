@@ -7,6 +7,7 @@
 #include "mako-common/vulkan/command_buffer.hpp"
 #include "mako-common/vulkan/image.hpp"
 #include "mako-common/vulkan/vulkan.hpp"
+#include "mako-common/helpers/errors.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>

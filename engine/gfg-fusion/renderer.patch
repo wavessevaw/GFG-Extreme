@@ -77,30 +77,32 @@ index 6cf0e80..0e51c83 100644
  # that was forgotten in CMake. The checker runs for the default and layer
  # targets, so adding a source under src/ fails even in an existing build tree.
 diff --git a/engine/mako-render/src/runtime_status.cpp b/engine/mako-render/src/runtime_status.cpp
-index 4cef6ba..8b4fb10 100644
+index 4cef6ba..99e718b 100644
 --- a/engine/mako-render/src/runtime_status.cpp
 +++ b/engine/mako-render/src/runtime_status.cpp
-@@ -380,6 +380,10 @@ std::string mako::layer::runtimeStatusJson(
+@@ -380,6 +380,11 @@ std::string mako::layer::runtimeStatusJson(
      else
          stream << "null";
      stream << '}'
 +           << ",\"frame_fusion\":{\"schema\":1,\"prepared_inputs\":"
 +           << status.frameFusionPreparedInputs
++           << ",\"requested\":" << status.frameFusionRequested
 +           << ",\"recorded_frames\":" << status.frameFusionRecordedFrames
 +           << ",\"avoided_source_copies\":" << status.frameFusionRecordedFrames << '}'
             << ",\"requested\":" << profileJson(status.requestedProfile)
             << ",\"applied\":" << profileJson(status.appliedProfile)
             << ",\"error\":";
 diff --git a/engine/mako-render/src/runtime_status.hpp b/engine/mako-render/src/runtime_status.hpp
-index 4493304..7f2e08d 100644
+index 4493304..a1676e1 100644
 --- a/engine/mako-render/src/runtime_status.hpp
 +++ b/engine/mako-render/src/runtime_status.hpp
-@@ -73,6 +73,8 @@ namespace mako::layer {
+@@ -73,6 +73,9 @@ namespace mako::layer {
          bool spatialSupersamplingActive{false};
          std::optional<std::string> spatialFallbackReason;
          std::optional<double> nonSupersamplingFactorCeiling;
 +        size_t frameFusionPreparedInputs{0};
 +        uint64_t frameFusionRecordedFrames{0};
++        bool frameFusionRequested{false};
          std::optional<std::string> error;
      };
  
@@ -473,10 +475,18 @@ index c6b4852..df0731f 100644
  
  bool Swapchain::updateGamescopeHdrState(
 diff --git a/engine/mako-render/src/swapchain/status.cpp b/engine/mako-render/src/swapchain/status.cpp
-index 4ed8c4f..1a62db3 100644
+index 4ed8c4f..1bd64d5 100644
 --- a/engine/mako-render/src/swapchain/status.cpp
 +++ b/engine/mako-render/src/swapchain/status.cpp
-@@ -154,6 +154,10 @@ void Swapchain::publishRuntimeStatus(const std::string_view reason) noexcept {
+@@ -1,6 +1,7 @@
+ /* SPDX-License-Identifier: GPL-3.0-or-later */
+ 
+ #include "swapchain/swapchain.hpp"
++#include <cstdlib>
+ 
+ #include <algorithm>
+ #include <optional>
+@@ -154,6 +155,12 @@ void Swapchain::publishRuntimeStatus(const std::string_view reason) noexcept {
              : std::nullopt,
          .nonSupersamplingFactorCeiling =
              nonSupersamplingFactorCeiling,
@@ -484,6 +494,8 @@ index 4ed8c4f..1a62db3 100644
 +            ? this->spatialScaler->directFrameGenerationInputCount() : 0,
 +        .frameFusionRecordedFrames = this->spatialScaler
 +            ? this->spatialScaler->frameFusionRecordedFrames() : 0,
++        .frameFusionRequested = std::getenv("GFG_FRAME_FUSION") &&
++            std::string_view(std::getenv("GFG_FRAME_FUSION")) == "1",
          .error = this->runtimeStatusState.error,
      });
  }

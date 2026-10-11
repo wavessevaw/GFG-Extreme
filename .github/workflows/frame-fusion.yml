@@ -5,6 +5,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 jobs:
   native:
     runs-on: ubuntu-22.04
@@ -24,6 +27,7 @@ jobs:
           git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
       - name: Build production renderer and run full CTest and pixel comparison
         run: |
+          set -euo pipefail
           python3 scripts/build_frame_fusion.py --work "$RUNNER_TEMP/fusion" --headers "$RUNNER_TEMP/vkh/include" 2>&1 | tee frame-fusion-tests.log
       - name: Validate Vulkan synchronization
         env:
