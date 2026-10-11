@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 2.0.2).
+"""Live orchestration service for GFG Governor (GFG Extreme 2.0.3).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -24,6 +24,7 @@ import os
 import threading
 import statistics
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -73,7 +74,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, confirmation_evidence, matches,
 )
 
-VERSION = "2.0.2"
+VERSION = "2.0.3"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -158,6 +159,7 @@ class GovernorService:
         self._extreme_scale_failures = 0
         self._extreme_scale_blocked: Optional[str] = None   # Extreme only: the profile scales itself
         self._scale_blocked: Optional[str] = None           # every mode: the renderer refused the scale
+        self._scale_refusal_seen_seq = 0
         self._extreme_rs: Optional[Dict[str, Any]] = None   # the renderer's last runtime-state report
         self._extreme_rs_at = -1e9
         self.search = PowerSearch()
@@ -235,6 +237,7 @@ class GovernorService:
         self._last_display_poll = 0.0
         self._active_profile = ""
         self._evaluation_after_seq = 0
+        self._autopilot_transition_seq = 0
         self._last_event_key = ""
         self._device: Optional[Dict[str, str]] = None
         self._reset_run_state()
@@ -933,7 +936,9 @@ class GovernorService:
                 and point_key != "base" and not released):
             deltas = {**deltas, "flow_scale": flow.wanted}
         with self._io_lock:
-            return self.overlay.write(profile, deltas, point_key=point_key, released=released)
+            record = self.overlay.write(profile, deltas, point_key=point_key, released=released)
+            self._mark_autopilot_transition()
+            return record
 
     def _ensure_overlay_sync(
         self, profile: str, deltas: Dict[str, Any], point_key: str
@@ -944,7 +949,17 @@ class GovernorService:
         if flow and flow.wanted is not None and flow.context and flow.context[0] == profile and point_key != "base":
             deltas = {**deltas, "flow_scale": flow.wanted}
         with self._io_lock:
-            return self.overlay.ensure(profile, deltas, point_key=point_key)
+            record = self.overlay.ensure(profile, deltas, point_key=point_key)
+            if record is not None:
+                self._mark_autopilot_transition()
+            return record
+
+    def _mark_autopilot_transition(self) -> None:
+        # A consumed Budget window is not a settings change. Keep the baseline
+        # boundary independent so a 12 s window can outlive the 6 s evaluator.
+        self._autopilot_transition_seq = self.observer.sample_seq
+        self._autopilot_targets.pending = None
+        self._autopilot_targets.pending_n = 0
 
     def _restore_overlay_sync(self, profile: str, released: bool = False) -> Optional[str]:
         """Restore ``profile``'s overlay to the Saved projection (standby).
@@ -1104,7 +1119,7 @@ class GovernorService:
     # probe re-locks and restarts the wait), and steps aside every ACT_RESEARCH_EVERY_S for
     # ACT_RESEARCH_S so the Governor can try a lower level with the plain point.
     ACT_SETTLE_S = 60.0
-    ACT_RESEARCH_EVERY_S = 600.0
+    ACT_RESEARCH_EVERY_S = 300.0
     ACT_RESEARCH_S = 120.0
     # Do not interpret the transitional cadence right after an Act change as
     # persistent frame starvation. Requires fresh, consecutive renderer samples.
@@ -1405,6 +1420,8 @@ class GovernorService:
         ready, self._split_ready = self._split_ready, None
         if getattr(self.cpu, "restore_pending", False):
             await asyncio.to_thread(self.cpu.restore)
+            if not self.cpu.owned and not getattr(self.cpu, "restore_pending", False):
+                self._mark_autopilot_transition()
         if self._autopilot_blocks_planned():
             self._status["power_split"] = {"enabled": self._power_split_enabled(), "phase": "frozen",
                                            "reason": "gpu-clock-trial", "available": bool(self.cpu.discover())}
@@ -1414,6 +1431,7 @@ class GovernorService:
         if split is None:
             if self.cpu.owned:
                 await asyncio.to_thread(self.cpu.restore)
+                self._mark_autopilot_transition()
             self._status["power_split"] = {"enabled": self._power_split_enabled(), "phase": "off",
                                            "available": bool(self.cpu.discover())}
             return
@@ -1446,6 +1464,7 @@ class GovernorService:
                 split.step(now, False, SplitSample(None, target_real, None, None, None, None, None))
         change = split.last_change
         if change is not None:
+            self._mark_autopilot_transition()
             self._event("power-split", change["reason"], profile=profile, cpu_khz=change["to_khz"],
                         before_khz=change["from_khz"], level=change["level"], tdp_w=self._applied_tdp,
                         real=(recent.get("real") or {}).get("median"),
@@ -1522,6 +1541,9 @@ class GovernorService:
         """No more render-scale trials this game session (any mode); a game that overrides the
         swapchain size is remembered, so the next sessions skip the scaled points at once."""
         self._scale_blocked = reason
+        latest = self.observer.latest_scaling
+        if latest:
+            self._scale_refusal_seen_seq = int(latest.get("event_seq") or 0)
         if reason == extreme_policy.GAME_IGNORES_SCALE:
             self._scale_ignored_games()[game_prefix(profile, self._game_app_id())] = {
                 "reason": "game-ignores-render-scale", "at": round(time.time())}
@@ -1958,7 +1980,9 @@ class GovernorService:
         Restoring inherited caps there reopened the higher fastPPT channel the ceiling had clamped.
         """
         if self.power.state.owned and not self._extreme_session(profile):
-            await asyncio.to_thread(self.power.restore_if_owned)
+            result = await asyncio.to_thread(self.power.restore_if_owned)
+            if result.get("restored"):
+                self._mark_autopilot_transition()
 
     async def _restore_power(self, reason: str) -> None:
         profile = self._active_profile
@@ -2011,6 +2035,7 @@ class GovernorService:
         self._rollback_deltas = None
         self._synced_deltas = None
         self._evaluation_after_seq = self.observer.sample_seq
+        self._mark_autopilot_transition()
         # Per-point state that must not outlive the point (audit 1.0.7).  A ladder kept on purpose
         # sets ``_exhausted`` again right after (``_release_point_keep_ladder``).
         self._exhausted = False
@@ -2558,7 +2583,11 @@ class GovernorService:
         policy = target_for(self._device["model"], external=external, valid_rates=display.get("valid_rates"),
                             current_hz=display.get("current_refresh_hz"))
         display_target = int(policy["target"])
-        target = self._governor_target(profile, display_target, summary, snapshot=snapshot)
+        goal_summary = summary
+        if self._mode(profile) == "autopilot":
+            goal_summary = self.observer.summary(self.WINDOW_SECONDS, after_seq=max(
+                self._autopilot_transition_seq, self._autopilot_targets.last_seq))
+        target = self._governor_target(profile, display_target, goal_summary, snapshot=snapshot)
         self._status.update({
             "target_output_fps": target,
             "device": {**self._device, "mode": policy["mode"], "target_reason": policy["reason"]},
@@ -2583,6 +2612,7 @@ class GovernorService:
             or (self._launch_key is not None and launch_key is not None and launch_key != self._launch_key)
         )
         if new_game_session:
+            self._scale_blocked = None
             self._clear_autopilot_session("new-game-session")
             # A failed Act executor belongs to the old game/telemetry session.
             # Never carry the lockout to a different game.
@@ -2637,6 +2667,7 @@ class GovernorService:
             self._evaluation_after_seq = max(self._evaluation_after_seq, seq)
             self._tdp_set_seq = max(self._tdp_set_seq, seq)
             self._injection_seq = max(self._injection_seq, seq)
+            self._mark_autopilot_transition()
             if self._request is not None:
                 self._request.created += away        # the confirmation timeout does not run in the menu
 
@@ -2812,8 +2843,11 @@ class GovernorService:
             self._status.update({"state": "LOCKED", "reason": "flow-scale-trial"})
             return
 
-        if self._mode(profile) == "autopilot" and await self._autopilot_tick(profile, summary, target):
-            return
+        if self._mode(profile) == "autopilot":
+            baseline = self.observer.summary(self.WINDOW_SECONDS,
+                                             after_seq=self._autopilot_transition_seq)
+            if await self._autopilot_tick(profile, baseline, target):
+                return
         if self._mode(profile) in self.BUDGET_MODES:
             await self._budget_step(profile, external, target)
             return
@@ -2921,6 +2955,7 @@ class GovernorService:
                              "recommended_point": self._point, "recommendation_proven": True,
                              "active_point_matches": True})
         await self._apply_budget_tdp(profile)  # the point is live: now its watts
+        self._mark_autopilot_transition()
 
     def _budget_state(self) -> str:
         budget = self._budget
@@ -3018,6 +3053,14 @@ class GovernorService:
         return extreme_policy.power_ceiling(user_w, hardware_w)
 
     def _budget_can_scale(self, capability: Dict[str, Any]) -> bool:
+        # The launch can provision a scaler that the game then explicitly
+        # refuses. Observe that refusal even before requesting a scaled rung.
+        if self._active_profile and not self._scale_blocked:
+            latest = self.observer.latest_scaling
+            if (latest and int(latest.get("event_seq") or 0) > self._scale_refusal_seen_seq
+                    and extreme_policy.scale_refused([latest]) == extreme_policy.GAME_IGNORES_SCALE
+                    and (self._launch or {}).get("running")):
+                self._block_scale(self._active_profile, extreme_policy.GAME_IGNORES_SCALE)
         cpu_bound = (self._status.get("diagnosis") or {}).get("bottleneck") == "cpu"
         if self._budget is not None and self._budget.flavor == "extreme" and self._extreme_scale_blocked:
             return False  # the profile scales on its own
@@ -3050,7 +3093,7 @@ class GovernorService:
         # Menu FPS is not game capacity. Do not lower the goal before the core
         # loop reaches its menu pause, nor count windows from before resume.
         fresh = bool(fresh and self._menu_since is None and not self._menu_covering()
-                     and (summary.get("first_sample_seq") or 0) > self._evaluation_after_seq)
+                     and (summary.get("first_sample_seq") or 0) > self._autopilot_transition_seq)
         if snapshot is not None:
             age = snapshot.get("sample_age_ms")
             fresh = bool(fresh and isinstance(age, (int, float)) and 0 <= age <= self.MAX_SAMPLE_AGE_MS)
@@ -3058,6 +3101,16 @@ class GovernorService:
                     and snapshot.get("session_generation") != self._generation_seen):
                 self._autopilot_targets = TargetPolicy()
                 fresh = False
+            elif (int(summary.get("samples") or 0) < 5
+                  and isinstance(age, (int, float)) and 0 <= age <= self.MAX_SAMPLE_AGE_MS
+                  and self._menu_since is None and not self._menu_covering()):
+                # Collecting the next disjoint window is not telemetry loss.
+                # Keep the preceding miss until a complete new window arrives.
+                hz = 90 if display_target >= 90 else 60
+                if self._autopilot_targets.display_goal != hz:
+                    self._autopilot_targets.update(display_target, None, None,
+                        self._autopilot_preference(profile), False, now=self._clock())
+                return min(int(display_target), int(self._autopilot_targets.target or display_target))
         chosen = int(self._autopilot_targets.update(
             display_target, real, output, self._autopilot_preference(profile), fresh,
             sample_seq=summary.get("last_sample_seq"),
@@ -3094,6 +3147,7 @@ class GovernorService:
         self._autopilot_tones = None
         self._autopilot_tone_since = 0.0
         self._autopilot_targets = TargetPolicy()
+        self._mark_autopilot_transition()
         if self._autopilot_arbiter.state != "RESTORE_PENDING":
             self._autopilot_arbiter = Arbiter()
         if self._budget is not None:
@@ -3102,8 +3156,11 @@ class GovernorService:
         self._status["autopilot"] = {"enabled": False, "active": False, "reason": reason}
 
     def _restore_autopilot_shading(self, reason: str) -> bool:
+        was_owned = self._autopilot_half_rate.owned
         result = self._autopilot_half_rate.restore()
         if result.get("restored") or result.get("yielded"):
+            if was_owned:
+                self._mark_autopilot_transition()
             if (self._autopilot_arbiter.tool == "half-rate-shading"
                     and self._autopilot_arbiter.state in ("ROLLBACK", "RESTORE_PENDING", "SETTLE", "VERIFY")):
                 self._autopilot_arbiter.finish_rollback()
@@ -3115,10 +3172,13 @@ class GovernorService:
         return False
 
     def _restore_autopilot_gpu(self, reason: str) -> bool:
+        was_owned = self._autopilot_gpu.owned
         result = self._autopilot_gpu.restore()
         if result.get("yielded"):
             self._autopilot_gpu_yielded = True
         if result.get("restored") or result.get("yielded"):
+            if was_owned:
+                self._mark_autopilot_transition()
             if (self._autopilot_arbiter.tool == "gpu-clock"
                     and self._autopilot_arbiter.state in ("ROLLBACK", "RESTORE_PENDING", "SETTLE", "VERIFY")):
                 self._autopilot_arbiter.finish_rollback()
@@ -3188,7 +3248,7 @@ class GovernorService:
             return False, "point-target-changed"
         if int(summary.get("samples") or 0) < 8 or float(summary.get("sample_span_s") or 0) < 8.0:
             return False, "baseline-too-short"
-        floor = int(self._evaluation_after_seq or 0)
+        floor = int(self._autopilot_transition_seq or 0)
         first = summary.get("first_sample_seq")
         if not isinstance(first, int) or first <= floor:
             return False, "baseline-overlaps-transition"
@@ -3289,6 +3349,14 @@ class GovernorService:
             if self._budget is not None:
                 self._budget.hold_planned = True
             return True
+        if (self._budget is not None and self._budget.tdp_control and self._budget.flavor != "extreme"
+                and self._budget.tdp is not None and self._budget.tdp > self._budget.normal_max_w
+                and decision.action != "PAUSE" and decision.reason not in ("thermal-watch", "bottleneck-unknown")):
+            # Emergency watts are temporary. Auto's draw-based HOLD and a new
+            # resource trial must not prevent the ordinary confirmed down-probe.
+            decision = replace(decision, action="OPTIMIZE_POWER", reason="recover-emergency-power",
+                               tool="budget", expected_effect="reduce_power",
+                               message="Checking whether the emergency power increase is still needed.")
         if decision.action in ("OPTIMIZE_SHADING", "OPTIMIZE_GPU_CLOCK"):
             trial_ready, trial_reason = self._autopilot_trial_ready(summary, target)
             if not trial_ready:
@@ -3598,6 +3666,8 @@ class GovernorService:
         budget = self._budget
         if budget is None or not budget.tdp_control:
             return True
+        if budget.flavor != "extreme" and budget.tdp is not None and budget.tdp > budget.normal_max_w:
+            return False  # settle emergency watts with Budget, never freeze them under Act
         settled_since = getattr(budget, "settled_since", getattr(budget, "locked_since", None))
         return (budget.phase == "locked" and budget.probe is None and settled_since is not None
                 and self._clock() - float(settled_since) >= self.ACT_SETTLE_S)
@@ -3611,6 +3681,13 @@ class GovernorService:
                   and self._injection_starvation_yields < 2
                   and (self._injection is not None or self._act_power_settled()))
         policy = self.frame_os.policy
+        if (acting and self._budget is not None and self._budget.tdp_control and self._budget.flavor != "extreme"
+                and self._budget.tdp is not None and self._budget.tdp > self._budget.normal_max_w):
+            acting = False
+            if self._injection is not None:
+                self._injection_hold_until = self._clock() + self.ACT_RESEARCH_S
+                self._event("frame-os-injection-yielded", "emergency-power-research", profile=profile,
+                            tdp_w=self._budget.tdp)
         if acting and policy is not None and self._clock() < policy._boost_blocked_until:
             acting = False
             self._injection_hold_until = max(self._injection_hold_until, policy._boost_blocked_until)
@@ -3824,6 +3901,7 @@ class GovernorService:
             self._status.update({"state": "PAUSED", "reason": "tdp-write-failed"})
             return False
         self._applied_tdp = target
+        self._mark_autopilot_transition()
         self._evaluation_after_seq = self.observer.sample_seq
         self._tdp_set_seq = self.observer.sample_seq
         self._event("tdp-set", budget.last_reason, watts=target, profile=profile,

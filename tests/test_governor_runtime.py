@@ -2047,7 +2047,7 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.feed(16, 30, 90)
         self.step()
         self.assertIsNotNone(self.svc._injection, "watts settled: Act takes the point")
-        # ten minutes later Act steps aside so the Governor can try a lower level
+        # five minutes later Act steps aside so the Governor can try a lower level
         self.svc._injection_started_at -= self.svc.ACT_RESEARCH_EVERY_S
         self.feed(16, 30, 90)
         self.step()
