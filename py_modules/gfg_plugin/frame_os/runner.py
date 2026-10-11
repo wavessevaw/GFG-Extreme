@@ -178,6 +178,7 @@ class FrameOsRunner:
             # a held boost is not an ineffective one: never let a control window (or the calm
             # cadence it leaves in the pacer's interval ring) back boosts off
             self.policy._boost_since = None
+            self.policy._delivery_at = now
         elif acting and self.executor_active and telemetry.get("live"):
             # without the executor the pacer gets the calm cadence: no boost can be delivered yet
             interval = telemetry.get("present_interval_p50_ms")

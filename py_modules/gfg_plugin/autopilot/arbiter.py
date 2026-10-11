@@ -1,6 +1,8 @@
 """One optimization at a time. Planned work waits until a check is confirmed."""
 from __future__ import annotations
 
+import math
+
 
 class Arbiter:
     SETTLE_S = 2.0
@@ -51,6 +53,22 @@ class Arbiter:
         if evidence.get("session") != self.baseline.get("session"):
             self._reject(now, "context-changed")
             return "rollback"
+        # Thermal protection and the measurement deadline also apply when the
+        # renderer repeats a complete but stale window. Never freeze TDP forever.
+        if _hot(evidence):
+            self._reject(now, "thermal-limited")
+            return "rollback"
+        valid = (evidence.get("fresh", True)
+                 and _number(evidence.get("real")) is not None
+                 and _number(evidence.get("output")) is not None
+                 and int(evidence.get("sample_seq") or 0) > self.after_seq
+                 and (evidence.get("first_sample_seq") is None
+                      or evidence["first_sample_seq"] > self.after_seq))
+        if not valid:
+            if now - self.since > self.SETTLE_S + self.VERIFY_S + 8:
+                self._reject(now, "measurement-lost")
+                return "rollback"
+            return "wait"
         if int(evidence.get("samples") or 0) < 5 or float(evidence.get("span_s") or 0) < 2.0:
             if now - self.since > self.SETTLE_S + self.VERIFY_S + 8:
                 self._reject(now, "measurement-lost")
@@ -124,6 +142,11 @@ def _gain(before: dict, after: dict) -> bool:
     draw_before, draw_after = before.get("draw_w"), after.get("draw_w")
     equivalent = after["real"] >= real * 0.98 and after["output"] >= out * 0.98
     return bool(equivalent and draw_before and draw_after and draw_after <= draw_before - 0.5)
+
+
+def _number(value):
+    return (float(value) if isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value) else None)
 
 
 def _collapsed(before: dict, after: dict) -> bool:

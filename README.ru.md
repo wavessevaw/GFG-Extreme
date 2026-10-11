@@ -10,7 +10,7 @@
 
 Плагин Decky Loader, который согласует работу генератора кадров, GPU и CPU, настройки графического конвейера и лимиты мощности. Autopilot анализирует телеметрию игры и выбирает действия, которые можно проверить по реальным измерениям.
 
-[**Скачать 2.0.0**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v2.0.0) · [Установка](#установка) · [Autopilot](#autopilot) · [Диагностика](#диагностика)
+[**Скачать 2.0.1**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v2.0.1) · [Установка](#установка) · [Autopilot](#autopilot) · [Диагностика](#диагностика)
 
 ![Релиз](https://img.shields.io/github/v/release/wavessevaw/GFG-Extreme?style=flat-square&color=fb0d00&label=release)
 ![Steam Deck](https://img.shields.io/badge/Steam%20Deck-OLED%20%7C%20LCD-20242e?style=flat-square)
@@ -128,7 +128,7 @@
 
 Нужны [Decky Loader](https://decky.xyz/) и [Lossless Scaling в Steam](https://store.steampowered.com/app/993090/Lossless_Scaling/) для поддерживаемой схемы генерации GFG.
 
-1. Скачайте [**GFG-Extreme-v2_0_0.zip**](https://github.com/wavessevaw/GFG-Extreme/releases/download/v2.0.0/GFG-Extreme-v2_0_0.zip). В Decky выберите **Install from zip** и подтвердите необходимые разрешения на работу с управлением мощностью.
+1. Скачайте [**GFG-Extreme-v2_0_1.zip**](https://github.com/wavessevaw/GFG-Extreme/releases/download/v2.0.1/GFG-Extreme-v2_0_1.zip). В Decky выберите **Install from zip** и подтвердите необходимые разрешения на работу с управлением мощностью.
 2. Откройте GFG Extreme, при необходимости нажмите **Install engine**.
 3. В Steam зайдите в **Свойства игры → Параметры запуска** и добавьте:
 

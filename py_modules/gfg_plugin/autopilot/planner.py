@@ -6,6 +6,7 @@ missing: a target FPS is not a measured Real FPS.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 
 @dataclass(frozen=True)
@@ -52,7 +53,7 @@ class Decision:
 
 
 def _num(value):
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         return None
     return float(value)
 
@@ -92,6 +93,18 @@ def decide(view: View) -> Decision:
     if meeting and frame_ok and view.preference == "smoothness":
         return done("HOLD", "smoothness-held", "none", "hold",
                     "Stable frame rate. Keeping it smooth.")
+    # Resource trials need a confirmed stable operating point. Offer them on
+    # healthy, heavily loaded cadence too; offering them only below the goal
+    # conflicted with admission's >=95% delivery gate and made them unreachable.
+    if meeting and frame_ok:
+        if cpu is not None and gpu is not None and cpu >= 85 and gpu <= 70 and view.gpu_clock_available:
+            return done("OPTIMIZE_GPU_CLOCK", "probable-cpu-bottleneck", "gpu-clock",
+                        "reduce_power", "Stable frame rate. Checking a GPU clock step to reduce power.")
+        if (gpu is not None and gpu >= 90 and view.shading_consent
+                and view.shading_available and not view.shading_enabled):
+            return done("OPTIMIZE_SHADING", "gpu-shader-limited", "half-rate-shading",
+                        "reduce_gpu_fragment_cost",
+                        "Testing Steam Half Rate Shading. Image quality may decrease.")
     if meeting and frame_ok and view.preference == "auto" and not _has_power_headroom(draw, ceiling):
         return done("HOLD", "already-efficient", "none", "hold",
                     "Stable frame rate. No change is justified.")

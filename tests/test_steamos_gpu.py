@@ -64,8 +64,8 @@ class SteamOSGpuTests(unittest.TestCase):
         self.assertEqual((fake.level, fake.manual), ("auto", 1100))
         self.assertFalse(clock.owned)
         writes = [c for c in fake.calls if "set-property" in c]
-        self.assertEqual(writes[0][-3:], ("GpuPerformanceLevel", "s", "manual"))
-        self.assertEqual(writes[1][-3:], ("ManualGpuClock", "u", "1500"))
+        self.assertEqual(writes[0][-3:], ("ManualGpuClock", "u", "1500"))
+        self.assertEqual(writes[1][-3:], ("GpuPerformanceLevel", "s", "manual"))
         self.assertEqual(writes[-1][-3:], ("GpuPerformanceLevel", "s", "auto"))
         self.assertTrue(all(BUS_NAME in c and OBJECT_PATH in c and INTERFACE in c for c in writes))
 

@@ -73,7 +73,7 @@ class ArbiterTests(unittest.TestCase):
     def test_a_real_gain_needs_a_sample_from_after_the_change(self):
         arbiter = Arbiter()
         arbiter.begin("gpu-clock", "check", 0, {"real": 30, "output": 60, "sample_seq": 5, "frametime_p95": 30})
-        self.assertEqual(arbiter.judge(20, measured(real=40, output=80, sample_seq=5, frametime_p95=25)), "wait")
+        self.assertEqual(arbiter.judge(1, measured(real=40, output=80, sample_seq=5, frametime_p95=25)), "wait")
         arbiter.judge(3, measured(real=36, output=72, sample_seq=6, frametime_p95=28))
         self.assertEqual(arbiter.judge(12, measured(real=36, output=72, sample_seq=7, frametime_p95=28)), "accept")
 

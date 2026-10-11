@@ -22,6 +22,7 @@ class SteamOSGpuBackend(SteamOSManagerTdp):
     Read-back checks the SteamOSManager property rather than observed GPU MHz
     (observed clocks can fluctuate with the workload).
     """
+    manual_is_fixed = True
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
