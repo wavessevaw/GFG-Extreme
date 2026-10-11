@@ -17,6 +17,7 @@ the gfg-pacer control channel and the PPT caps.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 from typing import Dict, List, Optional, Sequence
 
 BOOST_CAMERA = 0.5          # right-stick intensity that makes real frames matter
@@ -117,6 +118,9 @@ class InjectionPolicy:
     history: List[str] = field(default_factory=list)
     _boost_since: Optional[float] = None
     _boost_blocked_until: float = -1e9
+    _boost_missing_s: float = 0.0
+    _delivery_at: Optional[float] = None
+    _last_boost_miss_at: Optional[float] = None
     # per game (Frame OS memory): effects the A/B proof ruled out in this game
     boost_allowed: bool = True
     rest_allowed: bool = True
@@ -130,17 +134,35 @@ class InjectionPolicy:
     def note_delivered(self, now: float, real_fps: Optional[float]) -> None:
         """Measured real cadence while acting.  A boost the GPU cannot deliver is a waste of the
         energy bank: stop boosting for a while instead of paying watts for nothing."""
+        dt = 0.0 if self._delivery_at is None else max(0.0, min(0.2, now - self._delivery_at))
+        self._delivery_at = now
         if self.level != "boost":
             self._boost_since = None
             return
+        if (isinstance(real_fps, bool) or not isinstance(real_fps, (int, float))
+                or not math.isfinite(real_fps)):
+            self._boost_since = None
+            return  # unavailable cadence is not evidence of failed delivery
         if real_fps is not None and real_fps >= 0.9 * self.boost_real_hz:
             self._boost_since = None          # delivered
+            self._boost_missing_s = 0.0
+            self._last_boost_miss_at = None
             return
+        if self._last_boost_miss_at is not None and now - self._last_boost_miss_at > BOOST_BACKOFF_S:
+            self._boost_missing_s = 0.0
+        self._last_boost_miss_at = now
         if self._boost_since is None:
             self._boost_since = now
-        elif now - self._boost_since >= BOOST_PROOF_S:
+        elif now - self._boost_since >= 1.3:
+            # Ignore the pacer's interval-ring transition, then accumulate
+            # unsuccessful burst exposure too. Short camera swings must not
+            # reset the proof timer forever (2.0.0 field log: boost stayed at 30).
+            self._boost_missing_s += dt
+        if (now - self._boost_since >= BOOST_PROOF_S
+                or self._boost_missing_s >= BOOST_PROOF_S):
             self._boost_blocked_until = now + BOOST_BACKOFF_S
             self._boost_since = None
+            self._boost_missing_s = 0.0
             self._note(f"{now:.1f}:boost-ineffective")
 
     @property

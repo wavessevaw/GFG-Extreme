@@ -10,7 +10,7 @@
 
 A Decky Loader plugin that coordinates the frame generator, CPU/GPU resources, rendering workload and power limits. Autopilot observes each game and chooses measurable, reversible adjustments rather than changing only TDP.
 
-[**Download 2.0.0**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v2.0.0) · [Install](#installation) · [Autopilot](#autopilot) · [Diagnostics](#diagnostics)
+[**Download 2.0.1**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v2.0.1) · [Install](#installation) · [Autopilot](#autopilot) · [Diagnostics](#diagnostics)
 
 ![Release](https://img.shields.io/github/v/release/wavessevaw/GFG-Extreme?style=flat-square&color=fb0d00&label=release)
 ![Steam Deck](https://img.shields.io/badge/Steam%20Deck-OLED%20%7C%20LCD-20242e?style=flat-square)

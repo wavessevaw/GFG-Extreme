@@ -162,9 +162,10 @@ class HalfRateShading:
             if self.backend.read() != "2x2":
                 raise OSError("VRS readback failed")
         except OSError:
-            self.reason = "write-or-readback-failed"
+            failure = "write-or-readback-failed"
+            self.reason = failure
             restored = self.restore()
-            return {"applied": False, "reason": self.reason,
+            return {"applied": False, "reason": failure,
                     "restored": restored.get("restored", False)}
         self.phase = "owned"
         self.reason = "trial-enabled"

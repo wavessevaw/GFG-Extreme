@@ -10,7 +10,7 @@
 
 Плагин Decky Loader, который согласует работу генератора кадров, GPU и CPU, настройки графического конвейера и лимиты мощности. Autopilot анализирует телеметрию игры и выбирает действия, которые можно проверить по реальным измерениям.
 
-[**Скачать 2.0.0**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v2.0.0) · [Установка](#установка) · [Autopilot](#autopilot) · [Диагностика](#диагностика)
+[**Скачать 2.0.1**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v2.0.1) · [Установка](#установка) · [Autopilot](#autopilot) · [Диагностика](#диагностика)
 
 ![Релиз](https://img.shields.io/github/v/release/wavessevaw/GFG-Extreme?style=flat-square&color=fb0d00&label=release)
 ![Steam Deck](https://img.shields.io/badge/Steam%20Deck-OLED%20%7C%20LCD-20242e?style=flat-square)

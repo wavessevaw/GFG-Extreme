@@ -73,7 +73,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, confirmation_evidence, matches,
 )
 
-VERSION = "2.0.0"
+VERSION = "2.0.1"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -204,6 +204,7 @@ class GovernorService:
         self._autopilot_half_rate = HalfRateShading(
             receipt_path=self.configuration.config_dir / "autopilot-vrs-receipt.json")
         self._autopilot_shading_yielded = False
+        self._autopilot_gpu_yielded = False
         self._autopilot_targets = TargetPolicy()
         self._autopilot_plan = "off"
         self._autopilot_launch = None
@@ -1403,7 +1404,7 @@ class GovernorService:
         ready, self._split_ready = self._split_ready, None
         if getattr(self.cpu, "restore_pending", False):
             await asyncio.to_thread(self.cpu.restore)
-        if self._mode(profile) == "autopilot" and self._autopilot_blocks_planned():
+        if self._autopilot_blocks_planned():
             self._status["power_split"] = {"enabled": self._power_split_enabled(), "phase": "frozen",
                                            "reason": "gpu-clock-trial", "available": bool(self.cpu.discover())}
             return
@@ -2018,6 +2019,8 @@ class GovernorService:
 
     async def _release_point(self, profile: str, reason: str) -> bool:
         """Drop the applied point: overlay back to base (lease kept), power restored."""
+        await asyncio.to_thread(self._restore_autopilot_shading, reason)
+        await asyncio.to_thread(self._restore_autopilot_gpu, reason)
         had_runtime = bool(self._point or self._request or self._point_deltas)
         self._clear_point_state()
         await self._restore_power(reason)
@@ -2528,6 +2531,10 @@ class GovernorService:
             # when optimization has been explicitly disabled.
             await self._sample_passive_hud(profile)
             return
+        if (self._autopilot_half_rate.phase == "restore-pending"
+                or self._autopilot_gpu.phase == "restore-pending"):
+            self._status.update({"state": "PAUSED", "reason": "autopilot-restore-pending"})
+            return
         if config.get("fg_backend", FG_BACKEND_GFG) != FG_BACKEND_GFG:
             if self._point or self._request or self.power.state.owned:
                 await self._release_point(profile, "external-fg-backend")
@@ -2547,7 +2554,7 @@ class GovernorService:
         policy = target_for(self._device["model"], external=external, valid_rates=display.get("valid_rates"),
                             current_hz=display.get("current_refresh_hz"))
         display_target = int(policy["target"])
-        target = self._governor_target(profile, display_target, summary)
+        target = self._governor_target(profile, display_target, summary, snapshot=snapshot)
         self._status.update({
             "target_output_fps": target,
             "device": {**self._device, "mode": policy["mode"], "target_reason": policy["reason"]},
@@ -2628,6 +2635,15 @@ class GovernorService:
             self._injection_seq = max(self._injection_seq, seq)
             if self._request is not None:
                 self._request.created += away        # the confirmation timeout does not run in the menu
+
+        # Judge active resource trials before the general FPS freshness gate.
+        # Otherwise a silent renderer bypasses the arbiter timeout indefinitely
+        # and the ordinary stale path can move TDP underneath an unjudged trial.
+        if (self._mode(profile) == "autopilot"
+                and self._autopilot_arbiter.state in ("SETTLE", "VERIFY")
+                and self._autopilot_arbiter.freeze_tdp):
+            await self._autopilot_tick(profile, summary, target)
+            return
 
         # Resource availability is not a renderer/FPS trial. When Vulkan
         # temporarily has no generated-frame slots (x1 only), release the
@@ -3004,19 +3020,36 @@ class GovernorService:
     def _autopilot_blocks_planned(self) -> bool:
         # The selected mode is part of the lock's ownership. A stale Autopilot
         # HOLD cannot freeze Flow or Power Split after changing to Quality.
+        if (self._autopilot_half_rate.phase == "restore-pending"
+                or self._autopilot_gpu.phase == "restore-pending"):
+            return True
         if not self._active_profile or self._mode(self._active_profile) != "autopilot":
             return False
         if self._autopilot_arbiter.blocks_planned:
             return True
         return self._autopilot_plan in ("pause", "hold")
 
-    def _governor_target(self, profile: str, display_target: int, summary: Dict[str, Any]) -> int:
+    def _governor_target(self, profile: str, display_target: int, summary: Dict[str, Any],
+                         *, snapshot: Optional[Dict[str, Any]] = None) -> int:
         """The FPS goal Governor will actually chase. Autopilot may choose a lower one."""
         if self._mode(profile) != "autopilot" or not self._profile_enabled(profile):
             return int(display_target)
+        if self._autopilot_arbiter.freeze_tdp:
+            return int(self._autopilot_targets.target or display_target)
         real = (summary.get("real") or {}).get("median")
         output = (summary.get("output") or {}).get("median")
         fresh = int(summary.get("samples") or 0) >= 5 and real is not None and output is not None
+        # Menu FPS is not game capacity. Do not lower the goal before the core
+        # loop reaches its menu pause, nor count windows from before resume.
+        fresh = bool(fresh and self._menu_since is None and not self._menu_covering()
+                     and (summary.get("first_sample_seq") or 0) > self._evaluation_after_seq)
+        if snapshot is not None:
+            age = snapshot.get("sample_age_ms")
+            fresh = bool(fresh and isinstance(age, (int, float)) and 0 <= age <= self.MAX_SAMPLE_AGE_MS)
+            if (self._generation_seen is not None
+                    and snapshot.get("session_generation") != self._generation_seen):
+                self._autopilot_targets = TargetPolicy()
+                fresh = False
         chosen = int(self._autopilot_targets.update(
             display_target, real, output, self._autopilot_preference(profile), fresh,
             sample_seq=summary.get("last_sample_seq"),
@@ -3033,6 +3066,7 @@ class GovernorService:
             "real": (summary.get("real") or {}).get("median"),
             "output": (summary.get("output") or {}).get("median"),
             "sample_seq": summary.get("last_sample_seq") or 0,
+            "first_sample_seq": summary.get("first_sample_seq"),
             "samples": int(summary.get("samples") or 0),
             "span_s": float(summary.get("sample_span_s") or 0),
             "frametime_p95": frame.get("p95_ms"),
@@ -3048,6 +3082,7 @@ class GovernorService:
             return
         self._autopilot_plan = "off"
         self._autopilot_shading_yielded = False
+        self._autopilot_gpu_yielded = False
         self._autopilot_tones = None
         self._autopilot_tone_since = 0.0
         self._autopilot_targets = TargetPolicy()
@@ -3073,8 +3108,11 @@ class GovernorService:
 
     def _restore_autopilot_gpu(self, reason: str) -> bool:
         result = self._autopilot_gpu.restore()
+        if result.get("yielded"):
+            self._autopilot_gpu_yielded = True
         if result.get("restored") or result.get("yielded"):
-            if self._autopilot_arbiter.state in ("ROLLBACK", "RESTORE_PENDING", "SETTLE", "VERIFY"):
+            if (self._autopilot_arbiter.tool == "gpu-clock"
+                    and self._autopilot_arbiter.state in ("ROLLBACK", "RESTORE_PENDING", "SETTLE", "VERIFY")):
                 self._autopilot_arbiter.finish_rollback()
             self._event("autopilot-gpu-restored", result.get("reason") or "restored", why=reason)
             return True
@@ -3083,6 +3121,11 @@ class GovernorService:
         return False
 
     def _autopilot_maintain(self) -> None:
+        if self._autopilot_gpu.phase == "owned":
+            clock = self._autopilot_gpu.status()
+            if clock.get("available") and (clock.get("level") != "manual"
+                    or clock.get("current_limit_mhz") != self._autopilot_gpu.applied_max):
+                self._restore_autopilot_gpu("external-quick-menu-override")
         if (self._autopilot_half_rate.owned
                 and self._autopilot_half_rate.phase == "owned"
                 and self._autopilot_half_rate.status().get("mode") != "2x2"):
@@ -3128,6 +3171,8 @@ class GovernorService:
         """
         if self._menu_since is not None or self._menu_covering():
             return False, "steam-menu-open"
+        if self._flow.busy or self.cpu.owned or getattr(self.cpu, "restore_pending", False) or self._injection is not None:
+            return False, "resource-controller-busy"
         point = self._point
         if self._request is not None or self._point_mode != "applied" or not isinstance(point, dict):
             return False, "point-not-confirmed"
@@ -3199,6 +3244,8 @@ class GovernorService:
         evidence["gpu_busy_pct"] = sensors.get("gpu_busy_pct")
         evidence["gpu_clock_mhz"] = sensors.get("gpu_clock_mhz")
         clock_ready = bool(clock.get("available") and clock.get("writes_enabled")
+                           and not self._autopilot_gpu_yielded
+                           and flow_number(view.gpu_mhz) is not None and view.gpu_mhz > 0
                            and clock.get("level") in ("auto", "manual")
                            and (clock.get("level") == "auto" or self._autopilot_gpu.owned))
         if not clock_ready and decision.action == "OPTIMIZE_GPU_CLOCK":
@@ -3209,7 +3256,10 @@ class GovernorService:
             return True
         if arbiter.freeze_tdp and arbiter.state in ("SETTLE", "VERIFY"):
             measured = self.observer.summary(self.WINDOW_SECONDS, after_seq=arbiter.after_seq)
+            snapshot = self.observer.snapshot()
+            age = snapshot.get("sample_age_ms")
             verdict = arbiter.judge(now, {**self._autopilot_evidence(measured, session),
+                                           "fresh": isinstance(age, (int, float)) and 0 <= age <= self.MAX_SAMPLE_AGE_MS,
                                            "draw_w": power.get("draw_w"), "temp_c": sensors.get("temp_c"),
                                            "cpu_busy_pct": sensors.get("cpu_top_core_pct"),
                                            "gpu_busy_pct": sensors.get("gpu_busy_pct"),
@@ -3267,19 +3317,20 @@ class GovernorService:
                     arbiter.mark_restore_pending("shading-restore-unconfirmed", tool="half-rate-shading")
                     return True
                 self._event("autopilot-shading-skipped", result.get("reason"), profile=profile)
+                arbiter.blocked_until[decision.action] = now + arbiter.REJECT_S
             else:
                 self._event("autopilot-shading-skipped", admission, profile=profile)
             # Report the actual skip rather than the planner's proposed trial.
-            self._autopilot_plan = "hold"
+            self._autopilot_plan = "run"
             if self._budget is not None:
-                self._budget.hold_planned = self._budget.hold_probes = True
+                self._budget.hold_planned = self._budget.hold_probes = False
             self._publish_autopilot(profile, view, decision, clock,
                                     deferred_reason=result.get("reason", "not-applied")
                                     if admission == "ok" and shading.get("mode") == "1x1"
                                     else admission)
-            return True
+            return False
         if decision.action == "OPTIMIZE_GPU_CLOCK" and arbiter.admit(decision.action, now) == "ok" and clock_ready:
-            result = await asyncio.to_thread(self._autopilot_gpu.lower_ceiling)
+            result = await asyncio.to_thread(self._autopilot_gpu.lower_ceiling, view.gpu_mhz)
             if result.get("applied"):
                 arbiter.begin("gpu-clock", decision.reason, now, evidence)
                 self._event("autopilot-apply", decision.reason, profile=profile,
@@ -3294,20 +3345,23 @@ class GovernorService:
             self._event("autopilot-gpu-skipped", skip, profile=profile)
             if self._autopilot_gpu.phase == "restore-pending":
                 arbiter.mark_restore_pending(skip, tool="gpu-clock")
-            self._autopilot_plan = "hold"
+            pending = arbiter.blocks_planned
+            self._autopilot_plan = "pause" if pending else "run"
+            if not pending:
+                arbiter.blocked_until[decision.action] = now + arbiter.REJECT_S
             if self._budget is not None:
-                self._budget.hold_planned = self._budget.hold_probes = True
+                self._budget.hold_planned = self._budget.hold_probes = pending
             self._publish_autopilot(profile, view, decision, clock, deferred_reason=skip)
-            return True
+            return pending
         elif decision.action == "OPTIMIZE_GPU_CLOCK":
             skip = arbiter.admit(decision.action, now)
             self._event("autopilot-gpu-skipped", skip, profile=profile)
             if self._budget is not None:
-                self._budget.hold_planned = self._budget.hold_probes = True
-            arbiter.note("HOLD", skip)
-            self._autopilot_plan = "hold"
+                self._budget.hold_planned = self._budget.hold_probes = False
+            arbiter.note("OPTIMIZE_POWER", skip)
+            self._autopilot_plan = "run"
             self._publish_autopilot(profile, view, decision, clock, deferred_reason=skip)
-            return True
+            return False
         holding = decision.action in ("HOLD", "PAUSE") or now < arbiter.cooldown_until
         self._autopilot_plan = "pause" if decision.action == "PAUSE" else ("hold" if holding else "run")
         if self._budget is not None:
@@ -3333,6 +3387,9 @@ class GovernorService:
         proposed = autopilot_tones(view, critical=decision.reason == "thermal-limited")
         shown, since = hold_tones(self._autopilot_tones, proposed, now, self._autopilot_tone_since)
         self._autopilot_tones, self._autopilot_tone_since = shown, since
+        if (deferred_reason is None and decision.action in ("OPTIMIZE_GPU_CLOCK", "OPTIMIZE_SHADING")
+                and self._autopilot_arbiter.state not in ("SETTLE", "VERIFY")):
+            deferred_reason = self._autopilot_arbiter.reason or "not-applied"
         deferred = deferred_reason is not None
         display_action = ("PAUSE" if deferred_reason == "steam-menu-open" else "HOLD") if deferred else decision.action
         display_message = (
@@ -3542,6 +3599,12 @@ class GovernorService:
                   and self._clock() >= self._injection_hold_until
                   and self._injection_starvation_yields < 2
                   and (self._injection is not None or self._act_power_settled()))
+        policy = self.frame_os.policy
+        if acting and policy is not None and self._clock() < policy._boost_blocked_until:
+            acting = False
+            self._injection_hold_until = max(self._injection_hold_until, policy._boost_blocked_until)
+            if self._injection is not None:
+                self._event("frame-os-injection-yielded", "boost-ineffective", profile=profile)
         if (acting and self._injection is not None and self._budget is not None and self._budget.tdp_control
                 and self._injection_started_at is not None
                 and self._clock() - self._injection_started_at >= self.ACT_RESEARCH_EVERY_S):

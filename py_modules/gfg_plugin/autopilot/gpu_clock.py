@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import glob
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -127,7 +128,7 @@ class GpuClock:
                 "min_mhz": int(found.group(1)), "max_mhz": high,
                 "current_limit_mhz": clocks[-1] if clocks else high}
 
-    def lower_ceiling(self) -> dict:
+    def lower_ceiling(self, observed_mhz: float | None = None) -> dict:
         if not self.writes_enabled:
             return {"applied": False, "reason": "writes-disabled"}
         if self.phase == "restore-pending":
@@ -142,7 +143,16 @@ class GpuClock:
                                        or info.get("current_limit_mhz") != self.applied_max):
             self._clear()
             return {"applied": False, "reason": "external-change"}
-        target = int(info["current_limit_mhz"]) - STEP_MHZ
+        current = int(info["current_limit_mhz"])
+        if observed_mhz is not None:
+            if (isinstance(observed_mhz, bool) or not isinstance(observed_mhz, (int, float))
+                    or not math.isfinite(observed_mhz) or observed_mhz <= 0):
+                return {"applied": False, "reason": "observed-clock-unavailable"}
+            # SteamOSManager pins a manual frequency. Starting from its hardware
+            # maximum could raise a lightly loaded GPU's actual clock. Start
+            # below the observed clock as well as the currently allowed limit.
+            current = min(current, int(observed_mhz))
+        target = current - STEP_MHZ
         if target < int(info["min_mhz"]):
             return {"applied": False, "reason": "no-headroom"}
         if self.phase == "idle":
@@ -171,7 +181,12 @@ class GpuClock:
         if self.phase == "idle":
             return {"restored": True, "reason": "not-owned"}
         info = self.status()
-        if self.phase == "owned" and info.get("available"):
+        if self.phase in ("owned", "restore-pending") and info.get("available"):
+            if (info.get("level") == self.saved_level
+                    and (self.saved_manual is None or info.get("manual_clock_mhz") == self.saved_manual)
+                    and info.get("current_limit_mhz") == self.saved_max):
+                self._clear()
+                return {"restored": True, "reason": "already-restored"}
             current = info.get("current_limit_mhz")
             if (info.get("level") != "manual"
                     or current not in (self.applied_max, self.saved_max)):
@@ -243,7 +258,9 @@ class GpuClock:
             return
         if not isinstance(payload, dict) or payload.get("phase") not in ("partial", "owned", "restore-pending"):
             return
-        self.phase = payload["phase"]
+        # Restart loses the arbiter's comparison window. Recover the receipt
+        # through restore, never retain an experiment that cannot be judged.
+        self.phase = "restore-pending"
         self.saved_level = payload.get("saved_level")
         self.saved_manual = payload.get("saved_manual")
         self.saved_max = payload.get("saved_max")
