@@ -2548,13 +2548,21 @@ class GovernorService:
         """One renderer receipt once. A repeated poll is not a new sample."""
         from .autopilot.contracts import Config
         clock = self._clock()
-        latest = self.autopilot_observation.snapshot.samples[-1:]
+        snapshot = self.autopilot_observation.snapshot
+        latest = snapshot.samples[-1:]
         sample = latest[0] if latest else None
-        fresh = sample is not None and 0 <= clock - sample.timestamp_mono <= Config().max_age_s
-        if fresh and sample.seq != self._autopilot_seen_seq:
-            self._autopilot_seen_seq = sample.seq
+        fresh = (
+            not snapshot.blocked_reason and bool(snapshot.session_key)
+            and snapshot.backend == "gfg"
+            and 0 <= clock - snapshot.timestamp_mono <= Config().max_age_s
+            and sample is not None and sample.context == snapshot.context
+            and 0 <= clock - sample.timestamp_mono <= Config().max_age_s
+        )
+        receipt = (snapshot.session_key, sample.seq) if sample is not None else None
+        if fresh and receipt != self._autopilot_seen_seq:
+            self._autopilot_seen_seq = receipt
             return sample.seq, sample.timestamp_mono, True, sample
-        return 0, clock, False, sample
+        return 0, clock, False, sample if fresh else None
 
     async def _poll_autopilot_observation(self, profile: str) -> None:
         await asyncio.to_thread(self.observer.poll)
@@ -2640,10 +2648,39 @@ class GovernorService:
             slot_busy=slot.busy, slot_knob=slot.knob,
         ).public()
 
+    def _autopilot_conflicting_executor(self) -> str:
+        """Admission only: preserve consent and let existing owners release themselves."""
+        if getattr(self.cpu, "owned", False) or getattr(self.cpu, "restore_pending", False):
+            return "cpu-owner-active"
+        if self._injection is not None or (
+                self.frame_os.enabled and self.frame_os.mode == "act"):
+            return "frame-os-act-active"
+        if self._request is not None:
+            return "renderer-request-active"
+        return ""
+
+    def _autopilot_saved_revision(self, saved):
+        if not isinstance(saved, dict):
+            return None
+        import hashlib
+        import json
+        body = json.dumps(saved, sort_keys=True, default=str).encode()
+        return hashlib.sha256(body).hexdigest()[:16]
+
+    def _autopilot_power_context(self, ceiling_w, saved):
+        """A trial belongs to one session, one Saved revision and one verified ceiling."""
+        ceiling = None
+        if isinstance(ceiling_w, (int, float)) and not isinstance(ceiling_w, bool):
+            ceiling = round(float(ceiling_w), 3)
+        return (self.autopilot_observation.snapshot.session_key,
+                self._autopilot_saved_revision(saved), ceiling)
+
     async def _run_autopilot_power(self) -> None:
         """Apply at most one owned power step. Off unless the development flag is set."""
         if not self._autopilot_power_enabled or self._autopilot_flow_enabled:
             return
+        profile = self._status.get("profile") or ""
+        saved = await asyncio.to_thread(self._saved_profile_config, profile) if profile else None
         if self._restoration_blocked():
             now = self._clock()
             seq, _stamp, evidence, sample = self._autopilot_evidence()
@@ -2651,7 +2688,7 @@ class GovernorService:
                 self._autopilot_power.step, now=now, seq=seq,
                 real=None if sample is None else sample.real_fps,
                 output=None if sample is None else sample.output_fps,
-                context=self.autopilot_observation.snapshot.context or "session",
+                context=self._autopilot_power_context(None, saved),
                 ceiling_w=None, owned=False, allow=False, slot=self._autopilot_slot,
                 restore_pending=True, evidence=evidence,
             )
@@ -2670,14 +2707,16 @@ class GovernorService:
         )
         seq, stamp, evidence, sample = self._autopilot_evidence()
         view = self._autopilot_power_view
+        ceiling = view.get("ceiling_tdp_w") if view.get("owned") is True else None
         outcome = await asyncio.to_thread(
             self._autopilot_power.step, now=stamp, seq=seq,
             real=None if sample is None else sample.real_fps,
             output=None if sample is None else sample.output_fps,
-            context=self.autopilot_observation.snapshot.context or "session",
-            ceiling_w=view.get("ceiling_tdp_w") if view.get("owned") is True else None,
+            context=self._autopilot_power_context(ceiling, saved),
+            ceiling_w=ceiling,
             owned=view.get("owned") is True,
-            allow=decision.action is Action.TRIAL and decision.knob is Knob.POWER_CAP,
+            allow=(decision.action is Action.TRIAL and decision.knob is Knob.POWER_CAP
+                   and not self._autopilot_conflicting_executor()),
             other_busy=self._autopilot_slot.busy and self._autopilot_slot.knob is not Knob.POWER_CAP,
             slot=self._autopilot_slot, evidence=evidence,
         )
@@ -2737,13 +2776,15 @@ class GovernorService:
         )
         slot = self._autopilot_slot
         profile = self._status.get("profile") or ""
-        if decision.action is not Action.TRIAL or decision.knob is not Knob.FLOW_SCALE or decision.release_slot:
+        if (decision.action is not Action.TRIAL or decision.knob is not Knob.FLOW_SCALE
+                or decision.release_slot or self._autopilot_conflicting_executor()):
             if self._autopilot_flow_dirty() and profile and self._point is not None and self.overlay is not None:
                 await self._restore_autopilot_flow(profile)
                 return
             if slot.busy and slot.knob is Knob.FLOW_SCALE and not self._autopilot_hold_for_restore(slot):
                 slot.abort(decision.reason)
-            reason = "restore-before-release" if self._autopilot_flow_dirty() else decision.reason
+            reason = ("restore-before-release" if self._autopilot_flow_dirty()
+                      else self._autopilot_conflicting_executor() or decision.reason)
             self._status["autopilot_flow"] = self._flow_report(False, decision.action.value, reason)
             return
         if slot.busy and slot.knob is not Knob.FLOW_SCALE:
