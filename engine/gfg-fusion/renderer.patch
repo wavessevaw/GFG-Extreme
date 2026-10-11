@@ -1,0 +1,489 @@
+diff --git a/engine/docs/MEMORY-MANAGEMENT.md b/engine/docs/MEMORY-MANAGEMENT.md
+index c065d6e..39ee872 100644
+--- a/engine/docs/MEMORY-MANAGEMENT.md
++++ b/engine/docs/MEMORY-MANAGEMENT.md
+@@ -129,3 +129,7 @@ ## Validation and change ownership
+ | Scaling admission and resource formats | [`spatial_scaling_policy.hpp`](../mako-render/src/spatial_scaling_policy.hpp), [`spatial_scaler.cpp`](../mako-render/src/spatial_scaler.cpp) |
+ 
+ Extend these owners when changing memory behavior. Keep the allocator, accounting, failure cleanup, focused tests, and owning boundary guide aligned; do not add a second allocator or treat a policy estimate as completion or allocation proof.
++
++## Experimental direct sampled FG inputs
++
++The GFG Frame Fusion patch owns bounded descriptor bindings in `SpatialScaler`, borrowing generated-image views from the swapchain. Bindings must be drained and cleared before replacing or destroying their images, including prepared scalers, backend transitions and retirement. Setup is transactional and recording performs no allocations. Descriptors only accept matching extent/format, sampled usage, unique handles and at most 64 inputs. This patch retains the private fallback images; it removes one copy on an eligible recorded path, not the full memory allocation.
+diff --git a/engine/docs/SCALING.md b/engine/docs/SCALING.md
+index a4bd08b..bb4a3eb 100644
+--- a/engine/docs/SCALING.md
++++ b/engine/docs/SCALING.md
+@@ -146,3 +146,7 @@ ## Code and test ownership
+ | Shared LS1/LSFG resource resolution and validation; LS1 translation | `mako-backend/src/extraction/`, `mako-cli inspect-dll` |
+ | Portable policy and transition coverage | `mako-render/tests/spatial_scaling_policy_tests.cpp`, `mako-render/tests/profile_update_tests.cpp` |
+ | GPU quality and runtime evidence | `mako-cli/src/tools/quality.cpp`, private MAKO Gym suites |
++
++## Experimental GFG Frame Fusion patch
++
++The GFG fork can opt in with `GFG_FRAME_FUSION=1` before launch. Only the SDR8 post-Frame-Generation MAKO path prebinds matching sampled private generated images and skips their source-sized input blit. The scaler shader, output blit, WSI order and pixel semantics remain unchanged. Native Resolution, LS1, HDR, unknown images, unsupported formats and failed bindings use the copy-based path. Runtime status distinguishes prepared bindings from recorded work; counters are not GPU-time or power evidence.
+diff --git a/engine/mako-common/include/mako-common/vulkan/image.hpp b/engine/mako-common/include/mako-common/vulkan/image.hpp
+index f3e6061..5dde405 100644
+--- a/engine/mako-common/include/mako-common/vulkan/image.hpp
++++ b/engine/mako-common/include/mako-common/vulkan/image.hpp
+@@ -51,6 +51,8 @@ namespace vk {
+         /// get the extent of the image
+         /// @return the extent of the image
+         [[nodiscard]] VkExtent2D getExtent() const { return this->extent; }
++        [[nodiscard]] VkFormat getFormat() const { return this->format; }
++        [[nodiscard]] VkImageUsageFlags getUsage() const { return this->usage; }
+     private:
+         std::shared_ptr<void> pooledMemory;
+         ls::owned_ptr<VkDeviceMemory> memory;
+@@ -58,5 +60,7 @@ namespace vk {
+         ls::owned_ptr<VkImageView> view;
+ 
+         VkExtent2D extent{};
++        VkFormat format{};
++        VkImageUsageFlags usage{};
+     };
+ }
+diff --git a/engine/mako-common/src/vulkan/image.cpp b/engine/mako-common/src/vulkan/image.cpp
+index 615db1a..95ae426 100644
+--- a/engine/mako-common/src/vulkan/image.cpp
++++ b/engine/mako-common/src/vulkan/image.cpp
+@@ -180,7 +180,7 @@ Image::Image(const vk::Vulkan& vk,
+             std::optional<int> importFd,
+             std::optional<int*> exportFd,
+             std::shared_ptr<ImageMemoryPool> internalPool) :
+-        extent(extent) {
++        extent(extent), format(format), usage(usage) {
+     const int incomingFd = importFd.value_or(-1);
+     ls::FileDescriptorScope imported{{&incomingFd, 1}};
+     if (internalPool && (importFd || exportFd))
+diff --git a/engine/mako-render/CMakeLists.txt b/engine/mako-render/CMakeLists.txt
+index 6cf0e80..0e51c83 100644
+--- a/engine/mako-render/CMakeLists.txt
++++ b/engine/mako-render/CMakeLists.txt
+@@ -19,6 +19,15 @@ set(ADAPTIVE_SOURCE "src/adaptive_scheduler.cpp")
+ set(SPATIAL_SCALER_SOURCE "src/spatial_scaler.cpp")
+ set(COLOR_PIPELINE_SOURCE "src/color_pipeline.cpp")
+ 
++if(GFG_FUSION_TEST_SOURCE)
++    add_executable(gfg-frame-fusion-tests "${GFG_FUSION_TEST_SOURCE}"
++        "../mako-cli/src/tools/image_transfer.cpp")
++    target_include_directories(gfg-frame-fusion-tests PRIVATE
++        "src" "../mako-cli/src/tools")
++    target_link_libraries(gfg-frame-fusion-tests PRIVATE mako-spatial-scaler)
++    add_test(NAME gfg-frame-fusion COMMAND gfg-frame-fusion-tests)
++endif()
++
+ # Keep explicit target membership while detecting a newly added implementation
+ # that was forgotten in CMake. The checker runs for the default and layer
+ # targets, so adding a source under src/ fails even in an existing build tree.
+diff --git a/engine/mako-render/src/runtime_status.cpp b/engine/mako-render/src/runtime_status.cpp
+index 4cef6ba..8b4fb10 100644
+--- a/engine/mako-render/src/runtime_status.cpp
++++ b/engine/mako-render/src/runtime_status.cpp
+@@ -380,6 +380,10 @@ std::string mako::layer::runtimeStatusJson(
+     else
+         stream << "null";
+     stream << '}'
++           << ",\"frame_fusion\":{\"schema\":1,\"prepared_inputs\":"
++           << status.frameFusionPreparedInputs
++           << ",\"recorded_frames\":" << status.frameFusionRecordedFrames
++           << ",\"avoided_source_copies\":" << status.frameFusionRecordedFrames << '}'
+            << ",\"requested\":" << profileJson(status.requestedProfile)
+            << ",\"applied\":" << profileJson(status.appliedProfile)
+            << ",\"error\":";
+diff --git a/engine/mako-render/src/runtime_status.hpp b/engine/mako-render/src/runtime_status.hpp
+index 4493304..7f2e08d 100644
+--- a/engine/mako-render/src/runtime_status.hpp
++++ b/engine/mako-render/src/runtime_status.hpp
+@@ -73,6 +73,8 @@ namespace mako::layer {
+         bool spatialSupersamplingActive{false};
+         std::optional<std::string> spatialFallbackReason;
+         std::optional<double> nonSupersamplingFactorCeiling;
++        size_t frameFusionPreparedInputs{0};
++        uint64_t frameFusionRecordedFrames{0};
+         std::optional<std::string> error;
+     };
+ 
+diff --git a/engine/mako-render/src/spatial_scaler.cpp b/engine/mako-render/src/spatial_scaler.cpp
+index 86cab67..fe8988e 100644
+--- a/engine/mako-render/src/spatial_scaler.cpp
++++ b/engine/mako-render/src/spatial_scaler.cpp
+@@ -140,6 +140,13 @@ namespace {
+         virtual void clearDirectOutputs() = 0;
+         [[nodiscard]] virtual size_t directOutputCount() const = 0;
+         [[nodiscard]] virtual bool hasDirectOutput(VkImage) const = 0;
++        virtual void configureDirectInputs(const vk::Vulkan&,
++            std::span<const std::reference_wrapper<const vk::Image>>) {}
++        virtual void clearDirectInputs() {}
++        [[nodiscard]] virtual size_t directInputCount() const { return 0; }
++        [[nodiscard]] virtual bool hasDirectInput(VkImage) const { return false; }
++        virtual void recordDirectInput(const vk::Vulkan&, VkCommandBuffer,
++            VkImage) const { throw std::logic_error("direct input unavailable"); }
+         virtual void recordCompute(
+             const vk::Vulkan&, VkCommandBuffer,
+             VkImage directOutput = VK_NULL_HANDLE
+@@ -372,15 +379,65 @@ namespace {
+                 const VkImage image) const override {
+             return directOutputIndex(this->directOutputs, image).has_value();
+         }
++        void configureDirectInputs(const vk::Vulkan& vk,
++                const std::span<const std::reference_wrapper<const vk::Image>> inputs) override {
++            std::optional<vk::DescriptorPool> replacementPool;
++            std::vector<vk::DescriptorSet> replacementSets;
++            std::vector<VkImage> replacementHandles;
++            if (!inputs.empty()) {
++                const auto count = static_cast<uint32_t>(inputs.size());
++                replacementPool.emplace(vk, vk::Limits{
++                    .sets = count, .uniform_buffers = count, .samplers = count,
++                    .sampled_images = count, .storage_images = count,
++                });
++                replacementSets.reserve(count);
++                replacementHandles.reserve(count);
++                for (const auto& input : inputs) {
++                    replacementSets.emplace_back(vk, *replacementPool, this->shader,
++                        std::vector<ls::R<const vk::Image>>{std::cref(input.get())},
++                        std::vector<ls::R<const vk::Image>>{std::cref(this->reconstructedImage)},
++                        std::vector<ls::R<const vk::Sampler>>{std::cref(this->sampler)},
++                        std::vector<ls::R<const vk::Buffer>>{std::cref(this->parameterBuffer)});
++                    replacementHandles.push_back(input.get().handle());
++                }
++            }
++            // Build the replacement completely before changing live bindings.
++            this->inputDescriptorSets.clear();
++            this->inputDescriptorPool.reset();
++            this->inputDescriptorPool = std::move(replacementPool);
++            this->inputDescriptorSets = std::move(replacementSets);
++            this->directInputs = std::move(replacementHandles);
++        }
++        void clearDirectInputs() override {
++            this->inputDescriptorSets.clear();
++            this->inputDescriptorPool.reset();
++            this->directInputs.clear();
++        }
++        [[nodiscard]] size_t directInputCount() const override {
++            return this->directInputs.size();
++        }
++        [[nodiscard]] bool hasDirectInput(const VkImage input) const override {
++            return directOutputIndex(this->directInputs, input).has_value();
++        }
++        void recordDirectInput(const vk::Vulkan& vk,
++                const VkCommandBuffer commandBuffer, const VkImage input) const override {
++            this->recordMakoCompute(vk, commandBuffer, VK_NULL_HANDLE, input);
++        }
+         void recordCompute(const vk::Vulkan& vk,
++                const VkCommandBuffer commandBuffer, const VkImage output) const override {
++            this->recordMakoCompute(vk, commandBuffer, output, VK_NULL_HANDLE);
++        }
++        void recordMakoCompute(const vk::Vulkan& vk,
+                 const VkCommandBuffer commandBuffer,
+-                const VkImage directOutput) const override {
++                const VkImage directOutput, const VkImage directInput) const {
+             const auto directIndex = directOutput == VK_NULL_HANDLE
+                 ? std::optional<size_t>{}
+                 : directOutputIndex(this->directOutputs, directOutput);
+             const VkImage outputImage = directIndex
+                 ? directOutput : this->reconstructedImage.handle();
+-            const auto& outputDescriptors = directIndex
++            const auto inputIndex = directOutputIndex(this->directInputs, directInput);
++            const auto& outputDescriptors = inputIndex
++                ? this->inputDescriptorSets.at(*inputIndex) : directIndex
+                 ? this->directDescriptorSets.at(*directIndex)
+                 : this->descriptorSet;
+             const std::array barriers{
+@@ -400,7 +457,8 @@ namespace {
+                 commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                 0, nullptr, 0, nullptr,
+-                static_cast<uint32_t>(barriers.size()), barriers.data()
++                inputIndex ? 1U : static_cast<uint32_t>(barriers.size()),
++                inputIndex ? &barriers[1] : barriers.data()
+             );
+             vk.df().CmdBindPipeline(
+                 commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+@@ -441,6 +499,9 @@ namespace {
+         std::optional<vk::DescriptorPool> directDescriptorPool;
+         std::vector<vk::DescriptorSet> directDescriptorSets;
+         std::vector<VkImage> directOutputs;
++        std::optional<vk::DescriptorPool> inputDescriptorPool;
++        std::vector<vk::DescriptorSet> inputDescriptorSets;
++        std::vector<VkImage> directInputs;
+     };
+ 
+     class Ls1Pipeline final : public Pipeline {
+@@ -771,6 +832,7 @@ class SpatialScaler::Implementation {
+             const std::optional<std::filesystem::path>& shaderDllPath) :
+         sourceSize(sourceExtent),
+         presentationSize(presentationExtent),
++        workingFormat(workingFormat),
+         requested(requested),
+         active(requested) {
+         // The spatial role is constructed at the scaling-engine startup
+@@ -824,6 +886,8 @@ class SpatialScaler::Implementation {
+ 
+     VkExtent2D sourceSize{};
+     VkExtent2D presentationSize{};
++    VkFormat workingFormat{};
++    mutable uint64_t fusionFrames{0};
+     ls::ScalingMethod requested{ls::ScalingMethod::Mako};
+     ls::ScalingMethod active{ls::ScalingMethod::Mako};
+     std::string fallback;
+@@ -875,6 +939,39 @@ size_t SpatialScaler::directFrameGenerationOutputCount() const {
+     return this->implementation->pipeline->directOutputCount();
+ }
+ 
++void SpatialScaler::configureDirectFrameGenerationInputs(const vk::Vulkan& vk,
++        const std::span<const std::reference_wrapper<const vk::Image>> inputs) {
++    if (inputs.size() > 64)
++        throw ls::vulkan_error("Frame Fusion input capacity exceeds 64");
++    for (size_t index = 0; index < inputs.size(); ++index) {
++        const auto& image = inputs[index].get();
++        const auto extent = image.getExtent();
++        if (extent.width != this->implementation->sourceSize.width ||
++                extent.height != this->implementation->sourceSize.height ||
++                image.getFormat() != this->implementation->workingFormat ||
++                !(image.getUsage() & VK_IMAGE_USAGE_SAMPLED_BIT))
++            throw ls::vulkan_error("Frame Fusion requires matching sampled input images");
++        for (size_t prior = 0; prior < index; ++prior)
++            if (inputs[prior].get().handle() == image.handle())
++                throw ls::vulkan_error("Frame Fusion rejects duplicate input images");
++    }
++    this->implementation->pipeline->configureDirectInputs(vk, inputs);
++    this->implementation->fusionFrames = 0;
++}
++
++void SpatialScaler::clearDirectFrameGenerationInputs() {
++    this->implementation->pipeline->clearDirectInputs();
++    this->implementation->fusionFrames = 0;
++}
++
++size_t SpatialScaler::directFrameGenerationInputCount() const {
++    return this->implementation->pipeline->directInputCount();
++}
++
++uint64_t SpatialScaler::frameFusionRecordedFrames() const {
++    return this->implementation->fusionFrames;
++}
++
+ VkExtent2D SpatialScaler::sourceExtent() const {
+     return this->implementation->sourceSize;
+ }
+@@ -1017,37 +1114,55 @@ void SpatialScaler::recordSourceToPresentation(const vk::Vulkan& vk,
+         const vk::CommandBuffer& commandBuffer,
+         const VkImage sourceImage, const VkImage presentationImage,
+         const VkImageLayout sourceLayout,
+-        const VkImageLayout presentationLayout) const {
++        const VkImageLayout presentationLayout,
++        const VkImageLayout finalLayout) const {
+     const auto handle = commandBuffer.handle();
+-    const std::array inputBarriers{
+-        imageBarrier(
+-            sourceImage, VK_ACCESS_MEMORY_WRITE_BIT,
+-            VK_ACCESS_TRANSFER_READ_BIT, sourceLayout,
+-            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+-        ),
+-        imageBarrier(
+-            this->implementation->pipeline->input().handle(), VK_ACCESS_NONE,
+-            VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+-            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+-        ),
+-    };
+-    vk.df().CmdPipelineBarrier(
+-        handle, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+-        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+-        static_cast<uint32_t>(inputBarriers.size()), inputBarriers.data()
+-    );
+-
+-    const auto sourceCopy = blitRegion(
+-        this->implementation->sourceSize, this->implementation->sourceSize
+-    );
+-    vk.df().CmdBlitImage(
+-        handle, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+-        this->implementation->pipeline->input().handle(),
+-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+-        1, &sourceCopy, VK_FILTER_NEAREST
+-    );
+-
+-    this->implementation->pipeline->recordCompute(vk, handle);
++    if (this->implementation->pipeline->hasDirectInput(sourceImage)) {
++        const auto inputBarrier = imageBarrier(sourceImage,
++            VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
++            sourceLayout, VK_IMAGE_LAYOUT_GENERAL);
++        vk.df().CmdPipelineBarrier(handle, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
++            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
++            0, nullptr, 0, nullptr, 1, &inputBarrier);
++        this->implementation->pipeline->recordDirectInput(vk, handle, sourceImage);
++        const auto restore = imageBarrier(sourceImage,
++            VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_TRANSFER_READ_BIT,
++            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
++        vk.df().CmdPipelineBarrier(handle, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
++            VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
++            0, nullptr, 0, nullptr, 1, &restore);
++        ++this->implementation->fusionFrames;
++    } else {
++        const std::array inputBarriers{
++            imageBarrier(
++                sourceImage, VK_ACCESS_MEMORY_WRITE_BIT,
++                VK_ACCESS_TRANSFER_READ_BIT, sourceLayout,
++                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
++            ),
++            imageBarrier(
++                this->implementation->pipeline->input().handle(), VK_ACCESS_NONE,
++                VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
++                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
++            ),
++        };
++        vk.df().CmdPipelineBarrier(
++            handle, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
++            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
++            static_cast<uint32_t>(inputBarriers.size()), inputBarriers.data()
++        );
++    
++        const auto sourceCopy = blitRegion(
++            this->implementation->sourceSize, this->implementation->sourceSize
++        );
++        vk.df().CmdBlitImage(
++            handle, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++            this->implementation->pipeline->input().handle(),
++            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
++            1, &sourceCopy, VK_FILTER_NEAREST
++        );
++    
++        this->implementation->pipeline->recordCompute(vk, handle);
++    }
+ 
+     const auto presentationBarrier = imageBarrier(
+         presentationImage,
+@@ -1077,11 +1192,12 @@ void SpatialScaler::recordSourceToPresentation(const vk::Vulkan& vk,
+     const auto finalBarrier = imageBarrier(
+         presentationImage, VK_ACCESS_TRANSFER_WRITE_BIT,
+         VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+-        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
++        finalLayout
+     );
+     vk.df().CmdPipelineBarrier(
+         handle, VK_PIPELINE_STAGE_TRANSFER_BIT,
+-        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0,
++        finalLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
++            ? VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
+         0, nullptr, 0, nullptr, 1, &finalBarrier
+     );
+ }
+diff --git a/engine/mako-render/src/spatial_scaler.hpp b/engine/mako-render/src/spatial_scaler.hpp
+index da42cab..f0e3906 100644
+--- a/engine/mako-render/src/spatial_scaler.hpp
++++ b/engine/mako-render/src/spatial_scaler.hpp
+@@ -49,6 +49,16 @@ namespace mako::layer {
+         void clearDirectFrameGenerationOutputs();
+         [[nodiscard]] size_t directFrameGenerationOutputCount() const;
+ 
++        /// Frame Fusion: preallocate sampled-image bindings for generated
++        /// private inputs. Unsupported algorithms keep the copy-based path.
++        /// The caller must drain in-flight work before replacing or clearing
++        /// these bindings, and retain the input images for their lifetime.
++        void configureDirectFrameGenerationInputs(const vk::Vulkan& vk,
++            std::span<const std::reference_wrapper<const vk::Image>> inputs);
++        void clearDirectFrameGenerationInputs();
++        [[nodiscard]] size_t directFrameGenerationInputCount() const;
++        [[nodiscard]] uint64_t frameFusionRecordedFrames() const;
++
+         /// Reconstruct the application's low-resolution rectangle, write the
+         /// native-resolution result back into its image, and optionally copy
+         /// the same result to MAKO's exported FG source. Production WSI uses
+@@ -70,7 +80,8 @@ namespace mako::layer {
+             VkImageLayout sourceLayout =
+                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+             VkImageLayout presentationLayout =
+-                VK_IMAGE_LAYOUT_UNDEFINED) const;
++                VK_IMAGE_LAYOUT_UNDEFINED,
++            VkImageLayout finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) const;
+ 
+         [[nodiscard]] VkExtent2D sourceExtent() const;
+         [[nodiscard]] VkExtent2D presentationExtent() const;
+diff --git a/engine/mako-render/src/swapchain/present/generated_frames.cpp b/engine/mako-render/src/swapchain/present/generated_frames.cpp
+index bbe8ed7..80ceb71 100644
+--- a/engine/mako-render/src/swapchain/present/generated_frames.cpp
++++ b/engine/mako-render/src/swapchain/present/generated_frames.cpp
+@@ -430,6 +430,8 @@ VkResult Swapchain::presentGeneratedFrames(
+         generatedSubmitDuration += finishPresentDiagnostic(
+             generatedSubmitStarted
+         );
++        if (this->spatialScaler && this->spatialScaler->frameFusionRecordedFrames() == 1)
++            this->publishRuntimeStatus("frame-fusion-first-submitted-frame");
+         logSlowPresentOperation(
+             "submit-generated-copy", this->frameState.realFrameIndex,
+             this->frameState.sequenceIndex,
+diff --git a/engine/mako-render/src/swapchain/resources.cpp b/engine/mako-render/src/swapchain/resources.cpp
+index c6b4852..df0731f 100644
+--- a/engine/mako-render/src/swapchain/resources.cpp
++++ b/engine/mako-render/src/swapchain/resources.cpp
+@@ -1,6 +1,7 @@
+ /* SPDX-License-Identifier: GPL-3.0-or-later */
+ 
+ #include "swapchain/swapchain.hpp"
++#include <cstdlib>
+ #include "present_diagnostics.hpp"
+ #include "mako-common/helpers/errors.hpp"
+ #include "mako-common/helpers/file_descriptors.hpp"
+@@ -727,6 +728,30 @@ void Swapchain::configureDirectSpatialFrameGenerationOutputs(
+         const vk::Vulkan& vk, SpatialScaler& scaler,
+         const std::span<const vk::Image> outputs,
+         const std::string_view reason) noexcept {
++    // Experimental Fusion Core only shares private SDR FG outputs. No WSI
++    // storage-usage changes, shader reordering, or additional per-frame work.
++    scaler.clearDirectFrameGenerationInputs();
++    const char* fusion = std::getenv("GFG_FRAME_FUSION");
++    if (fusion && std::string_view(fusion) == "1" &&
++            this->spatialFramePipelinePlacement ==
++                SpatialFramePipelinePlacement::PostFrameGeneration &&
++            this->colorPipeline.encoding == backend::FrameEncoding::Sdr8 &&
++            !this->destinationImages.empty()) {
++        try {
++            std::vector<std::reference_wrapper<const vk::Image>> inputs;
++            inputs.reserve(this->destinationImages.size());
++            for (const auto& input : this->destinationImages)
++                inputs.push_back(std::cref(input));
++            scaler.configureDirectFrameGenerationInputs(vk, inputs);
++            std::cerr << "MAKO Renderer: frame-fusion: prepared_inputs="
++                      << scaler.directFrameGenerationInputCount()
++                      << "; mode=direct-sampled-input; reason=" << reason << '\n';
++        } catch (const std::exception& error) {
++            scaler.clearDirectFrameGenerationInputs();
++            std::cerr << "MAKO Renderer: frame-fusion: fallback=copy-private-input; reason="
++                      << error.what() << '\n';
++        }
++    }
+     if (!directSpatialFrameGenerationOutputEligible(
+             this->spatialFramePipelinePlacement,
+             this->info.spatialScalingActive, outputs.size())) {
+@@ -765,10 +790,14 @@ void Swapchain::configureDirectSpatialFrameGenerationOutputs(
+ }
+ 
+ void Swapchain::clearDirectSpatialFrameGenerationOutputs() noexcept {
+-    if (this->spatialScaler)
++    if (this->spatialScaler) {
+         this->spatialScaler->clearDirectFrameGenerationOutputs();
+-    if (this->preparedSpatialScaler)
++        this->spatialScaler->clearDirectFrameGenerationInputs();
++    }
++    if (this->preparedSpatialScaler) {
+         this->preparedSpatialScaler->clearDirectFrameGenerationOutputs();
++        this->preparedSpatialScaler->clearDirectFrameGenerationInputs();
++    }
+ }
+ 
+ bool Swapchain::updateGamescopeHdrState(
+diff --git a/engine/mako-render/src/swapchain/status.cpp b/engine/mako-render/src/swapchain/status.cpp
+index 4ed8c4f..1a62db3 100644
+--- a/engine/mako-render/src/swapchain/status.cpp
++++ b/engine/mako-render/src/swapchain/status.cpp
+@@ -154,6 +154,10 @@ void Swapchain::publishRuntimeStatus(const std::string_view reason) noexcept {
+             : std::nullopt,
+         .nonSupersamplingFactorCeiling =
+             nonSupersamplingFactorCeiling,
++        .frameFusionPreparedInputs = this->spatialScaler
++            ? this->spatialScaler->directFrameGenerationInputCount() : 0,
++        .frameFusionRecordedFrames = this->spatialScaler
++            ? this->spatialScaler->frameFusionRecordedFrames() : 0,
+         .error = this->runtimeStatusState.error,
+     });
+ }
