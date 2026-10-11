@@ -3237,10 +3237,19 @@ class GovernorService:
                 self._event("autopilot-actuator-skipped", trial_reason, profile=profile,
                             tool=decision.tool, output_fps=output,
                             point=self._point.get("key") if self._point else None)
-                self._publish_autopilot(profile, view, decision, clock)
-                # Allow the established BudgetController to improve a weak
-                # cadence, but never alter clock or shading during Steam QAM.
-                return trial_reason == "steam-menu-open"
+                # This was a SKIPPED actuator, not a running experiment.
+                # Keep the existing TDP controller available outside Steam QAM,
+                # and never show "Testing shading" before a write is confirmed.
+                covered = trial_reason == "steam-menu-open"
+                self._autopilot_plan = "hold" if covered else "run"
+                arbiter.note("HOLD" if covered else "OPTIMIZE_POWER", trial_reason)
+                if self._budget is not None:
+                    self._budget.hold_planned = covered
+                    self._budget.hold_probes = covered
+                self._publish_autopilot(profile, view, decision, clock,
+                                        deferred_reason=trial_reason)
+                # A weak cadence still gets help from ordinary BudgetController.
+                return covered
         if decision.action == "OPTIMIZE_SHADING":
             admission = arbiter.admit(decision.action, now)
             if admission == "ok" and shading.get("mode") == "1x1":
@@ -3260,7 +3269,14 @@ class GovernorService:
                 self._event("autopilot-shading-skipped", result.get("reason"), profile=profile)
             else:
                 self._event("autopilot-shading-skipped", admission, profile=profile)
+            # Report the actual skip rather than the planner's proposed trial.
             self._autopilot_plan = "hold"
+            if self._budget is not None:
+                self._budget.hold_planned = self._budget.hold_probes = True
+            self._publish_autopilot(profile, view, decision, clock,
+                                    deferred_reason=result.get("reason", "not-applied")
+                                    if admission == "ok" and shading.get("mode") == "1x1"
+                                    else admission)
             return True
         if decision.action == "OPTIMIZE_GPU_CLOCK" and arbiter.admit(decision.action, now) == "ok" and clock_ready:
             result = await asyncio.to_thread(self._autopilot_gpu.lower_ceiling)
@@ -3274,14 +3290,24 @@ class GovernorService:
                 if self._budget is not None:
                     self._budget.hold_planned = True
                 return True
-            self._event("autopilot-gpu-skipped", result.get("reason") or "GPU_CLOCK_UNAVAILABLE", profile=profile)
-        elif decision.action == "OPTIMIZE_GPU_CLOCK":
-            self._event("autopilot-gpu-skipped", arbiter.admit(decision.action, now), profile=profile)
+            skip = result.get("reason") or "GPU_CLOCK_UNAVAILABLE"
+            self._event("autopilot-gpu-skipped", skip, profile=profile)
+            if self._autopilot_gpu.phase == "restore-pending":
+                arbiter.mark_restore_pending(skip, tool="gpu-clock")
+            self._autopilot_plan = "hold"
             if self._budget is not None:
-                self._budget.hold_planned = True
-            arbiter.note("HOLD", arbiter.admit(decision.action, now))
-            self._publish_autopilot(profile, view, decision, clock)
-            return arbiter.freeze_tdp
+                self._budget.hold_planned = self._budget.hold_probes = True
+            self._publish_autopilot(profile, view, decision, clock, deferred_reason=skip)
+            return True
+        elif decision.action == "OPTIMIZE_GPU_CLOCK":
+            skip = arbiter.admit(decision.action, now)
+            self._event("autopilot-gpu-skipped", skip, profile=profile)
+            if self._budget is not None:
+                self._budget.hold_planned = self._budget.hold_probes = True
+            arbiter.note("HOLD", skip)
+            self._autopilot_plan = "hold"
+            self._publish_autopilot(profile, view, decision, clock, deferred_reason=skip)
+            return True
         holding = decision.action in ("HOLD", "PAUSE") or now < arbiter.cooldown_until
         self._autopilot_plan = "pause" if decision.action == "PAUSE" else ("hold" if holding else "run")
         if self._budget is not None:
@@ -3299,15 +3325,30 @@ class GovernorService:
                     clock_backend=clock.get("backend"), clock_level=clock.get("level"))
         return False
 
-    def _publish_autopilot(self, profile: str, view, decision, clock: Dict[str, Any]) -> None:
+    def _publish_autopilot(self, profile: str, view, decision, clock: Dict[str, Any],
+                           deferred_reason: Optional[str] = None) -> None:
+        # The planner proposes an action; the UI must never claim that an
+        # actuator is being tested when trial eligibility or the write failed.
         now = self._clock()
         proposed = autopilot_tones(view, critical=decision.reason == "thermal-limited")
         shown, since = hold_tones(self._autopilot_tones, proposed, now, self._autopilot_tone_since)
         self._autopilot_tones, self._autopilot_tone_since = shown, since
+        deferred = deferred_reason is not None
+        display_action = ("PAUSE" if deferred_reason == "steam-menu-open" else "HOLD") if deferred else decision.action
+        display_message = (
+            "Steam menu is open. Clock and shading experiments are paused."
+            if deferred_reason == "steam-menu-open" else
+            "Awaiting confirmed game measurements. No GPU or shading change was applied."
+            if deferred_reason in ("point-not-confirmed", "baseline-too-short",
+                                   "baseline-overlaps-transition", "renderer-not-stable",
+                                   "renderer-evidence-unavailable", "point-target-changed") else
+            "The requested experiment was skipped. Hardware settings were not changed."
+        ) if deferred else decision.message
         self._status["autopilot"] = {
             "enabled": True, "active": True, "state": self._autopilot_arbiter.state,
-            "action": decision.action, "reason": decision.reason, "message": decision.message,
-            "tool": self._autopilot_arbiter.tool or decision.tool,
+            "action": display_action, "reason": deferred_reason or decision.reason,
+            "message": display_message,
+            "tool": ("none" if deferred else self._autopilot_arbiter.tool or decision.tool),
             "preference": self._autopilot_preference(profile),
             "real_fps": decision.measured_real_fps, "output_fps": decision.measured_output_fps,
             "target_fps": view.target_fps, "confidence": decision.confidence,
