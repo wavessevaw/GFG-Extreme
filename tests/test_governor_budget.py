@@ -388,10 +388,10 @@ class FastRaiseTests(unittest.TestCase):
     def test_a_failing_lower_power_probe_reverts_within_seconds(self):
         ctl, now = self.locked_at_10()
         tdp = ctl.tdp
-        ctl.observe(now + 400, WindowVerdict(True, False, "holds"), 30)   # reprobe: -1 W
+        ctl.observe(now + ctl.FLOOR_BACKOFF_MAX_S + 5, WindowVerdict(True, False, "holds"), 30)   # reprobe: -1 W
         self.assertEqual((ctl.probe, ctl.tdp), ("down", tdp - 1))
-        ctl.fast_check(now + 401, 27.0, tdp - 1)
-        ctl.fast_check(now + 402, 27.0, tdp - 1)
+        ctl.fast_check(now + ctl.FLOOR_BACKOFF_MAX_S + 6, 27.0, tdp - 1)
+        ctl.fast_check(now + ctl.FLOOR_BACKOFF_MAX_S + 7, 27.0, tdp - 1)
         self.assertEqual((ctl.probe, ctl.tdp), (None, tdp))
 
     def test_deck_log_2026_10_06_resume_at_6_watts(self):
