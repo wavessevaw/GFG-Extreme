@@ -97,7 +97,7 @@ class QualityObjectiveTests(unittest.TestCase):
         ladder = TrialLadder(target_output_fps=90, preserve_resolution=True)
         self.assertEqual(ladder.next_upgrade("45x2", lambda p: None, 0).key, "51x1.75")
         ladder.reject("51x1.75", "bad", until=600)
-        self.assertNotEqual(ladder.next_upgrade("45x2", lambda p: None, 300).key, "51x1.75")
+        self.assertIsNone(ladder.next_upgrade("45x2", lambda p: None, 300))
         self.assertEqual(ladder.next_upgrade("45x2", lambda p: None, 601).key, "51x1.75")
 
     def test_native_has_no_quality_upgrade(self):

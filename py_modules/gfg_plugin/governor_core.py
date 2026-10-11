@@ -279,9 +279,11 @@ class TrialLadder:
         current = next((i for i, p in enumerate(choices) if p.key == current_key), None)
         if current is None:
             return None
-        return next((p for p in reversed(choices[:current])
-                     if p.render_scale_pct == 100 and p.key not in self.rejected
-                     and not applicable(p)), None)
+        candidate = next((p for p in reversed(choices[:current]) if p.render_scale_pct == 100), None)
+        # Failure of the adjacent finer cadence is not a reason to try an
+        # even more demanding cadence. Wait for that candidate's cooldown.
+        return (candidate if candidate is not None and candidate.key not in self.rejected
+                and not applicable(candidate) else None)
 
     def mark_attempt(self) -> None:
         self.attempts += 1
