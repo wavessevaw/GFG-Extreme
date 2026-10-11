@@ -20,9 +20,11 @@ at once. A skipped incompatible action is not a successful hardware trial.
 | CPU power split | Existing sensor and bottleneck gates apply. Pending CPU restoration excludes a GPU/VRS trial; pending GPU/VRS restoration pauses other resource changes. | `BudgetRuntimeTests`, global restoration barrier regression |
 | Scaling | Available only with a scale-ready launch and GPU-bound game. Ignored render extent is not retried as if effective. | `BottleneckAwareLadderTests`, budget/runtime scaling tests |
 | Frame OS Observe | Computes decisions and evidence without executing Act cadence changes. | Frame OS runner and integration tests |
+| Frame OS Off / Shadow | Off disables the layer's policy actions. Shadow runs the scheduler and reports would-be decisions without sleeping or executing Act cadence changes. | control-channel mode, runner disable and native scheduler/layer tests |
 | Frame OS Act: Calm | Existing Act unlock, live pacer and settled Governor point are required. Calm uses the confirmed cadence. | Frame OS runner/integration and native mock-driver tests |
 | Frame OS Act: Boost | Input/motion and available energy fund a higher real cadence. Failed settled bursts accumulate and back off; the adaptive point yields to Governor. | Frame OS policy/energy tests, `BurstDeliveryTests`, runtime release regression |
 | Frame OS Act: Rest | Requires verified inactivity or Steam UI, then wakes on input/focus. Without renderer capacity for lower real cadence it keeps the compatible cadence. | Frame OS idle/focus/capacity tests and runtime menu regressions |
+| Frame timing / Stall shield | Existing feature settings apply in Act after native confirmation. Stall shield avoids extra waiting on a late frame; it cannot eliminate game loading or shader stalls. | native scheduler, ordering and late-frame comparison tests |
 | Battery / Balanced / Quality transitions | Leaving Autopilot restores its GPU/VRS settings. Failed restoration blocks resource writes in every mode until recovered or an external override is recognized. | mode-switch restoration and restore-lock regressions |
 
 ## Release verification
@@ -47,7 +49,7 @@ claimed. After installing the new ZIP and restarting the game:
 3. With per-game shading opt-in, verify 2x2 is actually applied only in confirmed
    gameplay; compare text and fine detail visually, then disable the opt-in and
    verify 1x1 is restored. FPS alone cannot prove acceptable image quality.
-4. Test Frame OS Observe, then unlocked Act. Confirm Calm, funded Boost and
+4. Test Frame OS Off, Observe, Shadow, then unlocked Act. Confirm Calm, funded Boost and
    verified Rest from actual delivered cadence/power, including wake-up and
    ineffective-boost backoff. A label change alone is insufficient evidence.
 5. Collect the full session recording and renderer telemetry, not only a summary.
