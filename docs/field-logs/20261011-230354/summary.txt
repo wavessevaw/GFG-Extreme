@@ -1,0 +1,23 @@
+GFG Extreme log summary
+========================
+
+- The mode was switched 6 times during the recording; each switch starts a new search.
+- Operating points the renderer did not confirm or that failed their trial: 33x2.75, 36x2.5, 40x2.25, 45x2, 45x2-s90, 51x1.75, native90. Measured cadence, not the planned multiplier: 33x2.75 delivered output 88.051 / real 29.354 (asked output 90, real 33); 40x2.25 delivered output 89.96 / real 34.475 (asked output 90, real 40); 36x2.5 delivered output 89.999 / real 30.0 (asked output 90, real 36); native90 delivered output 47.828 / real 47.828 (asked output 90, real 90); 51x1.75 delivered output 78.025 / real 39.013 (asked output 90, real 51); 45x2 delivered output 67.243 / real 33.621 (asked output 90, real 45); 40x2.25 delivered output 89.613 / real 33.699 (asked output 90, real 40); 45x2-s90 delivered output 82.045 / real 41.023 (asked output 90, real 45); 33x2.75 delivered output 88.611 / real 29.651 (asked output 90, real 33).
+- Median output FPS 90 against a 90 FPS target.
+- Frame OS (act): the layer reported 12134 frames; freshness 23.38 ms, present interval 33.33 / 33.39 ms (p50 / p95), present hold 20.29 ms, engine DXVK.
+- Frame OS Act executor events: {'frame-os-injection:start': 4, 'frame-os-injection:stop': 2, 'frame-os-injection-yielded:power-research': 1}.
+- Frame OS by decision — boost: 786 samples, 30.0 real, freshness 23.25 ms, output p5 86.383 (acting); calm: 1138 samples, 30.0 real, freshness 23.47 ms, output p5 86.906 (acting); rest: 19 samples, 30.0 real, freshness 7.16 ms, output p5 89.009 (acting).
+- Frame OS Act: boost did not raise the real frame rate (the renderer or the GPU held it).
+- Frame OS input sensor: 207608 gamepad events from 4 gamepads; decisions {'rest': 24, 'calm': 1139, 'boost': 786}.
+- Power split: the CPU clock went down to 3.0 GHz (capped 7% of the time); the cap came off 2× for real frames short.
+- Render scale had no effect: the renderer offered the game 852x532 but it rendered at 1280x800 (application-extent-override-no-source-presentation-split). This game sets its own render size, so render scale (the profile's own included) cannot work here.
+
+recorded with: GFG Extreme 2.0.0 (renderer identity: see diagnostics)
+samples: 2184  duration: 2206.3 s  target: 90
+states: {'LOCKED': 1462, 'APPLY': 289, 'OPTIMIZE_POWER': 220, 'GUARD': 125, 'PAUSED': 39, 'DISABLED': 21, 'PROBE': 14, 'PLAN': 14}
+top reasons: {'frame-os-act-holds-point': 921, 'awaiting-fresh-evidence': 260, 'fast-raise:starved': 230, 'budget-point-holds': 152, 'guard-more-power:real-below-cap': 90, 'reprobe-lower-power': 51, 'minimum-power-found': 51, 'testing-lower-power': 48}
+points used: {'30x3': 1791, '36x2.5': 79, '45x2': 63, '33x2.75': 50}
+real FPS: {'median': 29.999, 'p5': 29.496}  output FPS: {'median': 89.993, 'p5': 79.417}
+TDP: {'min': 8.0, 'max': 20.0}  max temp: 74.0 °C  bottlenecks: {'gpu': 550, 'none': 273, 'power': 1361}
+renderer diagnostics: 51444 lines, 51332 events, 1788 FPS samples; operations: {'present-breakdown': 24412, 'present-total': 24411, 'adaptive-plan': 983, 'fixed-plan': 761, 'acquire-generated-image': 369, 'history-warmup': 136, 'runtime-state-applied': 40, 'ordered-acquire-transition-recovery-armed': 29, 'adaptive-stabilization': 23, 'adaptive-ramp': 22, 'adaptive-ramp-accepted': 21, 'gamescope-focus': 17}
+governor events: {'autopilot-decide': 1131, 'tdp-set': 97, 'budget-step': 37, 'operating-point-requested': 22, 'power-split': 21, 'operating-point-confirmed': 15, 'autopilot-actuator-skipped': 15, 'operating-point-applied': 12, 'operating-point-rejected': 10, 'overlay-rolled-back': 9, 'power-restored': 7, 'operating-point-released': 7}
