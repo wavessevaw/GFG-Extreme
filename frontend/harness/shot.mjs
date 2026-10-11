@@ -85,26 +85,26 @@ async function card(name, cols) {
   console.log(out + name + ".png");
 }
 
-// Overview: Battery at work, Extreme, Details.
+// Overview: real frontend UI, example 30 real → 90 output cadence, Autopilot and Details.
 await card("card-overview", [
-  { png: await screen(st("readme-home"), { until: "MODE" }), label: "Battery · at work" },
-  { png: await screen(st("home-extreme"), { taps: 2, until: "STOP" }), label: "<b>Extreme</b> · whole stock limit" },
-  { png: await screen(st("readme-home"), { nav: ["Details"], until: "HEALTH" }), label: "Details · every decision" },
+  { png: await screen(st("readme-home"), { until: "MODE" }), label: "Battery · example session" },
+  { png: await screen(st("home-autopilot"), { until: "FILTERS", maxH: 1160 }), label: "<b>Autopilot</b> · measured decisions" },
+  { png: await screen(st("home-autopilot"), { nav: ["Details"], until: "HEALTH" }), label: "Details · operating point" },
 ]);
 
-// The four modes: the Home hero of each.
+// Four modes now offered by the 2.0.0 mode selector.
 await card("card-modes", [
   { png: await region(st("readme-home"), { from: ".hero", to: ".hero" }), label: "Battery" },
   { png: await region(st("home-balanced"), { from: ".hero", to: ".hero" }), label: "Balanced" },
   { png: await region(st("home-quality-oled"), { from: ".hero", to: ".hero" }), label: "Quality" },
-  { png: await region(st("home-extreme"), { from: ".hero", to: ".hero" }), label: "<b>Extreme</b>" },
+  { png: await region(st("home-autopilot"), { from: ".hero", to: ".hero" }), label: "<b>Autopilot</b>" },
 ]);
 
-// Extreme: what it does now, what it checks, what it asks.
-await card("card-extreme", [
-  { png: await region(st("home-extreme"), { from: ".xcard", to: ".xcard" }), label: "Nine directions, each with its state" },
-  { png: await region(st("home-extreme-verify"), { from: ".hero", to: ".hero" }), label: "A new render scale is checked first" },
-  { png: await region(st("home-extreme"), { nav: ["Details"], from: "EXTREME", to: "^Gain vs Balanced" }), label: "Details · confirmed values only" },
+// The same genuine Autopilot card in confirmed/awaiting-measurement states.
+// These are explicitly sample values, not a performance benchmark.
+await card("card-autopilot", [
+  { png: await region(st("home-autopilot"), { from: "^AUTOPILOT", to: "^AUTOPILOT" }), label: "Confirmed · no unneeded changes" },
+  { png: await region(st("home-autopilot-wait"), { from: "^AUTOPILOT", to: "^AUTOPILOT" }), label: "Trial deferred · unchanged hardware" },
 ]);
 
 // Smart power split.
