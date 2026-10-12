@@ -64,10 +64,10 @@ class BudgetPointsTests(unittest.TestCase):
         self.assertTrue(budget_points(90)[0].degraded)
         self.assertFalse(any(p.degraded for p in budget_points(90)[1:]))
 
-    def test_ladder_60_respects_real_floor(self):
+    def test_ladder_60_opens_x375_and_keeps_emergency_last(self):
         keys = [p.key for p in budget_points(60)]
-        # x4 at 60 Hz would mean 15 real FPS; the last resort stops at 20 real.
-        self.assertEqual(keys, ["20x3", "24x2.5", "27x2.25", "30x2", "34x1.75", "40x1.5", "48x1.25", "native60"])
+        # x3.75 is normal at 16 real; x4 at 15 real remains an emergency point.
+        self.assertEqual(keys, ["15x4", "16x3.75", "17x3.5", "18x3.25", "20x3", "22x2.75", "24x2.5", "27x2.25", "30x2", "34x1.75", "40x1.5", "48x1.25", "native60"])
 
     def test_starts_at_30_real_and_10_watts(self):
         ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25)
@@ -486,9 +486,9 @@ class TierEffortTests(unittest.TestCase):
 
 
 class BalancedModeTests(unittest.TestCase):
-    def test_points_never_go_below_30_real_and_start_at_45_real_12_watts(self):
+    def test_points_include_x375_and_start_at_45_real_12_watts(self):
         c = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25, flavor="balanced")
-        self.assertEqual(min(p.base_target_fps for p in c.points[1:]), 30)
+        self.assertEqual(min(p.base_target_fps for p in c.points[1:]), 24)
         self.assertEqual((c.point.base_target_fps, c.tdp), (45, 12.0))
         self.assertEqual(c.status()["flavor"], "balanced")
 
@@ -498,7 +498,7 @@ class BalancedModeTests(unittest.TestCase):
         now, trace = run(c, game, 0.0, 400)
         self.assertFalse(any(point == c.points[0].key for point, _, _ in trace))
         self.assertLessEqual(max(t for _, t, _ in trace), 15.0)
-        self.assertEqual(min(p for p in (c.point.base_target_fps,)), 30)
+        self.assertEqual(min(p for p in (c.point.base_target_fps,)), 24)
         self.assertTrue(c.exhausted)
 
     def test_oled_balanced_fixed_x2_60_output_recovers_90_without_extra_watts(self):
@@ -531,20 +531,20 @@ class BalancedModeTests(unittest.TestCase):
         self.assertEqual(c.observe(8.0, verdict, 30.0, 90.0), "hold")
         self.assertEqual((c.point.key, c.tdp), ("45x2", 12.0))
 
-    def test_balanced_does_not_violate_30_real_floor_or_spend_unused_watts(self):
-        """At 26 real there is no legal x3 point that can reliably hold 90."""
+    def test_balanced_uses_fractional_recovery_without_spending_unused_watts(self):
+        """At 26 real, x3.5 can recover output without futile extra watts."""
         c = BudgetController(target_output_fps=90, now=0.0, flavor="balanced")
         c.phase, c.draw_w = "locked", 8.0
         verdict = window_verdict(
             {"real": {"p5": 26.0, "median": 26.0}, "output": {"median": 52.0}},
             c.point,
         )
-        self.assertEqual(c.observe(8.0, verdict, 26.0, 52.0), "hold")
-        self.assertEqual((c.point.key, c.tdp), ("45x2", 12.0))
-        self.assertIn("guard-not-power-bound", c.last_reason)
+        self.assertEqual(c.observe(8.0, verdict, 26.0, 52.0), "move")
+        self.assertEqual((c.point.key, c.tdp), ("26x3.5", 12.0))
+        self.assertIn("guard-output-recovery", c.last_reason)
 
-    def test_balanced_60hz_does_not_attempt_sub_30_real_recovery(self):
-        """60-Hz panels start at the deepest regular Balanced point, 30x2."""
+    def test_balanced_60hz_rechecks_before_fractional_recovery(self):
+        """A mild dip gets rechecked before using a deeper fractional ratio."""
         c = BudgetController(target_output_fps=60, now=0.0, flavor="balanced")
         c.phase, c.draw_w = "locked", 8.0
         verdict = window_verdict(
@@ -553,6 +553,8 @@ class BalancedModeTests(unittest.TestCase):
         )
         self.assertEqual(c.observe(8.0, verdict, 26.0, 52.0), "hold")
         self.assertEqual(c.point.key, "30x2")
+        self.assertEqual(c.observe(16.0, verdict, 26.0, 52.0), "move")
+        self.assertEqual((c.point.key, c.tdp), ("27x2.25", 12.0))
 
     def test_battery_flavour_is_unchanged(self):
         c = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=25)
@@ -573,17 +575,19 @@ class SixtyHertzTests(unittest.TestCase):
         self.assertEqual(BudgetController(target_output_fps=90, now=0.0).point.key, "30x3")
         self.assertEqual(BudgetController(target_output_fps=90, now=0.0, flavor="balanced").point.key, "45x2")
 
-    def test_balanced_60_never_goes_below_30_real_or_to_the_last_resort(self):
+    def test_balanced_60_stops_at_x375_without_emergency(self):
         c = BudgetController(target_output_fps=60, now=0.0, min_tdp_w=3, max_tdp_w=15, flavor="balanced")
         now, trace = run(c, Game(0.8), 0.0, 300)
-        self.assertGreaterEqual(min(c.points[i].base_target_fps for i in range(1, len(c.points))), 30)
+        self.assertGreaterEqual(min(c.points[i].base_target_fps for i in range(1, len(c.points))), 16)
         self.assertFalse(any(key == c.points[0].key for key, _, _ in trace))
         self.assertLessEqual(max(t for _, t, _ in trace), 15.0)
 
-    def test_capacity_two_still_allows_the_60_hz_last_resort(self):
+    def test_capacity_two_allows_normal_x3_but_not_the_60_hz_emergency(self):
         c = BudgetController(target_output_fps=60, now=0.0, min_tdp_w=3, max_tdp_w=20)
         c.current_max_multiplier = 3.0
-        self.assertTrue(c._usable(0, 0.0))          # 20x3 needs only two generated frames
+        self.assertFalse(c._usable(0, 0.0))
+        x3 = next(i for i,p in enumerate(c.points) if p.key == "20x3")
+        self.assertTrue(c._usable(x3, 0.0))
 
     def test_a_60_hz_game_that_holds_lowers_power(self):
         c = BudgetController(target_output_fps=60, now=0.0, min_tdp_w=3, max_tdp_w=15)
@@ -1044,7 +1048,7 @@ class ExtremeTests(unittest.TestCase):
     def test_ladder_trades_resolution_for_real_frames(self):
         from gfg_plugin.governor_core import extreme_points
         keys = [p.key for p in extreme_points(90)]
-        self.assertEqual(keys[0], "23x4", "fixed x4 is the Extreme last resort")
+        self.assertEqual(keys[0], "23x3.913", "emergency must still target 90 output")
         i = keys.index
         self.assertLess(i("30x3"), i("33x2.75@80"))
         self.assertLess(i("45x2@80"), i("45x2@90"))
@@ -1130,9 +1134,10 @@ class ExtremeTests(unittest.TestCase):
         ctl.observe(30.0, WindowVerdict(True, False, "holds"), ctl.point.base_target_fps, 90)
         self.assertEqual(ctl.settled_since, 30.0)
 
-    def test_no_last_resort_ratio(self):
+    def test_emergency_ratio_preserves_output_and_power_limit(self):
         ctl = self.make()
         game = Game(fps_per_watt=1.0)        # hopeless: 15 real at 15 W
         _, trace = run(ctl, game, 0.0, 40)
-        self.assertNotIn("23x3.913", [t[0] for t in trace])
+        self.assertIn("23x3.913", [t[0] for t in trace])
+        self.assertAlmostEqual(ctl.points[0].base_target_fps * ctl.points[0].multiplier, 90, places=1)
         self.assertGreaterEqual(min(BudgetController.EMERGENCY_CEILING_W, 15.0), max(t[1] for t in trace))

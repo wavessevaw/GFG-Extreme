@@ -12,7 +12,7 @@ const cases = [
   ["home-relaunch-dock", [], ["Restart the game", "Dock"]],
   ["home-paused-relaunch", [], ["Restart the game"]],
   ["home-no-tdp", [], ["No TDP access"]],
-  ["home-locked-oled", ["Details"], ["Details", "HEALTH", "Frametime p95 / p99", "24.5 / 31.2 ms", "×1 to ×3.75, deeper only as a last resort", "never modified"]],
+  ["home-locked-oled", ["Details"], ["Details", "HEALTH", "Frametime p95 / p99", "24.5 / 31.2 ms", "×1 to ×3.75, steps of 0.25", "never modified"]],
   ["home-budget-oled", [], ["Adapting · 9 W", "Ideal: 11 W or less", "EASY"]],
   ["home-budget-oled", ["Details"], ["BATTERY", "TDP target", "9 W", "Ideal (≤ 11 W)", "Lowest stable TDP", "15 W max (this Deck's maximum)"]],
   ["home-power-split", ["Details"], ["CPU / GPU POWER SPLIT", "CPU capped at 2.4 GHz · the GPU gets the watts", "+7.4% GPU clock/W · 6 A/B", "+7.9% GPU clock, −0.4% draw", "Smart power split"]],
@@ -20,8 +20,8 @@ const cases = [
   ["home-warm-start", [], ["Adapting · 8 W", "Started from what worked last time."]],
   ["home-warm-start", ["Details"], ["Remembered from last session"]],
   ["home-budget-oled", ["Details"], ["Searched from scratch"]],
-  ["home-balanced", [], ["Balanced", "never goes below 30 real FPS"]],
-  ["home-balanced", ["Details"], ["×1 to ×3, never below 30 real FPS", "12–13 W start"]],
+  ["home-balanced", [], ["Balanced", "Uses ratios up to ×3.75"]],
+  ["home-balanced", ["Details"], ["×1 to ×3.75, steps of 0.25", "12–13 W start"]],
   ["log-saved", ["Settings", "Diagnostics"], ["Saved: /home/deck/Desktop/GFG-Extreme-log-1.zip", "WHAT THE LOG SHOWS", "No renderer diagnostics were written"]],
   ["home-idle-oled", ["Settings", "Diagnostics", "Check setup"], ["Everything GFG needs is in place (3 checks)", "✓ launch wrapper installed"]],
   ["setup-bad", ["Settings", "Diagnostics", "Check setup"], ["2 of 3 checks failed", "NEEDS ATTENTION", "✗ host MangoHud Vulkan layer present", "cannot appear", "Turn the overlay on in Settings"]],
@@ -51,7 +51,7 @@ const cases = [
   ["home-paused-external-tdp", [], ["changed outside GFG", "In Battery and Balanced modes GFG takes it back"]],
   ["home-no-model-game", ["Settings", "Diagnostics"], ["Reset what GFG learned for this game", "No game identified yet"]],
   ["home-cap-ignored", [], ["TDP limit overridden", "17.4 W", "another tool"]],
-  ["home-quality-oled", ["Details"], ["×1 to ×3, steps of 0.25", "never above your own"]],
+  ["home-quality-oled", ["Details"], ["×1 to ×3.75, steps of 0.25", "never above your own"]],
   ["home-quality-oled", [], ["keeps your render resolution", "fewest generated frames that hold"]],
   ["home-locked-oled", ["Settings", "Frame generation backend"], ["BACKEND", "GFG", "OptiScaler"]],
   ["home-locked-oled", ["Settings", "Scaling"], ["Scale-ready launch"]],
@@ -365,9 +365,25 @@ for (const diagnostics of [false, true]) for (const fail of [false, true]) {
   }
   await page.close(); cases.push(["stick-touch-" + (diagnostics ? "diagnostics" : "home") + (fail ? "-error" : "-saved")]);
 }
+for (const diagnostics of [false, true]) for (const fail of [false, true]) {
+  const page = await openPage(browser, { ...STATES["home-autopilot"], __featureFail: fail }, diagnostics ? ["Settings", "Diagnostics"] : []);
+  const row = page.locator(".row").filter({ has: page.getByText("Continuous Boost", { exact: true }) }).first();
+  if (await row.locator(".tog.on").count()) { failed++; console.error("FAIL continuous Boost default on"); }
+  await row.click(); await page.waitForTimeout(150);
+  const calls = await page.evaluate(() => (window.__featureSets || []).map(x => x.slice(1)));
+  if (JSON.stringify(calls) !== '[["continuous_boost",true]]' ||
+      (await row.locator(".tog.on").count()) !== (fail ? 0 : 1)) {
+    failed++; console.error("FAIL continuous Boost save: " + JSON.stringify({ diagnostics, fail, calls }));
+  }
+  if (!fail) {
+    await row.click(); await page.waitForTimeout(150);
+    if (await row.locator(".tog.on").count()) { failed++; console.error("FAIL continuous Boost off"); }
+  }
+  await page.close(); cases.push(["continuous-boost-" + diagnostics + "-" + fail]);
+}
 for (const mode of ["budget","balanced","quality","extreme"]) {
   const page = await openPage(browser,{ ...STATES["home-autopilot"],mode },["Settings","Diagnostics"]);
-  if (await page.getByText("Stick touch Boost",{exact:true}).count() || await page.getByText("Short Boost",{exact:true}).count() || await page.getByText("Frame Fusion",{exact:true}).count()) {
+  if (await page.getByText("Continuous Boost",{exact:true}).count() || await page.getByText("Stick touch Boost",{exact:true}).count() || await page.getByText("Short Boost",{exact:true}).count() || await page.getByText("Frame Fusion",{exact:true}).count()) {
     failed++;console.error("FAIL Autopilot-only controls leaked into "+mode);
   }
   await page.close();cases.push(["autopilot-scope-"+mode]);

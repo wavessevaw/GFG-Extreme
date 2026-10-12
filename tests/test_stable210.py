@@ -151,7 +151,8 @@ class DefaultsAndScopeTests(unittest.TestCase):
     def test_all_autopilot_switches_default_on_and_all_other_modes_close_fusion(self):
         s=self.svc
         self.assertTrue(s.frame_fusion_enabled())
-        self.assertTrue(all(s.frame_os_features('game').values()))
+        self.assertTrue(all(v for k,v in s.frame_os_features('game').items() if k != 'continuous_boost'))
+        self.assertFalse(s.frame_os_features('game')['continuous_boost'])
         self.assertEqual(s._frame_os_mode('game'),'act')
         saved=s._saved_profile_config('game')
         self.assertTrue(s._base_for('game',saved)['gfg_frame_fusion'])

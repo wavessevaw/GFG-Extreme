@@ -272,8 +272,8 @@ var TIER_TEXT = {
 };
 var PHASE_TEXT = { settle: "Starting at 10 W", search_down: "Lowering TDP", upgrade: "Fewer generated frames", probe: "Re-checking", locked: "Watching", guard: "Protecting" };
 var MODE_TEXT = {
-  balanced: "Balanced: starts at about 45 real FPS and 12 W, never goes below 30 real FPS and never above your Deck's normal power range. A bit more battery for a steadier picture.",
-  budget: "Battery: the lowest TDP that holds steady frames, down to this Deck's measured minimum. Tests cheaper frame ratios before keeping extra watts. Real FPS stays at 24 or more; deeper only as a last resort.",
+  balanced: "Balanced: starts at about 45 real FPS on OLED or 30 on LCD and 12 W. Uses ratios up to \xD73.75 when needed to keep output steady, within your Deck's normal power range.",
+  budget: "Battery: the lowest TDP that holds steady frames, down to this Deck's measured minimum. Tests cheaper frame ratios before keeping extra watts. Normal ratios reach \xD73.75: 24 real FPS at 90 Hz or 16 at 60 Hz. Deeper only as a last resort.",
   quality: "Quality: keeps your render resolution and uses the fewest generated frames that hold. Then lowers TDP; rechecks finer frame ratios after stable play. Uses more battery.",
   extreme: "Extreme \u2014 BETA / EXPERIMENTAL. In development; not recommended for regular play. Uses your Deck's stock limit \u2014 15 W, or your own lower limit, never more, no overclock. Lowers render resolution to 90% / 80% with matched sharpening only when the engine confirms it. Uses more battery than Balanced.",
   autopilot: "Autopilot chooses the steady frame rate and the lowest power that holds it. It uses Governor for TDP. A GPU clock change is one step, then checked. If the frames get worse, the previous setting comes back."
@@ -731,15 +731,15 @@ function SessionRings({ ls, target, battery }) {
 }
 function FrameTimingControls({ profile, settings, refresh, autopilot = false }) {
   const wanted = settings || {};
-  const [features, setFeatures] = useState({ latency: wanted.latency !== false, shield: wanted.shield !== false, touch_boost: wanted.touch_boost !== false, boost: wanted.boost !== false });
+  const [features, setFeatures] = useState({ latency: wanted.latency !== false, shield: wanted.shield !== false, touch_boost: wanted.touch_boost !== false, boost: wanted.boost !== false, continuous_boost: wanted.continuous_boost === true });
   const [error, setError] = useState("");
   const busy = useRef(false);
   useEffect(
     () => {
-      setFeatures({ latency: wanted.latency !== false, shield: wanted.shield !== false, touch_boost: wanted.touch_boost !== false, boost: wanted.boost !== false });
+      setFeatures({ latency: wanted.latency !== false, shield: wanted.shield !== false, touch_boost: wanted.touch_boost !== false, boost: wanted.boost !== false, continuous_boost: wanted.continuous_boost === true });
       setError("");
     },
-    [profile, wanted.latency, wanted.shield, wanted.touch_boost, wanted.boost]
+    [profile, wanted.latency, wanted.shield, wanted.touch_boost, wanted.boost, wanted.continuous_boost]
   );
   const change = async (feature, enabled) => {
     if (busy.current) return;
@@ -775,6 +775,7 @@ function FrameTimingControls({ profile, settings, refresh, autopilot = false }) 
         onChange: (v) => change("shield", v)
       }),
       autopilot ? h(Toggle, { on: features.boost, title: "Short Boost", sub: "Briefly raises real-frame cadence, then returns to calm. Maximum 1.5 seconds; funded within your power limit.", onChange: (v) => change("boost", v) }) : null,
+      autopilot ? h(Toggle, { on: features.continuous_boost, title: "Continuous Boost", sub: "Keeps higher real-frame cadence without the 1.5-second limit. Uses more power; pauses in menus and for thermal, delivery or power-search guards. Overrides short pulses. Off by default.", onChange: (v) => change("continuous_boost", v) }) : null,
       autopilot ? h(Toggle, {
         on: features.touch_boost,
         title: "Stick touch Boost",
@@ -1380,7 +1381,7 @@ function GovernorPage({ s, back, profile, refresh }) {
       "div",
       { className: "kv" },
       h("span", null, "Multipliers"),
-      h("b", null, mode === "balanced" || mode === "extreme" ? "\xD71 to \xD73, never below 30 real FPS" : mode === "budget" ? "\xD71 to \xD73.75, deeper only as a last resort" : "\xD71 to \xD73, steps of 0.25"),
+      h("b", null, "\xD71 to \xD73.75, steps of 0.25"),
       h("span", null, "Saved profile"),
       h("b", null, "never modified"),
       h("span", null, "TDP"),

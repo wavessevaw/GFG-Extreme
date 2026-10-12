@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 2.1.0).
+"""Live orchestration service for GFG Governor (GFG Extreme 2.1.1).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -76,7 +76,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, confirmation_evidence, matches,
 )
 
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -722,7 +722,7 @@ class GovernorService:
         if not fo.get("enabled"):
             self._hud_fos = self._hud_tag = None
         # Renderer samples arrive about once a second: one late sample must not blank the numbers
-        # (they flipped between a value and "вЂ”").  Hold the last good ones for HUD_HOLD_S.
+        # (they flipped between a value and "—").  Hold the last good ones for HUD_HOLD_S.
         if fresh and number(fps) is not None:
             self._hud_values = (now - (age / 1000.0 if snapshot is not None else 0), number(fps), number(real))
         held = self._hud_values if (self._hud_values and now - self._hud_values[0] <= self.HUD_HOLD_S) else None
@@ -928,6 +928,7 @@ class GovernorService:
             return {}
         try:
             return {**base_deltas(saved, scale_ready=self._scale_ready(profile)),
+                    **({"adaptive_max_multiplier": 4} if self._profile_enabled(profile) else {}),
                     "gfg_frame_fusion": self._profile_enabled(profile) and self._mode(profile) == "autopilot" and self.frame_fusion_enabled()}
         except PointNotApplicable as error:
             self._status.setdefault("overlay", {})["scale_ready_ignored"] = error.reason
@@ -1215,12 +1216,13 @@ class GovernorService:
         raw = raw if isinstance(raw, dict) else {}
         return {"latency": raw.get("latency") is not False,
                 "boost": raw.get("boost") is not False,
+                "continuous_boost": raw.get("continuous_boost") is True,
                 "shield": raw.get("shield") is not False, "touch_boost": raw.get("touch_boost") is not False}
 
     def set_frame_os_feature(self, profile: str, feature: str, enabled: bool) -> Dict[str, Any]:
         profile = str(profile or "").strip()
-        if not profile or feature not in ("latency", "shield", "boost", "touch_boost") or type(enabled) is not bool:
-            return {"success": False, "error": "Profile, latency/shield/touch_boost and a boolean are required"}
+        if not profile or feature not in ("latency", "shield", "boost", "touch_boost", "continuous_boost") or type(enabled) is not bool:
+            return {"success": False, "error": "Profile, a supported frame timing feature and a boolean are required"}
         settings = self._settings.setdefault("profiles", {}).setdefault(profile, {})
         previous = settings.get("frame_os_features")
         features = {**self.frame_os_features(profile), feature: enabled}
@@ -1234,7 +1236,9 @@ class GovernorService:
                 settings["frame_os_features"] = previous
             return {"success": False, "error": str(error)}
         if profile == self._active_profile:
-            if feature == "boost" and not enabled:
+            if feature in ("boost", "continuous_boost"):
+                # Stop the previous decision now; the next sync applies the new
+                # preference with the current Autopilot / power-search gates.
                 self.frame_os.boost_enabled = False
                 self.frame_os.cancel_boost()
                 self.frame_os._apply_game_flags()
@@ -1377,7 +1381,9 @@ class GovernorService:
             latency_enabled=self.frame_os_features(profile)["latency"],
             stall_shield_enabled=self.frame_os_features(profile)["shield"],
             touch_boost_enabled=self._mode(profile) == "autopilot" and self.frame_os_features(profile)["touch_boost"],
-            boost_enabled=(self._mode(profile) == "autopilot" and self.frame_os_features(profile)["boost"]
+            continuous_boost_enabled=self._mode(profile) == "autopilot" and self.frame_os_features(profile)["continuous_boost"],
+            boost_enabled=(self._mode(profile) == "autopilot" and
+                           (self.frame_os_features(profile)["boost"] or self.frame_os_features(profile)["continuous_boost"])
                            and budget.phase == "locked" and self._request is None
                            and not self._autopilot_arbiter.freeze_tdp),
         )

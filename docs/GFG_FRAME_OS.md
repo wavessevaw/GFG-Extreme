@@ -286,3 +286,8 @@ search runs down to the level that holds first. While Act injects, it steps asid
 `ACT_RESEARCH_EVERY_S` (10 min) for `ACT_RESEARCH_S` (2 min). The plain point runs during that
 pause, so the Governor can try one lower level and the smart power split can measure. These
 pauses never count as output starvation.
+
+
+## Continuous Boost (2.1.1)
+
+An explicit per-profile Autopilot switch, off by default, requests the higher real cadence throughout active play. It overrides the short-pulse preference, has no 1.5-second duration limit and does not require stick input or stored pulse energy. The normal Governor/player power ceiling still clamps its extra watts. Menus, thermal/output guards, ineffective-delivery backoff and power-search pauses remain authoritative. Disabling the switch cancels the current decision immediately, then resumes the selected short-pulse policy. Each runner tick renews a 500 ms power lease, so a stopped runner cannot leave boost watts applied.

@@ -76,7 +76,8 @@ class FrameOsRunner:
     def configure(self, *, enabled: bool, mode: str, output_hz: float, calm_real_hz: float,
                   max_multiplier: float, calm_w: Optional[float],
                   latency_enabled: bool = True, stall_shield_enabled: bool = False,
-                  touch_boost_enabled: bool = False, boost_enabled: bool = True) -> None:
+                  touch_boost_enabled: bool = False, boost_enabled: bool = True,
+                  continuous_boost_enabled: bool = False) -> None:
         mode = mode if mode in MODES else "observe"
         was_enabled = self.enabled
         self.enabled, self.mode = bool(enabled), mode
@@ -115,6 +116,7 @@ class FrameOsRunner:
                 self.policy.broker.calm_w = float(calm_w)   # the Governor moved the calm cap
         else:
             self.policy.broker = None  # power ownership was released
+        self.policy.configure_continuous_boost(continuous_boost_enabled is True)
         self.policy.configure_touch_boost(touch_boost_enabled is True)
         self._apply_game_flags()
         self.proof.skip.add("frames")  # long A/B windows cannot measure these bounded pulses
@@ -245,13 +247,16 @@ class FrameOsRunner:
             "input_sensor": self._sensor_status(inp), "ab_control": control,
             "game_disabled": dict(self.game_disabled),
             "boost_enabled": self.boost_enabled,
+            "continuous_boost_enabled": self.policy.continuous_boost_enabled,
             "burst_cadence": dict(self.burst_cadence.last),
             "burst_observations":{**self.burst_observations,"seconds":round(self.burst_observations["seconds"],3),"gain_measured":False},
         }
         if decision.level == "boost" and self.policy._burst_started is not None:
             last["decision"]["boost_since"] = self.policy._burst_started
-            last["decision"]["boost_until"] = min(max(self.policy._boost_until, self.policy._touch_until),
-                                                    self.policy._burst_started + 1.5)
+            # Sustained mode renews a short lease each tick: a stopped runner
+            # cannot leave additional watts applied indefinitely.
+            last["decision"]["boost_until"] = (now + 0.5 if self.policy.continuous_boost_enabled else
+                min(max(self.policy._boost_until, self.policy._touch_until), self.policy._burst_started + 1.5))
         requested = self.policy.touch_intent and decision.level == "boost"
         if not self.policy.touch_boost_enabled:
             touch_state = "off"

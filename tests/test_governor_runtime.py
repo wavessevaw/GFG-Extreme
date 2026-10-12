@@ -477,7 +477,7 @@ class TrialFlowTests(RuntimeBase):
         self.assertEqual(st["request"]["point"], "51x1.75")
         prof = self.overlay_profile()
         self.assertEqual((prof["adaptive"], prof["target_fps"], prof["base_fps_cap"]), (True, 90, 51))
-        self.assertEqual(prof["adaptive_max_multiplier"], 2)
+        self.assertEqual(prof["adaptive_max_multiplier"], 4)
         self.feed_adaptive(16, 51, 90)   # ratio 1.76
         st = self.step()
         self.assertEqual(st["reason"], "operating-point-confirmed")
@@ -556,7 +556,7 @@ class TrialFlowTests(RuntimeBase):
 
     def test_bounded_ladder_ends_in_not_viable_and_restores_base(self):
         self.prime_not_matching()
-        for _ in range(40):
+        for _ in range(60):
             self.feed(2, 20, 20)
             st = self.step()
             if st["request"]:
@@ -848,8 +848,12 @@ class LiveAttachTests(RuntimeBase):
     def test_unchanged_standby_is_not_rewritten(self):
         rev = self.header()["rev"]
         self.svc._standby_overlays_sync(force=True)
+        self.assertEqual(self.header()["rev"], rev, "unchanged standby must not reload")
         self.svc.set_enabled("game", True)
-        self.assertEqual(self.header()["rev"], rev, "a rewrite is a config reload in the running game")
+        self.assertGreater(self.header()["rev"], rev, "enabling reserves the full normal range")
+        enabled_rev = self.header()["rev"]
+        self.svc._standby_overlays_sync(force=True)
+        self.assertEqual(self.header()["rev"], enabled_rev)
 
     def test_enable_mid_game_applies_point_without_relaunch(self):
         # Game was launched while the Governor was off: its launch already read the standby overlay.
@@ -1032,7 +1036,7 @@ class BudgetRuntimeTests(RuntimeBase):
             self.assertEqual(states[unverified], "unavailable", unverified)
         self.assertEqual(states["latency"], "off", "timing is accessible but Act is not enabled")
         self.assertEqual(states["shield"], "off", "shield is opt-in")
-        self.assertEqual(ext["feature_settings"], {"latency": True, "shield": True, "boost": True, "touch_boost": True})
+        self.assertEqual(ext["feature_settings"], {"latency": True, "shield": True, "boost": True, "touch_boost": True, "continuous_boost": False})
         self.assertEqual(states["upscale"], "ready", "full resolution until a scaled point is confirmed")
         self.assertEqual(ext["gain"]["kind"], "unavailable")
         self.assertIsNone(ext["gain"]["percent"], "no number without an A-B-A proof")
@@ -1194,7 +1198,7 @@ class BudgetRuntimeTests(RuntimeBase):
               "observed_fast_w": 12.75}, "15%"),
             ({"maximum_tdp_w": 15, "observed_tdp_w": 12,
               "observed_fast_w": 15}, "0%"),
-            ({"maximum_tdp_w": 15}, "РІР‚вЂќ"),
+            ({"maximum_tdp_w": 15}, "вЂ”"),
         ]
         for power, expected in cases:
             with self.subTest(power=power):
@@ -1207,7 +1211,7 @@ class BudgetRuntimeTests(RuntimeBase):
                     self.svc._ring_hud_key = None
                     self.assertTrue(self.svc._publish_ring_hud(status, settings))
                 saving = hud_rings.energy_savings_pct(seen[-1]["energy_tdp"], seen[-1]["maximum_tdp"])
-                self.assertEqual(hud_rings._fmt_pct(saving, "") if saving is not None else "РІР‚вЂќ", expected)
+                self.assertEqual(hud_rings._fmt_pct(saving, "") if saving is not None else "вЂ”", expected)
                 self.assertEqual(seen[-1]["maximum_tdp"], power.get("gamescope_max_tdp_w") or power["maximum_tdp_w"])
                 self.assertEqual(seen[-1]["limit"], 12, "existing arc limit stays unchanged")
 
@@ -1737,6 +1741,8 @@ class BudgetRuntimeTests(RuntimeBase):
         self.step()
         b = self.svc._budget
         b.phase, b.probe, b.locked_since = "locked", None, self.t["now"]
+        b.current_max_multiplier = 3.0  # no feasible deeper ratio on this renderer
+        self.capacity_report(2)
         self.svc.power.values["draw_w"] = 4.0   # far under the 10 W cap: not power-bound
         self.windows(2, 27, 81)
         self.assertTrue(b.last_reason.startswith("guard-not-power-bound"))
@@ -2446,7 +2452,7 @@ class RingRefreshTests(unittest.TestCase):
         self.assertEqual(len(self.writes), 2)
 
     def test_stale_and_nonfinite_fps_are_not_displayed(self):
-        # field report 1.3: one late sample flipped the number to "РІР‚вЂќ" and back (flicker); the last
+        # field report 1.3: one late sample flipped the number to "вЂ”" and back (flicker); the last
         # good value is held for HUD_HOLD_S, never longer
         self.publish()
         self.status["telemetry"]["snapshot"]["sample_age_ms"] = 3000

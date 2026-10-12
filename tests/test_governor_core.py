@@ -45,8 +45,8 @@ class GovernorPlannerTests(unittest.TestCase):
 
     def test_no_automatic_x4_x5_candidates(self):
         multipliers = {point.multiplier for point in self.planner.candidates(external_display=False)}
-        self.assertEqual(multipliers, {1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3})
-        self.assertLessEqual(max(multipliers), 3)
+        self.assertEqual(multipliers, {1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.25, 3.5, 3.75})
+        self.assertLessEqual(max(multipliers), 3.75)
 
     def test_quarter_steps_are_chosen_from_proven_capacity(self):
         cases = ((76, "72x1.25"), (54, "51x1.75"), (43, "40x2.25"), (38, "36x2.5"), (35, "33x2.75"))
