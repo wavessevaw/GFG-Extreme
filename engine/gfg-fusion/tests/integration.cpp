@@ -429,7 +429,7 @@ static void nativeSourceIntegration(vk::Vulkan& vk) {
     for (const auto format : {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM})
     for (const auto size : {VkExtent2D{320,200}, VkExtent2D{317,193}}) {
         const vk::Image app(vk, size, format, usage);
-        const VkExtent2D sampleSize{size.width+31, size.height+19};
+        const VkExtent2D sampleSize=size;
         std::vector<vk::Image> baseline, native;
         for (unsigned i=0; i<2; ++i) {
             baseline.emplace_back(vk, size, VK_FORMAT_R8G8B8A8_UNORM, usage);

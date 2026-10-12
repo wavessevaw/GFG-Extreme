@@ -1207,7 +1207,7 @@ index 581c1ef..c40f345 100644
          "submit-source-copy", this->frameState.realFrameIndex,
          this->frameState.sequenceIndex, sourceSubmitStarted
 diff --git a/engine/mako-render/src/swapchain/resources.cpp b/engine/mako-render/src/swapchain/resources.cpp
-index c6b4852..34c0957 100644
+index c6b4852..6f822f9 100644
 --- a/engine/mako-render/src/swapchain/resources.cpp
 +++ b/engine/mako-render/src/swapchain/resources.cpp
 @@ -1,6 +1,8 @@
@@ -1317,7 +1317,7 @@ index c6b4852..34c0957 100644
 +                VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 +                std::nullopt, &fd);
 +        }
-+    
++
 +        int syncFd{-1};
 +        ls::FileDescriptorScope syncScope{{&syncFd, 1}};
 +        resources.syncSemaphore.emplace(vk, 0, std::nullopt, &syncFd);
