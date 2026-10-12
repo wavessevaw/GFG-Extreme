@@ -409,14 +409,17 @@ static void sourceTransfer(const vk::Vulkan& vk, const vk::CommandBuffer& comman
         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr,
         static_cast<uint32_t>(after.size()), after.data());
 }
-static std::vector<uint8_t> readGeneral(const vk::Vulkan& vk, const vk::Image& image) {
-    auto bytes = download(vk, image);
+static void restoreReadImage(const vk::Vulkan& vk, const vk::Image& image) {
     const vk::CommandBuffer command(vk); command.begin(vk);
     const auto after = imageBarrier(image.handle(), VK_ACCESS_TRANSFER_READ_BIT,
         VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
     vk.df().CmdPipelineBarrier(command.handle(), VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &after);
     command.end(vk); command.submit(vk);
+}
+static std::vector<uint8_t> readGeneral(const vk::Vulkan& vk, const vk::Image& image) {
+    auto bytes = download(vk, image);
+    restoreReadImage(vk, image);
     return bytes;
 }
 static void nativeSourceIntegration(vk::Vulkan& vk) {
@@ -461,6 +464,8 @@ static void nativeSourceIntegration(vk::Vulkan& vk) {
                 "native source transfer overwrote the previous history frame");
             record(vk, oldSampler, baseline[slot], oldSample);
             record(vk, newSampler, native[slot], newSample);
+            restoreReadImage(vk, baseline[slot]);
+            restoreReadImage(vk, native[slot]);
             require(download(vk, oldSample) == download(vk, newSample),
                 "native source sampler colours differ from legacy RGBA input");
             ++comparisons;
