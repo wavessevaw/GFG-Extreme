@@ -64,6 +64,67 @@ class EvidenceTests(unittest.TestCase):
                 normalize({**good, **update})
 
 
+class NativeResolutionEvidenceTests(unittest.TestCase):
+    def payload(self, transfers=5, format_=44, **changes):
+        return {"schema": 2, "requested": True, "prepared_inputs": 0,
+            "recorded_frames": 0, "avoided_source_copies": 0,
+            "native_prepared_inputs": 2, "native_source_transfers": transfers,
+            "native_conversion_blits_avoided": transfers if format_ == 44 else 0,
+            "native_source_format": format_, "native_fallback_reason": "", **changes}
+
+    def context(self, **changes):
+        return {"phase": "active", "frame_generation_active": True,
+            "spatial_scaling": {"active": False, "source_width": 1280,
+                "source_height": 800, "presentation_width": 1280, "presentation_height": 800},
+            "frame_fusion": normalize(self.payload()), **changes}
+
+    def test_native_work_without_scaling_is_observed_without_copy_savings(self):
+        state = summarize(True, [self.context()])
+        self.assertEqual(state["state"], "observed")
+        self.assertEqual(state["processing_path"], "native-input")
+        self.assertEqual(state["native_source_transfers_at_last_publication"], 5)
+        self.assertEqual(state["native_conversion_blits_avoided_at_last_publication"], 5)
+        self.assertEqual(state["avoided_source_copies_at_last_publication"], 0)
+        self.assertEqual(state["contexts"][0]["eligibility"], "native-path-observed")
+        self.assertFalse(state["gain_measured"])
+
+    def test_preparation_and_transition_do_not_claim_work(self):
+        c = self.context(frame_fusion=normalize(self.payload(transfers=0)))
+        state = summarize(True, [c])
+        self.assertEqual(state["state"], "prepared")
+        self.assertEqual(state["contexts"][0]["eligibility"], "native-prepared-awaiting-submit")
+        self.assertFalse(state["path_observed"])
+        for changes in ({"phase": "draining"}, {"frame_generation_active": False}):
+            self.assertFalse(summarize(True, [self.context(**changes)])["path_observed"])
+
+    def test_rgba_transfer_does_not_claim_channel_conversion_savings(self):
+        c = self.context(frame_fusion=normalize(self.payload(format_=37)))
+        self.assertEqual(summarize(True, [c])["native_conversion_blits_avoided_at_last_publication"], 0)
+
+    def test_legacy_evidence_defaults_native_work_to_zero(self):
+        native = normalize({"schema": 1, "requested": True, "prepared_inputs": 2,
+            "recorded_frames": 5, "avoided_source_copies": 5})
+        self.assertEqual(native["native_source_transfers"], 0)
+        self.assertEqual(summarize(True, [EvidenceTests().context(frames=1)])["processing_path"], "spatial-input")
+
+    def test_native_transport_rejects_inconsistent_evidence(self):
+        for changes in ({"schema": 3}, {"native_source_transfers": True},
+                {"native_prepared_inputs": 1}, {"native_prepared_inputs": 0},
+                {"native_source_format": 50}, {"native_source_format": 37},
+                {"native_conversion_blits_avoided": 4}, {"requested": False},
+                {"prepared_inputs": 2}, {"native_fallback_reason": "x"*241},
+                {"native_fallback_reason": None}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                normalize(self.payload(**changes))
+
+    def test_fallback_reason_survives_export(self):
+        native = normalize(self.payload(transfers=0, native_prepared_inputs=0,
+            native_source_format=37, native_fallback_reason="native-source-format-not-shareable"))
+        state = summarize(True, [self.context(frame_fusion=native)])
+        self.assertEqual(state["state"], "pipeline-not-eligible")
+        self.assertEqual(state["contexts"][0]["eligibility"], "native-source-format-not-shareable")
+
+
 class SettingsTests(unittest.TestCase):
     def setUp(self):
         # Reuse fixture methods without inheriting its hundreds of test cases.

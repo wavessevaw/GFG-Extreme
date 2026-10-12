@@ -1797,7 +1797,7 @@ function FrameFusionPanel({ s }) {
     setBusy(false);
   };
   const messages = {
-    "observed": "The direct processing path has been used in this game. Power benefit is not measured yet.",
+    "observed": fusion.processing_path === "native-input" ? "Native-resolution Fusion is processing frames. Power benefit is not measured yet." : "The direct processing path has been used in this game. Power benefit is not measured yet.",
     "prepared": "Ready to try. Waiting for a compatible frame.",
     "pipeline-not-eligible": "This game is using the regular processing path.",
     "renderer-unsupported": "The current engine has no Fusion support. Install the updated engine; native 64-bit games only.",
@@ -1811,7 +1811,7 @@ function FrameFusionPanel({ s }) {
     h("div", { className: "list" }, h(Toggle, {
       title: "Frame Fusion",
       on: enabled,
-      sub: "Shares compatible frame buffers. Applies from the next game start.",
+      sub: "Reduces compatible frame processing, including native resolution. Applies from the next game start.",
       onChange: change
     })),
     error ? h(Note, null, error) : null,

@@ -24,6 +24,14 @@ using mako::cli::images::imageBarrier;
 using mako::cli::images::uploadImage;
 static PFN_vkCmdBlitImage originalBlit{};
 static uint64_t blits{};
+static PFN_vkCmdCopyImage originalCopy{};
+static uint64_t copies{};
+static void VKAPI_CALL countedCopy(VkCommandBuffer command, VkImage source,
+        VkImageLayout sourceLayout, VkImage destination, VkImageLayout destinationLayout,
+        uint32_t count, const VkImageCopy* regions) {
+    ++copies;
+    originalCopy(command, source, sourceLayout, destination, destinationLayout, count, regions);
+}
 static void VKAPI_CALL countedBlit(VkCommandBuffer command, VkImage source,
         VkImageLayout sourceLayout, VkImage destination, VkImageLayout destinationLayout,
         uint32_t count, const VkImageBlit* regions, VkFilter filter) {
@@ -376,6 +384,118 @@ static void applicationIntegration(vk::Vulkan& vk) {
     std::cout << "Frame Fusion PRE-FG PASS: " << comparisons
         << " cropped RGBA/BGRA comparisons within 1 LSB; guarded source region; FG handoff; borrowed lifetime\n";
 }
+// Exercise the production raw transfer primitive independently of WSI and the
+// licensed model. Both histories remain private: no acquired game image is
+// borrowed by another VkDevice. Sampler comparison verifies channel semantics.
+static void sourceTransfer(const vk::Vulkan& vk, const vk::CommandBuffer& command,
+        const vk::Image& app, const vk::Image& history, const bool native) {
+    const std::array before{
+        imageBarrier(app.handle(), 0, VK_ACCESS_TRANSFER_READ_BIT,
+            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL),
+        imageBarrier(history.handle(), 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)};
+    if (native) {
+        require(app.getFormat() == history.getFormat(), "raw transfer must preserve format");
+        command.copyImage(vk, before, {app.handle(), history.handle()}, app.getExtent(), {});
+    } else {
+        command.blitImage(vk, before, {app.handle(), history.handle()}, app.getExtent(), {});
+    }
+    const std::array after{
+        imageBarrier(app.handle(), VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_MEMORY_READ_BIT,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL),
+        imageBarrier(history.handle(), VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL)};
+    vk.df().CmdPipelineBarrier(command.handle(), VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr,
+        static_cast<uint32_t>(after.size()), after.data());
+}
+static std::vector<uint8_t> readGeneral(const vk::Vulkan& vk, const vk::Image& image) {
+    auto bytes = download(vk, image);
+    const vk::CommandBuffer command(vk); command.begin(vk);
+    const auto after = imageBarrier(image.handle(), VK_ACCESS_TRANSFER_READ_BIT,
+        VK_ACCESS_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+    vk.df().CmdPipelineBarrier(command.handle(), VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &after);
+    command.end(vk); command.submit(vk);
+    return bytes;
+}
+static void nativeSourceIntegration(vk::Vulkan& vk) {
+    unsigned comparisons = 0;
+    const auto usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+        VK_IMAGE_USAGE_SAMPLED_BIT;
+    for (const auto format : {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM})
+    for (const auto size : {VkExtent2D{320,200}, VkExtent2D{317,193}}) {
+        const vk::Image app(vk, size, format, usage);
+        const VkExtent2D sampleSize{size.width+31, size.height+19};
+        std::vector<vk::Image> baseline, native;
+        for (unsigned i=0; i<2; ++i) {
+            baseline.emplace_back(vk, size, VK_FORMAT_R8G8B8A8_UNORM, usage);
+            native.emplace_back(vk, size, format, usage);
+        }
+        const vk::Image oldSample(vk, sampleSize, VK_FORMAT_R8G8B8A8_UNORM, usage);
+        const vk::Image newSample(vk, sampleSize, VK_FORMAT_R8G8B8A8_UNORM, usage);
+        SpatialScaler oldSampler(vk, size, sampleSize, VK_FORMAT_R8G8B8A8_UNORM,
+            ls::ScalingMethod::Mako, 0.5F, std::nullopt);
+        SpatialScaler newSampler(vk, size, sampleSize, VK_FORMAT_R8G8B8A8_UNORM,
+            ls::ScalingMethod::Mako, 0.5F, std::nullopt);
+        const std::array oldHandles{baseline[0].handle(), baseline[1].handle()};
+        const std::array newHandles{native[0].handle(), native[1].handle()};
+        oldSampler.configureDirectApplicationInputs(vk, oldHandles, size, VK_FORMAT_R8G8B8A8_UNORM, usage);
+        newSampler.configureDirectApplicationInputs(vk, newHandles, size, format, usage);
+        std::array<std::vector<uint8_t>, 2> historyBytes;
+        for (unsigned phase=0; phase<12; ++phase) {
+            const unsigned slot=phase%2, previous=1-slot;
+            const auto pixels=pattern(size, phase);
+            uploadImage(vk, app, pixels);
+            for (const bool direct : {false,true}) {
+                const vk::CommandBuffer command(vk); command.begin(vk);
+                blits=0; copies=0;
+                sourceTransfer(vk, command, app, direct ? native[slot] : baseline[slot], direct);
+                command.end(vk); command.submit(vk);
+                require(blits == (direct ? 0 : 1) && copies == (direct ? 1 : 0),
+                    "native source transport must replace one blit with one copy");
+            }
+            historyBytes[slot]=pixels;
+            require(readGeneral(vk, native[slot]) == pixels, "native source bytes changed");
+            if (phase) require(readGeneral(vk, native[previous]) == historyBytes[previous],
+                "native source transfer overwrote the previous history frame");
+            record(vk, oldSampler, baseline[slot], oldSample);
+            record(vk, newSampler, native[slot], newSample);
+            require(download(vk, oldSample) == download(vk, newSample),
+                "native source sampler colours differ from legacy RGBA input");
+            ++comparisons;
+        }
+        // Recreating a context destroys both private histories and views.
+        // The next size/format starts a fresh ring rather than borrowing WSI.
+    }
+    std::cout << "Frame Fusion NATIVE PASS: " << comparisons
+        << " byte-identical RGBA/BGRA sampler comparisons; source bytes and alpha preserved; two-history isolation; one copy replaces one blit\n";
+}
+static void nativeSourceProfile(vk::Vulkan& vk) {
+    const VkExtent2D size{1280,800};
+    const auto usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+        VK_IMAGE_USAGE_SAMPLED_BIT;
+    const vk::Image app(vk, size, VK_FORMAT_B8G8R8A8_UNORM, usage);
+    const vk::Image baseline(vk, size, VK_FORMAT_R8G8B8A8_UNORM, usage);
+    const vk::Image native(vk, size, VK_FORMAT_B8G8R8A8_UNORM, usage);
+    uploadImage(vk, app, pattern(size,0));
+    for (const bool direct : {false,true}) {
+        TimestampQueryPool queries(vk,2);
+        std::vector<double> samples;
+        for (unsigned i=0; i<48; ++i) {
+            const vk::CommandBuffer command(vk); command.begin(vk); queries.reset(command.handle());
+            queries.write(command.handle(),VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,0);
+            sourceTransfer(vk, command, app, direct ? native : baseline, direct);
+            queries.write(command.handle(),VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,1);
+            command.end(vk); command.submit(vk);
+            if (i>=8) samples.push_back(queries.microseconds().front());
+        }
+        std::sort(samples.begin(), samples.end());
+        std::cout << (direct ? "native-source-copy" : "legacy-source-conversion")
+            << " samples=40 gpu_median_us=" << (samples[19]+samples[20])/2
+            << " gpu_p95_us=" << samples[37] << " source_transfers_per_real_frame=1\n";
+    }
+}
 static void profile(vk::Vulkan& vk) {
     const VkExtent2D sourceSize{852,532},outputSize{1280,800};
     const vk::Image input(vk,sourceSize,VK_FORMAT_R8G8B8A8_UNORM,
@@ -462,11 +582,13 @@ int main(int argc,char** argv) {
             native.family,false,false);
         auto& functions=const_cast<vk::VulkanDeviceFuncs&>(vk.df());
         originalBlit=functions.CmdBlitImage;functions.CmdBlitImage=countedBlit;
+        originalCopy=functions.CmdCopyImage;functions.CmdCopyImage=countedCopy;
         VkPhysicalDeviceProperties properties{};vkGetPhysicalDeviceProperties(native.physical,&properties);
         std::cout << "Vulkan proof device: " << properties.deviceName << '\n';
-        if(argc==2 && std::string(argv[1])=="--profile") {profile(vk);applicationProfile(vk);}
-        else {integration(vk);applicationIntegration(vk);}
+        if(argc==2 && std::string(argv[1])=="--profile") {profile(vk);applicationProfile(vk);nativeSourceProfile(vk);}
+        else {integration(vk);applicationIntegration(vk);nativeSourceIntegration(vk);}
         functions.CmdBlitImage=originalBlit;
+        functions.CmdCopyImage=originalCopy;
         return 0;
     } catch(const std::exception& error) {
         std::cerr << "Frame Fusion FAIL: " << error.what() << '\n';return 1;
