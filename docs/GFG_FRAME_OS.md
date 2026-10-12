@@ -1,6 +1,17 @@
 # GFG Frame OS — architecture (working draft)
 
-Status: shipped as an experimental feature in 1.2.0 (off by default; Act behind an unlock).
+Status: stable 2.1.0 defaults to Act in Autopilot. Explicit saved off/lock choices are preserved.
+
+## Current 2.1.0 behavior
+
+Boost and Frame Fusion execute only in Autopilot. The feature switches default on. Right-stick touch requests 500 ms; camera/action or contact with motion can request up to 1.5 s. A hard burst limit and recovery gap prevent continuous input from holding elevated cadence or watts. See [short Boost](STICK_TOUCH_BOOST.md) and [Fusion](FRAME_FUSION.md).
+
+Boost delivery uses fresh real-present counter windows of 150–500 ms, within one writer, generation and swapchain epoch, clipped to the acknowledged pulse. Long `frames` A/B trials and old frame-pair memory are excluded from this policy. Three seconds of accumulated unsuccessful qualified exposure cause 120 s back-off. A partial gain above calm + max(1 FPS, 5%) qualifies; reaching the whole requested boost target is not required. These observations do not establish a causal FPS gain.
+
+The adaptive overlay can remain prepared during calm while Governor continues its power search. Boost requires settled power (8 s), no pending point request and no conflicting resource trial. Only actual Boost/rest holds window judgement; a serialized 100 ms power reconciliation returns expired Boost to calm even between Governor iterations. Heat, output starvation and scope exits retain their recovery paths.
+
+The implementation history below describes earlier versions. Its developer unlock, long Boost A/B and historical dwell values are superseded by the contract above.
+
 
 ## 1. The shift
 
@@ -275,4 +286,3 @@ search runs down to the level that holds first. While Act injects, it steps asid
 `ACT_RESEARCH_EVERY_S` (10 min) for `ACT_RESEARCH_S` (2 min). The plain point runs during that
 pause, so the Governor can try one lower level and the smart power split can measure. These
 pauses never count as output starvation.
-
