@@ -10,7 +10,7 @@ same nodes directly when it can.
 
 The Deck's own controller is also read from its hidraw node: while Steam runs, the kernel stops
 feeding its evdev node, but every hidraw reader still receives the controller's state reports.
-Only sticks and the main buttons are decoded from them (``DeckReportDecoder``).
+Sticks, the main buttons, right-stick contact and gyro speed are decoded (``DeckReportDecoder``).
 
 Pseudo record ``type == STATUS_TYPE``: ``code`` = open evdev gamepads, ``value`` = open Deck
 hidraw nodes (diagnostics).
@@ -18,13 +18,14 @@ hidraw nodes (diagnostics).
 from __future__ import annotations
 
 import errno
+import math
 import os
 import select
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .input_sensor import ABS_RX, ABS_RY, ABS_X, ABS_Y, EV_ABS, EV_KEY, EVENT, STATUS_TYPE
+from .input_sensor import ABS_RX, ABS_RY, ABS_X, ABS_Y, EV_ABS, EV_KEY, EVENT, STATUS_TYPE, DECK_MOTION_TYPE
 
 RESCAN_S = 2.0
 ABS_NEEDED = (0x00, 0x01, 0x03, 0x04)   # ABS_X, ABS_Y, ABS_RX, ABS_RY
@@ -72,6 +73,9 @@ DECK_STATE_REPORT = 0x09
 DECK_AXES = ((ABS_X, 48), (ABS_Y, 50), (ABS_RX, 52), (ABS_RY, 54))   # s16 LE offsets (hid-steam)
 DECK_BUTTON_BYTES = (8, 9, 10)          # face, shoulder, d-pad, menu, grip and stick-click bits
 AXIS_STEP = 256                         # forward a stick only when it moved this much
+DECK_RIGHT_TOUCH_BYTE, DECK_RIGHT_TOUCH_MASK = 14, 0x80
+DECK_GYRO_OFFSETS = (30, 32, 34)  # signed LE; 2000 degrees/s full scale, SDL Deck report contract
+MOTION_HEARTBEAT_S = 0.05        # bounded 20 Hz, plus contact edges; stale reports expire at the reader
 
 
 def deck_hidraw_nodes(sys_hidraw: Path = Path("/sys/class/hidraw"), dev: Path = Path("/dev")) -> Dict[Path, str]:
@@ -95,12 +99,20 @@ class DeckReportDecoder:
     def __init__(self) -> None:
         self.axes: Dict[int, int] = {}
         self.buttons = [0] * len(DECK_BUTTON_BYTES)
+        self._motion_at = -float("inf")
+        self._touch: Optional[bool] = None
 
     def decode(self, report: bytes, t: float) -> bytes:
         if len(report) < 56 or report[0] != 0x01 or report[2] != DECK_STATE_REPORT:
             return b""
         sec, usec = int(t), int((t % 1) * 1e6)
         out = bytearray()
+        touch = bool(report[DECK_RIGHT_TOUCH_BYTE] & DECK_RIGHT_TOUCH_MASK)
+        if touch is not self._touch or t < self._motion_at or t - self._motion_at >= MOTION_HEARTBEAT_S:
+            gyro = [int.from_bytes(report[o:o+2], "little", signed=True) for o in DECK_GYRO_OFFSETS]
+            rate = round(math.sqrt(sum(v*v for v in gyro)) * 2000000.0 / 32768.0)
+            out += EVENT.pack(sec, usec, DECK_MOTION_TYPE, int(touch), rate)
+            self._touch, self._motion_at = touch, t
         for code, offset in DECK_AXES:
             value = int.from_bytes(report[offset:offset + 2], "little", signed=True)
             if abs(value - self.axes.get(code, 0)) >= AXIS_STEP or (value == 0 and self.axes.get(code)):

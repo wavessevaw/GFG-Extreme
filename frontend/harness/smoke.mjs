@@ -1,7 +1,7 @@
 // Frontend smoke test: renders each key screen against mock Decky globals and asserts visible text.
 import { launch, openPage, STATES } from "./lib.mjs";
 const cases = [
-  ["fusion-prepared", ["Settings", "Diagnostics"], ["FRAME FUSION (EXPERIMENTAL)", "Waiting for a compatible frame"]],
+  ["fusion-prepared", ["Settings", "Diagnostics"], ["FRAME FUSION", "Waiting for a compatible frame"]],
   ["fusion-observed", ["Settings", "Diagnostics"], ["direct processing path has been used", "Power benefit is not measured yet"]],
   ["fusion-restart", ["Settings", "Diagnostics"], ["Restart the game to apply your choice"]],
   ["fusion-unsupported", ["Settings", "Diagnostics"], ["current engine has no Fusion support", "native 64-bit games only"]],
@@ -233,7 +233,7 @@ for (const [state, nav, expected] of cases) {
   await page.getByText("Frame timing", { exact: true }).first().click();
   await page.waitForTimeout(120);
   const sets = await page.evaluate(() => (window.__featureSets || []).map(x => x.slice(1)));
-  if (JSON.stringify(sets) !== '[["shield",true],["latency",false]]') {
+  if (JSON.stringify(sets) !== '[["shield",false],["latency",false]]') {
     failed++; console.error("FAIL frame timing preference calls: " + JSON.stringify(sets));
   }
   await page.close();
@@ -246,7 +246,7 @@ for (const [state, nav, expected] of cases) {
   await row.click();
   await page.waitForTimeout(120);
   if (!(await page.getByText("Could not save frame timing", { exact: true }).count())
-      || await row.locator(".tog.on").count()) {
+      || !(await row.locator(".tog.on").count())) {
     failed++; console.error("FAIL frame timing save error kept a successful toggle");
   }
   await page.close();
@@ -328,7 +328,7 @@ for (const fail of [false, true]) {
   cases.push(["automatic-flow-" + (fail ? "error" : "success")]);
 }
 for (const fail of [false, true]) {
-  const state = { ...STATES["home-idle-oled"], __fusionFail: fail,
+  const state = { ...STATES["home-autopilot"], __fusionFail: fail,
     frame_fusion: { enabled: false, state: "off" } };
   const page = await openPage(browser, state, ["Settings", "Diagnostics"]);
   const row = page.locator(".row").filter({ has: page.getByText("Frame Fusion", { exact: true }) });
@@ -341,7 +341,7 @@ for (const fail of [false, true]) {
   await page.close(); cases.push(["fusion-toggle-" + (fail ? "error" : "success")]);
 }
 for (const processing_path of ["native-input", "spatial-input"]) {
-  const state = { ...STATES["home-idle-oled"], frame_fusion: {
+  const state = { ...STATES["home-autopilot"], frame_fusion: {
     enabled: true, state: "observed", processing_path } };
   const page = await openPage(browser, state, ["Settings", "Diagnostics"]);
   const expected = processing_path === "native-input"
@@ -351,6 +351,31 @@ for (const processing_path of ["native-input", "spatial-input"]) {
     failed++; console.error("FAIL Fusion processing path: " + processing_path);
   }
   await page.close(); cases.push(["fusion-observed-" + processing_path]);
+}
+for (const diagnostics of [false, true]) for (const fail of [false, true]) {
+  const state = { ...STATES["home-autopilot"], __featureFail: fail };
+  const page = await openPage(browser, state, diagnostics ? ["Settings", "Diagnostics"] : []);
+  const row = page.locator(".row").filter({ has: page.getByText("Stick touch Boost", { exact: true }) }).first();
+  if (!(await row.locator(".tog.on").count())) { failed++; console.error("FAIL stick touch default off"); }
+  await row.click(); await page.waitForTimeout(150);
+  const calls = await page.evaluate(() => (window.__featureSets || []).map(x => x.slice(1)));
+  if (JSON.stringify(calls) !== '[["touch_boost",false]]' ||
+      (await row.locator(".tog.on").count()) !== (fail ? 1 : 0)) {
+    failed++; console.error("FAIL independent stick touch switch: " + JSON.stringify({ diagnostics, fail, calls }));
+  }
+  await page.close(); cases.push(["stick-touch-" + (diagnostics ? "diagnostics" : "home") + (fail ? "-error" : "-saved")]);
+}
+for (const mode of ["budget","balanced","quality","extreme"]) {
+  const page = await openPage(browser,{ ...STATES["home-autopilot"],mode },["Settings","Diagnostics"]);
+  if (await page.getByText("Stick touch Boost",{exact:true}).count() || await page.getByText("Short Boost",{exact:true}).count() || await page.getByText("Frame Fusion",{exact:true}).count()) {
+    failed++;console.error("FAIL Autopilot-only controls leaked into "+mode);
+  }
+  await page.close();cases.push(["autopilot-scope-"+mode]);
+}
+{
+  const page = await openPage(browser,STATES["home-autopilot"],["Settings","Profile"]);
+  if (!(await page.getByText("stable",{exact:true}).count())) {failed++;console.error("FAIL stable profile label");}
+  await page.close();cases.push(["stable-profile-label"]);
 }
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);

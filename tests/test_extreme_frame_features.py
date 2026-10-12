@@ -68,14 +68,14 @@ class FeatureSettingsTests(unittest.TestCase):
         self.service._save_settings = Mock()
         self.service._poke = Mock()
 
-    def test_defaults_preserve_existing_timing_and_leave_shield_opt_in(self):
-        self.assertEqual(self.service.frame_os_features("Game"), {"latency": True, "shield": False})
+    def test_autopilot_feature_defaults_on(self):
+        self.assertEqual(self.service.frame_os_features("Game"), {"latency": True, "shield": True, "touch_boost": True, "boost": True})
 
     def test_independent_profile_settings(self):
         self.assertTrue(self.service.set_frame_os_feature("Game", "shield", True)["success"])
         self.service.set_frame_os_feature("Game", "latency", False)
-        self.assertEqual(self.service.frame_os_features("Game"), {"latency": False, "shield": True})
-        self.assertEqual(self.service.frame_os_features("Other"), {"latency": True, "shield": False})
+        self.assertEqual(self.service.frame_os_features("Game"), {"latency": False, "shield": True, "touch_boost": True, "boost": True})
+        self.assertEqual(self.service.frame_os_features("Other"), {"latency": True, "shield": True, "touch_boost": True, "boost": True})
 
     def test_invalid_input_does_not_write(self):
         for feature, value in (("unknown", True), ("shield", "false"), ("latency", 0)):
@@ -93,7 +93,7 @@ class FeatureSettingsTests(unittest.TestCase):
         service._settings = {"frame_os_act_unlocked": True, "profiles": {"Game": {
             "frame_os": "act", "frame_os_features": {"latency": False, "shield": True}}}}
         service._budget = SimpleNamespace(point=SimpleNamespace(target_output_fps=90, base_target_fps=30),
-                                          tdp=15, tdp_control=True)
+                                          tdp=15, tdp_control=True, phase="locked")
         service._point = {}
         service._status["enabled"] = True
         service._menu_covering = lambda: False

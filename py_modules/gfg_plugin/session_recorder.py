@@ -51,14 +51,15 @@ def _read_tail(path: Path, limit: int) -> bytes:
         return b""
 
 
-def _read_range(path: Path, start: int, limit: int) -> bytes:
+def _read_range(path: Path, start: int, limit: int, identity: Optional[tuple] = None) -> bytes:
     """Bytes appended after ``start``; if the file was truncated/rotated, from the beginning."""
     try:
-        size = path.stat().st_size
-        if size < start:
-            start = 0
-        begin = max(start, size - limit)
         with path.open("rb") as handle:
+            stat = os.fstat(handle.fileno())
+            size = stat.st_size
+            if size < start or identity is not None and (stat.st_dev,stat.st_ino) != identity:
+                start = 0
+            begin = max(start, size - limit)
             handle.seek(begin)
             return handle.read(limit)
     except OSError:
@@ -154,6 +155,9 @@ def compact_frame_os(frame_os: Any) -> Any:
         "input": frame_os.get("input_sensor"),
         "ab_control": frame_os.get("ab_control"), "proof": frame_os.get("proof"),
         "benefit": frame_os.get("benefit"),
+        "touch_boost": frame_os.get("touch_boost"),
+        "burst_cadence": frame_os.get("burst_cadence"),
+        "burst_observations":frame_os.get("burst_observations"),
         "layer": {k: tel.get(k) for k in (
             "live", "writer_pid", "engine", "passthrough", "frames", "hits", "misses", "cost_p50_ms", "cost_q_ms",
             "avg_delay_ms", "freshness_ms", "present_hold_ms", "acquire_block_ms", "present_interval_p50_ms",
@@ -317,6 +321,7 @@ class SessionRecorder:
         self.last_findings: List[str] = []
         self._timeline: Optional[Path] = None
         self._offsets: Dict[Path, int] = {}
+        self._diagnostic_identities: Dict[Path, tuple] = {}
         self._task: Optional[asyncio.Task] = None
         self._lines = 0
         self._profile = ""
@@ -347,9 +352,12 @@ class SessionRecorder:
             self.last_error = f"cannot-create-recording: {error}"
             return {"success": False, "error": self.last_error, **self.status()}
         self._offsets = {}
+        self._diagnostic_identities = {}
         for path in self.diagnostics_paths:
             try:
-                self._offsets[path] = path.stat().st_size
+                stat = path.stat()
+                self._offsets[path] = stat.st_size
+                self._diagnostic_identities[path] = (stat.st_dev,stat.st_ino)
             except OSError:
                 self._offsets[path] = 0
         self._profile = profile
@@ -537,7 +545,7 @@ class SessionRecorder:
                                  "driver": read(str(p / "scaling_driver"))}
                         for p in sorted(Path("/sys/devices/system/cpu/cpufreq").glob("policy[0-9]*"))[:16]},
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme 2.2.0 (renderer identity: see diagnostics)",
+            "plugin_version": "GFG Extreme 2.1.0 (renderer identity: see diagnostics)",
         }
 
     def _write_bundle(self) -> Path:
@@ -602,10 +610,33 @@ class SessionRecorder:
                 "last_live_sample": self._last_fusion_contexts}, indent=2))
             bundle.writestr("renderer-identity.json", json.dumps(
                 self._renderer_identity(processes), indent=2))
+            diagnostic_index = []
             for path, start in self._offsets.items():
-                data = _read_range(path, start, MAX_DIAG_BYTES)
+                identity = self._diagnostic_identities.get(path)
+                candidates = [path.with_name(path.name+f".{i}") for i in range(4,0,-1)] + [path]
+                existing = []
+                for candidate in candidates:
+                    try:
+                        st = candidate.stat()
+                        existing.append((candidate,(st.st_dev,st.st_ino),st.st_size))
+                    except OSError:
+                        pass
+                found = next((i for i,(_,ident,_) in enumerate(existing) if ident == identity),None)
+                selected = existing[found:] if found is not None else existing[-1:]
+                chunks = [_read_range(candidate,start if ident == identity else 0,MAX_DIAG_BYTES,ident)
+                          for candidate,ident,_ in selected]
+                data = b"".join(chunks)
+                truncated = len(data)>MAX_DIAG_BYTES or any(size-(start if ident==identity else 0)>MAX_DIAG_BYTES
+                                                         for _,ident,size in selected)
+                if len(data)>MAX_DIAG_BYTES:
+                    data = data[-MAX_DIAG_BYTES:]
+                diagnostic_index.append({"path":path.name,"start_offset":start,
+                    "start_file_found":found is not None,"rotation_detected":bool(selected and selected[0][0]!=path),
+                    "initial_segment_unavailable":identity is not None and found is None,
+                    "truncated":truncated,"segments":[candidate.name for candidate,_,_ in selected]})
                 if data:
                     bundle.writestr(f"diagnostics-{path.name}", data)
+            bundle.writestr("diagnostics-index.json",json.dumps({"schema":1,"files":diagnostic_index},indent=2))
             events = []
             try:
                 for line in self.events_path.read_text(encoding="utf-8", errors="replace").splitlines():

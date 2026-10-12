@@ -392,7 +392,10 @@ class SteamUiRestTests(unittest.TestCase):
         p = InjectionPolicy(output_hz=90, calm_real_hz=30, max_multiplier=4)
         d = p.tick(10.0, {"camera": 0.9, "action": 0, "idle_s": 0.0}, focused=False)
         self.assertEqual((d.level, d.reason, d.real_hz), ("rest", "steam-ui", 22.5))
-        self.assertEqual(p.tick(10.1, {"camera": 0.9, "action": 0, "idle_s": 0.0}, focused=True).level, "boost")
+        self.assertEqual(p.tick(10.1, {"camera": 0.9, "action": 0, "idle_s": 0.0}, focused=True).level, "calm")
+        p.tick(10.2,{"camera":0,"idle_s":1},focused=True)
+        p.tick(10.4,{"camera":0,"idle_s":1},focused=True)
+        self.assertEqual(p.tick(10.5,{"camera":.9,"idle_s":0},focused=True).level,"boost")
 
     def test_observer_tracks_gamescope_focus(self):
         import tempfile

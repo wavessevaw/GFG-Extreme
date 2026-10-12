@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from .governor_telemetry import TelemetryObserver
 
-CURRENT_VERSION = "2.2.0"  # kept in step by scripts/bump_version.py
+CURRENT_VERSION = "2.1.0"  # kept in step by scripts/bump_version.py
 
 
 def _percentile(values: List[float], pct: float) -> Optional[float]:
@@ -74,6 +74,8 @@ def analyze_diagnostics(text: str) -> Dict[str, Any]:
     return {
         "lines": lines, "parsed_events": sum(operations.values()), "fps_samples": samples,
         "operations": dict(operations.most_common(12)),
+        "delivery_misses": operations["generated-delivery-miss"],
+        "acquire_quarantines": operations["ordered-acquire-quarantine"],
         "capacity_waits": len(capacity_waits),
         "available_capacity": capacity_waits[-1] if capacity_waits else None,
         "real_median": statistics.median(real) if real else None,
@@ -95,6 +97,11 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
     diag = analyze_diagnostics(diag_text)
 
     report: Dict[str, Any] = {"files": len(names), "samples": len(samples), "diagnostics": diag}
+    try:
+        index = json.loads(_read(bundle,"diagnostics-index.json") or "{}")
+        report["diagnostic_export"] = index
+    except ValueError:
+        report["diagnostic_export"] = {}
     try:
         report["plugin_version"] = json.loads(_read(bundle, "system.json") or "{}").get("plugin_version")
     except (ValueError, AttributeError):
@@ -164,6 +171,13 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
     report["failed_checks"] = [c for c in self_test if not c.get("ok")]
     report["overlay_burst_before_exit"] = overlay_burst_before_exit(_jsonl(_read(bundle, "activity.jsonl")))
     report["frame_os"] = frame_os_summary(samples, _read(bundle, "game-processes.json"))
+    if report["frame_os"] is not None:
+        bursts=[(r.get("frame_os") or {}).get("burst_observations") for r in samples]
+        bursts=[b for b in bursts if isinstance(b,dict)]
+        report["frame_os"]["short_bursts"]={"available":bool(bursts),**{
+            k:max((b.get(k) or 0 for b in bursts),default=0)
+            for k in ("windows","accelerated_windows","seconds","peak_real_hz")},"gain_measured":False}
+    report["stick_touch_boost"] = stick_touch_boost_summary(samples)
     if report["frame_os"]:
         report["frame_os"]["by_level"] = frame_os_by_level(samples)
         report["frame_os"]["injection"] = dict(Counter(
@@ -194,6 +208,21 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
         for a in actions)
     report["findings"] = findings(report, names)
     return report
+
+
+def stick_touch_boost_summary(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
+    rows = [(r.get("frame_os") or {}).get("touch_boost") for r in samples
+        if isinstance(r.get("frame_os"), dict)]
+    rows = [r for r in rows if isinstance(r, dict)]
+    return {"available": bool(rows), "samples": len(rows),
+        "states": dict(Counter(str(r.get("state", "unknown")) for r in rows)),
+        "enabled_samples": sum(r.get("enabled") is True for r in rows),
+        "fresh_contact_samples": sum(r.get("signal_fresh") is True and r.get("right_stick_touch") is True for r in rows),
+        "requested_samples": sum(r.get("requested") is True for r in rows),
+        "submitted_samples": sum(r.get("submitted") is True for r in rows),
+        "maximum_touch_requests_snapshot": max((r["touch_requests"] for r in rows
+            if type(r.get("touch_requests")) is int and 0 <= r["touch_requests"] < 2**64), default=0),
+        "last": rows[-1] if rows else None, "gain_measured": False}
 
 
 def frame_fusion_summary(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -409,6 +438,13 @@ def _version(text: Any) -> Optional[tuple]:
 
 def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
     out: List[str] = []
+    diag = report.get("diagnostics") or {}
+    if diag.get("delivery_misses"):
+        out.append(f"Renderer delivery misses: {diag['delivery_misses']}; acquire quarantines: {diag.get('acquire_quarantines',0)}. "
+                   "Inspect focus/menu transitions and raw diagnostics; these are runtime faults even if setup checks pass.")
+    incomplete = [r for r in (report.get("diagnostic_export") or {}).get("files",[]) if r.get("truncated") or r.get("initial_segment_unavailable")]
+    if incomplete:
+        out.append("Renderer diagnostic export is incomplete: " + ", ".join(r.get("path","?") for r in incomplete) + ". Missing events cannot be ruled out.")
     recorded, current = _version(report.get("plugin_version")), _version(CURRENT_VERSION)
     if recorded and current and recorded < current:
         out.append(f"Recorded with {'.'.join(map(str, recorded))}; this report is from {CURRENT_VERSION}. "
@@ -434,6 +470,12 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
     if share is not None and share < 0.5 and diag["fps_samples"]:
         out.append(f"Telemetry was usable only {int(share * 100)}% of the time (stale or missing FPS events).")
     states = report.get("states", {})
+    touch = report.get("stick_touch_boost") or {}
+    if touch.get("enabled_samples"):
+        out.append(f"Stick touch Boost: {touch['fresh_contact_samples']} samples with fresh contact, "
+                   f"{touch['requested_samples']} requests and {touch['submitted_samples']} acknowledged submissions. "
+                   f"States {touch['states']}; maximum touch-request snapshot {touch['maximum_touch_requests_snapshot']}. "
+                   "Contact, requests and acknowledgements do not establish increased renderer FPS or energy benefit.")
     if states.get("PAUSED", 0) > 0.3 * report["samples"]:
         top = next(iter(report["reasons"]), "?")
         out.append(f"The Governor was PAUSED for {states['PAUSED']} of {report['samples']} samples; most common reason: {top}.")
@@ -579,9 +621,15 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
                                  + (" (acting)" if row["acting_share"] >= 0.5 else ""))
             out.append("Frame OS by decision — " + "; ".join(parts) + ".")
             boost, calm = by_level.get("boost"), by_level.get("calm")
-            if (boost and calm and boost["acting_share"] >= 0.5 and boost.get("real_fps") and calm.get("real_fps")
+            if (not (fo.get("short_bursts") or {}).get("available") and boost and calm and boost["acting_share"] >= 0.5 and boost.get("real_fps") and calm.get("real_fps")
                     and boost["real_fps"] < calm["real_fps"] + 5):
                 out.append("Frame OS Act: boost did not raise the real frame rate (the renderer or the GPU held it).")
+        burst=fo.get("short_bursts") or {}
+        if burst.get("available"):
+            out.append(f"Short Boost observation snapshots: {burst['windows']} qualified windows, {burst['accelerated_windows']} "
+                       f"above the calm cadence; peak {burst['peak_real_hz']} real presents/s. "
+                       "Repeated snapshots are not added; long FPS medians cannot judge short pulses. "
+                       "Forwarding cadence is not a controlled gain or physical scanout measurement.")
         if fo.get("input_sources"):
             if not fo.get("input_events"):
                 out.append(f"Frame OS input sensor saw no gamepad input (sources {fo['input_sources']}, "

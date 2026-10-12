@@ -90,7 +90,7 @@ class RunnerMemoryTests(unittest.TestCase):
         self.assertFalse(r.policy.boost_allowed)
         self.assertEqual(status["proof"]["response"]["n"], 0, "no shaping: nothing to test")
         self.assertFalse(status["benefit"]["measured"]["frames"], "earlier sessions are historical, not current measurement")
-        self.assertEqual(status["proof"]["frames"]["historical"]["n"], 3)
+        self.assertEqual(status["proof"]["frames"]["historical"]["n"], 0, "long frame proof is inapplicable to short pulses")
         # a new policy (the Governor moved the point) keeps the per-game switches
         r.configure(enabled=True, mode="act", output_hz=90, calm_real_hz=45, max_multiplier=2.0, calm_w=10.0)
         self.assertFalse(r.policy.boost_allowed)

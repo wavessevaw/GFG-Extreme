@@ -10,22 +10,22 @@
 
 A Decky Loader plugin that coordinates the frame generator, CPU/GPU resources, rendering workload and power limits. Autopilot observes each game and chooses measurable, reversible adjustments rather than changing only TDP.
 
-[**Download 2.0.3**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v2.0.3) · [Install](#installation) · [Autopilot](#autopilot) · [Diagnostics](#diagnostics)
+[**Download 2.1.0**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v2.1.0) · [Install](#installation) · [Autopilot](#autopilot) · [Diagnostics](#diagnostics)
 
 ![Release](https://img.shields.io/github/v/release/wavessevaw/GFG-Extreme?style=flat-square&color=fb0d00&label=release)
 ![Steam Deck](https://img.shields.io/badge/Steam%20Deck-OLED%20%7C%20LCD-20242e?style=flat-square)
 ![Decky](https://img.shields.io/badge/Decky%20Loader-plugin-20242e?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-20242e?style=flat-square)
 
-<img src="docs/img/card-overview.png" alt="GFG Extreme 2.0.0 user interface: Battery, Autopilot and Details" width="900">
+<img src="docs/img/card-overview.png" alt="GFG Extreme 2.1.0 user interface: Battery, Autopilot and Details" width="900">
 
-<sub>Real GFG Extreme 2.0.0 interface rendered in a browser using illustrative sample data. Not measured game performance.</sub>
+<sub>Real GFG Extreme 2.1.0 interface rendered in a browser using illustrative sample data. Not measured game performance.</sub>
 
 </div>
 
 ## Autopilot
 
-**Autopilot in GFG Extreme 2.0.0 is not an automatic TDP slider.** It is an orchestration mode that balances frame pacing, genuinely rendered frames, generated output, visual workload, APU power and temperature. Watts are only one of its tools.
+**Autopilot in GFG Extreme 2.1.0 is not an automatic TDP slider.** It is an orchestration mode that balances frame pacing, genuinely rendered frames, generated output, visual workload, APU power and temperature. Watts are only one of its tools.
 
 The existing Governor handles a *rendering operating point*: the required real-frame cadence, generation multiplier, and available power. **Autopilot sits above the Governor.** It inspects the game, selects a promising type of intervention, reserves that resource for an isolated trial, and checks whether the result was worthwhile. It avoids adjusting several unrelated knobs simultaneously and then pretending to know which one helped.
 
@@ -84,7 +84,7 @@ On **Stop**, game exit or a mode change, GFG attempts to restore only the contro
 
 <div align="center">
 <img src="docs/img/card-autopilot.png" alt="Autopilot's confirmed configuration and skipped trial states" width="800">
-<sub>Actual 2.0.0 Autopilot cards using illustrative measurements: a verified operating point and a deferred experiment with no hardware write.</sub>
+<sub>Actual 2.1.0 Autopilot cards using illustrative measurements: a verified operating point and a deferred experiment with no hardware write.</sub>
 </div>
 
 
@@ -112,11 +112,11 @@ The optional Vulkan rings overlay shows output and real FPS, TDP, and additional
 
 ## Other features
 
-GFG Extreme 2.0.0 still includes the earlier Governor work, alongside the new Autopilot:
+GFG Extreme 2.1.0 still includes the earlier Governor work, alongside the Autopilot:
 
 - **Per-game profiles**, remembered viable operating points and explicit reset of learned game data.
 - **Smart CPU/GPU power split**, which can trial a CPU cap in a GPU-bound game and restore it if measured performance worsens. Available only where the OS permits safe control.
-- **Frame OS** with Observe, Shadow and optional experimental Act. The Act path has not been proven to improve each game; it can yield or roll back when unstable.
+- **Frame OS** with Observe, Shadow and Act enabled by default in Autopilot. The Act path has not been proven to improve each game; it can yield or roll back when unstable.
 - **vkBasalt filters** for sharpening, anti-aliasing and color looks; game restarts may be required for initial layer loading.
 - **Session summaries and Diagnostics**, including recent FPS/frametime/power estimates, reasons for Governor decisions and exportable logs.
 
@@ -130,7 +130,7 @@ GFG Extreme 2.0.0 still includes the earlier Governor work, alongside the new Au
 
 Requires [Decky Loader](https://decky.xyz/) and [Lossless Scaling on Steam](https://store.steampowered.com/app/993090/Lossless_Scaling/) for the supported GFG generation setup.
 
-1. Download [**GFG-Extreme-v2_0_3.zip**](https://github.com/wavessevaw/GFG-Extreme/releases/download/v2.0.3/GFG-Extreme-v2_0_3.zip). Use Decky's **Install from zip** feature and approve the requested permissions for supported power controls.
+1. Download [**GFG-Extreme-v2_1_0.zip**](https://github.com/wavessevaw/GFG-Extreme/releases/download/v2.1.0/GFG-Extreme-v2_1_0.zip). Use Decky's **Install from zip** feature and approve the requested permissions for supported power controls.
 2. Open GFG Extreme and select **Install engine** if it is not installed.
 3. For a Steam game, open **Properties → Launch Options** and add:
 
@@ -184,6 +184,12 @@ Community: https://t.me/gfg_extreme
 
 GPL-3.0-or-later · [License](LICENSE.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
 
-## Frame Fusion preview
+## Frame Fusion and short Boost
 
-The experimental 2.1.1 prerelease adds opt-in [Frame Fusion Core](docs/FRAME_FUSION.md). Stable downloads remain on 2.0.3; physical Deck performance and energy benefit are not yet established.
+Stable 2.1.0 includes both [Fusion Core and Native Fusion](docs/FRAME_FUSION.md), plus [short Boost and right-stick touch](docs/STICK_TOUCH_BOOST.md). **Fusion and Boost run only in Autopilot.** Their switches, frame timing, Stall Shield and compatible shading trials default on; explicit saved off choices remain off. The normal Battery, Balanced and Quality paths do not execute Fusion or Boost.
+
+Fusion can avoid a compatible scaler-input transfer or the native BGRA conversion. Steam Deck field logs confirm the native path executes; they do not establish an overall FPS, energy or input-latency gain. Incompatible formats and resource failures retain the existing path. Leaving Autopilot closes the shortcuts immediately; private history replacement follows the renderer's bounded transition.
+
+Boost requests a **500 ms pulse on right-stick touch**; camera/action input and contact with motion can request up to **1.5 seconds**, then return to calm. Continuous input cannot turn it into a permanent power increase. A recovery gap, energy bank, compatible executor, temperature/output guards and fresh short cadence observations remain in force. A request or policy acknowledgment is not delivered FPS.
+
+The built-in profile is shown as **stable** in Profiles. Its existing persisted identifier is retained so saved profiles and Steam launch commands continue to work. Users moving from the 2.1.1/2.2.0 previews should install the stable ZIP explicitly; the stable version number is deliberately 2.1.0.

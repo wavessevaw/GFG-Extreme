@@ -47,8 +47,8 @@ def check(path, version):
             sha = lambda data: hashlib.sha256(data).hexdigest()
             if source != identity["source"] or sha(read("engine/gfg-fusion/renderer.patch")) != source["patch_sha256"]:
                 raise ValueError("Frame Fusion source provenance mismatch")
-            if identity.get("default_enabled") is not False:
-                raise ValueError("Experimental Frame Fusion must default off")
+            if identity.get("default_enabled") is not True or identity.get("autopilot_only") is not True:
+                raise ValueError("Stable Frame Fusion must default on and be scoped to Autopilot")
             if sha(read("bin/gfg-fusion/gfg-frame-fusion-tests")) != identity["proof_sha256"]:
                 raise ValueError("Frame Fusion proof executable mismatch")
             bundle = package.get("bundled_renderer") or package["remote_binary"][0]

@@ -141,7 +141,9 @@ def _gain(before: dict, after: dict) -> bool:
         return True
     draw_before, draw_after = before.get("draw_w"), after.get("draw_w")
     equivalent = after["real"] >= real * 0.98 and after["output"] >= out * 0.98
-    return bool(equivalent and draw_before and draw_after and draw_after <= draw_before - 0.5)
+    power_proof = all(int(value.get("draw_samples") or 0) >= 5 and float(value.get("draw_span_s") or 0) >= 2
+                      and value.get("draw_basis") == "renderer-window-median" for value in (before,after))
+    return bool(equivalent and power_proof and draw_before and draw_after and draw_after <= draw_before - 0.5)
 
 
 def _number(value):

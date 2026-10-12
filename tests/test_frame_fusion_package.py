@@ -45,10 +45,12 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256(payload).hexdigest(), bundle["sha256hash"])
             self.assertEqual(identity["archive_sha256"], bundle["sha256hash"])
             with tarfile.open(fileobj=io.BytesIO(payload)) as archive:
+                self.assertTrue(json.loads(archive.extractfile('gfg-fusion-source.json').read())['autopilot_only'])
                 self.assertEqual(archive.extractfile("lib32/libmako-render.so").read(), old32)
                 self.assertEqual(archive.extractfile("lib/libmako-render.so").read(),
                     (build / "mako-render/libmako-render.so").read_bytes())
-            self.assertFalse(identity["default_enabled"])
+            self.assertTrue(identity["default_enabled"])
+            self.assertTrue(identity["autopilot_only"])
 
     def test_invalid_architecture_never_replaces_the_archive(self):
         with tempfile.TemporaryDirectory() as temp:

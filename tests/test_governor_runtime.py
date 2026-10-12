@@ -1032,7 +1032,7 @@ class BudgetRuntimeTests(RuntimeBase):
             self.assertEqual(states[unverified], "unavailable", unverified)
         self.assertEqual(states["latency"], "off", "timing is accessible but Act is not enabled")
         self.assertEqual(states["shield"], "off", "shield is opt-in")
-        self.assertEqual(ext["feature_settings"], {"latency": True, "shield": False})
+        self.assertEqual(ext["feature_settings"], {"latency": True, "shield": False, "touch_boost": False})
         self.assertEqual(states["upscale"], "ready", "full resolution until a scaled point is confirmed")
         self.assertEqual(ext["gain"]["kind"], "unavailable")
         self.assertIsNone(ext["gain"]["percent"], "no number without an A-B-A proof")
@@ -1194,7 +1194,7 @@ class BudgetRuntimeTests(RuntimeBase):
               "observed_fast_w": 12.75}, "15%"),
             ({"maximum_tdp_w": 15, "observed_tdp_w": 12,
               "observed_fast_w": 15}, "0%"),
-            ({"maximum_tdp_w": 15}, "—"),
+            ({"maximum_tdp_w": 15}, "вЂ”"),
         ]
         for power, expected in cases:
             with self.subTest(power=power):
@@ -1207,7 +1207,7 @@ class BudgetRuntimeTests(RuntimeBase):
                     self.svc._ring_hud_key = None
                     self.assertTrue(self.svc._publish_ring_hud(status, settings))
                 saving = hud_rings.energy_savings_pct(seen[-1]["energy_tdp"], seen[-1]["maximum_tdp"])
-                self.assertEqual(hud_rings._fmt_pct(saving, "") if saving is not None else "—", expected)
+                self.assertEqual(hud_rings._fmt_pct(saving, "") if saving is not None else "вЂ”", expected)
                 self.assertEqual(seen[-1]["maximum_tdp"], power.get("gamescope_max_tdp_w") or power["maximum_tdp_w"])
                 self.assertEqual(seen[-1]["limit"], 12, "existing arc limit stays unchanged")
 
@@ -1923,11 +1923,14 @@ class PointStateResetTests(RuntimeBase):
 
 
 class FrameOsIntegrationTests(BudgetRuntimeTests):
-    """Development feature: off by default, marker for the launcher, TDP offset only in act mode."""
+    """Autopilot-only transient injection; optional timing modes retain their gates."""
+    def setUp(self):
+        super().setUp()
+        self.svc.set_mode("game","autopilot")
 
     def test_off_by_default_and_marker_follows_the_mode(self):
-        self.assertEqual(self.svc._frame_os_mode("game"), "off")
-        self.assertFalse(self.svc.frame_os_marker_path.exists())
+        self.assertEqual(self.svc._frame_os_mode("game"), "act")
+        self.assertTrue(self.svc.frame_os_marker_path.exists())
         self.assertTrue(self.svc.set_frame_os("game", "observe")["success"])
         self.assertTrue(self.svc.frame_os_marker_path.exists())
         self.assertFalse(self.svc.set_frame_os("game", "turbo")["success"])
@@ -2024,11 +2027,11 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         budget.draw_w = 14.0
         budget._lock(0.0, "native-holds")
         self.svc._budget = budget
-        self.t["now"] = 45.0
-        budget.observe(45.0, WindowVerdict(True, False, "holds"), 90, 90)
+        self.t["now"] = 4.0
+        budget.observe(4.0, WindowVerdict(True, False, "holds"), 90, 90)
         self.assertFalse(self.svc._act_power_settled())
-        self.t["now"] = 60.0
-        self.assertTrue(self.svc._act_power_settled(), "noop reprobe must not starve Act's 60 s dwell")
+        self.t["now"] = 8.0
+        self.assertTrue(self.svc._act_power_settled(), "noop reprobe must not reset the settled dwell")
         budget._move("changed-watts", tdp=12.0)
         self.assertFalse(self.svc._act_power_settled(), "real changes invalidate settled evidence")
 
@@ -2436,7 +2439,7 @@ class RingRefreshTests(unittest.TestCase):
         self.assertEqual(len(self.writes), 2)
 
     def test_stale_and_nonfinite_fps_are_not_displayed(self):
-        # field report 1.3: one late sample flipped the number to "—" and back (flicker); the last
+        # field report 1.3: one late sample flipped the number to "вЂ”" and back (flicker); the last
         # good value is held for HUD_HOLD_S, never longer
         self.publish()
         self.status["telemetry"]["snapshot"]["sample_age_ms"] = 3000
