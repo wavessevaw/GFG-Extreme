@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from .governor_telemetry import TelemetryObserver
 
-CURRENT_VERSION = "2.1.1"  # kept in step by scripts/bump_version.py
+CURRENT_VERSION = "2.2.0"  # kept in step by scripts/bump_version.py
 
 
 def _percentile(values: List[float], pct: float) -> Optional[float]:
@@ -211,6 +211,15 @@ def frame_fusion_summary(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
             r.get("avoided_source_copies_at_last_publication", 0) for r in rows
             if type(r.get("avoided_source_copies_at_last_publication")) is int
             and 0 <= r["avoided_source_copies_at_last_publication"] < 2**64), default=0),
+        "processing_paths": dict(Counter(str(r.get("processing_path", "legacy")) for r in rows)),
+        "maximum_native_transfers_snapshot": max((
+            r.get("native_source_transfers_at_last_publication", 0) for r in rows
+            if type(r.get("native_source_transfers_at_last_publication")) is int
+            and 0 <= r["native_source_transfers_at_last_publication"] < 2**64), default=0),
+        "maximum_native_conversion_blits_avoided_snapshot": max((
+            r.get("native_conversion_blits_avoided_at_last_publication", 0) for r in rows
+            if type(r.get("native_conversion_blits_avoided_at_last_publication")) is int
+            and 0 <= r["native_conversion_blits_avoided_at_last_publication"] < 2**64), default=0),
         "last": rows[-1] if rows else None, "last_context_sample": latest_contexts, "gain_measured": False}
 
 
@@ -439,6 +448,9 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
         out.append(f"Frame Fusion: states {fusion['states']}; native direct path observed in "
                    f"{fusion['observed_samples']} of {fusion['samples']} recorded samples; "
                    f"maximum avoided-copy publication snapshot {fusion['maximum_avoided_copies_snapshot']}. "
+                   f"Native source transfers snapshot {fusion['maximum_native_transfers_snapshot']}; "
+                   f"BGRA conversion blits avoided snapshot {fusion['maximum_native_conversion_blits_avoided_snapshot']}; "
+                   f"processing paths {fusion['processing_paths']}. "
                    "Snapshots are not a session copy total or proof of FPS, latency or energy improvement.")
         last = fusion.get("last") or {}
         context_sample = fusion.get("last_context_sample") or {}

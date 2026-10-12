@@ -115,6 +115,22 @@ class FusionDiagnosticsTests(unittest.TestCase):
         self.assertFalse(result["frame_fusion"]["available"])
         self.assertTrue(any("native status was not captured" in line for line in result["findings"]))
 
+    def test_native_snapshots_preserve_work_without_summing_or_claiming_removed_copies(self):
+        from test_frame_fusion import NativeResolutionEvidenceTests
+        fusion = summarize(True, [NativeResolutionEvidenceTests().context()])
+        data = io.BytesIO()
+        with zipfile.ZipFile(data, "w") as z:
+            z.writestr("timeline.jsonl", "\n".join(json.dumps({"t": t, "frame_fusion": fusion}) for t in range(4)))
+        data.seek(0)
+        with zipfile.ZipFile(data) as z:
+            result = analyze(z)["frame_fusion"]
+        self.assertEqual(result["observed_samples"], 4)
+        self.assertEqual(result["processing_paths"], {"native-input": 4})
+        self.assertEqual(result["maximum_native_transfers_snapshot"], 5)
+        self.assertEqual(result["maximum_native_conversion_blits_avoided_snapshot"], 5)
+        self.assertEqual(result["maximum_avoided_copies_snapshot"], 0)
+        self.assertFalse(result["gain_measured"])
+
     def test_probe_captures_launch_opt_in(self):
         with tempfile.TemporaryDirectory() as temp:
             proc = Path(temp)/"25"; proc.mkdir()

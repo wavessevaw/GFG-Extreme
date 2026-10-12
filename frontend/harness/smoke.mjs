@@ -340,6 +340,18 @@ for (const fail of [false, true]) {
   }
   await page.close(); cases.push(["fusion-toggle-" + (fail ? "error" : "success")]);
 }
+for (const processing_path of ["native-input", "spatial-input"]) {
+  const state = { ...STATES["home-idle-oled"], frame_fusion: {
+    enabled: true, state: "observed", processing_path } };
+  const page = await openPage(browser, state, ["Settings", "Diagnostics"]);
+  const expected = processing_path === "native-input"
+    ? "Native-resolution Fusion is processing frames. Power benefit is not measured yet."
+    : "The direct processing path has been used in this game. Power benefit is not measured yet.";
+  if (!(await page.getByText(expected, { exact: true }).count())) {
+    failed++; console.error("FAIL Fusion processing path: " + processing_path);
+  }
+  await page.close(); cases.push(["fusion-observed-" + processing_path]);
+}
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);
 process.exit(failed ? 1 : 0);
