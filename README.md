@@ -186,4 +186,4 @@ GPL-3.0-or-later · [License](LICENSE.md) · [Third-party notices](THIRD_PARTY_N
 
 ## Frame Fusion preview
 
-The experimental 2.1.0 prerelease adds opt-in [Frame Fusion Core](docs/FRAME_FUSION.md). Stable downloads remain on 2.0.3; physical Deck performance and energy benefit are not yet established.
+The experimental 2.1.1 prerelease adds opt-in [Frame Fusion Core](docs/FRAME_FUSION.md). Stable downloads remain on 2.0.3; physical Deck performance and energy benefit are not yet established.
