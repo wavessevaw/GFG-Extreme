@@ -68,7 +68,7 @@ class OperatingPointPlanner:
         if preserve_resolution:
             # Quality protects the player\'s render resolution; scaled choices
             # remain available manually and to the other modes.
-            return ladder + ((OperatingPoint("20x3-degraded", 60, 20, 3, 100, degraded=True),) if sixty else ())
+            return ladder
         base2 = int(round(target / 2))
         # Render scale is a tool of its own: before pushing generation to x2.75/x3
         # (more artefacts, more latency) try x2 with a reduced render scale, which
@@ -80,7 +80,7 @@ class OperatingPointPlanner:
         head = tuple(p for p in ladder if p.multiplier <= 2.5)
         rest = tuple(p for p in ladder if p.multiplier > 2.5)
         if sixty:
-            tail = (OperatingPoint("20x3-degraded", 60, 20, 3, 100, degraded=True),)
+            tail = ()
         else:
             tail = (
                 OperatingPoint("30x3-s90", 90, 30, 3, 90, requires_scale_validation=True),
@@ -88,9 +88,8 @@ class OperatingPointPlanner:
             )
         return head + mid + rest + tail
 
-    # Automatic multipliers: native, then quarter steps up to x3.  x4/x5 are
-    # never chosen automatically.
-    MULTIPLIER_GRID = (1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0)
+    # Shared normal range for every mode. Emergency points are separate.
+    MULTIPLIER_GRID = (1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75)
 
     @classmethod
     def fg_ladder(cls, target: int) -> tuple[OperatingPoint, ...]:
@@ -102,8 +101,8 @@ class OperatingPointPlanner:
                 key = f"native{target}"
             else:
                 key = f"{base}x{m:g}"
-            if target == 60 and m == 3.0:
-                continue  # 20x3 only exists as the degraded last resort
+            if base < ADAPTIVE_MINIMUM_BASE_FPS:
+                continue
             points.append(OperatingPoint(key, target, base, m if m != int(m) else int(m), 100))
         return tuple(points)
 
@@ -471,11 +470,11 @@ class CostModel:
 
     @staticmethod
     def multiplier_penalty(multiplier: float) -> float:
-        """Piecewise linear: x1 0, x2 1, x3 4 (x1.5 0.5, x2.5 2.5); anything else is steep."""
+        """Piecewise linear: x1 0, x2 1, x3 4 (x1.5 0.5, x2.5 2.5); the same slope continues through x3.75."""
         m = float(multiplier)
         if 1.0 <= m <= 2.0:
             return (m - 1.0) * 1.0
-        if 2.0 < m <= 3.0:
+        if 2.0 < m <= 3.75:
             return 1.0 + (m - 2.0) * 3.0
         return 20.0
 
@@ -696,10 +695,10 @@ class PowerSearch:
 #
 # Multipliers 1.0 .. 3.75 in 0.25 steps are normal tools; x4 is a last resort.
 
-BUDGET_MULTIPLIERS = (1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75)
+BUDGET_MULTIPLIERS = OperatingPointPlanner.MULTIPLIER_GRID
 EMERGENCY_MULTIPLIER = 4
-REAL_FLOOR_FPS = 24  # below this interpolation smears; deeper points are not offered
-EMERGENCY_REAL_FLOOR_FPS = 20  # even the last resort keeps a real cadence that can be watched
+REAL_FLOOR_FPS = 24  # legacy constant; normal eligibility now follows target / 3.75
+EMERGENCY_REAL_FLOOR_FPS = 20  # legacy constant; emergency eligibility now follows target / 4
 START_REAL_FPS = 30  # first point: ~30 real (30x3 at 90 Hz, 30x2 at 60 Hz)
 
 
@@ -707,15 +706,17 @@ def _point_key(target: int, base: int, multiplier: float) -> str:
     return f"native{target}" if multiplier == 1 else f"{base}x{multiplier:g}"
 
 
-BALANCED_REAL_FLOOR_FPS = 30   # Balanced never goes below 30 real (x3 at 90 Hz)
+BALANCED_REAL_FLOOR_FPS = 30   # legacy preferred cadence, no longer an eligibility floor
 BALANCED_START_REAL_FPS = 45   # and starts at x2 at 90 Hz
 BALANCED_START_TDP_W = 12.0
 BALANCED_IDEAL_MAX_W = 13.0
 
 
-def budget_points(target_output_fps: int, real_floor: int = REAL_FLOOR_FPS) -> tuple[OperatingPoint, ...]:
-    """Cheapest first: x4 emergency, then real ``real_floor`` (24, or 30 in Balanced) .. native."""
+def budget_points(target_output_fps: int, real_floor: Optional[int] = None) -> tuple[OperatingPoint, ...]:
+    """Cheapest first: emergency, then the shared normal x3.75 .. native range."""
     target = int(target_output_fps)
+    if real_floor is None:
+        real_floor = max(ADAPTIVE_MINIMUM_BASE_FPS, int(round(target / BUDGET_MULTIPLIERS[-1])))
     normal = []
     seen: set[int] = set()
     for m in reversed(BUDGET_MULTIPLIERS):
@@ -725,10 +726,10 @@ def budget_points(target_output_fps: int, real_floor: int = REAL_FLOOR_FPS) -> t
         seen.add(base)
         mult = int(m) if m == int(m) else m
         normal.append(OperatingPoint(_point_key(target, base, m), target, base, mult, 100))
-    # Last resort: as deep as x4 allows, but the real cadence stays >= 20 and the
+    # Last resort: as deep as x4 and the renderer minimum allow; the
     # ratio is taken from the target, so the output still lands on the display
     # rate (90/23 = 3.91, not 22x4 = 88 on a 90 Hz panel).
-    base4 = max(math.ceil(target / EMERGENCY_MULTIPLIER), EMERGENCY_REAL_FLOOR_FPS)
+    base4 = max(math.ceil(target / EMERGENCY_MULTIPLIER), ADAPTIVE_MINIMUM_BASE_FPS)
     mult4 = round(target / base4, 3)
     mult4 = int(mult4) if mult4 == int(mult4) else mult4
     emergency = OperatingPoint(_point_key(target, base4, mult4), target, base4, mult4, 100, degraded=True)
@@ -752,11 +753,11 @@ def extreme_points(target_output_fps: int) -> tuple[OperatingPoint, ...]:
     resolution back on the next step; the guard (idx - 1) gives up resolution before real frames.
     Scaled rungs are only usable with the Scaling Engine provisioned at launch (``_usable``);
     without it the ladder is the plain one. Quarter-step ratios through x3.75 remain
-    available below 30 real; index 0 is fixed x4, used after normal points fail.
+    available below 30 real; index 0 is the panel-aligned emergency, used after normal points fail.
     """
     floor = max(ADAPTIVE_MINIMUM_BASE_FPS, math.ceil(target_output_fps / 4))
     base = budget_points(target_output_fps, floor)
-    emergency = OperatingPoint(f"{floor}x4", target_output_fps, floor, 4, 100, degraded=True)
+    emergency = base[0]  # fractional at 90 Hz: keep the same output target
     normal = base[1:]
     rungs = []
     for p in normal:
@@ -926,7 +927,7 @@ class BudgetController:
             self.points = extreme_points(self.target_output_fps)
         else:
             self.points = with_render_scale(
-                budget_points(self.target_output_fps, BALANCED_REAL_FLOOR_FPS if balanced else REAL_FLOOR_FPS))
+                budget_points(self.target_output_fps))
         # Set by the service every step: the game was launched with the Scaling Engine provisioned
         # (scale-ready launch or the profile's own scaling) and is not CPU-bound.
         self.scale_capable = False
@@ -961,7 +962,7 @@ class BudgetController:
         self.tdp = min(max(start_w, self.min_w), self.normal_max_w) if self.tdp_control else None
         if balanced or extreme:
             # No watts beyond the inherited device/player ceiling. Balanced keeps
-            # its 30-real floor; Extreme may use deep ratios, including x4.
+            # its regular x3.75 limit; Extreme may use emergency x4.
             self.emergency_max_w = self.normal_max_w
         self.phase = "settle"
         self.probe: Optional[str] = None
@@ -1644,12 +1645,12 @@ class BudgetController:
         # but a game producing only 30 real FPS delivers 60 output, not the 90 target.
         # The APU draws 8 W under a 12 W cap, so buying more watts is futile.
         # The old comfort_idx gate forbade a deeper ratio and the power guard then held
-        # 45x2 forever.  Use a feasible fixed-ratio rung *below* comfort_idx only
+        # 45x2 forever.  Use a feasible quarter-step rung *below* comfort_idx only
         # when both real and output are short and the APU is demonstrably not
-        # power-bound.  Prefer full render scale and respect the Balanced 30-real
-        # floor and the current renderer capacity.  Ordinary hitches, menus and
+        # power-bound. Prefer the best feasible full-resolution rung, including
+        # fractional ratios, within the current renderer capacity.  Ordinary hitches, menus and
         # already-healthy output must not trigger this quality trade-off.
-        if (self.flavor == "balanced" and verdict.short and not verdict.stall
+        if (verdict.short and not verdict.stall
                 and self._draw_says_not_power_bound(verdict)
                 and isinstance(real_median, (int, float)) and math.isfinite(float(real_median))
                 and isinstance(output_median, (int, float)) and math.isfinite(float(output_median))
@@ -1657,7 +1658,6 @@ class BudgetController:
             feasible = next(
                 (i for i in range(self.idx - 1, 0, -1)
                  if self._usable(i, now) and self.points[i].render_scale_pct == 100
-                 and float(self.points[i].multiplier).is_integer()
                  and self.points[i].base_target_fps * HOLD_REAL_RATIO <= float(real_median)),
                 None,
             )

@@ -1,4 +1,4 @@
-"""Extreme offers the quarter-step grid through fixed x4, with capability checks."""
+"""Extreme offers the quarter-step grid through x3.75 with a panel-aligned emergency, with capability checks."""
 import unittest
 from py_modules.gfg_plugin.governor_core import BudgetController, extreme_points, WindowVerdict
 from py_modules.gfg_plugin.governor_overlay import point_deltas
@@ -9,11 +9,11 @@ class ExtremeMultiplierTests(unittest.TestCase):
         for target in (60, 90, 120):
             points = extreme_points(target)
             plain = [p for p in points if p.render_scale_pct == 100]
-            for mult in (3.25, 3.5, 3.75, 4):
+            for mult in (3.25, 3.5, 3.75):
                 self.assertTrue(any(p.multiplier == mult for p in plain), (target, mult))
             self.assertTrue(all(1 <= p.multiplier <= 4 for p in points))
             self.assertEqual(len({p.key for p in points}), len(points))
-            self.assertEqual(points[0].multiplier, 4)
+            self.assertAlmostEqual(points[0].base_target_fps * points[0].multiplier, target, places=1)
             self.assertTrue(points[0].degraded)
 
     def test_overlay_pins_fractional_cadence_and_fixed_x4(self):
@@ -40,12 +40,12 @@ class ExtremeMultiplierTests(unittest.TestCase):
                 self.assertFalse(ctl._usable(i, 0))
         self.assertEqual(ctl.point.key, "45x2")
 
-    def test_fixed_x4_is_reachable_without_scaling_or_more_watts(self):
+    def test_panel_aligned_emergency_is_reachable_without_scaling_or_more_watts(self):
         ctl = BudgetController(target_output_fps=90, now=0, flavor="extreme", max_tdp_w=15)
         ctl.current_max_multiplier = 4
         ctl.scale_capable = False
         ctl.idx = next(i for i, p in enumerate(ctl.points) if p.key == "24x3.75")
         result = ctl._escalate(30, WindowVerdict(False, True, "real-below-cap", short=True), 22, 82)
         self.assertEqual(result, "move")
-        self.assertEqual(ctl.point.key, "23x4")
+        self.assertEqual(ctl.point.key, "23x3.913")
         self.assertEqual(ctl.tdp, 15)

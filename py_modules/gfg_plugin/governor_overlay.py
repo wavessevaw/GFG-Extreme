@@ -144,7 +144,7 @@ def point_deltas(
             "adaptive": True,
             "adaptive_auto_base_fps_cap": False,
             "adaptive_stable_cadence": False,
-            "adaptive_max_multiplier": max(2, math.ceil(multiplier)),
+            "adaptive_max_multiplier": int(MAX_AUTO_MULTIPLIER),
             "multiplier": int(saved.get("multiplier", 2) or 2),
             "target_fps": int(point["target_output_fps"]),
             "base_fps_cap": int(point["base_target_fps"]),

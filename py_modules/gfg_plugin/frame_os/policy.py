@@ -134,6 +134,7 @@ class InjectionPolicy:
     rest_allowed: bool = True
     _cam_prev: Optional[float] = None
     _cam_prev_t: Optional[float] = None
+    continuous_boost_enabled: bool = False
     touch_boost_enabled: bool = False
     _touch_seen: Optional[int] = None
     _touch_until: float = -1e9
@@ -157,6 +158,12 @@ class InjectionPolicy:
         self._input_armed = False
         self._quiet_since = None
         self.level = "calm"
+
+    def configure_continuous_boost(self, enabled: bool) -> None:
+        if self.continuous_boost_enabled != enabled:
+            self.cancel_boost()
+            self._burst_recovery_until = -1e9
+        self.continuous_boost_enabled = enabled is True
 
     def configure_touch_boost(self, enabled: bool) -> None:
         if self.touch_boost_enabled != enabled:
@@ -211,7 +218,8 @@ class InjectionPolicy:
                 or not math.isfinite(real_fps)):
             self._boost_since = None
             return  # unavailable cadence is not evidence of failed delivery
-        delivered_floor = self.calm_real_hz + max(1.0,self.calm_real_hz*0.05) if short_window else 0.9*self.boost_real_hz
+        delivered_floor = (self.calm_real_hz + max(1.0,self.calm_real_hz*0.05)
+                           if short_window and not self.continuous_boost_enabled else 0.9*self.boost_real_hz)
         if real_fps is not None and real_fps >= delivered_floor:
             self._boost_since = None          # delivered
             self._boost_missing_s = 0.0
@@ -285,11 +293,14 @@ class InjectionPolicy:
         touch_trigger = self._touch_trigger(now, inp, focused)
         trigger = trigger or touch_trigger
         boost_until = max(self._boost_until, self._touch_until)
+        if self.continuous_boost_enabled:
+            boost_until = now + 1.0
+            trigger = "continuous-boost"
 
         if focused is False:
             self.cancel_boost()
             boost_until = -1e9
-        if self._burst_started is not None and now - self._burst_started >= BOOST_MAX_BURST_S:
+        if not self.continuous_boost_enabled and self._burst_started is not None and now - self._burst_started >= BOOST_MAX_BURST_S:
             self._boost_until = self._touch_until = -1e9
             self._burst_recovery_until = now + BOOST_RECOVERY_S
             self._burst_started = None
@@ -309,13 +320,15 @@ class InjectionPolicy:
         elif now < boost_until and now < self._boost_blocked_until:
             level, reason = "calm", "boost-ineffective"
         elif now < boost_until and self.boost_real_hz > self.calm_real_hz:
-            affordable = self.broker is None or self.broker.can_boost() or self.level == "boost"
+            # Explicit sustained mode spends power directly within the service's
+            # normal ceiling; its duration must not depend on a finite pulse bank.
+            affordable = self.continuous_boost_enabled or self.broker is None or self.broker.can_boost() or self.level == "boost"
             level, reason = ("boost", trigger or self._reason) if affordable else ("calm", "energy-bank-empty")
         else:
             level, reason = "calm", "steady"
         if self.broker is not None:
             self.broker.tick(now, draw_w, level)
-            if level == "boost" and self.broker.bank_j <= 0.0:
+            if level == "boost" and not self.continuous_boost_enabled and self.broker.bank_j <= 0.0:
                 level, reason = "calm", "energy-bank-empty"
         if level != self.level:
             self._note(f"{now:.1f}:{self.level}->{level}:{reason}")

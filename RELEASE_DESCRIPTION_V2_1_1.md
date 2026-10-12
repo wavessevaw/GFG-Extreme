@@ -1,11 +1,17 @@
-# GFG Extreme 2.1.1 — Frame Fusion diagnostic preview
+# GFG Extreme 2.1.1 — stable
 
-Experimental prerelease. Stable remains 2.0.3. Fusion defaults off.
+Bug-fix update for 2.1.0. Every Governor mode now offers normal multipliers from ×1 to ×3.75 in quarter steps, including Battery, Balanced, Quality, Autopilot and the legacy Extreme mode.
 
-Fixes missing Frame Fusion evidence in exported recordings. Timeline samples now retain actual native status, publication counters, source/presentation dimensions and scaler constraints. The latest live contexts survive game exit in frame-fusion-contexts.json. Game process snapshots capture the Fusion launch setting; renderer-identity.json compares mapped MAKO file hashes with the plugin's expected manifest without treating a replaced installation as the running file. Unavailable identity remains unknown.
+- Quality includes ×3.25, ×3.5 and ×3.75. Balanced can use these steps when higher real-frame targets cannot hold. At 60 output FPS, ×3.75 means 16 real FPS; at 90 it means 24. Mode priorities and power limits still apply.
+- Governor launch overlays reserve up to three generated-frame slots. Fractional point changes retain this capacity, so a low initial ratio does not strand the session below the newly available steps. Restart the game after updating. Drivers that cannot provide the required resources retain their measured capacity limit.
+- When output is short and measured APU draw is below the power cap, a feasible fractional ratio can restore output without futile extra watts. Healthy output and transient stalls keep their guards.
+- Emergency points remain separate from the normal ×3.75 range. The legacy Extreme fallback now targets 90 output instead of requesting fixed 23×4 = 92.
+- Updated mode descriptions, English/Russian README and UI cards. Corrected damaged punctuation in the English README.
 
-The plain-language summary distinguishes enabled settings, prepared inputs and observed direct work. Copy counters are snapshots, never a summed session total or an FPS/energy claim. Existing 2.1.0 logs with only the UI switch are explicitly inconclusive.
+**Continuous Boost** is a separate Autopilot-only switch, off by default. It holds the higher real-frame cadence without the 1.5-second pulse limit, including without stick input. It may use extra power within the normal power ceiling; menu, heat, delivery and power-search guards still pause it. Turning it off restores the short-pulse policy.
 
-The native Fusion renderer and its immutable patch are unchanged from 2.1.0. Install this plugin update, keep or reinstall its matching engine, and restart the game after changing Fusion. Device performance and battery benefit still require an off/on comparison in a controlled scene; see docs/FRAME_FUSION.md.
+Fusion and both Boost policies remain Autopilot-only. Existing saved feature choices are preserved. No measured performance or battery-life gain is claimed by this release.
 
-SHA-256: `<sha256>`
+Install **GFG-Extreme-v2_1_1.zip** through Decky, update the bundled engine if prompted, and restart the game through `/home/deck/.local/bin/gfg %command%` so the new launch capacity is provisioned.
+
+SHA-256: `<sha256>` — also see **SHA256SUMS.txt**.

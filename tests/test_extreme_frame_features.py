@@ -69,13 +69,13 @@ class FeatureSettingsTests(unittest.TestCase):
         self.service._poke = Mock()
 
     def test_autopilot_feature_defaults_on(self):
-        self.assertEqual(self.service.frame_os_features("Game"), {"latency": True, "shield": True, "touch_boost": True, "boost": True})
+        self.assertEqual(self.service.frame_os_features("Game"), {"latency": True, "shield": True, "touch_boost": True, "boost": True, "continuous_boost": False})
 
     def test_independent_profile_settings(self):
         self.assertTrue(self.service.set_frame_os_feature("Game", "shield", True)["success"])
         self.service.set_frame_os_feature("Game", "latency", False)
-        self.assertEqual(self.service.frame_os_features("Game"), {"latency": False, "shield": True, "touch_boost": True, "boost": True})
-        self.assertEqual(self.service.frame_os_features("Other"), {"latency": True, "shield": True, "touch_boost": True, "boost": True})
+        self.assertEqual(self.service.frame_os_features("Game"), {"latency": False, "shield": True, "touch_boost": True, "boost": True, "continuous_boost": False})
+        self.assertEqual(self.service.frame_os_features("Other"), {"latency": True, "shield": True, "touch_boost": True, "boost": True, "continuous_boost": False})
 
     def test_invalid_input_does_not_write(self):
         for feature, value in (("unknown", True), ("shield", "false"), ("latency", 0)):
