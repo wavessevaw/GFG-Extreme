@@ -251,7 +251,7 @@ index de08cde..7674005 100644
          sampler2D(sourceTexture, sourceSampler), coordinate, 0.0
      );
 diff --git a/engine/mako-render/src/spatial_scaler.cpp b/engine/mako-render/src/spatial_scaler.cpp
-index 86cab67..97ea656 100644
+index 86cab67..2d8e968 100644
 --- a/engine/mako-render/src/spatial_scaler.cpp
 +++ b/engine/mako-render/src/spatial_scaler.cpp
 @@ -140,6 +140,13 @@ namespace {
@@ -577,7 +577,7 @@ index 86cab67..97ea656 100644
 +            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
 +            static_cast<uint32_t>(inputBarriers.size()), inputBarriers.data()
 +        );
-+    
++
 +        const auto sourceCopy = blitRegion(
 +            this->implementation->sourceSize, this->implementation->sourceSize
 +        );
@@ -587,7 +587,7 @@ index 86cab67..97ea656 100644
 +            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 +            1, &sourceCopy, VK_FILTER_NEAREST
 +        );
-+    
++
 +        this->implementation->pipeline->recordCompute(
 +            vk, handle,
 +            directFrameGenerationOutput
@@ -630,18 +630,6 @@ index 86cab67..97ea656 100644
 -        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
 -        static_cast<uint32_t>(inputBarriers.size()), inputBarriers.data()
 -    );
--
--    const auto sourceCopy = blitRegion(
--        this->implementation->sourceSize, this->implementation->sourceSize
--    );
--    vk.df().CmdBlitImage(
--        handle, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
--        this->implementation->pipeline->input().handle(),
--        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
--        1, &sourceCopy, VK_FILTER_NEAREST
--    );
--
--    this->implementation->pipeline->recordCompute(vk, handle);
 +    if (this->implementation->pipeline->hasDirectInput(sourceImage)) {
 +        const auto inputBarrier = imageBarrier(sourceImage,
 +            VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
@@ -675,7 +663,16 @@ index 86cab67..97ea656 100644
 +            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
 +            static_cast<uint32_t>(inputBarriers.size()), inputBarriers.data()
 +        );
-+    
+ 
+-    const auto sourceCopy = blitRegion(
+-        this->implementation->sourceSize, this->implementation->sourceSize
+-    );
+-    vk.df().CmdBlitImage(
+-        handle, sourceImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+-        this->implementation->pipeline->input().handle(),
+-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+-        1, &sourceCopy, VK_FILTER_NEAREST
+-    );
 +        const auto sourceCopy = blitRegion(
 +            this->implementation->sourceSize, this->implementation->sourceSize
 +        );
@@ -685,7 +682,8 @@ index 86cab67..97ea656 100644
 +            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 +            1, &sourceCopy, VK_FILTER_NEAREST
 +        );
-+    
+ 
+-    this->implementation->pipeline->recordCompute(vk, handle);
 +        this->implementation->pipeline->recordCompute(vk, handle);
 +    }
  
