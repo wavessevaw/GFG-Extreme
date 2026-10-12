@@ -47,6 +47,7 @@ from .frame_os.runner import FrameOsRunner
 from .frame_os.memory import GameMemory, seed_pairs
 from .frame_os.proof import METRICS as FRAME_OS_METRICS
 from .package_paths import PLUGIN_ROOT
+from .managed_files import write_managed_text_atomically
 from .host_sensors import HostSensors, diagnose
 from . import extreme as extreme_policy
 from .autopilot.arbiter import Arbiter
@@ -1139,6 +1140,34 @@ class GovernorService:
         self._poke()
         return {"success": True, "error": None, "ab": self._frame_os_ab()}
 
+    def frame_fusion_enabled(self) -> bool:
+        return self._settings.get("frame_fusion") is True
+
+    def _sync_frame_fusion_marker(self) -> None:
+        marker = self.configuration.runtime_state_dir / "frame-fusion.enabled"
+        if self.frame_fusion_enabled():
+            write_managed_text_atomically(marker, "enabled\n", 0o600, self.log)
+        else:
+            marker.unlink(missing_ok=True)
+
+    def set_frame_fusion(self, enabled: bool) -> Dict[str, Any]:
+        if type(enabled) is not bool:
+            return {"success": False, "error": "Boolean required"}
+        previous = self.frame_fusion_enabled()
+        self._settings["frame_fusion"] = enabled
+        try:
+            self._save_settings()
+            self._sync_frame_fusion_marker()
+        except OSError as error:
+            self._settings["frame_fusion"] = previous
+            try:
+                self._save_settings()
+                self._sync_frame_fusion_marker()
+            except OSError:
+                self.log.warning("Frame Fusion settings restoration pending")
+            return {"success": False, "error": str(error)}
+        return {"success": True, "enabled": enabled, "relaunch_required": True}
+
     def set_auto_flow(self, enabled: bool) -> Dict[str, Any]:
         self._settings["auto_flow"] = bool(enabled)
         self._save_settings()
@@ -1838,6 +1867,10 @@ class GovernorService:
             await asyncio.to_thread(self._sync_frame_os_marker)
         except OSError as error:
             self.log.debug("Frame OS marker not written: %s", error)
+        try:
+            await asyncio.to_thread(self._sync_frame_fusion_marker)
+        except OSError as error:
+            self.log.warning("Frame Fusion marker not written: %s", error)
         self.frame_os.start()
         self._wake = asyncio.Event()
         self._wake_loop = asyncio.get_running_loop()

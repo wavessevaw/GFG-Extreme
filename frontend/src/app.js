@@ -19,6 +19,7 @@ const rpc = {
   setFrameOs: safeCallable("set_governor_frame_os"),
   setFrameOsActUnlock: safeCallable("set_governor_frame_os_act_unlock"),
   setFrameOsAb: safeCallable("set_governor_frame_os_ab"),
+  setFrameFusion: safeCallable("set_governor_frame_fusion"),
   setFrameOsFeature: safeCallable("set_governor_frame_os_feature"),
   setPowerSplit: safeCallable("set_governor_power_split"),
   setMode: safeCallable("set_governor_mode"),
@@ -1011,6 +1012,7 @@ function AdvancedPage({ back, s, insp, launch, go, profile }) {
     h("div", { className: "list" }, h(Row, { icon: "cog", title: "Journal", sub: "Undo recent changes", onClick: () => go("journal") })),
     h(ForgetModel, { profile }),
     h(FrameOsPanel, { s, profile }),
+    h(FrameFusionPanel, { s }),
     h("div", { className: "sec" }, "INSPECTOR"),
     h("div", { className: "cols" }, col("SAVED", sv), col("EFFECTIVE", ef), col("GOVERNOR", s && s.active_point ? { point: POINT_LABEL(s.active_point) } : {}, true), col("ACTUAL", ac)));
 }
@@ -1042,6 +1044,38 @@ function ForgetModel({ profile }) {
 }
 
 // GFG Frame OS (development): observe/shadow only measure; act changes frame timing and watts.
+function FrameFusionPanel({ s }) {
+  const fusion = (s && s.frame_fusion) || {};
+  const [enabled, setEnabled] = useState(fusion.enabled === true);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setEnabled(fusion.enabled === true); }, [fusion.enabled]);
+  const change = async (value) => {
+    if (busy) return;
+    setBusy(true); setError("");
+    try {
+      const result = await rpc.setFrameFusion(value);
+      if (result && result.success) setEnabled(result.enabled === true);
+      else setError((result && result.error) || "Could not save Frame Fusion");
+    } catch (e) { setError("Could not save Frame Fusion"); }
+    setBusy(false);
+  };
+  const messages = {
+    "observed": "The direct processing path has been used in this game. Power benefit is not measured yet.",
+    "prepared": "Ready to try. Waiting for a compatible generated frame.",
+    "pipeline-not-eligible": "This game is using the regular processing path.",
+    "renderer-unsupported": "The current engine has no Fusion support. Install the updated engine; native 64-bit games only.",
+    "waiting-for-game": "Start a game to check compatibility.",
+    "restart-required": "Restart the game to apply your choice.",
+  };
+  return h("div", null,
+    h("div", { className: "sec" }, "FRAME FUSION (EXPERIMENTAL)"),
+    h("div", { className: "list" }, h(Toggle, { title: "Frame Fusion", on: enabled,
+      sub: "Shares compatible frame buffers. Applies from the next game start.", onChange: change })),
+    error ? h(Note, null, error) : null,
+    fusion.state && fusion.state !== "off" ? h(Note, { quiet: true }, messages[fusion.state] || "Waiting for native evidence.") : null);
+}
+
 function FrameOsPanel({ s, profile }) {
   const fo = (s && s.frame_os) || {};
   const [mode, setMode] = useState(fo.mode || "off");

@@ -4,6 +4,7 @@ Type definitions for GFG Extreme responses.
 
 from typing import Literal, TypedDict, Optional, List
 from .config_schema import ConfigurationData
+from .frame_fusion import NativeFusionState
 
 
 class BaseResponse(TypedDict):
@@ -267,6 +268,7 @@ class RuntimeContextState(TypedDict):
     applied_generated_capacity: int
     frame_generation_active: bool
     spatial_scaling: RuntimeSpatialScalingState
+    frame_fusion: NativeFusionState
     requested: RuntimeProfileSnapshot
     applied: RuntimeProfileSnapshot
     error: Optional[str]

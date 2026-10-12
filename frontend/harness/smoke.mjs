@@ -1,6 +1,10 @@
 // Frontend smoke test: renders each key screen against mock Decky globals and asserts visible text.
 import { launch, openPage, STATES } from "./lib.mjs";
 const cases = [
+  ["fusion-prepared", ["Settings", "Diagnostics"], ["FRAME FUSION (EXPERIMENTAL)", "Waiting for a compatible generated frame"]],
+  ["fusion-observed", ["Settings", "Diagnostics"], ["direct processing path has been used", "Power benefit is not measured yet"]],
+  ["fusion-restart", ["Settings", "Diagnostics"], ["Restart the game to apply your choice"]],
+  ["fusion-unsupported", ["Settings", "Diagnostics"], ["current engine has no Fusion support", "native 64-bit games only"]],
   ["home-idle-oled", [], ["RUN", "90", "TARGET FPS", "Ready", "Steam Deck OLED"]],
   ["home-measuring", [], ["STOP", "Measuring", "ASSESSING"]],
   ["home-locked-oled", [], ["STOP", "Locked in", "45", "x2".replace("x", "×"), "MEDIUM", "TDP NOW", "2h05 left"]],

@@ -40,6 +40,10 @@ def build(work: Path, headers: Path, sanitize=False):
         run("git", "-C", source, "apply", patch)
     if not (headers / "vulkan/vulkan_core.h").is_file():
         raise ValueError("Pinned Vulkan-Headers are required")
+    # Generated payloads always come from the upstream owning generator.
+    # Neither the review patch nor this builder edits embedded arrays by hand.
+    if metadata.get("shader_source_changed"):
+        run(sys.executable, source / "engine/scripts/generate-spatial-scaling-spirv.py")
     run("cmake", "-S", source / "engine", "-B", output,
         "-DCMAKE_BUILD_TYPE=RelWithDebInfo" if sanitize else "-DCMAKE_BUILD_TYPE=Release",
         "-DMAKO_BUILD_UI=OFF", "-DMAKO_BUILD_CLI=ON", "-DMAKO_BUILD_VK_LAYER=ON",

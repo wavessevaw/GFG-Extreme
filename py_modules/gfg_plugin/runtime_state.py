@@ -10,6 +10,7 @@ import stat
 from typing import Any, Optional, cast
 
 from .base_service import BaseService
+from .frame_fusion import normalize as normalize_fusion
 from .types import (
     RuntimeApplicationPhase,
     RuntimeContextState,
@@ -305,6 +306,7 @@ def _context(value: object) -> RuntimeContextState:
             "frame_generation_active",
         ),
         "spatial_scaling": _spatial_scaling(value.get("spatial_scaling")),
+        "frame_fusion": normalize_fusion(value.get("frame_fusion")),
         "requested": _profile(value.get("requested"), "requested"),
         "applied": _profile(value.get("applied"), "applied"),
         "error": error_value,

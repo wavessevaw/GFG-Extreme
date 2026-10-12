@@ -285,6 +285,63 @@ static void integration(vk::Vulkan& vk) {
     std::cout << "Frame Fusion PASS: " << comparisons
         << " byte-identical image comparisons; input-copy elimination; rollback; invalid-input guards\n";
 }
+static void applicationIntegration(vk::Vulkan& vk) {
+    unsigned comparisons=0;
+    for(const auto format : {VK_FORMAT_R8G8B8A8_UNORM,VK_FORMAT_B8G8R8A8_UNORM})
+    for(const bool handoff : {false,true})
+    for(const float sharpness : {0.0F,0.5F,1.0F}) {
+        const VkExtent2D physical{317,193},source{211,128};
+        const auto usage=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|
+            VK_IMAGE_USAGE_SAMPLED_BIT;
+        const vk::Image original(vk,physical,format,usage),direct(vk,physical,format,usage);
+        const vk::Image baseFg(vk,physical,VK_FORMAT_R8G8B8A8_UNORM,usage|VK_IMAGE_USAGE_STORAGE_BIT);
+        const vk::Image fusedFg(vk,physical,VK_FORMAT_R8G8B8A8_UNORM,usage|VK_IMAGE_USAGE_STORAGE_BIT);
+        SpatialScaler base(vk,source,physical,VK_FORMAT_R8G8B8A8_UNORM,
+            ls::ScalingMethod::Mako,sharpness,std::nullopt);
+        SpatialScaler fused(vk,source,physical,VK_FORMAT_R8G8B8A8_UNORM,
+            ls::ScalingMethod::Mako,sharpness,std::nullopt);
+        if(handoff) {
+            const std::array a{std::cref(baseFg)},b{std::cref(fusedFg)};
+            base.configureDirectFrameGenerationOutputs(vk,a);
+            fused.configureDirectFrameGenerationOutputs(vk,b);
+        }
+        const std::array handles{direct.handle()};
+        fused.configureDirectApplicationInputs(vk,handles,physical,format,usage);
+        require(fused.directFrameGenerationInputCount()==1,"application view missing");
+        for(unsigned phase=0;phase<6;++phase) {
+            auto pixels=pattern(physical,phase);
+            // Pixels outside the logical source rectangle must never bleed in.
+            for(uint32_t y=0;y<physical.height;++y) for(uint32_t x=0;x<physical.width;++x)
+                if(x>=source.width || y>=source.height) {
+                    const auto p=(y*physical.width+x)*4;
+                    pixels[p]=255;pixels[p+1]=0;pixels[p+2]=255;pixels[p+3]=255;
+                }
+            uploadImage(vk,original,pixels);uploadImage(vk,direct,pixels);
+            const auto execute=[&](SpatialScaler& scaler,const vk::Image& app,const vk::Image& target) {
+                const vk::CommandBuffer command(vk);command.begin(vk);
+                scaler.record(vk,command,app.handle(),handoff ? target.handle() : VK_NULL_HANDLE,
+                    VK_IMAGE_LAYOUT_GENERAL);
+                command.end(vk);command.submit(vk);
+            };
+            blits=0;execute(base,original,baseFg);require(blits==2,"pre-FG baseline count changed");
+            blits=0;execute(fused,direct,fusedFg);require(blits==1,"pre-FG source copy remains");
+            const auto a=download(vk,original),b=download(vk,direct);
+            for(size_t i=0;i<a.size();++i)
+                require(std::abs(int(a[i])-int(b[i]))<=1,"cropped direct input differs by more than 1 LSB");
+            // Discard/readback semantics cannot destroy the borrowed game image.
+            ++comparisons;
+        }
+        fused.clearDirectFrameGenerationInputs();
+        uploadImage(vk,direct,pattern(physical,1));
+        const std::array badFormat{direct.handle()};
+        rejected([&]{fused.configureDirectApplicationInputs(vk,badFormat,physical,
+            VK_FORMAT_R8G8B8A8_SRGB,usage);});
+        rejected([&]{fused.configureDirectApplicationInputs(vk,badFormat,physical,
+            format,VK_IMAGE_USAGE_TRANSFER_SRC_BIT);});
+    }
+    std::cout << "Frame Fusion PRE-FG PASS: " << comparisons
+        << " cropped RGBA/BGRA comparisons within 1 LSB; guarded source region; FG handoff; borrowed lifetime\n";
+}
 static void profile(vk::Vulkan& vk) {
     const VkExtent2D sourceSize{852,532},outputSize{1280,800};
     const vk::Image input(vk,sourceSize,VK_FORMAT_R8G8B8A8_UNORM,
@@ -325,7 +382,7 @@ int main(int argc,char** argv) {
         auto& functions=const_cast<vk::VulkanDeviceFuncs&>(vk.df());
         originalBlit=functions.CmdBlitImage;functions.CmdBlitImage=countedBlit;
         if(argc==2 && std::string(argv[1])=="--profile") profile(vk);
-        else integration(vk);
+        else {integration(vk);applicationIntegration(vk);}
         functions.CmdBlitImage=originalBlit;
         return 0;
     } catch(const std::exception& error) {
