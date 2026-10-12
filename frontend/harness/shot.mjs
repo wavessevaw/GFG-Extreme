@@ -119,9 +119,16 @@ await card("card-power-split", [
 
 // Frame OS.
 {
-  const fo = st("home-frame-os-act");
+  const fo = JSON.parse(JSON.stringify(st("home-frame-os-act")));
+  fo.mode = "autopilot";
+  fo.frame_os.benefit.frames_pct = null;
+  fo.frame_os.benefit.measured.frames = false;
+  fo.frame_os.proof.frames = { n: 0, measured: false, skipped: true };
+  fo.frame_os.game.frames = { n: 0 };
+  fo.frame_os.game.verdicts.frames = "unclear";
+  fo.frame_os.burst_observations = { windows: 12, accelerated_windows: 8, seconds: 3.2, peak_real_hz: 36, gain_measured: false };
   await card("card-frame-os", [
-    { png: await region(fo, { from: ".fos", to: ".fos" }), label: "Home · measured in game" },
+    { png: await region(fo, { from: ".fos", to: ".fos" }), label: "Home · illustrative short pulse" },
     { png: await region(fo, { nav: ["Settings", "Diagnostics"], from: "FRAME OS (EXPERIMENTAL)", to: "<INSPECTOR" }), label: "Diagnostics · A/B and per-game memory" },
   ]);
 }

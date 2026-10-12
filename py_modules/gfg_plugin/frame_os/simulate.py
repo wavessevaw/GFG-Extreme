@@ -62,12 +62,17 @@ def run(frame_os: bool, seed: int = 7, calm_w: float = 10.0) -> Dict[str, float]
     energy = motion_real = motion_ticks = boosts = 0.0
     latency = 0.0
     last_draw = None
+    peak_boost = max_burst = burst_s = 0.0
     for t, inp, scene, cut in events:
         if frame_os:
             cost = 1000.0 / 30 * 0.6 * scene
             d = policy.tick(t, inp, scene_change=scene_detector.tick(t, cost), draw_w=last_draw)
             real, cap = d.real_hz, d.tdp_w or calm_w
             boosts += d.level == "boost"
+            burst_s = burst_s + TICK_S if d.level == "boost" else 0.0
+            max_burst = max(max_burst, burst_s)
+            if d.level == "boost":
+                peak_boost = max(peak_boost, real)
             if d.level == "rest":
                 real = 30.0
         else:
@@ -86,6 +91,8 @@ def run(frame_os: bool, seed: int = 7, calm_w: float = 10.0) -> Dict[str, float]
         "real_fps_in_motion": round(motion_real / motion_ticks, 1) if motion_ticks else 0.0,
         "frame_time_ms_avg": round(latency / n, 1),
         "boost_share": round(boosts / n, 3),
+        "peak_boost_real_fps": round(peak_boost, 1),
+        "max_burst_s": round(max_burst, 2),
     }
 
 

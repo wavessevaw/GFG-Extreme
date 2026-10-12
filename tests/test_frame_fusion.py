@@ -206,6 +206,10 @@ class WrapperTests(unittest.TestCase):
     def test_marker_enables_next_native_launch(self):
         marker = self.svc.runtime_state_dir / "frame-fusion.enabled"
         marker.parent.mkdir(parents=True, exist_ok=True); marker.write_text("enabled\n")
+        self.assertEqual(self.launch_value(), "0", "legacy renderer has no live Autopilot scope")
+        source = self.svc.local_share_dir.parent.parent / "gfg-fusion-source.json"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text('{"autopilot_only":true}')
         self.assertEqual(self.launch_value(), "1")
 
     def test_flatpak_uses_baseline_even_with_marker(self):

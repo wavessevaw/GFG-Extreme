@@ -1417,6 +1417,8 @@ class GovernorService:
             return
         fresh: Dict[str, List[float]] = {}
         for metric in FRAME_OS_METRICS:
+            if metric == "frames":
+                continue  # steady A/B cadence cannot judge bounded short Boost pulses
             pairs = self.frame_os.proof.pairs[metric]
             saved = self._fo_saved.get(metric, 0)
             if len(pairs) < saved:

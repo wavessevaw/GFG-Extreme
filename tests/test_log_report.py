@@ -228,6 +228,20 @@ class FrameOsLateSwitchTests(unittest.TestCase):
 
 
 class FrameOsByLevelTests(unittest.TestCase):
+    def test_short_burst_snapshots_are_not_summed_or_judged_by_long_medians(self):
+        rows = [{"t": i, "state": "LOCKED", "frame_os": {
+            "mode": "act", "layer_installed": True, "acting": True,
+            "level": "calm" if i < 3 else "boost",
+            "layer": {"live": True, "frames": 100 + i, "present_interval_p50_ms": 33.3},
+            "burst_observations": {"windows": 12, "accelerated_windows": 8,
+                                   "seconds": 3.2, "peak_real_hz": 36}}} for i in range(6)]
+        rep = analyze(bundle({"timeline.jsonl": timeline(rows)}))
+        burst = rep["frame_os"]["short_bursts"]
+        self.assertEqual(burst["windows"], 12)
+        self.assertEqual(burst["accelerated_windows"], 8)
+        self.assertEqual(burst["seconds"], 3.2)
+        self.assertNotIn("boost did not raise the real frame rate", "\n".join(rep["findings"]))
+
     def test_boost_and_calm_are_reported_separately(self):
         def row(i, level, interval, fresh, acting):
             return {"t": float(i), "state": "LOCKED", "output": 90, "tdp": 12,
