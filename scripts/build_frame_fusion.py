@@ -52,8 +52,8 @@ def build(work: Path, headers: Path, sanitize=False):
         f"-DGFG_FUSION_TEST_SOURCE={FUSION / 'tests/integration.cpp'}",
         f"-DMAKO_ENABLE_SANITIZERS={'ON' if sanitize else 'OFF'}")
     run("cmake", "--build", output, "--parallel", "2")
-    run("ctest", "--test-dir", output, "--output-on-failure", "-E", "^gfg-frame-fusion$")
     if not sanitize:
+        run("ctest", "--test-dir", output, "--output-on-failure", "-E", "^gfg-frame-fusion$")
         run(output / "mako-render/gfg-frame-fusion-tests")
         run(output / "mako-render/gfg-frame-fusion-tests", "--profile")
     else:

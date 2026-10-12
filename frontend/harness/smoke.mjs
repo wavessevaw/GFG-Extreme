@@ -334,7 +334,7 @@ for (const fail of [false, true]) {
   const row = page.locator(".row").filter({ has: page.getByText("Frame Fusion", { exact: true }) });
   await row.click(); await page.waitForTimeout(150);
   const calls = await page.evaluate(() => window.__fusionSets || []);
-  if (JSON.stringify(calls) !== "[true]" || await row.locator(".tog.on").count() !== (fail ? 0 : 1)
+  if (JSON.stringify(calls) !== "[true]" || (await row.locator(".tog.on").count()) !== (fail ? 0 : 1)
       || (fail && !(await page.getByText("Could not save Frame Fusion", { exact: true }).count()))) {
     failed++; console.error("FAIL Frame Fusion opt-in/save failure: " + JSON.stringify({ fail, calls }));
   }

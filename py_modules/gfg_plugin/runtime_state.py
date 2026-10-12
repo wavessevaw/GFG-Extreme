@@ -11,6 +11,7 @@ from typing import Any, Optional, cast
 
 from .base_service import BaseService
 from .frame_fusion import normalize as normalize_fusion
+from .governor_overlay import OVERLAY_DIRNAME
 from .types import (
     RuntimeApplicationPhase,
     RuntimeContextState,
@@ -392,8 +393,17 @@ class RuntimeStateService(BaseService):
     def get_status(self, profile_name: str = "") -> RuntimeStatusResponse:
         contexts: list[RuntimeContextState] = []
         try:
-            if self.runtime_state_dir.is_dir():
-                for path in self.runtime_state_dir.glob("*.json"):
+            # Native status lives beside MAKO_CONFIG, including the Governor's
+            # leased overlay. Inspect only these two owned locations, not an
+            # unbounded recursive walk through profile/launch JSON files.
+            folders = (self.runtime_state_dir,
+                self.config_dir / OVERLAY_DIRNAME / self.runtime_state_dir.name)
+            for folder in folders:
+                if not folder.is_dir():
+                    continue
+                paths = sorted(folder.glob("*.json"), key=lambda path: path.stat().st_mtime,
+                    reverse=True)[:64]
+                for path in paths:
                     context = self._read_context(path)
                     if context is None:
                         continue
@@ -403,6 +413,13 @@ class RuntimeStateService(BaseService):
                     }:
                         continue
                     contexts.append(context)
+            unique: dict[tuple, RuntimeContextState] = {}
+            for context in contexts:
+                key = (context["pid"], context["process_start_ticks"], context["role"], context["context"])
+                previous = unique.get(key)
+                if previous is None or context["updated_unix_ms"] > previous["updated_unix_ms"]:
+                    unique[key] = context
+            contexts = list(unique.values())
             contexts.sort(
                 key=lambda context: (
                     context["updated_unix_ms"],

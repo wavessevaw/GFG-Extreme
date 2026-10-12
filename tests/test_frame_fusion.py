@@ -95,6 +95,34 @@ class SettingsTests(unittest.TestCase):
         self.assertFalse(json.loads(self.gov.settings_path.read_text())["frame_fusion"])
 
 
+class RuntimeLocationTests(unittest.TestCase):
+    def test_governor_overlay_status_is_read_and_newest_identity_wins(self):
+        import test_governor_runtime  # initializes the existing Decky fixture
+        from gfg_plugin.runtime_state import RuntimeStateService
+        from gfg_plugin.governor_overlay import OVERLAY_DIRNAME
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            svc = object.__new__(RuntimeStateService)
+            svc.config_dir = root
+            svc.runtime_state_dir = root / "runtime-state"
+            svc.log = logging.getLogger("fusion-runtime-test")
+            nested = root / OVERLAY_DIRNAME / "runtime-state"
+            for folder in (svc.runtime_state_dir, nested):
+                folder.mkdir(parents=True); (folder / "status.json").write_text("{}")
+            other = root / "unowned" / "runtime-state"
+            other.mkdir(parents=True); (other / "status.json").write_text("{}")
+            def read(path):
+                return {"pid": 1, "process_start_ticks": 50, "role": "frame-generation",
+                    "context": 2, "updated_unix_ms": 20 if path.parent == nested else 10,
+                    "state_revision": 1, "phase": "active",
+                    "requested": {"name": "game"}, "applied": {"name": "game"}}
+            with patch.object(svc, "_read_context", side_effect=read) as reader:
+                status = svc.get_status("game")
+            self.assertEqual(reader.call_count, 2)
+            self.assertEqual(len(status["contexts"]), 1)
+            self.assertEqual(status["contexts"][0]["updated_unix_ms"], 20)
+
+
 @unittest.skipUnless(shutil.which("bash") and os.name == "posix", "real launch-wrapper requires Linux")
 class WrapperTests(unittest.TestCase):
     def setUp(self):

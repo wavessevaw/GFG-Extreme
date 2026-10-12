@@ -11,7 +11,7 @@ index c065d6e..39ee872 100644
 +
 +The GFG Frame Fusion patch owns bounded descriptor bindings in `SpatialScaler`, borrowing generated-image views from the swapchain. Bindings must be drained and cleared before replacing or destroying their images, including prepared scalers, backend transitions and retirement. Setup is transactional and recording performs no allocations. Descriptors only accept matching extent/format, sampled usage, unique handles and at most 64 inputs. This patch retains the private fallback images; it removes one copy on an eligible recorded path, not the full memory allocation.
 diff --git a/engine/docs/SCALING.md b/engine/docs/SCALING.md
-index a4bd08b..bb4a3eb 100644
+index a4bd08b..76f2243 100644
 --- a/engine/docs/SCALING.md
 +++ b/engine/docs/SCALING.md
 @@ -146,3 +146,7 @@ ## Code and test ownership
@@ -21,7 +21,7 @@ index a4bd08b..bb4a3eb 100644
 +
 +## Experimental GFG Frame Fusion patch
 +
-+The GFG fork can opt in with `GFG_FRAME_FUSION=1` before launch. Only the SDR8 post-Frame-Generation MAKO path prebinds matching sampled private generated images and skips their source-sized input blit. The scaler shader, output blit, WSI order and pixel semantics remain unchanged. Native Resolution, LS1, HDR, unknown images, unsupported formats and failed bindings use the copy-based path. Runtime status distinguishes prepared bindings from recorded work; counters are not GPU-time or power evidence.
++The GFG fork opts in with `GFG_FRAME_FUSION=1` before launch. The SDR8 MAKO path prebinds compatible sampled inputs and skips their source-sized blit. Before FG, supported linear UNORM swapchains negotiate sampled usage at creation and borrow image views; a clamped UV mapping samples only the logical source rectangle of the larger physical image. After FG, matching private generated images are sampled directly. The reconstruction weights, output copy and WSI ordering remain owned by their existing components. Native Resolution, LS1, HDR, nonlinear sRGB, unknown images, unsupported usage and failed bindings use the original path. Runtime status distinguishes prepared inputs from submitted work; counters are not GPU-time or power evidence.
 diff --git a/engine/mako-backend/tests/dll_inspection_tests.cpp b/engine/mako-backend/tests/dll_inspection_tests.cpp
 index 0df99c0..9b525fc 100644
 --- a/engine/mako-backend/tests/dll_inspection_tests.cpp
@@ -54,7 +54,7 @@ index 0df99c0..9b525fc 100644
          writeFile(modelPath, model);
          std::filesystem::last_write_time(modelPath, modelTime);
 diff --git a/engine/mako-common/include/mako-common/vulkan/image.hpp b/engine/mako-common/include/mako-common/vulkan/image.hpp
-index f3e6061..c4a89c7 100644
+index f3e6061..df66797 100644
 --- a/engine/mako-common/include/mako-common/vulkan/image.hpp
 +++ b/engine/mako-common/include/mako-common/vulkan/image.hpp
 @@ -34,6 +34,11 @@ namespace vk {
@@ -69,7 +69,15 @@ index f3e6061..c4a89c7 100644
          /// create an internal image backed by a context-local non-aliasing pool
          Image(const vk::Vulkan& vk,
              VkExtent2D extent,
-@@ -51,6 +56,8 @@ namespace vk {
+@@ -46,11 +51,15 @@ namespace vk {
+         [[nodiscard]] const auto& handle() const { return this->image.get(); }
+         /// get the image view handle
+         /// @return the image view handle
+-        [[nodiscard]] const auto& imageview() const { return this->view.get(); }
++        [[nodiscard]] VkImageView imageview() const {
++            return this->hasView ? this->view.get() : VK_NULL_HANDLE;
++        }
+ 
          /// get the extent of the image
          /// @return the extent of the image
          [[nodiscard]] VkExtent2D getExtent() const { return this->extent; }
@@ -78,16 +86,17 @@ index f3e6061..c4a89c7 100644
      private:
          std::shared_ptr<void> pooledMemory;
          ls::owned_ptr<VkDeviceMemory> memory;
-@@ -58,5 +65,7 @@ namespace vk {
+@@ -58,5 +67,8 @@ namespace vk {
          ls::owned_ptr<VkImageView> view;
  
          VkExtent2D extent{};
 +        VkFormat format{};
 +        VkImageUsageFlags usage{};
++        bool hasView{false};
      };
  }
 diff --git a/engine/mako-common/src/vulkan/image.cpp b/engine/mako-common/src/vulkan/image.cpp
-index 615db1a..5e97a70 100644
+index 615db1a..03409ca 100644
 --- a/engine/mako-common/src/vulkan/image.cpp
 +++ b/engine/mako-common/src/vulkan/image.cpp
 @@ -180,7 +180,7 @@ Image::Image(const vk::Vulkan& vk,
@@ -99,14 +108,31 @@ index 615db1a..5e97a70 100644
      const int incomingFd = importFd.value_or(-1);
      ls::FileDescriptorScope imported{{&incomingFd, 1}};
      if (internalPool && (importFd || exportFd))
-@@ -200,6 +200,11 @@ Image::Image(const vk::Vulkan& vk,
+@@ -195,11 +195,27 @@ Image::Image(const vk::Vulkan& vk,
+         this->memory = allocateMemory(vk, *this->image, importFd,
+             exportFd.has_value(), imported);
+     }
+-    this->view = createImageView(vk, *this->image, format);
++    // Transfer-only Native Resolution images cannot legally have image views.
++    // They only participate in blits; sampled/storage users retain their view.
++    this->hasView = (usage & (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
++        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
++        VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT)) != 0;
++    if (this->hasView)
++        this->view = createImageView(vk, *this->image, format);
+     if (exportFd)
          exportMemory(vk, *this->memory, **exportFd);
  }
  
 +Image::Image(const vk::Vulkan& vk, const VkImage borrowedImage,
 +        const VkExtent2D extent, const VkFormat format, const VkImageUsageFlags usage) :
-+    image(new VkImage(borrowedImage)), view(createImageView(vk, borrowedImage, format)),
-+    extent(extent), format(format), usage(usage) {}
++    image(new VkImage(borrowedImage)), extent(extent), format(format), usage(usage) {
++    this->hasView = (usage & (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
++        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
++        VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT)) != 0;
++    if (this->hasView)
++        this->view = createImageView(vk, borrowedImage, format);
++}
 +
  Image::Image(const vk::Vulkan& vk,
              const VkExtent2D extent,
@@ -197,9 +223,18 @@ index 4493304..a1676e1 100644
      };
  
 diff --git a/engine/mako-render/src/shaders/spatial_scaling.comp b/engine/mako-render/src/shaders/spatial_scaling.comp
-index de08cde..4a18c23 100644
+index de08cde..7674005 100644
 --- a/engine/mako-render/src/shaders/spatial_scaling.comp
 +++ b/engine/mako-render/src/shaders/spatial_scaling.comp
+@@ -12,7 +12,7 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+ 
+ layout(set = 0, binding = 0, std140) uniform SpatialScalingParameters {
+     vec4 sizes;  // source width/height, output width/height
+-    vec4 tuning; // normalized sharpness, reserved
++    vec4 tuning; // sharpness, optional cropped-input UV scale XY, reserved
+ } parameters;
+ 
+ layout(set = 0, binding = 16) uniform sampler sourceSampler;
 @@ -34,6 +34,14 @@ vec4 sourceTexel(ivec2 coordinate) {
  }
  
