@@ -2,6 +2,41 @@
 from __future__ import annotations
 from typing import TypedDict
 
+MAX_DIAGNOSTIC_CONTEXTS = 16
+
+
+def compact_context(context: dict) -> dict:
+    """Copy facts from RuntimeStateService's validated, live contexts only."""
+    scaling = context.get("spatial_scaling") or {}
+    native = context.get("frame_fusion") or normalize(None)
+    if not native.get("supported"):
+        eligibility = "renderer-unsupported"
+    elif not native.get("requested"):
+        eligibility = "disabled-at-launch"
+    elif context.get("phase") != "active":
+        eligibility = "runtime-transition"
+    elif not context.get("frame_generation_active"):
+        eligibility = "frame-generation-inactive"
+    elif not scaling.get("active"):
+        eligibility = "scaling-inactive"
+    elif scaling.get("active_method") not in (None, "mako"):
+        eligibility = "unsupported-scaler"
+    elif not native.get("prepared_inputs"):
+        eligibility = "direct-inputs-unavailable"
+    elif native.get("recorded_frames", 0):
+        eligibility = "direct-path-observed"
+    else:
+        eligibility = "prepared-awaiting-submit"
+    bounded = lambda value: value[:240] if isinstance(value, str) else value
+    return {k: bounded(context.get(k)) for k in (
+        "pid", "process_start_ticks", "context", "role", "updated_unix_ms",
+        "state_revision", "phase", "reason", "frame_generation_active", "error")} | {
+        "spatial_scaling": {k: bounded(scaling.get(k)) for k in (
+            "active", "activation_supported", "requested_method", "active_method", "pipeline",
+            "source_width", "source_height", "presentation_width", "presentation_height",
+            "inactive_reason", "constraint_reason", "fallback_reason")},
+        "frame_fusion": dict(native), "eligibility": eligibility,
+        "eligibility_basis": "derived-from-native-state"}
 
 class NativeFusionState(TypedDict):
     supported: bool
@@ -62,4 +97,8 @@ def summarize(enabled: bool, contexts: list[dict]) -> dict:
         "path_observed": bool(observed), "prepared_inputs": prepared,
         "avoided_source_copies_at_last_publication": sum(
             c["frame_fusion"]["avoided_source_copies"] for c in observed),
-        "gain_measured": False}
+        "gain_measured": False,
+        "contexts_total": len(current),
+        "contexts_truncated": max(0, len(current) - MAX_DIAGNOSTIC_CONTEXTS),
+        "contexts": [compact_context(c) for c in sorted(current,
+            key=lambda c: (c not in observed, -c.get("updated_unix_ms", 0)))[:MAX_DIAGNOSTIC_CONTEXTS]]}

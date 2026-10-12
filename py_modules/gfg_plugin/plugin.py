@@ -769,6 +769,7 @@ class Plugin:
             plugin_log=Path(plugin_log) if plugin_log else None, logger=decky.logger,
             hud_enabled=lambda profile: bool(self.governor_service.hud_settings(profile)["enabled"]),
             activity=self.activity,
+            renderer_manifest=Path(__file__).resolve().parents[2] / "bin/gfg-fusion/manifest.json",
         )
 
     async def log_ui_event(self, kind: str = "", detail: Any = None) -> Dict[str, Any]:
@@ -1522,7 +1523,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Extreme 2.0.3 started")
+        decky.logger.info("GFG Extreme 2.1.1 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""

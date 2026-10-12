@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from .governor_telemetry import TelemetryObserver
 
-CURRENT_VERSION = "2.1.0"  # kept in step by scripts/bump_version.py
+CURRENT_VERSION = "2.1.1"  # kept in step by scripts/bump_version.py
 
 
 def _percentile(values: List[float], pct: float) -> Optional[float]:
@@ -174,8 +174,44 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
         report["power_split"]["capped_share"] = round(sum(bool(r.get("cap_khz")) for r in rows) / len(rows), 2)
     report["extreme"] = extreme_summary(samples, events)
     report["render_scale"] = render_scale_summary(events, diag_text)
+    report["frame_fusion"] = frame_fusion_summary(samples)
+    try:
+        identity = json.loads(_read(bundle, "renderer-identity.json") or "{}")
+        processes = identity.get("processes", []) if isinstance(identity, dict) else []
+        libraries = [lib for process in processes if isinstance(process, dict)
+                     for lib in (process.get("renderer_files") or []) if isinstance(lib, dict)]
+        report["frame_fusion"]["renderer_identity"] = {
+            "available": bool(libraries),
+            "matched": sum(lib.get("matches_plugin_manifest") is True for lib in libraries),
+            "mismatched": sum(lib.get("matches_plugin_manifest") is False for lib in libraries),
+            "unknown": sum(lib.get("matches_plugin_manifest") is None for lib in libraries)}
+    except (ValueError, TypeError, AttributeError):
+        report["frame_fusion"]["renderer_identity"] = {"available": False}
+    actions = _jsonl(_read(bundle, "activity.jsonl"))
+    report["frame_fusion"]["enable_requested_in_activity"] = any(
+        a.get("kind") == "set_governor_frame_fusion" and isinstance(a.get("args"), dict)
+        and a["args"].get("enabled") is True
+        for a in actions)
     report["findings"] = findings(report, names)
     return report
+
+
+def frame_fusion_summary(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
+    rows = [r["frame_fusion"] for r in samples if isinstance(r.get("frame_fusion"), dict)]
+    latest_contexts = next(({"captured_at": r.get("t"), "contexts": r["frame_fusion"]["contexts"]}
+        for r in reversed(samples) if isinstance(r.get("frame_fusion"), dict)
+        and isinstance(r["frame_fusion"].get("contexts"), list) and r["frame_fusion"]["contexts"]), None)
+    return {"available": bool(rows), "samples": len(rows),
+        "states": dict(Counter(str(r.get("state", "unknown")) for r in rows)),
+        "enabled_samples": sum(r.get("enabled") is True for r in rows),
+        "observed_samples": sum(r.get("path_observed") is True for r in rows),
+        # Counters are native publication snapshots and reset with contexts.
+        # Repeated snapshots must never be summed as a session copy total.
+        "maximum_avoided_copies_snapshot": max((
+            r.get("avoided_source_copies_at_last_publication", 0) for r in rows
+            if type(r.get("avoided_source_copies_at_last_publication")) is int
+            and 0 <= r["avoided_source_copies_at_last_publication"] < 2**64), default=0),
+        "last": rows[-1] if rows else None, "last_context_sample": latest_contexts, "gain_measured": False}
 
 
 def extreme_summary(samples: List[Dict[str, Any]], events: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -398,6 +434,36 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
                    f"a setting (rejections by reason: {report.get('rejections_by_reason')}).")
     if report.get("mode_switches"):
         out.append(f"The mode was switched {report['mode_switches']} times during the recording; each switch starts a new search.")
+    fusion = report.get("frame_fusion") or {}
+    if fusion.get("available"):
+        out.append(f"Frame Fusion: states {fusion['states']}; native direct path observed in "
+                   f"{fusion['observed_samples']} of {fusion['samples']} recorded samples; "
+                   f"maximum avoided-copy publication snapshot {fusion['maximum_avoided_copies_snapshot']}. "
+                   "Snapshots are not a session copy total or proof of FPS, latency or energy improvement.")
+        last = fusion.get("last") or {}
+        context_sample = fusion.get("last_context_sample") or {}
+        for context in (context_sample.get("contexts") or [])[:3]:
+            if not isinstance(context, dict):
+                continue
+            scaling = context.get("spatial_scaling") or {}
+            out.append(f"Last captured Frame Fusion context {context.get('pid')}/{context.get('context')} "
+                       f"at {context_sample.get('captured_at')}: "
+                       f"{context.get('eligibility', 'unknown')}; "
+                       f"source {scaling.get('source_width')}x{scaling.get('source_height')}, "
+                       f"presentation {scaling.get('presentation_width')}x{scaling.get('presentation_height')}, "
+                       f"pipeline {scaling.get('pipeline')}; native scaling reason "
+                       f"{scaling.get('inactive_reason') or scaling.get('constraint_reason') or scaling.get('fallback_reason') or 'none reported'}.")
+        identity = fusion.get("renderer_identity") or {}
+        if identity.get("available"):
+            out.append(f"Mapped renderer file identity: {identity.get('matched', 0)} match the plugin manifest, "
+                       f"{identity.get('mismatched', 0)} differ, {identity.get('unknown', 0)} are unconfirmed. "
+                       "File identity does not establish GPU completion or a performance gain.")
+        if last.get("enabled") is True and not fusion["observed_samples"]:
+            out.append("Frame Fusion was enabled but this recording contains no observed direct-path work. "
+                       "Check native contexts for restart, scaler eligibility and source/presentation extents.")
+    elif fusion.get("enable_requested_in_activity"):
+        out.append("Frame Fusion was enabled in the UI, but its native status was not captured. "
+                   "This log cannot establish whether Fusion executed.")
     repeated = {w: n for w, n in (report.get("failed_power_probes") or {}).items() if n >= 3}
     if repeated:
         out.append("Lower-power probes failed repeatedly at the same level ("

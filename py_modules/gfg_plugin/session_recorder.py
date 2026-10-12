@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from .privileged_power import writer as privileged_writer
+from .renderer_identity import mapped_renderer_files, process_start_ticks
 
 MAX_TIMELINE_BYTES = 24 * 1024 * 1024
 MAX_DIAG_BYTES = 12 * 1024 * 1024
@@ -31,7 +32,7 @@ PROBE_ENV_KEYS = (
     "MANGOHUD_CONFIGFILE", "VK_INSTANCE_LAYERS", "VK_IMPLICIT_LAYER_PATH", "VK_ADD_IMPLICIT_LAYER_PATH",
     "VK_LAYER_PATH", "VK_LOADER_LAYERS_ENABLE", "VK_LOADER_LAYERS_DISABLE", "GAMESCOPE_WAYLAND_DISPLAY",
     "PRESSURE_VESSEL_RUNTIME", "STEAM_COMPAT_APP_ID", "SteamAppId",
-    "GFG_FRAME_OS", "DISABLE_GFG_FRAME_OS", "GFG_FRAME_OS_SHM",
+    "GFG_FRAME_OS", "DISABLE_GFG_FRAME_OS", "GFG_FRAME_OS_SHM", "GFG_FRAME_FUSION",
 )
 
 
@@ -103,6 +104,7 @@ def compact_status(status: Dict[str, Any]) -> Dict[str, Any]:
             "phase", "probe", "flavor", "verifying", "thermal", "thermal_deferred", "current_max_multiplier",
             "known_failures", "warm_started", "floor_w", "heat_limited")} if status.get("budget") else None,
         "frame_os": compact_frame_os(status.get("frame_os")),
+        "frame_fusion": status.get("frame_fusion") if isinstance(status.get("frame_fusion"), dict) else None,
         "power_split": {k: (status.get("power_split") or {}).get(k) for k in (
             "phase", "reason", "level", "cap_khz", "ab", "pairs", "gain_pct")} if status.get("power_split") else None,
         "extreme": compact_extreme(status.get("extreme")),
@@ -200,6 +202,7 @@ def probe_game_processes(proc_root: Path = Path("/proc"), limit: int = 8) -> Lis
     except OSError:
         return found
     for proc in entries:
+        start_ticks = process_start_ticks(proc)
         try:
             env: Dict[str, str] = {}
             for item in (proc / "environ").read_bytes().split(b"\0"):
@@ -218,14 +221,19 @@ def probe_game_processes(proc_root: Path = Path("/proc"), limit: int = 8) -> Lis
             comm = (proc / "comm").read_text(encoding="utf-8", errors="replace").strip()
         except OSError:
             comm = ""
+        renderer_files = mapped_renderer_files(proc, maps)
+        if process_start_ticks(proc) != start_ticks:
+            continue  # PID was reused while collecting this process.
         found.append({
             "pid": int(proc.name), "comm": comm,
+            "process_start_ticks": start_ticks,
             "env": {k: env[k] for k in PROBE_ENV_KEYS if k in env},
             "mangohud_loaded": any("libMangoHud" in lib for lib in libs),
             "frame_os_layer_loaded": any("libVkLayer_gfg_pacer" in lib for lib in libs),
             "layer_libraries": [lib for lib in libs if "vulkan" in lib.lower() or "MangoHud" in lib
                                 or "mako" in lib.lower() or "gamescope" in lib.lower()
                                 or "gfg_pacer" in lib][:40],
+            "renderer_files": renderer_files,
         })
         if len(found) >= limit:
             break
@@ -278,6 +286,7 @@ class SessionRecorder:
         host_mangohud_manifest: Path = HOST_MANGOHUD_MANIFEST,
         activity: Any = None,
         power_probe: Callable[[], List[Dict[str, Any]]] = probe_power_sensors,
+        renderer_manifest: Optional[Path] = None,
     ) -> None:
         self.activity = activity
         self.power_probe = power_probe
@@ -296,6 +305,9 @@ class SessionRecorder:
         self.clock = clock
         self.hud_enabled = hud_enabled
         self.process_probe = process_probe
+        self.renderer_manifest = Path(renderer_manifest) if renderer_manifest else None
+        self._last_fusion_contexts: Optional[Dict[str, Any]] = None
+        self._process_probed_at: Optional[float] = None
         self.host_mangohud_manifest = Path(host_mangohud_manifest)
         self._game_processes: List[Dict[str, Any]] = []
         self.recording = False
@@ -342,6 +354,8 @@ class SessionRecorder:
                 self._offsets[path] = 0
         self._profile = profile
         self._game_processes = []
+        self._process_probed_at = None
+        self._last_fusion_contexts = None
         try:
             self._power_start = self.power_probe()
         except Exception:
@@ -379,6 +393,9 @@ class SessionRecorder:
             try:
                 record = compact_status(self.status_provider())
                 record["t"] = self.clock()
+                fusion = record.get("frame_fusion")
+                if isinstance(fusion, dict) and fusion.get("contexts"):
+                    self._last_fusion_contexts = {"captured_at": record["t"], "status": fusion}
                 self._append(record)
                 if self._lines % PROBE_EVERY_SAMPLES == 1:
                     await self._probe()
@@ -391,6 +408,7 @@ class SessionRecorder:
         found = await asyncio.to_thread(self.process_probe)
         if found:
             self._game_processes = found
+            self._process_probed_at = self.clock()
 
     def _append(self, record: Dict[str, Any]) -> None:
         if self._timeline is None:
@@ -519,7 +537,7 @@ class SessionRecorder:
                                  "driver": read(str(p / "scaling_driver"))}
                         for p in sorted(Path("/sys/devices/system/cpu/cpufreq").glob("policy[0-9]*"))[:16]},
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme 2.1.0 (renderer identity: see diagnostics)",
+            "plugin_version": "GFG Extreme 2.1.1 (renderer identity: see diagnostics)",
         }
 
     def _write_bundle(self) -> Path:
@@ -560,6 +578,8 @@ class SessionRecorder:
                 "launch-wrapper.sh the generated launcher\n"
                 "overlay/         in-game overlay config and status line\n"
                 "game-processes.json  layer env of the running game and whether MangoHud was loaded\n"
+                "frame-fusion-contexts.json latest live normalized Fusion contexts (kept after game exit)\n"
+                "renderer-identity.json mapped renderer file hashes and expected plugin manifest\n"
                 "power-sensors.json   every hwmon power cap/draw at start and end of the recording\n"
                 "profile.json     saved profile\n"
                 "plugin.log       tail of the Decky plugin log\n"))
@@ -568,6 +588,8 @@ class SessionRecorder:
             bundle.writestr("self_test.json", json.dumps(self.self_test(), indent=2))
             bundle.writestr("system.json", json.dumps(self._system_info(), indent=2))
             processes = self._game_processes or self.process_probe()
+            if processes and self._process_probed_at is None:
+                self._process_probed_at = self.clock()
             try:
                 power_end = self.power_probe()
             except Exception as error:
@@ -575,6 +597,11 @@ class SessionRecorder:
             bundle.writestr("power-sensors.json", json.dumps(
                 {"start": self._power_start, "end": power_end}, indent=2))
             bundle.writestr("game-processes.json", json.dumps(processes, indent=2))
+            bundle.writestr("frame-fusion-contexts.json", json.dumps({
+                "schema": 1, "available": self._last_fusion_contexts is not None,
+                "last_live_sample": self._last_fusion_contexts}, indent=2))
+            bundle.writestr("renderer-identity.json", json.dumps(
+                self._renderer_identity(processes), indent=2))
             for path, start in self._offsets.items():
                 data = _read_range(path, start, MAX_DIAG_BYTES)
                 if data:
@@ -632,3 +659,40 @@ class SessionRecorder:
             os.chmod(target, 0o644)
         except OSError:
             pass
+
+    def _renderer_identity(self, processes: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Keep expected package identity separate from evidence of the mapped file."""
+        manifest = None
+        manifest_error = "manifest-not-available"
+        if self.renderer_manifest is not None:
+            try:
+                value = json.loads(_read_tail(self.renderer_manifest, MAX_FILE_BYTES))
+                if not isinstance(value, dict) or value.get("schema") != 1:
+                    raise ValueError("unsupported renderer manifest")
+                manifest = {k: value.get(k) for k in (
+                    "schema", "source", "archive_sha256", "native_libraries", "default_enabled")}
+                manifest_error = None
+            except (OSError, ValueError, TypeError) as error:
+                manifest_error = str(error)[:240]
+        expected = (manifest or {}).get("native_libraries") or {}
+        expected = expected if isinstance(expected, dict) else {}
+        recorded = []
+        for process in processes[:8]:
+            files = []
+            for library in (process.get("renderer_files") or [])[:2]:
+                item = dict(library)
+                # Baseline 32-bit libraries are deliberately not replaced by Fusion.
+                name = "lib/" + Path(str(item.get("path", ""))).name
+                wanted = expected.get(name) if item.get("elf_bits") == 64 else None
+                item["expected_sha256"] = wanted
+                item["matches_plugin_manifest"] = (
+                    item.get("sha256") == wanted if item.get("state") == "verified" and wanted else None)
+                files.append(item)
+            recorded.append({"pid": process.get("pid"), "comm": process.get("comm"),
+                "process_start_ticks": process.get("process_start_ticks"),
+                "launch_fusion": (process.get("env") or {}).get("GFG_FRAME_FUSION"),
+                "renderer_files": files})
+        return {"schema": 1, "captured_at": self._process_probed_at,
+            "expected_plugin_manifest": manifest, "manifest_error": manifest_error,
+            "processes": recorded,
+            "note": "Mapped-file identity is not GPU timing, image quality or whole-device energy evidence."}
