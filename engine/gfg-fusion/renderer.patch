@@ -112,19 +112,20 @@ index 615db1a..5e97a70 100644
              const VkExtent2D extent,
              std::shared_ptr<ImageMemoryPool> internalPool,
 diff --git a/engine/mako-render/CMakeLists.txt b/engine/mako-render/CMakeLists.txt
-index 6cf0e80..0e51c83 100644
+index 6cf0e80..71a44e6 100644
 --- a/engine/mako-render/CMakeLists.txt
 +++ b/engine/mako-render/CMakeLists.txt
-@@ -19,6 +19,15 @@ set(ADAPTIVE_SOURCE "src/adaptive_scheduler.cpp")
+@@ -19,6 +19,16 @@ set(ADAPTIVE_SOURCE "src/adaptive_scheduler.cpp")
  set(SPATIAL_SCALER_SOURCE "src/spatial_scaler.cpp")
  set(COLOR_PIPELINE_SOURCE "src/color_pipeline.cpp")
  
 +if(GFG_FUSION_TEST_SOURCE)
++    find_package(Vulkan REQUIRED)
 +    add_executable(gfg-frame-fusion-tests "${GFG_FUSION_TEST_SOURCE}"
 +        "../mako-cli/src/tools/image_transfer.cpp")
 +    target_include_directories(gfg-frame-fusion-tests PRIVATE
 +        "src" "../mako-cli/src/tools")
-+    target_link_libraries(gfg-frame-fusion-tests PRIVATE mako-spatial-scaler)
++    target_link_libraries(gfg-frame-fusion-tests PRIVATE mako-spatial-scaler Vulkan::Vulkan)
 +    add_test(NAME gfg-frame-fusion COMMAND gfg-frame-fusion-tests)
 +endif()
 +

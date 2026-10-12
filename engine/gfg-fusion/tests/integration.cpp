@@ -34,6 +34,37 @@ static void VKAPI_CALL countedBlit(VkCommandBuffer command, VkImage source,
 static void require(bool good, const char* reason) {
     if (!good) throw std::runtime_error(reason);
 }
+// Private-image validation needs no external-memory/FD transport. Production
+// still uses its normal application-device/LSFG transport; we explicitly test
+// the same scaler on a headless device without pretending to exercise LSFG.
+struct HeadlessDevice {
+    VkInstance instance{};VkPhysicalDevice physical{};VkDevice device{};uint32_t family{};
+    HeadlessDevice() {
+        const VkApplicationInfo app{.sType=VK_STRUCTURE_TYPE_APPLICATION_INFO,
+            .pApplicationName="gfg-frame-fusion-proof",.apiVersion=VK_API_VERSION_1_1};
+        const VkInstanceCreateInfo create{.sType=VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,.pApplicationInfo=&app};
+        require(vkCreateInstance(&create,nullptr,&instance)==VK_SUCCESS,"headless instance unavailable");
+        uint32_t count{};vkEnumeratePhysicalDevices(instance,&count,nullptr);
+        require(count>0,"no Vulkan device");std::vector<VkPhysicalDevice> devices(count);
+        require(vkEnumeratePhysicalDevices(instance,&count,devices.data())==VK_SUCCESS,"device enumeration failed");
+        physical=devices.front();
+        for(const auto candidate:devices) {VkPhysicalDeviceProperties props{};
+            vkGetPhysicalDeviceProperties(candidate,&props);if(props.vendorID==0x1002){physical=candidate;break;}}
+        uint32_t families{};vkGetPhysicalDeviceQueueFamilyProperties(physical,&families,nullptr);
+        std::vector<VkQueueFamilyProperties> queues(families);
+        vkGetPhysicalDeviceQueueFamilyProperties(physical,&families,queues.data());
+        bool found=false;for(uint32_t i=0;i<families;++i) if(queues[i].queueFlags&VK_QUEUE_COMPUTE_BIT){family=i;found=true;break;}
+        require(found,"no compute queue");const float priority=1.0F;
+        const VkDeviceQueueCreateInfo queue{.sType=VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueFamilyIndex=family,.queueCount=1,.pQueuePriorities=&priority};
+        VkPhysicalDeviceFeatures features{};vkGetPhysicalDeviceFeatures(physical,&features);
+        const VkDeviceCreateInfo info{.sType=VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            .queueCreateInfoCount=1,.pQueueCreateInfos=&queue,.pEnabledFeatures=&features};
+        require(vkCreateDevice(physical,&info,nullptr,&device)==VK_SUCCESS,"headless device unavailable");
+    }
+    ~HeadlessDevice(){if(device)vkDestroyDevice(device,nullptr);if(instance)vkDestroyInstance(instance,nullptr);}
+    HeadlessDevice(const HeadlessDevice&)=delete;
+};
 template<class Function> static void rejected(Function f) {
     bool failed=false;
     try { f(); } catch (const std::exception&) { failed=true; }
@@ -296,12 +327,15 @@ static void applicationIntegration(vk::Vulkan& vk) {
         const vk::Image original(vk,physical,format,usage),direct(vk,physical,format,usage);
         const vk::Image baseFg(vk,physical,VK_FORMAT_R8G8B8A8_UNORM,usage|VK_IMAGE_USAGE_STORAGE_BIT);
         const vk::Image fusedFg(vk,physical,VK_FORMAT_R8G8B8A8_UNORM,usage|VK_IMAGE_USAGE_STORAGE_BIT);
+        const vk::Image baseFgNext(vk,physical,VK_FORMAT_R8G8B8A8_UNORM,usage|VK_IMAGE_USAGE_STORAGE_BIT);
+        const vk::Image fusedFgNext(vk,physical,VK_FORMAT_R8G8B8A8_UNORM,usage|VK_IMAGE_USAGE_STORAGE_BIT);
         SpatialScaler base(vk,source,physical,VK_FORMAT_R8G8B8A8_UNORM,
             ls::ScalingMethod::Mako,sharpness,std::nullopt);
         SpatialScaler fused(vk,source,physical,VK_FORMAT_R8G8B8A8_UNORM,
             ls::ScalingMethod::Mako,sharpness,std::nullopt);
         if(handoff) {
-            const std::array a{std::cref(baseFg)},b{std::cref(fusedFg)};
+            const std::array a{std::cref(baseFg),std::cref(baseFgNext)},
+                b{std::cref(fusedFg),std::cref(fusedFgNext)};
             base.configureDirectFrameGenerationOutputs(vk,a);
             fused.configureDirectFrameGenerationOutputs(vk,b);
         }
@@ -323,8 +357,8 @@ static void applicationIntegration(vk::Vulkan& vk) {
                     VK_IMAGE_LAYOUT_GENERAL);
                 command.end(vk);command.submit(vk);
             };
-            blits=0;execute(base,original,baseFg);require(blits==2,"pre-FG baseline count changed");
-            blits=0;execute(fused,direct,fusedFg);require(blits==1,"pre-FG source copy remains");
+            blits=0;execute(base,original,phase%2 ? baseFgNext : baseFg);require(blits==2,"pre-FG baseline count changed");
+            blits=0;execute(fused,direct,phase%2 ? fusedFgNext : fusedFg);require(blits==1,"pre-FG source copy remains");
             const auto a=download(vk,original),b=download(vk,direct);
             for(size_t i=0;i<a.size();++i)
                 require(std::abs(int(a[i])-int(b[i]))<=1,"cropped direct input differs by more than 1 LSB");
@@ -372,16 +406,65 @@ static void profile(vk::Vulkan& vk) {
     }
     std::cout << "Timing describes this Vulkan device; it is not a Steam Deck energy measurement.\n";
 }
+static void applicationProfile(vk::Vulkan& vk) {
+    const VkExtent2D source{852,532},physical{1280,800};
+    const auto usage=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT;
+    const vk::Image app(vk,physical,VK_FORMAT_R8G8B8A8_UNORM,usage);
+    const vk::Image target(vk,physical,VK_FORMAT_R8G8B8A8_UNORM,usage|VK_IMAGE_USAGE_STORAGE_BIT);
+    const auto pixels=pattern(physical,0);
+    const vk::Buffer restore(vk,pixels.data(),pixels.size(),VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    const auto reset=[&](const vk::CommandBuffer& command) {
+        const auto before=imageBarrier(app.handle(),VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT,
+            VK_ACCESS_TRANSFER_WRITE_BIT,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        vk.df().CmdPipelineBarrier(command.handle(),VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&before);
+        const VkBufferImageCopy region{.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
+            .imageExtent={physical.width,physical.height,1}};
+        vk.df().CmdCopyBufferToImage(command.handle(),restore.handle(),app.handle(),
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&region);
+        const auto after=imageBarrier(app.handle(),VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_MEMORY_READ_BIT,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_GENERAL);
+        vk.df().CmdPipelineBarrier(command.handle(),VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,0,nullptr,0,nullptr,1,&after);
+    };
+    for(const bool direct:{false,true}) {
+        SpatialScaler scaler(vk,source,physical,VK_FORMAT_R8G8B8A8_UNORM,
+            ls::ScalingMethod::Mako,0.5F,std::nullopt);
+        const std::array refs{std::cref(target)};scaler.configureDirectFrameGenerationOutputs(vk,refs);
+        if(direct) {const std::array handles{app.handle()};
+            scaler.configureDirectApplicationInputs(vk,handles,physical,VK_FORMAT_R8G8B8A8_UNORM,usage);}
+        for(unsigned i=0;i<8;++i) {
+            const vk::CommandBuffer command(vk);command.begin(vk);reset(command);
+            scaler.record(vk,command,app.handle(),target.handle(),VK_IMAGE_LAYOUT_GENERAL);
+            command.end(vk);command.submit(vk);
+        }
+        TimestampQueryPool queries(vk,80);
+        const vk::CommandBuffer command(vk);command.begin(vk);queries.reset(command.handle());
+        for(uint32_t i=0;i<40;++i) {
+            reset(command); // Fresh game pixels, deliberately outside the timed interval.
+            queries.write(command.handle(),VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,2*i);
+            scaler.record(vk,command,app.handle(),target.handle(),VK_IMAGE_LAYOUT_GENERAL);
+            queries.write(command.handle(),VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,2*i+1);
+        }
+        command.end(vk);command.submit(vk);
+        auto samples=queries.microseconds();std::sort(samples.begin(),samples.end());
+        std::cout << (direct ? "pre-fusion" : "pre-baseline") << " samples=40 gpu_median_us="
+            << (samples[19]+samples[20])/2 << " gpu_p95_us=" << samples[37]
+            << " blits_per_real_frame=" << (direct ? 1 : 2) << '\n';
+    }
+}
 int main(int argc,char** argv) {
     try {
-        vk::Vulkan vk("gfg-frame-fusion-tests",{1,0,0},"gfg-frame-fusion-tests",{1,0,0},
-            [](const vk::VulkanInstanceFuncs&,const std::vector<VkPhysicalDevice>& devices){
-                if(devices.empty()) throw std::runtime_error("no Vulkan device");
-                return devices.front();
-            });
+        HeadlessDevice native;
+        const auto instanceFunctions=vk::initVulkanInstanceFuncs(native.instance,vkGetInstanceProcAddr,false);
+        vk::Vulkan vk(native.instance,native.device,native.physical,instanceFunctions,
+            vk::initVulkanDeviceFuncs(instanceFunctions,native.device,false,false),
+            native.family,false,false);
         auto& functions=const_cast<vk::VulkanDeviceFuncs&>(vk.df());
         originalBlit=functions.CmdBlitImage;functions.CmdBlitImage=countedBlit;
-        if(argc==2 && std::string(argv[1])=="--profile") profile(vk);
+        VkPhysicalDeviceProperties properties{};vkGetPhysicalDeviceProperties(native.physical,&properties);
+        std::cout << "Vulkan proof device: " << properties.deviceName << '\n';
+        if(argc==2 && std::string(argv[1])=="--profile") {profile(vk);applicationProfile(vk);}
         else {integration(vk);applicationIntegration(vk);}
         functions.CmdBlitImage=originalBlit;
         return 0;

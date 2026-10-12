@@ -12,6 +12,11 @@ rm -rf "$work/GFG-Extreme/.github"
 cp "$payloads"/org.freedesktop.Platform.VulkanLayer.makorender-*.flatpak "$work/GFG-Extreme/bin/"
 chmod 644 "$work"/GFG-Extreme/bin/*.flatpak
 (cd "$work/GFG-Extreme/bin" && sha256sum -c --quiet SHA256SUMS.txt)
+if [ -f "$work/GFG-Extreme/engine/gfg-fusion/source.json" ]; then
+  python3 "$root/scripts/package_frame_fusion.py" --plugin "$work/GFG-Extreme" \
+    --build "${FRAME_FUSION_BUILD:?set FRAME_FUSION_BUILD to the verified native build}"
+  (cd "$work/GFG-Extreme/bin" && sha256sum -c --quiet SHA256SUMS.txt)
+fi
 # Frame OS pacer layer (64-bit), built from this commit; staged by the Governor only when a
 # profile turns Frame OS on. VULKAN_HEADERS: a Vulkan-Headers include/ directory.
 pacer="$work/GFG-Extreme/engine/gfg-pacer"

@@ -2,7 +2,7 @@
   "schema": 1,
   "repository": "https://github.com/eugeniosegala/MAKO.git",
   "commit": "edd2946bd3c4281e357bd436e0e7b80df0759576",
-  "patch_sha256": "a958690c7cbeed0961f638e161fb0ab904e2b45514304bf3f308e9dfaf4a1cf1",
+  "patch_sha256": "e9b2a228b365d1b874147fbfa1ebc0b94a2c50870d1742be44946446da6448f4",
   "feature": "fusion-core-direct-sampled-input",
   "default_enabled": false,
   "platforms": [

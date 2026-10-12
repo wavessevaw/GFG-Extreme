@@ -756,7 +756,7 @@ class Plugin:
         return SessionRecorder(
             user_home=home, config_dir=cfg.config_dir, runtime_state_dir=cfg.runtime_state_dir,
             wrapper_path=cfg.mako_script_path,
-            status_provider=lambda: self.governor_service.get_status(),
+            status_provider=self._governor_status_with_fusion,
             events_path=self.governor_service.events_path,
             diagnostics_paths=[cfg.config_dir / PRESENT_DIAGNOSTICS_LOG_FILENAME,
                                Path("/dev/shm/gfg-present-diagnostics.log")],
@@ -792,10 +792,12 @@ class Plugin:
 
     async def get_governor_status(self, profile_name: str = "") -> Dict[str, Any]:
         """Return the live GFG Governor state without mutating the profile."""
+        return await asyncio.to_thread(self._governor_status_with_fusion, profile_name)
+
+    def _governor_status_with_fusion(self, profile_name: str = "") -> Dict[str, Any]:
         status = self.governor_service.get_status(profile_name)
         from .frame_fusion import summarize
-        runtime = await asyncio.to_thread(self.runtime_state_service.get_status,
-            profile_name or status.get("profile", ""))
+        runtime = self.runtime_state_service.get_status(profile_name or status.get("profile", ""))
         status["frame_fusion"] = summarize(self.governor_service.frame_fusion_enabled(),
             runtime.get("contexts", []) if runtime.get("success") else [])
         hud = status.get("hud")

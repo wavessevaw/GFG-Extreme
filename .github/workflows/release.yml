@@ -125,13 +125,21 @@ jobs:
 
       - name: Native build dependencies
         if: steps.version.outputs.exists == 'false'
-        run: sudo apt-get update && sudo apt-get install -y g++-12
+        run: sudo apt-get update && sudo apt-get install -y g++-12 cmake libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers libx11-dev libxcb1-dev glslang-tools spirv-tools p7zip-full
+
+      - name: Build and verify Frame Fusion native renderer
+        if: steps.version.outputs.exists == 'false'
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+        run: |
+          git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/fusion-vkh"
+          python3 scripts/build_frame_fusion.py --work "$RUNNER_TEMP/fusion" --headers "$RUNNER_TEMP/fusion-vkh/include"
 
       - name: Build zip
         if: steps.version.outputs.exists == 'false'
         run: |
           git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
-          VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" scripts/build_release.sh "${{ steps.version.outputs.version }}" payloads out
+          FRAME_FUSION_BUILD="$RUNNER_TEMP/fusion/build" VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" scripts/build_release.sh "${{ steps.version.outputs.version }}" payloads out
 
       - name: Verify Frame OS and Rings HUD packaged in Decky zip
         if: steps.version.outputs.exists == 'false'

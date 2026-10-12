@@ -1798,7 +1798,7 @@ function FrameFusionPanel({ s }) {
   };
   const messages = {
     "observed": "The direct processing path has been used in this game. Power benefit is not measured yet.",
-    "prepared": "Ready to try. Waiting for a compatible generated frame.",
+    "prepared": "Ready to try. Waiting for a compatible frame.",
     "pipeline-not-eligible": "This game is using the regular processing path.",
     "renderer-unsupported": "The current engine has no Fusion support. Install the updated engine; native 64-bit games only.",
     "waiting-for-game": "Start a game to check compatibility.",
