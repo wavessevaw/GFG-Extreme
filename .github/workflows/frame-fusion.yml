@@ -1,0 +1,89 @@
+name: Frame Fusion
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  native:
+    runs-on: ubuntu-22.04
+    env:
+      CXX: g++-12
+      CC: gcc-12
+      VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Native dependencies and Vulkan software device
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-12 cmake libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers libx11-dev libxcb1-dev glslang-tools spirv-tools p7zip-full
+          git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
+      - name: Build production renderer and run full CTest and pixel comparison
+        run: |
+          set -euo pipefail
+          python3 scripts/build_frame_fusion.py --work "$RUNNER_TEMP/fusion" --headers "$RUNNER_TEMP/vkh/include" 2>&1 | tee frame-fusion-tests.log
+      - name: Validate Vulkan synchronization
+        env:
+          VK_INSTANCE_LAYERS: VK_LAYER_KHRONOS_validation
+          VK_LAYER_ENABLES: VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT
+        run: |
+          "$RUNNER_TEMP/fusion/build/mako-render/gfg-frame-fusion-tests" > fusion-validation.log 2>&1
+          cat fusion-validation.log
+          if grep -E 'Validation Error|SYNC-HAZARD|VUID-' fusion-validation.log; then exit 1; fi
+      - name: Upload renderer and evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: frame-fusion-native
+          path: |
+            ${{ runner.temp }}/fusion/build/mako-render/libmako-render.so
+            ${{ runner.temp }}/fusion/build/mako-render/libmako-render-scaling.so
+            ${{ runner.temp }}/fusion/build/mako-cli/mako-cli
+            ${{ runner.temp }}/fusion/build/mako-render/gfg-frame-fusion-tests
+            frame-fusion-tests.log
+            fusion-validation.log
+      - name: Verify packaging of the native fork
+        run: |
+          stage="$RUNNER_TEMP/fusion-package"
+          mkdir -p "$stage/bin" "$stage/engine"
+          cp package.json "$stage/"
+          cp -r engine/gfg-fusion "$stage/engine/"
+          cp bin/MAKO-Renderer-v4.0.0-linux.tar.xz bin/SHA256SUMS.txt "$stage/bin/"
+          python3 scripts/package_frame_fusion.py --plugin "$stage" --build "$RUNNER_TEMP/fusion/build"
+          python3 - "$stage" <<'PY'
+          import hashlib,json,sys,tarfile
+          from pathlib import Path
+          root=Path(sys.argv[1]);p=json.loads((root/'package.json').read_text())
+          assert 'remote_binary' not in p
+          bundle=p['bundled_renderer'];manifest=json.loads((root/'bin/gfg-fusion/manifest.json').read_text())
+          archive=root/'bin'/bundle['name']
+          assert hashlib.sha256(archive.read_bytes()).hexdigest()==manifest['archive_sha256']==bundle['sha256hash']
+          with tarfile.open(archive) as f:
+              for name,expected in manifest['native_libraries'].items():
+                  assert hashlib.sha256(f.extractfile(name).read()).hexdigest()==expected
+          print('Native fork archive, composite provenance and payload hashes verified')
+          PY
+  sanitized:
+    runs-on: ubuntu-22.04
+    env:
+      CXX: g++-12
+      CC: gcc-12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Sanitizer build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-12 cmake libvulkan-dev libx11-dev libxcb1-dev glslang-tools spirv-tools p7zip-full
+          git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
+      - name: Compile production code with ASan and UBSan and run portable policies
+        run: python3 scripts/build_frame_fusion.py --sanitized --work "$RUNNER_TEMP/fusion" --headers "$RUNNER_TEMP/vkh/include"

@@ -95,6 +95,10 @@ export const STATES = {
   "frame-os-no-layer": { ...base, enabled: false, state: "DISABLED", device: dev("oled", 90), frame_os: { mode: "observe", layer_installed: false, layer_error: "this build does not include the Frame OS layer", enabled: false } },
   "home-effort-reason": { ...base, enabled: true, state: "LOCKED", mode: "quality", device: dev("oled", 90), target_output_fps: 90, telemetry: tel(30, 90, 3), active_point: { multiplier: 3, render_scale_pct: 100 }, effort: { level: "hard", reason: "x3 required" } },
   "frame-os-refused": { ...base, device: dev("oled", 90), target_output_fps: 90, frame_os: { mode: "off" }, __frameOsFail: true },
+  "fusion-prepared": { ...base, frame_fusion: { enabled: true, state: "prepared", path_observed: false } },
+  "fusion-observed": { ...base, frame_fusion: { enabled: true, state: "observed", path_observed: true, gain_measured: false } },
+  "fusion-restart": { ...base, frame_fusion: { enabled: false, state: "restart-required", path_observed: true } },
+  "fusion-unsupported": { ...base, frame_fusion: { enabled: true, state: "renderer-unsupported", path_observed: false } },
   "home-paused-external-tdp": { ...base, enabled: true, state: "PAUSED", reason: "external-tdp-change", mode: "balanced", device: dev("oled", 90), target_output_fps: 90 },
   "home-no-model-game": { ...base, device: dev("oled", 90), target_output_fps: 90, __modelTarget: null },
   "home-last-session-above-limit": { ...base, last_session: { minutes: 20, avg_output_fps: 88, avg_real_fps: 44, avg_tdp_w: 17.1, avg_draw_w: 16.4, reference_w: 15, saved_w: -2.1, saved_wh: -0.7, profile: "mako" } },
@@ -140,6 +144,7 @@ var callable = (n) => async (...a) => ({ get_governor_status: () => window.__sta
     return { success: true, features };
   },
   set_governor_frame_os_ab: (enabled) => { (window.__abSets = window.__abSets || []).push(enabled); return { success: true, ab: !!enabled }; },
+  set_governor_frame_fusion: (enabled) => { (window.__fusionSets = window.__fusionSets || []).push(enabled); return window.__state.__fusionFail ? { success: false, error: "Could not save Frame Fusion" } : { success: true, enabled }; },
   set_governor_frame_os_act_unlock: (enabled) => { (window.__actUnlocks = window.__actUnlocks || []).push(enabled); return { success: true, act_unlocked: !!enabled }; },
   set_governor_frame_os: (p, m) => (window.__state.__frameOsFail ? { success: false, error: "marker: read-only" } : { success: true, mode: m }),
   forget_governor_game_model: (p) => { (window.__forgets = window.__forgets || []).push(p); return { success: true, forgotten: 2, game: "app:292030" }; },

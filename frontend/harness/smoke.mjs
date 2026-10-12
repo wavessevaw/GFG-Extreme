@@ -1,6 +1,10 @@
 // Frontend smoke test: renders each key screen against mock Decky globals and asserts visible text.
 import { launch, openPage, STATES } from "./lib.mjs";
 const cases = [
+  ["fusion-prepared", ["Settings", "Diagnostics"], ["FRAME FUSION (EXPERIMENTAL)", "Waiting for a compatible frame"]],
+  ["fusion-observed", ["Settings", "Diagnostics"], ["direct processing path has been used", "Power benefit is not measured yet"]],
+  ["fusion-restart", ["Settings", "Diagnostics"], ["Restart the game to apply your choice"]],
+  ["fusion-unsupported", ["Settings", "Diagnostics"], ["current engine has no Fusion support", "native 64-bit games only"]],
   ["home-idle-oled", [], ["RUN", "90", "TARGET FPS", "Ready", "Steam Deck OLED"]],
   ["home-measuring", [], ["STOP", "Measuring", "ASSESSING"]],
   ["home-locked-oled", [], ["STOP", "Locked in", "45", "x2".replace("x", "×"), "MEDIUM", "TDP NOW", "2h05 left"]],
@@ -322,6 +326,19 @@ for (const fail of [false, true]) {
   }
   await page.close();
   cases.push(["automatic-flow-" + (fail ? "error" : "success")]);
+}
+for (const fail of [false, true]) {
+  const state = { ...STATES["home-idle-oled"], __fusionFail: fail,
+    frame_fusion: { enabled: false, state: "off" } };
+  const page = await openPage(browser, state, ["Settings", "Diagnostics"]);
+  const row = page.locator(".row").filter({ has: page.getByText("Frame Fusion", { exact: true }) });
+  await row.click(); await page.waitForTimeout(150);
+  const calls = await page.evaluate(() => window.__fusionSets || []);
+  if (JSON.stringify(calls) !== "[true]" || (await row.locator(".tog.on").count()) !== (fail ? 0 : 1)
+      || (fail && !(await page.getByText("Could not save Frame Fusion", { exact: true }).count()))) {
+    failed++; console.error("FAIL Frame Fusion opt-in/save failure: " + JSON.stringify({ fail, calls }));
+  }
+  await page.close(); cases.push(["fusion-toggle-" + (fail ? "error" : "success")]);
 }
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);

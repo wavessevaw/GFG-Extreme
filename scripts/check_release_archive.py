@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Validate the actual Decky ZIP before publishing, including version and native payloads."""
 import json
+import hashlib
+import io
 import re
 import sys
 import zipfile
+import tarfile
 from pathlib import PurePosixPath
 
 ROOT = "GFG-Extreme/"
@@ -38,6 +41,25 @@ def check(path, version):
             versions.append(found.group(1))
         if versions != [version] * len(versions):
             raise ValueError(f"version mismatch: {versions}, expected {version}")
+        if "GFG-Extreme/engine/gfg-fusion/source.json" in names:
+            source = json.loads(read("engine/gfg-fusion/source.json"))
+            identity = json.loads(read("bin/gfg-fusion/manifest.json"))
+            sha = lambda data: hashlib.sha256(data).hexdigest()
+            if source != identity["source"] or sha(read("engine/gfg-fusion/renderer.patch")) != source["patch_sha256"]:
+                raise ValueError("Frame Fusion source provenance mismatch")
+            if identity.get("default_enabled") is not False:
+                raise ValueError("Experimental Frame Fusion must default off")
+            if sha(read("bin/gfg-fusion/gfg-frame-fusion-tests")) != identity["proof_sha256"]:
+                raise ValueError("Frame Fusion proof executable mismatch")
+            bundle = package.get("bundled_renderer") or package["remote_binary"][0]
+            payload = read("bin/" + bundle["name"])
+            if sha(payload) != bundle["sha256hash"] or sha(payload) != identity["archive_sha256"]:
+                raise ValueError("Frame Fusion archive checksum mismatch")
+            with tarfile.open(fileobj=io.BytesIO(payload), mode="r:xz") as native:
+                for path, expected in identity["native_libraries"].items():
+                    member = native.getmember("./" + path) if "./" + path in native.getnames() else native.getmember(path)
+                    if sha(native.extractfile(member).read()) != expected:
+                        raise ValueError("Frame Fusion native payload mismatch: " + path)
 
         for layer in ("pacer", "hud"):
             base = "bin/gfg-frame-os/"
