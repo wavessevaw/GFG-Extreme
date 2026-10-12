@@ -43,6 +43,14 @@ class ContinuousPolicyTests(unittest.TestCase):
         p._boost_blocked_until = 120
         self.assertEqual(p.tick(1, {}).reason, 'boost-ineffective')
 
+    def test_continuous_delivery_must_sustain_the_requested_cadence(self):
+        p = InjectionPolicy(90, 30)
+        p.configure_continuous_boost(True)
+        for i in range(40):
+            p.tick(i / 10, {})
+            p.note_delivered(i / 10, 36, short_window=True, exposure_s=.1)
+        self.assertEqual(p.tick(4, {}).reason, 'boost-ineffective')
+
 
 class ContinuousRunnerTests(unittest.TestCase):
     def test_live_ticks_renew_watts_but_stopped_runner_expires_them(self):

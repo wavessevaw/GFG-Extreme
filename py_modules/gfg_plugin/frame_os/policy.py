@@ -218,7 +218,8 @@ class InjectionPolicy:
                 or not math.isfinite(real_fps)):
             self._boost_since = None
             return  # unavailable cadence is not evidence of failed delivery
-        delivered_floor = self.calm_real_hz + max(1.0,self.calm_real_hz*0.05) if short_window else 0.9*self.boost_real_hz
+        delivered_floor = (self.calm_real_hz + max(1.0,self.calm_real_hz*0.05)
+                           if short_window and not self.continuous_boost_enabled else 0.9*self.boost_real_hz)
         if real_fps is not None and real_fps >= delivered_floor:
             self._boost_since = None          # delivered
             self._boost_missing_s = 0.0
