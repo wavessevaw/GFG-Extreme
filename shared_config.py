@@ -309,6 +309,12 @@ CONFIG_SCHEMA_DEF: Dict[str, ConfigFieldDefinition] = {
         "location": "toml"
     },
 
+    "gfg_frame_fusion": {
+        "fieldType": ConfigFieldType.BOOLEAN,
+        "default": False,
+        "description": "GFG-owned live Fusion scope; managed by Autopilot.",
+        "location": "toml"
+    },
     "frame_generation_enabled": {
         "fieldType": ConfigFieldType.BOOLEAN,
         "default": True,

@@ -799,8 +799,19 @@ class Plugin:
         status = self.governor_service.get_status(profile_name)
         from .frame_fusion import summarize
         runtime = self.runtime_state_service.get_status(profile_name or status.get("profile", ""))
-        status["frame_fusion"] = summarize(self.governor_service.frame_fusion_enabled(),
+        requested = self.governor_service.frame_fusion_enabled()
+        scoped = status.get("mode") == "autopilot" and status.get("enabled") is True
+        status["frame_fusion"] = summarize(requested and scoped,
             runtime.get("contexts", []) if runtime.get("success") else [])
+        status["frame_fusion"].update(setting_enabled=requested, autopilot_only=True, scope_active=scoped)
+        old_engine=any((c.get("frame_fusion") or {}).get("supported") and not (c.get("frame_fusion") or {}).get("autopilot_scope_supported")
+                       for c in runtime.get("contexts",[]) if isinstance(c,dict))
+        status["frame_fusion"]["scope_update_required"]=old_engine
+        if old_engine:
+            status["frame_fusion"].update(state="renderer-update-required",restart_required=True)
+        elif not scoped:
+            status["frame_fusion"].update(state="autopilot-only" if status.get("mode") != "autopilot" else "paused",
+                                         restart_required=False, path_observed=False, processing_path="none")
         hud = status.get("hud")
         if isinstance(hud, dict):
             # The overlay needs SteamOS's own MangoHud layer, staged at plugin start.
@@ -1523,7 +1534,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Extreme 2.2.0 started")
+        decky.logger.info("GFG Extreme 2.1.0 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""

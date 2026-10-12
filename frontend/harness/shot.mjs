@@ -2,9 +2,10 @@
 // canvas per topic. Writes docs/img/card-*.png. The Quick Access panel is 330 px wide; everything is
 // rendered at 2x. No real game names in the pictures.
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { launch, openPage, STATES } from "./lib.mjs";
 
-const out = process.env.GFG_SHOT_DIR || new URL("../../docs/img/", import.meta.url).pathname;
+const out = process.env.GFG_SHOT_DIR || fileURLToPath(new URL("../../docs/img/", import.meta.url));
 fs.mkdirSync(out, { recursive: true });
 const VERSION = JSON.parse(fs.readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version;
 const browser = await launch();
@@ -92,7 +93,7 @@ await card("card-overview", [
   { png: await screen(st("home-autopilot"), { nav: ["Details"], until: "HEALTH" }), label: "Details · operating point" },
 ]);
 
-// Four modes now offered by the 2.0.0 mode selector.
+// Four modes offered by stable 2.1.0.
 await card("card-modes", [
   { png: await region(st("readme-home"), { from: ".hero", to: ".hero" }), label: "Battery" },
   { png: await region(st("home-balanced"), { from: ".hero", to: ".hero" }), label: "Balanced" },
@@ -107,6 +108,10 @@ await card("card-autopilot", [
   { png: await region(st("home-autopilot-wait"), { from: "^AUTOPILOT", to: "^AUTOPILOT" }), label: "Trial deferred · unchanged hardware" },
 ]);
 
+await card("card-profile", [
+  { png: await screen(st("home-autopilot"), { nav: ["Settings", "Profile"], maxH: 750 }), label: "stable · compatible saved profiles" },
+]);
+
 // Smart power split.
 await card("card-power-split", [
   { png: await region(st("home-power-split"), { nav: ["Details"], from: "CPU / GPU POWER SPLIT", to: "^Smart power split" }), label: "CPU cap measured in game" },
@@ -114,9 +119,16 @@ await card("card-power-split", [
 
 // Frame OS.
 {
-  const fo = st("home-frame-os-act");
+  const fo = JSON.parse(JSON.stringify(st("home-frame-os-act")));
+  fo.mode = "autopilot";
+  fo.frame_os.benefit.frames_pct = null;
+  fo.frame_os.benefit.measured.frames = false;
+  fo.frame_os.proof.frames = { n: 0, measured: false, skipped: true };
+  fo.frame_os.game.frames = { n: 0 };
+  fo.frame_os.game.verdicts.frames = "unclear";
+  fo.frame_os.burst_observations = { windows: 12, accelerated_windows: 8, seconds: 3.2, peak_real_hz: 36, gain_measured: false };
   await card("card-frame-os", [
-    { png: await region(fo, { from: ".fos", to: ".fos" }), label: "Home · measured in game" },
+    { png: await region(fo, { from: ".fos", to: ".fos" }), label: "Home · illustrative short pulse" },
     { png: await region(fo, { nav: ["Settings", "Diagnostics"], from: "FRAME OS (EXPERIMENTAL)", to: "<INSPECTOR" }), label: "Diagnostics · A/B and per-game memory" },
   ]);
 }

@@ -52,12 +52,16 @@ def package(plugin: Path, build: Path):
                 outgoing.addfile(member, io.BytesIO(data)); replaced.add(name)
             else:
                 outgoing.addfile(member, incoming.extractfile(member) if member.isfile() else None)
+        scope_metadata = json.dumps(source,sort_keys=True).encode('utf-8')
+        member = tarfile.TarInfo('gfg-fusion-source.json')
+        member.size=len(scope_metadata);member.mode=0o644;member.mtime=0
+        outgoing.addfile(member,io.BytesIO(scope_metadata))
     if replaced != set(replacements):
         raise ValueError("Baseline archive is missing native renderer members")
     data = output.getvalue()
     temporary = archive.with_suffix(archive.suffix + ".fusion.tmp")
     temporary.write_bytes(data); temporary.replace(archive)
-    bundle["version"] = "4.0.0-gfg.fusion.2"
+    bundle["version"] = "4.0.0-gfg.fusion.3"
     bundle["sha256hash"] = digest(data)
     bundle["frame_fusion"] = {"source": source, "base_archive_sha256": digest(original)}
     # The generated archive is a local fork, not the upstream asset at that URL.
@@ -77,7 +81,7 @@ def package(plugin: Path, build: Path):
     identity = {"schema": 1, "source": source, "native_libraries": {
         name: digest(content) for name, content in replacements.items()},
         "proof_sha256": digest(proof), "archive_sha256": digest(data),
-        "unsupported": ["32-bit", "Flatpak", "HDR", "LS1"], "default_enabled": False}
+        "unsupported": ["32-bit", "Flatpak", "HDR", "LS1"], "default_enabled": True, "autopilot_only": True}
     (tools / "manifest.json").write_text(json.dumps(identity, indent=2) + "\n", encoding="utf-8")
     print("Packaged Frame Fusion native fork:", digest(data))
 

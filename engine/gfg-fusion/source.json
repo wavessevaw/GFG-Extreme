@@ -2,9 +2,9 @@
   "schema": 1,
   "repository": "https://github.com/eugeniosegala/MAKO.git",
   "commit": "edd2946bd3c4281e357bd436e0e7b80df0759576",
-  "patch_sha256": "b36ae996b3f9aed637f8db675f74c384d10c00ce253db8ba63faf5532c16fa91",
+  "patch_sha256": "8c75729afc03df1ade1f04d7af531f3a61d65bf3c48b59dacd0f924ec87732f0",
   "feature": "fusion-spatial-and-native-source-input",
-  "default_enabled": false,
+  "default_enabled": true,
   "platforms": [
     "native-linux-x86_64"
   ],
@@ -18,5 +18,6 @@
   ],
   "scaler": "mako",
   "shader_algorithm_changed": false,
-  "shader_source_changed": true
+  "shader_source_changed": true,
+  "autopilot_only": true
 }

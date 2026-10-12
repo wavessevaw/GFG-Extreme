@@ -1032,7 +1032,7 @@ class BudgetRuntimeTests(RuntimeBase):
             self.assertEqual(states[unverified], "unavailable", unverified)
         self.assertEqual(states["latency"], "off", "timing is accessible but Act is not enabled")
         self.assertEqual(states["shield"], "off", "shield is opt-in")
-        self.assertEqual(ext["feature_settings"], {"latency": True, "shield": False})
+        self.assertEqual(ext["feature_settings"], {"latency": True, "shield": True, "boost": True, "touch_boost": True})
         self.assertEqual(states["upscale"], "ready", "full resolution until a scaled point is confirmed")
         self.assertEqual(ext["gain"]["kind"], "unavailable")
         self.assertIsNone(ext["gain"]["percent"], "no number without an A-B-A proof")
@@ -1194,7 +1194,7 @@ class BudgetRuntimeTests(RuntimeBase):
               "observed_fast_w": 12.75}, "15%"),
             ({"maximum_tdp_w": 15, "observed_tdp_w": 12,
               "observed_fast_w": 15}, "0%"),
-            ({"maximum_tdp_w": 15}, "—"),
+            ({"maximum_tdp_w": 15}, "РІР‚вЂќ"),
         ]
         for power, expected in cases:
             with self.subTest(power=power):
@@ -1207,7 +1207,7 @@ class BudgetRuntimeTests(RuntimeBase):
                     self.svc._ring_hud_key = None
                     self.assertTrue(self.svc._publish_ring_hud(status, settings))
                 saving = hud_rings.energy_savings_pct(seen[-1]["energy_tdp"], seen[-1]["maximum_tdp"])
-                self.assertEqual(hud_rings._fmt_pct(saving, "") if saving is not None else "—", expected)
+                self.assertEqual(hud_rings._fmt_pct(saving, "") if saving is not None else "РІР‚вЂќ", expected)
                 self.assertEqual(seen[-1]["maximum_tdp"], power.get("gamescope_max_tdp_w") or power["maximum_tdp_w"])
                 self.assertEqual(seen[-1]["limit"], 12, "existing arc limit stays unchanged")
 
@@ -1923,8 +1923,7 @@ class PointStateResetTests(RuntimeBase):
 
 
 class FrameOsIntegrationTests(BudgetRuntimeTests):
-    """Development feature: off by default, marker for the launcher, TDP offset only in act mode."""
-
+    """Autopilot-only transient injection; optional timing modes retain their gates."""
     def test_off_by_default_and_marker_follows_the_mode(self):
         self.assertEqual(self.svc._frame_os_mode("game"), "off")
         self.assertFalse(self.svc.frame_os_marker_path.exists())
@@ -1965,7 +1964,8 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.assertEqual(runner.tdp_offset_w, 0.0, "observe never moves watts")
         self.assertEqual(self.svc.get_status("game")["frame_os"]["mode"], "observe")
 
-    def test_act_requires_explicit_developer_unlock(self):
+    def test_explicit_act_lock_is_respected(self):
+        self.svc.set_frame_os_act_unlock(False)
         with patch.dict(os.environ, {"GFG_FRAME_OS_EXPERIMENTAL_ACT": "0"}):
             refused = self.svc.set_frame_os("game", "act")
             self.assertFalse(refused["success"])
@@ -1980,6 +1980,7 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
             self.assertFalse(self.svc.frame_os_marker_path.exists())
 
     def test_act_unlock_setting_persists_without_env(self):
+        self.svc.set_frame_os_act_unlock(False)
         with patch.dict(os.environ, {"GFG_FRAME_OS_EXPERIMENTAL_ACT": "0"}):
             self.assertFalse(self.svc.set_frame_os("game", "act")["success"])
             self.assertTrue(self.svc.set_frame_os_act_unlock(True)["act_unlocked"])
@@ -2000,6 +2001,7 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.svc.set_frame_os_ab(True)
 
     def _act_live_point(self):
+        self.svc.set_mode("game", "autopilot")
         self.svc.set_frame_os_act_unlock(True)
         self.assertTrue(self.svc.set_frame_os("game", "act")["success"])
         self.feed(20, 45, 90)
@@ -2024,15 +2026,16 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         budget.draw_w = 14.0
         budget._lock(0.0, "native-holds")
         self.svc._budget = budget
-        self.t["now"] = 45.0
-        budget.observe(45.0, WindowVerdict(True, False, "holds"), 90, 90)
+        self.t["now"] = 4.0
+        budget.observe(4.0, WindowVerdict(True, False, "holds"), 90, 90)
         self.assertFalse(self.svc._act_power_settled())
-        self.t["now"] = 60.0
-        self.assertTrue(self.svc._act_power_settled(), "noop reprobe must not starve Act's 60 s dwell")
+        self.t["now"] = 8.0
+        self.assertTrue(self.svc._act_power_settled(), "noop reprobe must not reset the settled dwell")
         budget._move("changed-watts", tdp=12.0)
         self.assertFalse(self.svc._act_power_settled(), "real changes invalidate settled evidence")
 
     def test_act_waits_for_the_governor_to_settle_its_watts_and_steps_aside_to_research(self):
+        self.svc.set_mode("game", "autopilot")
         self.svc.set_frame_os_act_unlock(True)
         self.assertTrue(self.svc.set_frame_os("game", "act")["success"])
         self.feed(20, 45, 90)
@@ -2068,23 +2071,23 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
             for real in (45, 30, 30):
                 self.feed(16, real, 90)
                 self.step()
-            self.svc.frame_os.proof.pairs["frames"].extend(pairs)
+            self.svc.frame_os.proof.pairs["response"].extend(pairs)
             self.feed(16, 30, 90)
             self.step()
 
-        # two sessions measure boosts that bring nothing: the GPU cannot feed them here
-        self.svc.frame_os.proof.pairs["frames"].extend([1.0, 0.5, 1.5, 0.0, 0.8])
+        # two sessions show harmful response shaping; pulse delivery uses its own meter
+        self.svc.frame_os.proof.pairs["response"].extend([-10.0, -11.0, -9.0, -10.0, -10.0])
         self.feed(16, 30, 90)
         self.step()
         record = self.svc._settings["frame_os_games"]["app:4242"]
-        self.assertEqual(record["pairs"]["frames"], [1.0, 0.5, 1.5, 0.0, 0.8])
+        self.assertEqual(record["pairs"]["response"], [-10.0, -11.0, -9.0, -10.0, -10.0])
         self.assertEqual(record["off"], {}, "never switched off mid-session")
         self.feed(16, 30, 90)
         self.step()
-        self.assertEqual(len(self.svc._settings["frame_os_games"]["app:4242"]["pairs"]["frames"]), 5,
+        self.assertEqual(len(self.svc._settings["frame_os_games"]["app:4242"]["pairs"]["response"]), 5,
                          "stored once, not again on the next steps")
-        session([1, 3, 3], [0.2, 1.1, 0.9, 0.4])
-        self.assertFalse(self.svc.frame_os.game_disabled["boost"])
+        session([1, 3, 3], [-10.0, -11.0, -9.0, -10.0])
+        self.assertFalse(self.svc.frame_os.game_disabled["shaping"])
         # a game exit (probe: not running) is no new memory session
         self.inspector.info.update(running=False)
         self.feed(16, 30, 90)
@@ -2094,15 +2097,14 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         # third launch: two sessions of evidence decide at its start
         session([1, 4, 4], [])
         self.assertEqual(self.svc._settings["frame_os_games"]["app:4242"]["sessions"], 3)
-        self.assertEqual(self.svc._settings["frame_os_games"]["app:4242"]["off"], {"boost": 3})
-        self.assertTrue(self.svc.frame_os.game_disabled["boost"])
-        self.assertFalse(self.svc.frame_os.policy.boost_allowed)
-        self.assertEqual(self.svc.get_status("game")["frame_os"]["game"]["verdicts"]["frames"], "useless")
-        self.assertEqual(self.svc.frame_os.proof.summary()["frames"]["n"], 9, "earlier pairs counted once")
+        self.assertEqual(self.svc._settings["frame_os_games"]["app:4242"]["off"], {"shaping": 3})
+        self.assertTrue(self.svc.frame_os.game_disabled["shaping"])
+        self.assertEqual(self.svc.get_status("game")["frame_os"]["game"]["verdicts"]["response"], "hurts")
+        self.assertEqual(self.svc.frame_os.proof.summary()["response"]["n"], 9, "earlier pairs counted once")
         # "Reset what GFG learned" forgets it too
         self.assertTrue(self.svc.forget_game_model("game")["success"])
         self.assertNotIn("app:4242", self.svc._settings["frame_os_games"])
-        self.assertFalse(self.svc.frame_os.game_disabled["boost"])
+        self.assertFalse(self.svc.frame_os.game_disabled["shaping"])
 
     def test_act_injects_adaptive_overlay_only_while_the_pacer_is_live(self):
         self._act_live_point()
@@ -2114,9 +2116,13 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.assertEqual((prof["adaptive"], prof["base_fps_cap"], prof["target_fps"]), (True, 45, 90))
         self.assertEqual(prof["adaptive_max_multiplier"], 3, "default capacity x3: rest stays at 30 real")
         self.assertFalse(prof["adaptive_stable_cadence"])
-        self.assertEqual((st["state"], st["reason"]), ("LOCKED", "frame-os-act-holds-point"))
+        self.assertNotEqual(st["reason"], "frame-os-act-holds-point", "prepared calm overlay must allow power research")
+        self._settle_budget()
+        self.svc._configure_frame_os("game")
+        self.svc.frame_os.last["decision"] = {"level": "rest"}
         writes = list(self.svc.power.writes)
-        self.windows(3, 22, 90)              # rest cadence: never judged as a failing point
+        self.assertTrue(asyncio.run(self.svc._sync_injection("game")),
+                        "rest cadence holds the point instead of judging its reduced real FPS")
         self.assertEqual(self.svc._point["key"], "30x3")
         self.assertEqual(self.svc.power.writes[-1], writes[-1])
         # Act off: the next step takes the adaptive overlay back to the plain point
@@ -2303,6 +2309,7 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
         self.assertEqual(self.svc._point["key"], "30x3")
 
     def test_act_offset_is_applied_on_top_of_the_budget_cap(self):
+        self.svc.set_mode("game", "autopilot")
         with patch.dict(os.environ, {"GFG_FRAME_OS_EXPERIMENTAL_ACT": "1"}):
             self.assertTrue(self.svc.set_frame_os("game", "act")["success"])
             self.assertTrue(self.svc.get_status("game")["frame_os"]["act_unlocked"])
@@ -2311,7 +2318,8 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
             self.feed(16, 30, 90)
             self.step()
             runner = self.svc.frame_os
-            runner.last = {"decision": {"tdp_w": runner.policy.broker.calm_w + 4.0}}
+            runner.last = {"decision": {"level": "boost", "boost_until": runner.clock() + .5,
+                                        "tdp_w": runner.policy.broker.calm_w + 4.0}}
             runner.executor_active = True
             self.svc._applied_tdp = None
             asyncio.run(self.svc._apply_budget_tdp("game"))
@@ -2327,6 +2335,8 @@ class HudCadenceTests(unittest.TestCase):
         svc._wake = asyncio.Event()
         svc.log = logging.getLogger("hud-cadence")
         svc._is_idle = lambda: False
+        svc.frame_os = __import__("types").SimpleNamespace(executor_active=False)
+        svc._budget = None
         calls = []
 
         async def iteration():
@@ -2436,7 +2446,7 @@ class RingRefreshTests(unittest.TestCase):
         self.assertEqual(len(self.writes), 2)
 
     def test_stale_and_nonfinite_fps_are_not_displayed(self):
-        # field report 1.3: one late sample flipped the number to "—" and back (flicker); the last
+        # field report 1.3: one late sample flipped the number to "РІР‚вЂќ" and back (flicker); the last
         # good value is held for HUD_HOLD_S, never longer
         self.publish()
         self.status["telemetry"]["snapshot"]["sample_age_ms"] = 3000

@@ -271,19 +271,28 @@ class BurstDeliveryTests(unittest.TestCase):
     def test_short_failed_bursts_eventually_back_off(self):
         p = InjectionPolicy(output_hz=90, calm_real_hz=30)
         now = 100.0
-        for _ in range(30):
-            for _ in range(20):
-                p.tick(now, {"camera": 1, "idle_s": 0})
-                p.note_delivered(now, 30)
-                now += 0.1
-            now += 2
-            p.tick(now, {"camera": 0, "idle_s": 0})
-            p.note_delivered(now, 30)
+        quiet = {"camera": 0, "idle_s": 0}
+        moving = {"camera": 1, "idle_s": 0}
+        for _ in range(8):
+            p.tick(now, quiet)
+            now += .2
+            p.tick(now, quiet)
+            now += .6
+            for _ in range(16):
+                d = p.tick(now, moving)
+                if d.level == "boost":
+                    p.note_delivered(now, 30, short_window=True, exposure_s=.1)
+                now += .1
             if now < p._boost_blocked_until:
                 break
         self.assertGreater(p._boost_blocked_until, now)
-        self.assertEqual(p.tick(now, {"camera": 1, "idle_s": 0}).reason, "boost-ineffective")
-        self.assertEqual(p.tick(now + BOOST_BACKOFF_S + 1, {"camera": 1, "idle_s": 0}).level, "boost")
+        p.tick(now, quiet)
+        p.tick(now + .2, quiet)
+        self.assertEqual(p.tick(now + 1, moving).reason, "boost-ineffective")
+        now += BOOST_BACKOFF_S + 2
+        p.tick(now, quiet)
+        p.tick(now + .2, quiet)
+        self.assertEqual(p.tick(now + 1, moving).level, "boost")
 
     def test_missing_cadence_does_not_count_as_failed_delivery(self):
         p = InjectionPolicy(output_hz=90, calm_real_hz=30)

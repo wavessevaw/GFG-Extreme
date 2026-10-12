@@ -41,7 +41,7 @@ class EvidenceTests(unittest.TestCase):
 
     def test_disabling_requires_restart_of_old_process(self):
         s = summarize(False, [self.context(frames=4)])
-        self.assertTrue(s["path_observed"])
+        self.assertFalse(s["path_observed"])
         self.assertTrue(s["restart_required"])
 
     def test_enabling_does_not_change_old_launch(self):
@@ -136,8 +136,8 @@ class SettingsTests(unittest.TestCase):
     def tearDown(self):
         self.fixture.tearDown()
 
-    def test_explicit_opt_in_and_launch_marker(self):
-        self.assertFalse(self.gov.frame_fusion_enabled())
+    def test_default_on_and_explicit_launch_marker(self):
+        self.assertTrue(self.gov.frame_fusion_enabled())
         marker = self.gov.configuration.runtime_state_dir / "frame-fusion.enabled"
         self.assertTrue(self.gov.set_frame_fusion(True)["success"])
         self.assertTrue(marker.is_file())
@@ -147,13 +147,13 @@ class SettingsTests(unittest.TestCase):
 
     def test_non_boolean_does_not_enable(self):
         self.assertFalse(self.gov.set_frame_fusion("true")["success"])
-        self.assertFalse(self.gov.frame_fusion_enabled())
+        self.assertTrue(self.gov.frame_fusion_enabled())
 
     def test_marker_failure_restores_previous_setting(self):
         with patch.object(self.gov, "_sync_frame_fusion_marker", side_effect=OSError("read only")):
-            self.assertFalse(self.gov.set_frame_fusion(True)["success"])
-        self.assertFalse(self.gov.frame_fusion_enabled())
-        self.assertFalse(json.loads(self.gov.settings_path.read_text())["frame_fusion"])
+            self.assertFalse(self.gov.set_frame_fusion(False)["success"])
+        self.assertTrue(self.gov.frame_fusion_enabled())
+        self.assertTrue(json.loads(self.gov.settings_path.read_text())["frame_fusion"])
 
 
 class RuntimeLocationTests(unittest.TestCase):
@@ -206,6 +206,10 @@ class WrapperTests(unittest.TestCase):
     def test_marker_enables_next_native_launch(self):
         marker = self.svc.runtime_state_dir / "frame-fusion.enabled"
         marker.parent.mkdir(parents=True, exist_ok=True); marker.write_text("enabled\n")
+        self.assertEqual(self.launch_value(), "0", "legacy renderer has no live Autopilot scope")
+        source = self.svc.local_share_dir.parent.parent / "gfg-fusion-source.json"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text('{"autopilot_only":true}')
         self.assertEqual(self.launch_value(), "1")
 
     def test_flatpak_uses_baseline_even_with_marker(self):

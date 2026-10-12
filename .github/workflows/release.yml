@@ -49,13 +49,21 @@ jobs:
           echo "notes=$notes" >> "$GITHUB_OUTPUT"
           # An older development tag may exist without a published ZIP.
           # A tag alone is not evidence of a release.
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Release $tag already exists; not publishing again."
+          replace_preview=false
+          if gh release view "$tag" --json isPrerelease > "$RUNNER_TEMP/existing-release.json" 2>/dev/null; then
+            if [ "$tag" = v2.1.0 ] && [ "$stable" = true ] && python3 -c 'import json,sys;sys.exit(0 if json.load(open(sys.argv[1]))["isPrerelease"] else 1)' "$RUNNER_TEMP/existing-release.json"; then
+              replace_preview=true
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+              echo "Verified build will replace the user-authorized v2.1.0 preview."
+            else
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              echo "Release $tag already exists; not publishing again."
+            fi
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
-            test -f "$notes" || { echo "::error::$notes is missing"; exit 1; }
           fi
+          echo "replace_preview=$replace_preview" >> "$GITHUB_OUTPUT"
+          test -f "$notes" || { echo "::error::$notes is missing"; exit 1; }
 
       - uses: actions/setup-python@v5
         if: steps.version.outputs.exists == 'false'
@@ -178,8 +186,43 @@ jobs:
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/v2.0.0" \
               -f sha="$GITHUB_SHA" -F force=true >/dev/null
           fi
+          # The old preview/tag stays available throughout tests and package verification.
+          # Never replace a stable release or delete unrelated releases.
+          if [ "${{ steps.version.outputs.replace_preview }}" = true ]; then
+            gh release view v2.1.0 --json isPrerelease --jq '.isPrerelease' | grep -qx true
+            gh release delete v2.1.0 --yes --cleanup-tag
+          fi
           gh release create "${{ steps.version.outputs.tag }}" out/*.zip out/SHA256SUMS.txt \
             --target "$GITHUB_SHA" "${flags[@]}" --notes-file notes.md
+
+      - name: Verify published stable 2.1.0 before retiring previews
+        if: success() && steps.version.outputs.exists == 'false' && steps.version.outputs.tag == 'v2.1.0' && steps.version.outputs.stable == 'true'
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v2.1.0" > "$RUNNER_TEMP/published-stable.json"
+          python3 - "$RUNNER_TEMP/published-stable.json" "$GITHUB_SHA" <<'PY'
+          import hashlib,json,sys
+          from pathlib import Path
+          release=json.load(open(sys.argv[1]))
+          assert not release['prerelease'] and not release['draft']
+          assets={a['name']:a for a in release['assets']}
+          package=Path('out/GFG-Extreme-v2_1_0.zip')
+          assert assets[package.name]['size']==package.stat().st_size
+          assert assets[package.name]['digest']=='sha256:'+hashlib.sha256(package.read_bytes()).hexdigest()
+          assert 'SHA256SUMS.txt' in assets
+          print('Published stable ZIP identity verified')
+          PY
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/v2.1.0" --jq '.object.sha')" = "$GITHUB_SHA"
+          gh release download v2.1.0 --pattern SHA256SUMS.txt --dir "$RUNNER_TEMP/stable-checksum"
+          cmp out/SHA256SUMS.txt "$RUNNER_TEMP/stable-checksum/SHA256SUMS.txt"
+
+      - name: Retire user-authorized Fusion previews after stable asset verification
+        if: success() && steps.version.outputs.exists == 'false' && steps.version.outputs.tag == 'v2.1.0' && steps.version.outputs.stable == 'true'
+        run: |
+          for tag in v2.1.1 v2.2.0; do
+            if gh release view "$tag" --json isPrerelease --jq '.isPrerelease' 2>/dev/null | grep -qx true; then
+              gh release delete "$tag" --yes --cleanup-tag
+            fi
+          done
 
       - name: Retire superseded Autopilot prereleases after official 2.0.0 is verified
         if: success() && steps.version.outputs.exists == 'false' && steps.version.outputs.tag == 'v2.0.0'

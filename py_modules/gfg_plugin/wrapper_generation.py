@@ -81,7 +81,7 @@ from .profile_storage import (
 )
 
 
-WRAPPER_FORMAT_VERSION = 87
+WRAPPER_FORMAT_VERSION = 88
 WRAPPER_FORMAT_MARKER = f"# mako-wrapper-format: {WRAPPER_FORMAT_VERSION}"
 HOST_COMPATIBILITY_MARKER = "# mako-host-compatibility: aarch64-passthrough-v1"
 DIAGNOSTICS_DEFAULT_MARKER = (
@@ -875,12 +875,13 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         "fi",
         # Preserve the established Renderer -> Gamescope WSI -> spatial order.
         f'gfg_fusion_marker={shlex.quote(str(context.runtime_state_dir / "frame-fusion.enabled"))}',
-        'if [ "$mako_flatpak_runtime" != 1 ] && [ -f "$gfg_fusion_marker" ]; then',
+        f'gfg_fusion_source={shlex.quote(str(context.local_share_dir.parent.parent / "gfg-fusion-source.json"))}',
+        "if [ \"$mako_flatpak_runtime\" != 1 ] && [ -f \"$gfg_fusion_marker\" ] && grep -Eq '\"autopilot_only\"[[:space:]]*:[[:space:]]*true' \"$gfg_fusion_source\" 2>/dev/null; then",
         '    export GFG_FRAME_FUSION=1',
         'else',
         '    export GFG_FRAME_FUSION=0',
         'fi',
-        'unset gfg_fusion_marker',
+        'unset gfg_fusion_marker gfg_fusion_source',
         # Flatpak preparation stages the host's own WSI binary beside its
         # guarded manifest, so Heroic and EmuDeck use this same chain without
         # exposing or searching the host's global Vulkan layer directory.

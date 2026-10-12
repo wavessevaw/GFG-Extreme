@@ -13,7 +13,7 @@ from gfg_plugin import hud_rings
 
 
 def measured(**kwargs):
-    row = {"samples": 6, "span_s": 3.0, "session": None}
+    row = {"samples": 6, "span_s": 3.0, "session": None, "draw_samples": 6, "draw_span_s": 3, "draw_basis": "renderer-window-median"}
     row.update(kwargs)
     return row
 

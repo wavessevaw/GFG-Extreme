@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 2.2.0).
+"""Live orchestration service for GFG Governor (GFG Extreme 2.1.0).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -44,6 +44,7 @@ from .frame_os.control_channel import DEFAULT_PATH as DEFAULT_SHM, ControlChanne
 from . import hud_rings
 from .frame_os import layer_install as frame_os_layer
 from .frame_os.runner import FrameOsRunner
+from .autopilot.power_window import PowerWindow
 from .frame_os.memory import GameMemory, seed_pairs
 from .frame_os.proof import METRICS as FRAME_OS_METRICS
 from .package_paths import PLUGIN_ROOT
@@ -75,7 +76,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, confirmation_evidence, matches,
 )
 
-VERSION = "2.2.0"
+VERSION = "2.1.0"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -107,7 +108,7 @@ class GovernorService:
     CEILING_REJECT_TTL_S = 600.0
     QUALITY_REPROBE_S = 300.0
     # Budget mode (default): lowest TDP first, then fewer generated frames.
-    DEFAULT_MODE = "budget"
+    DEFAULT_MODE = "autopilot"
     MODES = ("budget", "balanced", "quality", "extreme", "autopilot")
     BUDGET_MODES = ("budget", "balanced", "extreme", "autopilot")
     FLAVORS = {"budget": "battery", "balanced": "balanced", "extreme": "extreme", "autopilot": "battery"}
@@ -276,6 +277,7 @@ class GovernorService:
         self._reclaims = 0
         self._over_cap_windows = 0
         self._draw_samples: List[float] = []
+        self._autopilot_power = PowerWindow()
         self._tdp_set_seq = 0
         self._fast_point_key: Optional[str] = None
         self._fast_last_sample_seq = 0  # never count a cached FPS window as another check
@@ -419,9 +421,12 @@ class GovernorService:
         if mode not in self.MODES:
             return {"success": False, "error": f"Unknown mode: {mode}"}
         was = self._mode(profile)
+        if profile == self._active_profile and mode != "autopilot":
+            self.frame_os.cancel_boost()
         self._settings.setdefault("profiles", {}).setdefault(profile, {})["mode"] = mode
         self._save_settings()
-        overlay_error = None
+        overlay_error = self._ensure_base_overlay_sync(profile) if mode != was else None
+        self._sync_frame_os_marker()
         if "extreme" in (mode, was) and mode != was:
             # Extreme renders below full resolution when that buys real frames: the Scaling Engine
             # is provisioned from the next launch on (process-static), like a scale-ready launch.
@@ -717,7 +722,7 @@ class GovernorService:
         if not fo.get("enabled"):
             self._hud_fos = self._hud_tag = None
         # Renderer samples arrive about once a second: one late sample must not blank the numbers
-        # (they flipped between a value and "—").  Hold the last good ones for HUD_HOLD_S.
+        # (they flipped between a value and "вЂ”").  Hold the last good ones for HUD_HOLD_S.
         if fresh and number(fps) is not None:
             self._hud_values = (now - (age / 1000.0 if snapshot is not None else 0), number(fps), number(real))
         held = self._hud_values if (self._hud_values and now - self._hud_values[0] <= self.HUD_HOLD_S) else None
@@ -922,7 +927,8 @@ class GovernorService:
         if saved is None:
             return {}
         try:
-            return base_deltas(saved, scale_ready=self._scale_ready(profile))
+            return {**base_deltas(saved, scale_ready=self._scale_ready(profile)),
+                    "gfg_frame_fusion": self._profile_enabled(profile) and self._mode(profile) == "autopilot" and self.frame_fusion_enabled()}
         except PointNotApplicable as error:
             self._status.setdefault("overlay", {})["scale_ready_ignored"] = error.reason
             return {}
@@ -1079,6 +1085,7 @@ class GovernorService:
         self._save_settings()
         try:
             self._sync_diagnostics_marker()
+            self._sync_frame_os_marker()
         except OSError as error:
             self.log.warning("Governor could not update diagnostics marker: %s", error)
         self._sync_hud_presence()
@@ -1111,7 +1118,7 @@ class GovernorService:
 
     def _frame_os_act_unlocked(self) -> bool:
         """Act changes Vulkan frame timing and power: require an explicit opt-in (setting or env)."""
-        return os.environ.get(self.FRAME_OS_ACT_ENV) == "1" or bool(self._settings.get("frame_os_act_unlocked"))
+        return os.environ.get(self.FRAME_OS_ACT_ENV) == "1" or self._settings.get("frame_os_act_unlocked") is not False
 
     INJECTION_HOLD_S = 60.0
     # Field log 1.5.0: Act took the point right after its trial and the Governor never searched
@@ -1119,7 +1126,7 @@ class GovernorService:
     # Act now starts only once the budget has settled (locked for ACT_SETTLE_S: a successful lower
     # probe re-locks and restarts the wait), and steps aside every ACT_RESEARCH_EVERY_S for
     # ACT_RESEARCH_S so the Governor can try a lower level with the plain point.
-    ACT_SETTLE_S = 60.0
+    ACT_SETTLE_S = 8.0
     ACT_RESEARCH_EVERY_S = 300.0
     ACT_RESEARCH_S = 120.0
     # Do not interpret the transitional cadence right after an Act change as
@@ -1141,7 +1148,7 @@ class GovernorService:
         return {"success": True, "error": None, "ab": self._frame_os_ab()}
 
     def frame_fusion_enabled(self) -> bool:
-        return self._settings.get("frame_fusion") is True
+        return self._settings.get("frame_fusion") is not False
 
     def _sync_frame_fusion_marker(self) -> None:
         marker = self.configuration.runtime_state_dir / "frame-fusion.enabled"
@@ -1158,6 +1165,8 @@ class GovernorService:
         try:
             self._save_settings()
             self._sync_frame_fusion_marker()
+            self._standby_overlays_sync(force=True)
+            self._poke()
         except OSError as error:
             self._settings["frame_fusion"] = previous
             try:
@@ -1205,12 +1214,13 @@ class GovernorService:
         raw = self._profile_settings(profile).get("frame_os_features")
         raw = raw if isinstance(raw, dict) else {}
         return {"latency": raw.get("latency") is not False,
-                "shield": raw.get("shield") is True}
+                "boost": raw.get("boost") is not False,
+                "shield": raw.get("shield") is not False, "touch_boost": raw.get("touch_boost") is not False}
 
     def set_frame_os_feature(self, profile: str, feature: str, enabled: bool) -> Dict[str, Any]:
         profile = str(profile or "").strip()
-        if not profile or feature not in ("latency", "shield") or type(enabled) is not bool:
-            return {"success": False, "error": "Profile, latency/shield and a boolean are required"}
+        if not profile or feature not in ("latency", "shield", "boost", "touch_boost") or type(enabled) is not bool:
+            return {"success": False, "error": "Profile, latency/shield/touch_boost and a boolean are required"}
         settings = self._settings.setdefault("profiles", {}).setdefault(profile, {})
         previous = settings.get("frame_os_features")
         features = {**self.frame_os_features(profile), feature: enabled}
@@ -1223,11 +1233,18 @@ class GovernorService:
             else:
                 settings["frame_os_features"] = previous
             return {"success": False, "error": str(error)}
+        if profile == self._active_profile:
+            if feature == "boost" and not enabled:
+                self.frame_os.boost_enabled = False
+                self.frame_os.cancel_boost()
+                self.frame_os._apply_game_flags()
+            elif feature == "touch_boost" and self.frame_os.policy is not None:
+                self.frame_os.policy.configure_touch_boost(enabled)
         self._poke()
         return {"success": True, "error": None, "profile": profile, "features": features}
 
     def _frame_os_mode(self, profile: str) -> str:
-        mode = str(self._profile_settings(profile).get("frame_os", "off"))
+        mode = str(self._profile_settings(profile).get("frame_os", "act" if self._mode(profile) == "autopilot" else "off"))
         if mode == "act" and not self._frame_os_act_unlocked():
             # Also protects profiles saved by an older build; a new UI alone is not a safety gate.
             return "off"
@@ -1359,6 +1376,10 @@ class GovernorService:
             calm_w=budget.tdp if budget.tdp_control else None,
             latency_enabled=self.frame_os_features(profile)["latency"],
             stall_shield_enabled=self.frame_os_features(profile)["shield"],
+            touch_boost_enabled=self._mode(profile) == "autopilot" and self.frame_os_features(profile)["touch_boost"],
+            boost_enabled=(self._mode(profile) == "autopilot" and self.frame_os_features(profile)["boost"]
+                           and budget.phase == "locked" and self._request is None
+                           and not self._autopilot_arbiter.freeze_tdp),
         )
         self._sync_frame_os_memory(profile)
 
@@ -1379,7 +1400,7 @@ class GovernorService:
         if launch_key and launch_key != (self._fo_memory_key or (None, None))[1]:
             prefix = game_prefix(profile, self._game_app_id())
             key = (prefix, launch_key)
-            memory = GameMemory(self._frame_os_games().get(prefix))
+            memory = GameMemory(self._frame_os_games().get(prefix), boost_policy=1)
             disabled = memory.start_session()
             self._fo_memory, self._fo_memory_key = memory, key
             # this session's pairs are new: what the meter holds belongs to the game before
@@ -1396,6 +1417,8 @@ class GovernorService:
             return
         fresh: Dict[str, List[float]] = {}
         for metric in FRAME_OS_METRICS:
+            if metric == "frames":
+                continue  # steady A/B cadence cannot judge bounded short Boost pulses
             pairs = self.frame_os.proof.pairs[metric]
             saved = self._fo_saved.get(metric, 0)
             if len(pairs) < saved:
@@ -1970,7 +1993,7 @@ class GovernorService:
         value["ladder"] = self._ladder.status() if self._ladder else None
         value["mode"] = self._mode(profile or value.get("profile", ""))
         gp = profile or value.get("profile", "")
-        value["autopilot_shading_allowed"] = bool(self._profile_settings(gp).get("autopilot_shading", False))
+        value["autopilot_shading_allowed"] = bool(self._profile_settings(gp).get("autopilot_shading", True))
         value["autopilot_shading"] = self._autopilot_half_rate.status()
         value["budget"] = self._budget.status() if self._budget else None
         if self._restore_pending:
@@ -3272,7 +3295,8 @@ class GovernorService:
         """
         if self._menu_since is not None or self._menu_covering():
             return False, "steam-menu-open"
-        if self._flow.busy or self.cpu.owned or getattr(self.cpu, "restore_pending", False) or self._injection is not None:
+        if (self._flow.busy or self.cpu.owned or getattr(self.cpu, "restore_pending", False)
+                or self._injection is not None and (self.frame_os.last.get("decision") or {}).get("level") == "boost"):
             return False, "resource-controller-busy"
         point = self._point
         if self._request is not None or self._point_mode != "applied" or not isinstance(point, dict):
@@ -3330,7 +3354,7 @@ class GovernorService:
             tdp_error=power.get("error"),
             tdp_external_change=bool(power.get("external_change")),
             shading_available=bool(shading.get("available")),
-            shading_consent=(bool(self._profile_settings(profile).get("autopilot_shading", False))
+            shading_consent=(bool(self._profile_settings(profile).get("autopilot_shading", True))
                              and not self._autopilot_shading_yielded),
             shading_enabled=bool(shading.get("enabled")),
         )
@@ -3339,7 +3363,8 @@ class GovernorService:
         now = self._clock()
         session = (profile, str(self._launch_key), ((self._status.get("telemetry") or {}).get("snapshot") or {}).get("session_generation"))
         evidence = self._autopilot_evidence(summary, session)
-        evidence["draw_w"] = power.get("draw_w")
+        self._autopilot_power.add(now, session, evidence["sample_seq"], power.get("draw_w"))
+        evidence.update(self._autopilot_power.summary(evidence.get("first_sample_seq"),evidence.get("sample_seq")))
         evidence["temp_c"] = sensors.get("temp_c")
         evidence["cpu_busy_pct"] = sensors.get("cpu_top_core_pct")
         evidence["gpu_busy_pct"] = sensors.get("gpu_busy_pct")
@@ -3359,12 +3384,12 @@ class GovernorService:
             measured = self.observer.summary(self.WINDOW_SECONDS, after_seq=arbiter.after_seq)
             snapshot = self.observer.snapshot()
             age = snapshot.get("sample_age_ms")
-            verdict = arbiter.judge(now, {**self._autopilot_evidence(measured, session),
-                                           "fresh": isinstance(age, (int, float)) and 0 <= age <= self.MAX_SAMPLE_AGE_MS,
-                                           "draw_w": power.get("draw_w"), "temp_c": sensors.get("temp_c"),
-                                           "cpu_busy_pct": sensors.get("cpu_top_core_pct"),
-                                           "gpu_busy_pct": sensors.get("gpu_busy_pct"),
-                                           "gpu_clock_mhz": sensors.get("gpu_clock_mhz")})
+            judged = self._autopilot_evidence(measured, session)
+            judged.update(self._autopilot_power.summary(judged.get("first_sample_seq"),judged.get("sample_seq")))
+            judged.update(fresh=isinstance(age,(int,float)) and 0 <= age <= self.MAX_SAMPLE_AGE_MS,
+                          temp_c=sensors.get("temp_c"),cpu_busy_pct=sensors.get("cpu_top_core_pct"),
+                          gpu_busy_pct=sensors.get("gpu_busy_pct"),gpu_clock_mhz=sensors.get("gpu_clock_mhz"))
+            verdict = arbiter.judge(now, judged)
             if verdict == "rollback":
                 restored = (self._restore_autopilot_shading("rollback")
                             if arbiter.tool == "half-rate-shading"
@@ -3376,7 +3401,7 @@ class GovernorService:
             elif verdict == "accept":
                 self._event("autopilot-accept", "verified-gain", profile=profile,
                             before=arbiter.baseline,
-                            after=self._autopilot_evidence(measured, session))
+                            after=judged)
             self._publish_autopilot(profile, view, decision, clock)
             self._autopilot_plan = "hold"
             if self._budget is not None:
@@ -3519,7 +3544,7 @@ class GovernorService:
             "real_fps": decision.measured_real_fps, "output_fps": decision.measured_output_fps,
             "target_fps": view.target_fps, "confidence": decision.confidence,
             "gpu_clock": clock, "half_rate_shading": self._autopilot_half_rate.status(),
-            "shading_consent": bool(self._profile_settings(profile).get("autopilot_shading", False)),
+            "shading_consent": bool(self._profile_settings(profile).get("autopilot_shading", True)),
             "shading_yielded_to_steam": self._autopilot_shading_yielded,
             "tones": shown,
             "frametime_p95_ms": view.frametime_p95_ms,
@@ -3709,7 +3734,7 @@ class GovernorService:
         """Write (or take back) the Act adaptive overlay; True while Act injects on this point."""
         live = bool(((self.frame_os.last or {}).get("telemetry") or {}).get("live"))
         # only while the pacer is really in the game: without it the renderer would take 45 real
-        acting = (self._frame_os_mode(profile) == "act" and self._request is None and bool(self._point_deltas)
+        acting = (self._mode(profile) == "autopilot" and self._frame_os_mode(profile) == "act" and self._request is None and bool(self._point_deltas)
                   and self._clock() >= self._injection_hold_until
                   and self._injection_starvation_yields < 2
                   and (self._injection is not None or self._act_power_settled()))
@@ -3772,7 +3797,7 @@ class GovernorService:
             wanted = injection_deltas(self._point_deltas, float(self._budget.point.target_output_fps), boost, rest)
         if wanted == self._injection:
             self.frame_os.executor_active = wanted is not None
-            return wanted is not None
+            return wanted is not None and (self.frame_os.last.get("decision") or {}).get("level") in ("boost", "rest")
         saved = await asyncio.to_thread(self._saved_profile_config, profile)
         if saved is None:
             return False
@@ -3794,7 +3819,7 @@ class GovernorService:
         self._injection_started_at = self._clock() if wanted is not None else None
         # windows measured under injection say nothing about the plain point
         self._evaluation_after_seq = self.observer.sample_seq
-        return wanted is not None
+        return wanted is not None and (self.frame_os.last.get("decision") or {}).get("level") in ("boost", "rest")
 
     async def _drop_injection(self, profile: str, reason: str) -> None:
         saved = await asyncio.to_thread(self._saved_profile_config, profile)
@@ -3923,7 +3948,7 @@ class GovernorService:
         if budget is None or not budget.tdp_control or budget.tdp is None or not self.power.state.owned:
             return True
         # Frame OS (act mode) adds the watts of a funded boost / removes them in rest.
-        offset = self.frame_os.tdp_offset_w
+        offset = self.frame_os.tdp_offset_w if self._mode(profile) == "autopilot" and self._profile_enabled(profile) else 0.0
         # Without an offset the controller's own value goes out as is (emergency watts included).
         target = budget.tdp if not offset else round(
             min(max(budget.normal_max_w, budget.tdp), max(budget.min_w, budget.tdp + offset)), 1)
@@ -4115,8 +4140,22 @@ class GovernorService:
         if wake is not None:
             waiters.append(asyncio.ensure_future(wake.wait()))
         try:
-            done, _pending = await asyncio.wait(waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
-            return bool(done)
+            deadline = time.monotonic() + timeout
+            while True:
+                remaining = max(0.0, deadline-time.monotonic())
+                fast = self.frame_os.executor_active and self._budget is not None
+                done, _pending = await asyncio.wait(waiters, timeout=min(0.1, remaining) if fast else remaining,
+                                                  return_when=asyncio.FIRST_COMPLETED)
+                if done:
+                    return True
+                # Serialized with the owning Governor iteration: only apply a changed offset.
+                # A half-second touch must not wait for the next one-second power-search tick.
+                if fast:
+                    profile = self._active_profile or str(self._status.get("profile") or "")
+                    if profile and not self._stop.is_set():
+                        await self._apply_budget_tdp(profile)
+                if time.monotonic() >= deadline:
+                    return False
         finally:
             for waiter in waiters:
                 waiter.cancel()

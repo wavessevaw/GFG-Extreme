@@ -250,6 +250,7 @@ var fmtMult = (m) => {
   const q = Math.round(Number(m) * 4) / 4;
   return "\xD7" + (Number.isInteger(q) ? q : String(q));
 };
+var profileLabel = (name) => name === "mako" || name === "Default" ? "stable" : name;
 var MODE_LABEL = { budget: "Battery", balanced: "Balanced", quality: "Quality", extreme: "Extreme", autopilot: "Autopilot" };
 var frameOsMinutes = (m) => Object.entries(m || {}).map(([k, v]) => k + " " + num(v, 0) + "m").join(" \xB7 ");
 var sessionModes = (x) => x && x.mode === "mixed" && x.modes ? Object.entries(x.modes).map(([m, v]) => (MODE_LABEL[m] || m) + " " + num(v, 0) + "m").join(" \xB7 ") : MODE_LABEL[x && x.mode] || "\u2013";
@@ -728,17 +729,17 @@ function SessionRings({ ls, target, battery }) {
     ) : null
   );
 }
-function FrameTimingControls({ profile, settings, refresh }) {
+function FrameTimingControls({ profile, settings, refresh, autopilot = false }) {
   const wanted = settings || {};
-  const [features, setFeatures] = useState({ latency: wanted.latency !== false, shield: wanted.shield === true });
+  const [features, setFeatures] = useState({ latency: wanted.latency !== false, shield: wanted.shield !== false, touch_boost: wanted.touch_boost !== false, boost: wanted.boost !== false });
   const [error, setError] = useState("");
   const busy = useRef(false);
   useEffect(
     () => {
-      setFeatures({ latency: wanted.latency !== false, shield: wanted.shield === true });
+      setFeatures({ latency: wanted.latency !== false, shield: wanted.shield !== false, touch_boost: wanted.touch_boost !== false, boost: wanted.boost !== false });
       setError("");
     },
-    [profile, wanted.latency, wanted.shield]
+    [profile, wanted.latency, wanted.shield, wanted.touch_boost, wanted.boost]
   );
   const change = async (feature, enabled) => {
     if (busy.current) return;
@@ -772,7 +773,14 @@ function FrameTimingControls({ profile, settings, refresh }) {
         title: "Stall shield",
         sub: "Avoid extra waiting after a late frame; does not remove loading or shader stalls",
         onChange: (v) => change("shield", v)
-      })
+      }),
+      autopilot ? h(Toggle, { on: features.boost, title: "Short Boost", sub: "Briefly raises real-frame cadence, then returns to calm. Maximum 1.5 seconds; funded within your power limit.", onChange: (v) => change("boost", v) }) : null,
+      autopilot ? h(Toggle, {
+        on: features.touch_boost,
+        title: "Stick touch Boost",
+        sub: "Starts a short pulse on right-stick contact. Motion may extend it up to 1.5 seconds. Autopilot only.",
+        onChange: (v) => change("touch_boost", v)
+      }) : null
     ),
     error ? h(Note, null, error) : null
   );
@@ -1017,8 +1025,11 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
           refresh();
         }
       }),
-      s.autopilot_shading_allowed ? h(Note, { quiet: true }, "Shading: " + ((s.autopilot_shading || {}).mode || "unavailable") + " \xB7 Steam RADV dynamic VRS (physical Deck verification pending).") : null
+      s.autopilot_shading_allowed ? h(Note, { quiet: true }, "Shading: " + ((s.autopilot_shading || {}).mode || "unavailable") + " \xB7 Steam RADV dynamic VRS (physical Deck energy gain requires comparison).") : null,
+      h(FrameTimingControls, { profile, settings: (s.frame_os || {}).feature_settings, refresh, autopilot: true }),
+      h(FrameFusionPanel, { s, refresh })
     ) : null,
+    s.frame_fusion && s.frame_fusion.scope_update_required ? h(Note, null, "Install the updated engine and restart the game. This running engine cannot enforce Autopilot-only Fusion.") : null,
     health ? h("div", { className: "hint" }, health) : null,
     h("div", { style: { height: 12 } }),
     h(FiltersCard, { profile, cfg, patch, go }),
@@ -1469,10 +1480,10 @@ function ProfilesPage({ back, profiles, current, pick, reload }) {
     await reload();
   };
   if (sel) {
-    const isDefault = sel === "Default";
+    const isDefault = sel === "Default" || sel === "mako";
     return h(
       Page,
-      { title: sel, onBack: () => {
+      { title: profileLabel(sel), onBack: () => {
         setSel(null);
         setName("");
       } },
@@ -1513,7 +1524,7 @@ function ProfilesPage({ back, profiles, current, pick, reload }) {
   return h(
     Page,
     { title: "Profile", onBack: back },
-    h("div", { className: "list", style: { marginTop: 0 } }, (profiles || []).map((p) => h(Row, { key: p, title: p, value: p === current ? "Active" : "", onClick: () => setSel(p) }))),
+    h("div", { className: "list", style: { marginTop: 0 } }, (profiles || []).map((p) => h(Row, { key: p, title: profileLabel(p), value: p === current ? "Active" : "", onClick: () => setSel(p) }))),
     h("div", { className: "sec" }, "NEW PROFILE"),
     TF ? h(TF, { value: name, placeholder: "Profile name", onChange: (e) => setName(e.target.value) }) : null,
     h("div", { className: "list" }, h(Row, { title: "Create from current", onClick: () => name.trim() && act(async () => {
@@ -1603,7 +1614,7 @@ function SettingsPage({ back, go, profile, s }) {
       { className: "list", style: { marginTop: 0 } },
       h(Row, { icon: "filter", title: "GFG theme", sub: "Install the Steam interface theme for CSS Loader", onClick: () => go("theme") }),
       h(Row, { icon: "hud", title: "In-game overlay", sub: "FPS, \xD7N, TDP while playing", onClick: () => go("hud") }),
-      h(Row, { icon: "user", title: "Profile", value: profile || "Default", onClick: () => go("profiles") }),
+      h(Row, { icon: "user", title: "Profile", value: profileLabel(profile || "Default"), onClick: () => go("profiles") }),
       h(Row, { icon: "play", title: "Launch command", sub: "Copy it into the game's Steam launch options", onClick: () => go("launch") }),
       h(Row, { icon: "layers", title: "Frame generation backend", sub: "GFG Engine, OptiScaler, in-game", onClick: () => go("fg") }),
       h(Row, { icon: "scale", title: "Scaling", sub: "Render scale for extra headroom", onClick: () => go("scaling") }),
@@ -1718,7 +1729,7 @@ function AdvancedPage({ back, s, insp, launch, go, profile }) {
     h("div", { className: "list" }, h(Row, { icon: "cog", title: "Journal", sub: "Undo recent changes", onClick: () => go("journal") })),
     h(ForgetModel, { profile }),
     h(FrameOsPanel, { s, profile }),
-    h(FrameFusionPanel, { s }),
+    s && s.mode === "autopilot" ? h(FrameFusionPanel, { s }) : null,
     h("div", { className: "sec" }, "INSPECTOR"),
     h("div", { className: "cols" }, col("SAVED", sv), col("EFFECTIVE", ef), col("GOVERNOR", s && s.active_point ? { point: POINT_LABEL(s.active_point) } : {}, true), col("ACTUAL", ac))
   );
@@ -1775,22 +1786,24 @@ function ForgetModel({ profile }) {
     step === "done" && msg ? h(Note, { quiet: true }, msg) : null
   );
 }
-function FrameFusionPanel({ s }) {
+function FrameFusionPanel({ s, refresh }) {
   const fusion = s && s.frame_fusion || {};
-  const [enabled, setEnabled] = useState(fusion.enabled === true);
+  const [enabled, setEnabled] = useState(fusion.setting_enabled !== void 0 ? fusion.setting_enabled === true : fusion.enabled !== false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    setEnabled(fusion.enabled === true);
-  }, [fusion.enabled]);
+    setEnabled(fusion.setting_enabled !== void 0 ? fusion.setting_enabled === true : fusion.enabled !== false);
+  }, [fusion.setting_enabled, fusion.enabled]);
   const change = async (value) => {
     if (busy) return;
     setBusy(true);
     setError("");
     try {
       const result = await rpc.setFrameFusion(value);
-      if (result && result.success) setEnabled(result.enabled === true);
-      else setError(result && result.error || "Could not save Frame Fusion");
+      if (result && result.success) {
+        setEnabled(result.enabled === true);
+        if (refresh) refresh();
+      } else setError(result && result.error || "Could not save Frame Fusion");
     } catch (e) {
       setError("Could not save Frame Fusion");
     }
@@ -1798,20 +1811,23 @@ function FrameFusionPanel({ s }) {
   };
   const messages = {
     "observed": fusion.processing_path === "native-input" ? "Native-resolution Fusion is processing frames. Power benefit is not measured yet." : "The direct processing path has been used in this game. Power benefit is not measured yet.",
-    "prepared": "Ready to try. Waiting for a compatible frame.",
+    "prepared": "Prepared. Waiting for a compatible frame.",
+    "autopilot-only": "Available in Autopilot.",
+    "paused": "Runs while Autopilot is on.",
     "pipeline-not-eligible": "This game is using the regular processing path.",
     "renderer-unsupported": "The current engine has no Fusion support. Install the updated engine; native 64-bit games only.",
+    "renderer-update-required": "Install the updated engine and restart the game to enforce Autopilot-only Fusion.",
     "waiting-for-game": "Start a game to check compatibility.",
     "restart-required": "Restart the game to apply your choice."
   };
   return h(
     "div",
     null,
-    h("div", { className: "sec" }, "FRAME FUSION (EXPERIMENTAL)"),
+    h("div", { className: "sec" }, "FRAME FUSION"),
     h("div", { className: "list" }, h(Toggle, {
       title: "Frame Fusion",
       on: enabled,
-      sub: "Reduces compatible frame processing, including native resolution. Applies from the next game start.",
+      sub: "Optimizes compatible native and scaled frames in Autopilot. Start the game with the updated engine.",
       onChange: change
     })),
     error ? h(Note, null, error) : null,
@@ -1875,7 +1891,7 @@ function FrameOsPanel({ s, profile }) {
         }
       }
     })) : null,
-    h(FrameTimingControls, { key: profile, profile, settings: fo.feature_settings }),
+    h(FrameTimingControls, { key: profile, profile, settings: fo.feature_settings, autopilot: s && s.mode === "autopilot" }),
     fo.game && mode === "act" ? h("div", { className: "card" }, h("div", { className: "sec", style: { marginTop: 0 } }, "THIS GAME"), h(
       "div",
       { className: "kv" },

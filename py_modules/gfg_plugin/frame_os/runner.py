@@ -11,10 +11,12 @@ Rollout gates (docs/GFG_FRAME_OS.md): the mode decides what the layer is allowed
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from typing import Any, Callable, Dict, Optional
 
 from .benefit import BenefitMeter
+from .burst import BurstCadence
 from .control_channel import ControlChannel
 from . import input_relay
 from .input_sensor import EvdevReader, InputState
@@ -66,15 +68,22 @@ class FrameOsRunner:
         self.latency_enabled = True
         self.stall_shield_enabled = False
         self.game_disabled: Dict[str, bool] = {"shaping": False, "boost": False, "rest": False}
+        self.boost_enabled = True
+        self.burst_cadence = BurstCadence()
+        self.burst_observations = {"windows":0,"accelerated_windows":0,"seconds":0.0,"peak_real_hz":None}
 
     # ---------------------------------------------------------- Governor side (1 Hz)
     def configure(self, *, enabled: bool, mode: str, output_hz: float, calm_real_hz: float,
                   max_multiplier: float, calm_w: Optional[float],
-                  latency_enabled: bool = True, stall_shield_enabled: bool = False) -> None:
+                  latency_enabled: bool = True, stall_shield_enabled: bool = False,
+                  touch_boost_enabled: bool = False, boost_enabled: bool = True) -> None:
         mode = mode if mode in MODES else "observe"
         was_enabled = self.enabled
         self.enabled, self.mode = bool(enabled), mode
         self.latency_enabled, self.stall_shield_enabled = bool(latency_enabled), bool(stall_shield_enabled)
+        if self.boost_enabled and not boost_enabled:
+            self.cancel_boost()
+        self.boost_enabled = boost_enabled is True
         if not self.enabled:
             return
         if not was_enabled:
@@ -85,6 +94,8 @@ class FrameOsRunner:
             self.proof.reset()
             self.ab_control = None
             self.policy = None              # no bank/backoff from the previous session
+            self.burst_cadence = BurstCadence()
+            self.burst_observations = {"windows":0,"accelerated_windows":0,"seconds":0.0,"peak_real_hz":None}
             self.scene = SceneChangeDetector()
             self.last = {}
             if self.reader is not None:
@@ -104,23 +115,33 @@ class FrameOsRunner:
                 self.policy.broker.calm_w = float(calm_w)   # the Governor moved the calm cap
         else:
             self.policy.broker = None  # power ownership was released
+        self.policy.configure_touch_boost(touch_boost_enabled is True)
+        self._apply_game_flags()
+        self.proof.skip.add("frames")  # long A/B windows cannot measure these bounded pulses
 
     def apply_memory(self, disabled: Dict[str, bool], prior: Dict[str, Any]) -> None:
         """This game's memory: effects off here, and the A/B pairs earlier sessions measured."""
         self.game_disabled = {effect: bool((disabled or {}).get(effect)) for effect in self.game_disabled}
-        self.proof.load(prior or {}, skip={m for m, e in EFFECTS.items() if self.game_disabled[e]})
+        self.proof.load({**(prior or {}), "frames": []}, skip={"frames"} | {m for m, e in EFFECTS.items() if self.game_disabled[e]})
         self._apply_game_flags()
 
     def set_disabled(self, disabled: Dict[str, bool]) -> None:
         """Effects newly ruled out mid-session: switch them off, keep this session's pairs."""
         self.game_disabled = {effect: bool((disabled or {}).get(effect)) for effect in self.game_disabled}
-        self.proof.skip = {m for m, e in EFFECTS.items() if self.game_disabled[e]}
+        self.proof.skip = {"frames"} | {m for m, e in EFFECTS.items() if self.game_disabled[e]}
         self._apply_game_flags()
 
     def _apply_game_flags(self) -> None:
         if self.policy is not None:
-            self.policy.boost_allowed = not self.game_disabled["boost"]
+            self.policy.boost_allowed = self.boost_enabled and not self.game_disabled["boost"]
             self.policy.rest_allowed = not self.game_disabled["rest"]
+
+    def cancel_boost(self) -> None:
+        if self.policy is not None:
+            self.policy.cancel_boost()
+            broker = self.policy.broker
+            self.last["decision"] = Decision("calm", self.policy.calm_real_hz, self.policy.output_hz,
+                                             broker.calm_w if broker else None, "autopilot-scope-exit").to_dict()
 
     @property
     def injection(self) -> Optional[tuple]:
@@ -140,6 +161,9 @@ class FrameOsRunner:
         if not (self.enabled and self.mode == "act" and self.executor_active and self.policy and self.policy.broker):
             return 0.0
         tdp = decision.get("tdp_w")
+        deadline = decision.get("boost_until")
+        if decision.get("level") == "boost" and isinstance(deadline, (int, float)) and self.clock() >= deadline:
+            return 0.0
         return round(float(tdp) - self.policy.broker.calm_w, 1) if tdp is not None else 0.0
 
     # ---------------------------------------------------------- 10 Hz tick
@@ -160,6 +184,7 @@ class FrameOsRunner:
         self.reader.poll()
         inp = state.snapshot(time.time() if self.reader.available else now)
         telemetry = self.channel.read_telemetry() or {}
+        burst_real_hz = self.burst_cadence.sample(telemetry)
         cost = telemetry.get("cost_p50_ms") or None
         cut = self.scene.tick(now, cost)
         decision = self.policy.tick(now, inp, scene_change=cut, draw_w=self.draw_w, focused=self.focused)
@@ -181,8 +206,20 @@ class FrameOsRunner:
             self.policy._delivery_at = now
         elif acting and self.executor_active and telemetry.get("live"):
             # without the executor the pacer gets the calm cadence: no boost can be delivered yet
-            interval = telemetry.get("present_interval_p50_ms")
-            self.policy.note_delivered(now, 1000.0 / interval if interval else None)
+            acknowledged_boost = ((self.last.get("decision") or {}).get("level") == "boost"
+                                  and telemetry.get("applied_generation") == self.generation)
+            if acknowledged_boost and burst_real_hz is not None:
+                previous=self.last.get("decision") or {}
+                window=self.burst_cadence.last
+                start=max(window["start_monotonic_s"],previous.get("boost_since",window["start_monotonic_s"]))
+                end=min(window["end_monotonic_s"],previous.get("boost_until",window["end_monotonic_s"]))
+                exposure=max(0.0,end-start)
+                if exposure>0:
+                    self.policy.note_delivered(now, burst_real_hz, short_window=True,exposure_s=exposure)
+                    self.burst_observations["windows"]+=1
+                    self.burst_observations["seconds"]+=exposure
+                    self.burst_observations["accelerated_windows"]+=burst_real_hz>=self.policy.calm_real_hz+max(1,self.policy.calm_real_hz*.05)
+                    self.burst_observations["peak_real_hz"]=max(self.burst_observations["peak_real_hz"] or 0,burst_real_hz)
         real_hz = decision.real_hz if acting and self.executor_active else self.policy.calm_real_hz
         shaping = self.latency_enabled and control != "no-shaping" and not self.game_disabled["shaping"]
         wanted = (self.mode, round(real_hz, 3), shaping, self.stall_shield_enabled)
@@ -207,7 +244,39 @@ class FrameOsRunner:
                             and telemetry.get("applied_generation") == self.generation,
             "input_sensor": self._sensor_status(inp), "ab_control": control,
             "game_disabled": dict(self.game_disabled),
+            "boost_enabled": self.boost_enabled,
+            "burst_cadence": dict(self.burst_cadence.last),
+            "burst_observations":{**self.burst_observations,"seconds":round(self.burst_observations["seconds"],3),"gain_measured":False},
         }
+        if decision.level == "boost" and self.policy._burst_started is not None:
+            last["decision"]["boost_since"] = self.policy._burst_started
+            last["decision"]["boost_until"] = min(max(self.policy._boost_until, self.policy._touch_until),
+                                                    self.policy._burst_started + 1.5)
+        requested = self.policy.touch_intent and decision.level == "boost"
+        if not self.policy.touch_boost_enabled:
+            touch_state = "off"
+        elif not inp.get("touch_signal_fresh"):
+            touch_state = "sensor-unavailable"
+        elif self.focused is False:
+            touch_state = "menu"
+        elif not acting:
+            touch_state = "observe-only"
+        elif not self.executor_active:
+            touch_state = "executor-unavailable"
+        elif requested:
+            touch_state = "submitted" if last["acknowledged"] else "requested"
+        elif decision.reason in ("boost-ineffective", "boost-off-for-game", "energy-bank-empty", "ab-control"):
+            touch_state = decision.reason
+        else:
+            touch_state = "armed"
+        interval = telemetry.get("present_interval_p50_ms")
+        last["touch_boost"] = {"enabled": self.policy.touch_boost_enabled, "state": touch_state,
+            "touch_requests": self.policy.touch_requests, "intent": self.policy.touch_intent,
+            "requested": requested, "submitted": bool(requested and acting and self.executor_active and last["acknowledged"]),
+            "right_stick_touch": inp.get("right_stick_touch"), "signal_fresh": inp.get("touch_signal_fresh") is True,
+            "target_real_hz": self.policy.boost_real_hz, "published_real_hz": real_hz,
+            "observed_real_hz": 1000.0 / interval if type(interval) in (int, float) and math.isfinite(interval) and interval > 0 and telemetry.get("live") else None,
+            "gain_measured": False}
         broker = self.policy.broker
         calm_w = broker.calm_w if broker is not None else None
         self.benefit.add(now, acting=acting, level=decision.level, telemetry=telemetry,
@@ -225,7 +294,9 @@ class FrameOsRunner:
         status = dict(self.reader.status()) if hasattr(self.reader, "status") else {}
         idle = inp.get("idle_s")
         status.update(camera=inp.get("camera"), action=inp.get("action"),
-                      idle_s=idle if isinstance(idle, (int, float)) and idle != float("inf") else None)
+                      idle_s=idle if isinstance(idle, (int, float)) and idle != float("inf") else None,
+                      right_stick_touch=inp.get("right_stick_touch"), touch_signal_fresh=inp.get("touch_signal_fresh"),
+                      gyro_dps=inp.get("gyro_dps"), touch_generation=inp.get("touch_generation"))
         return status
 
     def _bump(self) -> int:

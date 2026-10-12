@@ -1,11 +1,12 @@
 import { build } from "esbuild";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { chromium } = require("playwright");
 export const launch = () => chromium.launch({ args: ["--no-sandbox"], ...(process.env.GFG_CHROMIUM ? { executablePath: process.env.GFG_CHROMIUM } : {}) });
-const out = await build({ entryPoints: [new URL("../src/app.js", import.meta.url).pathname], bundle: true, format: "iife", globalName: "GFGPlugin", write: false, target: "es2020" });
-const rb = await build({ entryPoints: [new URL("./reactbundle.js", import.meta.url).pathname], bundle: true, format: "iife", write: false, define: {"process.env.NODE_ENV":"\"development\""} });
+const out = await build({ entryPoints: [fileURLToPath(new URL("../src/app.js", import.meta.url))], bundle: true, format: "iife", globalName: "GFGPlugin", write: false, target: "es2020" });
+const rb = await build({ entryPoints: [fileURLToPath(new URL("./reactbundle.js", import.meta.url))], bundle: true, format: "iife", write: false, define: {"process.env.NODE_ENV":"\"development\""} });
 const reactJs = rb.outputFiles[0].text; const domJs = "";
 const dev = (mode, target) => ({ mode, target, reason: { oled: "Steam Deck OLED panel runs 90 Hz", lcd: "Steam Deck LCD panel tops out at 60 Hz", dock: "External display: 60 FPS" }[mode] });
 const base = { version: "1.0.0", hud: { enabled: true, preset: "standard", position: "top-left" }, success: true, enabled: false, state: "DISABLED", telemetry: {}, power: {}, limitations: ["a game must be (re)launched after Governor is enabled to use the overlay and diagnostics"], ladder: { attempts: 2, max_attempts: 6 } };
@@ -31,7 +32,7 @@ export const STATES = {
   // Synthetic sample readings for README screenshots of the actual 2.0.0 UI.
   // No claimed battery gain or unique-frame delivery, no real Steam Deck measurement.
   "home-autopilot": {
-    ...base, version: "2.0.0", enabled: true, state: "LOCKED", mode: "autopilot",
+    ...base, version: "2.1.0", enabled: true, state: "LOCKED", mode: "autopilot",
     device: dev("oled", 90), target_output_fps: 90,
     telemetry: tel(30, 90, 3),
     active_point: { multiplier: 3, render_scale_pct: 100, base_target_fps: 30 },
@@ -51,11 +52,13 @@ export const STATES = {
       gpu_clock: { available: true, level: "auto", current_limit_mhz: 1240 },
       half_rate_shading: { available: true, mode: "1x1", enabled: false },
     },
-    autopilot_shading_allowed: false,
+    autopilot_shading_allowed: true,
+    frame_fusion: { setting_enabled: true, enabled: true, state: "observed", processing_path: "native-input", path_observed: true, gain_measured: false },
+    frame_os: { mode: "act", enabled: true, act_unlocked: true, feature_settings: { latency: true, shield: true, boost: true, touch_boost: true } },
     autopilot_shading: { available: true, mode: "1x1" },
   },
   "home-autopilot-wait": {
-    ...base, version: "2.0.0", enabled: true, state: "LOCKED", mode: "autopilot",
+    ...base, version: "2.1.0", enabled: true, state: "LOCKED", mode: "autopilot",
     device: dev("oled", 90), target_output_fps: 90, telemetry: tel(30, 90, 3),
     active_point: { multiplier: 3, render_scale_pct: 100 },
     active_point_mode: "applied",
@@ -95,10 +98,10 @@ export const STATES = {
   "frame-os-no-layer": { ...base, enabled: false, state: "DISABLED", device: dev("oled", 90), frame_os: { mode: "observe", layer_installed: false, layer_error: "this build does not include the Frame OS layer", enabled: false } },
   "home-effort-reason": { ...base, enabled: true, state: "LOCKED", mode: "quality", device: dev("oled", 90), target_output_fps: 90, telemetry: tel(30, 90, 3), active_point: { multiplier: 3, render_scale_pct: 100 }, effort: { level: "hard", reason: "x3 required" } },
   "frame-os-refused": { ...base, device: dev("oled", 90), target_output_fps: 90, frame_os: { mode: "off" }, __frameOsFail: true },
-  "fusion-prepared": { ...base, frame_fusion: { enabled: true, state: "prepared", path_observed: false } },
-  "fusion-observed": { ...base, frame_fusion: { enabled: true, state: "observed", path_observed: true, gain_measured: false } },
-  "fusion-restart": { ...base, frame_fusion: { enabled: false, state: "restart-required", path_observed: true } },
-  "fusion-unsupported": { ...base, frame_fusion: { enabled: true, state: "renderer-unsupported", path_observed: false } },
+  "fusion-prepared": { ...base, mode: "autopilot", frame_fusion: { enabled: true, state: "prepared", path_observed: false } },
+  "fusion-observed": { ...base, mode: "autopilot", frame_fusion: { enabled: true, state: "observed", path_observed: true, gain_measured: false } },
+  "fusion-restart": { ...base, mode: "autopilot", frame_fusion: { enabled: false, state: "restart-required", path_observed: true } },
+  "fusion-unsupported": { ...base, mode: "autopilot", frame_fusion: { enabled: true, state: "renderer-unsupported", path_observed: false } },
   "home-paused-external-tdp": { ...base, enabled: true, state: "PAUSED", reason: "external-tdp-change", mode: "balanced", device: dev("oled", 90), target_output_fps: 90 },
   "home-no-model-game": { ...base, device: dev("oled", 90), target_output_fps: 90, __modelTarget: null },
   "home-last-session-above-limit": { ...base, last_session: { minutes: 20, avg_output_fps: 88, avg_real_fps: 44, avg_tdp_w: 17.1, avg_draw_w: 16.4, reference_w: 15, saved_w: -2.1, saved_wh: -0.7, profile: "mako" } },
@@ -139,8 +142,9 @@ var callable = (n) => async (...a) => ({ get_governor_status: () => window.__sta
   set_governor_frame_os_feature: (p, feature, enabled) => {
     (window.__featureSets = window.__featureSets || []).push([p, feature, enabled]);
     if (window.__state.__featureFail) return { success: false, error: "Could not save frame timing" };
-    const features = { latency: true, shield: false, ...(window.__state.extreme || {}).feature_settings, [feature]: enabled };
+    const features = { latency: true, shield: true, touch_boost: true, boost: true, ...(window.__state.extreme || {}).feature_settings, [feature]: enabled };
     window.__state.extreme = { ...(window.__state.extreme || {}), feature_settings: features };
+    window.__state.frame_os = { ...(window.__state.frame_os || {}), feature_settings: features };
     return { success: true, features };
   },
   set_governor_frame_os_ab: (enabled) => { (window.__abSets = window.__abSets || []).push(enabled); return { success: true, ab: !!enabled }; },

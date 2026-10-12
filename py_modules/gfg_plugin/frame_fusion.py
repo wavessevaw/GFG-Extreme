@@ -43,6 +43,7 @@ def compact_context(context: dict) -> dict:
 
 class NativeFusionState(TypedDict):
     supported: bool
+    autopilot_scope_supported: bool
     requested: bool
     prepared_inputs: int
     recorded_frames: int
@@ -55,7 +56,7 @@ class NativeFusionState(TypedDict):
 
 
 def normalize(value: object) -> NativeFusionState:
-    empty: NativeFusionState = {"supported": False, "requested": False,
+    empty: NativeFusionState = {"supported": False, "autopilot_scope_supported": False, "requested": False,
         "prepared_inputs": 0, "recorded_frames": 0, "avoided_source_copies": 0,
         "native_prepared_inputs": 0, "native_source_transfers": 0,
         "native_conversion_blits_avoided": 0, "native_source_format": 0,
@@ -99,14 +100,17 @@ def normalize(value: object) -> NativeFusionState:
             raise ValueError("Frame Fusion native source layout is inconsistent")
         if conversions != (transfers if format_ == 44 else 0):
             raise ValueError("Frame Fusion conversion evidence is inconsistent")
-    return {**empty, "supported": True, "requested": requested, **fields, **native}
+    scoped = value.get("autopilot_scope_supported",False)
+    if type(scoped) is not bool:
+        raise ValueError("invalid Fusion scope capability")
+    return {**empty, "supported": True, "autopilot_scope_supported": scoped, "requested": requested, **fields, **native}
 
 
 def summarize(enabled: bool, contexts: list[dict]) -> dict:
     current = [c for c in contexts if isinstance(c, dict)]
     fusion = [c.get("frame_fusion") or normalize(None) for c in current]
     mismatch = any(f.get("supported") and f.get("requested") is not enabled for f in fusion)
-    observed = [c for c in current if c.get("phase") == "active"
+    observed = [c for c in current if enabled and (c.get("frame_fusion") or {}).get("requested") is True and c.get("phase") == "active"
         and c.get("frame_generation_active") is True
         and (((c.get("spatial_scaling") or {}).get("active") is True
               and (c.get("frame_fusion") or {}).get("recorded_frames", 0) > 0)

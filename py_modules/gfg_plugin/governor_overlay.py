@@ -59,6 +59,7 @@ LIVE_FIELDS = frozenset({
     "target_fps",
     "base_fps_cap",
     "frame_generation_enabled",
+    "gfg_frame_fusion",
     "scaling_factor",
     "scaling_method",
     # Extreme (1.6): the scaler's sharpening travels with its render scale (one logical point).

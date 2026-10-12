@@ -22,6 +22,8 @@ from typing import Deque, Dict, Iterable, List, Optional, Tuple
 EVENT = struct.Struct("llHHi")
 EV_KEY, EV_ABS = 0x01, 0x03
 STATUS_TYPE = 0x7FFF                 # relay pseudo record: code = open gamepads (input_relay.py)
+DECK_MOTION_TYPE = 0x7FFE            # trusted relay: code = right-stick touch, value = gyro millideg/s
+DECK_SIGNAL_LEASE_S = 0.35
 ABS_RX, ABS_RY = 0x03, 0x04          # right stick on Steam Deck / XInput layouts
 ABS_X, ABS_Y = 0x00, 0x01            # left stick
 STICK_DEADZONE = 0.12
@@ -43,6 +45,10 @@ class InputState:
         self.devices: Optional[int] = None   # gamepads the relay has open (None: unknown)
         self.hidraw: Optional[int] = None
         self.events = 0
+        self._deck_at: Optional[float] = None
+        self._right_touch: Optional[bool] = None
+        self._gyro_dps: Optional[float] = None
+        self._touch_generation = 0
 
     def _norm(self, value: int) -> float:
         span = (self.abs_max - self.abs_min) / 2.0 or 1.0
@@ -61,6 +67,15 @@ class InputState:
                 self.clear_activity()
             return
         self.events += 1
+        if etype == DECK_MOTION_TYPE:
+            if code not in (0, 1) or not 0 <= value <= 4000000:
+                return
+            if code == 1 and self._right_touch is not True:
+                self._touch_generation += 1
+            self._right_touch = bool(code)
+            self._gyro_dps = value / 1000.0
+            self._deck_at = t
+            return  # contact and sensor motion are never counted as action-button presses
         if etype == EV_ABS and code in (ABS_RX, ABS_RY, ABS_X, ABS_Y):
             v = self._norm(value)
             stick = self.right if code in (ABS_RX, ABS_RY) else self.left
@@ -88,8 +103,9 @@ class InputState:
         self._camera = self._camera_at = 0.0
         self._last_input = None
         self._presses.clear()
+        self._deck_at = self._right_touch = self._gyro_dps = None
 
-    def snapshot(self, now: float) -> Dict[str, float]:
+    def snapshot(self, now: float) -> Dict[str, object]:
         while self._presses and now - self._presses[0] > ACTION_WINDOW_S:
             self._presses.popleft()
         held = (self.right[0] ** 2 + self.right[1] ** 2) ** 0.5 > STICK_DEADZONE
@@ -97,6 +113,7 @@ class InputState:
         if active:
             self._last_input = now  # evdev reports changes, not a steady held stick
         camera = self._camera if held else self._decay(now)
+        fresh = self._deck_at is not None and 0 <= now - self._deck_at <= DECK_SIGNAL_LEASE_S
         return {
             "camera": round(camera, 3),
             "action": round(min(1.0, len(self._presses) / (ACTION_WINDOW_S * 4.0)), 3),  # 4 presses/s = 1.0
@@ -104,6 +121,11 @@ class InputState:
             # evdev covers gamepad input only. Keyboard/mouse activity is invisible and
             # silence cannot safely be treated as AFK or used to reduce the game's TDP.
             "idle_verified": False,
+            "right_stick_touch": self._right_touch if fresh else None,
+            "touch_signal_fresh": fresh,
+            "touch_generation": self._touch_generation,
+            "gyro_dps": self._gyro_dps if fresh else None,
+            "right_stick_deflection": round(min(1.0, (self.right[0]**2 + self.right[1]**2)**0.5), 3),
         }
 
     def feed(self, data: bytes) -> int:

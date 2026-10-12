@@ -1,26 +1,20 @@
 # Frame Fusion
 
-Frame Fusion is an experimental native renderer optimization with two paths. Fusion Core shares compatible images with the open MAKO spatial scaler and removes one reconstruction-input blit. Native Fusion preserves the source layout at equal resolution and replaces the source conversion blit with a same-format copy. The original frame generator, two historical source images, output copies and renderer scheduling remain owned by their existing components.
+Frame Fusion is a native renderer optimization available only in Autopilot with two paths. Fusion Core shares compatible images with the open MAKO spatial scaler and removes one reconstruction-input blit. Native Fusion preserves the source layout at equal resolution and replaces the source conversion blit with a same-format copy. The original frame generator, two historical source images, output copies and renderer scheduling remain owned by their existing components.
 
 ## Use
 
-Install the experimental GFG build and its updated engine, then enable **Settings → Diagnostics → Frame Fusion** and restart the game. The feature defaults off. Turning it off also applies at the next game launch.
+Install stable 2.1.0 and its bundled engine, start the game through the managed launcher and choose Autopilot. The Autopilot card exposes the default-on Fusion switch. Start/stop and mode changes project the GFG-owned `gfg_frame_fusion` live field into the runtime overlay; Saved is never changed by these projections. The launch marker only permits provisioning. Both the applied and requested live scope must permit the shortcut; leaving Autopilot immediately closes raw native transfers and direct scaler inputs, even if private-group replacement fails. Existing valid histories use the ordinary blit until replacement commits.
 
-Supported: native Linux x86_64 and validated SDR8 input. Fusion Core requires the open MAKO scaler and an actual source/presentation split. Native Fusion works with equal source/presentation extents, active frame generation, no spatial scaler and shareable RGBA8/BGRA8 UNORM history images. The normal modes and Autopilot keep their existing goals. Unsupported formats, missing sample access, unregistered images and failed setup retain the legacy path. Fusion does not add optimization to Flatpak bundles, 32-bit libraries, LS1 or HDR; it does not force a game to honor a render-scale request.
+The canonical private-resource transition rebuilds the input group when scope changes, preserves image/FD ownership and uses the existing retirement barrier. Scope is part of the resource key and pending request identity. Returning to Autopilot reopens shortcuts only after compatible resources are prepared. A game started with Fusion provisioning off needs relaunch to enable it. Other modes never execute these shortcuts.
 
-The status distinguishes requested settings, prepared descriptors and a successfully submitted direct path. An observed path proves that different processing was submitted; it does not prove lower whole-device power, additional real FPS or improved input latency. The copy counter is a snapshot at native publication, not a continuously sampled total.
+Logs retain the actual paths, counters, launch setting, mapped library hashes and export segment index. Repeated counter publications are never added together. Hash identity and submitted work do not prove GPU completion or a benefit. Native Fusion was observed in the 2026-10-12 19:43 field recording; an uncontrolled second recording does not establish its effect on watts, FPS or latency.
 
-## Recording the actual path (2.1.1)
-
-Start a diagnostic recording before testing. Each timeline sample now includes `frame_fusion`: the requested setting, restart state, actual path evidence and publication counters. Up to 16 live, validated native contexts retain PID/start identity, pipeline, source/presentation dimensions, native scaling constraints and Fusion counters. Observed contexts take priority; any omitted context count is explicit. A submitted path remains separate from a requested switch or prepared descriptors.
-
-`frame-fusion-contexts.json` keeps the latest nonempty native snapshot even if the game closes before Stop. `renderer-identity.json` records the expected plugin manifest and the hashes of mapped MAKO library files. Hashing prefers `/proc/PID/map_files`; a pathname fallback must match the mapped device/inode, so a replaced installation cannot masquerade as the running file. Missing permissions or identity give an explicit unknown result. File identity does not verify mapped memory, GPU completion or performance. `game-processes.json` also records the game's `GFG_FRAME_FUSION` launch value. `summary.txt` reports observed work and calls out older recordings that contain only an enabled UI setting. Repeated counter snapshots are never added together as a session total.
-
-For a useful device comparison, record two fresh game launches with Fusion off/on in the same scene and with matching resolution, scaling, FG ratio and TDP. Keep Frame OS off for this comparison because its adaptive cadence and boost can change delivery and watts independently. Confirm the on-run's native direct path and mapped engine identity before attributing a difference to Fusion. Compare sustained frame times, delivery misses, measured discharge and visible image quality; repeat the pair. A different scene, changed cap or unobserved direct path is inconclusive. Fusion stays experimental and defaults off until device evidence supports it.
+For a useful device comparison, record fresh on/off launches in the same scene with matching resolution, scaling, FG ratio and TDP. Disable Boost/Act for the comparison so adaptive cadence and power do not confound Fusion. Compare delivered frames, misses, frame times, discharge and visible quality, then repeat. The export now preserves segments across a launch rotation and flags missing/truncated segments explicitly.
 
 ## Native implementation
 
-### Native-resolution input (2.2.0 preview)
+### Native-resolution input (stable 2.1.0)
 
 Some games ignore a requested low render resolution and submit 1280×800 into a 1280×800 presentation surface. These games cannot exercise Core's reconstruction shortcut. Native Fusion instead retains BGRA8 bytes in the two private source images and imports matching sampled BGRA8 images into the backend device. Vulkan sampling produces the same logical RGBA values; model and output encoding remain SDR8/RGBA. RGBA8 also uses the raw transfer path but has no channel conversion to avoid. The native layout is explicitly separate from model colour encoding.
 
@@ -46,7 +40,7 @@ Native-source checks compare source bytes/alpha and logical sampler output again
 
 The release builder replaces only verified native x86_64 renderer/CLI payloads in a checksum-verified archive, preserves the original 32-bit and Flatpak paths, records source and payload identities, and validates the final Decky ZIP. The package uses the existing local `bundled_renderer` contract; Decky does not fetch a modified payload from an upstream URL.
 
-Steam Deck LCD/OLED, RADV, real LSFG execution, Gamescope WSI presentation, long sessions, suspend/resume and whole-device energy require subsequent device evidence. Fusion should remain experimental until that evidence exists. In particular, a smaller copy count does not by itself establish an overall speedup: negotiated usage and direct reads can change driver costs.
+Steam Deck LCD/OLED, RADV, real LSFG execution, Gamescope WSI presentation, long sessions, suspend/resume and whole-device energy require subsequent device evidence. Stable packaging does not qualify unmeasured hardware performance. In particular, a smaller copy count does not by itself establish an overall speedup: negotiated usage and direct reads can change driver costs.
 
 ## Further Frame Fusion
 

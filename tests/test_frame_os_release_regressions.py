@@ -34,7 +34,9 @@ class InputRegressionTests(unittest.TestCase):
         state = InputState()
         state.event(10.0, EV_ABS, ABS_RX, 30000)
         state.event(11.0, STATUS_TYPE, 0, 0)
-        self.assertEqual(state.snapshot(12.0), {"camera": 0.0, "action": 0.0, "idle_s": float("inf"), "idle_verified": False})
+        self.assertEqual(state.snapshot(12.0), {"camera": 0.0, "action": 0.0, "idle_s": float("inf"), "idle_verified": False,
+                           "right_stick_touch": None, "touch_signal_fresh": False, "touch_generation": 0,
+                           "gyro_dps": None, "right_stick_deflection": 0.0})
 
     def test_eof_removes_owned_fd_and_partial_record(self):
         read_fd, write_fd = os.pipe()

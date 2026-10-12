@@ -18,11 +18,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
-from typing import Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
+from .input_sensor import STICK_DEADZONE
 
 BOOST_CAMERA = 0.5          # right-stick intensity that makes real frames matter
 BOOST_ACTION = 0.5          # ~2 presses/s
 BOOST_HOLD_S = 1.5          # keep a boost this long after its last trigger (no flicker)
+BOOST_MAX_BURST_S = 1.5     # hard limit, even under continuous input
+BOOST_RECOVERY_S = 0.5      # return to the calm cadence before another burst
+BOOST_REARM_S = 0.15        # camera/action must become quiet before a new onset
 SCENE_BOOST_S = 1.0
 REST_IDLE_S = 20.0          # no input this long: pause menu, cutscene, AFK
 BOOST_PROOF_S = 3.0         # a boost that has not raised the measured real cadence by then ...
@@ -34,6 +38,10 @@ WAKE_IDLE_S = 0.2
 ONSET_CAMERA = 0.25
 ONSET_RATE = 2.0
 HISTORY_KEEP = 200
+TOUCH_PREBOOST_S = 0.5
+TOUCH_RELEASE_S = 0.2
+TOUCH_REARM_S = 0.15
+TOUCH_GYRO_DPS = 15.0
 
 
 @dataclass
@@ -126,24 +134,85 @@ class InjectionPolicy:
     rest_allowed: bool = True
     _cam_prev: Optional[float] = None
     _cam_prev_t: Optional[float] = None
+    touch_boost_enabled: bool = False
+    _touch_seen: Optional[int] = None
+    _touch_until: float = -1e9
+    _touch_rearm_at: float = -1e9
+    _touch_contact: bool = False
+    touch_requests: int = 0
+    touch_intent: bool = False
+    _burst_started: Optional[float] = None
+    _burst_recovery_until: float = -1e9
+    _input_armed: bool = True
+    _quiet_since: Optional[float] = None
+    _touch_motion_armed: bool = False
+
+    def cancel_boost(self) -> None:
+        """A scope exit cannot leave any camera, scene or contact contribution alive."""
+        self._boost_until = self._touch_until = -1e9
+        self._burst_started = None
+        self._boost_since = None
+        self._touch_contact = self.touch_intent = False
+        self._touch_motion_armed = False
+        self._input_armed = False
+        self._quiet_since = None
+        self.level = "calm"
+
+    def configure_touch_boost(self, enabled: bool) -> None:
+        if self.touch_boost_enabled != enabled:
+            self._touch_until = -1e9
+            self._touch_contact = self.touch_intent = False
+        self.touch_boost_enabled = enabled
+
+    def _touch_trigger(self, now: float, inp: Dict[str, Any], focused: Optional[bool]) -> Optional[str]:
+        contact = inp.get("right_stick_touch") if inp.get("touch_signal_fresh") is True else None
+        generation = inp.get("touch_generation")
+        edge = type(generation) is int and generation >= 0 and generation != self._touch_seen
+        if edge:
+            self._touch_seen = generation
+        self.touch_intent = False
+        if not self.touch_boost_enabled or focused is False or contact is None:
+            self._touch_until = -1e9
+            self._touch_contact = False
+            self._touch_motion_armed = False
+            return None
+        reason = "stick-touch"
+        if edge and contact is True and now >= self._touch_rearm_at:
+            self._touch_until = now + TOUCH_PREBOOST_S
+            self._touch_rearm_at = now + TOUCH_REARM_S
+            self.touch_requests += 1
+            self._touch_motion_armed = now >= self._burst_recovery_until
+        gyro, stick = inp.get("gyro_dps"), inp.get("right_stick_deflection")
+        moving = (type(gyro) in (int, float) and math.isfinite(gyro) and gyro >= TOUCH_GYRO_DPS) or (
+            type(stick) in (int, float) and math.isfinite(stick) and stick > STICK_DEADZONE)
+        if contact is True and moving and self._touch_motion_armed:
+            self._touch_until = max(self._touch_until, now + TOUCH_RELEASE_S)
+            reason = "stick-touch-motion"
+        elif contact is False and self._touch_contact:
+            self._touch_until = min(self._touch_until, now + TOUCH_RELEASE_S)
+        self._touch_contact = contact is True
+        self.touch_intent = now < self._touch_until
+        return reason if self.touch_intent else None
 
     def _note(self, entry: str) -> None:
         self.history.append(entry)
         del self.history[:-HISTORY_KEEP]       # a whole session of camera-onset boosts stays bounded
 
-    def note_delivered(self, now: float, real_fps: Optional[float]) -> None:
+    def note_delivered(self, now: float, real_fps: Optional[float], *, short_window: bool = False,
+                       exposure_s: Optional[float] = None) -> None:
         """Measured real cadence while acting.  A boost the GPU cannot deliver is a waste of the
         energy bank: stop boosting for a while instead of paying watts for nothing."""
         dt = 0.0 if self._delivery_at is None else max(0.0, min(0.2, now - self._delivery_at))
         self._delivery_at = now
-        if self.level != "boost":
+        if self.level != "boost" and not short_window:
             self._boost_since = None
             return
         if (isinstance(real_fps, bool) or not isinstance(real_fps, (int, float))
                 or not math.isfinite(real_fps)):
             self._boost_since = None
             return  # unavailable cadence is not evidence of failed delivery
-        if real_fps is not None and real_fps >= 0.9 * self.boost_real_hz:
+        delivered_floor = self.calm_real_hz + max(1.0,self.calm_real_hz*0.05) if short_window else 0.9*self.boost_real_hz
+        if real_fps is not None and real_fps >= delivered_floor:
             self._boost_since = None          # delivered
             self._boost_missing_s = 0.0
             self._last_boost_miss_at = None
@@ -151,14 +220,20 @@ class InjectionPolicy:
         if self._last_boost_miss_at is not None and now - self._last_boost_miss_at > BOOST_BACKOFF_S:
             self._boost_missing_s = 0.0
         self._last_boost_miss_at = now
-        if self._boost_since is None:
+        if short_window:
+            # The caller supplies a fresh generation-specific window clipped to the pulse.
+            # Count its final window too, even when this tick has just returned to calm.
+            exposure = dt if exposure_s is None else max(0.0,min(0.5,float(exposure_s)))
+            self._boost_missing_s += exposure
+            self._boost_since = None
+        elif self._boost_since is None:
             self._boost_since = now
-        elif now - self._boost_since >= 1.3:
+        elif not short_window and now - self._boost_since >= 1.3:
             # Ignore the pacer's interval-ring transition, then accumulate
             # unsuccessful burst exposure too. Short camera swings must not
             # reset the proof timer forever (2.0.0 field log: boost stayed at 30).
             self._boost_missing_s += dt
-        if (now - self._boost_since >= BOOST_PROOF_S
+        if (not short_window and self._boost_since is not None and now - self._boost_since >= BOOST_PROOF_S
                 or self._boost_missing_s >= BOOST_PROOF_S):
             self._boost_blocked_until = now + BOOST_BACKOFF_S
             self._boost_since = None
@@ -179,7 +254,7 @@ class InjectionPolicy:
         rest = self.output_hz / deepest
         return rest if 20.0 <= rest < self.calm_real_hz - 1e-6 else self.calm_real_hz
 
-    def tick(self, now: float, inp: Dict[str, float], scene_change: bool = False,
+    def tick(self, now: float, inp: Dict[str, Any], scene_change: bool = False,
              draw_w: Optional[float] = None, focused: Optional[bool] = None) -> Decision:
         camera, action = float(inp.get("camera", 0.0)), float(inp.get("action", 0.0))
         idle = float(inp.get("idle_s", float("inf")))
@@ -194,11 +269,32 @@ class InjectionPolicy:
             trigger = "camera-onset"
         elif action >= BOOST_ACTION:
             trigger = "action"
-        if trigger:
+        if not trigger:
+            if self._quiet_since is None:
+                self._quiet_since = now
+            if now - self._quiet_since >= BOOST_REARM_S:
+                self._input_armed = True
+        else:
+            self._quiet_since = None
+        if trigger and self._input_armed and now >= self._burst_recovery_until:
             self._boost_until = max(self._boost_until, now + BOOST_HOLD_S)
-        if scene_change:
+            self._input_armed = False
+        if scene_change and now >= self._burst_recovery_until:
             self._boost_until = max(self._boost_until, now + SCENE_BOOST_S)
             trigger = trigger or "scene-change"
+        touch_trigger = self._touch_trigger(now, inp, focused)
+        trigger = trigger or touch_trigger
+        boost_until = max(self._boost_until, self._touch_until)
+
+        if focused is False:
+            self.cancel_boost()
+            boost_until = -1e9
+        if self._burst_started is not None and now - self._burst_started >= BOOST_MAX_BURST_S:
+            self._boost_until = self._touch_until = -1e9
+            self._burst_recovery_until = now + BOOST_RECOVERY_S
+            self._burst_started = None
+            self._touch_motion_armed = False
+            boost_until = -1e9
 
         if focused is False and self.rest_allowed:
             level, reason = "rest", "steam-ui"      # Steam's menu covers the game: rest at once
@@ -206,11 +302,13 @@ class InjectionPolicy:
             # Gamepad silence cannot prove the player is idle in a keyboard/mouse game.
             # Require a future sensor with whole-session input coverage, not raw evdev silence.
             level, reason = "rest", "idle-verified"
-        elif now < self._boost_until and not self.boost_allowed:
+        elif now < self._burst_recovery_until:
+            level, reason = "calm", "boost-recovery"
+        elif now < boost_until and not self.boost_allowed:
             level, reason = "calm", "boost-off-for-game"     # measured useless or harmful here
-        elif now < self._boost_until and now < self._boost_blocked_until:
+        elif now < boost_until and now < self._boost_blocked_until:
             level, reason = "calm", "boost-ineffective"
-        elif now < self._boost_until and self.boost_real_hz > self.calm_real_hz:
+        elif now < boost_until and self.boost_real_hz > self.calm_real_hz:
             affordable = self.broker is None or self.broker.can_boost() or self.level == "boost"
             level, reason = ("boost", trigger or self._reason) if affordable else ("calm", "energy-bank-empty")
         else:
@@ -221,6 +319,14 @@ class InjectionPolicy:
                 level, reason = "calm", "energy-bank-empty"
         if level != self.level:
             self._note(f"{now:.1f}:{self.level}->{level}:{reason}")
+        if level == "boost" and self.level != "boost":
+            self._burst_started = now
+        elif level != "boost" and self.level == "boost":
+            self._boost_since = None
+            self._burst_recovery_until = max(self._burst_recovery_until, now + BOOST_RECOVERY_S)
+            self._burst_started = None
+            self._boost_until = self._touch_until = -1e9
+            self._touch_motion_armed = False
         self.level, self._reason = level, reason
         real = {"boost": self.boost_real_hz, "rest": self.rest_real_hz}.get(level, self.calm_real_hz)
         tdp = self.broker.tdp_for(level, cadence_drop=self.rest_real_hz < self.calm_real_hz) \
