@@ -1,8 +1,6 @@
 <div align="center">
 
-**Continuous Boost** is an optional Autopilot switch, off by default. It holds the higher real-frame cadence without the 1.5-second pulse limit and can use more power. Menus, heat, ineffective delivery and power-search guards still pause it.
-
-**English** · [Р СѓСЃСЃРєРёР№](README.ru.md)
+**English** · [Русский](README.ru.md)
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="144">
 
@@ -193,6 +191,8 @@ Stable 2.1.1 includes both [Fusion Core and Native Fusion](docs/FRAME_FUSION.md)
 Fusion can avoid a compatible scaler-input transfer or the native BGRA conversion. Steam Deck field logs confirm the native path executes; they do not establish an overall FPS, energy or input-latency gain. Incompatible formats and resource failures retain the existing path. Leaving Autopilot closes the shortcuts immediately; private history replacement follows the renderer's bounded transition.
 
 With Continuous Boost off, Short Boost requests a **500 ms pulse on right-stick touch**; camera/action input and contact with motion can request up to **1.5 seconds**, then return to calm. Continuous input cannot turn it into a permanent power increase. A recovery gap, energy bank, compatible executor, temperature/output guards and fresh short cadence observations remain in force. A request or policy acknowledgment is not delivered FPS.
+
+**Continuous Boost** is an optional Autopilot switch, off by default. It holds the higher real-frame cadence without the 1.5-second pulse limit and can use more power. Menus, heat, ineffective delivery and power-search guards still pause it.
 
 The built-in profile is shown as **stable** in Profiles. Its existing persisted identifier is retained so saved profiles and Steam launch commands continue to work. Users moving from the 2.1.1/2.2.0 previews should install the stable ZIP explicitly; the stable version number is deliberately 2.1.1.
 
