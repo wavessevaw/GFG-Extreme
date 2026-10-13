@@ -45,8 +45,10 @@ class BoundaryTests(unittest.TestCase):
             self.assertFalse(allowed_target(target(url=url)))
         self.assertFalse(allowed_target(target(type='service_worker')))
         self.assertFalse(allowed_target(target('Steam', url='https://steamloopback.host/library')))
-        self.assertFalse(allowed_target(target('Steam', url='https://steamloopback.host/index.html')))
-        self.assertFalse(allowed_target(target('Steam', url='https://steamloopback.host/routes/library')))
+        for title in ('Steam', 'SharedJSContext', 'Steam Shared Context presented by Valve\u2122'):
+            self.assertTrue(allowed_target(target(title, url='https://steamloopback.host/index.html')))
+            self.assertTrue(allowed_target(target(title, url='https://steamloopback.host/routes/library')))
+        self.assertFalse(allowed_target(target('SteamLibraryWindow', url='https://steamloopback.host/index.html')))
         self.assertTrue(allowed_target(target('SP', url='https://steamloopback.host/index.html')))
 
     def test_debugging_socket_cannot_redirect_to_remote_or_other_local_services(self):
@@ -126,6 +128,17 @@ class ShellTests(unittest.IsolatedAsyncioTestCase):
         for value in ('true', 1, None, {}):
             self.assertFalse((await self.shell.set_enabled(value))['success'])
         self.assertFalse(self.file.exists())
+
+    async def test_empty_and_unrecognized_windows_explain_waiting(self):
+        self.steam.targets = []
+        result = await self.shell.set_enabled(True)
+        self.assertIn('No Steam Gaming Mode window', result['error'])
+        self.steam.targets = [target()]
+        async def unsupported(tab, script):
+            return {'applied': False, 'reason': 'waiting-for-supported-surface'}
+        self.steam.evaluate = unsupported
+        await self.shell.sync()
+        self.assertIn('waiting-for-supported-surface', self.shell.status()['error'])
 
     async def test_malformed_saved_preference_keeps_standard_appearance(self):
         self.file.write_text('{bad')

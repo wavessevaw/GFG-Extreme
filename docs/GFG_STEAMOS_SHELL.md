@@ -19,3 +19,10 @@ No configured Steam Deck SSH connection was available on the development host. P
 ## Installation
 
 Download the `GFG-Extreme-2.2.0-shell-candidate` artifact from the candidate workflow, extract it, and install the inner `GFG-Extreme-v2_2_0.zip` through Decky's install-from-ZIP option. `SHA256SUMS.txt` identifies that ZIP. This is a candidate, not a replacement for stable 2.1.1.
+
+
+## Connection correction — shell-fix-2
+
+The initial candidate could stay in Waiting for Steam Gaming Mode because its target-name filter omitted SharedJSContext and other names supported by Decky. Discovery now uses the local browser CDP endpoint and attaches directly to matching targets, with a legacy per-page fallback. Both transports restrict host, port and target origin. Runtime DOM checks still decide whether a window contains a supported Steam surface.
+
+Waiting now distinguishes no matching window, a connected but unsupported document, and connection failure. State changes are recorded in the plugin log. The appearance page identifies this build as `shell-fix-2`. Real HTTP/WebSocket integration tests cover browser target discovery, flattened-session attachment, per-page fallback and rejection of a remote debugging URL. Hardware validation remains pending; this correction does not assert the user's exact failure has been confirmed from device logs.

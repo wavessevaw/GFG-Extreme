@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -19,6 +20,8 @@ from .package_paths import PLUGIN_ROOT
 ASSETS = PLUGIN_ROOT / 'themes' / 'gfg-shell'
 POLL_S = 3.0
 LEASE_MS = 15000
+SHARED_TITLES = ('SP', 'Steam', 'SharedJSContext', 'Steam Shared Context presented by Valve\u2122')
+LOG = logging.getLogger(__name__)
 
 
 def allowed_target(tab: dict) -> bool:
@@ -31,54 +34,97 @@ def allowed_target(tab: dict) -> bool:
     path = unquote(url.path)
     title = tab.get('title', '')
     return ('Valve Steam Gamepad' in path
+            or ((path == '/index.html' or path.startswith('/routes/')) and title in SHARED_TITLES)
             or title in ('SP', 'Steam Big Picture Mode')
             or title.startswith(('QuickAccess', 'MainMenu', 'SteamKeyboard')))
 
 
-def allowed_socket(url: str) -> bool:
+def allowed_socket(url: str, *, browser=False) -> bool:
     try:
         p = urlparse(url)
         return (p.scheme == 'ws' and p.hostname in ('localhost', '127.0.0.1', '::1')
-                and p.port == 8080 and p.path.startswith('/devtools/page/')
+                and p.port == 8080 and p.path.startswith('/devtools/browser/' if browser else '/devtools/page/')
                 and p.username is None and p.password is None)
     except ValueError:
         return False
 
 
 class SteamTransport:
+    def __init__(self):
+        self.target_count = 0
+
+    async def _command(self, ws, ident, method, params, session_id=None):
+        import aiohttp
+        request = {'id': ident, 'method': method, 'params': params}
+        if session_id:
+            request['sessionId'] = session_id
+        await ws.send_json(request)
+        async for message in ws:
+            if message.type != aiohttp.WSMsgType.TEXT:
+                continue
+            value = json.loads(message.data)
+            if value.get('id') != ident:
+                continue
+            if value.get('error'):
+                raise OSError('Steam debugging command failed: ' + method)
+            return value.get('result', {})
+        raise OSError('Steam UI connection closed')
+
     async def tabs(self) -> list[dict]:
         import aiohttp
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3)) as session:
+            # Browser targets include CEF windows not exposed by the legacy /json list.
+            try:
+                async with session.get('http://127.0.0.1:8080/json/version', allow_redirects=False) as response:
+                    if response.status != 200:
+                        raise OSError('Steam browser endpoint unavailable')
+                    info = await response.json(content_type=None)
+                socket = info.get('webSocketDebuggerUrl', '')
+                if not allowed_socket(socket, browser=True):
+                    raise ValueError('Not a local Steam browser socket')
+                async with session.ws_connect(socket) as ws:
+                    reply = await self._command(ws, 1, 'Target.getTargets', {})
+                data = reply.get('targetInfos')
+                if not isinstance(data, list) or len(data) > 128:
+                    raise ValueError('Unexpected Steam UI target list')
+                self.target_count = len(data)
+                return [dict(t, _browser_socket=socket) for t in data
+                        if isinstance(t, dict) and allowed_target(t)]
+            except (OSError, ValueError, aiohttp.ClientError):
+                pass  # Older CEF builds still expose per-page debugging sockets.
             async with session.get('http://127.0.0.1:8080/json', allow_redirects=False) as response:
                 if response.status != 200:
                     raise OSError('Steam UI endpoint unavailable')
                 data = await response.json(content_type=None)
                 if not isinstance(data, list) or len(data) > 128:
                     raise ValueError('Unexpected Steam UI target list')
+                self.target_count = len(data)
                 return [t for t in data if isinstance(t, dict) and allowed_target(t)]
 
     async def evaluate(self, tab: dict, script: str) -> dict:
         import aiohttp
-        socket = tab.get('webSocketDebuggerUrl', '')
-        if not allowed_target(tab) or not allowed_socket(socket):
+        browser = bool(tab.get('_browser_socket'))
+        socket = tab.get('_browser_socket') if browser else tab.get('webSocketDebuggerUrl', '')
+        if not allowed_target(tab) or not allowed_socket(socket, browser=browser):
             raise ValueError('Not a local Steam Gaming Mode target')
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3)) as session:
             async with session.ws_connect(socket) as ws:
-                await ws.send_json({'id': 1, 'method': 'Runtime.evaluate', 'params': {
-                    'expression': script, 'returnByValue': True, 'awaitPromise': False}})
-                async for message in ws:
-                    if message.type != aiohttp.WSMsgType.TEXT:
-                        continue
-                    value = json.loads(message.data)
-                    if value.get('id') != 1:
-                        continue
-                    result = value.get('result', {})
-                    if value.get('error') or result.get('exceptionDetails'):
-                        raise OSError('Steam rejected the theme operation')
-                    answer = result.get('result', {}).get('value')
-                    if not isinstance(answer, dict):
-                        raise OSError('Steam theme did not acknowledge the operation')
-                    return answer
+                session_id = None
+                if browser:
+                    attached = await self._command(ws, 1, 'Target.attachToTarget',
+                        {'targetId': tab['targetId'], 'flatten': True})
+                    session_id = attached.get('sessionId')
+                    if not session_id:
+                        raise OSError('Steam did not attach its UI window')
+                result = await self._command(ws, 2, 'Runtime.evaluate', {
+                    'expression': script, 'returnByValue': True, 'awaitPromise': False,
+                    'userGesture': True}, session_id)
+                if result.get('exceptionDetails'):
+                    raise OSError('Steam rejected the theme operation')
+                answer = result.get('result', {}).get('value')
+                if not isinstance(answer, dict):
+                    raise OSError('Steam theme did not acknowledge the operation')
+                return answer
         raise OSError('Steam UI connection closed')
 
 
@@ -95,6 +141,7 @@ class SteamShell:
         self._task = None
         self._stopping = False
         self._dirty = True
+        self._last_diagnostic = None
         self._load()
 
     def _load(self):
@@ -133,7 +180,8 @@ class SteamShell:
                 'engine': 'gfg-shell', 'requires_css_loader': False,
                 'targets': list(self._targets), 'error': self._error,
                 'coverage': sorted({s for t in active for s in t.get('surfaces', [])}),
-                'lease_seconds': LEASE_MS // 1000}
+                'lease_seconds': LEASE_MS // 1000, 'build': 'shell-fix-2',
+                'discovered_targets': getattr(self.transport, 'target_count', None)}
 
     async def set_enabled(self, enabled: bool) -> dict:
         if type(enabled) is not bool:
@@ -169,12 +217,24 @@ class SteamShell:
                     return {'title': tab.get('title', 'Steam'), 'applied': False,
                             'error': 'Steam UI target is not responding'}
             self._targets = await asyncio.gather(*(apply(t) for t in tabs[:16]))
-            self._error = ('Some Steam UI windows did not respond; their theme lease will expire.'
-                           if any(t.get('error') for t in self._targets) else None)
+            self._error = None
+            if enabled:
+                if not tabs:
+                    self._error = 'No Steam Gaming Mode window detected. Open the Steam home screen.'
+                elif any(t.get('error') for t in self._targets):
+                    self._error = 'Steam UI connection failed for one or more windows.'
+                elif not any(t.get('applied') for t in self._targets):
+                    reasons = sorted({str(t.get('reason', 'unknown')) for t in self._targets})
+                    self._error = 'Steam connected, but appearance was not applied: ' + ', '.join(reasons)
             self._dirty = False
-        except Exception:
+        except Exception as error:
             self._targets = []
-            self._error = 'Steam Gaming Mode is unavailable. GFG will reconnect automatically.' if enabled else None
+            self._error = ('Steam connection unavailable (' + type(error).__name__ +
+                           '). GFG will reconnect automatically.') if enabled else None
+        diagnostic = (enabled, self._error, tuple((t.get('title'), t.get('applied'), t.get('reason')) for t in self._targets))
+        if diagnostic != self._last_diagnostic:
+            LOG.info('GFG SteamOS shell-fix-2: enabled=%s targets=%s error=%s', enabled, self._targets, self._error)
+            self._last_diagnostic = diagnostic
 
     async def start(self):
         if self._task is None or self._task.done():
