@@ -155,7 +155,7 @@ class ShellTests(unittest.IsolatedAsyncioTestCase):
     async def test_empty_and_unrecognized_windows_explain_waiting(self):
         self.steam.targets = []
         result = await self.shell.set_enabled(True)
-        self.assertIn('No Steam Gaming Mode window', result['error'])
+        self.assertIn('No supported Steam Gaming Mode window', result['error'])
         self.steam.targets = [target()]
         async def unsupported(tab, script):
             return {'applied': False, 'reason': 'waiting-for-supported-surface'}
