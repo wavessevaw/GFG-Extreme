@@ -1704,7 +1704,7 @@ function ThemePage({ back }) {
     h("div", { className: "list" }, h(Row, { icon: "stop", title: "Restore Steam appearance", onClick: busy ? void 0 : () => change(false) })),
     msg ? h(Note, null, msg) : null,
     status && status.error ? h(Note, null, status.error) : null,
-    h(Note, { quiet: true }, "Appearance build: shell-fix-4"),
+    h(Note, { quiet: true }, "Appearance build: shell-fix-5"),
     h(Note, { quiet: true }, "Preview: Steam layout and gamepad navigation stay native. Unloading GFG restores Steam; an interrupted connection restores it within 15 seconds.")
   );
 }
