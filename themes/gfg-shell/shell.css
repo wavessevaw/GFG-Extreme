@@ -37,6 +37,10 @@
 }
 
 /* Shared canvas and type. Do not paint over game art or external store pages. */
+html[data-gfg-shell][data-gfg-shell-page] body {
+  background-color: var(--gfg-shell-bg) !important;
+  color: var(--gfg-shell-text);
+}
 html[data-gfg-shell] :is(
   [class*="gamepadui_BasicHome_"], [class*="gamepadhome_TabbedContent_"],
   [class*="gamepadlibrary_GamepadLibrary_"], [class*="allcollections_Collection_"],
@@ -146,6 +150,8 @@ html[data-gfg-shell] [class*="gamepadpagedsettings_PagedSettingsDialog_PageListC
 }
 html[data-gfg-shell] [class*="gamepadpagedsettings_PageListItem_"] {
   border-radius: 12px;
+  background: transparent !important;
+  border-color: transparent;
   color: var(--gfg-shell-muted);
 }
 html[data-gfg-shell] [class*="gamepadpagedsettings_PageListItem_"]:is(.gpfocus,[class*="Selected"]) {
@@ -154,6 +160,7 @@ html[data-gfg-shell] [class*="gamepadpagedsettings_PageListItem_"]:is(.gpfocus,[
 }
 html[data-gfg-shell] [class*="gamepaddialog_Field_"] {
   border-radius: 12px;
+  background-color: var(--gfg-shell-panel) !important;
   border-color: var(--gfg-shell-line);
   color: var(--gfg-shell-text);
 }

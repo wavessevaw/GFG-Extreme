@@ -9,6 +9,7 @@ function applyGfgShell(config) {
     if (current && current.timer) clearTimeout(current.timer);
     document.getElementById(ID)?.remove();
     root?.removeAttribute("data-gfg-shell");
+    root?.removeAttribute("data-gfg-shell-page");
     delete window[KEY];
   };
   if (!config.enabled) { remove(); return { applied: false, restored: true }; }
@@ -34,6 +35,8 @@ function applyGfgShell(config) {
   if (!style) { style = document.createElement("style"); style.id = ID; document.head.appendChild(style); }
   if (style.textContent !== config.css) style.textContent = config.css;
   root.setAttribute("data-gfg-shell", "v1");
+  // Only full-page surfaces own the canvas; overlay windows stay transparent.
+  root.toggleAttribute("data-gfg-shell-page", surfaces.some(s => ["home", "library", "game", "settings", "downloads"].includes(s)));
   if (previous?.timer) clearTimeout(previous.timer);
   const state = { revision: config.revision, timer: null };
   window[KEY] = state;

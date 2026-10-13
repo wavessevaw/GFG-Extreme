@@ -35,6 +35,7 @@ try {
     await page.goto("https://steamloopback.host/Valve%20Steam%20Gamepad/default");
     const apply = enabled => page.evaluate(`(${runtime})(${JSON.stringify({ enabled, css, leaseMs: 15000, revision: "test" })})`);
     const before = await page.locator("button").count();
+    const originalCanvas = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     assert.ok((await apply(true)).surfaces.includes(surface), surface);
     assert.equal(await page.locator("button").count(), before, "native controls preserved");
     assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--gfg-shell-red").trim()), "#ff1608");
@@ -47,6 +48,8 @@ try {
     await apply(false);
     assert.equal(await page.locator("#gfg-steamos-shell-v1").count(), 0);
     assert.equal(await page.evaluate(() => document.documentElement.hasAttribute("data-gfg-shell")), false);
+    assert.equal(await page.evaluate(() => document.documentElement.hasAttribute("data-gfg-shell-page")), false);
+    assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), originalCanvas);
     assert.equal(await page.locator("button").count(), before);
     // A reload destroys the old lease; reapplying reattaches to the new document.
     await page.reload(); await apply(true);
