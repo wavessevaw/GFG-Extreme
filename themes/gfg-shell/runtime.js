@@ -43,16 +43,23 @@ function applyGfgShell(config) {
   // native Big Picture/popup target on the installed Steam version's hashes.
   // The backend has already whitelisted its CDP title + internal URL flags;
   // the runtime independently verifies the document shape above.
-  const nativeFallback = !surfaces.length && isNativeWindow && dom_nodes >= 40;
+  // A CDP target can be advertised as about:blank, while its running
+  // document has navigated to steamloopback.host. The backend already checks
+  // target title + URL, so both live Steam document forms can be styled.
+  const verifiedVisualRole = config.targetRole === "main" || config.targetRole === "overlay";
+  const nativeFallback = !surfaces.length && verifiedVisualRole &&
+    (isNativeWindow || isShared) && dom_nodes >= 40;
   // A shared-context target is only eligible when a Steam UI marker is present.
   // A bare SharedJSContext document is not an independent visible UI surface.
   const sharedFallback = !surfaces.length && isShared && config.targetRole === "shared"
     && dom_nodes >= 40 && !!document.querySelector(
       ".BasicUI, .gpfocus, .DialogButton, [class*='gamepad'], [class*='quickaccess'], [class*='mainmenu']");
   if (!surfaces.length && !nativeFallback && !sharedFallback) {
-    remove(); return { applied: false, reason: "waiting-for-supported-surface", surfaces, dom_nodes };
+    remove(); return { applied: false, reason: "waiting-for-supported-surface", surfaces, dom_nodes,
+      documentKind: isShared ? "steam-loopback" : isNativeWindow ? "native-about-blank" : "other" };
   }
-  const mode = nativeFallback ? "native-target" : sharedFallback ? "shared-steam-marker" : "module-probe";
+  const mode = nativeFallback ? (isShared ? "native-loopback-target" : "native-target") :
+    sharedFallback ? "shared-steam-marker" : "module-probe";
   if (nativeFallback) surfaces.push(config.targetRole === "main" ? "steam-main" : "steam-overlay");
   if (sharedFallback) surfaces.push("steam-shared");
   let style = document.getElementById(ID);
@@ -60,14 +67,15 @@ function applyGfgShell(config) {
   if (!style) { style = document.createElement("style"); style.id = ID; document.head.appendChild(style); }
   if (style.textContent !== config.css) style.textContent = config.css;
   root.setAttribute("data-gfg-shell", "v1");
-  root.setAttribute("data-gfg-shell-role", isNativeWindow ? config.targetRole : "shared");
+  root.setAttribute("data-gfg-shell-role", verifiedVisualRole ? config.targetRole : "shared");
   // Only full-page surfaces own the canvas; overlay windows stay transparent.
-  root.toggleAttribute("data-gfg-shell-page", (isNativeWindow && config.targetRole === "main") ||
+  root.toggleAttribute("data-gfg-shell-page", (verifiedVisualRole && config.targetRole === "main") ||
     surfaces.some(s => ["home", "library", "game", "settings", "downloads"].includes(s)));
   if (previous?.timer) clearTimeout(previous.timer);
   const state = { revision: config.revision, timer: null };
   window[KEY] = state;
   state.timer = setTimeout(() => { if (window[KEY] === state) remove(); },
     Math.max(1000, Math.min(30000, Number(config.leaseMs) || 15000)));
-  return { applied: true, revision: config.revision, surfaces, mode, dom_nodes };
+  return { applied: true, revision: config.revision, surfaces, mode, dom_nodes,
+    documentKind: isShared ? "steam-loopback" : "native-about-blank" };
 }
