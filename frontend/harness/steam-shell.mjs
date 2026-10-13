@@ -107,8 +107,10 @@ try {
   await generic.goto("about:blank?createflags=0");
   await generic.setContent("<html><head></head><body><div>Loading</div></body></html>");
   assert.equal((await generic.evaluate(`(${runtime})(${JSON.stringify(genericConfig)})`)).applied, false);
+  await generic.route("https://steamloopback.host/**", route => route.fulfill({
+    contentType: "text/html", body: fixture(genericBody.replace('DialogButton gpfocus', 'unknownbutton'))
+  }));
   await generic.goto("https://steamloopback.host/");
-  await generic.setContent(fixture(genericBody.replace('DialogButton gpfocus', 'unknownbutton')));
   assert.equal((await generic.evaluate(`(${runtime})(${JSON.stringify({ ...genericConfig, targetRole: "shared" })})`)).applied, false);
   await generic.close();
 
