@@ -987,7 +987,7 @@ function ThemePage({ back }) {
     } catch (e) { if (mounted.current) setMsg(String(e.message || e)); }
     finally { changing.current = false; if (mounted.current) setBusy(false); }
   };
-  const state = status && status.active ? "GFG CSS injected into Steam" : status && status.enabled ? "Waiting for Steam Gaming Mode" : "Standard Steam appearance";
+  const state = status && status.active ? "GFG appearance active" : status && status.enabled ? "Waiting for Steam Gaming Mode" : "Standard Steam appearance";
   return h(Page, { title: "GFG theme", onBack: back },
     h(Note, { quiet: true }, "Black surfaces, red accents and clear gamepad focus. Built into GFG — no CSS Loader required."),
     h("div", { className: "card" }, h("b", null, state),

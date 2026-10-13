@@ -1676,7 +1676,7 @@ function ThemePage({ back }) {
       if (mounted.current) setBusy(false);
     }
   };
-  const state = status && status.active ? "GFG CSS injected into Steam" : status && status.enabled ? "Waiting for Steam Gaming Mode" : "Standard Steam appearance";
+  const state = status && status.active ? "GFG appearance active" : status && status.enabled ? "Waiting for Steam Gaming Mode" : "Standard Steam appearance";
   return h(
     Page,
     { title: "GFG theme", onBack: back },
