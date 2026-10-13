@@ -1,0 +1,35 @@
+/* Selector families observed in upstream Colored Toggles and Material You.
+ * Preserve Steam's own toggle state and slider fill calculations. */
+[class*="gamepaddialog_ToggleRail_"] { background: var(--gfg-raised) !important; }
+[class*="gamepaddialog_ToggleRail_"]::before,
+[class*="gamepadslider_SliderTrack_"]::before {
+  background: var(--gfg-accent) !important;
+}
+[class*="gamepadslider_SliderTrack_"] {
+  background: var(--gfg-raised) !important;
+  border-radius: 999px !important;
+}
+[class*="gamepadslider_SliderHandle_"] {
+  background: var(--gfg-fg) !important;
+  border-radius: 50% !important;
+}
+[class*="gamepaddialog_FieldLabel_"], [class*="gamepaddialog_FieldLabel_"] .DialogLabel {
+  color: var(--gfg-fg) !important;
+}
+[class*="gamepaddialog_FieldDescription_"] { color: var(--gfg-muted) !important; }
+button[class*="gamepaddialog_Button_"], .BasicUI button.DialogButton {
+  background: var(--gfg-raised) !important;
+  color: var(--gfg-fg) !important;
+  border-radius: var(--gfg-radius) !important;
+  border-color: var(--gfg-border) !important;
+}
+.BasicUI button.DialogButton.Primary {
+  background: var(--gfg-accent) !important;
+  color: white !important;
+}
+[class*="gamepaddialog_BasicTextInput_"] {
+  background: var(--gfg-panel) !important;
+  color: var(--gfg-fg) !important;
+  border: 1px solid var(--gfg-border) !important;
+  border-radius: var(--gfg-radius) !important;
+}

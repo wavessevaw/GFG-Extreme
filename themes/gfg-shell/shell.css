@@ -1,0 +1,245 @@
+/* GFG SteamOS: original bundled styling, applied by GFG's own leased runtime.
+ * Keep Steam's DOM, focus tree, virtualized grids and native actions intact.
+ * Every rule is scoped to our removable root marker. No remote fonts/assets.
+ */
+:root[data-gfg-shell="v1"] {
+  --gfg-shell-bg: #09090b;
+  --gfg-shell-panel: #141418;
+  --gfg-shell-raised: #202026;
+  --gfg-shell-line: #303039;
+  --gfg-shell-red: #ff1608;
+  --gfg-shell-text: #f5f5f7;
+  --gfg-shell-muted: #9898a6;
+  --gpSystemLightestGrey: #f5f5f7;
+  --gpSystemLighterGrey: #d3d3dc;
+  --gpSystemLightGrey: #9898a6;
+  --gpSystemGrey: #777784;
+  --gpSystemDarkGrey: #303039;
+  --gpSystemDarkerGrey: #202026;
+  --gpSystemDarkestGrey: #141418;
+  --gpColor-Blue: #ff1608;
+  --gpColor-BlueHi: #ff493e;
+  --gpColor-DustyBlue: #bf241b;
+  --gpColor-ChalkyBlue: #ff766e;
+  --gpBackground-Neutral: #09090b;
+  --gpBackground-LightSofter: #141418;
+  --gpBackground-LightMedium: #202026;
+  --gpBackground-LightHarder: #303039;
+  --gpBackground-DarkSofter: #141418;
+  --gpBackground-DarkMedium: #09090b;
+  --gpBackground-DarkHarder: #050506;
+  --gpBackground-ActiveInput: #202026;
+  --gpBackground-Gradient: linear-gradient(180deg, #141418, #09090b);
+  --gpCornerSmall: 8px;
+  --gpCornerMedium: 12px;
+  --gpCornerLarge: 20px;
+  color-scheme: dark;
+}
+
+/* Shared canvas and type. Do not paint over game art or external store pages. */
+html[data-gfg-shell][data-gfg-shell-page] body {
+  background-color: var(--gfg-shell-bg) !important;
+  color: var(--gfg-shell-text);
+}
+html[data-gfg-shell] :is(
+  [class*="gamepadui_BasicHome_"], [class*="gamepadhome_TabbedContent_"],
+  [class*="gamepadlibrary_GamepadLibrary_"], [class*="allcollections_Collection_"],
+  [class*="gamepadpage_DialogBackground_"], [class*="gamepadsearch_GamepadSearch_"],
+  [class*="gamepadtabbedpage_TabContents_"], [class*="downloads_DownloadsPage_"]
+) { background: var(--gfg-shell-bg) !important; color: var(--gfg-shell-text); }
+html[data-gfg-shell] :is([class*="header_Header_"], [class*="footer_BasicFooter_"]) {
+  background: var(--gfg-shell-bg) !important;
+  color: var(--gfg-shell-text);
+  border-color: var(--gfg-shell-line) !important;
+  box-shadow: none !important;
+}
+html[data-gfg-shell] :is([class*="gamepadtabbedpage_Tab_"], [class*="gamepadhome_Tab_"]) {
+  border-radius: 999px !important;
+  color: var(--gfg-shell-muted);
+}
+html[data-gfg-shell] :is([class*="gamepadtabbedpage_Tab_"], [class*="gamepadhome_Tab_"]):is(
+  [class*="Selected"], [aria-selected="true"], .gpfocus
+) { background: var(--gfg-shell-red) !important; color: white !important; box-shadow: none !important; }
+
+/* Gamepad focus must remain visible. Never remove the focus target or change tabindex. */
+html[data-gfg-shell] .gpfocus:not(input):not(textarea),
+html[data-gfg-shell] :focus-visible {
+  outline: 2px solid var(--gfg-shell-red) !important;
+  outline-offset: 2px;
+  box-shadow: none !important;
+}
+html[data-gfg-shell] :is(button.DialogButton, [class*="gamepaddialog_Button_"]) {
+  border-radius: 12px !important;
+  background: var(--gfg-shell-raised);
+  color: var(--gfg-shell-text);
+  border-color: var(--gfg-shell-line);
+}
+html[data-gfg-shell] :is(button.DialogButton.Primary, [class*="appdetailsplaysection_PlayButton_"]) {
+  background: var(--gfg-shell-red) !important;
+  color: white !important;
+  border-radius: 14px !important;
+  box-shadow: none !important;
+}
+
+/* 01 Home: cinematic featured game, quiet carousel, no blue halo. */
+html[data-gfg-shell] [class*="gamepadhomerecentgames_RecentGamesBackgroundFadeGradient_"] {
+  background: linear-gradient(180deg, transparent 30%, #09090bee 90%, #09090b) !important;
+}
+html[data-gfg-shell] [class*="basicgamecarousel_CarouselCapsuleBackgroundGlow_"] { opacity: 0 !important; }
+html[data-gfg-shell] [class*="appportrait_FeaturedCapsule_"] {
+  border-radius: 20px !important;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+}
+html[data-gfg-shell] [class*="appportrait_FeaturedCapsule_"] img {
+  object-fit: cover;
+  object-position: center;
+}
+
+/* 02 Library: retain Steam's virtualization and gamepad geometry. */
+html[data-gfg-shell] :is([class*="libraryassetimage_Image_"], [class*="appportrait_LibraryItemBox_"]) {
+  border-radius: 14px !important;
+}
+html[data-gfg-shell] [class*="appportrait_LibraryItemBox_"].gpfocus {
+  outline: 3px solid var(--gfg-shell-red) !important;
+  outline-offset: 3px;
+}
+html[data-gfg-shell] :is([class*="gamepadlibrary_Filter_"], [class*="gamepadlibrary_LibraryHeader_"]) {
+  color: var(--gfg-shell-text);
+  border-color: var(--gfg-shell-line);
+}
+
+/* 03 Game: native artwork, native Play and achievement actions. */
+html[data-gfg-shell] [class*="basicappdetailssectionstyler_AppDetailsRoot_"] {
+  background-color: var(--gfg-shell-bg) !important;
+  color: var(--gfg-shell-text);
+}
+html[data-gfg-shell] :is([class*="appdetailssection_AppDetailsSection_"],
+  [class*="appdetailsplaysection_DetailsSection_"], [class*="appdetailsachievementssection_Achievement_"]) {
+  background-color: var(--gfg-shell-panel);
+  border-radius: 16px;
+  border-color: var(--gfg-shell-line);
+}
+
+/* 04 Quick Access and 07 Steam menu: opaque, readable system sheets. */
+html[data-gfg-shell] :is([class*="quickaccessmenu_QuickAccessMenu_"],
+  [class*="quickaccessmenu_Tab_"], [class*="quickaccessmenu_Title_"], [class*="mainmenu_Menu_"]) {
+  background: var(--gfg-shell-panel) !important;
+  color: var(--gfg-shell-text);
+  border-color: var(--gfg-shell-line);
+}
+html[data-gfg-shell] [class*="quickaccessmenu_Menu_"]::before { background: var(--gfg-shell-panel) !important; }
+html[data-gfg-shell] :is([class*="mainmenu_Menu_"], [class*="quickaccessmenu_QuickAccessMenu_"]) {
+  border-radius: 20px 0 0 20px;
+  box-shadow: 0 0 0 1px var(--gfg-shell-line), 0 12px 36px #0008 !important;
+}
+html[data-gfg-shell] [class*="mainmenu_Menu_"] { border-radius: 0 20px 20px 0; }
+html[data-gfg-shell] :is([class*="mainmenu_MenuItem_"], [class*="quickaccessmenu_Tab_"]).gpfocus {
+  border-radius: 12px;
+  background: var(--gfg-shell-red) !important;
+  color: white !important;
+}
+
+/* 05 Settings: calm cards, clear selected navigation and original controls. */
+html[data-gfg-shell] [class*="gamepadpagedsettings_PagedSettingDialog_ContentColumn_"] {
+  background: var(--gfg-shell-bg) !important;
+}
+html[data-gfg-shell] [class*="gamepadpagedsettings_PagedSettingsDialog_PageListColumn_"] {
+  background: var(--gfg-shell-panel) !important;
+  border-right: 1px solid var(--gfg-shell-line);
+}
+html[data-gfg-shell] [class*="gamepadpagedsettings_PageListItem_"] {
+  border-radius: 12px;
+  background: transparent !important;
+  border-color: transparent;
+  color: var(--gfg-shell-muted);
+}
+html[data-gfg-shell] [class*="gamepadpagedsettings_PageListItem_"]:is(.gpfocus,[class*="Selected"]) {
+  color: white !important;
+  background: var(--gfg-shell-red) !important;
+}
+html[data-gfg-shell] [class*="gamepaddialog_Field_"] {
+  border-radius: 12px;
+  background-color: var(--gfg-shell-panel) !important;
+  border-color: var(--gfg-shell-line);
+  color: var(--gfg-shell-text);
+}
+html[data-gfg-shell] [class*="gamepadslider_SliderTrack_"] {
+  background: var(--gfg-shell-line) !important;
+  border-radius: 999px;
+}
+html[data-gfg-shell] :is([class*="gamepadslider_SliderTrackFilled_"],
+  [class*="gamepadslider_SliderTrackFill_"], [class*="gamepadtoggle_ToggleSwitch_"][class*="On"]) {
+  background: var(--gfg-shell-red) !important;
+}
+html[data-gfg-shell] [class*="gamepadslider_SliderThumb_"] {
+  background: var(--gfg-shell-text) !important;
+  border-radius: 50%;
+}
+
+/* 06 Downloads: preserve progress widths and native reorder/pause actions. */
+html[data-gfg-shell] :is([class*="downloads_Section_"], [class*="downloadgraph_GraphAndStats_"]) {
+  background: var(--gfg-shell-panel) !important;
+  border-radius: 16px;
+}
+html[data-gfg-shell] [class*="downloads_DownloadItem_"] {
+  border-radius: 14px;
+  border-color: var(--gfg-shell-line);
+  background-color: var(--gfg-shell-panel);
+}
+html[data-gfg-shell] :is([class*="downloads_ProgressBar_"], [class*="downloadgraph_DownloadGraph_"]) {
+  --gpColor-Blue: var(--gfg-shell-red);
+  accent-color: var(--gfg-shell-red);
+}
+
+/* 08 Keyboard: keep every native key, language, suggestion and chord. */
+html[data-gfg-shell] :is([class*="virtualkeyboard_Keyboard_"], [class*="keyboard_Keyboard_"]) {
+  background: var(--gfg-shell-panel) !important;
+  border-top: 1px solid var(--gfg-shell-line);
+  border-radius: 20px 20px 0 0;
+}
+html[data-gfg-shell] [class*="virtualkeyboard_KeyboardKey_"] {
+  background: var(--gfg-shell-raised) !important;
+  color: var(--gfg-shell-text) !important;
+  border: 1px solid var(--gfg-shell-line);
+  border-radius: 10px !important;
+  box-shadow: none !important;
+}
+html[data-gfg-shell] [class*="virtualkeyboard_KeyboardKey_"].gpfocus {
+  border-color: var(--gfg-shell-red) !important;
+}
+html[data-gfg-shell] :is([class*="virtualkeyboard_Enter_"], [class*="virtualkeyboard_KeyboardKey_"][data-key="Enter"]) {
+  background: var(--gfg-shell-red) !important;
+  color: white !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-gfg-shell] :is([class*="appportrait_"], [class*="mainmenu_MenuItem_"]) { transition: none !important; }
+}
+
+/* Fallback for verified native CEF windows whose class hashes have changed.
+ * Avoid the Steam overlay's transparent body and game artwork surfaces. */
+html[data-gfg-shell="v1"][data-gfg-shell-role="main"] :is(body, #root, #react-root, .BasicUI) {
+  background-color: var(--gfg-shell-bg) !important;
+  color: var(--gfg-shell-text);
+}
+html[data-gfg-shell="v1"] :is(
+  .DialogContent, .DialogBody, .DialogHeader, .DialogFooter,
+  [role="dialog"], [role="menu"], [role="listbox"]
+) {
+  background-color: var(--gfg-shell-panel) !important;
+  color: var(--gfg-shell-text);
+  border-color: var(--gfg-shell-line);
+}
+html[data-gfg-shell="v1"] :is(.DialogButton, [role="button"].DialogButton) {
+  border-radius: 12px !important;
+  background-color: var(--gfg-shell-raised) !important;
+  color: var(--gfg-shell-text) !important;
+  border-color: var(--gfg-shell-line) !important;
+}
+html[data-gfg-shell="v1"] :is(
+  [role="tab"][aria-selected="true"], [role="menuitem"].gpfocus, [role="option"][aria-selected="true"]
+) {
+  background-color: var(--gfg-shell-red) !important;
+  color: white !important;
+  border-radius: 12px;
+}

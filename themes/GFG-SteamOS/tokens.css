@@ -1,0 +1,40 @@
+/* Owned by CSS Loader: removing the theme removes these variables and rules.
+ * Do not require the retired data-gfg-shell runtime marker. No remote assets.
+ * Do not set the transparent overlay document/body background. */
+:root {
+  --gfg-cssloader-enabled: 1;
+  --gfg-bg: #0a0a0c;
+  --gfg-panel: #17181b;
+  --gfg-raised: #25262b;
+  --gfg-border: #35373f;
+  --gfg-accent: #fc0700;
+  --gfg-fg: #f5f5f7;
+  --gfg-muted: #b0b2bf;
+  --gfg-radius: 12px;
+  --gpColor-Blue: var(--gfg-accent);
+  --gpColor-BlueHi: #ff453e;
+  --gpColor-DustyBlue: #ad1510;
+  --gpBackground-DarkMedium: var(--gfg-bg);
+  --gpBackground-DarkSofter: var(--gfg-panel);
+  --gpBackground-LightSofter: var(--gfg-panel);
+  --gpBackground-LightMedium: var(--gfg-raised);
+  --gpBackground-LightHarder: var(--gfg-border);
+  --gpBackground-Neutral: var(--gfg-bg);
+  --gpSystemLightestGrey: var(--gfg-fg);
+  --gpSystemLighterGrey: #dddde2;
+  --gpSystemLightGrey: var(--gfg-muted);
+}
+[class*="header_Header_"]::before, #Footer {
+  background: var(--gfg-bg) !important;
+  border-color: var(--gfg-border) !important;
+  box-shadow: none !important;
+}
+[class*="actionbuttonlegenditem_ActionButtonLabel_"] { color: var(--gfg-fg) !important; }
+/* Keep outlines on actual focus targets; don't change their hit testing. */
+.BasicUI .gpfocus, .BasicUI :focus-visible {
+  outline: 2px solid var(--gfg-accent) !important;
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gfg-shell-controls * { transition: none !important; }
+}

@@ -16,6 +16,7 @@ from pathlib import Path
 import decky
 
 from .theme_installer import ThemeInstaller
+from .steam_shell import SteamShell
 from .installation import InstallationService
 from .dll_detection import DllDetectionService
 from .configuration import ConfigurationService
@@ -67,6 +68,7 @@ class Plugin:
         self.installation_service = InstallationService()
         self.dll_detection_service = DllDetectionService()
         self.configuration_service = ConfigurationService()
+        self.steam_shell = SteamShell(self.configuration_service.config_dir / 'gfg-steam-shell.json')
         self.runtime_state_service = RuntimeStateService()
         self.pipeline_inspector_service = PipelineInspectorService(self.configuration_service)
         self.flatpak_service = FlatpakService()
@@ -1414,6 +1416,7 @@ class Plugin:
         Any initialization code should go here.
         """
         decky.logger.info("GFG Extreme loaded")
+        await self.steam_shell.start()
         try:
             _host, host_supported, host_error = (
                 await asyncio.to_thread(
@@ -1534,7 +1537,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Extreme 2.1.0 started")
+        decky.logger.info("GFG Extreme 2.2.0 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""
@@ -1547,6 +1550,8 @@ class Plugin:
         # Governor owns a separate runtime TDP overlay. Stop it first so an
         # owned PPT cap is restored before Dock/profile shutdown proceeds.
         await self.governor_service.stop()
+        if getattr(self, "steam_shell", None) is not None:
+            await self.steam_shell.stop()
 
         # Stop/debounce display writes first. A cancelled coroutine that is
         # already inside to_thread cannot stop the native thread, so the task
@@ -1621,6 +1626,12 @@ class Plugin:
     async def set_governor_auto_flow(self, enabled: bool) -> Dict[str, Any]:
         return self.governor_service.set_auto_flow(enabled)
 
+    async def get_steam_shell_status(self) -> Dict[str, Any]:
+        return self.steam_shell.status()
+
+    async def set_steam_shell_enabled(self, enabled: bool) -> Dict[str, Any]:
+        return await self.steam_shell.set_enabled(enabled)
+
     async def get_theme_status(self) -> Dict[str, Any]:
         async with self._theme_install_lock:
             return await asyncio.to_thread(self.theme_installer.status)
@@ -1637,6 +1648,9 @@ class Plugin:
         Performs cleanup of this plugin's private files.
         """
         decky.logger.info("GFG Extreme is being uninstalled")
+        if getattr(self, "steam_shell", None) is not None:
+            await self.steam_shell.set_enabled(False)
+            await self.steam_shell.stop()
 
         # Clean up GFG Engine files when the plugin is uninstalled
         await asyncio.to_thread(self.installation_service.cleanup_on_uninstall)

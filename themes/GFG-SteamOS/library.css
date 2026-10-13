@@ -1,0 +1,18 @@
+/* Steam owns the virtualized grid: do not override calculated item widths,
+ * transforms, row height or overflow. Four-column geometry needs device proof. */
+[class*="gamepadlibrary_GamepadLibrary_"],
+[class*="gamepadtabbedpage_TabContents_"] { background: var(--gfg-bg) !important; }
+[class*="gamepadtabbedpage_Tab_"] {
+  border-radius: 999px !important;
+  color: var(--gfg-muted) !important;
+}
+[class*="gamepadtabbedpage_Tab_"][aria-selected="true"],
+[class*="gamepadtabbedpage_Tab_"].gpfocus {
+  background: var(--gfg-accent) !important;
+  color: white !important;
+}
+[class*="libraryassetimage_Image_"] { border-radius: var(--gfg-radius) !important; }
+[class*="appportrait_LibraryItemBox_"].gpfocus {
+  outline: 3px solid var(--gfg-accent) !important;
+  outline-offset: 2px;
+}

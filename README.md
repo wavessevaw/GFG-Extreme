@@ -23,6 +23,12 @@ A Decky Loader plugin that coordinates the frame generator, CPU/GPU resources, r
 
 </div>
 
+## SteamOS appearance preview
+
+The 2.2.0 development branch now uses **CSS Loader + GFG SteamOS**, with Art Hero and Clean Gameview layout dependencies. **Settings → GFG theme → Install CSS Loader theme** installs the package; enable it in CSS Loader. Disable the previous built-in injector from that same GFG settings page. A compact GFG panel uses confirmed backend settings. This is partial implementation, not the finished eight-screen concept; Steam Deck validation and native-screen integrations remain pending. [Status, installation and recovery](docs/GFG_CSSLOADER_IMPLEMENTATION.md).
+
+
+
 ## Autopilot
 
 **Autopilot in GFG Extreme 2.1.1 is not an automatic TDP slider.** It is an orchestration mode that balances frame pacing, genuinely rendered frames, generated output, visual workload, APU power and temperature. Watts are only one of its tools.

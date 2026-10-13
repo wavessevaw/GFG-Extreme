@@ -18,6 +18,7 @@ jobs:
           node-version: "22"
       - name: Backend tests
         run: |
+          python3 -m pip install "aiohttp>=3.9,<4"
           python3 scripts/check_generated_config.py
           python3 -m unittest discover -s tests -p 'test_*.py'
       - name: Frame OS engine tests (scheduler, control channel, layer on the mock Vulkan driver)
@@ -52,3 +53,4 @@ jobs:
         run: |
           npx playwright install --with-deps chromium
           node frontend/harness/smoke.mjs
+          node frontend/harness/steam-shell.mjs

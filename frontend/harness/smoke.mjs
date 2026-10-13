@@ -299,19 +299,21 @@ for (const [state, nav, expected] of cases) {
   }
   cases.push(["energy-battery-colour-and-unknown-limits"]);
 }
-// Installation succeeds or fails visibly; copying is distinct from enabling CSS Loader.
+// Migration must disable the legacy injector; it must never claim to disable CSS Loader.
 for (const fail of [false, true]) {
   const page = await openPage(browser, { ...STATES["home-extreme"], __themeFail: fail }, ["Settings", "GFG theme"]);
-  await page.getByText("Install theme", { exact: true }).click();
+  await page.evaluate(() => { window.__shellEnabled = true; });
+  await page.getByText("Disable legacy GFG appearance", { exact: true }).click();
   await page.waitForTimeout(150);
-  const text = fail ? "Theme folder is read-only" : "Installed and up to date";
+  const text = fail ? "Could not save appearance" : "Enable GFG SteamOS in CSS Loader";
   if (!(await page.getByText(text, { exact: true }).count()) ||
-      await page.evaluate(() => window.__themeCalls) !== 1) {
+      await page.evaluate(() => window.__shellCalls) !== 1) {
     failed++; console.error("FAIL theme installer " + text);
   }
-  for (const error of page.__errors) { failed++; console.error("FAIL theme: " + error); }
+    if (await page.evaluate(() => window.__shellEnabled) !== fail) { failed++; console.error("FAIL legacy theme restore"); }
+    for (const error of page.__errors) { failed++; console.error("FAIL theme: " + error); }
   await page.close();
-  cases.push(["theme-installer-" + (fail ? "error" : "success")]);
+  cases.push(["legacy-shell-migration-" + (fail ? "error" : "success")]);
 }
 for (const fail of [false, true]) {
   const page = await openPage(browser, { ...STATES["home-extreme"], __flowFail: fail, flow_control: { enabled: true } }, ["Settings"]);

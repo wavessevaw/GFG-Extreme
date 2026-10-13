@@ -73,6 +73,7 @@ jobs:
       - name: Backend tests
         if: steps.version.outputs.exists == 'false'
         run: |
+          python3 -m pip install "aiohttp>=3.9,<4"
           python3 scripts/check_generated_config.py
           python3 -m unittest discover -s tests -p 'test_*.py'
 
@@ -96,6 +97,7 @@ jobs:
           git diff --exit-code dist/index.js || { echo "::error::dist/index.js is stale"; exit 1; }
           npx playwright install --with-deps chromium
           node frontend/harness/smoke.mjs
+          node frontend/harness/steam-shell.mjs
 
       - name: Identify Flatpak payload source
         if: steps.version.outputs.exists == 'false'

@@ -1,6 +1,8 @@
 // GFG Extreme UI. No npm deps: Decky provides SP_REACT and DFL as globals; `callable` comes from the shim.
 import { css } from "./theme.js";
 import { LOGO } from "./logo.js";
+import { makeShellControls } from "./shell-controls.js";
+import { shellStyle } from "./shell-style.js";
 const R = window.SP_REACT;
 const { useState, useEffect, useRef, useCallback } = R;
 const h = (t, p, ...c) => R.createElement(t, p, ...c);
@@ -12,6 +14,8 @@ const safeCallable = (name) => { const f = callable(name); return async (...a) =
 const rpc = {
   themeStatus: safeCallable("get_theme_status"),
   themeInstall: safeCallable("install_gfg_theme"),
+  shellStatus: safeCallable("get_steam_shell_status"),
+  shellEnable: safeCallable("set_steam_shell_enabled"),
   governor: safeCallable("get_governor_status"),
   setGovernor: safeCallable("set_governor_enabled"),
   setHud: safeCallable("set_governor_hud"),
@@ -58,6 +62,8 @@ const rpc = {
   setupCheck: safeCallable("run_setup_check"),
   logUi: safeCallable("log_ui_event"),
 };
+
+const { useCssLoader, ShellControls } = makeShellControls(R, rpc);
 
 // ---------- helpers
 const num = (v, d = 1) => (v == null || isNaN(v) ? "–" : Number(v).toFixed(d).replace(/\.0$/, ""));
@@ -507,7 +513,8 @@ function ExtremeOffer({ o, onTry, onHide }) {
       h("div", { className: "xbtns" }, h(Focusable, { className: "xbtn on", onClick: onTry }, "Try Extreme"), h(Focusable, { className: "xbtn", onClick: onHide }, "Not now"))));
 }
 
-function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch }) {
+function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch, forceClassic = false }) {
+  const themed = useCssLoader();
   const [busy, setBusy] = useState(false);
   const missing = inst && inst.installed === false;
   const xt = s.mode === "extreme";
@@ -562,6 +569,7 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
     sn.temp_c != null ? Math.round(sn.temp_c) + " °C" + (dg.thermal === "hot" ? " · hot" : dg.thermal === "heating" ? " · heating up" : "") : null,
     dg.smoothness === "stuttering" ? "stutter detected" : dg.smoothness === "smooth" ? "smooth" : null].filter(Boolean).join(" · ") : "";
   const left = mins != null ? (mins >= 60 ? Math.floor(mins / 60) + "h" + String(mins % 60).padStart(2, "0") : mins + "m") : "";
+  if (themed && !missing && !forceClassic) return h("div", null, h("style", null, shellStyle), h(ShellControls, { key: profile, s, profile, go }));
   return h("div", null,
     h("div", { className: "top" }, h("div", { className: "brand" }, h("img", { src: LOGO, width: 30, height: 30, style: { marginRight: 8, verticalAlign: "middle" } }), "GFG", h("b", null, "·"), "EXTREME"),
       h("div", { className: "chip" + (s.enabled ? " on" : "") }, h("i"), MODE_NAME[dev.mode] || "Display")),
@@ -959,30 +967,73 @@ function SettingsPage({ back, go, profile, s }) {
 }
 
 function ThemePage({ back }) {
+  const cssTheme = useCssLoader();
+  const [installation, setInstallation] = useState(null);
+  const [installing, setInstalling] = useState(false);
+  const installLock = useRef(false);
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
-  useEffect(() => { rpc.themeStatus().then(setStatus).catch((e) => setMsg(String(e))); }, []);
-  const install = async () => {
+  const mounted = useRef(true);
+  const changing = useRef(false);
+  const revision = useRef(0);
+  useEffect(() => {
+    let live = true;
+    rpc.themeStatus().then(r => { if (live) setInstallation(r); }).catch(e => { if (live) setMsg(e.message || String(e)); });
+    return () => { live = false; };
+  }, []);
+  const installTheme = async () => {
+    if (installLock.current) return;
+    installLock.current = true; setInstalling(true); setMsg("");
+    try {
+      const r = await rpc.themeInstall();
+      if (!r || !r.success) throw new Error(r?.error || "Could not install theme");
+      const saved = await rpc.themeStatus();
+      if (!saved || !saved.success || !saved.current) throw new Error(saved?.error || "Theme installation was not confirmed");
+      if (mounted.current) { setInstallation(saved); setMsg("Installed. Refresh CSS Loader and enable GFG SteamOS with its dependencies."); }
+    } catch (e) { if (mounted.current) setMsg(e.message || String(e)); }
+    finally { installLock.current = false; if (mounted.current) setInstalling(false); }
+  };
+  useEffect(() => {
+    mounted.current = true;
+    let timer;
+    const refresh = async () => {
+      try { const rev = revision.current; const r = await rpc.shellStatus(); if (mounted.current && !changing.current && rev === revision.current) setStatus(r); }
+      catch (e) { if (mounted.current) setMsg(String(e.message || e)); }
+      if (mounted.current) timer = setTimeout(refresh, 3000);
+    };
+    refresh();
+    return () => { mounted.current = false; clearTimeout(timer); };
+  }, []);
+  const change = async (enabled) => {
+    if (changing.current) return;
+    changing.current = true; revision.current++;
     setBusy(true); setMsg("");
     try {
-      const result = await rpc.themeInstall();
-      setMsg(result && result.success ? result.message : (result && result.error) || "Installation failed.");
-      setStatus(await rpc.themeStatus());
-    } catch (e) { setMsg(String(e)); }
-    finally { setBusy(false); }
+      const r = await rpc.shellEnable(enabled);
+      if (!r || !r.success) throw new Error((r && r.error) || "Could not save appearance");
+      if (mounted.current) setStatus(r);
+    } catch (e) { if (mounted.current) setMsg(String(e.message || e)); }
+    finally { changing.current = false; if (mounted.current) setBusy(false); }
   };
+  const state = cssTheme ? "GFG CSS Loader styles detected in this window" : "Enable GFG SteamOS in CSS Loader";
   return h(Page, { title: "GFG theme", onBack: back },
-    h(Note, { quiet: true }, "Install CSS Loader from the Decky store first. GFG copies its bundled theme to the CSS Loader themes folder."),
-    h("div", { className: "card" },
-      h("b", null, status && status.current ? "Installed and up to date" : status && status.installed ? "Update available" : "Not installed"),
-      h("div", { className: "hint", style: { textAlign: "left", wordBreak: "break-all" } }, status && status.path || "~/homebrew/themes/GFG Extreme")),
-    h("div", { className: "list" }, h(Row, { icon: "filter",
-      title: busy ? "Installing…" : status && status.installed ? "Update / reinstall theme" : "Install theme",
-      onClick: busy ? undefined : install })),
-    msg ? h(Note, { quiet: true }, msg) : null,
-    status && status.success === false ? h(Note, null, status.error) : null,
-    h(Note, { quiet: true }, "After installing, open CSS Loader, reload themes and enable GFG Extreme."));
+    h(Note, { quiet: true }, "Install the GFG-SteamOS theme in CSS Loader and accept its Art Hero and Clean Gameview dependencies. Switch the theme on and off in CSS Loader."),
+    h("div", { className: "list" }, h(Row, { title: installing ? "Installing theme…" : installation?.current ? "Reinstall CSS Loader theme" : "Install CSS Loader theme", sub: "Copies the bundled theme. Enable it in CSS Loader after installation.", onClick: installing ? undefined : installTheme })),
+    installation?.error ? h(Note, null, installation.error) : null,
+    h("div", { className: "card" }, h("b", null, state),
+      h("div", { className: "hint", style: { textAlign: "left" } }, "Steam keeps control of your games, menus and keyboard.")),
+    status && status.enabled ? h(Note, null, "The legacy GFG injector is still enabled. Disable it below before using CSS Loader to avoid conflicting styles.") : null,
+    status && status.coverage && status.coverage.length ? h(Note, { quiet: true }, "Detected screens: " + status.coverage.join(", ")) : null,
+    status && status.targets && status.targets.length ? h(Note, { quiet: true },
+      "Steam windows: " + status.targets.slice(0, 6).map((t) =>
+        (t.role || "?") + ": " + (t.applied ? (t.mode || "injected") : (t.reason || "connection-error")) +
+        (typeof t.dom_nodes === "number" ? " (" + t.dom_nodes + " nodes)" : "")).join(" | ")) : null,
+    h("div", { className: "list" }, h(Row, { icon: "stop", title: "Disable legacy GFG appearance", sub: busy ? "Disabling…" : "Removes only the previous built-in injector. CSS Loader is managed separately.", onClick: busy ? undefined : () => change(false) })),
+    msg ? h(Note, null, msg) : null,
+    status && status.error ? h(Note, null, status.error) : null,
+    h(Note, { quiet: true }, "Appearance build: css-loader-dev.1 · legacy diagnostics above"),
+    h(Note, { quiet: true }, "Styles detected is not visual acceptance. Hardware validation is pending. Disable GFG SteamOS and its layout dependencies in CSS Loader to restore the native appearance."));
 }
 
 function SetupCheckPage({ back, profile }) {
@@ -1293,7 +1344,7 @@ function Content() {
   else if (screen === "system") body = h(SystemPage, { back: () => setScreen("settings"), inst, reloadInst });
   else if (screen === "advanced") body = h(AdvancedPage, { back, s, insp, launch, go, profile });
   else if (screen === "filters") body = h(FiltersPage, { back: () => setScreen(filtersFrom), profile, cfg, patch });
-  else body = h(Home, { s, profile, go, refresh, inst, reloadInst, launch, cfg, patch });
+  else body = h(Home, { s, profile, go, refresh, inst, reloadInst, launch, cfg, patch, forceClassic: screen === "classic" });
   return h("div", { className: "gfg" }, h("style", null, css), errBanner, body);
 }
 

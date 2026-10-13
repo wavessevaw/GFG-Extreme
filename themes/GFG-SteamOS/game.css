@@ -1,0 +1,18 @@
+/* Clean Gameview supplies the actual native hero/play-bar layout. */
+.BasicUI [class*="sharedappdetailsheader_TopCapsule_"] {
+  --CGV-play-bar-height: 80px;
+}
+[class*="sharedappdetailsheader_HeaderBackgroundImage_"] { object-fit: cover; }
+.BasicUI [class*="appactionbutton_Green_"] [class*="appactionbutton_ButtonChild_"] {
+  background: var(--gfg-accent) !important;
+  color: white !important;
+  border-radius: var(--gfg-radius) !important;
+}
+[class*="appactionbutton_ButtonText_"] { color: var(--gfg-fg) !important; }
+[class*="appdetailssection_AppDetailsSection_"] {
+  background-color: var(--gfg-panel) !important;
+  border-radius: var(--gfg-radius) !important;
+}
+[class*="appdetailsachievementssection_AchievementProgress_"] {
+  background: var(--gfg-accent) !important;
+}

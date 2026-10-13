@@ -40,6 +40,25 @@ class ReleaseArchiveTests(unittest.TestCase):
     def test_valid_archive(self):
         validator.check(self.archive(self.files()), "1.6.6")
 
+    def test_shell_assets_required_in_220_package(self):
+        root = Path(__file__).resolve().parents[1]
+        files = self.files()
+        for name, content in list(files.items()):
+            if isinstance(content, str):
+                files[name] = content.replace("1.6.6", "2.2.0")
+        for module in ("governor_flow.py", "theme_installer.py", "steam_shell.py"):
+            files["py_modules/gfg_plugin/" + module] = "module"
+        for folder in ("themes/css-loader/GFG Extreme", "themes/gfg-shell"):
+            for file in (root / folder).iterdir():
+                if file.is_file():
+                    files[file.relative_to(root).as_posix()] = file.read_bytes()
+        validator.check(self.archive(files), "2.2.0")
+        for name in ("py_modules/gfg_plugin/steam_shell.py", "themes/gfg-shell/runtime.js", "themes/gfg-shell/shell.css"):
+            incomplete = dict(files)
+            del incomplete[name]
+            with self.assertRaises(KeyError):
+                validator.check(self.archive(incomplete), "2.2.0")
+
     def test_stale_packaged_version(self):
         files = self.files()
         files["package.json"] = '{"version": "1.6.5"}'

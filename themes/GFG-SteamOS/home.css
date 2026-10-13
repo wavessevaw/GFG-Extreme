@@ -1,0 +1,17 @@
+/* Art Hero owns carousel geometry/hero sizing; never stack Switch Like Home.
+ * This layer supplies the GFG artwork treatment without hiding navigation. */
+[class*="gamepadhomerecentgames_RecentGamesBackgroundImage_"] {
+  object-fit: cover !important;
+  object-position: center !important;
+  filter: none !important;
+}
+[class*="basicgamecarousel_CarouselCapsuleBackgroundGlow_"] { opacity: 0 !important; }
+[class*="basicgamecarousel_BasicGameCarouselItemMediaContainer_"] {
+  border-radius: var(--gfg-radius) !important;
+}
+[class*="appportrait_LibraryItemBox_"] {
+  border-radius: var(--gfg-radius) !important;
+}
+[class*="gamepadhome_TabbedContent_"] {
+  background: var(--gfg-bg) !important;
+}

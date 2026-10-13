@@ -1,0 +1,20 @@
+[class*="downloads_DownloadsPage_"], [class*="downloads_ItemListWrapper_"] {
+  background: var(--gfg-bg) !important;
+}
+[class*="downloads_SectionItem_"] {
+  background: var(--gfg-panel) !important;
+  border: 1px solid var(--gfg-border) !important;
+  border-radius: var(--gfg-radius) !important;
+}
+[class*="downloads_SectionItem_"] [class*="downloads_Name_"] { color: var(--gfg-fg) !important; }
+[class*="downloads_ProgressBar_"] { background: var(--gfg-raised) !important; }
+[class*="downloads_ProgressBar_"] > div,
+[class*="header_HeaderDownloadProgressBar_"],
+[class*="appportrait_UninstalledProgressBar_"] { background: var(--gfg-accent) !important; }
+[class*="downloads_Button_"] {
+  background: var(--gfg-raised) !important;
+  color: var(--gfg-fg) !important;
+  border-radius: var(--gfg-radius) !important;
+}
+[class*="downloadgraph_GraphAndStats_"] { background: var(--gfg-panel) !important; }
+[class*="downloadgraph_GraphBarDownload_"] { color: var(--gfg-accent) !important; }
