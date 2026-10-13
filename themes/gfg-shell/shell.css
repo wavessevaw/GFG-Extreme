@@ -215,3 +215,31 @@ html[data-gfg-shell] :is([class*="virtualkeyboard_Enter_"], [class*="virtualkeyb
 @media (prefers-reduced-motion: reduce) {
   html[data-gfg-shell] :is([class*="appportrait_"], [class*="mainmenu_MenuItem_"]) { transition: none !important; }
 }
+
+/* Fallback for verified native CEF windows whose class hashes have changed.
+ * Avoid the Steam overlay's transparent body and game artwork surfaces. */
+html[data-gfg-shell="v1"][data-gfg-shell-role="main"] :is(body, #root, #react-root, .BasicUI) {
+  background-color: var(--gfg-shell-bg) !important;
+  color: var(--gfg-shell-text);
+}
+html[data-gfg-shell="v1"] :is(
+  .DialogContent, .DialogBody, .DialogHeader, .DialogFooter,
+  [role="dialog"], [role="menu"], [role="listbox"]
+) {
+  background-color: var(--gfg-shell-panel) !important;
+  color: var(--gfg-shell-text);
+  border-color: var(--gfg-shell-line);
+}
+html[data-gfg-shell="v1"] :is(.DialogButton, [role="button"].DialogButton) {
+  border-radius: 12px !important;
+  background-color: var(--gfg-shell-raised) !important;
+  color: var(--gfg-shell-text) !important;
+  border-color: var(--gfg-shell-line) !important;
+}
+html[data-gfg-shell="v1"] :is(
+  [role="tab"][aria-selected="true"], [role="menuitem"].gpfocus, [role="option"][aria-selected="true"]
+) {
+  background-color: var(--gfg-shell-red) !important;
+  color: white !important;
+  border-radius: 12px;
+}

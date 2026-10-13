@@ -75,6 +75,43 @@ try {
   assert.equal((await native.evaluate(`(${runtime})(${JSON.stringify({ ...nativeConfig, targetRole: "overlay" })})`)).applied, true);
   await native.close();
 
+  // This is the reproduced device failure: hundreds of DOM nodes in an
+  // approved native Steam CEF window, but none of the expected module prefixes.
+  const generic = await browser.newPage();
+  const genericBody = '<div class="mystery-root"><button class="DialogButton gpfocus">Play</button>'
+    + Array.from({ length: 1153 }, (_, i) => '<div class="ui-' + i + '">Steam</div>').join('') + '</div>';
+  await generic.goto("about:blank?createflags=0");
+  await generic.setContent(fixture(genericBody));
+  const genericConfig = { enabled: true, css, targetRole: "main", leaseMs: 15000, revision: "fallback" };
+  let genericResult = await generic.evaluate(`(${runtime})(${JSON.stringify(genericConfig)})`);
+  assert.equal(genericResult.applied, true, "native verified main window is eligible without module hashes");
+  assert.equal(genericResult.mode, "native-target");
+  assert.deepEqual(genericResult.surfaces, ["steam-main"]);
+  assert.equal(await generic.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgb(9, 9, 11)");
+  assert.equal(await generic.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--gpColor-Blue").trim()), "#ff1608");
+  await generic.evaluate(`(${runtime})(${JSON.stringify({ ...genericConfig, enabled: false })})`);
+  assert.equal(await generic.locator("#gfg-steamos-shell-v1").count(), 0);
+  assert.equal(await generic.evaluate(() => document.documentElement.hasAttribute("data-gfg-shell-role")), false);
+  assert.equal(await generic.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgb(35, 56, 75)");
+
+  // Another verified Steam overlay should work without becoming an opaque page.
+  await generic.goto("about:blank?browserviewpopup=1");
+  await generic.setContent(fixture(genericBody));
+  genericResult = await generic.evaluate(`(${runtime})(${JSON.stringify({ ...genericConfig, targetRole: "overlay" })})`);
+  assert.equal(genericResult.applied, true);
+  assert.equal(genericResult.mode, "native-target");
+  assert.equal(await generic.evaluate(() => document.documentElement.hasAttribute("data-gfg-shell-page")), false);
+  await generic.evaluate(`(${runtime})(${JSON.stringify({ ...genericConfig, enabled: false, targetRole: "overlay" })})`);
+
+  // Empty native targets and generic shared-context documents still wait.
+  await generic.goto("about:blank?createflags=0");
+  await generic.setContent("<html><head></head><body><div>Loading</div></body></html>");
+  assert.equal((await generic.evaluate(`(${runtime})(${JSON.stringify(genericConfig)})`)).applied, false);
+  await generic.goto("https://steamloopback.host/");
+  await generic.setContent(fixture(genericBody.replace('DialogButton gpfocus', 'unknownbutton')));
+  assert.equal((await generic.evaluate(`(${runtime})(${JSON.stringify({ ...genericConfig, targetRole: "shared" })})`)).applied, false);
+  await generic.close();
+
   const page = await browser.newPage();
   await page.route("**/*", route => route.fulfill({ contentType: "text/html", body: fixture(screens.home) }));
   await page.goto("https://example.com/");
@@ -82,5 +119,5 @@ try {
   await page.goto("https://steamloopback.host/");
   await page.setContent("<html><head></head><body>Unrecognized client</body></html>");
   assert.equal((await page.evaluate(`(${runtime})(${JSON.stringify({ enabled: true, css })})`)).applied, false);
-  console.log(`GFG Shell OK (${count} native-shape screen fixtures plus real Steam about:blank target shapes; restore, expiry, focus and external document rejection)`);
+  console.log(`GFG Shell OK (${count} native-shape fixtures; hash-free Steam DOM fallback, restore, expiry, focus, and external-page rejection)`);
 } finally { await browser.close(); }

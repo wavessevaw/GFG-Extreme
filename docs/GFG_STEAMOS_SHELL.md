@@ -6,7 +6,7 @@ Black surfaces, red accents, rounded cards and visible gamepad focus cover Home,
 
 ## Connection and recovery
 
-The backend uses Decky's local Steam CEF debugging endpoint on port 8080. It accepts only Steam Gaming Mode targets on steamloopback.host and local debugging sockets. The frontend can request a boolean preference; it cannot supply scripts, URLs or styles. No Steam installation files or startup files are changed.
+The backend uses Decky's local Steam CEF debugging endpoint on port 8080. It accepts only carefully verified Gaming Mode CEF targets (steamloopback.host shared context or Steam native Big Picture/overlay about:blank windows) and local debugging sockets. The frontend can request a boolean preference; it cannot supply scripts, URLs or styles. No Steam installation files or startup files are changed.
 
 An idempotent heartbeat runs every three seconds while enabled. Each window receives the bundled stylesheet and a 15-second lease. Unloading the plugin removes the style. If the backend or connection disappears, the browser removes it when the lease expires (a suspended JavaScript event loop must resume first). Reloaded windows reconnect automatically. An unavailable Steam target produces a waiting state, not a false success. The enabled preference survives plugin restarts; it defaults off for this preview.
 
@@ -40,3 +40,25 @@ backend-assigned target role, while keeping `steamloopback.host` shared-context
 support. Failure messages include the discovered target count/titles and DOM
 node count for unsupported surfaces. Synthetic tests now include native URL
 shapes; physical device validation is still required. This remains a candidate.
+
+
+## Connection correction — shell-fix-4
+
+Real device evidence on 2026-10-13: the backend did connect and execute the
+runtime across CEF documents containing 1153, 597, 74 and 5 DOM nodes, but every
+window returned `waiting-for-supported-surface`. The module-class probes were
+a premature hard gate, not proof that the native Steam UI was absent.
+
+Known, strictly title/URL-verified Big Picture and overlay CEF windows with
+at least 40 DOM nodes can now receive the bundled CSS even when no known module
+selector is present. A shared context still requires an explicit Steam UI
+marker; sparse/empty windows, external websites and unverified CEF targets do
+not receive styling. The stylesheet now includes scoped native-role canvas and
+Steam dialog/tab fallbacks. The frontend reports `shell-fix-4`, and target
+diagnostics include the role and applied strategy (module-probe vs fallback).
+
+Automated Playwright checks reproduce hash-free 1153-node native DOMs, assert
+a visible canvas color change, check safe restoration, overlay transparency,
+shared-context rejection and sparse-window rejection. Native device appearance
+still needs physical verification; an injected stylesheet is not proof that
+every Steam screen matches the mockups.
