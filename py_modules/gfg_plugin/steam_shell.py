@@ -211,7 +211,7 @@ class SteamShell:
                 'engine': 'gfg-shell', 'requires_css_loader': False,
                 'targets': list(self._targets), 'error': self._error,
                 'coverage': sorted({s for t in active for s in t.get('surfaces', [])}),
-                'lease_seconds': LEASE_MS // 1000, 'build': 'shell-fix-4',
+                'lease_seconds': LEASE_MS // 1000, 'build': 'shell-fix-5',
                 'discovered_targets': getattr(self.transport, 'target_count', None),
                 'discovered_titles': getattr(self.transport, 'target_titles', [])}
 
@@ -263,6 +263,8 @@ class SteamShell:
                 elif not any(t.get('applied') for t in self._targets):
                     reasons = sorted({str(t.get('role', 'unknown')) + ': ' +
                                       str(t.get('reason', 'unknown')) +
+                                      (' (document: ' + str(t.get('documentKind')) + ')'
+                                       if t.get('documentKind') else '') +
                                       (' (DOM nodes: ' + str(t.get('dom_nodes')) + ')'
                                        if t.get('dom_nodes') is not None else '')
                                       for t in self._targets})
@@ -274,7 +276,7 @@ class SteamShell:
                            '). GFG will reconnect automatically.') if enabled else None
         diagnostic = (enabled, self._error, tuple((t.get('title'), t.get('applied'), t.get('reason')) for t in self._targets))
         if diagnostic != self._last_diagnostic:
-            LOG.info('GFG SteamOS shell-fix-4: enabled=%s targets=%s error=%s', enabled, self._targets, self._error)
+            LOG.info('GFG SteamOS shell-fix-5: enabled=%s targets=%s error=%s', enabled, self._targets, self._error)
             self._last_diagnostic = diagnostic
 
     async def start(self):
