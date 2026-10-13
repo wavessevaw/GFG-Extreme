@@ -10,11 +10,11 @@ from typing import Any, Dict
 
 from .package_paths import PLUGIN_ROOT
 
-THEME_NAME = "GFG Extreme"
+THEME_NAME = "GFG-SteamOS"
 
 
 class ThemeInstaller:
-    def __init__(self, home: Path, source: Path = PLUGIN_ROOT / "themes" / "css-loader" / THEME_NAME):
+    def __init__(self, home: Path, source: Path = PLUGIN_ROOT / "themes" / THEME_NAME):
         self.home = Path(home)
         self.source = Path(source)
         self.destination = self.home / "homebrew" / "themes" / THEME_NAME
@@ -85,7 +85,7 @@ class ThemeInstaller:
                 raise
             return {"success": True, "installed": True, "current": True,
                     "path": str(self.destination),
-                    "message": "Installed. In CSS Loader, reload themes and enable GFG Extreme."}
+                    "message": "Installed. In CSS Loader, refresh themes, enable GFG SteamOS and accept its dependencies."}
         except (OSError, ValueError) as error:
             return {"success": False, "error": str(error)}
         finally:

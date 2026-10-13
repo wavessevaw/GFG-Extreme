@@ -1,0 +1,200 @@
+{
+  "Art Hero": {
+    "repository": "Metagawa/Steam-Deck-Themes",
+    "version": "v3.2.03",
+    "options": {
+      "Footer Options": [
+        "Smaller Footer",
+        "No Footer",
+        "Default"
+      ],
+      "Gradient Settings": [
+        "No Hero Gradient",
+        "Subtle Gradient",
+        "Subtle Gradient - Inverted",
+        "Linear Gradient",
+        "Linear Gradient - Inverted",
+        "No Change"
+      ],
+      "Hero Appearance": [
+        "Wide Hero",
+        "Expanded Hero",
+        "Full Screen Hero",
+        "No Hero"
+      ],
+      "Hero Alignment": [
+        "Center - Default",
+        "Left",
+        "Right",
+        "Top",
+        "Bottom"
+      ],
+      "Hero Fit": [
+        "Cover - Default",
+        "Contain",
+        "Fill",
+        "None",
+        "Scaledown"
+      ],
+      "Hero Z-Order": [
+        "Default",
+        "In front of Carousel"
+      ],
+      "Hero Height": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "-10",
+        "-9",
+        "-8",
+        "-7",
+        "-6",
+        "-5",
+        "-4",
+        "-3",
+        "-2",
+        "-1"
+      ],
+      "Hero Height - Fine Control": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9"
+      ],
+      "Header Bar Height": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10"
+      ],
+      "Header Bar Height - Fine Control": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9"
+      ],
+      "No Header": [
+        "Yes",
+        "No"
+      ],
+      "Carousel Font Size": [
+        "No Change",
+        "Larger",
+        "Largest"
+      ],
+      "Carousel Font Height": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "No Change",
+        "-4.5",
+        "-4",
+        "-3",
+        "-2",
+        "-1"
+      ],
+      "Carousel Height": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "-10",
+        "-9",
+        "-8",
+        "-7",
+        "-6",
+        "-5",
+        "-4",
+        "-3",
+        "-2",
+        "-1"
+      ],
+      "Carousel Height - Fine Control": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9"
+      ]
+    }
+  },
+  "Clean Gameview": {
+    "repository": "suchmememanyskill/Steam-Deck-Themes",
+    "version": "v1.7",
+    "options": {
+      "Play Bar Style": [
+        "Transparent",
+        "Blur",
+        "Connected with Body"
+      ],
+      "Alignment": [
+        "Zoom-Center",
+        "Zoom-Left",
+        "Zoom-Right",
+        "Contain",
+        "Stretch"
+      ],
+      "Show Steam Cloud": [
+        "Yes",
+        "No"
+      ],
+      "Ignore Footer": [
+        "Yes",
+        "No"
+      ],
+      "Lock Logo": [
+        "Yes",
+        "No"
+      ]
+    }
+  }
+}

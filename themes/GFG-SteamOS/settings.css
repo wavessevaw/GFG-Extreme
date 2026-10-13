@@ -1,0 +1,21 @@
+[class*="gamepadpagedsettings_PagedSettingsDialog_PageListColumn_"] {
+  background: var(--gfg-bg) !important;
+  border-right: 1px solid var(--gfg-border) !important;
+}
+[class*="gamepadpagedsettings_PagedSettingDialog_ContentColumn_"] {
+  background: var(--gfg-bg) !important;
+}
+[class*="gamepadpagedsettings_PagedSettingsDialog_PageListItem_"] {
+  border-radius: var(--gfg-radius) !important;
+  color: var(--gfg-fg) !important;
+}
+[class*="gamepadpagedsettings_PagedSettingsDialog_PageListItem_"][class*="gamepadpagedsettings_Active_"],
+[class*="gamepadpagedsettings_PagedSettingsDialog_PageListItem_"].gpfocus {
+  background: var(--gfg-accent) !important;
+  color: white !important;
+}
+[class*="gamepadpagedsettings_PagedSettingsDialog_PageContent_"] [class*="gamepaddialog_Field_"] {
+  background-color: var(--gfg-panel) !important;
+  border-color: var(--gfg-border) !important;
+  border-radius: var(--gfg-radius) !important;
+}

@@ -1,0 +1,17 @@
+/* Native key layout and IME remain owned by Steam. These selector families
+ * require validation on the user's Steam build; unknown keys remain native. */
+[class*="virtualkeyboard_Keyboard_"] {
+  background: var(--gfg-panel) !important;
+  border-top: 1px solid var(--gfg-border) !important;
+}
+[class*="virtualkeyboard_KeyboardKey_"] {
+  background: var(--gfg-raised) !important;
+  color: var(--gfg-fg) !important;
+  border-radius: 10px !important;
+  border-color: var(--gfg-border) !important;
+  box-shadow: none !important;
+}
+[class*="virtualkeyboard_KeyboardKey_"].gpfocus {
+  outline: 2px solid var(--gfg-accent) !important;
+  outline-offset: -2px;
+}

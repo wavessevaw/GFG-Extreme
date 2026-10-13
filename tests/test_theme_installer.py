@@ -19,7 +19,7 @@ class ThemeInstallerTests(unittest.TestCase):
         self.home.mkdir()
         self.source = self.root / "bundle"
         self.source.mkdir()
-        (self.source / "theme.json").write_text(json.dumps({"name": "GFG Extreme"}))
+        (self.source / "theme.json").write_text(json.dumps({"name": "GFG-SteamOS"}))
         (self.source / "shared.css").write_text("body { color: red; }")
         self.service = ThemeInstaller(self.home, self.source)
 
@@ -27,14 +27,14 @@ class ThemeInstallerTests(unittest.TestCase):
         self.assertFalse(self.service.status()["installed"])
         self.assertTrue(self.service.install()["success"])
         dest = self.service.destination
-        self.assertEqual(dest, self.home / "homebrew/themes/GFG Extreme")
+        self.assertEqual(dest, self.home / "homebrew/themes/GFG-SteamOS")
         (dest / "personal.css").write_text("custom")
         (self.source / "shared.css").write_text("body { color: green; }")
         self.assertFalse(self.service.status()["current"])
         self.assertTrue(self.service.install()["success"])
         self.assertEqual((dest / "personal.css").read_text(), "custom")
         self.assertTrue(self.service.status()["current"])
-        self.assertEqual(sorted(p.name for p in dest.parent.iterdir()), ["GFG Extreme"])
+        self.assertEqual(sorted(p.name for p in dest.parent.iterdir()), ["GFG-SteamOS"])
 
     def test_failed_commit_restores_previous_theme(self):
         self.service.install()
@@ -43,13 +43,13 @@ class ThemeInstallerTests(unittest.TestCase):
         import gfg_plugin.theme_installer as module
         replace = module.os.replace
         def fail_payload(src, dst):
-            if Path(src).name == "GFG Extreme" and Path(src).parent.name.startswith(".gfg-theme-"):
+            if Path(src).name == "GFG-SteamOS" and Path(src).parent.name.startswith(".gfg-theme-"):
                 raise OSError("cannot commit")
             return replace(src, dst)
         with patch.object(module.os, "replace", side_effect=fail_payload):
             self.assertFalse(self.service.install()["success"])
         self.assertEqual((self.service.destination / "shared.css").read_text(), old)
-        self.assertEqual(sorted(p.name for p in self.service.destination.parent.iterdir()), ["GFG Extreme"])
+        self.assertEqual(sorted(p.name for p in self.service.destination.parent.iterdir()), ["GFG-SteamOS"])
 
     def test_failed_rollback_retains_recovery_copy(self):
         self.service.install()
@@ -86,7 +86,7 @@ class ThemeInstallerTests(unittest.TestCase):
         self.assertEqual((self.service.destination / "theme.json").read_text(), before)
 
     def test_shipped_theme_manifest_and_all_patch_files_are_available(self):
-        source = ROOT / "themes/css-loader/GFG Extreme"
+        source = ROOT / "themes/GFG-SteamOS"
         with tempfile.TemporaryDirectory() as home:
             service = ThemeInstaller(Path(home), source)
             self.assertTrue(service.install()["success"])

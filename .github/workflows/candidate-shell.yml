@@ -63,7 +63,19 @@ jobs:
           git diff --exit-code dist/index.js || { echo "::error::dist/index.js is stale"; exit 1; }
           npx playwright install --with-deps chromium
           node frontend/harness/smoke.mjs
+          node --test frontend/harness/shell-actions.test.mjs
+          node frontend/harness/cssloader.mjs
           node frontend/harness/steam-shell.mjs
+
+      - name: Package CSS Loader theme separately
+        run: python3 scripts/package_cssloader.py cssloader-out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GFG-SteamOS-CSSLoader-development
+          path: cssloader-out/*
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Identify Flatpak payload source
         if: steps.version.outputs.exists == 'false'

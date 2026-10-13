@@ -1,0 +1,20 @@
+[class*="mainmenu_Menu_"], [class*="quickaccessmenu_Tabs_"],
+[class*="quickaccessmenu_Title_"], [class*="quickaccessmenu_PanelOuterNav_"],
+[class*="quickaccessmenu_TabGroupPanel_"] {
+  background: var(--gfg-bg) !important;
+  color: var(--gfg-fg) !important;
+}
+[class*="mainmenu_Menu_"] { border-right: 1px solid var(--gfg-border) !important; }
+[class*="quickaccessmenu_PanelOuterNav_"] { border-left: 1px solid var(--gfg-border) !important; }
+[class*="mainmenu_Item_"] {
+  border-radius: var(--gfg-radius) !important;
+  color: var(--gfg-fg) !important;
+}
+[class*="mainmenu_Item_"].gpfocus,
+[class*="mainmenu_Item_"][class*="mainmenu_Active_"],
+[class*="quickaccessmenu_Tab_"][class*="quickaccessmenu_Selected_"] {
+  background: var(--gfg-accent) !important;
+  color: white !important;
+  border-radius: var(--gfg-radius) !important;
+}
+[class*="mainmenu_ItemIcon_"], [class*="mainmenu_ItemLabel_"] { color: inherit !important; }

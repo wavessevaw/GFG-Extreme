@@ -1,0 +1,43 @@
+{
+  "name": "GFG-SteamOS",
+  "display_name": "GFG SteamOS",
+  "author": "wavessevaw",
+  "version": "v2.2.0-dev.1",
+  "manifest_version": 9,
+  "target": "System-Wide",
+  "description": "GFG black/red appearance with cinematic Home and Gameview. Development build: hardware and visual acceptance pending. Disable the legacy GFG SteamOS injector first.",
+  "flags": ["OPTIONAL_DEPENDENCIES", "REQUIRE_NAV_PATCH"],
+  "tabs": {
+    "gfg-main": ["SP", "Steam Big Picture Mode"],
+    "gfg-overlay": ["QuickAccess.*", "MainMenu.*"],
+    "gfg-keyboard": ["SteamKeyboard.*"]
+  },
+  "dependencies": {
+    "Art Hero": {
+      "Footer Options": "Default",
+      "Gradient Settings": "Subtle Gradient",
+      "Hero Appearance": "Full Screen Hero",
+      "Hero Alignment": "Center - Default",
+      "Hero Fit": "Cover - Default",
+      "No Header": "No"
+    },
+    "Clean Gameview": {
+      "Play Bar Style": "Transparent",
+      "Alignment": "Zoom-Center",
+      "Show Steam Cloud": "Yes",
+      "Ignore Footer": "No",
+      "Lock Logo": "Yes"
+    }
+  },
+  "inject": {
+    "tokens.css": ["gfg-main", "gfg-overlay", "gfg-keyboard"],
+    "controls.css": ["gfg-main", "gfg-overlay"],
+    "home.css": ["gfg-main"],
+    "library.css": ["gfg-main"],
+    "game.css": ["gfg-main"],
+    "settings.css": ["gfg-main"],
+    "downloads.css": ["gfg-main"],
+    "menus.css": ["gfg-main", "gfg-overlay"],
+    "keyboard.css": ["gfg-main", "gfg-keyboard"]
+  }
+}

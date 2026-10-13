@@ -25,7 +25,7 @@ A Decky Loader plugin that coordinates the frame generator, CPU/GPU resources, r
 
 ## SteamOS appearance preview
 
-The 2.2.0 candidate adds **Settings → GFG theme → GFG SteamOS**, a built-in black/red appearance for Gaming Mode without CSS Loader. Includes restoration and automatic reconnect. Native Steam layout and controls remain in place. Physical Steam Deck validation is pending. [Installation, coverage and recovery](docs/GFG_STEAMOS_SHELL.md).
+The 2.2.0 development branch now uses **CSS Loader + GFG SteamOS**, with Art Hero and Clean Gameview layout dependencies. **Settings → GFG theme → Install CSS Loader theme** installs the package; enable it in CSS Loader. Disable the previous built-in injector from that same GFG settings page. A compact GFG panel uses confirmed backend settings. This is partial implementation, not the finished eight-screen concept; Steam Deck validation and native-screen integrations remain pending. [Status, installation and recovery](docs/GFG_CSSLOADER_IMPLEMENTATION.md).
 
 
 
