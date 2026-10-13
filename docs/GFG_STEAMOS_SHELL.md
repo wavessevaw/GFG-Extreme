@@ -62,3 +62,26 @@ a visible canvas color change, check safe restoration, overlay transparency,
 shared-context rejection and sparse-window rejection. Native device appearance
 still needs physical verification; an injected stylesheet is not proof that
 every Steam screen matches the mockups.
+
+
+## Connection correction — shell-fix-5
+
+Physical shell-fix-4 evidence: the backend recognized `main`, two `overlay`, and
+`shared` CEF targets but rejected 1153/598/74/5-node DOM documents as
+`waiting-for-supported-surface`. The old fallback required the **live**
+JavaScript document to be `about:blank`; this need not match the initial CDP
+target URL. The actual Steam UI can be executing at `steamloopback.host`.
+
+An already title/URL-verified `main` or `overlay` target can now use the
+CSS-module-independent fallback on either a matching native `about:blank`
+document or a live `steamloopback.host` document with at least 40 DOM nodes.
+Only recognized Steam targets receive an enable script; remote origins, sparse
+startup pages, and unknown/empty shared contexts are still refused.
+The live document's verified role controls the root styling and main-page
+canvas, regardless of its current internal URL.
+
+Added a Chromium regression test that models the exact previously untested
+condition: a verified native Steam target running its document from
+`steamloopback.host` with 1153 DOM nodes and no recognized CSS-module
+classes. The test asserts application, role, visible canvas change, and
+restoration. This candidate still requires real-device visual validation.
