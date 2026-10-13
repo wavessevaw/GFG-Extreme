@@ -103,6 +103,30 @@ try {
   assert.equal(await generic.evaluate(() => document.documentElement.hasAttribute("data-gfg-shell-page")), false);
   await generic.evaluate(`(${runtime})(${JSON.stringify({ ...genericConfig, enabled: false, targetRole: "overlay" })})`);
 
+  // Regression from real device: backend verified Steam Big Picture/overlay
+  // targets, but Runtime.evaluate used a navigated steamloopback.host document.
+  // shell-fix-4 wrongly returned waiting with 1153/598/74 DOM nodes.
+  await generic.route("https://steamloopback.host/**", route => route.fulfill({
+    contentType: "text/html", body: fixture(genericBody)
+  }));
+  await generic.goto("https://steamloopback.host/Valve%20Steam%20Gamepad/default");
+  const liveMain = await generic.evaluate(`(${runtime})(${JSON.stringify({ ...genericConfig, revision: "live-loopback" })})`);
+  assert.equal(liveMain.applied, true, "verified main target with navigated Steam document");
+  assert.equal(liveMain.mode, "native-loopback-target");
+  assert.deepEqual(liveMain.surfaces, ["steam-main"]);
+  assert.equal(liveMain.documentKind, "steam-loopback");
+  assert.equal(await generic.evaluate(() => document.documentElement.getAttribute("data-gfg-shell-role")), "main");
+  assert.equal(await generic.evaluate(() => document.documentElement.hasAttribute("data-gfg-shell-page")), true);
+  assert.equal(await generic.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgb(9, 9, 11)");
+  await generic.evaluate(`(${runtime})(${JSON.stringify({ ...genericConfig, enabled: false })})`);
+  assert.equal(await generic.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgb(35, 56, 75)");
+  const liveOverlay = await generic.evaluate(`(${runtime})(${JSON.stringify({ ...genericConfig, targetRole: "overlay" })})`);
+  assert.equal(liveOverlay.applied, true, "verified overlay target with navigated Steam document");
+  assert.equal(liveOverlay.mode, "native-loopback-target");
+  assert.deepEqual(liveOverlay.surfaces, ["steam-overlay"]);
+  assert.equal(await generic.evaluate(() => document.documentElement.hasAttribute("data-gfg-shell-page")), false);
+  await generic.evaluate(`(${runtime})(${JSON.stringify({ ...genericConfig, targetRole: "overlay", enabled: false })})`);
+
   // Empty native targets and generic shared-context documents still wait.
   await generic.goto("about:blank?createflags=0");
   await generic.setContent("<html><head></head><body><div>Loading</div></body></html>");
