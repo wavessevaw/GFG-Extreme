@@ -59,6 +59,22 @@ try {
     assert.equal(await page.locator("#gfg-steamos-shell-v1").count(), 0, "crash lease restores Steam");
     await page.close(); count++;
   }
+  // An actual Deck's Big Picture and menu CEF targets use about:blank,
+  // unlike the SharedJSContext used by the existing loopback fixtures.
+  const native = await browser.newPage();
+  await native.goto("about:blank?createflags=0");
+  await native.setContent(fixture(screens.home));
+  const nativeConfig = { enabled: true, css, targetRole: "main", leaseMs: 15000, revision: "native" };
+  assert.equal((await native.evaluate(`(${runtime})(${JSON.stringify(nativeConfig)})`)).applied, true);
+  assert.equal(await native.locator("#gfg-steamos-shell-v1").count(), 1);
+  await native.evaluate(`(${runtime})(${JSON.stringify({ ...nativeConfig, enabled: false })})`);
+  assert.equal(await native.locator("#gfg-steamos-shell-v1").count(), 0);
+  assert.equal((await native.evaluate(`(${runtime})(${JSON.stringify({ ...nativeConfig, targetRole: "shared" })})`)).applied, false);
+  await native.goto("about:blank?browserviewpopup=42");
+  await native.setContent(fixture(screens.quickaccess));
+  assert.equal((await native.evaluate(`(${runtime})(${JSON.stringify({ ...nativeConfig, targetRole: "overlay" })})`)).applied, true);
+  await native.close();
+
   const page = await browser.newPage();
   await page.route("**/*", route => route.fulfill({ contentType: "text/html", body: fixture(screens.home) }));
   await page.goto("https://example.com/");
@@ -66,5 +82,5 @@ try {
   await page.goto("https://steamloopback.host/");
   await page.setContent("<html><head></head><body>Unrecognized client</body></html>");
   assert.equal((await page.evaluate(`(${runtime})(${JSON.stringify({ enabled: true, css })})`)).applied, false);
-  console.log(`GFG Shell OK (${count} native-shape screen fixtures; enable, disable, reload, expiry, focus, native actions; unknown/external documents rejected)`);
+  console.log(`GFG Shell OK (${count} native-shape screen fixtures plus real Steam about:blank target shapes; restore, expiry, focus and external document rejection)`);
 } finally { await browser.close(); }

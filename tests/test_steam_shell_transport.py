@@ -69,6 +69,13 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([c['method'] for c in self.commands],
                          ['Target.getTargets', 'Target.attachToTarget', 'Runtime.evaluate'])
 
+    async def test_real_big_picture_about_blank_is_discovered(self):
+        self.target = dict(self.target, title='Steam Big Picture Mode',
+                           url='about:blank?createflags=42')
+        tabs = await self.transport.tabs()
+        self.assertEqual(len(tabs), 1)
+        self.assertTrue((await self.transport.evaluate(tabs[0], '1'))['applied'])
+
     async def test_legacy_fallback(self):
         self.legacy = True
         tabs = await self.transport.tabs()

@@ -13,7 +13,14 @@ function applyGfgShell(config) {
     delete window[KEY];
   };
   if (!config.enabled) { remove(); return { applied: false, restored: true }; }
-  if (location.protocol !== "https:" || location.hostname !== "steamloopback.host" || !root || !document.head) {
+  const isShared = location.protocol === "https:" && location.hostname === "steamloopback.host";
+  // Steam's real Big Picture and overlay CEF windows have about:blank URLs.
+  // The Python CDP target filter verifies their title AND internal query flag,
+  // and the backend supplies this role (never the frontend user).
+  const isNativeWindow = location.protocol === "about:" && location.pathname === "blank"
+    && ((config.targetRole === "main" && new URLSearchParams(location.search).has("createflags"))
+      || (config.targetRole === "overlay" && new URLSearchParams(location.search).has("browserviewpopup")));
+  if ((!isShared && !isNativeWindow) || !root || !document.head) {
     remove(); return { applied: false, reason: "unsupported-document" };
   }
   // Semantic module names rather than build-specific hashes. A changed Steam
@@ -29,7 +36,10 @@ function applyGfgShell(config) {
     keyboard: '[class*="virtualkeyboard_"], [class*="keyboard_Keyboard_"]'
   };
   const surfaces = Object.keys(probes).filter(name => document.querySelector(probes[name]));
-  if (!surfaces.length) { remove(); return { applied: false, reason: "waiting-for-supported-surface", surfaces }; }
+  if (!surfaces.length) {
+    const dom_nodes = document.body ? document.body.getElementsByTagName("*").length : 0;
+    remove(); return { applied: false, reason: "waiting-for-supported-surface", surfaces, dom_nodes };
+  }
   let style = document.getElementById(ID);
   if (style && style.tagName !== "STYLE") { remove(); style = null; }
   if (!style) { style = document.createElement("style"); style.id = ID; document.head.appendChild(style); }

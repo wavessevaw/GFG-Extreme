@@ -13,7 +13,7 @@ import os
 import tempfile
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .package_paths import PLUGIN_ROOT
 
@@ -21,22 +21,48 @@ ASSETS = PLUGIN_ROOT / 'themes' / 'gfg-shell'
 POLL_S = 3.0
 LEASE_MS = 15000
 SHARED_TITLES = ('SP', 'Steam', 'SharedJSContext', 'Steam Shared Context presented by Valve\u2122')
+OVERLAY_PREFIXES = ('QuickAccess', 'MainMenu', 'SteamKeyboard')
 LOG = logging.getLogger(__name__)
 
 
-def allowed_target(tab: dict) -> bool:
-    """Never style the store, web browsers, friends chat, or desktop library."""
-    if tab.get('type') != 'page':
-        return False
-    url = urlparse(tab.get('url', ''))
-    if url.scheme != 'https' or url.hostname != 'steamloopback.host':
-        return False
-    path = unquote(url.path)
+def target_kind(tab: dict) -> str | None:
+    """Only Steam's known Gaming Mode CDP pages; never external/store pages.
+
+    On an actual Deck the visible Big Picture and sidebar CEF windows have
+    about:blank?createflags= / about:blank?browserviewpopup= addresses.
+    The shared React context instead has a steamloopback.host address.
+    Both kinds are necessary, but each has a deliberately narrow title/URL pair.
+    """
+    if not isinstance(tab, dict) or tab.get('type') != 'page':
+        return None
     title = tab.get('title', '')
-    return ('Valve Steam Gamepad' in path
-            or ((path == '/index.html' or path.startswith('/routes/')) and title in SHARED_TITLES)
-            or title in ('SP', 'Steam Big Picture Mode')
-            or title.startswith(('QuickAccess', 'MainMenu', 'SteamKeyboard')))
+    raw_url = tab.get('url', '')
+    if not isinstance(title, str) or not isinstance(raw_url, str):
+        return None
+    url = urlparse(raw_url)
+    path = unquote(url.path)
+    if url.scheme == 'about' and path == 'blank' and not url.fragment:
+        keys = parse_qs(url.query, keep_blank_values=True)
+        if title == 'Steam Big Picture Mode' and 'createflags' in keys:
+            return 'main'
+        if title.startswith(OVERLAY_PREFIXES) and 'browserviewpopup' in keys:
+            return 'overlay'
+        return None
+    if url.scheme != 'https' or url.hostname != 'steamloopback.host':
+        return None
+    if title in SHARED_TITLES and (
+        path == '/index.html' or path.startswith('/routes/') or 'Valve Steam Gamepad' in path
+    ):
+        return 'shared'
+    if title == 'Steam Big Picture Mode' and 'Valve Steam Gamepad' in path:
+        return 'main'
+    if title.startswith(OVERLAY_PREFIXES) and 'Valve Steam Gamepad' in path:
+        return 'overlay'
+    return None
+
+
+def allowed_target(tab: dict) -> bool:
+    return target_kind(tab) is not None
 
 
 def allowed_socket(url: str, *, browser=False) -> bool:
@@ -52,6 +78,7 @@ def allowed_socket(url: str, *, browser=False) -> bool:
 class SteamTransport:
     def __init__(self):
         self.target_count = 0
+        self.target_titles: list[str] = []
 
     async def _command(self, ws, ident, method, params, session_id=None):
         import aiohttp
@@ -88,6 +115,7 @@ class SteamTransport:
                 if not isinstance(data, list) or len(data) > 128:
                     raise ValueError('Unexpected Steam UI target list')
                 self.target_count = len(data)
+                self.target_titles = [str(t.get('title', ''))[:72] for t in data if isinstance(t, dict)][:16]
                 return [dict(t, _browser_socket=socket) for t in data
                         if isinstance(t, dict) and allowed_target(t)]
             except (OSError, ValueError, aiohttp.ClientError):
@@ -99,6 +127,7 @@ class SteamTransport:
                 if not isinstance(data, list) or len(data) > 128:
                     raise ValueError('Unexpected Steam UI target list')
                 self.target_count = len(data)
+                self.target_titles = [str(t.get('title', ''))[:72] for t in data if isinstance(t, dict)][:16]
                 return [t for t in data if isinstance(t, dict) and allowed_target(t)]
 
     async def evaluate(self, tab: dict, script: str) -> dict:
@@ -166,10 +195,12 @@ class SteamShell:
             if os.path.exists(name):
                 os.unlink(name)
 
-    def script(self, enabled: bool) -> str:
+    def script(self, enabled: bool, *, role: str = 'shared') -> str:
+        if role not in ('shared', 'main', 'overlay'):
+            raise ValueError('Unsupported Steam window role')
         runtime = (self.assets / 'runtime.js').read_text(encoding='utf-8')
         css = (self.assets / 'shell.css').read_text(encoding='utf-8') if enabled else ''
-        payload = {'enabled': enabled, 'css': css, 'leaseMs': LEASE_MS,
+        payload = {'enabled': enabled, 'css': css, 'targetRole': role, 'leaseMs': LEASE_MS,
                    'revision': hashlib.sha256(css.encode()).hexdigest()[:16]}
         return '(' + runtime + ')(' + json.dumps(payload, ensure_ascii=True) + ')'
 
@@ -180,8 +211,9 @@ class SteamShell:
                 'engine': 'gfg-shell', 'requires_css_loader': False,
                 'targets': list(self._targets), 'error': self._error,
                 'coverage': sorted({s for t in active for s in t.get('surfaces', [])}),
-                'lease_seconds': LEASE_MS // 1000, 'build': 'shell-fix-2',
-                'discovered_targets': getattr(self.transport, 'target_count', None)}
+                'lease_seconds': LEASE_MS // 1000, 'build': 'shell-fix-3',
+                'discovered_targets': getattr(self.transport, 'target_count', None),
+                'discovered_titles': getattr(self.transport, 'target_titles', [])}
 
     async def set_enabled(self, enabled: bool) -> dict:
         if type(enabled) is not bool:
@@ -206,11 +238,14 @@ class SteamShell:
     async def _sync_locked(self, *, removing=False):
         enabled = self.enabled and not removing
         try:
-            script = self.script(enabled)
+            # Validate assets before discovery, then pick a per-window runtime
+            # authorization; about:blank is never allowed for shared contexts.
+            self.script(enabled)
             tabs = await asyncio.wait_for(self.transport.tabs(), timeout=4)
             tabs = [t for t in tabs if allowed_target(t)]
             async def apply(tab):
                 try:
+                    script = self.script(enabled, role=target_kind(tab))
                     result = await asyncio.wait_for(self.transport.evaluate(tab, script), timeout=4)
                     return {'title': tab.get('title', 'Steam'), **result}
                 except Exception:
@@ -220,11 +255,16 @@ class SteamShell:
             self._error = None
             if enabled:
                 if not tabs:
-                    self._error = 'No Steam Gaming Mode window detected. Open the Steam home screen.'
+                    count = getattr(self.transport, 'target_count', 0)
+                    titles = ', '.join(getattr(self.transport, 'target_titles', [])[:6]) or 'none'
+                    self._error = f'No supported Steam Gaming Mode window among {count} CEF targets (titles: {titles}).'
                 elif any(t.get('error') for t in self._targets):
                     self._error = 'Steam UI connection failed for one or more windows.'
                 elif not any(t.get('applied') for t in self._targets):
-                    reasons = sorted({str(t.get('reason', 'unknown')) for t in self._targets})
+                    reasons = sorted({str(t.get('reason', 'unknown')) +
+                                      (' (DOM nodes: ' + str(t.get('dom_nodes')) + ')'
+                                       if t.get('dom_nodes') is not None else '')
+                                      for t in self._targets})
                     self._error = 'Steam connected, but appearance was not applied: ' + ', '.join(reasons)
             self._dirty = False
         except Exception as error:
@@ -233,7 +273,7 @@ class SteamShell:
                            '). GFG will reconnect automatically.') if enabled else None
         diagnostic = (enabled, self._error, tuple((t.get('title'), t.get('applied'), t.get('reason')) for t in self._targets))
         if diagnostic != self._last_diagnostic:
-            LOG.info('GFG SteamOS shell-fix-2: enabled=%s targets=%s error=%s', enabled, self._targets, self._error)
+            LOG.info('GFG SteamOS shell-fix-3: enabled=%s targets=%s error=%s', enabled, self._targets, self._error)
             self._last_diagnostic = diagnostic
 
     async def start(self):

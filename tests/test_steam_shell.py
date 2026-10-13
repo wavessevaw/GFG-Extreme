@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'py_modules'))
-from gfg_plugin.steam_shell import SteamShell, allowed_target, allowed_socket
+from gfg_plugin.steam_shell import SteamShell, allowed_target, allowed_socket, target_kind
 
 
 def target(title='Steam Big Picture Mode', **kw):
@@ -49,6 +49,18 @@ class BoundaryTests(unittest.TestCase):
             self.assertTrue(allowed_target(target(title, url='https://steamloopback.host/index.html')))
             self.assertTrue(allowed_target(target(title, url='https://steamloopback.host/routes/library')))
         self.assertFalse(allowed_target(target('SteamLibraryWindow', url='https://steamloopback.host/index.html')))
+        self.assertEqual(target_kind(target('Steam Big Picture Mode',
+            url='about:blank?createflags=0')), 'main')
+        self.assertEqual(target_kind(target('QuickAccess_uid2',
+            url='about:blank?browserviewpopup=1')), 'overlay')
+        self.assertEqual(target_kind(target('MainMenu_uid4',
+            url='about:blank?browserviewpopup=1')), 'overlay')
+        self.assertFalse(allowed_target(target('SharedJSContext', url='about:blank?createflags=1')))
+        self.assertFalse(allowed_target(target('Steam Big Picture Mode', url='about:blank')))
+        self.assertFalse(allowed_target(target('QuickAccess_uid2', url='about:blank?createflags=1')))
+        self.assertFalse(allowed_target(target('RandomPage', url='about:blank?browserviewpopup=1')))
+        self.assertFalse(allowed_target(target('Steam Big Picture Mode',
+            url='https://store.steampowered.com/')))
         self.assertTrue(allowed_target(target('SP', url='https://steamloopback.host/index.html')))
 
     def test_debugging_socket_cannot_redirect_to_remote_or_other_local_services(self):
@@ -76,6 +88,17 @@ class ShellTests(unittest.IsolatedAsyncioTestCase):
         result = await self.shell.set_enabled(False)
         self.assertFalse(result['active'])
         self.assertFalse(json.loads(self.file.read_text())['enabled'])
+        self.assertIn('"enabled": false', self.steam.calls[-1][1])
+
+    async def test_native_window_receives_scoped_authorization(self):
+        self.steam.targets = [target('Steam Big Picture Mode', url='about:blank?createflags=0')]
+        result = await self.shell.set_enabled(True)
+        self.assertTrue(result['active'])
+        self.assertIn('"targetRole": "main"', self.steam.calls[-1][1])
+        self.steam.targets = [target('QuickAccess_uid2', url='about:blank?browserviewpopup=1')]
+        await self.shell.sync()
+        self.assertIn('"targetRole": "overlay"', self.steam.calls[-1][1])
+        await self.shell.set_enabled(False)
         self.assertIn('"enabled": false', self.steam.calls[-1][1])
 
     async def test_failed_save_leaves_preference_and_ui_unchanged(self):

@@ -26,3 +26,17 @@ Download the `GFG-Extreme-2.2.0-shell-candidate` artifact from the candidate wor
 The initial candidate could stay in Waiting for Steam Gaming Mode because its target-name filter omitted SharedJSContext and other names supported by Decky. Discovery now uses the local browser CDP endpoint and attaches directly to matching targets, with a legacy per-page fallback. Both transports restrict host, port and target origin. Runtime DOM checks still decide whether a window contains a supported Steam surface.
 
 Waiting now distinguishes no matching window, a connected but unsupported document, and connection failure. State changes are recorded in the plugin log. The appearance page identifies this build as `shell-fix-2`. Real HTTP/WebSocket integration tests cover browser target discovery, flattened-session attachment, per-page fallback and rejection of a remote debugging URL. Hardware validation remains pending; this correction does not assert the user's exact failure has been confirmed from device logs.
+
+
+## Connection correction — shell-fix-3
+
+Physical Steam Deck CEF targets include the visible `Steam Big Picture Mode` window at
+`about:blank?createflags=…` and `QuickAccess_uid*` / `MainMenu_uid*` popups at
+`about:blank?browserviewpopup=…`. The shell-fix-2 URL restriction incorrectly
+excluded these windows. The backend now admits them only with known Steam window
+titles and matching internal URL query flags; all external pages remain excluded.
+The runtime separately authorizes these narrow native document shapes using a
+backend-assigned target role, while keeping `steamloopback.host` shared-context
+support. Failure messages include the discovered target count/titles and DOM
+node count for unsupported surfaces. Synthetic tests now include native URL
+shapes; physical device validation is still required. This remains a candidate.
