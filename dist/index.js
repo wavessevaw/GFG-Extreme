@@ -196,8 +196,8 @@ var safeCallable = (name) => {
   };
 };
 var rpc = {
-  themeStatus: safeCallable("get_theme_status"),
-  themeInstall: safeCallable("install_gfg_theme"),
+  shellStatus: safeCallable("get_steam_shell_status"),
+  shellEnable: safeCallable("set_steam_shell_enabled"),
   governor: safeCallable("get_governor_status"),
   setGovernor: safeCallable("set_governor_enabled"),
   setHud: safeCallable("set_governor_hud"),
@@ -1637,40 +1637,69 @@ function ThemePage({ back }) {
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const mounted = useRef(true);
+  const changing = useRef(false);
+  const revision = useRef(0);
   useEffect(() => {
-    rpc.themeStatus().then(setStatus).catch((e) => setMsg(String(e)));
+    mounted.current = true;
+    let timer;
+    const refresh = async () => {
+      try {
+        const rev = revision.current;
+        const r = await rpc.shellStatus();
+        if (mounted.current && !changing.current && rev === revision.current) setStatus(r);
+      } catch (e) {
+        if (mounted.current) setMsg(String(e.message || e));
+      }
+      if (mounted.current) timer = setTimeout(refresh, 3e3);
+    };
+    refresh();
+    return () => {
+      mounted.current = false;
+      clearTimeout(timer);
+    };
   }, []);
-  const install = async () => {
+  const change = async (enabled) => {
+    if (changing.current) return;
+    changing.current = true;
+    revision.current++;
     setBusy(true);
     setMsg("");
     try {
-      const result = await rpc.themeInstall();
-      setMsg(result && result.success ? result.message : result && result.error || "Installation failed.");
-      setStatus(await rpc.themeStatus());
+      const r = await rpc.shellEnable(enabled);
+      if (!r || !r.success) throw new Error(r && r.error || "Could not save appearance");
+      if (mounted.current) setStatus(r);
     } catch (e) {
-      setMsg(String(e));
+      if (mounted.current) setMsg(String(e.message || e));
     } finally {
-      setBusy(false);
+      changing.current = false;
+      if (mounted.current) setBusy(false);
     }
   };
+  const state = status && status.active ? "GFG appearance active" : status && status.enabled ? "Waiting for Steam Gaming Mode" : "Standard Steam appearance";
   return h(
     Page,
     { title: "GFG theme", onBack: back },
-    h(Note, { quiet: true }, "Install CSS Loader from the Decky store first. GFG copies its bundled theme to the CSS Loader themes folder."),
+    h(Note, { quiet: true }, "Black surfaces, red accents and clear gamepad focus. Built into GFG \u2014 no CSS Loader required."),
     h(
       "div",
       { className: "card" },
-      h("b", null, status && status.current ? "Installed and up to date" : status && status.installed ? "Update available" : "Not installed"),
-      h("div", { className: "hint", style: { textAlign: "left", wordBreak: "break-all" } }, status && status.path || "~/homebrew/themes/GFG Extreme")
+      h("b", null, state),
+      h("div", { className: "hint", style: { textAlign: "left" } }, "Steam keeps control of your games, menus and keyboard.")
     ),
-    h("div", { className: "list" }, h(Row, {
-      icon: "filter",
-      title: busy ? "Installing\u2026" : status && status.installed ? "Update / reinstall theme" : "Install theme",
-      onClick: busy ? void 0 : install
+    h("div", { className: "list" }, h(Toggle, {
+      on: !!(status && status.enabled),
+      title: "GFG SteamOS",
+      sub: busy ? "Applying\u2026" : "Apply the GFG appearance across Gaming Mode. Turn off to restore Steam.",
+      onChange: (value) => {
+        if (!busy && status) change(value);
+      }
     })),
-    msg ? h(Note, { quiet: true }, msg) : null,
-    status && status.success === false ? h(Note, null, status.error) : null,
-    h(Note, { quiet: true }, "After installing, open CSS Loader, reload themes and enable GFG Extreme.")
+    status && status.coverage && status.coverage.length ? h(Note, { quiet: true }, "Detected screens: " + status.coverage.join(", ")) : null,
+    h("div", { className: "list" }, h(Row, { icon: "stop", title: "Restore Steam appearance", onClick: busy ? void 0 : () => change(false) })),
+    msg ? h(Note, null, msg) : null,
+    status && status.error ? h(Note, null, status.error) : null,
+    h(Note, { quiet: true }, "Preview: Steam layout and gamepad navigation stay native. Unloading GFG restores Steam; an interrupted connection restores it within 15 seconds.")
   );
 }
 function SetupCheckPage({ back, profile }) {

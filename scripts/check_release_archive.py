@@ -88,6 +88,10 @@ def check(path, version):
             for file in css:
                 if PurePosixPath(file).name != file or not read(theme + file):
                     raise ValueError("invalid bundled theme file: " + file)
+        if tuple(map(int, version.split("-")[0].split("."))) >= (2, 2, 0):
+            for file in ("py_modules/gfg_plugin/steam_shell.py", "themes/gfg-shell/runtime.js", "themes/gfg-shell/shell.css"):
+                if not read(file):
+                    raise ValueError("empty GFG shell asset: " + file)
         if any("/gfg-open/" in name for name in names):
             raise ValueError("retired generator shipped in release")
         if not read("dist/index.js") or not read("main.py"):

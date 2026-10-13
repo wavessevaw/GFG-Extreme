@@ -124,6 +124,13 @@ window.__state = ${JSON.stringify(state)};
 window.__cfg = ${JSON.stringify(extra.cfg || { fg_backend: "gfg", multiplier: 2, })};
 var callable = (n) => async (...a) => ({ get_governor_status: () => window.__state, get_profiles: () => ({ profiles: ["Default", "Sample Game", "Another Game"], current_profile: "Sample Game" }),
   get_profile_config: () => ({ config: window.__cfg }), get_pipeline_inspector: () => ({ saved: { fg_backend: "gfg", multiplier: 2, scaling: "off" }, effective: { fg_backend: "gfg", multiplier: 2, scaling: "off" }, actual: { renderer: "loaded", multiplier: 2, ...(window.__state.__actual || {}) } }),
+  get_steam_shell_status: () => ({ success: true, enabled: !!window.__shellEnabled, active: !!window.__shellEnabled, coverage: window.__shellEnabled ? ["quickaccess"] : [] }),
+  set_steam_shell_enabled: (enabled) => {
+    window.__shellCalls = (window.__shellCalls || 0) + 1;
+    if (window.__state.__themeFail) return { success: false, error: "Could not save appearance" };
+    window.__shellEnabled = enabled;
+    return { success: true, enabled, active: enabled, coverage: enabled ? ["quickaccess"] : [] };
+  },
   get_theme_status: () => ({ success: true, installed: !!window.__themeInstalled, current: !!window.__themeInstalled, path: "/home/deck/homebrew/themes/GFG Extreme" }),
   install_gfg_theme: () => { window.__themeCalls = (window.__themeCalls || 0) + 1;
     if (window.__state.__themeFail) return { success: false, error: "Theme folder is read-only" };

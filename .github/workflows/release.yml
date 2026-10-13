@@ -96,6 +96,7 @@ jobs:
           git diff --exit-code dist/index.js || { echo "::error::dist/index.js is stale"; exit 1; }
           npx playwright install --with-deps chromium
           node frontend/harness/smoke.mjs
+          node frontend/harness/steam-shell.mjs
 
       - name: Identify Flatpak payload source
         if: steps.version.outputs.exists == 'false'

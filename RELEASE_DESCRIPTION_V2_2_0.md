@@ -1,11 +1,12 @@
-# GFG Extreme 2.2.0 — Native Fusion preview
+# GFG Extreme 2.2.0 — SteamOS appearance preview
 
-Frame Fusion now has a path for games rendering at the display's native resolution, including games that ignore a requested render scale. On compatible native 64-bit SDR8 games, the renderer preserves BGRA/RGBA input layout and uses a same-format source copy. BGRA no longer needs a full-frame conversion to RGBA before the existing frame generator.
+Built-in black/red Steam Gaming Mode appearance. No CSS Loader dependency.
 
-The two history images and source transfer remain necessary. This change removes a conversion step; it does not claim fewer source copies, more real FPS or measured battery savings. The frame generator's model, output encoding and scheduling stay unchanged.
+- Settings → GFG theme → GFG SteamOS; explicit restore action.
+- Styles for eight Steam surfaces, native actions and navigation retained.
+- Automatic reconnect after UI reload; expiring styles restore Steam after a lost backend connection.
+- Separate persisted appearance preference; off by default during preview.
 
-Enable **Settings → Diagnostics → Frame Fusion**, install the bundled updated engine and restart the game. Fusion remains off by default. Unsupported layouts and unavailable sharing fall back to the regular path. Flatpak, 32-bit and HDR use their existing engine paths.
+This candidate has synthetic browser coverage. It has not been verified on physical Steam Deck hardware or against a specific Steam Stable/Beta build. The approved concept's custom layouts are not reproduced exactly; this implementation styles Steam's existing interface.
 
-Diagnostics distinguish native transfers and avoided BGRA conversions from Core's removed scaling-input copies. Native-resolution work can be reported when scaling is inactive. The log export retains engine identity, launch setting, dimensions, fallback reasons and the last live context. Publication snapshots are never added together as session totals.
-
-Automated checks cover the production renderer, portable policies, source bytes/alpha, logical RGBA/BGRA sampling, two-frame history isolation, transfer command counts, Vulkan synchronization, Python diagnostics, frontend behavior and final package provenance. Steam Deck/RADV, licensed model execution, suspend/resume and battery comparisons still require device testing. This preview leaves 2.0.3 as the latest stable release.
+See docs/GFG_STEAMOS_SHELL.md for installation, recovery and validation limits. Stable 2.1.1 remains the recommended release until device verification.

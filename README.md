@@ -23,6 +23,12 @@ A Decky Loader plugin that coordinates the frame generator, CPU/GPU resources, r
 
 </div>
 
+## SteamOS appearance preview
+
+The 2.2.0 candidate adds **Settings → GFG theme → GFG SteamOS**, a built-in black/red appearance for Gaming Mode without CSS Loader. Includes restoration and automatic reconnect. Native Steam layout and controls remain in place. Physical Steam Deck validation is pending. [Installation, coverage and recovery](docs/GFG_STEAMOS_SHELL.md).
+
+
+
 ## Autopilot
 
 **Autopilot in GFG Extreme 2.1.1 is not an automatic TDP slider.** It is an orchestration mode that balances frame pacing, genuinely rendered frames, generated output, visual workload, APU power and temperature. Watts are only one of its tools.
