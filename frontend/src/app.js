@@ -10,6 +10,8 @@ const rpcErrors = { last: null, listeners: new Set() };
 const reportRpcError = (name, e) => { rpcErrors.last = { name, message: String((e && e.message) || e) }; rpcErrors.listeners.forEach((f) => f()); };
 const safeCallable = (name) => { const f = callable(name); return async (...a) => { try { const r = await f(...a); if (rpcErrors.last && rpcErrors.last.name === name) { rpcErrors.last = null; rpcErrors.listeners.forEach((g) => g()); } return r; } catch (e) { if (name !== "log_ui_event") reportRpcError(name, e); throw e; } }; };
 const rpc = {
+  themeStatus: safeCallable("get_theme_status"),
+  themeInstall: safeCallable("install_gfg_theme"),
   governor: safeCallable("get_governor_status"),
   setGovernor: safeCallable("set_governor_enabled"),
   setHud: safeCallable("set_governor_hud"),
@@ -17,8 +19,13 @@ const rpc = {
   setFrameOs: safeCallable("set_governor_frame_os"),
   setFrameOsActUnlock: safeCallable("set_governor_frame_os_act_unlock"),
   setFrameOsAb: safeCallable("set_governor_frame_os_ab"),
+  setFrameFusion: safeCallable("set_governor_frame_fusion"),
+  setFrameOsFeature: safeCallable("set_governor_frame_os_feature"),
   setPowerSplit: safeCallable("set_governor_power_split"),
   setMode: safeCallable("set_governor_mode"),
+  setAutopilotPreference: safeCallable("set_governor_autopilot_preference"),
+  setAutopilotShading: safeCallable("set_governor_autopilot_shading"),
+  setAutoFlow: safeCallable("set_governor_auto_flow"),
   setExtremeSharpness: safeCallable("set_governor_extreme_sharpness"),
   setExtremeActConsent: safeCallable("set_governor_extreme_act_consent"),
   forgetModel: safeCallable("forget_governor_game_model"),
@@ -56,7 +63,8 @@ const rpc = {
 const num = (v, d = 1) => (v == null || isNaN(v) ? "–" : Number(v).toFixed(d).replace(/\.0$/, ""));
 const MODE_NAME = { oled: "Steam Deck OLED", lcd: "Steam Deck LCD", dock: "Dock", external: "Dock", unknown: "Display" };
 const fmtMult = (m) => { const q = Math.round(Number(m) * 4) / 4; return "×" + (Number.isInteger(q) ? q : String(q)); };
-const MODE_LABEL = { budget: "Battery", balanced: "Balanced", quality: "Quality", extreme: "Extreme" };
+const profileLabel = (name) => name === "mako" || name === "Default" ? "stable" : name;
+const MODE_LABEL = { budget: "Battery", balanced: "Balanced", quality: "Quality", extreme: "Extreme", autopilot: "Autopilot" };
 // review 1.1.x: a session switched between modes reads "Battery 18m · Balanced 13m", not just its last mode.
 const frameOsMinutes = (m) => Object.entries(m || {}).map(([k, v]) => k + " " + num(v, 0) + "m").join(" · ");
 const sessionModes = (x) => (x && x.mode === "mixed" && x.modes ? Object.entries(x.modes).map(([m, v]) => (MODE_LABEL[m] || m) + " " + num(v, 0) + "m").join(" · ") : (MODE_LABEL[x && x.mode] || "–"));
@@ -80,16 +88,24 @@ const TIER_TEXT = {
 };
 const PHASE_TEXT = { settle: "Starting at 10 W", search_down: "Lowering TDP", upgrade: "Fewer generated frames", probe: "Re-checking", locked: "Watching", guard: "Protecting" };
 const MODE_TEXT = {
-  balanced: "Balanced: starts at about 45 real FPS and 12 W, never goes below 30 real FPS and never above your Deck's normal power range. A bit more battery for a steadier picture.",
-  budget: "Battery: lowest TDP first, 9–11 W ideal. Real FPS stays at 24 or more; a deeper ratio (down to 20 real) and the highest watts your Deck allows only as a last resort.",
-  quality: "Quality: fewest generated frames first, then lowers TDP. Uses more battery.",
-  extreme: "Extreme: the most real frames at your Deck's stock limit — 15 W, or your own lower limit, never more, no overclock. Lowers render resolution to 90% / 80% with matched sharpening only when the engine confirms it. Uses more battery than Balanced.",
+  balanced: "Balanced: starts at about 45 real FPS on OLED or 30 on LCD and 12 W. Uses ratios up to ×3.75 when needed to keep output steady, within your Deck's normal power range.",
+  budget: "Battery: the lowest TDP that holds steady frames, down to this Deck's measured minimum. Tests cheaper frame ratios before keeping extra watts. Normal ratios reach ×3.75: 24 real FPS at 90 Hz or 16 at 60 Hz. Deeper only as a last resort.",
+  quality: "Quality: keeps your render resolution and uses the fewest generated frames that hold. Then lowers TDP; rechecks finer frame ratios after stable play. Uses more battery.",
+  extreme: "Extreme — BETA / EXPERIMENTAL. In development; not recommended for regular play. Uses your Deck's stock limit — 15 W, or your own lower limit, never more, no overclock. Lowers render resolution to 90% / 80% with matched sharpening only when the engine confirms it. Uses more battery than Balanced.",
+  autopilot: "Autopilot chooses the steady frame rate and the lowest power that holds it. It uses Governor for TDP. A GPU clock change is one step, then checked. If the frames get worse, the previous setting comes back.",
 };
 
 // ---------- Extreme (1.6)
 const XB_TITLE = { upscale: "Upscale + sharpen", quiet: "Quiet background", split: "Power → GPU", cooling: "Cooling ahead",
   act: "Frame OS Act", memory: "Memory tuning", latency: "Low latency", shield: "Stutter shield", instant: "Instant start" };
 const XB_REASON = {
+  "pacing-setting-off": "Off in Settings",
+  "pacer-feature-upgrade-required": "Restart with the updated Frame OS layer",
+  "pacing-paused": "Waiting for gameplay",
+  "pacing-ab-control": "A/B control window",
+  "native-frame-timing-active": "Frame-start timing confirmed by the layer",
+  "native-stall-shield-active": "Late-frame recovery confirmed by the layer",
+  "awaiting-pacer-acknowledgement": "Waiting for native confirmation",
   "game-not-running": "Waiting for the game",
   "scaler-not-provisioned-at-launch": "Restart the game once to enable",
   "cpu-bound-full-resolution": "CPU-bound: full resolution kept",
@@ -148,9 +164,9 @@ function describeExtreme(s, d) {
 // The ceilings come from the device (a stock Deck stops at 15 W).
 const budgetRule = (b) => {
   const lim = (b && b.limits_w) || {};
-  if (lim.normal == null) return "9–11 W ideal, then what your Deck allows";
+  if (lim.normal == null) return "Lowest stable TDP within this Deck's limits";
   const last = lim.emergency > lim.normal ? ", " + num(lim.emergency, 0) + " W last resort" : " (this Deck's maximum)";
-  return "9–11 W ideal, " + num(lim.normal, 0) + " W max" + last;
+  return "Lowest stable TDP" + (lim.min != null ? ", " + num(lim.min, 1) + " W device floor" : "") + ", " + num(lim.normal, 0) + " W max" + last;
 };
 
 // Plain-language state for the hero card. Returns {head, body, tone}
@@ -171,6 +187,7 @@ function describe(s) {
   if (b && s.state === "LOCKED" && b.thermal_deferred && b.heat_limited) return { head: "Cooling · " + num(b.tdp_w, 0) + " W", body: "The Deck is " + (b.thermal === "hot" ? "hot" : b.thermal === "heating" ? "heating up" : "cooling down") + ": GFG keeps the current ratio and only tries lower watts. Fewer generated frames are tried again once it cools.", tone: "warn" };
   if (b && s.state === "LOCKED") return { head: "Adapting · " + num(b.tdp_w, 0) + " W", body: (b.warm_started ? "Started from what worked last time. " : "") + (TIER_TEXT[b.tier] || "Checks FPS every second: adds watts at once when the game falls short, tries lower watts every 45 s."), tone: b.tier === "emergency" ? "warn" : "ok" };
   if (b && s.state === "GUARD") return { head: "Protecting", body: "A scene got heavier: more generated frames first, then more watts.", tone: "warn" };
+  if (s.reason === "flow-scale-trial") return { head: "Checking efficiency", body: "Comparing generation workload at the same frame target and power cap.", tone: "ok" };
   if (s.state === "OPTIMIZE_POWER") return { head: "Saving power", body: "Lowering TDP while holding the target.", tone: "ok" };
   if (s.state === "LOCKED") return { head: "Locked in", body: "Stable at target. GFG stays out of the way.", tone: "ok" };
   if (s.state === "GUARD") return { head: "Protecting", body: "Quality dipped — restoring a safe setting.", tone: "warn" };
@@ -323,7 +340,7 @@ function HeroTop({ layout, onTap, value, max, label, sub, d, wolf }) {
 
 // Frame OS benefit rings: colour by effectiveness, red when Frame OS made it worse.
 const ringHue = (v, max) => (v < 0 ? 0 : 25 + 115 * Math.min(1, Math.abs(v) / max));
-function MiniRing({ value, max, text, label, live, estimate, fixed }) {
+function MiniRing({ value, max, text, displayText, label, live, estimate, fixed }) {
   const r = 26, w = 4, size = 2 * (r + w), c = 2 * Math.PI * r;
   const has = value != null;
   const f = has ? Math.min(1, Math.abs(value) / max) : 0;
@@ -336,11 +353,29 @@ function MiniRing({ value, max, text, label, live, estimate, fixed }) {
         // Halo as a wider faint arc inside the SVG: a CSS drop-shadow is clipped to a square in Steam's browser.
         glow ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeOpacity: 0.22, strokeWidth: w + 4, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null,
         has ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: color, strokeWidth: w, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } }) : null),
-      h("div", { className: "mnum" + (estimate || !has ? " dim" : "") }, has ? text : "—")),
+      h("div", { className: "mnum" + (estimate || !has ? " dim" : "") }, displayText !== undefined ? displayText : has ? text : "—")),
     h("div", { className: "mlab" }, label));
 }
 
-function FrameOsCard({ fo }) {
+function energySavingsText(cap, maximum) {
+  if (typeof cap !== "number" || !Number.isFinite(cap) || cap < 0 ||
+      typeof maximum !== "number" || !Number.isFinite(maximum) || maximum <= 0) return "—";
+  const stockMaximum = maximum;
+  return Math.round(Math.max(0, Math.min(100, 100 * (stockMaximum - cap) / stockMaximum))) + "%";
+}
+function observedEnergyText(power = {}) {
+  const current = power.observed_tdp_w != null ? power.observed_tdp_w : power.current_tdp_w;
+  const caps = [current, power.observed_fast_w].filter(v => typeof v === "number" && Number.isFinite(v) && v >= 0);
+  const maximum = [power.gamescope_max_tdp_w, power.maximum_tdp_w].find(v => typeof v === "number" && Number.isFinite(v) && v > 0);
+  return caps.length ? energySavingsText(Math.max(...caps), maximum) : "—";
+}
+function EnergyRing({ battery, displayText }) {
+  const charge = typeof battery === "number" && Number.isFinite(battery) && battery >= 0 && battery <= 100 ? battery : null;
+  const hue = charge == null ? 0 : 120 * Math.min(1, charge / 50);
+  return h(MiniRing, { value: charge, max: 100, displayText, label: "Energy", live: false,
+    fixed: charge == null ? "#5c5c66" : "hsl(" + hue + " 80% 52%)" });
+}
+function FrameOsCard({ fo, power, battery }) {
   const b = fo.benefit;
   if (!fo.enabled || !b) return null;
   const est = !!b.estimate;
@@ -352,9 +387,9 @@ function FrameOsCard({ fo }) {
     h("div", { className: "fos-head" }, h("span", null, "FRAME OS"),
       h("span", { className: "pill " + (est ? "would" : ab || level || "") }, est ? "ESTIMATE" : ab ? "A/B CHECK" : (level || "").toUpperCase())),
     h("div", { className: "rings" },
-      h(MiniRing, { value: resp, max: 50, text: resp == null ? "" : (resp >= 0 ? "−" : "+") + Math.abs(Math.round(resp)) + "%", label: "Response", live: level !== "rest", estimate: est }),
-      h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "−") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est }),
-      h(MiniRing, { value: energy, max: 30, text: energy == null ? "" : pct(energy), label: "Energy", live: level === "rest", estimate: est })),
+      h(MiniRing, { value: resp, max: 50, text: resp == null ? "" : (resp >= 0 ? "−" : "+") + Math.abs(Math.round(resp)) + "%", label: "Response", live: level !== "rest", estimate: est || !(b.measured && b.measured.response) }),
+      h(MiniRing, { value: frames, max: 50, text: frames == null ? "" : (frames >= 0 ? "+" : "−") + Math.abs(Math.round(frames)) + "%", label: "Frames", live: level === "boost", estimate: est || !(b.measured && b.measured.frames) }),
+      h(EnergyRing, { battery, displayText: observedEnergyText(power) })),
     fo.mode === "act" ? h("div", { className: "abline" }, proofLine(fo.proof, b.measured)) : null,
     fo.mode === "act" && learnedLine(fo.game) ? h("div", { className: "abline" }, learnedLine(fo.game)) : null);
 }
@@ -378,7 +413,7 @@ function proofLine(proof, measured) {
 }
 
 // Last session as rings: averages for the whole game session, benefit rings when Frame OS ran.
-function SessionRings({ ls, target }) {
+function SessionRings({ ls, target, battery }) {
   const b = ls.frame_os_benefit;
   const signed = (v, good) => (v == null ? "" : (v >= 0 ? good : good === "+" ? "−" : "+") + Math.abs(Math.round(v)) + "%");
   const limit = ls.reference_w || 15;
@@ -390,10 +425,41 @@ function SessionRings({ ls, target }) {
     b ? h("div", { className: "rings", style: { marginTop: 10 } },
       h(MiniRing, { value: b.response, max: 50, text: signed(b.response, "−"), label: "Response", live: true, estimate: b.estimate }),
       h(MiniRing, { value: b.frames, max: 50, text: signed(b.frames, "+"), label: "Frames", live: true, estimate: b.estimate }),
-      h(MiniRing, { value: b.energy, max: 30, text: b.energy == null ? "" : (b.energy < 0 ? "−" : "") + Math.abs(Math.round(b.energy)) + "%", label: "Energy", live: true, estimate: b.estimate })) : null);
+      h(EnergyRing, { battery, displayText: energySavingsText(ls.avg_tdp_w, ls.energy_reference_w || ls.maximum_tdp_w) })) : null);
 }
 
 // Extreme: the nine directions with what each really does in this session.
+function FrameTimingControls({ profile, settings, refresh, autopilot = false }) {
+  const wanted = settings || {};
+  const [features, setFeatures] = useState({ latency: wanted.latency !== false, shield: wanted.shield !== false, touch_boost: wanted.touch_boost !== false, boost: wanted.boost !== false, continuous_boost: wanted.continuous_boost === true });
+  const [error, setError] = useState("");
+  const busy = useRef(false);
+  useEffect(() => { setFeatures({ latency: wanted.latency !== false, shield: wanted.shield !== false, touch_boost: wanted.touch_boost !== false, boost: wanted.boost !== false, continuous_boost: wanted.continuous_boost === true }); setError(""); },
+            [profile, wanted.latency, wanted.shield, wanted.touch_boost, wanted.boost, wanted.continuous_boost]);
+  const change = async (feature, enabled) => {
+    if (busy.current) return;
+    busy.current = true; setError("");
+    try {
+      const r = await rpc.setFrameOsFeature(profile, feature, enabled);
+      if (!r || !r.success) throw new Error((r && r.error) || "Could not save frame timing");
+      setFeatures(r.features || { ...features, [feature]: enabled });
+      if (refresh) refresh();
+    } catch (e) { setError(String(e.message || e)); }
+    finally { busy.current = false; }
+  };
+  return h("div", null,
+    h("div", { className: "list" },
+      h(Toggle, { on: features.latency, title: "Frame timing", sub: "Control frame-start timing in Act; active after native confirmation",
+                  onChange: (v) => change("latency", v) }),
+      h(Toggle, { on: features.shield, title: "Stall shield", sub: "Avoid extra waiting after a late frame; does not remove loading or shader stalls",
+                  onChange: (v) => change("shield", v) }),
+      autopilot ? h(Toggle, { on: features.boost, title: "Short Boost", sub: "Briefly raises real-frame cadence, then returns to calm. Maximum 1.5 seconds; funded within your power limit.", onChange: (v) => change("boost", v) }) : null,
+      autopilot ? h(Toggle, { on: features.continuous_boost, title: "Continuous Boost", sub: "Keeps higher real-frame cadence without the 1.5-second limit. Uses more power; pauses in menus and for thermal, delivery or power-search guards. Overrides short pulses. Off by default.", onChange: (v) => change("continuous_boost", v) }) : null,
+      autopilot ? h(Toggle, { on: features.touch_boost, title: "Stick touch Boost", sub: "Starts a short pulse on right-stick contact. Motion may extend it up to 1.5 seconds. Autopilot only.",
+                  onChange: (v) => change("touch_boost", v) }) : null),
+    error ? h(Note, null, error) : null);
+}
+
 function ExtremeCard({ x, profile, refresh }) {
   const list = x.boosters || [];
   if (!list.length) return null;
@@ -410,8 +476,10 @@ function ExtremeCard({ x, profile, refresh }) {
   const dot = (st) => (st === "active" ? "" : st === "waiting" || st === "restart_required" || st === "ready" ? " wait" : " idle");
   return h("div", { className: "card xcard" },
     h("div", { className: "fos-head" }, h("span", null, "EXTREME BOOSTERS"), h("span", { className: "pill live" }, active + " / " + list.length + " ACTIVE")),
+    h("div", { className: "abline", role: "note" }, h("b", null, "BETA / EXPERIMENTAL"), " · In development; not recommended for regular play."),
     h("div", { className: "boost" }, list.map((b) => h("div", { key: b.id, className: "bt" + (b.state === "unavailable" || b.state === "off" ? " na" : "") },
       h("i", { className: dot(b.state).trim() }), h("div", null, h("b", null, XB_TITLE[b.id] || b.id), h("span", null, boosterDetail(b)))))),
+    h(FrameTimingControls, { key: profile, profile, settings: x.feature_settings, refresh }),
     up.state !== "unavailable" ? h("div", { className: "xsharp" }, h("span", null, "Sharpening"),
       h("div", { className: "step" },
         h(Focusable, { className: "stepb", onClick: () => step(-0.05) }, "−"),
@@ -435,7 +503,7 @@ function ExtremeOffer({ o, onTry, onHide }) {
   return h("div", { className: "card promo", style: { marginTop: 12 } },
     h("span", { className: "xbadge" }, "▲"),
     h("div", { className: "t" }, h("b", null, "Want more real frames?"),
-      h("span", null, "This game leaves " + num(o.headroom_w, 0) + " W of your " + num(o.ceiling_w, 0) + " W limit unused. Extreme puts it into real frames — no overclock; the result is measured in game, not promised."),
+      h("span", null, "This game leaves " + num(o.headroom_w, 0) + " W of your " + num(o.ceiling_w, 0) + " W limit unused. Extreme is BETA / EXPERIMENTAL: in development and not recommended for regular play. Performance gains are not promised."),
       h("div", { className: "xbtns" }, h(Focusable, { className: "xbtn on", onClick: onTry }, "Try Extreme"), h(Focusable, { className: "xbtn", onClick: onHide }, "Not now"))));
 }
 
@@ -511,20 +579,36 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
         !xt && pw.owned && pw.initial_tdp_w && pw.initial_tdp_w - tdp >= 1 ? h("div", { className: "r" }, h("span", null, "SAVING"), h("span", null, num(pw.initial_tdp_w - tdp, 0) + " W under your " + num(pw.initial_tdp_w, 0) + " W limit")) : null,
         h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, (tdp / ((xt && x.ceiling && x.ceiling.ceiling_w) || pw.initial_tdp_w || pw.maximum_tdp_w || 15)) * 100) + "%" } }))) : null),
     xt && s.enabled ? h(ExtremeCard, { x, profile, refresh }) : null,
-    !xt && s.enabled && s.extreme_offer && !offerHidden ? h(ExtremeOffer, { o: s.extreme_offer, onTry: () => setMode("extreme"), onHide: () => setOfferHidden(true) }) : null,
-    s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os }) : null,
+    !xt && s.mode !== "autopilot" && s.enabled && s.extreme_offer && !offerHidden ? null : null,
+    s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os, power: s.power, battery: s.battery && s.battery.percent }) : null,
     h(Focusable, { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? undefined : toggle },
       h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 18 }), busy ? "WORKING…" : missing ? "INSTALL ENGINE" : s.enabled ? "STOP" : "RUN"),
     h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : missing ? "The GFG engine is not installed yet. One tap installs it." : "Target " + target + " FPS · " + (dev.reason || "picked automatically for this screen")),
     h("div", { className: "sec" }, "MODE"),
-    h(Seg, { cls: "four", value: s.mode || "budget", options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"], ["extreme", "EXTREME", "x"]], onChange: setMode }),
+    h(Seg, { cls: "four", value: s.mode === "extreme" ? "autopilot" : (s.mode || "budget"), options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"], ["autopilot", "Autopilot"]], onChange: setMode }),
     asking ? h(ActConsent, { onAnswer: answerAct }) : null,
     h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
+    s.mode === "autopilot" ? h("div", { className: "card" },
+      h("div", { className: "sec" }, "AUTOPILOT"),
+      h("div", { className: "kv" },
+        h("span", null, "State"), h("b", null, (s.autopilot && s.autopilot.state) || "OBSERVE"),
+        h("span", null, "Real"), h("b", null, s.autopilot && s.autopilot.real_fps != null ? num(s.autopilot.real_fps, 0) : "–"),
+        h("span", null, "Output"), h("b", null, s.autopilot && s.autopilot.output_fps != null ? num(s.autopilot.output_fps, 0) : "–"),
+        h("span", null, "GPU clock"), h("b", null, s.autopilot && s.autopilot.gpu_clock && s.autopilot.gpu_clock.available ? ((s.autopilot.gpu_clock.limit_mhz || s.autopilot.gpu_clock.current_limit_mhz) + " MHz") : "Unavailable")),
+      h(Note, { quiet: true }, (s.autopilot && s.autopilot.message) || "Waiting for measured frames."),
+      h(Seg, { value: (s.autopilot && s.autopilot.preference) || "auto", options: [["auto", "Auto"], ["battery", "Battery"], ["smoothness", "Smoothness"]], onChange: async (v) => { try { await rpc.setAutopilotPreference(profile, v); } catch (e) {} refresh(); } }),
+      h(Toggle, { on: !!s.autopilot_shading_allowed, title: "Try Half Rate Shading",
+        sub: "Optional 2×2 shading experiment when GPU-limited. May blur text and game details. GFG measures FPS and restores it on failure or Stop.",
+        onChange: async (v) => { try { await rpc.setAutopilotShading(profile, v); } catch (e) {} refresh(); } }),
+      s.autopilot_shading_allowed ? h(Note, { quiet: true }, "Shading: " + ((s.autopilot_shading || {}).mode || "unavailable") + " · Steam RADV dynamic VRS (physical Deck energy gain requires comparison).") : null,
+      h(FrameTimingControls, { profile, settings: (s.frame_os || {}).feature_settings, refresh, autopilot: true }),
+      h(FrameFusionPanel, { s, refresh })) : null,
+    s.frame_fusion && s.frame_fusion.scope_update_required ? h(Note, null, "Install the updated engine and restart the game. This running engine cannot enforce Autopilot-only Fusion.") : null,
     health ? h("div", { className: "hint" }, health) : null,
     h("div", { style: { height: 12 } }),
     h(FiltersCard, { profile, cfg, patch, go }),
     !s.session && s.last_session ? h("div", { className: "card" }, h("div", { className: "sec" }, "LAST SESSION"),
-      h(SessionRings, { ls: s.last_session, target }),
+      h(SessionRings, { ls: s.last_session, target, battery: s.battery && s.battery.percent }),
       h("div", { className: "kv", style: { marginTop: 12 } },
         h("span", null, "Played"), h("b", null, num(s.last_session.minutes, 0) + " min"),
         s.last_session.mode === "mixed" ? h("span", null, "Modes") : null, s.last_session.mode === "mixed" ? h("b", null, sessionModes(s.last_session)) : null,
@@ -738,7 +822,7 @@ function GovernorPage({ s, back, profile, refresh }) {
       h("span", null, "Fan"), h("b", null, (s.sensors || {}).fan_rpm != null ? num(s.sensors.fan_rpm, 0) + " rpm" : "–"))),
     h("div", { className: "sec" }, "RULES"),
     h("div", { className: "card" }, h("div", { className: "kv" },
-      h("span", null, "Multipliers"), h("b", null, mode === "balanced" || mode === "extreme" ? "×1 to ×3, never below 30 real FPS" : mode === "budget" ? "×1 to ×3.75, deeper only as a last resort" : "×1 to ×3, steps of 0.25"),
+      h("span", null, "Multipliers"), h("b", null, "×1 to ×3.75, steps of 0.25"),
       h("span", null, "Saved profile"), h("b", null, "never modified"),
       h("span", null, "TDP"), h("b", null, mode === "extreme" ? "the whole limit: 15 W or your lower one, never above" : mode === "balanced" ? "12–13 W start, never above the normal range" : mode === "budget" ? budgetRule(b) : "never above your own"),
       mode !== "quality" ? h("span", null, "Reacts") : null,
@@ -799,8 +883,8 @@ function ProfilesPage({ back, profiles, current, pick, reload }) {
   const TF = window.DFL && window.DFL.TextField;
   const act = async (fn) => { setMsg(""); try { const r = await fn(); if (r && r.success === false) setMsg(r.error || "Failed"); } catch (e) { setMsg(String(e)); } await reload(); };
   if (sel) {
-    const isDefault = sel === "Default";
-    return h(Page, { title: sel, onBack: () => { setSel(null); setName(""); } },
+    const isDefault = sel === "Default" || sel === "mako";
+    return h(Page, { title: profileLabel(sel), onBack: () => { setSel(null); setName(""); } },
       h("div", { className: "list", style: { marginTop: 0 } },
         h(Row, { title: sel === current ? "Active profile" : "Make active", onClick: () => act(async () => { await pick(sel); }) }),
         h(Row, { title: "Duplicate", sub: "Copy into a new profile", onClick: () => act(() => rpc.createProfile(sel + " copy", sel)) })),
@@ -813,7 +897,7 @@ function ProfilesPage({ back, profiles, current, pick, reload }) {
       msg ? h(Note, null, msg) : null);
   }
   return h(Page, { title: "Profile", onBack: back },
-    h("div", { className: "list", style: { marginTop: 0 } }, (profiles || []).map((p) => h(Row, { key: p, title: p, value: p === current ? "Active" : "", onClick: () => setSel(p) }))),
+    h("div", { className: "list", style: { marginTop: 0 } }, (profiles || []).map((p) => h(Row, { key: p, title: profileLabel(p), value: p === current ? "Active" : "", onClick: () => setSel(p) }))),
     h("div", { className: "sec" }, "NEW PROFILE"),
     TF ? h(TF, { value: name, placeholder: "Profile name", onChange: (e) => setName(e.target.value) }) : null,
     h("div", { className: "list" }, h(Row, { title: "Create from current", onClick: () => name.trim() && act(async () => { const r = await rpc.createProfile(name.trim(), current); if (r && r.success) setName(""); return r; }) })),
@@ -835,21 +919,70 @@ function JournalPage({ back, profile, reloadCfg }) {
     msg ? h(Note, null, msg) : null);
 }
 
+function FlowControl({ s }) {
+  const flow = s && s.flow_control || {};
+  const [on, setOn] = useState(flow.enabled !== false);
+  const [error, setError] = useState("");
+  useEffect(() => { setOn(flow.enabled !== false); }, [flow.enabled]);
+  const busy = ["a1", "b", "a2", "wait-a", "wait-b", "wait-accept", "wait-restore"].includes(flow.phase);
+  return h("div", null,
+    h("div", { className: "sec" }, "GENERATION WORKLOAD"),
+    h("div", { className: "list" }, h(Toggle, { on, title: "Automatic flow scale",
+      sub: "Experimental. Rare checks with a rollback; pauses while Frame OS Act runs.",
+      onChange: async (value) => {
+        setError("");
+        try { const result = await rpc.setAutoFlow(value); if (!result || result.success === false) throw new Error(result && result.error || "Could not save"); setOn(value); }
+        catch (e) { setError(String(e)); }
+      } })),
+    h("div", { className: "hint" }, busy ? "Testing generation workload…" :
+      flow.accepted ? "Confirmed flow scale: " + num(flow.confirmed, 2) : "Keeps your saved flow scale until a change is confirmed."),
+    error ? h(Note, null, error) : null);
+}
+
 function SettingsPage({ back, go, profile, s }) {
   return h(Page, { title: "Settings", onBack: back },
     h("div", { className: "list", style: { marginTop: 0 } },
+      h(Row, { icon: "filter", title: "GFG theme", sub: "Install the Steam interface theme for CSS Loader", onClick: () => go("theme") }),
       h(Row, { icon: "hud", title: "In-game overlay", sub: "FPS, ×N, TDP while playing", onClick: () => go("hud") }),
-      h(Row, { icon: "user", title: "Profile", value: profile || "Default", onClick: () => go("profiles") }),
+      h(Row, { icon: "user", title: "Profile", value: profileLabel(profile || "Default"), onClick: () => go("profiles") }),
       h(Row, { icon: "play", title: "Launch command", sub: "Copy it into the game's Steam launch options", onClick: () => go("launch") }),
       h(Row, { icon: "layers", title: "Frame generation backend", sub: "GFG Engine, OptiScaler, in-game", onClick: () => go("fg") }),
       h(Row, { icon: "scale", title: "Scaling", sub: "Render scale for extra headroom", onClick: () => go("scaling") }),
       h(Row, { icon: "filter", title: "Filters", sub: "Sharpening, anti-aliasing, color looks", onClick: () => go("filters") })),
+    h(FlowControl, { s }),
     h("div", { className: "sec" }, "SUPPORT"),
     h("div", { className: "list" },
       h(Row, { icon: "cog", title: "Diagnostics", sub: "Record a log, inspector, journal", onClick: () => go("advanced") }),
       h(Row, { icon: "cog", title: "System", sub: "Engine install, Flatpak access", onClick: () => go("system") }),
       h(Row, { icon: "cog", title: "All settings", sub: "Every profile option", onClick: () => go("all") })),
     h("div", { className: "hint" }, "GFG Extreme " + ((s && s.version) || "")));
+}
+
+function ThemePage({ back }) {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  useEffect(() => { rpc.themeStatus().then(setStatus).catch((e) => setMsg(String(e))); }, []);
+  const install = async () => {
+    setBusy(true); setMsg("");
+    try {
+      const result = await rpc.themeInstall();
+      setMsg(result && result.success ? result.message : (result && result.error) || "Installation failed.");
+      setStatus(await rpc.themeStatus());
+    } catch (e) { setMsg(String(e)); }
+    finally { setBusy(false); }
+  };
+  return h(Page, { title: "GFG theme", onBack: back },
+    h(Note, { quiet: true }, "Install CSS Loader from the Decky store first. GFG copies its bundled theme to the CSS Loader themes folder."),
+    h("div", { className: "card" },
+      h("b", null, status && status.current ? "Installed and up to date" : status && status.installed ? "Update available" : "Not installed"),
+      h("div", { className: "hint", style: { textAlign: "left", wordBreak: "break-all" } }, status && status.path || "~/homebrew/themes/GFG Extreme")),
+    h("div", { className: "list" }, h(Row, { icon: "filter",
+      title: busy ? "Installing…" : status && status.installed ? "Update / reinstall theme" : "Install theme",
+      onClick: busy ? undefined : install })),
+    msg ? h(Note, { quiet: true }, msg) : null,
+    status && status.success === false ? h(Note, null, status.error) : null,
+    h(Note, { quiet: true }, "After installing, open CSS Loader, reload themes and enable GFG Extreme."));
 }
 
 function SetupCheckPage({ back, profile }) {
@@ -887,6 +1020,7 @@ function AdvancedPage({ back, s, insp, launch, go, profile }) {
     h("div", { className: "list" }, h(Row, { icon: "cog", title: "Journal", sub: "Undo recent changes", onClick: () => go("journal") })),
     h(ForgetModel, { profile }),
     h(FrameOsPanel, { s, profile }),
+    s && s.mode === "autopilot" ? h(FrameFusionPanel, { s }) : null,
     h("div", { className: "sec" }, "INSPECTOR"),
     h("div", { className: "cols" }, col("SAVED", sv), col("EFFECTIVE", ef), col("GOVERNOR", s && s.active_point ? { point: POINT_LABEL(s.active_point) } : {}, true), col("ACTUAL", ac)));
 }
@@ -918,6 +1052,43 @@ function ForgetModel({ profile }) {
 }
 
 // GFG Frame OS (development): observe/shadow only measure; act changes frame timing and watts.
+function FrameFusionPanel({ s, refresh }) {
+  const fusion = (s && s.frame_fusion) || {};
+  const [enabled, setEnabled] = useState(fusion.setting_enabled !== undefined ? fusion.setting_enabled === true : fusion.enabled !== false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setEnabled(fusion.setting_enabled !== undefined ? fusion.setting_enabled === true : fusion.enabled !== false); }, [fusion.setting_enabled, fusion.enabled]);
+  const change = async (value) => {
+    if (busy) return;
+    setBusy(true); setError("");
+    try {
+      const result = await rpc.setFrameFusion(value);
+      if (result && result.success) { setEnabled(result.enabled === true); if (refresh) refresh(); }
+      else setError((result && result.error) || "Could not save Frame Fusion");
+    } catch (e) { setError("Could not save Frame Fusion"); }
+    setBusy(false);
+  };
+  const messages = {
+    "observed": fusion.processing_path === "native-input"
+      ? "Native-resolution Fusion is processing frames. Power benefit is not measured yet."
+      : "The direct processing path has been used in this game. Power benefit is not measured yet.",
+    "prepared": "Prepared. Waiting for a compatible frame.",
+    "autopilot-only": "Available in Autopilot.",
+    "paused": "Runs while Autopilot is on.",
+    "pipeline-not-eligible": "This game is using the regular processing path.",
+    "renderer-unsupported": "The current engine has no Fusion support. Install the updated engine; native 64-bit games only.",
+    "renderer-update-required": "Install the updated engine and restart the game to enforce Autopilot-only Fusion.",
+    "waiting-for-game": "Start a game to check compatibility.",
+    "restart-required": "Restart the game to apply your choice.",
+  };
+  return h("div", null,
+    h("div", { className: "sec" }, "FRAME FUSION"),
+    h("div", { className: "list" }, h(Toggle, { title: "Frame Fusion", on: enabled,
+      sub: "Optimizes compatible native and scaled frames in Autopilot. Start the game with the updated engine.", onChange: change })),
+    error ? h(Note, null, error) : null,
+    fusion.state && fusion.state !== "off" ? h(Note, { quiet: true }, messages[fusion.state] || "Waiting for native evidence.") : null);
+}
+
 function FrameOsPanel({ s, profile }) {
   const fo = (s && s.frame_os) || {};
   const [mode, setMode] = useState(fo.mode || "off");
@@ -954,6 +1125,7 @@ function FrameOsPanel({ s, profile }) {
     unlocked ? h("div", { className: "list" }, h(Toggle, { on: fo.ab !== false, title: "A/B check in Act",
       sub: "Now and then a few seconds without one Act effect, to measure what Act really gives",
       onChange: async (v) => { try { await rpc.setFrameOsAb(v); } catch (e) {} } })) : null,
+    h(FrameTimingControls, { key: profile, profile, settings: fo.feature_settings, autopilot: s && s.mode === "autopilot" }),
     fo.game && mode === "act" ? h("div", { className: "card" }, h("div", { className: "sec", style: { marginTop: 0 } }, "THIS GAME"), h("div", { className: "kv" },
       h("span", null, "Sessions with Act"), h("b", null, String(fo.game.sessions || 0)),
       ...[["response", "Frame timing"], ["frames", "Boost"], ["energy", "Rest"]].flatMap(([k, name]) => {
@@ -1112,6 +1284,7 @@ function Content() {
   else if (screen === "scaling") body = h(ScalingPage, { s, back: () => setScreen("settings"), profile, refresh });
   else if (screen === "hud") body = h(HudPage, { back: () => setScreen("settings"), s, profile, refresh });
   else if (screen === "profiles") body = h(ProfilesPage, { back: () => setScreen("settings"), profiles, current: profile, pick, reload: loadProfiles });
+  else if (screen === "theme") body = h(ThemePage, { back: () => setScreen("settings") });
   else if (screen === "settings") body = h(SettingsPage, { back, go, profile, s });
   else if (screen === "setup") body = h(SetupCheckPage, { back: () => setScreen("advanced"), profile });
   else if (screen === "launch") body = h(LaunchPage, { back: () => setScreen("settings"), launch });

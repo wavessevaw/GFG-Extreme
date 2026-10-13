@@ -113,19 +113,19 @@ class OverlayTests(unittest.TestCase):
         self.assertEqual((d["adaptive"], d["target_fps"], d["base_fps_cap"]), (True, 90, 60))
         self.assertFalse(d["adaptive_auto_base_fps_cap"])
         self.assertFalse(d["adaptive_stable_cadence"])
-        self.assertEqual(d["adaptive_max_multiplier"], 2)
+        self.assertEqual(d["adaptive_max_multiplier"], 4)
         self.assertTrue(d["frame_generation_enabled"])
         self.assertTrue(set(d) <= LIVE_FIELDS | {"multiplier"})
         # the projection must accept it without silently normalising anything
         self.store.write("game", d, point_key="60x1.5")
 
-    def test_quarter_step_fractions_are_expressible_up_to_x3(self):
-        for m, base in ((1.25, 72), (1.75, 51), (2.25, 40), (2.5, 36), (2.75, 33)):
+    def test_quarter_step_fractions_keep_full_capacity_through_x375(self):
+        for m, base in ((1.25, 72), (1.75, 51), (2.25, 40), (2.5, 36), (2.75, 33), (3.25, 28), (3.5, 26), (3.75, 24)):
             point = {"key": f"{base}x{m:g}", "target_output_fps": 90, "base_target_fps": base,
                      "multiplier": m, "render_scale_pct": 100}
             d = point_deltas(point, self.saved, scale_capable=False, scale_ready=False)
             self.assertEqual((d["adaptive"], d["base_fps_cap"], d["target_fps"]), (True, base, 90))
-            self.assertEqual(d["adaptive_max_multiplier"], max(2, int(-(-m // 1))))
+            self.assertEqual(d["adaptive_max_multiplier"], 4)
             self.store.write("game", d, point_key=point["key"])  # projection accepts it unchanged
 
     def test_multipliers_outside_one_to_four_are_not_expressible(self):
@@ -191,7 +191,7 @@ class OverlayTests(unittest.TestCase):
 
     def test_saved_fingerprint_changes_when_saved_changes(self):
         before = self.svc.saved_config_fingerprint()
-        self.svc.update_profile_config_fields("game", {"multiplier": 3})
+        self.svc.update_profile_config_fields("game", {"multiplier": 4})
         self.assertNotEqual(self.svc.saved_config_fingerprint(), before)
 
 

@@ -9,6 +9,8 @@ import math
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Iterable, Optional
 
+from shared_config import ADAPTIVE_MINIMUM_BASE_FPS
+
 
 @dataclass(frozen=True)
 class OperatingPoint:
@@ -57,11 +59,16 @@ class OperatingPointPlanner:
     @classmethod
     def candidates(
         cls, *, external_display: bool = False, target_output_fps: Optional[int] = None,
+        preserve_resolution: bool = False,
     ) -> tuple[OperatingPoint, ...]:
         """Ladder for a 60 FPS target (Dock / Deck LCD) or a 90 FPS target (Deck OLED)."""
         sixty = (int(target_output_fps) == 60) if target_output_fps else bool(external_display)
         target = 60 if sixty else 90
         ladder = cls.fg_ladder(target)
+        if preserve_resolution:
+            # Quality protects the player\'s render resolution; scaled choices
+            # remain available manually and to the other modes.
+            return ladder
         base2 = int(round(target / 2))
         # Render scale is a tool of its own: before pushing generation to x2.75/x3
         # (more artefacts, more latency) try x2 with a reduced render scale, which
@@ -73,7 +80,7 @@ class OperatingPointPlanner:
         head = tuple(p for p in ladder if p.multiplier <= 2.5)
         rest = tuple(p for p in ladder if p.multiplier > 2.5)
         if sixty:
-            tail = (OperatingPoint("20x3-degraded", 60, 20, 3, 100, degraded=True),)
+            tail = ()
         else:
             tail = (
                 OperatingPoint("30x3-s90", 90, 30, 3, 90, requires_scale_validation=True),
@@ -81,9 +88,8 @@ class OperatingPointPlanner:
             )
         return head + mid + rest + tail
 
-    # Automatic multipliers: native, then quarter steps up to x3.  x4/x5 are
-    # never chosen automatically.
-    MULTIPLIER_GRID = (1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0)
+    # Shared normal range for every mode. Emergency points are separate.
+    MULTIPLIER_GRID = (1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75)
 
     @classmethod
     def fg_ladder(cls, target: int) -> tuple[OperatingPoint, ...]:
@@ -95,8 +101,8 @@ class OperatingPointPlanner:
                 key = f"native{target}"
             else:
                 key = f"{base}x{m:g}"
-            if target == 60 and m == 3.0:
-                continue  # 20x3 only exists as the degraded last resort
+            if base < ADAPTIVE_MINIMUM_BASE_FPS:
+                continue
             points.append(OperatingPoint(key, target, base, m if m != int(m) else int(m), 100))
         return tuple(points)
 
@@ -111,6 +117,7 @@ class OperatingPointPlanner:
         observed_p5_fps: Optional[float],
         observed_multiplier: Optional[float],
         target_output_fps: Optional[int] = None,
+        preserve_resolution: bool = False,
     ) -> PlannerDecision:
         if not isinstance(observed_p5_fps, (int, float)) or not math.isfinite(float(observed_p5_fps)):
             return PlannerDecision(None, False, "insufficient-capacity-evidence", None, None)
@@ -120,7 +127,8 @@ class OperatingPointPlanner:
             if isinstance(observed_multiplier, (int, float)) and math.isfinite(float(observed_multiplier))
             else None
         )
-        candidates = self.candidates(external_display=external_display, target_output_fps=target_output_fps)
+        candidates = self.candidates(external_display=external_display, target_output_fps=target_output_fps,
+                                     preserve_resolution=preserve_resolution)
 
         # Native capacity is only positively proven while the observed cadence
         # is effectively native.  An active 2x/3x scheduler can intentionally
@@ -189,7 +197,9 @@ class TrialLadder:
     OUTPUT_MEDIAN_RATIO = 0.94
     MAX_MISSES = 1
 
-    def __init__(self, *, external_display: bool = False, target_output_fps: Optional[int] = None) -> None:
+    def __init__(self, *, external_display: bool = False, target_output_fps: Optional[int] = None,
+                 preserve_resolution: bool = False) -> None:
+        self.preserve_resolution = preserve_resolution
         self.external_display = bool(external_display)
         self.target_output_fps = int(target_output_fps) if target_output_fps else (60 if external_display else 90)
         self.rejected: Dict[str, str] = {}
@@ -216,6 +226,7 @@ class TrialLadder:
     def candidates(self) -> tuple[OperatingPoint, ...]:
         return OperatingPointPlanner.candidates(
             external_display=self.external_display, target_output_fps=self.target_output_fps,
+            preserve_resolution=self.preserve_resolution,
         )
 
     def next_point(self, applicable: Any, now: Optional[float] = None) -> Optional[OperatingPoint]:
@@ -225,11 +236,7 @@ class TrialLadder:
         expressed (for example a scaled point on a process launched without the
         Scaling Engine); such points are skipped and reported, not rejected.
         """
-        if now is not None:
-            for key, until in list(self._reject_until.items()):
-                if now >= until:
-                    self._reject_until.pop(key)
-                    self.rejected.pop(key, None)
+        self._expire_rejections(now)
         if self.attempts >= self.MAX_ATTEMPTS:
             return None
         self.skipped = {}
@@ -252,6 +259,30 @@ class TrialLadder:
                 continue
             return point
         return None
+
+    def _expire_rejections(self, now: Optional[float]) -> None:
+        if now is not None:
+            for key, until in list(self._reject_until.items()):
+                if now >= until:
+                    self._reject_until.pop(key)
+                    self.rejected.pop(key, None)
+
+    def next_upgrade(self, current_key: str, applicable: Any, now: float) -> Optional[OperatingPoint]:
+        """One adjacent quality recovery trial, retaining failure cooldowns.
+
+        A capped old native measurement cannot disprove today's headroom.
+        This returns a trial, never a positive capacity claim.
+        """
+        self._expire_rejections(now)
+        choices = self.candidates()
+        current = next((i for i, p in enumerate(choices) if p.key == current_key), None)
+        if current is None:
+            return None
+        candidate = next((p for p in reversed(choices[:current]) if p.render_scale_pct == 100), None)
+        # Failure of the adjacent finer cadence is not a reason to try an
+        # even more demanding cadence. Wait for that candidate's cooldown.
+        return (candidate if candidate is not None and candidate.key not in self.rejected
+                and not applicable(candidate) else None)
 
     def mark_attempt(self) -> None:
         self.attempts += 1
@@ -439,11 +470,11 @@ class CostModel:
 
     @staticmethod
     def multiplier_penalty(multiplier: float) -> float:
-        """Piecewise linear: x1 0, x2 1, x3 4 (x1.5 0.5, x2.5 2.5); anything else is steep."""
+        """Piecewise linear: x1 0, x2 1, x3 4 (x1.5 0.5, x2.5 2.5); the same slope continues through x3.75."""
         m = float(multiplier)
         if 1.0 <= m <= 2.0:
             return (m - 1.0) * 1.0
-        if 2.0 < m <= 3.0:
+        if 2.0 < m <= 3.75:
             return 1.0 + (m - 2.0) * 3.0
         return 20.0
 
@@ -664,10 +695,10 @@ class PowerSearch:
 #
 # Multipliers 1.0 .. 3.75 in 0.25 steps are normal tools; x4 is a last resort.
 
-BUDGET_MULTIPLIERS = (1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75)
+BUDGET_MULTIPLIERS = OperatingPointPlanner.MULTIPLIER_GRID
 EMERGENCY_MULTIPLIER = 4
-REAL_FLOOR_FPS = 24  # below this interpolation smears; deeper points are not offered
-EMERGENCY_REAL_FLOOR_FPS = 20  # even the last resort keeps a real cadence that can be watched
+REAL_FLOOR_FPS = 24  # legacy constant; normal eligibility now follows target / 3.75
+EMERGENCY_REAL_FLOOR_FPS = 20  # legacy constant; emergency eligibility now follows target / 4
 START_REAL_FPS = 30  # first point: ~30 real (30x3 at 90 Hz, 30x2 at 60 Hz)
 
 
@@ -675,15 +706,17 @@ def _point_key(target: int, base: int, multiplier: float) -> str:
     return f"native{target}" if multiplier == 1 else f"{base}x{multiplier:g}"
 
 
-BALANCED_REAL_FLOOR_FPS = 30   # Balanced never goes below 30 real (x3 at 90 Hz)
+BALANCED_REAL_FLOOR_FPS = 30   # legacy preferred cadence, no longer an eligibility floor
 BALANCED_START_REAL_FPS = 45   # and starts at x2 at 90 Hz
 BALANCED_START_TDP_W = 12.0
 BALANCED_IDEAL_MAX_W = 13.0
 
 
-def budget_points(target_output_fps: int, real_floor: int = REAL_FLOOR_FPS) -> tuple[OperatingPoint, ...]:
-    """Cheapest first: x4 emergency, then real ``real_floor`` (24, or 30 in Balanced) .. native."""
+def budget_points(target_output_fps: int, real_floor: Optional[int] = None) -> tuple[OperatingPoint, ...]:
+    """Cheapest first: emergency, then the shared normal x3.75 .. native range."""
     target = int(target_output_fps)
+    if real_floor is None:
+        real_floor = max(ADAPTIVE_MINIMUM_BASE_FPS, int(round(target / BUDGET_MULTIPLIERS[-1])))
     normal = []
     seen: set[int] = set()
     for m in reversed(BUDGET_MULTIPLIERS):
@@ -693,10 +726,10 @@ def budget_points(target_output_fps: int, real_floor: int = REAL_FLOOR_FPS) -> t
         seen.add(base)
         mult = int(m) if m == int(m) else m
         normal.append(OperatingPoint(_point_key(target, base, m), target, base, mult, 100))
-    # Last resort: as deep as x4 allows, but the real cadence stays >= 20 and the
+    # Last resort: as deep as x4 and the renderer minimum allow; the
     # ratio is taken from the target, so the output still lands on the display
     # rate (90/23 = 3.91, not 22x4 = 88 on a 90 Hz panel).
-    base4 = max(math.ceil(target / EMERGENCY_MULTIPLIER), EMERGENCY_REAL_FLOOR_FPS)
+    base4 = max(math.ceil(target / EMERGENCY_MULTIPLIER), ADAPTIVE_MINIMUM_BASE_FPS)
     mult4 = round(target / base4, 3)
     mult4 = int(mult4) if mult4 == int(mult4) else mult4
     emergency = OperatingPoint(_point_key(target, base4, mult4), target, base4, mult4, 100, degraded=True)
@@ -707,22 +740,25 @@ RENDER_SCALE_STEPS = (90, 80)   # live Scaling Engine factors the overlay allows
 SCALE_ANCHOR_REAL_FPS = 30
 
 
-EXTREME_REAL_FLOOR_FPS = 30   # Extreme: never below 30 real, like Balanced
+EXTREME_REAL_FLOOR_FPS = EMERGENCY_REAL_FLOOR_FPS  # legacy import; effective floor follows target / 4
 EXTREME_START_REAL_FPS = 45   # and starts at x2 at 90 Hz, at the full normal budget
 
 
 def extreme_points(target_output_fps: int) -> tuple[OperatingPoint, ...]:
     """Extreme ladder: more real frames is better, resolution is the currency.
 
-    Every normal point (30 real .. native) comes at 80 %, 90 % and full render scale, ordered by
+    Every normal point (target / 4 real .. native) comes at 80 %, 90 % and full render scale, ordered by
     (real cadence, scale): ``30x3 < 36x2.5@80 < 36x2.5@90 < 36x2.5 < 45x2@80 ...``.  The upgrade
     path (idx + 1) therefore buys more real frames with a lower render resolution first and wins the
     resolution back on the next step; the guard (idx - 1) gives up resolution before real frames.
     Scaled rungs are only usable with the Scaling Engine provisioned at launch (``_usable``);
-    without it the ladder is the plain one.  Index 0 is the last-resort point, never used here.
+    without it the ladder is the plain one. Quarter-step ratios through x3.75 remain
+    available below 30 real; index 0 is the panel-aligned emergency, used after normal points fail.
     """
-    base = budget_points(target_output_fps, EXTREME_REAL_FLOOR_FPS)
-    emergency, normal = base[0], base[1:]
+    floor = max(ADAPTIVE_MINIMUM_BASE_FPS, math.ceil(target_output_fps / 4))
+    base = budget_points(target_output_fps, floor)
+    emergency = base[0]  # fractional at 90 Hz: keep the same output target
+    normal = base[1:]
     rungs = []
     for p in normal:
         for pct in sorted(RENDER_SCALE_STEPS):
@@ -869,34 +905,43 @@ class BudgetController:
     # A lower level that just failed is not tried again at once, even after a guard raise and a
     # successful walk back down (Field log: 9 W failed nine times in 29 min with this
     # point, each failure a visible dip).  The wait doubles with every repeat at the same level.
-    FLOOR_BACKOFF_S = 120.0
-    FLOOR_BACKOFF_MAX_S = 600.0
+    # Field replay: three failed 9 W probes in a half-hour are not useful
+    # exploration. Let one failure cool down 5 min, two failures 30 min;
+    # an externally lighter scene can still clear a single failure early.
+    FLOOR_BACKOFF_S = 300.0
+    FLOOR_BACKOFF_MAX_S = 1800.0
     FAILURE_TTL_S = REJECT_TTL_S  # failures loaded from game memory expire like in-session rejections
     MAX_REQUEST_FAILURES = 4
 
     def __init__(
         self, *, target_output_fps: int, now: float,
         min_tdp_w: Optional[float] = None, max_tdp_w: Optional[float] = None,
-        tdp_control: bool = True, flavor: str = "battery",
+        tdp_control: bool = True, flavor: str = "battery", minimize_tdp: bool = False,
     ) -> None:
         self.flavor = flavor if flavor in ("balanced", "extreme") else "battery"
         balanced = self.flavor == "balanced"
         extreme = self.flavor == "extreme"
+        self.minimize_tdp = bool(minimize_tdp and self.flavor == "battery")
         self.target_output_fps = int(target_output_fps)
         if extreme:
             self.points = extreme_points(self.target_output_fps)
         else:
             self.points = with_render_scale(
-                budget_points(self.target_output_fps, BALANCED_REAL_FLOOR_FPS if balanced else REAL_FLOOR_FPS))
+                budget_points(self.target_output_fps))
         # Set by the service every step: the game was launched with the Scaling Engine provisioned
         # (scale-ready launch or the profile's own scaling) and is not CPU-bound.
         self.scale_capable = False
         self.tdp_control = bool(tdp_control)
         hw_min = float(min_tdp_w) if min_tdp_w else 0.0
         hw_max = float(max_tdp_w) if max_tdp_w else self.EMERGENCY_CEILING_W
-        self.min_w = max(self.MIN_TDP_W, hw_min)
-        self.normal_max_w = min(self.NORMAL_CEILING_W, hw_max)
-        self.emergency_max_w = min(self.EMERGENCY_CEILING_W, hw_max)
+        # Battery may search the device's reported range; the old fixed 6 W
+        # comfort floor is retained when the minimum is unknown or for other goals.
+        self.min_w = min(hw_max, hw_min if self.minimize_tdp and hw_min > 0
+                         else max(self.MIN_TDP_W, hw_min))
+        # Extreme receives its verified player/device ceiling from the power actuator.
+        # Battery and Balanced keep their conservative normal/emergency ceilings.
+        self.normal_max_w = hw_max if extreme else min(self.NORMAL_CEILING_W, hw_max)
+        self.emergency_max_w = hw_max if extreme else min(self.EMERGENCY_CEILING_W, hw_max)
         start_real = (EXTREME_START_REAL_FPS if extreme else
                       BALANCED_START_REAL_FPS if balanced else START_REAL_FPS)
         # Start on an integer ratio: on a Deck they confirmed in ~10 s, while fractional points often
@@ -911,13 +956,13 @@ class BudgetController:
         start_w = BALANCED_START_TDP_W if balanced else self.START_TDP_W
         if extreme:
             # Every watt of the ceiling goes into frames: no search for lower watts.  The ceiling
-            # comes from the service: min(15 W, the player's own lower limit) (extreme.power_ceiling).
+            # comes from the service: min(inherited player fast/slow caps, hardware maximum).
             self.ideal_max_w = self.normal_max_w
             start_w = self.normal_max_w
         self.tdp = min(max(start_w, self.min_w), self.normal_max_w) if self.tdp_control else None
         if balanced or extreme:
-            # No last-resort ratio and no watts beyond the Deck's normal range: Balanced trades
-            # some battery for a real-frame floor of 30 and a ceiling it never crosses.
+            # No watts beyond the inherited device/player ceiling. Balanced keeps
+            # its regular x3.75 limit; Extreme may use emergency x4.
             self.emergency_max_w = self.normal_max_w
         self.phase = "settle"
         self.probe: Optional[str] = None
@@ -932,6 +977,9 @@ class BudgetController:
         self.recover_interval = self.RECOVER_S
         self.rejected: Dict[str, float] = {}
         self.locked_since = now
+        # Reprobe scheduling may re-lock an unchanged point every 45 s. Act and
+        # memory need the independent duration of the actually stable point.
+        self.settled_since: Optional[float] = None
         self.reprobe_interval = self.REPROBE_S
         self.next_probe = "down"
         self.exhausted = False
@@ -1014,6 +1062,7 @@ class BudgetController:
         self.normal_max_w = self.emergency_max_w = self.ideal_max_w = ceiling
         if self.tdp is not None:
             self.tdp = ceiling  # Extreme plays the whole budget
+            self.settled_since = None  # new watts need fresh healthy evidence
         if self.last_good is not None and self.last_good[1] is not None:
             self.last_good = (self.last_good[0], min(self.last_good[1], ceiling))
 
@@ -1120,11 +1169,15 @@ class BudgetController:
             self.verifying = None  # left the inferred point before it was verified (a TDP-only move keeps it)
         if tdp is not None and self.tdp_control:
             self.tdp = round(float(tdp), 1)
+        if (self.idx, self.tdp) != self.prev:
+            self.settled_since = None
         self.good = self.bad = 0
         self.last_reason = reason
         return "move"
 
     def _lock(self, now: float, reason: str) -> str:
+        if self.phase != "locked" or self.settled_since is None:
+            self.settled_since = now
         self.phase = "locked"
         self.probe = None
         self.locked_since = now
@@ -1200,9 +1253,13 @@ class BudgetController:
         return self._fast_raise(now)
 
     def _fast_raise(self, now: float) -> str:
-        if self.probe == "down" and self.last_good is not None:
+        if self.probe in ("down", "economy") and self.last_good is not None:
             # The lower level did not hold: back to the one that did, at once.
-            self._note_floor_failure(now)
+            if self.probe == "down":
+                self._note_floor_failure(now)
+            else:
+                self.rejected[self.point.key] = now
+                self._note_failure(self.point, now)
             idx, tdp = self.last_good
             from_phase = self.phase
             self.probe = None
@@ -1228,7 +1285,7 @@ class BudgetController:
         self._move("fast-raise:starved", tdp=target)
         self.last_good = (self.idx, self.tdp)   # a later failed probe never reverts below this
         self.phase = "locked"
-        self.locked_since = now
+        self.locked_since = self.settled_since = now
         self.short_since = self.stall_since = self.stall_step_at = None
         self.fast_at, self.starved_checks = now, 0
         return "move"
@@ -1250,11 +1307,12 @@ class BudgetController:
         )
 
     def _floor_backoff(self, count: int) -> float:
-        return min(self.FLOOR_BACKOFF_S * (2.0 ** max(0, count - 1)), self.FLOOR_BACKOFF_MAX_S)
+        return min(self.FLOOR_BACKOFF_S * (6.0 ** min(max(0, count - 1), 2)),
+                   self.FLOOR_BACKOFF_MAX_S)
 
-    def _floor_blocked(self, level: float, now: float) -> bool:
+    def _floor_blocked(self, level: float, now: float, *, idx: Optional[int] = None) -> bool:
         """``level`` (or a higher one) failed recently with this point: do not probe it yet."""
-        known = self.floor_failures.get(self.idx)
+        known = self.floor_failures.get(self.idx if idx is None else idx)
         if known is None:
             return False
         failed_w, when, count = known
@@ -1317,6 +1375,9 @@ class BudgetController:
             elif self.short_since is None:
                 self.short_since = now
         if verdict.healthy:
+            if getattr(self, "hold_planned", False):
+                self.bad = 0
+                return "hold"
             return self._healthy(now)
         return self._unhealthy(now, verdict, real_median, output_median)
 
@@ -1325,6 +1386,10 @@ class BudgetController:
         self.good += 1
         self.request_failures = 0
         if self.phase == "locked":
+            if self.settled_since is None:
+                self.settled_since = now
+            if getattr(self, "hold_probes", False):
+                return "hold"
             if now - self.locked_since < self._probe_delay():
                 return "hold"
             return self._reprobe(now)
@@ -1347,7 +1412,7 @@ class BudgetController:
         if self.phase == "probe":
             # The scene got lighter: keep going the same way until it fails.
             self.reprobe_interval = self.REPROBE_S
-            self.phase = "search_down" if was == "down" else "upgrade"
+            self.phase = "search_down" if was in ("down", "economy") else "upgrade"
         if self.phase in ("settle", "search_down"):
             if self._can_lower() and self.flavor != "extreme":
                 self.phase = "search_down"
@@ -1418,7 +1483,25 @@ class BudgetController:
             return i
         return None
 
+    def _economy_candidate(self, now: float) -> Optional[int]:
+        """A legal cheaper cadence/scale to test before declaring a Battery floor.
+
+        The candidate must be confirmed and judged at the current known-good
+        watts before another power step. Never retry a point whose lower cap
+        already failed recently, or claim savings when caps are ignored.
+        """
+        if (not self.minimize_tdp or not self.tdp_control or self.cap_ignored
+                or self.tdp is None or self.tdp - 1 < self.min_w - 1e-6):
+            return None
+        return next((i for i in range(1, self.idx)
+                     if self._upgrade_allowed(i, now)
+                     and not self._floor_blocked(self.tdp - 1, now, idx=i)), None)
+
     def _upgrade(self, now: float) -> str:
+        economy = self._economy_candidate(now)
+        if economy is not None:
+            self.phase, self.probe = "probe", "economy"
+            return self._move("testing-cheaper-cadence-for-power", idx=economy)
         if self.cap_ignored and self.idx >= self.comfort_idx:
             return self._lock(now, "cap-ignored-quality-held")
         up = self._next_up()
@@ -1461,8 +1544,13 @@ class BudgetController:
                 self.phase, self.probe = "probe", "down"
                 self.next_probe = "up" if self._owed_quality() else "down"
                 return self._move("reprobe-lower-power", tdp=self.tdp - 1.0)
+            economy = self._economy_candidate(now)
+            if kind == "down" and economy is not None:
+                self.phase, self.probe = "probe", "economy"
+                return self._move("reprobe-cheaper-cadence-for-power", idx=economy)
             up = self._next_up()
-            if kind == "up" and self._owed_quality() and up is not None and self._upgrade_allowed(up, now):
+            quality_due = self._owed_quality() or (self.flavor == "balanced" and not self._can_lower())
+            if kind == "up" and quality_due and up is not None and self._upgrade_allowed(up, now):
                 self.phase, self.probe, self.next_probe = "probe", "up", "down"
                 self.thermal_deferred = False
                 return self._move("reprobe-fewer-generated-frames", idx=up)
@@ -1475,7 +1563,7 @@ class BudgetController:
         self.good = 0
         if self.probe is not None and self.last_good is not None:
             failed = self.points[self.idx]
-            if self.probe == "up":
+            if self.probe in ("up", "economy"):
                 self.rejected[failed.key] = now
                 self._note_failure(failed, now)
             elif self.probe == "down":
@@ -1557,12 +1645,12 @@ class BudgetController:
         # but a game producing only 30 real FPS delivers 60 output, not the 90 target.
         # The APU draws 8 W under a 12 W cap, so buying more watts is futile.
         # The old comfort_idx gate forbade a deeper ratio and the power guard then held
-        # 45x2 forever.  Use a feasible fixed-ratio rung *below* comfort_idx only
+        # 45x2 forever.  Use a feasible quarter-step rung *below* comfort_idx only
         # when both real and output are short and the APU is demonstrably not
-        # power-bound.  Prefer full render scale and respect the Balanced 30-real
-        # floor and the current renderer capacity.  Ordinary hitches, menus and
+        # power-bound. Prefer the best feasible full-resolution rung, including
+        # fractional ratios, within the current renderer capacity.  Ordinary hitches, menus and
         # already-healthy output must not trigger this quality trade-off.
-        if (self.flavor == "balanced" and verdict.short and not verdict.stall
+        if (verdict.short and not verdict.stall
                 and self._draw_says_not_power_bound(verdict)
                 and isinstance(real_median, (int, float)) and math.isfinite(float(real_median))
                 and isinstance(output_median, (int, float)) and math.isfinite(float(output_median))
@@ -1570,7 +1658,6 @@ class BudgetController:
             feasible = next(
                 (i for i in range(self.idx - 1, 0, -1)
                  if self._usable(i, now) and self.points[i].render_scale_pct == 100
-                 and float(self.points[i].multiplier).is_integer()
                  and self.points[i].base_target_fps * HOLD_REAL_RATIO <= float(real_median)),
                 None,
             )
@@ -1593,7 +1680,7 @@ class BudgetController:
             return self._move(f"guard-deeper-multiplier:{verdict.reason}", idx=deeper)
         if self.tdp_control and self.tdp is not None and self.tdp < self.normal_max_w - 1e-6:
             return self._move(f"guard-more-power:{verdict.reason}", tdp=min(self.normal_max_w, self.tdp + step))
-        if self.idx == 1 and self._usable(0, now) and self.flavor == "battery":
+        if self.idx > 0 and self._usable(0, now) and self.flavor in ("battery", "extreme"):
             return self._move(f"guard-emergency-x4:{verdict.reason}", idx=0)
         # Above the normal budget only while the real stream keeps missing the
         # cap of the deepest point there is: that, not an FPS number, is what
@@ -1628,7 +1715,7 @@ class BudgetController:
         """
         failed = self.points[self.idx]
         self.rejected[failed.key] = now
-        if self.probe == "up":
+        if self.probe in ("up", "economy"):
             self._note_failure(failed, now)  # an upgrade the renderer could not deliver at this TDP
         delivered = self._delivered_point(observed, failed, now)
         if delivered is not None:
@@ -1699,6 +1786,7 @@ class BudgetController:
             "cap_ignored": self.cap_ignored,
             "warm_started": self.warm_started,
             "flavor": self.flavor,
+            "goal": "minimum-feasible-tdp" if self.minimize_tdp else "cadence-and-power",
             "verifying": self.verifying,
             "current_max_multiplier": self.current_max_multiplier,
             "capacity_resume_point": (

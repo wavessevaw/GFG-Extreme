@@ -59,10 +59,13 @@ LIVE_FIELDS = frozenset({
     "target_fps",
     "base_fps_cap",
     "frame_generation_enabled",
+    "gfg_frame_fusion",
     "scaling_factor",
     "scaling_method",
     # Extreme (1.6): the scaler's sharpening travels with its render scale (one logical point).
     "scaling_sharpness",
+    # Live private-resource rebuild, used only by confirmed flow A/B/A trials.
+    "flow_scale",
 })
 # Budget mode uses x1 .. x3.75 normally and x4 as a last resort; x5 is never chosen.
 MAX_AUTO_MULTIPLIER = 4.0
@@ -141,7 +144,7 @@ def point_deltas(
             "adaptive": True,
             "adaptive_auto_base_fps_cap": False,
             "adaptive_stable_cadence": False,
-            "adaptive_max_multiplier": max(2, math.ceil(multiplier)),
+            "adaptive_max_multiplier": int(MAX_AUTO_MULTIPLIER),
             "multiplier": int(saved.get("multiplier", 2) or 2),
             "target_fps": int(point["target_output_fps"]),
             "base_fps_cap": int(point["base_target_fps"]),

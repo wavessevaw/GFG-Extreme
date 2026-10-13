@@ -173,6 +173,8 @@ class ProofMeter:
         for metric in METRICS:
             out[metric] = stats(self.prior[metric] + self.pairs[metric])
             out[metric]["session_n"] = len(self.pairs[metric])
+            out[metric]["session"] = stats(self.pairs[metric])
+            out[metric]["historical"] = stats(self.prior[metric])
         return out
 
     def load(self, prior: Dict[str, List[float]], skip: Optional[set] = None) -> None:

@@ -95,7 +95,7 @@ class GovernorServiceTests(unittest.TestCase):
     def test_hud_and_effort_read_service_telemetry_shape(self):
         from gfg_plugin.governor_hud import status_line
         summary = {"real": {"median": 45}, "output": {"median": 90}, "latest": {"effective_multiplier": 2.0}}
-        line = status_line({"enabled": True, "telemetry": {"snapshot": {}, "summary": summary}}, "minimal")
+        line = status_line({"enabled": True, "telemetry": {"snapshot": {"sample_age_ms": 100, "latest": {"real_fps": 45, "output_fps": 90}}, "summary": summary}}, "minimal")
         self.assertEqual(line, "90 FPS  x2  (45)")
 
     def test_hud_status_file_shows_live_tdp(self):

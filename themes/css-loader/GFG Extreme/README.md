@@ -4,7 +4,7 @@ The GFG Extreme look for the whole Steam Deck interface: near-black backgrounds,
 
 ## Install
 1. Install **CSS Loader** from the Decky store.
-2. Copy this folder (`GFG Extreme`) to `~/homebrew/themes/` on the Deck.
+2. In GFG settings, open **GFG theme** and press **Install theme**. Alternatively, copy this folder (`GFG Extreme`) to `~/homebrew/themes/` on the Deck.
 3. Open CSS Loader, press **Reload themes** and switch **GFG Extreme** on.
 
 ## Options

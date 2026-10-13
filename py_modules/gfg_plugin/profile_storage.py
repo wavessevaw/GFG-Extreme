@@ -483,7 +483,7 @@ def default_profile_metadata(
         processes = process_names(config)
         metadata[profile_name] = profile_metadata_entry(
             display_name=(
-                "Default" if profile_name == DEFAULT_PROFILE_NAME
+                "stable" if profile_name == DEFAULT_PROFILE_NAME
                 else profile_name
             ),
             kind=(

@@ -179,7 +179,7 @@ class GameModelStore:
         return self._save()
 
     # == BudgetController.FLOOR_BACKOFF_MAX_S: no floor failure blocks a level for longer.
-    FLOOR_BACKOFF_MAX_S = 600.0
+    FLOOR_BACKOFF_MAX_S = 1800.0
 
     @staticmethod
     def _valid_floor(v: Any) -> bool:

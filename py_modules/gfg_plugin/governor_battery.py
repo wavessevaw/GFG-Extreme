@@ -23,7 +23,14 @@ def _num(path: Path) -> Optional[float]:
 
 
 def read_battery(root: Path = POWER_SUPPLY) -> Dict[str, Any]:
-    """Return ``{available, percent, discharging, energy_uwh, power_uw}``."""
+    """Battery readings plus external power, including a full battery on AC."""
+    online = []
+    for supply in sorted(root.glob("*")):
+        if (_read(supply / "type") or "").lower() in {"mains", "usb", "usb_c", "usb_pd", "wireless"}:
+            value = _read(supply / "online")
+            if value in {"0", "1"}:
+                online.append(value == "1")
+    external_power = any(online) if online else None
     try:
         candidates = sorted(root.glob("BAT*"))
     except OSError:
@@ -38,14 +45,19 @@ def read_battery(root: Path = POWER_SUPPLY) -> Dict[str, Any]:
                 power = abs(current) * voltage / 1_000_000.0 if current is not None else None
         if energy is None:
             continue
+        status = (_read(bat / "status") or "").lower()
+        # Charging proves external power when no online supply is exposed. Full
+        # and Not charging do not: some batteries report them while unplugged.
+        on_ac = external_power if external_power is not None else (True if status == "charging" else False if status == "discharging" else None)
         return {
+            "external_power": on_ac,
             "available": True,
             "percent": _num(bat / "capacity"),
-            "discharging": (_read(bat / "status") or "").lower() == "discharging",
+            "discharging": status == "discharging",
             "energy_uwh": energy,
             "power_uw": abs(power) if power is not None else None,
         }
-    return {"available": False}
+    return {"available": False, "external_power": external_power}
 
 
 class BatteryEstimator:

@@ -1,11 +1,11 @@
-"""GFG Extreme (1.6): the stock-power contract and the render scale + sharpening policy.
+"""GFG Extreme (1.6): device-aware power and render scale + sharpening policy.
 
 First stage (P0) of ``docs/EXTREME_FOUNDATION.md``.  Pure functions; ``governor_service`` owns the
 lifecycle.  The rules this module encodes:
 
-* **One power ceiling.**  ``min(15 W, the player's own lower limit, the hardware maximum)``.  Extreme
-  never raises a player's 10-12 W to 15 and never goes above 15 W, overclocked BIOS or not.  Every
-  TDP write (the Governor's, Frame OS Act boosts, recovery) is clamped to it by the power actuator.
+* **One device-aware power ceiling.** The inherited player fast/slow PPT caps and
+  actual hardware maxima bound every write. No universal 15 W restriction.
+  Missing limits pause control, rather than guessing a device capability.
 * **Scale + sharpening are one logical point.**  The ladder is 100 -> 90 -> 80 % render scale (75 / 70
   follow after on-Deck validation of the native reference); the scaler's sharpening starts from
   ``CAS_START`` plus the player's own correction.  Saved is never written: everything goes through
@@ -25,7 +25,6 @@ import math
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
-EXTREME_CEILING_W = 15.0
 # Starting hypothesis for calibration (EXTREME_FOUNDATION.md), not a quality verdict.
 CAS_START: Dict[int, float] = {100: 0.0, 90: 0.15, 80: 0.30, 75: 0.40, 70: 0.50}
 AUTO_SCALE_STEPS = (90, 80)
@@ -53,14 +52,16 @@ def _finite(value: Any) -> Optional[float]:
 # ---------------------------------------------------------------------------- power ceiling
 def power_ceiling(user_w: Any, hardware_max_w: Any = None) -> Dict[str, Any]:
     """The one ceiling of every Extreme power write, and where it comes from."""
-    options = [(EXTREME_CEILING_W, "stock-limit")]
+    options = []
     user = _finite(user_w)
     if user is not None and user > 0:
-        options.append((round(user, 1), "your-limit"))
+        options.append((math.floor(user * 10.0) / 10.0, "your-limit"))
     hardware = _finite(hardware_max_w)
     if hardware is not None and hardware > 0:
-        options.append((round(hardware, 1), "hardware"))
-    ceiling, source = min(options, key=lambda option: option[0])  # ties: the first (stock) wins
+        options.append((math.floor(hardware * 10.0) / 10.0, "hardware"))
+    if not options:
+        return {"ceiling_w": None, "source": "unavailable", "user_w": None}
+    ceiling, source = min(options, key=lambda option: option[0])
     return {"ceiling_w": ceiling, "source": source, "user_w": round(user, 1) if user else None}
 
 
@@ -205,24 +206,57 @@ def runtime_state_evidence(doc: Any) -> Optional[Dict[str, Any]]:
         "sharpness": None,
         "method": spatial.get("active_method") or spatial.get("requested_method"),
         "pid": _int(doc.get("pid")),
+        "process_start_ticks": _int(doc.get("process_start_ticks")),
         "updated_unix_ms": _finite(doc.get("updated_unix_ms")),
         "reason": spatial.get("inactive_reason") or spatial.get("fallback_reason"),
     }
 
 
-def read_runtime_states(dirs: Iterable[Any], pids: Iterable[int], since_unix_s: float = 0.0) -> List[Dict[str, Any]]:
-    """Runtime-state records of the game's processes written after ``since_unix_s``, oldest first.
+def _runtime_process_identities(pids: Iterable[int], proc_root: Any) -> set:
+    """Host/namespace PID plus start ticks; timestamps alone never identify a game."""
+    from pathlib import Path
 
-    Bounded: at most RUNTIME_STATE_MAX_FILES files of RUNTIME_STATE_MAX_BYTES each; anything
-    unreadable or malformed is skipped.  Records of the game's PIDs win; only when none matches
-    (a PID namespace) do other records written after ``since_unix_s`` count.
+    identities = set()
+    for pid in pids:
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+            continue
+        folder = Path(proc_root) / str(pid)
+        try:
+            # comm may contain spaces and ')'; field 22 follows the final closing parenthesis.
+            stat = (folder / "stat").read_text(encoding="utf-8")
+            ticks = int(stat.rpartition(")")[2].split()[19])
+            if ticks <= 0:
+                continue
+        except (OSError, ValueError, IndexError, UnicodeError):
+            continue
+        aliases = {pid}
+        try:
+            for line in (folder / "status").read_text(encoding="utf-8").splitlines():
+                if line.startswith("NSpid:"):
+                    aliases.update(int(value) for value in line.partition(":")[2].split())
+                    break
+        except (OSError, ValueError, UnicodeError):
+            pass
+        identities.update((alias, ticks) for alias in aliases if alias > 0)
+    return identities
+
+
+def read_runtime_states(dirs: Iterable[Any], pids: Iterable[int], since_unix_s: float = 0.0,
+                        *, proc_root: Any = "/proc") -> List[Dict[str, Any]]:
+    """Read evidence of this launch, including verified pressure-vessel PID aliases.
+
+    Both PID (host or NSpid) and process_start_ticks must match a live game process.
+    A fresh timestamp from another process is not a fallback for missing identity.
+    Bounded reads: at most RUNTIME_STATE_MAX_FILES files per directory, each limited
+    to RUNTIME_STATE_MAX_BYTES, including files that grow while being read.
     """
     import json
     from pathlib import Path
 
-    wanted = {int(p) for p in pids if isinstance(p, int) or str(p).isdigit()}
+    identities = _runtime_process_identities(pids, proc_root)
+    if not identities:
+        return []
     out: List[Dict[str, Any]] = []
-    others: List[Dict[str, Any]] = []
     for base in dirs:
         folder = Path(base) / RUNTIME_STATE_DIRNAME
         try:
@@ -233,19 +267,19 @@ def read_runtime_states(dirs: Iterable[Any], pids: Iterable[int], since_unix_s: 
             try:
                 if path.stat().st_size > RUNTIME_STATE_MAX_BYTES:
                     continue
-                record = runtime_state_evidence(json.loads(path.read_text(encoding="utf-8")))
+                with path.open("rb") as handle:
+                    payload = handle.read(RUNTIME_STATE_MAX_BYTES + 1)
+                if len(payload) > RUNTIME_STATE_MAX_BYTES:
+                    continue
+                record = runtime_state_evidence(json.loads(payload))
             except (OSError, ValueError, UnicodeError):
                 continue
-            if record is None:
+            if record is None or (record.get("pid"), record.get("process_start_ticks")) not in identities:
                 continue
             updated = record.get("updated_unix_ms")
             if since_unix_s and (updated is None or updated / 1000.0 < since_unix_s):
                 continue
-            (out if not wanted or record.get("pid") in wanted else others).append(record)
-    if not out:
-        # A game in Steam's container (pressure-vessel) may report a PID from its own namespace.
-        # Then records written after the request (or, for diagnostics, any) are the next best.
-        out = others
+            out.append(record)
     out.sort(key=lambda r: r.get("updated_unix_ms") or 0.0)
     return out
 
@@ -339,6 +373,10 @@ def booster_states(facts: Dict[str, Any]) -> List[Dict[str, Any]]:
         out.append(_cap("split", "off", "power-split-setting-off"))
     elif not split.get("available", True):
         out.append(_cap("split", "unavailable", "cpu-clock-control-unavailable"))
+    elif split.get("restore_pending"):
+        out.append(_cap("split", "waiting", "cpu-restore-pending"))
+    elif split.get("game_off"):
+        out.append(_cap("split", "off", "no-measured-benefit-for-game"))
     elif split.get("cap_khz"):
         out.append(_cap("split", "active", "gpu-bound-cpu-capped", cap_khz=split["cap_khz"]))
     else:
@@ -355,17 +393,21 @@ def booster_states(facts: Dict[str, Any]) -> List[Dict[str, Any]]:
         out.append(_cap("act", "off", "act-not-enabled"))
     elif running and not act.get("pacer_live"):
         out.append(_cap("act", "restart_required", "pacer-not-loaded-at-launch"))
+    elif act.get("injecting") and act.get("acknowledged"):
+        out.append(_cap("act", "active", "adaptive-cadence-active"))
     elif act.get("injecting"):
-        out.append(_cap("act", "active", "boosting-real-frames"))
+        out.append(_cap("act", "waiting", "awaiting-pacer-acknowledgement"))
     else:
         out.append(_cap("act", "waiting", "waits-for-settled-watts"))
 
     # 6. Memory (P4): no global VM tweaks without pressure/OOM/recovery tests.
     out.append(_cap("memory", "unavailable", "global-memory-tweaks-not-applied"))
     # 7. Low latency (P3): a software proxy is not input-to-photon; no Reflex claims.
-    out.append(_cap("latency", "unavailable", "latency-not-measured-on-hardware"))
+    out.append(pacing_booster("latency", facts) if "pacing" in facts else
+               _cap("latency", "unavailable", "latency-not-measured-on-hardware"))
     # 8. Stutter shield (P3): needs p99 / max-gap acceptance on a Deck.
-    out.append(_cap("shield", "unavailable", "not-validated-on-hardware"))
+    out.append(pacing_booster("shield", facts) if "pacing" in facts else
+               _cap("shield", "unavailable", "not-validated-on-hardware"))
 
     # 9. Instant start: a remembered point of this game, verified again before it counts.
     if facts.get("warm_started"):
@@ -402,3 +444,45 @@ def session_state(*, enabled: bool, running: bool, overlay_active: bool, paused:
     if phase == "locked":
         return "ACTIVE"
     return "TUNE"
+
+
+def pacing_facts(settings: Dict[str, bool], runner: Dict[str, Any], *,
+                 mode: str, paused: bool) -> Dict[str, Any]:
+    """Cached native acknowledgement, separate from any claim about input latency."""
+    telemetry = runner.get("telemetry") or {}
+    return {"settings": dict(settings), "mode": mode, "paused": paused,
+            "live": bool(telemetry.get("live")),
+            "ack": bool(runner.get("acknowledged") and runner.get("mode") == mode),
+            "support": telemetry.get("features") or {},
+            "active": telemetry.get("active_features") or {},
+            "published": {"latency": runner.get("latency_enabled"),
+                          "shield": runner.get("stall_shield_enabled")},
+            "shaping_off": bool((runner.get("game_disabled") or {}).get("shaping")),
+            "control": runner.get("ab_control")}
+
+
+def pacing_booster(feature: str, facts: Dict[str, Any]) -> Dict[str, Any]:
+    pacing = facts.get("pacing") or {}
+    setting = (pacing.get("settings") or {}).get(feature, feature == "latency")
+    if not setting:
+        return _cap(feature, "off", "pacing-setting-off")
+    if pacing.get("mode") != "act":
+        return _cap(feature, "off", "act-not-enabled")
+    if not facts.get("running"):
+        return _cap(feature, "waiting", "game-not-running")
+    if not pacing.get("live"):
+        return _cap(feature, "restart_required", "pacer-not-loaded-at-launch")
+    native = "tick_shaping" if feature == "latency" else "stall_shield"
+    if not (pacing.get("support") or {}).get(native):
+        return _cap(feature, "restart_required", "pacer-feature-upgrade-required")
+    if pacing.get("paused"):
+        return _cap(feature, "ready", "pacing-paused")
+    if feature == "latency" and pacing.get("shaping_off"):
+        return _cap(feature, "off", "no-measured-benefit-for-game")
+    if feature == "latency" and pacing.get("control") == "no-shaping":
+        return _cap(feature, "waiting", "pacing-ab-control")
+    if (pacing.get("ack") and (pacing.get("published") or {}).get(feature) is True
+            and (pacing.get("active") or {}).get(native)):
+        return _cap(feature, "active", "native-frame-timing-active" if feature == "latency"
+                    else "native-stall-shield-active")
+    return _cap(feature, "waiting", "awaiting-pacer-acknowledgement")

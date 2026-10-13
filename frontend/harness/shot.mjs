@@ -2,9 +2,10 @@
 // canvas per topic. Writes docs/img/card-*.png. The Quick Access panel is 330 px wide; everything is
 // rendered at 2x. No real game names in the pictures.
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { launch, openPage, STATES } from "./lib.mjs";
 
-const out = process.env.GFG_SHOT_DIR || new URL("../../docs/img/", import.meta.url).pathname;
+const out = process.env.GFG_SHOT_DIR || fileURLToPath(new URL("../../docs/img/", import.meta.url));
 fs.mkdirSync(out, { recursive: true });
 const VERSION = JSON.parse(fs.readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version;
 const browser = await launch();
@@ -85,26 +86,30 @@ async function card(name, cols) {
   console.log(out + name + ".png");
 }
 
-// Overview: Battery at work, Extreme, Details.
+// Overview: real frontend UI, example 30 real → 90 output cadence, Autopilot and Details.
 await card("card-overview", [
-  { png: await screen(st("readme-home"), { until: "MODE" }), label: "Battery · at work" },
-  { png: await screen(st("home-extreme"), { taps: 2, until: "STOP" }), label: "<b>Extreme</b> · whole stock limit" },
-  { png: await screen(st("readme-home"), { nav: ["Details"], until: "HEALTH" }), label: "Details · every decision" },
+  { png: await screen(st("readme-home"), { until: "MODE" }), label: "Battery · example session" },
+  { png: await screen(st("home-autopilot"), { until: "FILTERS", maxH: 1160 }), label: "<b>Autopilot</b> · measured decisions" },
+  { png: await screen(st("home-autopilot"), { nav: ["Details"], until: "HEALTH" }), label: "Details · operating point" },
 ]);
 
-// The four modes: the Home hero of each.
+// Four modes offered by stable 2.1.0.
 await card("card-modes", [
   { png: await region(st("readme-home"), { from: ".hero", to: ".hero" }), label: "Battery" },
   { png: await region(st("home-balanced"), { from: ".hero", to: ".hero" }), label: "Balanced" },
   { png: await region(st("home-quality-oled"), { from: ".hero", to: ".hero" }), label: "Quality" },
-  { png: await region(st("home-extreme"), { from: ".hero", to: ".hero" }), label: "<b>Extreme</b>" },
+  { png: await region(st("home-autopilot"), { from: ".hero", to: ".hero" }), label: "<b>Autopilot</b>" },
 ]);
 
-// Extreme: what it does now, what it checks, what it asks.
-await card("card-extreme", [
-  { png: await region(st("home-extreme"), { from: ".xcard", to: ".xcard" }), label: "Nine directions, each with its state" },
-  { png: await region(st("home-extreme-verify"), { from: ".hero", to: ".hero" }), label: "A new render scale is checked first" },
-  { png: await region(st("home-extreme"), { nav: ["Details"], from: "EXTREME", to: "^Gain vs Balanced" }), label: "Details · confirmed values only" },
+// The same genuine Autopilot card in confirmed/awaiting-measurement states.
+// These are explicitly sample values, not a performance benchmark.
+await card("card-autopilot", [
+  { png: await region(st("home-autopilot"), { from: "^AUTOPILOT", to: "^AUTOPILOT" }), label: "Confirmed · no unneeded changes" },
+  { png: await region(st("home-autopilot-wait"), { from: "^AUTOPILOT", to: "^AUTOPILOT" }), label: "Trial deferred · unchanged hardware" },
+]);
+
+await card("card-profile", [
+  { png: await screen(st("home-autopilot"), { nav: ["Settings", "Profile"], maxH: 750 }), label: "stable · compatible saved profiles" },
 ]);
 
 // Smart power split.
@@ -114,9 +119,16 @@ await card("card-power-split", [
 
 // Frame OS.
 {
-  const fo = st("home-frame-os-act");
+  const fo = JSON.parse(JSON.stringify(st("home-frame-os-act")));
+  fo.mode = "autopilot";
+  fo.frame_os.benefit.frames_pct = null;
+  fo.frame_os.benefit.measured.frames = false;
+  fo.frame_os.proof.frames = { n: 0, measured: false, skipped: true };
+  fo.frame_os.game.frames = { n: 0 };
+  fo.frame_os.game.verdicts.frames = "unclear";
+  fo.frame_os.burst_observations = { windows: 12, accelerated_windows: 8, seconds: 3.2, peak_real_hz: 36, gain_measured: false };
   await card("card-frame-os", [
-    { png: await region(fo, { from: ".fos", to: ".fos" }), label: "Home · measured in game" },
+    { png: await region(fo, { from: ".fos", to: ".fos" }), label: "Home · illustrative short pulse" },
     { png: await region(fo, { nav: ["Settings", "Diagnostics"], from: "FRAME OS (EXPERIMENTAL)", to: "<INSPECTOR" }), label: "Diagnostics · A/B and per-game memory" },
   ]);
 }

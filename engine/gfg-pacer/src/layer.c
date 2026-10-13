@@ -382,6 +382,7 @@ static void present_done(dev_data *d, const VkPresentInfoKHR *info, int64_t fwd)
         return;
     }
     memset(&t, 0, sizeof(t));
+    t.reserved = GFG_SUPPORT_TICK_SHAPING | GFG_SUPPORT_STALL_SHIELD;
     t.frames = m->frames;
     t.cost_p50_ms = gfg_ring_quantile(&m->costs_ms, 0.5);
     t.cost_q_ms = gfg_ring_quantile(&m->costs_ms, d->sched_active ? d->sched.policy.cost_quantile : 0.95);
@@ -401,6 +402,12 @@ static void present_done(dev_data *d, const VkPresentInfoKHR *info, int64_t fwd)
         t.misses = s->misses;
         t.margin_ms = s->margin_ms;
         t.avg_delay_ms = s->avg_delay_ms;
+        if (d->mode == GFG_MODE_ACT) {
+            if (d->sched.policy.tick_shaping)
+                t.reserved |= GFG_ACTIVE_TICK_SHAPING;
+            if (d->sched.policy.pacing && d->sched.policy.stall_shield)
+                t.reserved |= GFG_ACTIVE_STALL_SHIELD;
+        }
     }
     memcpy(t.engine, d->engine, sizeof(t.engine));   /* the publishing device's own instance */
     pthread_mutex_unlock(&d->lock);

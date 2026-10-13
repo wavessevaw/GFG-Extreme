@@ -40,6 +40,7 @@ typedef struct gfg_policy {
     double max_margin_ms;
     double max_wait_ms;      /* never wait longer than this in one call (<= one refresh) */
     double cost_quantile;    /* frame-cost quantile used for planning, e.g. 0.9 */
+    int stall_shield;        /* limit additional present hold and re-anchor after a missed frame */
     int predictive;          /* 1: plan with the cost trend (Predictive Presentation), see below */
 } gfg_policy;
 

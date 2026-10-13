@@ -121,7 +121,9 @@ class SimulationTests(unittest.TestCase):
         from gfg_plugin.frame_os.simulate import compare
         for seed in (1, 2, 3, 7):
             c = compare(seed)
-            self.assertGreater(c["frame_os"]["real_fps_in_motion"], c["governor"]["real_fps_in_motion"] + 3)
+            self.assertGreater(c["frame_os"]["peak_boost_real_fps"], c["governor"]["real_fps_in_motion"] + 3)
+            self.assertGreater(c["frame_os"]["real_fps_in_motion"], c["governor"]["real_fps_in_motion"])
+            self.assertLessEqual(c["frame_os"]["max_burst_s"], 1.6)
             self.assertLess(c["frame_os"]["avg_w"], c["governor"]["avg_w"] * 1.15, "energy premium bounded")
 
 
@@ -392,7 +394,10 @@ class SteamUiRestTests(unittest.TestCase):
         p = InjectionPolicy(output_hz=90, calm_real_hz=30, max_multiplier=4)
         d = p.tick(10.0, {"camera": 0.9, "action": 0, "idle_s": 0.0}, focused=False)
         self.assertEqual((d.level, d.reason, d.real_hz), ("rest", "steam-ui", 22.5))
-        self.assertEqual(p.tick(10.1, {"camera": 0.9, "action": 0, "idle_s": 0.0}, focused=True).level, "boost")
+        self.assertEqual(p.tick(10.1, {"camera": 0.9, "action": 0, "idle_s": 0.0}, focused=True).level, "calm")
+        p.tick(10.2,{"camera":0,"idle_s":1},focused=True)
+        p.tick(10.4,{"camera":0,"idle_s":1},focused=True)
+        self.assertEqual(p.tick(10.5,{"camera":.9,"idle_s":0},focused=True).level,"boost")
 
     def test_observer_tracks_gamescope_focus(self):
         import tempfile
@@ -409,29 +414,24 @@ class SteamUiRestTests(unittest.TestCase):
 
 class BoostProofTests(unittest.TestCase):
     def test_undelivered_boost_backs_off(self):
-        from gfg_plugin.frame_os.policy import InjectionPolicy, BOOST_BACKOFF_S
-        p = InjectionPolicy(output_hz=90, calm_real_hz=30)
-        moving = {"camera": 0.9, "action": 0, "idle_s": 0.0}
-        t = 100.0
-        self.assertEqual(p.tick(t, moving).level, "boost")
-        for _ in range(40):                       # 4 s of boost, the layer still sees 30 real
-            t += 0.1
-            p.note_delivered(t, 30.0)
-            p.tick(t, moving)
-        d = p.tick(t + 0.1, moving)
-        self.assertEqual((d.level, d.reason), ("calm", "boost-ineffective"))
-        self.assertEqual(p.tick(t + BOOST_BACKOFF_S + 1, moving).level, "boost")
+        from test_autopilot_release_regressions import BurstDeliveryTests
+        BurstDeliveryTests("test_short_failed_bursts_eventually_back_off").test_short_failed_bursts_eventually_back_off()
 
-    def test_delivered_boost_keeps_going(self):
-        from gfg_plugin.frame_os.policy import InjectionPolicy
+    def test_delivered_boost_still_ends_after_a_short_pulse(self):
+        from gfg_plugin.frame_os.policy import InjectionPolicy, BOOST_MAX_BURST_S
         p = InjectionPolicy(output_hz=90, calm_real_hz=30)
-        moving = {"camera": 0.9, "action": 0, "idle_s": 0.0}
-        t = 100.0
-        p.tick(t, moving)
-        for _ in range(60):
-            t += 0.1
-            p.note_delivered(t, 44.5)
-            self.assertEqual(p.tick(t, moving).level, "boost")
+        moving = {"camera": .9, "action": 0, "idle_s": 0}
+        self.assertEqual(p.tick(100, moving).level, "boost")
+        for i in range(1, 61):
+            now = 100 + i * .1
+            d = p.tick(now, moving)
+            if d.level == "boost":
+                self.assertLess(now - 100, BOOST_MAX_BURST_S)
+                p.note_delivered(now, 44.5, short_window=True, exposure_s=.1)
+            else:
+                self.assertGreaterEqual(now - 100, BOOST_MAX_BURST_S)
+        self.assertEqual(p.level, "calm")
+        self.assertLess(p._boost_blocked_until, 100)
 
 
 class ReviewFixTests(unittest.TestCase):

@@ -93,6 +93,17 @@ class ReportTests(unittest.TestCase):
         self.assertIn("50% of the session waiting", joined)
         self.assertIn("switched 1 times", joined)
 
+    def test_rejection_cadence_is_the_measured_rate_not_the_plan(self):
+        events = [{"event": "operating-point-rejected", "reason": "confirmation-timeout", "point": "30x3",
+                   "cadence": {"delivered_output_fps": 48.0, "delivered_real_fps": 22.0,
+                               "requested_output_fps": 90, "requested_real_fps": 30}}]
+        rep = analyze(bundle({"timeline.jsonl": timeline(self.rows()), "governor-events.jsonl": timeline(events)}))
+        joined = "\n".join(rep["findings"])
+        self.assertIn("30x3", joined)
+        self.assertIn("output 48.0", joined)
+        self.assertIn("real 22.0", joined)
+        self.assertIn("asked output 90", joined)
+
     def test_heat_and_stutter_are_reported(self):
         rows = self.rows(10) + self.rows(10, reason="thermal-quality-held:heating",
                                          diagnosis={"thermal": "heating", "smoothness": "stuttering"})
@@ -182,8 +193,9 @@ class FrameOsReportTests(unittest.TestCase):
         rep = analyze(bundle({"timeline.jsonl": timeline(rows),
                               "game-processes.json": json.dumps([{"pid": 1, "frame_os_layer_loaded": True}])}))
         text = "\n".join(rep["findings"])
-        self.assertIn("response +46.5% (38.0..55.0) over 4 pairs; energy +12.0% over 1 pair", text)
-        self.assertIn("control windows 10% of samples", text)
+        self.assertIn("response +46.5% (38.0..55.0) over 4 pairs [session provenance unknown]", text)
+        self.assertIn("energy +12.0% over 1 pair [session provenance unknown]", text)
+        self.assertIn("control windows 10.0% of samples", text)
 
     def test_stale_telemetry_does_not_answer(self):
         layer = {"live": False, "frames": 900, "freshness_ms": 21.5}
@@ -216,6 +228,20 @@ class FrameOsLateSwitchTests(unittest.TestCase):
 
 
 class FrameOsByLevelTests(unittest.TestCase):
+    def test_short_burst_snapshots_are_not_summed_or_judged_by_long_medians(self):
+        rows = [{"t": i, "state": "LOCKED", "frame_os": {
+            "mode": "act", "layer_installed": True, "acting": True,
+            "level": "calm" if i < 3 else "boost",
+            "layer": {"live": True, "frames": 100 + i, "present_interval_p50_ms": 33.3},
+            "burst_observations": {"windows": 12, "accelerated_windows": 8,
+                                   "seconds": 3.2, "peak_real_hz": 36}}} for i in range(6)]
+        rep = analyze(bundle({"timeline.jsonl": timeline(rows)}))
+        burst = rep["frame_os"]["short_bursts"]
+        self.assertEqual(burst["windows"], 12)
+        self.assertEqual(burst["accelerated_windows"], 8)
+        self.assertEqual(burst["seconds"], 3.2)
+        self.assertNotIn("boost did not raise the real frame rate", "\n".join(rep["findings"]))
+
     def test_boost_and_calm_are_reported_separately(self):
         def row(i, level, interval, fresh, acting):
             return {"t": float(i), "state": "LOCKED", "output": 90, "tdp": 12,
@@ -229,3 +255,70 @@ class FrameOsByLevelTests(unittest.TestCase):
         joined = "\n".join(rep["findings"])
         self.assertIn("Frame OS by decision", joined)
         self.assertIn("boost did not raise the real frame rate", joined)
+
+
+class AuditRegressionTests(unittest.TestCase):
+    def report(self, rows):
+        return analyze(bundle({"timeline.jsonl": timeline(rows)}))
+
+    def extreme_row(self, **values):
+        return {"t": 0.0, "state": "APPLY", "point": None, "tdp": 15.0,
+                "tdp_fast": 15.0, "tdp_owned": True,
+                "extreme": {"state": "APPLY", "ceiling": {"ceiling_w": 15.0}}, **values}
+
+    def test_owned_transition_without_point_exposes_both_caps(self):
+        report = self.report([self.extreme_row(tdp=20.0, tdp_fast=20.0)])
+        ext = report["extreme"]
+        self.assertEqual((ext["max_tdp_w"], ext["owned_above_ceiling_samples"]), (20.0, 1))
+        self.assertIn("ABOVE THE CEILING in 1 owned samples", render(report))
+
+    def test_fast_channel_only_violation_is_visible(self):
+        ext = self.report([self.extreme_row(tdp_fast=20.0)])["extreme"]
+        self.assertEqual((ext["max_tdp_w"], ext["above_ceiling_samples"]), (20.0, 1))
+
+    def test_unowned_read_is_reported_without_attributing_a_gfg_write(self):
+        report = self.report([self.extreme_row(tdp=20.0, tdp_owned=False)])
+        ext = report["extreme"]
+        self.assertIsNone(ext["max_tdp_w"])
+        self.assertEqual((ext["max_observed_tdp_w"], ext["above_ceiling_samples"],
+                          ext["owned_above_ceiling_samples"]), (20.0, 1, 0))
+        self.assertIn("highest observed cap 20.0 W", render(report))
+        self.assertNotIn("owned samples", render(report))
+
+    def test_each_sample_uses_its_own_ceiling(self):
+        a = self.extreme_row()
+        b = self.extreme_row(t=1.0, tdp=9.0, tdp_fast=9.0,
+                             extreme={"ceiling": {"ceiling_w": 9.0}})
+        report = self.report([a, b])
+        self.assertEqual(report["extreme"]["above_ceiling_samples"], 0)
+        self.assertNotIn("ABOVE THE CEILING", render(report))
+
+    def frame_row(self, proof, **extra):
+        return {"t": 0.0, "state": "LOCKED", "frame_os": {
+            "mode": "act", "proof": proof, **extra}}
+
+    def test_old_archive_prior_is_not_reported_as_current_ab(self):
+        proof = {"response": {"n": 9, "session_n": 0, "mean": 42.3,
+                               "low": 33.3, "high": 51.3, "measured": True}}
+        text = render(self.report([self.frame_row(proof)]))
+        self.assertIn("historical; no pairs in this session", text)
+        self.assertIn("not independently measured input-to-display latency", text)
+        self.assertNotIn("A/B in game", text)
+
+    def test_mixed_old_archive_does_not_invent_current_mean(self):
+        proof = {"response": {"n": 9, "session_n": 2, "mean": 42.3, "measured": True}}
+        text = render(self.report([self.frame_row(proof)]))
+        self.assertIn("history + current session; 2 current pairs", text)
+
+    def test_new_archive_reports_current_pairs_separately(self):
+        proof = {"response": {"n": 10, "session_n": 1, "mean": 42.3, "measured": True,
+                               "session": {"n": 1, "mean": 12.0, "measured": False}}}
+        text = render(self.report([self.frame_row(proof)]))
+        self.assertIn("response +12.0% over 1 pair [current session; preliminary]", text)
+        self.assertNotIn("response +42.3%", text)
+
+    def test_unknown_relay_device_count_is_not_zero(self):
+        row = self.frame_row({}, input={"source": "relay", "events": 61021, "gamepads": None})
+        report = self.report([row])
+        self.assertIsNone(report["frame_os"]["input_gamepads"])
+        self.assertIn("unknown number of gamepads", render(report))

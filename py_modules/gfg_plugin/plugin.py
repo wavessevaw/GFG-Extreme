@@ -15,6 +15,7 @@ from pathlib import Path
 
 import decky
 
+from .theme_installer import ThemeInstaller
 from .installation import InstallationService
 from .dll_detection import DllDetectionService
 from .configuration import ConfigurationService
@@ -61,6 +62,8 @@ class Plugin:
 
     def __init__(self):
         """Initialize the plugin with all necessary services"""
+        self.theme_installer = ThemeInstaller(Path(decky.DECKY_USER_HOME))
+        self._theme_install_lock = asyncio.Lock()
         self.installation_service = InstallationService()
         self.dll_detection_service = DllDetectionService()
         self.configuration_service = ConfigurationService()
@@ -753,7 +756,7 @@ class Plugin:
         return SessionRecorder(
             user_home=home, config_dir=cfg.config_dir, runtime_state_dir=cfg.runtime_state_dir,
             wrapper_path=cfg.mako_script_path,
-            status_provider=lambda: self.governor_service.get_status(),
+            status_provider=self._governor_status_with_fusion,
             events_path=self.governor_service.events_path,
             diagnostics_paths=[cfg.config_dir / PRESENT_DIAGNOSTICS_LOG_FILENAME,
                                Path("/dev/shm/gfg-present-diagnostics.log")],
@@ -766,6 +769,7 @@ class Plugin:
             plugin_log=Path(plugin_log) if plugin_log else None, logger=decky.logger,
             hud_enabled=lambda profile: bool(self.governor_service.hud_settings(profile)["enabled"]),
             activity=self.activity,
+            renderer_manifest=Path(__file__).resolve().parents[2] / "bin/gfg-fusion/manifest.json",
         )
 
     async def log_ui_event(self, kind: str = "", detail: Any = None) -> Dict[str, Any]:
@@ -789,7 +793,25 @@ class Plugin:
 
     async def get_governor_status(self, profile_name: str = "") -> Dict[str, Any]:
         """Return the live GFG Governor state without mutating the profile."""
+        return await asyncio.to_thread(self._governor_status_with_fusion, profile_name)
+
+    def _governor_status_with_fusion(self, profile_name: str = "") -> Dict[str, Any]:
         status = self.governor_service.get_status(profile_name)
+        from .frame_fusion import summarize
+        runtime = self.runtime_state_service.get_status(profile_name or status.get("profile", ""))
+        requested = self.governor_service.frame_fusion_enabled()
+        scoped = status.get("mode") == "autopilot" and status.get("enabled") is True
+        status["frame_fusion"] = summarize(requested and scoped,
+            runtime.get("contexts", []) if runtime.get("success") else [])
+        status["frame_fusion"].update(setting_enabled=requested, autopilot_only=True, scope_active=scoped)
+        old_engine=any((c.get("frame_fusion") or {}).get("supported") and not (c.get("frame_fusion") or {}).get("autopilot_scope_supported")
+                       for c in runtime.get("contexts",[]) if isinstance(c,dict))
+        status["frame_fusion"]["scope_update_required"]=old_engine
+        if old_engine:
+            status["frame_fusion"].update(state="renderer-update-required",restart_required=True)
+        elif not scoped:
+            status["frame_fusion"].update(state="autopilot-only" if status.get("mode") != "autopilot" else "paused",
+                                         restart_required=False, path_observed=False, processing_path="none")
         hud = status.get("hud")
         if isinstance(hud, dict):
             # The overlay needs SteamOS's own MangoHud layer, staged at plugin start.
@@ -816,9 +838,19 @@ class Plugin:
         """Frame OS Act opt-in (persisted; Act changes frame timing and power)."""
         return await asyncio.to_thread(self.governor_service.set_frame_os_act_unlock, bool(enabled))
 
+    async def set_governor_frame_os_feature(self, profile_name: str, feature: str,
+                                           enabled: bool) -> Dict[str, Any]:
+        """Per-profile native frame-timing/shield preference; active status requires native ACK."""
+        return await asyncio.to_thread(self.governor_service.set_frame_os_feature,
+                                       profile_name, feature, enabled)
+
     async def set_governor_frame_os_ab(self, enabled: bool = True) -> Dict[str, Any]:
         """Frame OS A/B proof windows in Act (persisted; on by default)."""
         return await asyncio.to_thread(self.governor_service.set_frame_os_ab, bool(enabled))
+
+    async def set_governor_frame_fusion(self, enabled: bool = False) -> Dict[str, Any]:
+        """Opt-in Fusion Core; the generated launcher reads it at the next start."""
+        return await asyncio.to_thread(self.governor_service.set_frame_fusion, enabled)
 
     async def set_governor_power_split(self, enabled: bool = True) -> Dict[str, Any]:
         """Smart power split: CPU clock cap in GPU-bound games (persisted; on by default)."""
@@ -841,8 +873,16 @@ class Plugin:
         )
 
     async def set_governor_mode(self, profile_name: str, mode: str) -> Dict[str, Any]:
-        """Battery, Balanced, Quality or Extreme (the whole stock power limit into real frames)."""
+        """Battery, Balanced, Quality, Autopilot, or the internal Extreme path."""
         return await asyncio.to_thread(self.governor_service.set_mode, profile_name, mode)
+
+    async def set_governor_autopilot_preference(self, profile_name: str, preference: str) -> Dict[str, Any]:
+        """Auto, Battery or Smoothness. One policy, not a second controller."""
+        return await asyncio.to_thread(self.governor_service.set_autopilot_preference, profile_name, preference)
+
+    async def set_governor_autopilot_shading(self, profile_name: str, allowed: bool) -> Dict[str, Any]:
+        """Consent to visual-quality-changing Half Rate Shading GPU experiments."""
+        return await asyncio.to_thread(self.governor_service.set_autopilot_shading, profile_name, allowed)
 
     async def get_governor_game_model_target(self, profile_name: str) -> Dict[str, Any]:
         """Settings -> Diagnostics: which game "Reset what GFG learned" would reset (None: unknown)."""
@@ -1494,7 +1534,7 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Extreme 1.6.1 started")
+        decky.logger.info("GFG Extreme 2.1.0 started")
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""
@@ -1577,6 +1617,17 @@ class Plugin:
                 "for recovery on the next plugin load"
             )
         decky.logger.info("GFG Extreme unloaded")
+
+    async def set_governor_auto_flow(self, enabled: bool) -> Dict[str, Any]:
+        return self.governor_service.set_auto_flow(enabled)
+
+    async def get_theme_status(self) -> Dict[str, Any]:
+        async with self._theme_install_lock:
+            return await asyncio.to_thread(self.theme_installer.status)
+
+    async def install_gfg_theme(self) -> Dict[str, Any]:
+        async with self._theme_install_lock:
+            return await asyncio.to_thread(self.theme_installer.install)
 
     async def _uninstall(self):
         """

@@ -43,6 +43,14 @@ extern "C" {
 #define GFG_CTL_ENGINE_LEN 16
 
 /* policy.mode */
+/* Optional extension bits in policy.reserved / telemetry.reserved; layout stays v3.
+ * A legacy layer ignores requests and advertises no support. Never infer support from config. */
+#define GFG_POLICY_STALL_SHIELD 1u
+#define GFG_SUPPORT_TICK_SHAPING 1u
+#define GFG_SUPPORT_STALL_SHIELD 2u
+#define GFG_ACTIVE_TICK_SHAPING (1u << 16)
+#define GFG_ACTIVE_STALL_SHIELD (1u << 17)
+
 #define GFG_MODE_ACT 0u       /* scheduler decides and the layer sleeps */
 #define GFG_MODE_OBSERVE 1u   /* measure and publish only: no scheduler, no sleeps */
 #define GFG_MODE_SHADOW 2u    /* scheduler decides, the layer never sleeps (what act would do) */

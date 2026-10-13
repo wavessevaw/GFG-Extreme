@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from .governor_telemetry import TelemetryObserver
 
-CURRENT_VERSION = "1.6.1"  # kept in step by scripts/bump_version.py
+CURRENT_VERSION = "2.1.1"  # kept in step by scripts/bump_version.py
 
 
 def _percentile(values: List[float], pct: float) -> Optional[float]:
@@ -74,6 +74,8 @@ def analyze_diagnostics(text: str) -> Dict[str, Any]:
     return {
         "lines": lines, "parsed_events": sum(operations.values()), "fps_samples": samples,
         "operations": dict(operations.most_common(12)),
+        "delivery_misses": operations["generated-delivery-miss"],
+        "acquire_quarantines": operations["ordered-acquire-quarantine"],
         "capacity_waits": len(capacity_waits),
         "available_capacity": capacity_waits[-1] if capacity_waits else None,
         "real_median": statistics.median(real) if real else None,
@@ -95,6 +97,11 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
     diag = analyze_diagnostics(diag_text)
 
     report: Dict[str, Any] = {"files": len(names), "samples": len(samples), "diagnostics": diag}
+    try:
+        index = json.loads(_read(bundle,"diagnostics-index.json") or "{}")
+        report["diagnostic_export"] = index
+    except ValueError:
+        report["diagnostic_export"] = {}
     try:
         report["plugin_version"] = json.loads(_read(bundle, "system.json") or "{}").get("plugin_version")
     except (ValueError, AttributeError):
@@ -144,9 +151,33 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
         "caps_w": sorted({e["cap_w"] for e in not_bound if isinstance(e.get("cap_w"), (int, float))}),
     }
     report["rejected_points"] = sorted({str(e.get("point")) for e in events if e.get("event") == "operating-point-rejected"})
+    cadence = []
+    for event in events:
+        if event.get("event") != "operating-point-rejected":
+            continue
+        evidence = event.get("cadence") if isinstance(event.get("cadence"), dict) else {}
+        delivered_out, delivered_real = evidence.get("delivered_output_fps"), evidence.get("delivered_real_fps")
+        if delivered_out is None and delivered_real is None:
+            continue
+        cadence.append({
+            "point": str(event.get("point")),
+            "reason": str(event.get("reason") or ""),
+            "delivered_output_fps": delivered_out,
+            "delivered_real_fps": delivered_real,
+            "requested_output_fps": evidence.get("requested_output_fps"),
+            "requested_real_fps": evidence.get("requested_real_fps"),
+        })
+    report["rejection_cadence"] = cadence
     report["failed_checks"] = [c for c in self_test if not c.get("ok")]
     report["overlay_burst_before_exit"] = overlay_burst_before_exit(_jsonl(_read(bundle, "activity.jsonl")))
     report["frame_os"] = frame_os_summary(samples, _read(bundle, "game-processes.json"))
+    if report["frame_os"] is not None:
+        bursts=[(r.get("frame_os") or {}).get("burst_observations") for r in samples]
+        bursts=[b for b in bursts if isinstance(b,dict)]
+        report["frame_os"]["short_bursts"]={"available":bool(bursts),**{
+            k:max((b.get(k) or 0 for b in bursts),default=0)
+            for k in ("windows","accelerated_windows","seconds","peak_real_hz")},"gain_measured":False}
+    report["stick_touch_boost"] = stick_touch_boost_summary(samples)
     if report["frame_os"]:
         report["frame_os"]["by_level"] = frame_os_by_level(samples)
         report["frame_os"]["injection"] = dict(Counter(
@@ -157,28 +188,100 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
         report["power_split"]["capped_share"] = round(sum(bool(r.get("cap_khz")) for r in rows) / len(rows), 2)
     report["extreme"] = extreme_summary(samples, events)
     report["render_scale"] = render_scale_summary(events, diag_text)
+    report["frame_fusion"] = frame_fusion_summary(samples)
+    try:
+        identity = json.loads(_read(bundle, "renderer-identity.json") or "{}")
+        processes = identity.get("processes", []) if isinstance(identity, dict) else []
+        libraries = [lib for process in processes if isinstance(process, dict)
+                     for lib in (process.get("renderer_files") or []) if isinstance(lib, dict)]
+        report["frame_fusion"]["renderer_identity"] = {
+            "available": bool(libraries),
+            "matched": sum(lib.get("matches_plugin_manifest") is True for lib in libraries),
+            "mismatched": sum(lib.get("matches_plugin_manifest") is False for lib in libraries),
+            "unknown": sum(lib.get("matches_plugin_manifest") is None for lib in libraries)}
+    except (ValueError, TypeError, AttributeError):
+        report["frame_fusion"]["renderer_identity"] = {"available": False}
+    actions = _jsonl(_read(bundle, "activity.jsonl"))
+    report["frame_fusion"]["enable_requested_in_activity"] = any(
+        a.get("kind") == "set_governor_frame_fusion" and isinstance(a.get("args"), dict)
+        and a["args"].get("enabled") is True
+        for a in actions)
     report["findings"] = findings(report, names)
     return report
 
 
+def stick_touch_boost_summary(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
+    rows = [(r.get("frame_os") or {}).get("touch_boost") for r in samples
+        if isinstance(r.get("frame_os"), dict)]
+    rows = [r for r in rows if isinstance(r, dict)]
+    return {"available": bool(rows), "samples": len(rows),
+        "states": dict(Counter(str(r.get("state", "unknown")) for r in rows)),
+        "enabled_samples": sum(r.get("enabled") is True for r in rows),
+        "fresh_contact_samples": sum(r.get("signal_fresh") is True and r.get("right_stick_touch") is True for r in rows),
+        "requested_samples": sum(r.get("requested") is True for r in rows),
+        "submitted_samples": sum(r.get("submitted") is True for r in rows),
+        "maximum_touch_requests_snapshot": max((r["touch_requests"] for r in rows
+            if type(r.get("touch_requests")) is int and 0 <= r["touch_requests"] < 2**64), default=0),
+        "last": rows[-1] if rows else None, "gain_measured": False}
+
+
+def frame_fusion_summary(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
+    rows = [r["frame_fusion"] for r in samples if isinstance(r.get("frame_fusion"), dict)]
+    latest_contexts = next(({"captured_at": r.get("t"), "contexts": r["frame_fusion"]["contexts"]}
+        for r in reversed(samples) if isinstance(r.get("frame_fusion"), dict)
+        and isinstance(r["frame_fusion"].get("contexts"), list) and r["frame_fusion"]["contexts"]), None)
+    return {"available": bool(rows), "samples": len(rows),
+        "states": dict(Counter(str(r.get("state", "unknown")) for r in rows)),
+        "enabled_samples": sum(r.get("enabled") is True for r in rows),
+        "observed_samples": sum(r.get("path_observed") is True for r in rows),
+        # Counters are native publication snapshots and reset with contexts.
+        # Repeated snapshots must never be summed as a session copy total.
+        "maximum_avoided_copies_snapshot": max((
+            r.get("avoided_source_copies_at_last_publication", 0) for r in rows
+            if type(r.get("avoided_source_copies_at_last_publication")) is int
+            and 0 <= r["avoided_source_copies_at_last_publication"] < 2**64), default=0),
+        "processing_paths": dict(Counter(str(r.get("processing_path", "legacy")) for r in rows)),
+        "maximum_native_transfers_snapshot": max((
+            r.get("native_source_transfers_at_last_publication", 0) for r in rows
+            if type(r.get("native_source_transfers_at_last_publication")) is int
+            and 0 <= r["native_source_transfers_at_last_publication"] < 2**64), default=0),
+        "maximum_native_conversion_blits_avoided_snapshot": max((
+            r.get("native_conversion_blits_avoided_at_last_publication", 0) for r in rows
+            if type(r.get("native_conversion_blits_avoided_at_last_publication")) is int
+            and 0 <= r["native_conversion_blits_avoided_at_last_publication"] < 2**64), default=0),
+        "last": rows[-1] if rows else None, "last_context_sample": latest_contexts, "gain_measured": False}
+
+
 def extreme_summary(samples: List[Dict[str, Any]], events: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Extreme (1.6): ceiling, the highest TDP written, render scales the renderer confirmed."""
-    rows = [r.get("extreme") for r in samples if isinstance(r.get("extreme"), dict)]
-    if not rows:
+    """Both observed PPT channels, including transitions before a point is confirmed."""
+    samples = [r for r in samples if isinstance(r.get("extreme"), dict)]
+    if not samples:
         return None
+    rows = [r["extreme"] for r in samples]
     ceilings = [(r.get("ceiling") or {}).get("ceiling_w") for r in rows]
     ceilings = [c for c in ceilings if isinstance(c, (int, float))]
-    # Only caps GFG wrote: owned, with a live point.  Before that the cap read is the player's own
-    # (an unlocked BIOS: 20 W), which is not an Extreme write.
-    tdps = [r.get("tdp") for r in samples if isinstance(r.get("extreme"), dict) and r.get("tdp_owned")
-            and r.get("point") and isinstance(r.get("tdp"), (int, float))]
+    observed, owned = [], []
+    above = owned_above = 0
+    for sample in samples:
+        caps = [sample[k] for k in ("tdp", "tdp_fast")
+                if isinstance(sample.get(k), (int, float))]
+        observed.extend(caps)
+        if sample.get("tdp_owned"):
+            owned.extend(caps)
+        ceiling = (sample["extreme"].get("ceiling") or {}).get("ceiling_w")
+        if caps and isinstance(ceiling, (int, float)) and max(caps) > ceiling + 0.05:
+            above += 1
+            owned_above += bool(sample.get("tdp_owned"))
     applied = [r.get("applied") or {} for r in rows]
     scales = Counter(str(a.get("render_pct")) for a in applied if a.get("render_pct") is not None)
     return {
         "samples": len(rows),
         "states": dict(Counter(str(r.get("state")) for r in rows)),
         "ceiling_w": min(ceilings) if ceilings else None,
-        "max_tdp_w": max(tdps) if tdps else None,
+        "max_tdp_w": max(owned) if owned else None,
+        "max_observed_tdp_w": max(observed) if observed else None,
+        "above_ceiling_samples": above,
+        "owned_above_ceiling_samples": owned_above,
         "confirmed_scales": dict(scales),
         "acknowledged": sum(1 for e in events if e.get("event") in ("render-scale-acknowledged", "extreme-scale-acknowledged")),
         "not_acknowledged": sum(1 for e in events if e.get("event") in ("render-scale-not-acknowledged", "extreme-scale-not-acknowledged")),
@@ -303,7 +406,8 @@ def frame_os_summary(samples: List[Dict[str, Any]], processes_json: str) -> Opti
         "swapchain_recreations": max((x.get("swapchain_recreations") or 0 for x in layer), default=0),
         "levels": dict(Counter(str(r.get("level")) for r in rows if r.get("level"))),
         "input_sources": dict(Counter(str((r.get("input") or {}).get("source")) for r in rows if r.get("input"))),
-        "input_gamepads": max(((r.get("input") or {}).get("gamepads") or 0 for r in rows), default=0),
+        "input_gamepads": max(((r.get("input") or {}).get("gamepads") for r in rows
+                              if isinstance((r.get("input") or {}).get("gamepads"), (int, float))), default=None),
         "input_events": max(((r.get("input") or {}).get("events") or 0 for r in rows), default=0),
         # the in-game A/B check: the last sample holds the session's pairs so far
         "ab": next((r.get("proof") for r in reversed(rows) if isinstance(r.get("proof"), dict)), None),
@@ -334,6 +438,13 @@ def _version(text: Any) -> Optional[tuple]:
 
 def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
     out: List[str] = []
+    diag = report.get("diagnostics") or {}
+    if diag.get("delivery_misses"):
+        out.append(f"Renderer delivery misses: {diag['delivery_misses']}; acquire quarantines: {diag.get('acquire_quarantines',0)}. "
+                   "Inspect focus/menu transitions and raw diagnostics; these are runtime faults even if setup checks pass.")
+    incomplete = [r for r in (report.get("diagnostic_export") or {}).get("files",[]) if r.get("truncated") or r.get("initial_segment_unavailable")]
+    if incomplete:
+        out.append("Renderer diagnostic export is incomplete: " + ", ".join(r.get("path","?") for r in incomplete) + ". Missing events cannot be ruled out.")
     recorded, current = _version(report.get("plugin_version")), _version(CURRENT_VERSION)
     if recorded and current and recorded < current:
         out.append(f"Recorded with {'.'.join(map(str, recorded))}; this report is from {CURRENT_VERSION}. "
@@ -359,6 +470,12 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
     if share is not None and share < 0.5 and diag["fps_samples"]:
         out.append(f"Telemetry was usable only {int(share * 100)}% of the time (stale or missing FPS events).")
     states = report.get("states", {})
+    touch = report.get("stick_touch_boost") or {}
+    if touch.get("enabled_samples"):
+        out.append(f"Stick touch Boost: {touch['fresh_contact_samples']} samples with fresh contact, "
+                   f"{touch['requested_samples']} requests and {touch['submitted_samples']} acknowledged submissions. "
+                   f"States {touch['states']}; maximum touch-request snapshot {touch['maximum_touch_requests_snapshot']}. "
+                   "Contact, requests and acknowledgements do not establish increased renderer FPS or energy benefit.")
     if states.get("PAUSED", 0) > 0.3 * report["samples"]:
         top = next(iter(report["reasons"]), "?")
         out.append(f"The Governor was PAUSED for {states['PAUSED']} of {report['samples']} samples; most common reason: {top}.")
@@ -368,6 +485,39 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
                    f"a setting (rejections by reason: {report.get('rejections_by_reason')}).")
     if report.get("mode_switches"):
         out.append(f"The mode was switched {report['mode_switches']} times during the recording; each switch starts a new search.")
+    fusion = report.get("frame_fusion") or {}
+    if fusion.get("available"):
+        out.append(f"Frame Fusion: states {fusion['states']}; native direct path observed in "
+                   f"{fusion['observed_samples']} of {fusion['samples']} recorded samples; "
+                   f"maximum avoided-copy publication snapshot {fusion['maximum_avoided_copies_snapshot']}. "
+                   f"Native source transfers snapshot {fusion['maximum_native_transfers_snapshot']}; "
+                   f"BGRA conversion blits avoided snapshot {fusion['maximum_native_conversion_blits_avoided_snapshot']}; "
+                   f"processing paths {fusion['processing_paths']}. "
+                   "Snapshots are not a session copy total or proof of FPS, latency or energy improvement.")
+        last = fusion.get("last") or {}
+        context_sample = fusion.get("last_context_sample") or {}
+        for context in (context_sample.get("contexts") or [])[:3]:
+            if not isinstance(context, dict):
+                continue
+            scaling = context.get("spatial_scaling") or {}
+            out.append(f"Last captured Frame Fusion context {context.get('pid')}/{context.get('context')} "
+                       f"at {context_sample.get('captured_at')}: "
+                       f"{context.get('eligibility', 'unknown')}; "
+                       f"source {scaling.get('source_width')}x{scaling.get('source_height')}, "
+                       f"presentation {scaling.get('presentation_width')}x{scaling.get('presentation_height')}, "
+                       f"pipeline {scaling.get('pipeline')}; native scaling reason "
+                       f"{scaling.get('inactive_reason') or scaling.get('constraint_reason') or scaling.get('fallback_reason') or 'none reported'}.")
+        identity = fusion.get("renderer_identity") or {}
+        if identity.get("available"):
+            out.append(f"Mapped renderer file identity: {identity.get('matched', 0)} match the plugin manifest, "
+                       f"{identity.get('mismatched', 0)} differ, {identity.get('unknown', 0)} are unconfirmed. "
+                       "File identity does not establish GPU completion or a performance gain.")
+        if last.get("enabled") is True and not fusion["observed_samples"]:
+            out.append("Frame Fusion was enabled but this recording contains no observed direct-path work. "
+                       "Check native contexts for restart, scaler eligibility and source/presentation extents.")
+    elif fusion.get("enable_requested_in_activity"):
+        out.append("Frame Fusion was enabled in the UI, but its native status was not captured. "
+                   "This log cannot establish whether Fusion executed.")
     repeated = {w: n for w, n in (report.get("failed_power_probes") or {}).items() if n >= 3}
     if repeated:
         out.append("Lower-power probes failed repeatedly at the same level ("
@@ -380,8 +530,15 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
                    f"the cap (median draw {held.get('draw_w_median')} W at {caps}): the shortfall was not power "
                    "(CPU, streaming or hitches).")
     if report.get("rejected_points"):
-        out.append("Operating points the renderer did not confirm or that failed their trial: "
-                   + ", ".join(report["rejected_points"]) + ".")
+        sentence = ("Operating points the renderer did not confirm or that failed their trial: "
+                    + ", ".join(report["rejected_points"]) + ".")
+        shown = report.get("rejection_cadence") or []
+        if shown:
+            bits = [f"{row['point']} delivered output {row['delivered_output_fps']} / real {row['delivered_real_fps']}"
+                    f" (asked output {row['requested_output_fps']}, real {row['requested_real_fps']})"
+                    for row in shown]
+            sentence += " Measured cadence, not the planned multiplier: " + "; ".join(bits) + "."
+        out.append(sentence)
     target, out_med = report.get("target"), (report.get("output") or {}).get("median")
     if target and out_med is not None and out_med < 0.9 * target:
         out.append(f"Median output FPS {out_med:.0f} is below the {target} FPS target.")
@@ -431,33 +588,56 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
         parts = []
         for metric in ("response", "frames", "energy"):
             r = ab.get(metric) or {}
-            if r.get("n"):
-                interval = f" ({r['low']}..{r['high']})" if r.get("low") is not None else ""
-                parts.append(f"{metric} {r['mean']:+}%{interval} over {r['n']} pair{'s' if r['n'] != 1 else ''}")
+            if r.get("n") and isinstance(r.get("mean"), (int, float)):
+                session_n = r.get("session_n")
+                current = r.get("session")
+                if isinstance(current, dict) and current.get("n"):
+                    shown, scope = current, "current session"
+                elif session_n == 0:
+                    shown, scope = r, "historical; no pairs in this session"
+                elif isinstance(session_n, int) and session_n == r["n"]:
+                    shown, scope = r, "current session"
+                elif isinstance(session_n, int):
+                    shown, scope = r, f"history + current session; {session_n} current pairs"
+                else:
+                    shown, scope = r, "session provenance unknown"
+                interval = f" ({shown['low']}..{shown['high']})" if shown.get("low") is not None else ""
+                confidence = "; preliminary" if shown.get("measured") is False else ""
+                parts.append(f"{metric} {shown['mean']:+}%{interval} over {shown['n']} "
+                             f"pair{'s' if shown['n'] != 1 else ''} [{scope}{confidence}]")
         if parts:
-            out.append("Frame OS A/B in game (Act vs. the same moment without it): " + "; ".join(parts)
-                       + f"; control windows {round(100 * fo.get('ab_control_share', 0))}% of samples.")
+            out.append("Frame OS A/B telemetry (Act vs. control): " + "; ".join(parts)
+                       + f"; control windows {round(100 * fo.get('ab_control_share', 0), 1)}% of samples.")
+            if (ab.get("response") or {}).get("n"):
+                out.append("Frame OS response is an internal pacing/freshness metric, not independently measured input-to-display latency.")
         by_level = fo.get("by_level") or {}
         if by_level:
             parts = []
             for level in ("boost", "calm", "rest"):
                 row = by_level.get(level)
                 if row:
-                    parts.append(f"{level}: {row['samples']} s, {row['real_fps']} real, freshness "
+                    parts.append(f"{level}: {row['samples']} samples, {row['real_fps']} real, freshness "
                                  f"{row['freshness_ms']} ms, output p5 {row['output_p5']}"
                                  + (" (acting)" if row["acting_share"] >= 0.5 else ""))
             out.append("Frame OS by decision — " + "; ".join(parts) + ".")
             boost, calm = by_level.get("boost"), by_level.get("calm")
-            if (boost and calm and boost["acting_share"] >= 0.5 and boost.get("real_fps") and calm.get("real_fps")
+            if (not (fo.get("short_bursts") or {}).get("available") and boost and calm and boost["acting_share"] >= 0.5 and boost.get("real_fps") and calm.get("real_fps")
                     and boost["real_fps"] < calm["real_fps"] + 5):
                 out.append("Frame OS Act: boost did not raise the real frame rate (the renderer or the GPU held it).")
+        burst=fo.get("short_bursts") or {}
+        if burst.get("available"):
+            out.append(f"Short Boost observation snapshots: {burst['windows']} qualified windows, {burst['accelerated_windows']} "
+                       f"above the calm cadence; peak {burst['peak_real_hz']} real presents/s. "
+                       "Repeated snapshots are not added; long FPS medians cannot judge short pulses. "
+                       "Forwarding cadence is not a controlled gain or physical scanout measurement.")
         if fo.get("input_sources"):
             if not fo.get("input_events"):
                 out.append(f"Frame OS input sensor saw no gamepad input (sources {fo['input_sources']}, "
                            f"{fo.get('input_gamepads')} gamepads open): real-frame decisions stayed at rest.")
             else:
                 out.append(f"Frame OS input sensor: {fo['input_events']} gamepad events from "
-                           f"{fo.get('input_gamepads')} gamepads; decisions {fo.get('levels')}.")
+                           f"{fo.get('input_gamepads') if fo.get('input_gamepads') is not None else 'unknown number of'} "
+                           f"gamepads; decisions {fo.get('levels')}.")
     split = report.get("power_split")
     if split:
         reasons = split.get("reasons") or {}
@@ -465,7 +645,7 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
         if split.get("lowest_khz"):
             text += f"the CPU clock went down to {split['lowest_khz'] / 1e6:.1f} GHz"
         else:
-            text += "the CPU clock was never capped"
+            text += "no successful full-policy CPU cap was recorded (partial or pending writes are not counted)"
         lifts = [f"{n}× for {why.replace('-', ' ')}" for why, n in reasons.items()
                  if why in ("real-frames-short", "cpu-busy")]
         if split.get("capped_share") is not None:
@@ -494,9 +674,13 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
     if ext:
         text = (f"Extreme: ceiling {ext['ceiling_w']} W" if ext.get("ceiling_w") is not None else "Extreme: ceiling unknown")
         if ext.get("max_tdp_w") is not None:
-            text += f", highest cap read {ext['max_tdp_w']} W"
-            if ext.get("ceiling_w") is not None and ext["max_tdp_w"] > ext["ceiling_w"] + 0.05:
-                text += " (ABOVE THE CEILING: a bug or another tool)"
+            text += f", highest cap read while owned {ext['max_tdp_w']} W"
+            if ext.get("owned_above_ceiling_samples"):
+                text += f" (ABOVE THE CEILING in {ext['owned_above_ceiling_samples']} owned samples)"
+        if ext.get("max_observed_tdp_w") is not None:
+            text += (f"; highest observed cap {ext['max_observed_tdp_w']} W; "
+                     f"{ext['above_ceiling_samples']} samples above their contemporaneous ceiling")
+        # Readback alone does not establish who wrote a cap, even while GFG claims ownership.
         scales = ", ".join(f"{k}%" for k in sorted(ext.get("confirmed_scales") or {}, key=lambda k: -float(k)))
         text += f"; render scales confirmed by the renderer: {scales or 'none'}"
         if ext.get("not_acknowledged"):

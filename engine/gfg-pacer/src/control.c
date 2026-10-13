@@ -165,6 +165,7 @@ static int to_sched_policy(const gfg_ctl_policy *c, gfg_policy *out)
     out->real_target_hz = c->real_target_hz;
     out->tick_shaping = c->tick_shaping != 0;
     out->pacing = c->pacing != 0;
+    out->stall_shield = (c->reserved & GFG_POLICY_STALL_SHIELD) != 0;
     if (c->margin_ms > 0)
         out->margin_ms = c->margin_ms;
     if (c->max_wait_ms > 0)

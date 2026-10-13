@@ -54,8 +54,14 @@ def verdict(metric: str, values: List[float]) -> str:
 class GameMemory:
     """One game's record: ``{"pairs": {metric: [...]}, "sessions": n, "off": {effect: session}}``."""
 
-    def __init__(self, record: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, record: Optional[Dict[str, Any]] = None, *, boost_policy: Optional[int] = None) -> None:
         record = record if isinstance(record, dict) else {}
+        self.boost_policy = boost_policy
+        if boost_policy is not None and record.get("boost_policy") != boost_policy:
+            parts = {k:record[k] if isinstance(record.get(k),dict) else {} for k in ("pairs","pair_sessions","off")}
+            record = {**record, "pairs": {**parts["pairs"], "frames": []},
+                      "pair_sessions": {**parts["pair_sessions"], "frames": 0},
+                      "off": {k:v for k,v in parts["off"].items() if k != "boost"}}
         pairs = record.get("pairs") if isinstance(record.get("pairs"), dict) else {}
         self.pairs: Dict[str, List[float]] = {
             m: [float(v) for v in (pairs.get(m) or []) if isinstance(v, (int, float))][-KEEP_PAIRS:]
@@ -126,7 +132,8 @@ class GameMemory:
     def to_record(self) -> Dict[str, Any]:
         return {"pairs": {m: [round(v, 2) for v in self.pairs[m]] for m in METRICS},
                 "pair_sessions": dict(self.pair_sessions),
-                "sessions": self.sessions, "off": dict(self.off), "updated": round(self.updated)}
+                "sessions": self.sessions, "off": dict(self.off), "updated": round(self.updated),
+                **({"boost_policy":self.boost_policy} if self.boost_policy is not None else {})}
 
 
 def seed_pairs(memory: GameMemory) -> Dict[str, List[float]]:

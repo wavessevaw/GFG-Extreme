@@ -1,5 +1,6 @@
 name: Release
 
+# Only main may publish official releases. The experimental feature branch uses CI only.
 # Every push to main whose version (package.json) has no tag yet becomes a
 # GitHub release (0.x: pre-release v0.0.N-governor; 1.0.0+: official vX.Y.Z): tests, zip for Decky, SHA-256, description
 # from RELEASE_DESCRIPTION_V<version>.md.
@@ -12,14 +13,17 @@ permissions:
   contents: write
 
 concurrency:
-  group: release
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ github.token }}
+      CXX: g++-12
+      CC: gcc-12
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,18 +39,31 @@ jobs:
           else
             tag="v${version}"; stable=true
           fi
+          if python3 -c 'import json,sys; sys.exit(0 if json.load(open("package.json")).get("gfgPrerelease") else 1)'; then
+            stable=false
+          fi
           echo "stable=$stable" >> "$GITHUB_OUTPUT"
           notes="RELEASE_DESCRIPTION_V${version//./_}.md"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "notes=$notes" >> "$GITHUB_OUTPUT"
-          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Tag $tag already exists, nothing to release."
+          # An older development tag may exist without a published ZIP.
+          # A tag alone is not evidence of a release.
+          replace_preview=false
+          if gh release view "$tag" --json isPrerelease > "$RUNNER_TEMP/existing-release.json" 2>/dev/null; then
+            if [ "$tag" = v2.1.0 ] && [ "$stable" = true ] && python3 -c 'import json,sys;sys.exit(0 if json.load(open(sys.argv[1]))["isPrerelease"] else 1)' "$RUNNER_TEMP/existing-release.json"; then
+              replace_preview=true
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+              echo "Verified build will replace the user-authorized v2.1.0 preview."
+            else
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              echo "Release $tag already exists; not publishing again."
+            fi
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
-            test -f "$notes" || { echo "::error::$notes is missing"; exit 1; }
           fi
+          echo "replace_preview=$replace_preview" >> "$GITHUB_OUTPUT"
+          test -f "$notes" || { echo "::error::$notes is missing"; exit 1; }
 
       - uses: actions/setup-python@v5
         if: steps.version.outputs.exists == 'false'
@@ -80,25 +97,57 @@ jobs:
           npx playwright install --with-deps chromium
           node frontend/harness/smoke.mjs
 
-      - name: Fetch Flatpak payloads from the previous release
+      - name: Identify Flatpak payload source
         if: steps.version.outputs.exists == 'false'
+        id: payload_source
         run: |
-          # Newest published Governor release; other releases in the repo may carry no zip.
           previous="$(gh release list --limit 50 --json tagName,isDraft,createdAt --jq '[.[] | select((.isDraft | not) and (.tagName | test("-governor$|^v[0-9]+\\.[0-9]+\\.[0-9]+$")))] | sort_by(.createdAt) | last | .tagName // empty')"
           test -n "$previous" || { echo "::error::no previous Governor release to take Flatpak payloads from"; exit 1; }
           echo "Flatpak payloads from $previous"
+          echo "tag=$previous" >> "$GITHUB_OUTPUT"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$previous" > "$RUNNER_TEMP/payload-source.json"
+          cache_key="$(python3 -c 'import hashlib,json; d=json.load(open(__import__("os").path.join(__import__("os").environ["RUNNER_TEMP"],"payload-source.json"))); a=[(x["id"],x["name"],x["updated_at"],x.get("digest")) for x in d["assets"] if x["name"].endswith(".zip") or x["name"]=="SHA256SUMS.txt"]; assert len(a)>=2, "release payload assets missing"; print(hashlib.sha256(json.dumps(sorted(a)).encode()).hexdigest())')"
+          echo "cache_key=verified-flatpak-zip-v1-$cache_key" >> "$GITHUB_OUTPUT"
+
+      - name: Cache previous release payload archive
+        if: steps.version.outputs.exists == 'false'
+        id: payload_cache
+        uses: actions/cache@v4
+        with:
+          path: prev
+          key: ${{ steps.payload_source.outputs.cache_key }}
+
+      - name: Fetch Flatpak payloads from the previous release
+        if: steps.version.outputs.exists == 'false'
+        run: |
           mkdir -p prev payloads
-          gh release download "$previous" --pattern '*.zip' --pattern 'SHA256SUMS.txt' --dir prev
+          if [ "${{ steps.payload_cache.outputs.cache-hit }}" != true ]; then
+            gh release download "${{ steps.payload_source.outputs.tag }}" --pattern '*.zip' --pattern 'SHA256SUMS.txt' --dir prev
+          else
+            echo "Using cached archive; checksums and ZIP CRC are verified again."
+          fi
           (cd prev && sha256sum --check SHA256SUMS.txt)
           unzip -tq prev/*.zip
           unzip -q -j prev/*.zip 'GFG-Extreme/bin/*.flatpak' -d payloads
           ls -la payloads
 
+      - name: Native build dependencies
+        if: steps.version.outputs.exists == 'false'
+        run: sudo apt-get update && sudo apt-get install -y g++-12 cmake libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers libx11-dev libxcb1-dev glslang-tools spirv-tools p7zip-full
+
+      - name: Build and verify Frame Fusion native renderer
+        if: steps.version.outputs.exists == 'false'
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+        run: |
+          git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/fusion-vkh"
+          python3 scripts/build_frame_fusion.py --work "$RUNNER_TEMP/fusion" --headers "$RUNNER_TEMP/fusion-vkh/include"
+
       - name: Build zip
         if: steps.version.outputs.exists == 'false'
         run: |
           git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
-          VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" scripts/build_release.sh "${{ steps.version.outputs.version }}" payloads out
+          FRAME_FUSION_BUILD="$RUNNER_TEMP/fusion/build" VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" scripts/build_release.sh "${{ steps.version.outputs.version }}" payloads out
 
       - name: Verify Frame OS and Rings HUD packaged in Decky zip
         if: steps.version.outputs.exists == 'false'
@@ -128,7 +177,61 @@ jobs:
           if [ "${{ steps.version.outputs.stable }}" = true ]; then
             flags=(--latest --title "GFG Extreme ${{ steps.version.outputs.version }}")
           else
-            flags=(--prerelease --title "${{ steps.version.outputs.tag }}")
+            flags=(--prerelease --latest=false --title "${{ steps.version.outputs.tag }}")
+          fi
+          # The old v2.0.0 git tag was created during alpha development but
+          # never had a GitHub release. Repoint it only after tests and ZIP
+          # verification pass; publishing an old source commit would be wrong.
+          if [ "${{ steps.version.outputs.tag }}" = "v2.0.0" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/v2.0.0" \
+              -f sha="$GITHUB_SHA" -F force=true >/dev/null
+          fi
+          # The old preview/tag stays available throughout tests and package verification.
+          # Never replace a stable release or delete unrelated releases.
+          if [ "${{ steps.version.outputs.replace_preview }}" = true ]; then
+            gh release view v2.1.0 --json isPrerelease --jq '.isPrerelease' | grep -qx true
+            gh release delete v2.1.0 --yes --cleanup-tag
           fi
           gh release create "${{ steps.version.outputs.tag }}" out/*.zip out/SHA256SUMS.txt \
             --target "$GITHUB_SHA" "${flags[@]}" --notes-file notes.md
+
+      - name: Verify published stable 2.1.0 before retiring previews
+        if: success() && steps.version.outputs.exists == 'false' && steps.version.outputs.tag == 'v2.1.0' && steps.version.outputs.stable == 'true'
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v2.1.0" > "$RUNNER_TEMP/published-stable.json"
+          python3 - "$RUNNER_TEMP/published-stable.json" "$GITHUB_SHA" <<'PY'
+          import hashlib,json,sys
+          from pathlib import Path
+          release=json.load(open(sys.argv[1]))
+          assert not release['prerelease'] and not release['draft']
+          assets={a['name']:a for a in release['assets']}
+          package=Path('out/GFG-Extreme-v2_1_0.zip')
+          assert assets[package.name]['size']==package.stat().st_size
+          assert assets[package.name]['digest']=='sha256:'+hashlib.sha256(package.read_bytes()).hexdigest()
+          assert 'SHA256SUMS.txt' in assets
+          print('Published stable ZIP identity verified')
+          PY
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/v2.1.0" --jq '.object.sha')" = "$GITHUB_SHA"
+          gh release download v2.1.0 --pattern SHA256SUMS.txt --dir "$RUNNER_TEMP/stable-checksum"
+          cmp out/SHA256SUMS.txt "$RUNNER_TEMP/stable-checksum/SHA256SUMS.txt"
+
+      - name: Retire user-authorized Fusion previews after stable asset verification
+        if: success() && steps.version.outputs.exists == 'false' && steps.version.outputs.tag == 'v2.1.0' && steps.version.outputs.stable == 'true'
+        run: |
+          for tag in v2.1.1 v2.2.0; do
+            if gh release view "$tag" --json isPrerelease --jq '.isPrerelease' 2>/dev/null | grep -qx true; then
+              gh release delete "$tag" --yes --cleanup-tag
+            fi
+          done
+
+      - name: Retire superseded Autopilot prereleases after official 2.0.0 is verified
+        if: success() && steps.version.outputs.exists == 'false' && steps.version.outputs.tag == 'v2.0.0'
+        run: |
+          # Cleanup is gated on a published, non-prerelease asset pair.
+          gh release view v2.0.0 --json isPrerelease,assets --jq \
+            '.isPrerelease == false and any(.assets[].name; endswith(".zip")) and any(.assets[].name; . == "SHA256SUMS.txt")' | grep -qx true
+          for tag in v2.0.1 v2.0.3 v2.0.4; do
+            if gh release view "$tag" --json isPrerelease --jq '.isPrerelease' 2>/dev/null | grep -qx true; then
+              gh release delete "$tag" --yes --cleanup-tag
+            fi
+          done

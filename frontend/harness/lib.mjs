@@ -1,11 +1,12 @@
 import { build } from "esbuild";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { chromium } = require("playwright");
 export const launch = () => chromium.launch({ args: ["--no-sandbox"], ...(process.env.GFG_CHROMIUM ? { executablePath: process.env.GFG_CHROMIUM } : {}) });
-const out = await build({ entryPoints: [new URL("../src/app.js", import.meta.url).pathname], bundle: true, format: "iife", globalName: "GFGPlugin", write: false, target: "es2020" });
-const rb = await build({ entryPoints: [new URL("./reactbundle.js", import.meta.url).pathname], bundle: true, format: "iife", write: false, define: {"process.env.NODE_ENV":"\"development\""} });
+const out = await build({ entryPoints: [fileURLToPath(new URL("../src/app.js", import.meta.url))], bundle: true, format: "iife", globalName: "GFGPlugin", write: false, target: "es2020" });
+const rb = await build({ entryPoints: [fileURLToPath(new URL("./reactbundle.js", import.meta.url))], bundle: true, format: "iife", write: false, define: {"process.env.NODE_ENV":"\"development\""} });
 const reactJs = rb.outputFiles[0].text; const domJs = "";
 const dev = (mode, target) => ({ mode, target, reason: { oled: "Steam Deck OLED panel runs 90 Hz", lcd: "Steam Deck LCD panel tops out at 60 Hz", dock: "External display: 60 FPS" }[mode] });
 const base = { version: "1.0.0", hud: { enabled: true, preset: "standard", position: "top-left" }, success: true, enabled: false, state: "DISABLED", telemetry: {}, power: {}, limitations: ["a game must be (re)launched after Governor is enabled to use the overlay and diagnostics"], ladder: { attempts: 2, max_attempts: 6 } };
@@ -28,6 +29,51 @@ export const STATES = {
   "home-scale-ignored": { ...base, enabled: true, state: "LOCKED", mode: "budget", device: dev("oled", 90), target_output_fps: 90, telemetry: tel(30, 90, 3), active_point: { multiplier: 3, render_scale_pct: 100 }, scale_blocked: "game-ignores-render-scale", budget: { phase: "locked", point: "30x3", tdp_w: 11, tdp_control: true, tier: "ideal", scale_capable: false, limits_w: { min: 6, normal: 15, emergency: 15 } } },
   "home-extreme-consent": { ...base, enabled: true, state: "LOCKED", mode: "balanced", device: dev("oled", 90), target_output_fps: 90, telemetry: tel(45, 90, 2), active_point: { multiplier: 2, render_scale_pct: 100 }, extreme: { enabled: false, state: "OFF" } },
   "home-extreme-offer": { ...base, enabled: true, state: "LOCKED", mode: "balanced", device: dev("oled", 90), target_output_fps: 90, telemetry: tel(30, 90, 3), active_point: { multiplier: 3, render_scale_pct: 100 }, power: { owned: true, observed_tdp_w: 11 }, budget: { phase: "locked", point: "30x3", tdp_w: 11, tdp_control: true, tier: "ideal", flavor: "balanced", limits_w: { min: 6, normal: 15, emergency: 15 } }, extreme: { enabled: false, state: "OFF" }, extreme_offer: { headroom_w: 4, ceiling_w: 15, tdp_w: 11, real_target: 30 } },
+  // Synthetic sample readings for README screenshots of the actual 2.0.0 UI.
+  // No claimed battery gain or unique-frame delivery, no real Steam Deck measurement.
+  "home-autopilot": {
+    ...base, version: "2.1.0", enabled: true, state: "LOCKED", mode: "autopilot",
+    device: dev("oled", 90), target_output_fps: 90,
+    telemetry: tel(30, 90, 3),
+    active_point: { multiplier: 3, render_scale_pct: 100, base_target_fps: 30 },
+    active_point_mode: "applied",
+    power: { owned: true, observed_tdp_w: 10, initial_tdp_w: 15, draw_w: 10.3 },
+    effort: { level: "medium", reason: "stable real-frame cadence" },
+    battery: { minutes_left: 130, percent: 72 },
+    sensors: { temp_c: 68, gpu_clock_mhz: 1240, gpu_busy_pct: 99, cpu_top_core_pct: 64 },
+    diagnosis: { bottleneck: "gpu", smoothness: "smooth", thermal: "ok" },
+    budget: { phase: "locked", point: "30x3", tdp_w: 10, tdp_control: true, tier: "ideal", limits_w: { min: 6, normal: 15, emergency: 15 } },
+    autopilot: {
+      enabled: true, active: true, state: "HOLD", action: "HOLD",
+      reason: "already-efficient", tool: "none",
+      message: "Working configuration confirmed.",
+      real_fps: 30, output_fps: 90, target_fps: 90,
+      preference: "auto",
+      gpu_clock: { available: true, level: "auto", current_limit_mhz: 1240 },
+      half_rate_shading: { available: true, mode: "1x1", enabled: false },
+    },
+    autopilot_shading_allowed: true,
+    frame_fusion: { setting_enabled: true, enabled: true, state: "observed", processing_path: "native-input", path_observed: true, gain_measured: false },
+    frame_os: { mode: "act", enabled: true, act_unlocked: true, feature_settings: { latency: true, shield: true, boost: true, touch_boost: true } },
+    autopilot_shading: { available: true, mode: "1x1" },
+  },
+  "home-autopilot-wait": {
+    ...base, version: "2.1.0", enabled: true, state: "LOCKED", mode: "autopilot",
+    device: dev("oled", 90), target_output_fps: 90, telemetry: tel(30, 90, 3),
+    active_point: { multiplier: 3, render_scale_pct: 100 },
+    active_point_mode: "applied",
+    power: { owned: true, observed_tdp_w: 11, initial_tdp_w: 15 },
+    effort: { level: "medium" },
+    autopilot: {
+      enabled: true, active: true, state: "HOLD", action: "HOLD",
+      reason: "baseline-overlaps-transition", tool: "none",
+      message: "Awaiting confirmed game measurements. No GPU or shading change was applied.",
+      real_fps: 30, output_fps: 90, target_fps: 90, preference: "smoothness",
+      gpu_clock: { available: false },
+    },
+    autopilot_shading_allowed: true,
+    autopilot_shading: { available: true, mode: "1x1", enabled: false },
+  },
   "home-idle-oled": { ...base, device: dev("oled", 90), target_output_fps: 90 },
   "home-measuring": { ...base, enabled: true, state: "PROBE", device: dev("oled", 90), target_output_fps: 90, capability: {} },
   get "home-frame-os-learned"() { const s = JSON.parse(JSON.stringify(this["home-frame-os-act"])); Object.assign(s.frame_os.decision, { level: "calm", real_hz: 30 }); s.frame_os.benefit.frames_pct = 1; s.frame_os.game = { sessions: 6, verdicts: { response: "helps", frames: "useless", energy: "unclear" }, disabled: { boost: true, shaping: false, rest: false }, response: { n: 12 }, frames: { n: 5 }, energy: { n: 0 } }; return s; },
@@ -52,6 +98,10 @@ export const STATES = {
   "frame-os-no-layer": { ...base, enabled: false, state: "DISABLED", device: dev("oled", 90), frame_os: { mode: "observe", layer_installed: false, layer_error: "this build does not include the Frame OS layer", enabled: false } },
   "home-effort-reason": { ...base, enabled: true, state: "LOCKED", mode: "quality", device: dev("oled", 90), target_output_fps: 90, telemetry: tel(30, 90, 3), active_point: { multiplier: 3, render_scale_pct: 100 }, effort: { level: "hard", reason: "x3 required" } },
   "frame-os-refused": { ...base, device: dev("oled", 90), target_output_fps: 90, frame_os: { mode: "off" }, __frameOsFail: true },
+  "fusion-prepared": { ...base, mode: "autopilot", frame_fusion: { enabled: true, state: "prepared", path_observed: false } },
+  "fusion-observed": { ...base, mode: "autopilot", frame_fusion: { enabled: true, state: "observed", path_observed: true, gain_measured: false } },
+  "fusion-restart": { ...base, mode: "autopilot", frame_fusion: { enabled: false, state: "restart-required", path_observed: true } },
+  "fusion-unsupported": { ...base, mode: "autopilot", frame_fusion: { enabled: true, state: "renderer-unsupported", path_observed: false } },
   "home-paused-external-tdp": { ...base, enabled: true, state: "PAUSED", reason: "external-tdp-change", mode: "balanced", device: dev("oled", 90), target_output_fps: 90 },
   "home-no-model-game": { ...base, device: dev("oled", 90), target_output_fps: 90, __modelTarget: null },
   "home-last-session-above-limit": { ...base, last_session: { minutes: 20, avg_output_fps: 88, avg_real_fps: 44, avg_tdp_w: 17.1, avg_draw_w: 16.4, reference_w: 15, saved_w: -2.1, saved_wh: -0.7, profile: "mako" } },
@@ -74,6 +124,10 @@ window.__state = ${JSON.stringify(state)};
 window.__cfg = ${JSON.stringify(extra.cfg || { fg_backend: "gfg", multiplier: 2, })};
 var callable = (n) => async (...a) => ({ get_governor_status: () => window.__state, get_profiles: () => ({ profiles: ["Default", "Sample Game", "Another Game"], current_profile: "Sample Game" }),
   get_profile_config: () => ({ config: window.__cfg }), get_pipeline_inspector: () => ({ saved: { fg_backend: "gfg", multiplier: 2, scaling: "off" }, effective: { fg_backend: "gfg", multiplier: 2, scaling: "off" }, actual: { renderer: "loaded", multiplier: 2, ...(window.__state.__actual || {}) } }),
+  get_theme_status: () => ({ success: true, installed: !!window.__themeInstalled, current: !!window.__themeInstalled, path: "/home/deck/homebrew/themes/GFG Extreme" }),
+  install_gfg_theme: () => { window.__themeCalls = (window.__themeCalls || 0) + 1;
+    if (window.__state.__themeFail) return { success: false, error: "Theme folder is read-only" };
+    window.__themeInstalled = true; return { success: true, message: "Installed. In CSS Loader, reload themes and enable GFG Extreme." }; },
   check_mako_installed: () => ({ installed: true, installed_engine_version: '4.0.1', expected_engine_version: '4.0.1', engine_update_required: false, host_architecture_supported: true }), check_flatpak_extension_status: () => ({ success: true, installed_23_08: false, installed_24_08: true, installed_25_08: true }), get_flatpak_apps: () => ({ success: true, total_apps: 2, apps: [{ app_id: 'org.example.A', app_name: 'Heroic', has_filesystem_override: true, has_wrapper_override: true, has_required_env_override: true }, { app_id: 'org.example.B', app_name: 'Lutris', has_filesystem_override: false, has_wrapper_override: false }] }),
   get_config_schema: () => ({ field_names: ['scaling_enabled','scaling_factor','multiplier','dll','allow_fp16'], field_types: { scaling_enabled: 'boolean', scaling_factor: 'float', multiplier: 'integer', dll: 'string', allow_fp16: 'boolean' }, defaults: { scaling_enabled: false, scaling_factor: 1.5, multiplier: 2, dll: '', allow_fp16: true }, descriptions: { scaling_enabled: 'restart-bound scaling engine switch', scaling_factor: 'output scaling factor from 1.0x to 2.0x', multiplier: 'fixed multiplier', dll: 'optional full path to Lossless.dll', allow_fp16: 'allow FP16 acceleration' } }),
   run_setup_check: () => window.__state.__setup || ({ success: true, total: 3, failed: 0, checks: [{ check: 'launch wrapper installed', ok: true }, { check: 'overlay config published (active.conf)', ok: true }, { check: 'TDP control: fastPPT/slowPPT cap writable', ok: true }] }),
@@ -81,10 +135,20 @@ var callable = (n) => async (...a) => ({ get_governor_status: () => window.__sta
   get_launch_option: () => ({ launch_option: "/home/deck/.local/bin/gfg %command%" }),
   get_governor_game_model_target: (p) => ({ success: true, target: window.__state.__modelTarget !== undefined ? window.__state.__modelTarget : { profile: p, app_id: "292030", game: "app:292030" } }),
   set_governor_power_split: (enabled) => { (window.__splitSets = window.__splitSets || []).push(enabled); return { success: true, power_split: !!enabled }; },
+  set_governor_auto_flow: (enabled) => { (window.__flowSets = window.__flowSets || []).push(enabled); if (window.__state.__flowFail) return { success: false, error: "Could not save flow policy" }; return { success: true, enabled }; },
   set_governor_mode: (p, m) => { (window.__modes = window.__modes || []).push(m); return { success: true, mode: m }; },
   set_governor_extreme_act_consent: (allow) => { (window.__consents = window.__consents || []).push(allow); return { success: true, consent: !!allow }; },
   set_governor_extreme_sharpness: (p, v) => { (window.__sharp = window.__sharp || []).push(v); return { success: true, offset: v }; },
+  set_governor_frame_os_feature: (p, feature, enabled) => {
+    (window.__featureSets = window.__featureSets || []).push([p, feature, enabled]);
+    if (window.__state.__featureFail) return { success: false, error: "Could not save frame timing" };
+    const features = { latency: true, shield: true, touch_boost: true, boost: true, ...(window.__state.extreme || {}).feature_settings, [feature]: enabled };
+    window.__state.extreme = { ...(window.__state.extreme || {}), feature_settings: features };
+    window.__state.frame_os = { ...(window.__state.frame_os || {}), feature_settings: features };
+    return { success: true, features };
+  },
   set_governor_frame_os_ab: (enabled) => { (window.__abSets = window.__abSets || []).push(enabled); return { success: true, ab: !!enabled }; },
+  set_governor_frame_fusion: (enabled) => { (window.__fusionSets = window.__fusionSets || []).push(enabled); return window.__state.__fusionFail ? { success: false, error: "Could not save Frame Fusion" } : { success: true, enabled }; },
   set_governor_frame_os_act_unlock: (enabled) => { (window.__actUnlocks = window.__actUnlocks || []).push(enabled); return { success: true, act_unlocked: !!enabled }; },
   set_governor_frame_os: (p, m) => (window.__state.__frameOsFail ? { success: false, error: "marker: read-only" } : { success: true, mode: m }),
   forget_governor_game_model: (p) => { (window.__forgets = window.__forgets || []).push(p); return { success: true, forgotten: 2, game: "app:292030" }; },

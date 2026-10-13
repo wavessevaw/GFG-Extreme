@@ -26,6 +26,7 @@ from .config_schema_generated import (
     get_script_generation_logic,
 )
 from .constants import (
+    PLUGIN_ROOT,
     COMPETING_LSFG_DISABLE_ENVS,
     DXVK_HDR_ENV,
     EXTERNAL_VULKAN_LAYER_ENV,
@@ -80,7 +81,7 @@ from .profile_storage import (
 )
 
 
-WRAPPER_FORMAT_VERSION = 83
+WRAPPER_FORMAT_VERSION = 88
 WRAPPER_FORMAT_MARKER = f"# mako-wrapper-format: {WRAPPER_FORMAT_VERSION}"
 HOST_COMPATIBILITY_MARKER = "# mako-host-compatibility: aarch64-passthrough-v1"
 DIAGNOSTICS_DEFAULT_MARKER = (
@@ -91,6 +92,7 @@ FRAME_OS_LAYER_NAME = "VK_LAYER_GFG_pacer"
 RING_HUD_LAYER_NAME = "VK_LAYER_GFG_hud"
 
 REQUIRED_WRAPPER_EXPORTS = (
+    "export GFG_MANAGED_GAME=1",
     f"export {PRESENT_ACQUIRE_TIMEOUT_ENV}=",
     f"export {PRESENT_DIAGNOSTICS_ENV}=",
     f"export {MAKO_LAYER_ENABLE_ENV}=1",
@@ -280,6 +282,7 @@ def governor_hud_stack_lines(mangohud_manifest: str, mangohud_manifest32: str) -
 def governor_overlay_selection_lines() -> list[str]:
     """Pick the overlay only while its owner lease is alive; else use Saved."""
     return [
+        'export GFG_MANAGED_GAME=1',
         'mako_governor_overlay_active=""',
         'if [ -n "${mako_governor_overlay:-}" ] && [ -r "$mako_governor_overlay" ]; then',
         "    mako_governor_launch=\"$(sed -n 's/^# gfg-governor-launch: //p' \"$mako_governor_overlay\" 2>/dev/null | head -n 1)\"",
@@ -577,6 +580,8 @@ def script_configuration_lines(
     """Generate wrapper settings without repeating forced compatibility exports."""
     effective = effective_runtime_config(config)
     lines = get_script_generation_logic()(config)
+    # Retired generator settings and inherited opt-ins cannot select a renderer.
+    lines.append("unset GFG_OPEN_FG GFG_OPEN_DIAGNOSTICS_DIR")
     if config.get("fg_backend", FG_BACKEND_GFG) != FG_BACKEND_GFG:
         # Renderer v4 already supports these environment overrides. They are the
         # non-destructive runtime projection of the saved GFG Engine settings.
@@ -869,6 +874,14 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         f"    mako_vkbasalt_manifest32={vkbasalt_manifest32}",
         "fi",
         # Preserve the established Renderer -> Gamescope WSI -> spatial order.
+        f'gfg_fusion_marker={shlex.quote(str(context.runtime_state_dir / "frame-fusion.enabled"))}',
+        f'gfg_fusion_source={shlex.quote(str(context.local_share_dir.parent.parent / "gfg-fusion-source.json"))}',
+        "if [ \"$mako_flatpak_runtime\" != 1 ] && [ -f \"$gfg_fusion_marker\" ] && grep -Eq '\"autopilot_only\"[[:space:]]*:[[:space:]]*true' \"$gfg_fusion_source\" 2>/dev/null; then",
+        '    export GFG_FRAME_FUSION=1',
+        'else',
+        '    export GFG_FRAME_FUSION=0',
+        'fi',
+        'unset gfg_fusion_marker gfg_fusion_source',
         # Flatpak preparation stages the host's own WSI binary beside its
         # guarded manifest, so Heroic and EmuDeck use this same chain without
         # exposing or searching the host's global Vulkan layer directory.

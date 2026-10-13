@@ -70,7 +70,8 @@ class DeckHidrawTests(unittest.TestCase):
 
     def test_sticks_and_button_edges_only_on_change(self):
         dec = input_relay.DeckReportDecoder()
-        self.assertEqual(dec.decode(self.report(), 1.0), b"")                 # neutral: nothing
+        self.assertEqual(self.records(dec.decode(self.report(), 1.0)),
+                         [(input_relay.DECK_MOTION_TYPE, 0, 0)])             # establish contact sensor heartbeat
         out = self.records(dec.decode(self.report(rx=20000, b8=0x80), 1.01))
         self.assertIn((EV_ABS, ABS_RX, 20000), out)
         self.assertEqual(sum(1 for r in out if r[0] == EV_KEY), 1)

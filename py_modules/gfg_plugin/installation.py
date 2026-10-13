@@ -585,7 +585,8 @@ class InstallationService(BaseService):
         return RendererFileInventory(
             required_archive=required_destinations,
             optional_32bit_archive=optional_32bit_destinations,
-            optional_archive={f"bin/{CLI_FILENAME}": self.cli_file},
+            optional_archive={f"bin/{CLI_FILENAME}": self.cli_file,
+                              "gfg-fusion-source.json":self.local_lib_dir.parent/"gfg-fusion-source.json"},
             generated=(
                 self.registered_json_file, self.registered_json32_file,
                 self.gamescope_wsi_compatibility_manifest,
@@ -702,6 +703,9 @@ class InstallationService(BaseService):
                     )
                 self._validate_vkbasalt_binary_identity(*vkbasalt_binaries)
 
+                scope_file=self.local_lib_dir.parent/"gfg-fusion-source.json"
+                if scope_file not in staged_files:
+                    scope_file.unlink(missing_ok=True)  # an older engine must not inherit a scope capability
                 for destination, (temp_file, filename) in staged_files.items():
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     if filename == JSON_FILENAME:

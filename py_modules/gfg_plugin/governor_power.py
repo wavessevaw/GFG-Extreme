@@ -2,12 +2,13 @@
 
 The actuator is deliberately conservative.  It discovers the amdgpu hwmon PPT
 controls, snapshots the user's current caps as the session ceiling, preserves
-fast/slow PPT proportion, and refuses to overwrite caps that changed outside
+fast/slow PPT proportion within an explicit ceiling, and refuses to overwrite caps that changed outside
 Governor ownership.
 """
 from __future__ import annotations
 
 import os
+import math
 import threading
 import time
 from dataclasses import asdict, dataclass
@@ -51,6 +52,7 @@ class PowerControlState:
     fast_max_uw: Optional[int] = None
     slow_max_uw: Optional[int] = None
     ceiling_override_uw: Optional[int] = None
+    strict_ceiling: bool = False
     method: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -262,6 +264,38 @@ class SteamDeckPowerActuator:
                    error=result.get("error"))
         return result
 
+    def claim_at_ceiling_w(self, watts: Optional[float] = None) -> Dict[str, Any]:
+        """Claim and clamp both PPT channels to measured inherited/hardware limits.
+
+        With no explicit watt value, derive the cap from the freshly captured
+        user fast/slow caps and hardware maximum; never impose a fixed 15 W.
+        Keep the originals for ownership-safe restoration on exit.
+        """
+        with self._lock:
+            if self._closed:
+                return {**self.status(), "success": False}
+            result = self._claim()
+            if not result.get("owned"):
+                return {**result, "success": False}
+            candidates = [v for v in (
+                self.state.initial_slow_uw, self.state.initial_fast_uw,
+                self.state.slow_max_uw, self.state.fast_max_uw)
+                if isinstance(v, int) and v > 0]
+            if watts is not None:
+                try:
+                    numeric = float(watts)
+                except (TypeError, ValueError):
+                    numeric = float("nan")
+                if not math.isfinite(numeric) or numeric <= 0:
+                    return {**self.status(), "success": False, "error": "Invalid PPT ceiling"}
+                candidates.append(int(numeric * 1_000_000))
+            if not candidates:
+                return {**self.status(), "success": False, "error": "PPT limits unavailable"}
+            target = min(candidates) / 1_000_000.0
+            self.set_strict_ceiling_w(target)
+            result = self._set_tdp_w(target)
+            return {**self.status(), "success": bool(result.get("success"))}
+
     def _claim(self) -> Dict[str, Any]:
         if not self.state.available:
             self.discover()
@@ -331,6 +365,12 @@ class SteamDeckPowerActuator:
         assert self._fast_path is not None and self._slow_path is not None
         manager = self.manager if self.state.method == "steamos-manager" else None
         direct = self._direct_possible()
+        if manager is not None and not exact and self.state.strict_ceiling:
+            # Steam's integer TdpLimit API does not promise the fastPPT cap. A strict
+            # ceiling requires control of both channels, without a transient overshoot.
+            if not direct:
+                return "write-failed", "Explicit PPT ceiling requires writable fast/slow caps"
+            manager = None
         if manager is not None and exact and direct:
             # Put Steam's own TdpLimit back too, so a later re-apply by Steam
             # (sleep, game change) does not bring our last value back.
@@ -342,24 +382,41 @@ class SteamDeckPowerActuator:
         if manager is not None and not (exact and direct):
             watts = max(1, int(round(slow / 1_000_000.0)))
             low, high = getattr(manager, "range", None) or (watts, watts)
-            if (watts > high or watts < low) and direct:
-                manager = None  # outside what Steam allows : hwmon directly
+            if exact:
+                if slow != fast or slow % 1_000_000 or not low <= slow // 1_000_000 <= high:
+                    return "write-failed", "Exact PPT restore requires writable fast/slow caps"
             else:
-                watts = max(low, min(high, watts))
+                ceiling = self.state.ceiling_override_uw
+                slow_limits = [v for v in (self.state.slow_max_uw,
+                              ceiling if ceiling is not None else self.state.initial_slow_uw) if v is not None]
+                fast_limits = [v for v in (self.state.fast_max_uw,
+                              ceiling if ceiling is not None else self.state.initial_fast_uw) if v is not None]
+                safe_max = min(slow_limits + fast_limits) if slow_limits or fast_limits else slow
+                if (watts > high or watts < low or watts * 1_000_000 > safe_max) and direct:
+                    manager = None  # preserve fractional limits through the verified pair writer
+                else:
+                    watts = min(watts, high, safe_max // 1_000_000)
+                    if (watts < low or watts < 1
+                            or any(v is not None and watts * 1_000_000 < v
+                                   for v in (self.state.slow_min_uw, self.state.fast_min_uw))):
+                        return "write-failed", "No SteamOS Manager watt step fits the PPT limits"
         if manager is not None and not (exact and direct):
             ok, message = manager.set(watts)
             if ok:
                 deadline = time.monotonic() + self._verify_seconds
                 while True:
                     read_slow = _read_int(self._slow_path)
-                    if read_slow is not None and abs(read_slow - watts * 1_000_000) <= 500_000:
+                    read_fast = _read_int(self._fast_path)
+                    # The manager promises an equal pair. Reading slow alone can
+                    # accept a half-applied write or leave a high short-duration cap.
+                    if read_slow == read_fast == watts * 1_000_000:
                         self.state.expected_slow_uw = read_slow
-                        self.state.expected_fast_uw = _read_int(self._fast_path)
+                        self.state.expected_fast_uw = read_fast
                         return None
                     if time.monotonic() >= deadline:
                         break
                     self._sleep(0.1)
-                return "unverified", f"steamos-manager accepted {watts} W but the cap reads {read_slow}"
+                return "unverified", f"steamos-manager accepted {watts} W but the cap reads slow={read_slow}, fast={read_fast}"
             self._note("tdp-manager-failed", error=message, requested_w=watts)
             if not direct:
                 return "write-failed", f"steamos-manager: {message}"
@@ -379,15 +436,21 @@ class SteamDeckPowerActuator:
         self.state.expected_fast_uw = fast
         return None
 
-    def set_ceiling_w(self, watts: Optional[float]) -> None:
-        """Explicit session ceiling (budget mode); None returns to the claimed caps."""
-        if watts is None:
-            self.state.ceiling_override_uw = None
-            return
-        value = int(round(float(watts) * 1_000_000.0))
-        if self.state.slow_max_uw is not None:
-            value = min(value, self.state.slow_max_uw)
-        self.state.ceiling_override_uw = value
+    def set_ceiling_w(self, watts: Optional[float], *, strict: bool = False) -> None:
+        """Budget ceiling; strict (Extreme) requires verified control of both PPT caps."""
+        with self._lock:
+            self.state.strict_ceiling = bool(strict and watts is not None)
+            if watts is None:
+                self.state.ceiling_override_uw = None
+                return
+            value = int(round(float(watts) * 1_000_000.0))
+            if self.state.slow_max_uw is not None:
+                value = min(value, self.state.slow_max_uw)
+            self.state.ceiling_override_uw = value
+
+    def set_strict_ceiling_w(self, watts: float) -> None:
+        """Extreme's inherited device/player ceiling on both PPT channels."""
+        self.set_ceiling_w(watts, strict=True)
 
     def set_tdp_w(self, watts: float) -> Dict[str, Any]:
         with self._lock:
@@ -420,7 +483,10 @@ class SteamDeckPowerActuator:
             fast = min(fast, self.state.initial_fast_uw)
         else:
             slow = min(slow, self.state.ceiling_override_uw)
-            fast = min(fast, int(round(self.state.ceiling_override_uw * ratio)))
+            fast = min(fast, self.state.ceiling_override_uw)
+        if ((self.state.slow_min_uw is not None and slow < self.state.slow_min_uw)
+                or (self.state.fast_min_uw is not None and fast < self.state.fast_min_uw)):
+            return {"success": False, "error": "PPT ceiling is below the hardware minimum", "state": self.status()}
         failure = self._apply(slow, fast)
         if failure is not None:
             kind, error = failure
@@ -488,6 +554,16 @@ class SteamDeckPowerActuator:
 
     def status(self) -> Dict[str, Any]:
         value = self.state.to_dict()
+        # Cached SteamOSManager TdpLimitMax is the upper bound of Steam's
+        # Gamescope/QAM slider, independent of Governor's current 15 W ceiling.
+        manager_range = getattr(self.manager, "range", None)
+        slider_max = manager_range[1] if isinstance(manager_range, (tuple, list)) and len(manager_range) == 2 else None
+        if isinstance(slider_max, (int, float)) and not isinstance(slider_max, bool) and 0 < slider_max <= 60:
+            value["gamescope_max_tdp_w"] = float(slider_max)
+            value["energy_reference_source"] = "steamos-manager-slider"
+        else:
+            value["gamescope_max_tdp_w"] = None
+            value["energy_reference_source"] = "hwmon-maximum"
         if self._fast_path is not None and self._slow_path is not None:
             current_fast = _read_int(self._fast_path)
             current_slow = _read_int(self._slow_path)
