@@ -987,7 +987,7 @@ function ThemePage({ back }) {
     } catch (e) { if (mounted.current) setMsg(String(e.message || e)); }
     finally { changing.current = false; if (mounted.current) setBusy(false); }
   };
-  const state = status && status.active ? "GFG appearance active" : status && status.enabled ? "Waiting for Steam Gaming Mode" : "Standard Steam appearance";
+  const state = status && status.active ? "GFG CSS injected into Steam" : status && status.enabled ? "Waiting for Steam Gaming Mode" : "Standard Steam appearance";
   return h(Page, { title: "GFG theme", onBack: back },
     h(Note, { quiet: true }, "Black surfaces, red accents and clear gamepad focus. Built into GFG — no CSS Loader required."),
     h("div", { className: "card" }, h("b", null, state),
@@ -996,6 +996,10 @@ function ThemePage({ back }) {
       sub: busy ? "Applying…" : "Apply the GFG appearance across Gaming Mode. Turn off to restore Steam.",
       onChange: (value) => { if (!busy && status) change(value); } })),
     status && status.coverage && status.coverage.length ? h(Note, { quiet: true }, "Detected screens: " + status.coverage.join(", ")) : null,
+    status && status.targets && status.targets.length ? h(Note, { quiet: true },
+      "Steam windows: " + status.targets.slice(0, 6).map((t) =>
+        (t.role || "?") + ": " + (t.applied ? (t.mode || "injected") : (t.reason || "connection-error")) +
+        (typeof t.dom_nodes === "number" ? " (" + t.dom_nodes + " nodes)" : "")).join(" | ")) : null,
     h("div", { className: "list" }, h(Row, { icon: "stop", title: "Restore Steam appearance", onClick: busy ? undefined : () => change(false) })),
     msg ? h(Note, null, msg) : null,
     status && status.error ? h(Note, null, status.error) : null,
