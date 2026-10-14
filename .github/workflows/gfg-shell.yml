@@ -6,26 +6,18 @@ on:
       - "shell/**"
       - "py_modules/gfg_plugin/shell_bridge.py"
       - "tests/test_shell_bridge.py"
+      - "py_modules/gfg_plugin/shell_installer.py"
+      - "tests/test_shell_installer.py"
       - ".github/workflows/gfg-shell.yml"
   pull_request:
     paths:
       - "shell/**"
       - "py_modules/gfg_plugin/shell_bridge.py"
   workflow_dispatch:
-    inputs:
-      publish:
-        description: "Publish a pre-release (gfg-shell-v<version>-<suffix>)"
-        type: boolean
-        default: false
-      suffix:
-        description: "Pre-release suffix, e.g. b1"
-        default: "b1"
 
 jobs:
   shell:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -40,7 +32,7 @@ jobs:
           unzip -q "$RUNNER_TEMP/godot/godot.zip" -d "$RUNNER_TEMP/godot"
           echo "GODOT=$RUNNER_TEMP/godot/$GODOT_BIN" >> "$GITHUB_ENV"
       - name: Bridge unit tests (Python)
-        run: python3 -m unittest tests.test_shell_bridge -v
+        run: python3 -m unittest tests.test_shell_bridge tests.test_shell_installer -v
       - name: Import project (fails on script errors)
         run: |
           "$GODOT" --headless --path shell --import 2>&1 | tee "$RUNNER_TEMP/import.log"
@@ -73,8 +65,10 @@ jobs:
               -- --gfg-page=$p --gfg-screenshot="$RUNNER_TEMP/shots/$(echo $p | tr : _).png"
           done
           ls -la "$RUNNER_TEMP/shots"
-      - name: Package
-        run: shell/tools/package.sh "$RUNNER_TEMP/out" "$RUNNER_TEMP/godot"
+      - name: Plugin bundle and standalone package
+        run: |
+          shell/tools/build_bundle.sh "$GODOT" "$RUNNER_TEMP/out/bundle"
+          shell/tools/package.sh "$RUNNER_TEMP/out" "$RUNNER_TEMP/godot"
       - uses: actions/upload-artifact@v4
         with:
           name: gfg-shell
@@ -82,14 +76,3 @@ jobs:
             ${{ runner.temp }}/out/*
             ${{ runner.temp }}/shots/*.png
             ${{ runner.temp }}/logs/*
-      - name: Publish pre-release
-        if: github.event_name == 'workflow_dispatch' && inputs.publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          version="$(sed -n 's/^config\/version="\(.*\)"/\1/p' shell/project.godot)"
-          tag="gfg-shell-v${version}-${{ inputs.suffix }}"
-          gh release create "$tag" --prerelease --target "$GITHUB_SHA" \
-            --title "GFG Shell ${version}-${{ inputs.suffix }} (stage B test build)" \
-            --notes-file shell/package/RELEASE_NOTES.md \
-            "$RUNNER_TEMP"/out/gfg-shell-*.zip "$RUNNER_TEMP"/out/gfg-shell-*.zip.sha256 "$RUNNER_TEMP"/shots/*.png

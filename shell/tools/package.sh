@@ -13,8 +13,6 @@ if [ ! -x "$cache/$GODOT_BIN" ]; then
   curl -fsSL -o "$cache/godot.zip" "$GODOT_URL"
   echo "$GODOT_SHA256  $cache/godot.zip" | sha256sum -c -
   unzip -o -q "$cache/godot.zip" -d "$cache"
-  curl -fsSL -o "$cache/LICENSE.txt" "https://raw.githubusercontent.com/godotengine/godot/$GODOT_VERSION/LICENSE.txt"
-  curl -fsSL -o "$cache/COPYRIGHT.txt" "https://raw.githubusercontent.com/godotengine/godot/$GODOT_VERSION/COPYRIGHT.txt"
 fi
 godot="$cache/$GODOT_BIN"
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
@@ -27,8 +25,7 @@ cp "$godot" "$pkg/bin/godot"
 cp "$here"/package/*.sh "$pkg/"
 cp "$here/package/README.txt" "$pkg/"
 echo "$version" >"$pkg/VERSION"
-cp "$cache/LICENSE.txt" "$pkg/licenses/GODOT-LICENSE.txt"
-cp "$cache/COPYRIGHT.txt" "$pkg/licenses/GODOT-COPYRIGHT.txt"
+cp "$here"/package/licenses/* "$pkg/licenses/"
 cp "$here/../LICENSE.md" "$pkg/licenses/GFG-LICENSE.md"
 chmod +x "$pkg"/*.sh "$pkg/bin/godot"
 (cd "$pkg" && sha256sum gfg-shell.pck bin/godot *.sh >SHA256SUMS.txt)

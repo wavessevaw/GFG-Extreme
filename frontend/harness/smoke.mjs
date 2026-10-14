@@ -313,6 +313,28 @@ for (const fail of [false, true]) {
   await page.close();
   cases.push(["theme-installer-" + (fail ? "error" : "success")]);
 }
+// GFG Shell: install from the plugin, then launch through a Steam shortcut created once.
+for (const fail of [false, true]) {
+  const page = await openPage(browser, { ...STATES["home-extreme"], __shellFail: fail }, ["Settings", "GFG Shell"]);
+  await page.getByText("Install GFG Shell", { exact: true }).click();
+  await page.waitForTimeout(200);
+  if (fail) {
+    if (!(await page.getByText("Godot download failed its SHA-256 check", { exact: true }).count()) ||
+        await page.getByText("Launch GFG Shell", { exact: true }).count()) { failed++; console.error("FAIL shell install error not shown"); }
+  } else {
+    await page.getByText("Launch GFG Shell", { exact: true }).click();
+    await page.waitForTimeout(200);
+    await page.getByText("Launch GFG Shell", { exact: true }).click();
+    await page.waitForTimeout(200);
+    const r = await page.evaluate(() => [window.__addShortcut, window.__shellShortcut, window.__runGame, window.__adds]);
+    const want = JSON.stringify([["GFG Shell", "/home/deck/.local/share/gfg-shell/app/gfg-shell.sh", "/home/deck/.local/share/gfg-shell/app", ""], 3000000001,
+      [((3000000001n << 32n) | 0x02000000n).toString(), ((3000000001n << 32n) | 0x02000000n).toString()], 1]);
+    if (JSON.stringify(r) !== want) { failed++; console.error("FAIL shell launch " + JSON.stringify(r)); }
+  }
+  for (const error of page.__errors) { failed++; console.error("FAIL shell: " + error); }
+  await page.close();
+  cases.push(["shell-" + (fail ? "install-error" : "install-and-launch")]);
+}
 for (const fail of [false, true]) {
   const page = await openPage(browser, { ...STATES["home-extreme"], __flowFail: fail, flow_control: { enabled: true } }, ["Settings"]);
   const row = page.locator(".row").filter({ has: page.getByText("Automatic flow scale", { exact: true }) });

@@ -119,7 +119,9 @@ export const STATES = {
 const mockSrc = (state, extra) => `
 window.SP_REACT = React; window.DFL = { staticClasses: { Title: "t" }, Focusable: null, TextField: (p) => React.createElement("input", { ...p, "data-tf": "1" }) };
 window.__patches = [];
-window.appStore = { GetAppOverviewByAppID: (id) => (id === 292030 ? { display_name: "Sample Game" } : null) };
+window.SteamClient = { Apps: { AddShortcut: async (n, exe, dir, opts) => { window.__addShortcut = [n, exe, dir, opts]; window.__adds = (window.__adds || 0) + 1; window.__addedShortcut = 3000000001; return 3000000001; }, SetShortcutName() {}, SetShortcutExe() {}, SetShortcutStartDir() {},
+  RunGame: (id, a, b, c) => { (window.__runGame = window.__runGame || []).push(id); }, RemoveShortcut: (id) => { window.__removed = id; } } };
+window.appStore = { GetAppOverviewByAppID: (id) => (id === 292030 ? { display_name: "Sample Game" } : id && id === window.__addedShortcut ? { display_name: "GFG Shell", m_gameid: ((BigInt(id) << 32n) | 0x02000000n).toString() } : null) };
 window.__state = ${JSON.stringify(state)};
 window.__cfg = ${JSON.stringify(extra.cfg || { fg_backend: "gfg", multiplier: 2, })};
 var callable = (n) => async (...a) => ({ get_governor_status: () => window.__state, get_profiles: () => ({ profiles: ["Default", "Sample Game", "Another Game"], current_profile: "Sample Game" }),
@@ -128,6 +130,10 @@ var callable = (n) => async (...a) => ({ get_governor_status: () => window.__sta
   install_gfg_theme: () => { window.__themeCalls = (window.__themeCalls || 0) + 1;
     if (window.__state.__themeFail) return { success: false, error: "Theme folder is read-only" };
     window.__themeInstalled = true; return { success: true, message: "Installed. In CSS Loader, reload themes and enable GFG Extreme." }; },
+  get_shell_status: () => ({ success: true, packaged: true, packaged_version: "0.1.0", installed: !!window.__shellInstalled, installed_version: window.__shellInstalled ? "0.1.0" : "", update_available: false, path: "/home/deck/.local/share/gfg-shell/app/gfg-shell.sh", start_dir: "/home/deck/.local/share/gfg-shell/app", shortcut_appid: window.__shellShortcut || null, progress: { busy: false } }),
+  install_gfg_shell: () => { window.__shellInstalls = (window.__shellInstalls || 0) + 1; if (window.__state.__shellFail) return { success: false, error: "Godot download failed its SHA-256 check" }; window.__shellInstalled = true; return { success: true, version: "0.1.0" }; },
+  set_shell_shortcut: (id) => { window.__shellShortcut = id; return { success: true }; },
+  uninstall_gfg_shell: () => { window.__shellInstalled = false; return { success: true }; },
   check_mako_installed: () => ({ installed: true, installed_engine_version: '4.0.1', expected_engine_version: '4.0.1', engine_update_required: false, host_architecture_supported: true }), check_flatpak_extension_status: () => ({ success: true, installed_23_08: false, installed_24_08: true, installed_25_08: true }), get_flatpak_apps: () => ({ success: true, total_apps: 2, apps: [{ app_id: 'org.example.A', app_name: 'Heroic', has_filesystem_override: true, has_wrapper_override: true, has_required_env_override: true }, { app_id: 'org.example.B', app_name: 'Lutris', has_filesystem_override: false, has_wrapper_override: false }] }),
   get_config_schema: () => ({ field_names: ['scaling_enabled','scaling_factor','multiplier','dll','allow_fp16'], field_types: { scaling_enabled: 'boolean', scaling_factor: 'float', multiplier: 'integer', dll: 'string', allow_fp16: 'boolean' }, defaults: { scaling_enabled: false, scaling_factor: 1.5, multiplier: 2, dll: '', allow_fp16: true }, descriptions: { scaling_enabled: 'restart-bound scaling engine switch', scaling_factor: 'output scaling factor from 1.0x to 2.0x', multiplier: 'fixed multiplier', dll: 'optional full path to Lossless.dll', allow_fp16: 'allow FP16 acceleration' } }),
   run_setup_check: () => window.__state.__setup || ({ success: true, total: 3, failed: 0, checks: [{ check: 'launch wrapper installed', ok: true }, { check: 'overlay config published (active.conf)', ok: true }, { check: 'TDP control: fastPPT/slowPPT cap writable', ok: true }] }),

@@ -32,9 +32,11 @@ shell/                         Godot 4.4 проект (GDScript, GL Compatibilit
   scripts/ui, scripts/screens  интерфейс (тема по макетам: тёмный + красный)
   tests/run_tests.gd           headless-тесты (фикстура tools/make_fake_steam.py)
   tests/bridge_e2e.gd          Godot BridgeClient ↔ настоящий Python ShellBridge
-  tools/package.sh             пакет: закреплённый Godot 4.4.1 (sha256) + .pck + скрипты
+  tools/build_bundle.sh        бандл для zip плагина (bin/gfg-shell)
+  tools/package.sh             отдельный пакет для разработки (с Godot внутри)
   package/                     install.sh / uninstall.sh / gfg-shell.sh / collect-diagnostics.sh
-py_modules/gfg_plugin/shell_bridge.py   GFG Bridge в плагине GFG Extreme
+py_modules/gfg_plugin/shell_bridge.py     GFG Bridge в плагине GFG Extreme
+py_modules/gfg_plugin/shell_installer.py  установка/обновление/удаление из плагина
 ```
 
 ### Правила, зашитые в код
@@ -56,19 +58,30 @@ TCP `127.0.0.1:<случайный порт>`, строки JSON. Порт и т
 CPU/GPU, TDP, батарея, Frame Fusion, Continuous Boost), `profiles`, `set_mode`,
 `set_frame_fusion`, `set_feature` (только `continuous_boost`).
 
+## Установка и запуск — из плагина GFG Extreme
+
+Оболочка входит в zip плагина (`bin/gfg-shell/`: .pck ~110 КБ, скрипты, `godot.json`, лицензии).
+Godot runtime не кладётся в zip (≈130 МБ): плагин скачивает официальную сборку Godot 4.4.1 с
+GitHub один раз и проверяет SHA-256 из `godot.json` (`py_modules/gfg_plugin/shell_installer.py`).
+
+- **Настройки → GFG Shell → Install GFG Shell** — установка/обновление в `~/.local/share/gfg-shell/app`
+  (владелец — пользователь Deck; при ошибке предыдущая установка остаётся).
+- **Launch GFG Shell** — фронтенд один раз создаёт ярлык non-Steam игры штатным API Steam
+  (`SteamClient.Apps.AddShortcut`), запоминает его app id в плагине и запускает через
+  `SteamClient.Apps.RunGame`. Steam остаётся игровым клиентом, Steam Input — у Steam.
+- **Remove GFG Shell** — удаляет файлы и ярлык.
+
+Отдельный zip (`shell/tools/package.sh`, с Godot внутри) остаётся для разработки.
+
 ## Тест на Steam Deck (этап B)
 
-1. Скачать `gfg-shell-<версия>.zip` из pre-release, в режиме рабочего стола: распаковать,
-   `./install.sh` (если Steam запущен, оболочка появится в Steam как non-Steam игра; иначе
-   добавить `~/.local/share/gfg-shell/app/gfg-shell.sh` вручную).
-2. Вернуться в Gaming Mode, запустить «GFG Shell».
+1. Установить pre-release GFG Extreme `2.1.2-shell.N` через Decky.
+2. GFG Extreme → Settings → GFG Shell → Install, затем Launch.
 3. Пройти H1–H8 из [GFG_SHELL_RECON.md](GFG_SHELL_RECON.md#6-гипотезы-для-проверки-на-deck-этап-b):
    нативная игра, Proton-игра, non-Steam игра, игра с лаунчером, выход/падение игры,
    аварийное завершение оболочки, сон/пробуждение.
-4. Настройки → Диагностика → «Собрать диагностику» и прислать zip
+4. В оболочке: Настройки → Диагностика → «Собрать диагностику» и прислать zip
    (если оболочка не стартует — `~/.local/share/gfg-shell/app/collect-diagnostics.sh`).
-
-Удаление: `~/.local/share/gfg-shell/app/uninstall.sh` и ярлык в Steam.
 
 ## Скриншоты
 

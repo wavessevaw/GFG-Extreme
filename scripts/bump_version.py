@@ -17,16 +17,16 @@ def sub(path: str, pattern: str, repl: str, count: int = 1) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) != 2 or not re.fullmatch(r"\d+\.\d+\.\d+", sys.argv[1]):
-        sys.exit("usage: bump_version.py X.Y.Z")
+    if len(sys.argv) != 2 or not re.fullmatch(r"\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?", sys.argv[1]):
+        sys.exit("usage: bump_version.py X.Y.Z[-prerelease]")
     v = sys.argv[1]
     sub("package.json", r'^(  "version": )"[^"]+"', rf'\g<1>"{v}"')
     sub("package-lock.json", r'^(  "version": )"[^"]+"', rf'\g<1>"{v}"')
     sub("package-lock.json", r'^(      "version": )"[^"]+"(,\n      "license")', rf'\g<1>"{v}"\2')
     sub("py_modules/gfg_plugin/governor_service.py", r'^VERSION = "[^"]+"', f'VERSION = "{v}"')
-    sub("py_modules/gfg_plugin/governor_service.py", r"\(GFG Extreme [0-9.]+\)", f"(GFG Extreme {v})")
-    sub("py_modules/gfg_plugin/plugin.py", r'"GFG Extreme [0-9.]+ started"', f'"GFG Extreme {v} started"')
-    sub("py_modules/gfg_plugin/session_recorder.py", r'"GFG Extreme [0-9.]+ \(', f'"GFG Extreme {v} (')
+    sub("py_modules/gfg_plugin/governor_service.py", r"\(GFG Extreme [0-9A-Za-z.-]+\)", f"(GFG Extreme {v})")
+    sub("py_modules/gfg_plugin/plugin.py", r'"GFG Extreme [0-9A-Za-z.-]+ started"', f'"GFG Extreme {v} started"')
+    sub("py_modules/gfg_plugin/session_recorder.py", r'"GFG Extreme [0-9A-Za-z.-]+ \(', f'"GFG Extreme {v} (')
     sub("py_modules/gfg_plugin/log_report.py", r'^CURRENT_VERSION = "[^"]+"', f'CURRENT_VERSION = "{v}"')
     print(f"version set to {v}")
 

@@ -63,6 +63,8 @@ class Plugin:
     def __init__(self):
         """Initialize the plugin with all necessary services"""
         self.theme_installer = ThemeInstaller(Path(decky.DECKY_USER_HOME))
+        from .shell_installer import ShellInstaller
+        self.shell_installer = ShellInstaller(Path(decky.DECKY_USER_HOME))
         self._theme_install_lock = asyncio.Lock()
         self.installation_service = InstallationService()
         self.dll_detection_service = DllDetectionService()
@@ -1648,6 +1650,24 @@ class Plugin:
     async def install_gfg_theme(self) -> Dict[str, Any]:
         async with self._theme_install_lock:
             return await asyncio.to_thread(self.theme_installer.install)
+
+    async def get_shell_status(self) -> Dict[str, Any]:
+        """GFG Shell: packaged/installed versions, launcher path, remembered Steam shortcut."""
+        status = await asyncio.to_thread(self.shell_installer.status)
+        bridge = getattr(self, "_shell_bridge", None)
+        status["bridge_running"] = bridge is not None and bridge.port > 0
+        return status
+
+    async def install_gfg_shell(self) -> Dict[str, Any]:
+        """Install or update GFG Shell into the user's home (downloads the pinned Godot runtime once)."""
+        return await asyncio.to_thread(self.shell_installer.install)
+
+    async def uninstall_gfg_shell(self) -> Dict[str, Any]:
+        return await asyncio.to_thread(self.shell_installer.uninstall)
+
+    async def set_shell_shortcut(self, appid: Any = None) -> Dict[str, Any]:
+        """Remember the Steam shortcut the frontend created for GFG Shell (None forgets it)."""
+        return await asyncio.to_thread(self.shell_installer.set_shortcut, appid)
 
     async def _uninstall(self):
         """
