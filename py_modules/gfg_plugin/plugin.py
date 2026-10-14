@@ -1534,7 +1534,20 @@ class Plugin:
             )
 
         await self.governor_service.start()
+        await self._start_shell_bridge()
         decky.logger.info("GFG Extreme 2.1.0 started")
+
+    async def _start_shell_bridge(self) -> None:
+        """GFG Shell's local link (read status + allow-listed Governor settings)."""
+        from .shell_bridge import ShellBridge
+        try:
+            home = self.configuration_service.user_home
+            info = home.stat()
+            self._shell_bridge = ShellBridge(self, home, decky.logger, uid=info.st_uid, gid=info.st_gid)
+            await self._shell_bridge.start()
+        except Exception as error:  # the plugin must keep working without the shell link
+            decky.logger.warning("GFG Bridge not started: %s", error)
+            self._shell_bridge = None
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""
@@ -1544,6 +1557,13 @@ class Plugin:
                 await self.session_recorder.stop()
         except Exception as error:
             decky.logger.warning("Log recording could not be saved on unload: %s", error)
+        bridge = getattr(self, "_shell_bridge", None)
+        if bridge is not None:
+            try:
+                await bridge.stop()
+            except Exception as error:
+                decky.logger.warning("GFG Bridge stop failed: %s", error)
+            self._shell_bridge = None
         # Governor owns a separate runtime TDP overlay. Stop it first so an
         # owned PPT cap is restored before Dock/profile shutdown proceeds.
         await self.governor_service.stop()
