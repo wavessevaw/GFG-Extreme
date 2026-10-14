@@ -1,0 +1,30 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Per pair, full resolution (reference: LMC2.push, first lines):
+//   luma (Rec.709) of B into pyramid level 0, the HUD still counter, and on
+//   even pixels the 2x2 half-resolution RGB of B.
+#include "lmc_common.glsl"
+#include "lmc_store.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, P.size.xy))) return;
+    vec3 b = texelFetch(srcB, p, 0).rgb;
+    vec3 a = texelFetch(srcA, p, 0).rgb;
+    store_l(0, p, b.r * 0.2126 + b.g * 0.7152 + b.b * 0.0722);
+    vec3 d = abs(b - a);
+    bool still = max(d.r, max(d.g, d.b)) < P.still;
+    if ((PC.flags & 1) == 0) {  // history-only frames have no pair: the counter waits
+        uint c = imageLoad(hudCount, p).r;
+        imageStore(hudCount, p, uvec4(still ? c + G.moving : 0u));
+    }
+    if ((p.x & 1) == 0 && (p.y & 1) == 0) {
+        ivec2 h = p / 2;
+        if (all(lessThan(h, P.size.zw))) {
+            vec3 s = b + texelFetch(srcB, p + ivec2(1, 0), 0).rgb + texelFetch(srcB, p + ivec2(0, 1), 0).rgb +
+                     texelFetch(srcB, p + ivec2(1, 1), 0).rgb;
+            imageStore(storeHalf, h, vec4(s * 0.25, 1.0));
+        }
+    }
+}

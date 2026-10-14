@@ -1,0 +1,150 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Predictive block search, one level of one grid (reference: gen_lmc.estimate).
+// One thread per block; candidate order and the "first strictly smaller cost
+// wins" rule match the reference's argmin.
+//
+// PC.pass_: 0 = candidates + refinement (writes the grid buffer)
+//           1 = one propagation sweep (grid buffer -> scratch)
+//           2 = vector median (grid buffer -> scratch)
+//           3 = scratch -> grid buffer, recomputing the cost
+// PC.flags: bit 0 = temporal predictor valid
+#include "lmc_common.glsl"
+layout(local_size_x = 64) in;
+
+int g_l;
+ivec2 g_b;
+
+vec4 load_v(ivec2 b) {
+    ivec2 n = lblocks(g_l);
+    b = clamp(b, ivec2(0), n - 1);
+    int i = blk_offset(g_l) + b.y * n.x + b.x;
+    return PC.grid == 0 ? vb[i] : va[i];
+}
+
+void store_v(ivec2 b, vec4 v) {
+    int i = blk_offset(g_l) + b.y * lblocks(g_l).x + b.x;
+    if (PC.grid == 0) vb[i] = v; else va[i] = v;
+}
+
+// mean |own - other| over the 4x4 block (reference: Level.cost)
+float cost(vec2 v) {
+    float acc = 0.0;
+    [[unroll]] for (int oy = 0; oy < LMC_BLK; ++oy) {
+        [[unroll]] for (int ox = 0; ox < LMC_BLK; ++ox) {
+            vec2 q = vec2(g_b * LMC_BLK + ivec2(ox, oy));
+            if (PC.grid == 0) acc += abs(luma_b(g_l, q) - luma_a(g_l, q - v));
+            else acc += abs(luma_a(g_l, q) - luma_b(g_l, q + v));
+        }
+    }
+    return acc / float(LMC_BLK * LMC_BLK);
+}
+
+vec2 g_best;
+float g_cost;
+
+void consider(vec2 v, float pen) {
+    float c = cost(v) + pen;
+    if (c < g_cost) {
+        g_cost = c;
+        g_best = v;
+    }
+}
+
+vec2 temporal_cand() {
+    // reference resample_field: nearest block of a level-1 field (full-res px),
+    // scaled to this level.  B grid: the previous pair's B field; A grid: this
+    // pair's B field (reference: estimate(..., "a", layers, vb)).
+    ivec2 n = lblocks(g_l), tn = lblocks(1);
+    ivec2 i = clamp((g_b * tn) / n, ivec2(0), tn - 1);
+    int j = i.y * tn.x + i.x;
+    vec2 v = (PC.grid == 0 ? temporal[j].xy : vb[P.blk_off.x + j].xy) * 2.0;  // level-1 px -> full res
+    return v / float(1 << g_l);
+}
+
+vec2 camera_cand(int k) {
+    Layer L = LY.layers[k];
+    float s = float(1 << g_l);
+    vec2 c = vec2(g_b * LMC_BLK) + (float(LMC_BLK) - 1.0) * 0.5;
+    vec2 f = (c + 0.5) * s - 0.5;
+    if (PC.grid == 1) return (apply_h(L, f) - f) / s;
+    return (f - apply_h(inv_h(L), f)) / s;
+}
+
+vec2 median3(ivec2 b) {
+    vec2 nb[9];
+    int k = 0;
+    [[unroll]] for (int dy = -1; dy <= 1; ++dy)
+        [[unroll]] for (int dx = -1; dx <= 1; ++dx) nb[k++] = load_v(b + ivec2(dx, dy)).xy;
+    int best = 0;
+    float bd = 1e30;
+    for (int i = 0; i < 9; ++i) {
+        float d = 0.0;
+        for (int j = 0; j < 9; ++j) d += abs(nb[i].x - nb[j].x) + abs(nb[i].y - nb[j].y);
+        if (d < bd) { bd = d; best = i; }
+    }
+    return nb[best];
+}
+
+void main() {
+    g_l = PC.level;
+    ivec2 n = lblocks(g_l);
+    int id = int(gl_GlobalInvocationID.x);
+    if (id >= n.x * n.y) return;
+    g_b = ivec2(id % n.x, id / n.x);
+    int idx = blk_offset(g_l) + id;
+
+    if (PC.pass_ == 0) {
+        g_cost = 1e30;
+        g_best = vec2(0.0);
+        if (g_l == LMC_LEVELS) {
+            int r = P.coarse_r;
+            for (int dy = -r; dy <= r; ++dy)
+                for (int dx = -r; dx <= r; ++dx)
+                    consider(vec2(dx, dy), P.pen_update * 0.25 * float(abs(dx) + abs(dy)));
+        } else {
+            // parents (x2) of the coarser level: centre, up, down, left, right
+            int pl = g_l + 1;
+            ivec2 pn = lblocks(pl);
+            ivec2 pi = clamp(g_b / 2, ivec2(0), pn - 1);
+            const ivec2 O[5] = ivec2[5](ivec2(0, 0), ivec2(0, -1), ivec2(0, 1), ivec2(-1, 0), ivec2(1, 0));
+            for (int k = 0; k < 5; ++k) {
+                ivec2 q = clamp(pi + O[k], ivec2(0), pn - 1);
+                int j = blk_offset(pl) + q.y * pn.x + q.x;
+                consider(2.0 * (PC.grid == 0 ? vb[j].xy : va[j].xy), 0.0);
+            }
+        }
+        if ((PC.flags & 1) != 0) consider(temporal_cand(), 0.0);
+        for (int k = 0; k < int(LY.layer_count); ++k) consider(camera_cand(k), 0.0);
+        consider(vec2(0.0), P.pen_update);
+        // refinement: +-1 level pixel, and +-0.5 at level 1
+        int steps = g_l == 1 ? 2 : 1;
+        for (int s = 0; s < steps; ++s) {
+            float st = s == 0 ? 1.0 : 0.5;
+            vec2 c0 = g_best;
+            g_cost = cost(c0);
+            g_best = c0;
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx)
+                    if (dx != 0 || dy != 0) consider(c0 + vec2(dx, dy) * st, P.pen_update * st);
+        }
+        store_v(g_b, vec4(g_best, g_cost, 0.0));
+    } else if (PC.pass_ == 1) {
+        vec2 v = load_v(g_b).xy;
+        vec2 med = median3(g_b);
+        vec2 cands[6] = vec2[6](v, med, load_v(g_b + ivec2(0, -1)).xy, load_v(g_b + ivec2(0, 1)).xy,
+                                load_v(g_b + ivec2(-1, 0)).xy, load_v(g_b + ivec2(1, 0)).xy);
+        float bc = 1e30;
+        vec2 bv = v;
+        for (int k = 0; k < 6; ++k) {
+            float c = cost(cands[k]) + P.smooth_ * (abs(cands[k].x - med.x) + abs(cands[k].y - med.y));
+            if (c < bc) { bc = c; bv = cands[k]; }
+        }
+        scratch[idx] = vec4(bv, bc, 0.0);
+    } else if (PC.pass_ == 2) {
+        scratch[idx] = vec4(median3(g_b), 0.0, 0.0);
+    } else {
+        vec2 v = scratch[idx].xy;
+        store_v(g_b, vec4(v, cost(v), 0.0));
+    }
+}

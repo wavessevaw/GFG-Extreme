@@ -13,17 +13,21 @@ TE_ICD ?= /usr/share/vulkan/icd.d/lvp_icd.json
 
 SHADERS := me stats classify lists reuse light full
 FMT_SHADERS := luma down
+LMC_SHADERS := prep down search layers palette field masked orphan select compose
 SPV := $(SHADERS:%=$(BUILD)/spv/%.spv) \
-       $(foreach s,$(FMT_SHADERS),$(BUILD)/spv/$(s)_r16f.spv $(BUILD)/spv/$(s)_r32f.spv)
+       $(foreach s,$(FMT_SHADERS),$(BUILD)/spv/$(s)_r16f.spv $(BUILD)/spv/$(s)_r32f.spv) \
+       $(LMC_SHADERS:%=$(BUILD)/spv/lmc_%.spv)
 HDR := $(wildcard shaders/*.glsl)
+LMC_HDR := $(wildcard shaders/lmc/*.glsl)
 ENGINE := src/te_engine.c src/te_scheduler.c
+ENGINE_INC := src/te_lmc.inc
 
 .PHONY: all lib test clean
 all: $(BUILD)/te-bench $(BUILD)/te-tests
 
 # Position-independent static library for the MAKO renderer build.
 lib: $(BUILD)/libgfg-temporal.a
-$(BUILD)/pic/%.o: src/%.c src/*.h $(BUILD)/te_shaders.h
+$(BUILD)/pic/%.o: src/%.c src/*.h $(ENGINE_INC) $(BUILD)/te_shaders.h
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -fPIC -fvisibility=hidden $(VK_CFLAGS) -I$(BUILD) -Isrc -c -o $@ $<
 $(BUILD)/libgfg-temporal.a: $(BUILD)/pic/te_engine.o $(BUILD)/pic/te_scheduler.o
@@ -44,13 +48,18 @@ $(BUILD)/spv/%_r32f.spv: shaders/%.comp $(HDR)
 	$(GLSLANG) -V --target-env vulkan1.2 -DLUMA_FMT=r32f -o $@ $< >/dev/null
 	$(SPIRV_VAL) --target-env vulkan1.2 $@
 
+$(BUILD)/spv/lmc_%.spv: shaders/lmc/lmc_%.comp $(LMC_HDR)
+	@mkdir -p $(@D)
+	$(GLSLANG) -V --target-env vulkan1.2 -o $@ $< >/dev/null
+	$(SPIRV_VAL) --target-env vulkan1.2 $@
+
 $(BUILD)/te_shaders.h: $(SPV) tools/embed_spirv.py
 	$(PYTHON) tools/embed_spirv.py $@ $(foreach f,$(SPV),$(notdir $(basename $(f)))=$(f))
 
-$(BUILD)/te-bench: src/te_bench.c $(ENGINE) src/*.h $(BUILD)/te_shaders.h
+$(BUILD)/te-bench: src/te_bench.c $(ENGINE) $(ENGINE_INC) src/*.h $(BUILD)/te_shaders.h
 	$(CC) $(CFLAGS) $(VK_CFLAGS) -I$(BUILD) -Isrc -o $@ src/te_bench.c $(ENGINE) -ldl -lpthread -lm
 
-$(BUILD)/te-tests: tests/te_tests.c $(ENGINE) src/*.h $(BUILD)/te_shaders.h
+$(BUILD)/te-tests: tests/te_tests.c $(ENGINE) $(ENGINE_INC) src/*.h $(BUILD)/te_shaders.h
 	$(CC) $(CFLAGS) $(VK_CFLAGS) -I$(BUILD) -Isrc -o $@ tests/te_tests.c $(ENGINE) -ldl -lpthread -lm
 
 test: $(BUILD)/te-tests $(BUILD)/te-bench

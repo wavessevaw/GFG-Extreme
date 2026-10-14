@@ -83,7 +83,7 @@ static FILE* npy_create(const char* path, size_t n, size_t h, size_t w) {
 static void usage(void) {
     fprintf(stderr,
             "usage: te-bench --frames seq.npy [--start S] [--pairs N] [--step K] [--crop WxH]\n"
-            "                [--mode adaptive|full|light|reuse] [--tile 8|16|32] [--levels L] [--range R]\n"
+            "                [--algo tiles|lmc] [--mode adaptive|full|light|reuse] [--tile 8|16|32] [--levels L] [--range R]\n"
             "                [--light-thr X] [--probe N] [--profile] [--out gen.npy] [--json stats.jsonl]\n"
             "                [--analysis DIR] [--device NAME] [--validation] [--no-download]\n");
 }
@@ -118,6 +118,10 @@ int main(int argc, char** argv) {
                 else if (strcmp(v, "reuse") == 0) params.force_class = 0;
                 else { usage(); return 2; }
             }
+        } else if (ARG("--algo")) {
+            if (strcmp(v, "lmc") == 0) params.algorithm = TE_ALGO_LMC;
+            else if (strcmp(v, "tiles") == 0) params.algorithm = TE_ALGO_TILES;
+            else { usage(); return 2; }
         } else if (ARG("--tile")) params.tile = (uint32_t)strtoul(v, NULL, 10);
         else if (ARG("--levels")) params.levels = (uint32_t)strtoul(v, NULL, 10);
         else if (ARG("--range")) params.coarse_range = (int32_t)strtol(v, NULL, 10);
@@ -164,8 +168,8 @@ int main(int argc, char** argv) {
     }
     uint32_t tx, ty;
     uint32_t tiles = te_tile_count(ctx, &tx, &ty);
-    fprintf(stderr, "te-bench: %s %zux%zu tiles %ux%u pairs %zu step %zu mode %s%s\n", te_device_name(dev), W, H, tx,
-            ty, pairs, step, params.adaptive ? "adaptive" : (params.force_class == 2 ? "full" : params.force_class == 1 ? "light" : "reuse"),
+    fprintf(stderr, "te-bench: %s %zux%zu algo %s tiles %ux%u pairs %zu step %zu mode %s%s\n", te_device_name(dev), W, H,
+            params.algorithm == TE_ALGO_LMC ? "lmc" : "tiles", tx, ty, pairs, step, params.adaptive ? "adaptive" : (params.force_class == 2 ? "full" : params.force_class == 1 ? "light" : "reuse"),
             profile ? " profile" : "");
     FILE* out = out_path ? npy_create(out_path, pairs * (step - 1), H, W) : NULL;
     FILE* json = json_path ? fopen(json_path, "w") : NULL;

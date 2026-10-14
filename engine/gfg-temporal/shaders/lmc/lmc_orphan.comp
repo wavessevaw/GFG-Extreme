@@ -1,0 +1,91 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Wide search for level-1 blocks the camera and block field leave unexplained
+// (reference: gen_lmc.orphan_search).  One thread per block of one grid.
+// Only residual pixels take part on both sides: an object is matched to the
+// object, not to the background around it.
+// PC.grid: 0 = B grid (own B, other A, sign -1), 1 = A grid (own A, other B, +1)
+#include "lmc_common.glsl"
+#include "lmc_store.glsl"
+layout(local_size_x = 64) in;
+
+float resid(int which, ivec2 p) {
+    if (imageLoad(hudCount, p).r >= uint(P.hud_pairs)) return 0.0;
+    ivec2 h = min(p / 2, P.size.zw - 1);
+    float c = which == 1 ? texelFetch(fieldB, h, 0).z : texelFetch(fieldA, h, 0).z;
+    return c > P.orphan_resid ? 1.0 : 0.0;
+}
+
+void main() {
+    int grid = PC.grid;
+    ivec2 nb = lblocks(1);
+    int id = int(gl_GlobalInvocationID.x);
+    if (id >= nb.x * nb.y) return;
+    ivec2 bb = ivec2(id % nb.x, id / nb.x);
+    int own = grid == 0 ? 1 : 0, oth = 1 - own;
+    float sgn = grid == 0 ? -1.0 : 1.0;
+    // orphan: share of residual pixels in the 8x8 block
+    float share = 0.0;
+    for (int oy = 0; oy < 8; ++oy)
+        for (int ox = 0; ox < 8; ++ox) share += resid(own, bb * 8 + ivec2(ox, oy));
+    vec4 result = vec4(0.0);
+    if (share / 64.0 > P.orphan_share) {
+        ivec2 qn = P.size.xy / 4;
+        // own 2x2 quarter cells
+        float yo[4], wo[4];
+        ivec2 cell[4];
+        float wsum = 0.0;
+        for (int k = 0; k < 4; ++k) {
+            cell[k] = bb * 2 + ivec2(k & 1, k >> 1);
+            vec4 m = MQ.mq[min(cell[k].y, qn.y - 1) * qn.x + min(cell[k].x, qn.x - 1)];
+            yo[k] = own == 1 ? m.x : m.z;
+            wo[k] = own == 1 ? m.y : m.w;
+            wsum += wo[k];
+        }
+        int r = P.orphan_r / 4;
+        float best = 1e30;
+        vec2 bv = vec2(0.0);
+        for (int dy = -r; dy <= r; ++dy)
+            for (int dx = -r; dx <= r; ++dx) {
+                float num = 0.0, den = 0.0;
+                for (int k = 0; k < 4; ++k) {
+                    ivec2 t = cell[k] + ivec2(round(sgn * float(dx)), round(sgn * float(dy)));
+                    bool in_ = all(greaterThanEqual(t, ivec2(0))) && all(lessThan(t, qn));
+                    ivec2 tc = clamp(t, ivec2(0), qn - 1);
+                    vec4 m = MQ.mq[tc.y * qn.x + tc.x];
+                    float yt = oth == 1 ? m.x : m.z;
+                    float wt = (oth == 1 ? m.y : m.w) * (in_ ? 1.0 : 0.0);
+                    float wg = wo[k] * wt;
+                    num += abs(yo[k] - yt) * wg;
+                    den += wg;
+                }
+                float c = num / max(den, 1e-6);
+                if (!(den >= 0.5 * max(wsum, 1e-6))) c = 1e30;
+                c += 0.0005 * float(abs(dx) + abs(dy));
+                if (c < best) { best = c; bv = vec2(dx * 4, dy * 4); }
+            }
+        // refine at full resolution, +-3 px, on the residual pixels
+        float fb = 1e30;
+        vec2 fv = bv;
+        for (int ddy = -3; ddy <= 3; ++ddy)
+            for (int ddx = -3; ddx <= 3; ++ddx) {
+                vec2 v = bv + vec2(ddx, ddy);
+                float num = 0.0, den = 0.0;
+                for (int oy = 0; oy < 8; ++oy)
+                    for (int ox = 0; ox < 8; ++ox) {
+                        ivec2 p = bb * 8 + ivec2(ox, oy);
+                        float w = resid(own, p);
+                        float yown = own == 1 ? texelFetch(lumaB0, p, 0).r : texelFetch(lumaA0, p, 0).r;
+                        num += abs(yown - luma_at(oth, 0, vec2(p) + sgn * v)) * w;
+                        den += w;
+                    }
+                float c = num / max(den, 1.0);
+                if (c < fb) { fb = c; fv = v; }
+            }
+        if (best < 1e29 && fb < P.orphan_max_cost) {
+            result = vec4(fv, 1.0, 0.0);
+            if (grid == 0) atomicAdd(G.orphans_b, 1u); else atomicAdd(G.orphans_a, 1u);
+        }
+    }
+    if (grid == 0) ORB.ob[id] = result; else ORA.oa[id] = result;
+}

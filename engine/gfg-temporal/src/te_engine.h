@@ -44,7 +44,10 @@ typedef struct {
     int32_t adaptive;          /* 0: every tile uses force_class */
     int32_t force_class;       /* 0 reuse, 1 light, 2 full */
     uint32_t full_density;     /* FULL decision per 1x1 or 2x2 block */
+    uint32_t algorithm;        /* TE_ALGO_TILES (te.2 tile classes) or TE_ALGO_LMC (layered motion) */
 } te_params;
+
+enum { TE_ALGO_TILES = 0, TE_ALGO_LMC = 1 };
 
 void te_params_default(te_params* params);
 

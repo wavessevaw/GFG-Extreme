@@ -1,0 +1,31 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Quarter-resolution masked luma of both frames for the orphan search
+// (reference: gen_lmc.masked_down with f = 4).  The residual mask of a full-res
+// pixel is "its half-res field cost > ORPHAN_RESID and not HUD"; a cell keeps
+// the masked mean luma and the maximum of the mask, so a thin object survives.
+#include "lmc_common.glsl"
+#include "lmc_store.glsl"
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main() {
+    ivec2 c = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 n = P.size.xy / 4;
+    if (any(greaterThanEqual(c, n))) return;
+    float yb = 0.0, ya = 0.0, cb = 0.0, ca = 0.0, mb = 0.0, ma = 0.0;
+    for (int oy = 0; oy < 4; ++oy)
+        for (int ox = 0; ox < 4; ++ox) {
+            ivec2 p = c * 4 + ivec2(ox, oy);
+            bool hud = imageLoad(hudCount, p).r >= uint(P.hud_pairs);
+            ivec2 h = min(p / 2, P.size.zw - 1);
+            float rb = (!hud && texelFetch(fieldB, h, 0).z > P.orphan_resid) ? 1.0 : 0.0;
+            float ra = (!hud && texelFetch(fieldA, h, 0).z > P.orphan_resid) ? 1.0 : 0.0;
+            yb += texelFetch(lumaB0, p, 0).r * rb;
+            ya += texelFetch(lumaA0, p, 0).r * ra;
+            cb += rb;
+            ca += ra;
+            mb = max(mb, rb);
+            ma = max(ma, ra);
+        }
+    MQ.mq[c.y * n.x + c.x] = vec4(yb / max(cb, 1e-6), mb, ya / max(ca, 1e-6), ma);
+}

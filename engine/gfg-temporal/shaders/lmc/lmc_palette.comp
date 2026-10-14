@@ -1,0 +1,97 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+// Motion palette, one workgroup (reference: gen_lmc2.motion_palette): the
+// LMC_PALETTE most frequent level-1 B-grid vectors among non-HUD blocks, by a
+// 64x64 histogram of 8 px bins and a 17x17 histogram of 0.5 px steps inside
+// the fullest bin.  Also turns this pair's motion votes into G.moving for the
+// next pair's HUD counter.
+#include "lmc_common.glsl"
+layout(local_size_x = 256) in;
+
+shared uint s_h[64 * 64];
+shared uint s_key[8];
+shared uint s_n;
+
+uint wg_max(uint v) {
+    uint m = subgroupMax(v);
+    if (subgroupElect()) s_key[gl_SubgroupID] = m;
+    barrier();
+    uint r = 0u;
+    for (uint k = 0; k < gl_NumSubgroups; ++k) r = max(r, s_key[k]);
+    barrier();
+    return r;
+}
+
+uint wg_add(uint v) {
+    uint m = subgroupAdd(v);
+    if (subgroupElect()) s_key[gl_SubgroupID] = m;
+    barrier();
+    uint r = 0u;
+    for (uint k = 0; k < gl_NumSubgroups; ++k) r += s_key[k];
+    barrier();
+    return r;
+}
+
+vec2 bvec(int i) { return vb[P.blk_off.x + i].xy * 2.0; }
+
+void main() {
+    uint lid = gl_LocalInvocationIndex;
+    int n = P.counts.y;
+    // live flag in scratch[].x (free after the layer fit)
+    uint nl = 0u;
+    for (int i = int(lid); i < n; i += 256) {
+        uint live = vb[P.blk_off.x + i].w > 0.5 ? 0u : 1u;
+        scratch[P.blk_off.x + i].x = float(live);
+        nl += live;
+    }
+    uint total = max(wg_add(nl), 1u);
+    if (lid == 0u) {
+        G.moving = G.moving_votes * 2u > uint(n) ? 1u : 0u;
+        G.pal_count = 0u;
+    }
+    for (int k = 0; k < LMC_PALETTE; ++k) {
+        for (uint j = lid; j < 4096u; j += 256u) s_h[j] = 0u;
+        barrier();
+        for (int i = int(lid); i < n; i += 256) {
+            if (scratch[P.blk_off.x + i].x < 0.5) continue;
+            ivec2 q = clamp(ivec2(floor((bvec(i) + 256.0) / 8.0)), ivec2(0), ivec2(63));
+            atomicAdd(s_h[q.y * 64 + q.x], 1u);
+        }
+        barrier();
+        uint best = 0u;
+        for (uint j = lid; j < 4096u; j += 256u) best = max(best, (s_h[j] << 12) | (4095u - j));
+        best = wg_max(best);
+        uint bcount = best >> 12, bidx = 4095u - (best & 4095u);
+        if (float(bcount) < 0.01 * float(total)) break;  // uniform: every thread has the same value
+        ivec2 bxy = ivec2(int(bidx % 64u), int(bidx / 64u));
+        vec2 origin = vec2(bxy) * 8.0 - 256.0;
+        barrier();
+        for (uint j = lid; j < 289u; j += 256u) s_h[j] = 0u;
+        barrier();
+        for (int i = int(lid); i < n; i += 256) {
+            if (scratch[P.blk_off.x + i].x < 0.5) continue;
+            vec2 v = bvec(i);
+            ivec2 q = clamp(ivec2(floor((v + 256.0) / 8.0)), ivec2(0), ivec2(63));
+            if (q != bxy) continue;
+            ivec2 f = clamp(ivec2(floor((v - origin) / 0.5 + 0.5)), ivec2(0), ivec2(16));
+            atomicAdd(s_h[f.y * 17 + f.x], 1u);
+        }
+        barrier();
+        uint fbest = 0u;
+        for (uint j = lid; j < 289u; j += 256u) fbest = max(fbest, (s_h[j] << 12) | (4095u - j));
+        fbest = wg_max(fbest);
+        uint fidx = 4095u - (fbest & 4095u);
+        vec2 mode = origin + vec2(float(fidx % 17u), float(fidx / 17u)) * 0.5;
+        if (lid == 0u) {
+            G.palette[k] = vec4(mode, 0.0, 0.0);
+            G.pal_count = uint(k + 1);
+        }
+        for (int i = int(lid); i < n; i += 256) {
+            vec2 d = abs(bvec(i) - mode);
+            if (max(d.x, d.y) <= 1.5) scratch[P.blk_off.x + i].x = 0.0;
+        }
+        barrier();
+        memoryBarrierBuffer();
+    }
+}

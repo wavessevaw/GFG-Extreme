@@ -98,7 +98,10 @@ struct te_device {
     VkDeviceSize allocated;    /* bytes of device memory currently allocated by te */
 };
 
+struct te_lmc;
+
 struct te_context {
+    struct te_lmc* lmc;        /* TE_ALGO_LMC: resources of the layered motion path */
     te_device* dev;
     te_context_desc desc;
     uint32_t tx, ty, tiles;
@@ -127,6 +130,10 @@ struct te_context {
     uint64_t submits;          /* submissions so far */
     uint64_t outputs_completed;/* outputs whose GPU work finished */
 };
+
+static VkResult lmc_create(te_context* ctx);
+static void lmc_destroy(te_context* ctx);
+static void lmc_record_init(te_context* ctx, VkCommandBuffer cb);
 
 /* ------------------------------------------------------------------ loader */
 
@@ -234,6 +241,7 @@ void te_params_default(te_params* p) {
     p->adaptive = 1;
     p->force_class = 2;
     p->full_density = TE_DEFAULT_FULL_DENSITY;
+    p->algorithm = TE_ALGO_TILES;
 }
 
 void te_context_desc_default(te_context_desc* d, uint32_t width, uint32_t height, uint32_t outputs) {
@@ -738,6 +746,7 @@ static void record_init(te_context* ctx, VkCommandBuffer cb, void* user) {
         vkCmdFillBuffer(cb, zeroed[i]->buf, 0, VK_WHOLE_SIZE, 0);
     barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
             VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+    if (ctx->lmc) lmc_record_init(ctx, cb);
 }
 
 static VkResult import_timeline(te_context* ctx, int fd) {
@@ -930,6 +939,7 @@ VkResult te_context_create(te_device* dev, const te_context_desc* desc, te_conte
     TRY(vkAllocateDescriptorSets(d, &dsai, ctx->set1));
     write_sets(ctx);
     TRY(create_pipelines(ctx));
+    if (p->algorithm == TE_ALGO_LMC) TRY(lmc_create(ctx));
     for (int s = 0; s < TE_RING; ++s) {
         te_slot* slot = &ctx->ring[s];
         VkCommandBufferAllocateInfo cai = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -971,6 +981,7 @@ void te_context_destroy(te_context* ctx) {
     te_device* dev = ctx->dev;
     VkDevice d = dev->device;
     vkDeviceWaitIdle(d);
+    lmc_destroy(ctx);
     for (int s = 0; s < TE_RING; ++s) {
         te_slot* slot = &ctx->ring[s];
         if (slot->fence) vkDestroyFence(d, slot->fence, NULL);
@@ -1019,6 +1030,8 @@ static void push(te_context* ctx, VkCommandBuffer cb, float t, int level, int fr
 }
 
 static uint32_t groups(uint32_t n, uint32_t g) { return (n + g - 1) / g; }
+
+#include "te_lmc.inc"
 
 static void record_analysis(te_context* ctx, te_slot* slot, const te_submit* s, int generate) {
     VkCommandBuffer cb = slot->analysis;
@@ -1170,6 +1183,17 @@ static void collect(te_context* ctx, te_slot* slot) {
     }
 #undef DELTA
     const uint8_t* rb = slot->readback.map;
+    if (ctx->lmc) {
+        /* LMC: tiles[i] = layer count, orphan blocks (B grid, A grid) */
+        for (uint32_t i = 0; i < slot->outputs; ++i) {
+            const uint32_t* g = (const uint32_t*)(rb + TE_GLOBALS_HEADER * i);
+            for (int c = 0; c < 3; ++c) st->tiles[i][c] = g[c];
+        }
+        st->profiled = 0;
+        ctx->have_last = 1;
+        slot->generated = 0;
+        return;
+    }
     for (uint32_t i = 0; i < slot->outputs; ++i) {
         const uint32_t* g = (const uint32_t*)(rb + TE_GLOBALS_HEADER * i);
         for (int c = 0; c < 3; ++c) st->tiles[i][c] = g[12 + 4 * c];
@@ -1233,13 +1257,15 @@ VkResult te_submit_frame(te_context* ctx, const te_submit* s) {
                                    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     vkResetCommandBuffer(slot->analysis, 0);
     vkBeginCommandBuffer(slot->analysis, &bi);
-    record_analysis(ctx, slot, s, generate);
+    if (ctx->lmc) lmc_record_analysis(ctx, slot, s, generate);
+    else record_analysis(ctx, slot, s, generate);
     CHECK(vkEndCommandBuffer(slot->analysis), "vkEndCommandBuffer(analysis)");
     uint32_t outs = s->count; /* every requested output is produced and signalled */
     for (uint32_t i = 0; i < outs; ++i) {
         vkResetCommandBuffer(slot->out[i], 0);
         vkBeginCommandBuffer(slot->out[i], &bi);
-        record_output(ctx, slot, s, i, !generate);
+        if (ctx->lmc) lmc_record_output(ctx, slot, s, i, !generate);
+        else record_output(ctx, slot, s, i, !generate);
         CHECK(vkEndCommandBuffer(slot->out[i]), "vkEndCommandBuffer(output)");
     }
     VkSubmitInfo si[1 + TE_MAX_OUTPUTS];

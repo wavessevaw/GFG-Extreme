@@ -31,6 +31,7 @@ from methods import register
 MAX_LAYERS = 3     # motion planes: camera/far scene, ground, a wall
 MIN_LAYER_SHARE = 0.10
 PALETTE = 4
+ORPHAN_RESID = 0.15  # half-res 3x3 cost above which a pixel is unexplained
 RANSAC_ITERS = 128
 MARGIN = 0.06      # half-res 3x3 RGB SAD (mean per pixel x 9) other candidates must beat
 TOL_PX = 0.75      # trajectory consistency, half-res pixels (+10 % of |v|)
@@ -73,7 +74,14 @@ def camera_vec(H, px, py, grid, scale):
 
 
 def half_field(ah, bh_, blocks, orph, H, grid, hudh, palette=()):
-    """Per-pixel vectors at 1/2 res (half-res pixel units)."""
+    """Per-pixel vectors at 1/2 res (half-res pixel units).
+
+    Cost of candidate v at pixel p: sum over the 3x3 window q of
+    |own(q) - other(q + sign * v)|, with p's own v for the whole window (the
+    GPU evaluates each candidate once per 8x8 block over an LDS apron).
+    Candidate order: own block, its 8 neighbours, the orphan vectors of those
+    9 blocks, the layers, the palette, zero; others must beat the own block
+    by MARGIN."""
     h, w = ah.shape[:2]
     py, px = grid_coords(h, w)
     bi = np.clip((py // 4).astype(int), 0, blocks.shape[0] - 1)
@@ -90,8 +98,13 @@ def half_field(ah, bh_, blocks, orph, H, grid, hudh, palette=()):
     best_v = np.zeros((h, w, 2), np.float32)
     for k, v in enumerate(cands):
         ox, oy = px + sign * v[..., 0], py + sign * v[..., 1]
-        d = np.abs(own - L.bilinear(oth, ox, oy)).sum(-1)
-        c = uniform_filter(d, 3, mode="nearest") + (0.0 if k == 0 else MARGIN)
+        c = np.zeros((h, w), np.float32)
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                qy = np.clip(py + dy, 0, h - 1).astype(int)
+                qx = np.clip(px + dx, 0, w - 1).astype(int)
+                c += np.abs(own[qy, qx] - L.bilinear(oth, ox + dx, oy + dy)).sum(-1)
+        c = c / 9.0 + (0.0 if k == 0 else MARGIN)
         c = np.where(L.inside(ox, oy, w, h), c, np.inf)
         better = c < best_c
         best_c = np.where(better, c, best_c)
@@ -100,45 +113,122 @@ def half_field(ah, bh_, blocks, orph, H, grid, hudh, palette=()):
     return best_v, best_c
 
 
+def pcg(state):
+    """PCG32 step (same constants as the GLSL hash): returns (new state, value)."""
+    state = (state * 747796405 + 2891336453) & 0xFFFFFFFF
+    word = (((state >> ((state >> 28) + 4)) ^ state) * 277803737) & 0xFFFFFFFF
+    return state, ((word >> 22) ^ word) & 0xFFFFFFFF
+
+
+def fit_h_ls(src, dst, w):
+    """Homography with h33 = 1 by weighted normal equations on Hartley-normalised
+    points: an 8x8 solve the GPU does in one workgroup (float32)."""
+    def norm(p, wt):
+        c = (p * wt[:, None]).sum(0) / max(wt.sum(), 1e-9)
+        d = (np.linalg.norm(p - c, axis=1) * wt).sum() / max(wt.sum(), 1e-9)
+        sc = np.sqrt(2) / max(d, 1e-6)
+        return (p - c) * sc, np.array([[sc, 0, -sc * c[0]], [0, sc, -sc * c[1]], [0, 0, 1]])
+    ps, Ts = norm(src, w)
+    pd, Td = norm(dst, w)
+    x, y, u, v = ps[:, 0], ps[:, 1], pd[:, 0], pd[:, 1]
+    z, o = np.zeros_like(x), np.ones_like(x)
+    A = np.concatenate([np.stack([x, y, o, z, z, z, -u * x, -u * y], 1),
+                        np.stack([z, z, z, x, y, o, -v * x, -v * y], 1)])
+    rhs = np.concatenate([u, v])
+    ww = np.concatenate([w, w])
+    M = (A * ww[:, None]).T @ A + 1e-9 * np.eye(8)
+    h = np.linalg.solve(M, (A * ww[:, None]).T @ rhs)
+    H = np.append(h, 1.0).reshape(3, 3)
+    H = np.linalg.inv(Td) @ H @ Ts
+    return H / H[2, 2]
+
+
+def irls_h(xs, ys, vx, vy, w0, iters=6):
+    """Tukey IRLS with fit_h_ls (GPU form of gen_lmc.robust_camera)."""
+    src = np.stack([xs, ys], 1)
+    dst = src + np.stack([vx, vy], 1)
+    w = w0.astype(np.float64).copy()
+    if (w > 0).sum() < 8:
+        return None
+    H = None
+    for _ in range(iters):
+        H = fit_h_ls(src, dst, w)
+        px, py = L.apply_h(H, xs, ys)
+        r = np.hypot(px - dst[:, 0], py - dst[:, 1])
+        c = max(2.0, 2.5 * hist_median(r[w0 > 0]))
+        w = w0 * np.where(r < c, (1 - (r / c) ** 2) ** 2, 0.0)
+    return H
+
+
+def hist_median(r):
+    """Median by a 256-bin histogram of 0.25 px (GPU form: one LDS histogram);
+    returns the centre of the bin holding the middle element."""
+    if r.size == 0:
+        return 0.0
+    b = np.clip((r / 0.25).astype(np.int64), 0, 255)
+    cum = np.cumsum(np.bincount(b, minlength=256))
+    k = int(np.searchsorted(cum, (r.size + 1) // 2))
+    return (k + 0.5) * 0.25
+
+
 def motion_palette(vb, w0, k=PALETTE):
-    """The k most frequent block vectors (1 px bins, near-duplicates merged).
-    Background motion is always among them, so a pixel next to an object
-    still has the right candidate when all of its neighbouring blocks took
-    the object's motion (the halo around a still object on a moving scene)."""
-    q = np.round(vb.reshape(-1, 2)).astype(np.int32)
-    q = q[w0.ravel() > 0]
-    if q.size == 0:
-        return []
-    keys, counts = np.unique(q[:, 0] * 4096 + q[:, 1], return_counts=True)
-    order = np.argsort(-counts)
+    """The k most frequent block vectors.  Background motion is always among
+    them, so a pixel next to an object still has the right candidate when all
+    of its neighbouring blocks took the object's motion (the halo around a
+    still object on a moving scene).
+
+    GPU form: a 64x64 histogram of 8 px bins (LDS), the fullest bin, then a
+    17x17 histogram of 0.5 px steps inside it; found blocks are removed and the
+    next mode is searched.  Modes under 1 % of the blocks are ignored."""
+    v = vb.reshape(-1, 2)
+    live = w0.ravel() > 0
+    n = max(int(live.sum()), 1)
     out = []
-    for i in order:
-        v = np.array([(keys[i] + 2048) // 4096, (keys[i] + 2048) % 4096 - 2048], np.float32)
-        if counts[i] < 0.01 * q.shape[0]:
+    for _ in range(k):
+        q = np.clip(np.floor((v + 256.0) / 8.0).astype(int), 0, 63)
+        hist = np.zeros(64 * 64, np.int64)
+        np.add.at(hist, q[live, 1] * 64 + q[live, 0], 1)
+        b = int(np.argmax(hist))
+        if hist[b] < 0.01 * n:
             break
-        if all(np.abs(v - o).max() > 1.5 for o in out):
-            out.append(v)
-        if len(out) == k:
-            break
+        bx, by = b % 64, b // 64
+        inb = live & (q[:, 0] == bx) & (q[:, 1] == by)
+        f = np.clip(np.floor((v - (np.array([bx, by]) * 8.0 - 256.0)) / 0.5 + 0.5).astype(int), 0, 16)
+        fh = np.zeros(17 * 17, np.int64)
+        np.add.at(fh, f[inb, 1] * 17 + f[inb, 0], 1)
+        fb = int(np.argmax(fh))
+        mode = np.array([bx * 8.0 - 256.0 + (fb % 17) * 0.5, by * 8.0 - 256.0 + (fb // 17) * 0.5], np.float32)
+        out.append(mode)
+        live = live & (np.abs(v - mode).max(-1) > 1.5)
     return out
 
 
-def ransac_plane(xs, ys, vx, vy, w0, rng, iters=RANSAC_ITERS):
-    """Best homography by inlier count from 4-block samples, then a weighted
-    refit on its inliers.  Multi-plane scenes need this: an IRLS fit over all
-    blocks settles on a compromise that fits no plane."""
+def ransac_plane(xs, ys, vx, vy, w0, seed, iters=RANSAC_ITERS, seeds=()):
+    """Best homography by inlier count from 4-block samples (PCG32 sampling,
+    hypotheses spread at least 120 px apart), then IRLS on its inliers.
+    Multi-plane scenes need this: an IRLS fit over all blocks settles on a
+    compromise that fits no plane."""
     idx = np.nonzero(w0 > 0)[0]
     if idx.size < 12:
         return None, None
     dx, dy = xs + vx, ys + vy
     tol = 1.5 + 0.03 * np.hypot(vx, vy)
-    best_n, best_in = 0, None
-    for _ in range(iters):
-        s = rng.choice(idx, 4, replace=False)
+    hyps = list(seeds)
+    for it in range(iters):
+        st = (seed * 9781 + it * 6271 + 1) & 0xFFFFFFFF
+        pick = []
+        for _ in range(4):
+            st, r = pcg(st)
+            pick.append(idx[r % idx.size])
+        p = np.stack([xs[pick], ys[pick]], 1)
+        if np.min([np.hypot(*(p[i] - p[j])) for i in range(4) for j in range(i + 1, 4)]) < 120:
+            continue  # clustered samples give a homography that fits nothing else
         try:
-            H = L.fit_homography(np.stack([xs[s], ys[s]], 1), np.stack([dx[s], dy[s]], 1), np.ones(4))
+            hyps.append(fit_h_ls(p, np.stack([dx[pick], dy[pick]], 1), np.ones(4)))
         except np.linalg.LinAlgError:
             continue
+    best_n, best_in = 0, None
+    for H in hyps:
         if not np.all(np.isfinite(H)):
             continue
         px, py = L.apply_h(H, xs[idx], ys[idx])
@@ -148,14 +238,17 @@ def ransac_plane(xs, ys, vx, vy, w0, rng, iters=RANSAC_ITERS):
             best_n, best_in = n, idx[inl]
     if best_in is None or best_in.size < 8:
         return None, None
-    H = L.fit_homography(np.stack([xs[best_in], ys[best_in]], 1), np.stack([dx[best_in], dy[best_in]], 1),
-                         np.ones(best_in.size))
+    wref = np.zeros_like(w0)
+    wref[best_in] = 1.0
+    H = irls_h(xs, ys, vx, vy, wref)
+    if H is None or not np.all(np.isfinite(H)):
+        return None, None
     px, py = L.apply_h(H, xs, ys)
     explained = (np.hypot(px - dx, py - dy) < tol) & (w0 > 0)
     return H, explained
 
 
-def fit_layers(vb, cb, hud, yb, rng):
+def fit_layers(vb, cb, hud, yb, seed, prev=()):
     """Sequential planes: the largest first (camera rotation / far scene or the
     ground), then the next largest among the remaining blocks.  A homography
     is exact for a planar surface whatever the camera does."""
@@ -170,7 +263,7 @@ def fit_layers(vb, cb, hud, yb, rng):
     total = max(w0.sum(), 1.0)
     layers, shares = [], []
     for _ in range(MAX_LAYERS):
-        H, explained = ransac_plane(xs, ys, vx, vy, w0, rng)
+        H, explained = ransac_plane(xs, ys, vx, vy, w0, seed * 4 + len(layers), seeds=prev)
         if H is None:
             break
         share = float(explained.sum() / total)
@@ -191,7 +284,7 @@ class LMC2:
         self.temporal = None
         self.H = None
         self.layers = []
-        self.rng = np.random.default_rng(1)
+        self.pairs = 0
         self.palette = []
         self.debug = {}
 
@@ -207,15 +300,15 @@ class LMC2:
             return []
         a, pyr_a, ah = prev
         still_now = np.abs(b - a).max(-1) < L.STILL
-        moving = self.H is not None and np.hypot(*(np.array(L.apply_h(self.H, self.w / 2, self.h / 2))
-                                                   - np.array([self.w / 2, self.h / 2]))) > 1.0
+        moving = self.temporal is not None and float(np.median(np.abs(self.temporal).max(-1))) > 1.0
         self.still = np.where(still_now, self.still + (1 if moving else 0), 0)
         hud = self.still >= L.HUD_PAIRS
         hudh = half(hud.astype(np.float32)) > 0.5
         # one search per grid; the camera candidate is the previous pair's fit
         vb, cb = L.estimate(pyr_a, pyr_b, "b", self.layers or None, self.temporal)
         va, ca = L.estimate(pyr_a, pyr_b, "a", self.layers or None, vb)
-        layers, shares = fit_layers(vb, cb, hud, yb, self.rng)
+        self.pairs += 1
+        layers, shares = fit_layers(vb, cb, hud, yb, self.pairs, self.layers)
         bhb, bwb = vb.shape[:2]
         hudb = hud[: bhb * 8, : bwb * 8].reshape(bhb, 8, bwb, 8).mean(axis=(1, 3)) > 0.2
         pal = motion_palette(vb, (~hudb).astype(np.float32))
@@ -227,8 +320,8 @@ class LMC2:
         # orphans need per-pixel residuals: a first per-pixel pass without them
         pvb, pcb = half_field(ah, bh_, vb, None, H, "b", hudh, pal)
         pva, pca = half_field(ah, bh_, va, None, H, "a", hudh, pal)
-        rb = np.repeat(np.repeat(pcb > L.RESID * 0.5, 2, 0), 2, 1)[: self.h, : self.w] & ~hud
-        ra = np.repeat(np.repeat(pca > L.RESID * 0.5, 2, 0), 2, 1)[: self.h, : self.w] & ~hud
+        rb = np.repeat(np.repeat(pcb > ORPHAN_RESID, 2, 0), 2, 1)[: self.h, : self.w] & ~hud
+        ra = np.repeat(np.repeat(pca > ORPHAN_RESID, 2, 0), 2, 1)[: self.h, : self.w] & ~hud
         ob = L.orphan_search(pyr_b[0], rb.astype(np.float32), pyr_a[0], ra.astype(np.float32), -1.0, vb)
         oa = L.orphan_search(pyr_a[0], ra.astype(np.float32), pyr_b[0], rb.astype(np.float32), 1.0, va)
         if ob[1].any():
