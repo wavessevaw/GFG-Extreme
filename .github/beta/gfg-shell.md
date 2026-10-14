@@ -1,6 +1,8 @@
-# GFG Extreme 2.1.2-shell.3 — GFG Shell beta (pre-release)
+# GFG Extreme 2.1.2-shell.4 — GFG Shell beta (pre-release)
 
 **Experimental build for hardware trials. Not verified on a Steam Deck.** Everything else is GFG Extreme 2.1.1.
+
+**Fixed in shell.4 (GFG Shell 0.2.1):** not every installed game was listed. Tools are now recognised by name only (a guessed list of tool ids could hide real games), and a game on disk counts as installed even while Steam has its "fully installed" flag cleared for an update. **Настройки → Хранилище** shows how many games each Steam library contributed, and the diagnostics zip lists every game found.
 
 **New in shell.3 (GFG Shell 0.2.0) — redesigned to the GFG/SteamOS concept sheets:**
 - **A selects and B goes back** (Godot leaves both unbound for gamepads; now bound).

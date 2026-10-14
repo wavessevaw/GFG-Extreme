@@ -127,6 +127,12 @@ func test_library() -> void:
 	check(by["Sky Courier"].last_played > by["Neon Drift"].last_played, "manifest LastPlayed kept when localconfig lacks it")
 	check(by["Hollow Lantern"].update_pending and by["Hollow Lantern"].bytes_downloaded == 5300000000, "update progress from manifest")
 	check(not by["Neon Drift"].update_pending, "no update pending")
+	eq(lib.scan.size(), 2, "scan report per library")
+	eq(lib.scan[0].tools + lib.scan[1].tools, 1, "one tool skipped (Proton)")
+	eq(lib.scan[0].bad + lib.scan[1].bad, 1, "one broken manifest reported")
+	eq(lib.scan[0].games + lib.scan[1].games, 8, "8 Steam games counted")
+	check(not SteamLibrary.is_tool(1245040, "Some Game"), "unknown ids are not filtered as tools")
+	check(SteamLibrary.is_tool(2805730, "Proton 9.0"), "tools recognised by name")
 	eq(SteamLibrary.new().load_library(fixture + "/nope"), [], "missing root yields empty library")
 
 

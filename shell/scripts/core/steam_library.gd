@@ -13,13 +13,17 @@ extends RefCounted
 const STEAMID64_BASE := 76561197960265728
 
 ## Runtime/tool depots that show up as installed apps but are not games.
-const TOOL_APPIDS := [228980, 1070560, 1391110, 1628350, 1493710, 2180100, 1826330, 2348590, 2805730, 1887720, 961940, 1054830, 1113280, 1245040, 1420170, 1580130, 2230260, 3658110]
+## Only ids that are certainly not games (Steamworks redistributables, Steam Linux
+## Runtimes, Proton Experimental); every other tool is recognised by its name.
+const TOOL_APPIDS := [228980, 1070560, 1391110, 1628350, 1493710]
 const TOOL_NAME_PREFIXES := ["Proton", "Steam Linux Runtime", "Steamworks Common", "SteamVR", "Steam Audio"]
 
 var steam_root: String = ""
 var account_id: String = ""
 var games: Array = []          # Array[Dictionary], see _game()
 var errors: PackedStringArray = PackedStringArray()
+## Per library: {path, exists, manifests, games, tools, bad, duplicates} (diagnostics + Settings)
+var scan: Array = []
 
 
 static func find_steam_root(home: String = "") -> String:
@@ -47,6 +51,7 @@ func load_library(root: String = "") -> Array:
 	steam_root = root if root != "" else find_steam_root()
 	games.clear()
 	errors.clear()
+	scan.clear()
 	if steam_root == "":
 		errors.append("steam-root-not-found")
 		return games
@@ -55,11 +60,16 @@ func load_library(root: String = "") -> Array:
 	var favorites := _read_steam_favorites()
 	var seen := {}
 	for lib in library_paths(steam_root):
-		for g in _read_manifests(lib):
+		var report := {"path": lib, "exists": DirAccess.dir_exists_absolute(lib + "/steamapps"),
+			"manifests": 0, "games": 0, "tools": 0, "bad": 0, "duplicates": 0}
+		for g in _read_manifests(lib, report):
 			if seen.has(g.id):
+				report.duplicates += 1
 				continue
 			seen[g.id] = true
+			report.games += 1
 			games.append(g)
+		scan.append(report)
 	for g in _read_shortcuts():
 		games.append(g)
 	for g in games:
@@ -168,9 +178,13 @@ static func parse_manifest(text: String, library: String) -> Dictionary:
 	g.state_flags = int(str(Vdf.get_ci(st, "StateFlags", "0")))
 	# StateFlags bit 2 (value 4) = "fully installed"; updates/downloads set other bits on top.
 	g.installed = (g.state_flags & 4) != 0
+	var installdir := str(Vdf.get_ci(st, "installdir", ""))
 	g.size_bytes = int(str(Vdf.get_ci(st, "SizeOnDisk", "0")))
 	g.library = library
-	g.install_dir = library + "/steamapps/common/" + str(Vdf.get_ci(st, "installdir", ""))
+	g.install_dir = library + "/steamapps/common/" + installdir
+	# an update or validation can clear the "fully installed" bit while the game is on disk
+	if not g.installed and installdir != "" and int(g.size_bytes) > 0 and DirAccess.dir_exists_absolute(g.install_dir):
+		g.installed = true
 	g.last_played = int(str(Vdf.get_ci(st, "LastPlayed", "0")))
 	g.launch_id = str(appid)
 	# Download / update progress as Steam records it (Загрузки screen).
@@ -182,7 +196,7 @@ static func parse_manifest(text: String, library: String) -> Dictionary:
 	return g
 
 
-func _read_manifests(library: String) -> Array:
+func _read_manifests(library: String, report: Dictionary = {}) -> Array:
 	var out := []
 	var dir := DirAccess.open(library + "/steamapps")
 	if dir == null:
@@ -190,11 +204,14 @@ func _read_manifests(library: String) -> Array:
 	for f in dir.get_files():
 		if not (f.begins_with("appmanifest_") and f.ends_with(".acf")):
 			continue
+		report["manifests"] = int(report.get("manifests", 0)) + 1
 		var g := parse_manifest(read_text(library + "/steamapps/" + f), library)
 		if g.is_empty():
 			errors.append("bad-manifest:" + f)
+			report["bad"] = int(report.get("bad", 0)) + 1
 			continue
 		if is_tool(g.appid, g.name):
+			report["tools"] = int(report.get("tools", 0)) + 1
 			continue
 		out.append(g)
 	return out

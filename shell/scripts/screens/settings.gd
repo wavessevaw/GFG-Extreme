@@ -176,6 +176,18 @@ func _sec_storage() -> void:
 		_info(c, "storage", name, "%s · занято %d%%" % [UI.fmt_size(st.total), int(used * 100)], "свободно " + UI.fmt_size(st.free))
 	if seen.is_empty():
 		_info(c, "storage", "Хранилище", "Steam не найден", "—")
+	var lc := _card()
+	for r in Shell.library.scan:
+		var title: String = "Библиотека Steam" if r.path == Shell.library.steam_root else r.path.get_file()
+		var sub: String = r.path + ("" if r.exists else " · не найдена")
+		var val: String = "%d игр" % r.games
+		if r.tools or r.bad:
+			val += " (+%d служ., %d ошиб.)" % [r.tools, r.bad]
+		_info(lc, "library", title, sub, val)
+	_info(lc, "refresh", "Обновить библиотеку", "Перечитать файлы Steam", "Обновить", func():
+		Shell.reload_library()
+		_show("storage")
+		app.toast("Библиотека: %d игр" % Shell.games.size()))
 	_info(_card(), "download", "Загрузки", "Обновления и очередь", "Открыть", func(): app.push("downloads"))
 
 
