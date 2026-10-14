@@ -28,10 +28,46 @@ var _env_floor := 0               # only processes newer than the launch have th
 var resolve_game: Callable = func(_id): return {}
 
 
+## Launch ids of the shell itself: Steam starts GFG Shell as a non-Steam game, so its
+## own process tree carries a SteamLaunch marker and SteamGameId. Never a "game".
+var self_ids: Array = []
+
+
 func _ready() -> void:
 	var r := OS.get_environment("GFG_SHELL_PROC_ROOT")
 	if r != "":
 		_proc_root = r
+	self_ids = own_launch_ids(_proc_root)
+	if not self_ids.is_empty():
+		Log.info("runner", "shell runs under Steam as %s (ignored as a game)" % str(self_ids))
+
+
+## SteamGameId/SteamAppId of this process and the AppId of every SteamLaunch ancestor.
+static func own_launch_ids(proc_root: String = "/proc") -> Array:
+	var ids := []
+	for k in ["SteamGameId", "SteamAppId", "SteamOverlayGameId"]:
+		var v := OS.get_environment(k)
+		if v != "" and v != "0" and not ids.has(v):
+			ids.append(v)
+	var pid := OS.get_process_id()
+	for _i in 32:
+		if pid <= 1:
+			break
+		var f := FileAccess.open("%s/%d/cmdline" % [proc_root, pid], FileAccess.READ)
+		if f != null:
+			var v2 := parse_steamlaunch_value(f.get_buffer(8192))
+			if v2 != "" and not ids.has(v2):
+				ids.append(v2)
+		var st := FileAccess.open("%s/%d/stat" % [proc_root, pid], FileAccess.READ)
+		if st == null:
+			break
+		var line := st.get_buffer(1024).get_string_from_utf8()
+		var close_paren := line.rfind(")")
+		var fields := line.substr(close_paren + 2).split(" ", false)
+		if fields.size() < 2 or not fields[1].is_valid_int():
+			break
+		pid = int(fields[1])
+	return ids
 
 
 static func steam_command() -> String:
@@ -107,7 +143,7 @@ func poll() -> void:
 			# A game started outside the shell (Steam UI, another launcher) is still tracked.
 			var other := ""
 			for p in procs:
-				if p.launch != "":
+				if p.launch != "" and not self_ids.has(p.launch):
 					other = p.launch
 					break
 			if other != "":
@@ -138,8 +174,8 @@ static func game_ids(g: Dictionary) -> Array:
 	return ids
 
 
-static func _matches(procs: Array, g: Dictionary) -> bool:
-	var ids := game_ids(g)
+func _matches(procs: Array, g: Dictionary) -> bool:
+	var ids := game_ids(g).filter(func(i): return not self_ids.has(i))
 	if ids.is_empty():
 		return false
 	for p in procs:

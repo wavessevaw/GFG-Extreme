@@ -1,6 +1,8 @@
-# GFG Extreme 2.1.2-shell.5 — GFG Shell beta (pre-release)
+# GFG Extreme 2.1.2-shell.6 — GFG Shell beta (pre-release)
 
 **Experimental build for hardware trials. Not verified on a Steam Deck.** Everything else is GFG Extreme 2.1.1.
+
+**Fixed in shell.6 (GFG Shell 0.2.3):** opening a game showed "Игра запущена" before anything was started — the shell took its own Steam launch marker (Steam runs it as a non-Steam game) for a running game. Its own ids are now ignored, and the launch screen appears only for games started from the shell.
 
 **Fixed in shell.5 (GFG Shell 0.2.2):** after quitting a non-Steam game the shell could hang on "Запуск через Steam…". The game is now recognised by any of its ids (Steam AppId, the 32-bit shortcut id, the 64-bit game id) in Steam's launch marker or in the game's `SteamGameId`; and if the game window took the screen and the shell gets it back, the launch screen closes on its own. B also stops waiting.
 

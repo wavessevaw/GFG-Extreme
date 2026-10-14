@@ -235,6 +235,19 @@ func test_shortcut_detection() -> void:
 		OS.execute("rm", ["-rf", proc])
 	OS.set_environment("GFG_SHELL_STEAM_CMD", "")
 	eq(GameRunner.env_value(_cmd(["A=1", "SteamGameId=42", "B=2"]), "SteamGameId"), "42", "env value")
+	# the shell's own Steam marker is never taken for a game
+	var proc2 := OS.get_cache_dir() + "/gfg-shell-test-self-%d" % OS.get_process_id()
+	_proc(proc2, "77", ["reaper", "SteamLaunch", "AppId=3000000001", "--", "gfg-shell.sh"])
+	var r2 := GameRunner.new()
+	r2._proc_root = proc2
+	r2.self_ids = ["3000000001"]
+	r2.poll()
+	eq(r2.state, "idle", "own SteamLaunch marker ignored")
+	r2.self_ids = []
+	r2.poll()
+	eq(r2.state, "running", "an outside game is still tracked")
+	r2.free()
+	OS.execute("rm", ["-rf", proc2])
 	eq(GameRunner.parse_steamlaunch_value(_cmd(["reaper", "SteamLaunch", "AppId=10627985823405965312", "--"])), "10627985823405965312", "64-bit AppId kept as text")
 
 

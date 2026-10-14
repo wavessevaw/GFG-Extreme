@@ -297,14 +297,19 @@ func quit_shell() -> void:
 
 func _on_game_state(state: String, g: Dictionary) -> void:
 	Log.info("app", "game state %s: %s" % [state, g.get("name", "?")])
+	# Only launches started from the shell show the launch screen; a game started
+	# from Steam's own UI is tracked silently.
+	var ours: bool = _launch.visible
 	match state:
 		"running":
-			_launch.running(g)
+			if ours:
+				_launch.running(g)
 		"exited":
-			_launch.close()
-			if current_page() != "game":
-				open_game(Shell.library_game_by_appid(int(g.get("appid", 0))))
-			toast("С возвращением в GFG Shell")
+			if ours:
+				_launch.close()
+				if current_page() != "game":
+					open_game(Shell.library_game_by_appid(int(g.get("appid", 0))))
+				toast("С возвращением в GFG Shell")
 		"idle":
 			if _launch.visible and _launch.phase != "failed":
 				_launch.close()
