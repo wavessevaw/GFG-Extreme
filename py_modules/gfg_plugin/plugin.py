@@ -852,6 +852,10 @@ class Plugin:
         """Opt-in Fusion Core; the generated launcher reads it at the next start."""
         return await asyncio.to_thread(self.governor_service.set_frame_fusion, enabled)
 
+    async def set_governor_temporal_engine(self, mode: str = "off", consent: bool = False) -> Dict[str, Any]:
+        """Experimental GFG Temporal Engine launch mode (off/observe/shadow/experimental)."""
+        return await asyncio.to_thread(self.governor_service.set_temporal_engine, mode, consent)
+
     async def set_governor_power_split(self, enabled: bool = True) -> Dict[str, Any]:
         """Smart power split: CPU clock cap in GPU-bound games (persisted; on by default)."""
         return await asyncio.to_thread(self.governor_service.set_power_split, bool(enabled))

@@ -20,6 +20,7 @@ const rpc = {
   setFrameOsActUnlock: safeCallable("set_governor_frame_os_act_unlock"),
   setFrameOsAb: safeCallable("set_governor_frame_os_ab"),
   setFrameFusion: safeCallable("set_governor_frame_fusion"),
+  setTemporalEngine: safeCallable("set_governor_temporal_engine"),
   setFrameOsFeature: safeCallable("set_governor_frame_os_feature"),
   setPowerSplit: safeCallable("set_governor_power_split"),
   setMode: safeCallable("set_governor_mode"),
@@ -1021,6 +1022,7 @@ function AdvancedPage({ back, s, insp, launch, go, profile }) {
     h(ForgetModel, { profile }),
     h(FrameOsPanel, { s, profile }),
     s && s.mode === "autopilot" ? h(FrameFusionPanel, { s }) : null,
+    h(TemporalEnginePanel, { s }),
     h("div", { className: "sec" }, "INSPECTOR"),
     h("div", { className: "cols" }, col("SAVED", sv), col("EFFECTIVE", ef), col("GOVERNOR", s && s.active_point ? { point: POINT_LABEL(s.active_point) } : {}, true), col("ACTUAL", ac)));
 }
@@ -1087,6 +1089,50 @@ function FrameFusionPanel({ s, refresh }) {
       sub: "Optimizes compatible native and scaled frames in Autopilot. Start the game with the updated engine.", onChange: change })),
     error ? h(Note, null, error) : null,
     fusion.state && fusion.state !== "off" ? h(Note, { quiet: true }, messages[fusion.state] || "Waiting for native evidence.") : null);
+}
+
+// GFG Temporal Engine (experimental): off by default; experimental replaces regular frame generation
+// only after an explicit confirmation. Applies from the next game start.
+const TE_STATE = {
+  "off": "Off. Regular frame generation is used.",
+  "waiting-for-game": "Applies from the next game start.",
+  "observing": "Observing: checks whether this game could use the engine. No extra GPU work.",
+  "shadow-measuring": "Measuring in the background. Regular frame generation still produces the frames.",
+  "generating": "The Temporal Engine produces the generated frames.",
+  "fallback": "Not used in this game; regular frame generation kept the work.",
+};
+function TemporalEnginePanel({ s }) {
+  const te = (s && s.temporal_engine) || {};
+  const [mode, setMode] = useState(te.requested_mode || "off");
+  const [confirm, setConfirm] = useState(false);
+  const [msg, setMsg] = useState("");
+  useEffect(() => { if (te.requested_mode) setMode(te.requested_mode); }, [te.requested_mode]);
+  const save = async (next, consent) => {
+    setMsg("");
+    try {
+      const r = await rpc.setTemporalEngine(next, !!consent);
+      if (r && r.success) { setMode(r.mode); setConfirm(false); setMsg("Restart the game to apply."); }
+      else setMsg((r && r.error) === "consent-required" ? "Confirm Experimental first." : "Could not save: " + ((r && r.error) || "unknown error"));
+    } catch (e) { setMsg("Could not save."); }
+  };
+  const pick = (v) => { if (v === "experimental") { setConfirm(true); return; } save(v, false); };
+  const sh = te.shares || {}, g = te.gpu_ms || {};
+  const pct = (v) => (v == null ? "–" : Math.round(v * 100) + "%");
+  return h("div", null,
+    h("div", { className: "sec" }, "TEMPORAL ENGINE · EXPERIMENTAL"),
+    h(Seg, { value: confirm ? "experimental" : mode, options: [["off", "Off"], ["observe", "Observe"], ["shadow", "Shadow"], ["experimental", "Experimental"]], onChange: pick }),
+    confirm ? h("div", { className: "list" },
+      h(Note, null, "Experimental replaces regular frame generation in compatible games with an unverified engine. Image quality and frame pacing may differ. Shadow measures without changing frames."),
+      h(Row, { icon: "cog", title: "Use Experimental", sub: "Applies from the next game start", onClick: () => save("experimental", true) }),
+      h(Row, { icon: "stop", title: "Cancel", onClick: () => setConfirm(false) })) : null,
+    h(Note, { quiet: true }, TE_STATE[te.state] || "Waiting for the engine."),
+    te.state === "fallback" && te.fallback_reasons && te.fallback_reasons.length ? h(Note, { quiet: true }, "Reason: " + te.fallback_reasons.join(", ")) : null,
+    te.state === "shadow-measuring" || te.state === "generating" ? h("div", { className: "kv" },
+      h("span", null, "Tiles reuse / light / full"), h("b", null, pct(sh.reuse) + " / " + pct(sh.light) + " / " + pct(sh.full)),
+      h("span", null, "GPU per frame pair"), h("b", null, g.pair_p50 != null ? num(g.pair_p50, 2) + " ms (p95 " + num(g.pair_p95, 2) + ")" : "–"),
+      h("span", null, "Dispatched / GPU-completed"), h("b", null, (te.outputs_dispatched || 0) + " / " + (te.outputs_gpu_completed || 0)),
+      h("span", null, "Dropped pairs"), h("b", null, String(te.dropped || 0))) : null,
+    msg ? h(Note, { quiet: true }, msg) : null);
 }
 
 function FrameOsPanel({ s, profile }) {

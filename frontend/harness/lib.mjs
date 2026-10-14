@@ -99,6 +99,8 @@ export const STATES = {
   "home-effort-reason": { ...base, enabled: true, state: "LOCKED", mode: "quality", device: dev("oled", 90), target_output_fps: 90, telemetry: tel(30, 90, 3), active_point: { multiplier: 3, render_scale_pct: 100 }, effort: { level: "hard", reason: "x3 required" } },
   "frame-os-refused": { ...base, device: dev("oled", 90), target_output_fps: 90, frame_os: { mode: "off" }, __frameOsFail: true },
   "fusion-prepared": { ...base, mode: "autopilot", frame_fusion: { enabled: true, state: "prepared", path_observed: false } },
+  "temporal-shadow": { ...base, temporal_engine: { requested_mode: "shadow", state: "shadow-measuring", applied: true, shares: { reuse: 0.3, light: 0.3, full: 0.4 }, gpu_ms: { pair_p50: 2.4, pair_p95: 3.1 }, outputs_dispatched: 200, outputs_gpu_completed: 198, dropped: 4 } },
+  "temporal-fallback": { ...base, temporal_engine: { requested_mode: "experimental", state: "fallback", applied: false, fallback_reasons: ["no-external-semaphore-fd"] } },
   "fusion-observed": { ...base, mode: "autopilot", frame_fusion: { enabled: true, state: "observed", path_observed: true, gain_measured: false } },
   "fusion-restart": { ...base, mode: "autopilot", frame_fusion: { enabled: false, state: "restart-required", path_observed: true } },
   "fusion-unsupported": { ...base, mode: "autopilot", frame_fusion: { enabled: true, state: "renderer-unsupported", path_observed: false } },
@@ -148,6 +150,7 @@ var callable = (n) => async (...a) => ({ get_governor_status: () => window.__sta
     return { success: true, features };
   },
   set_governor_frame_os_ab: (enabled) => { (window.__abSets = window.__abSets || []).push(enabled); return { success: true, ab: !!enabled }; },
+  set_governor_temporal_engine: (mode, consent) => { (window.__teSets = window.__teSets || []).push([mode, consent]); return mode === "experimental" && !consent ? { success: false, error: "consent-required" } : { success: true, mode, relaunch_required: true }; },
   set_governor_frame_fusion: (enabled) => { (window.__fusionSets = window.__fusionSets || []).push(enabled); return window.__state.__fusionFail ? { success: false, error: "Could not save Frame Fusion" } : { success: true, enabled }; },
   set_governor_frame_os_act_unlock: (enabled) => { (window.__actUnlocks = window.__actUnlocks || []).push(enabled); return { success: true, act_unlocked: !!enabled }; },
   set_governor_frame_os: (p, m) => (window.__state.__frameOsFail ? { success: false, error: "marker: read-only" } : { success: true, mode: m }),

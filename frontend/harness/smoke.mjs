@@ -2,6 +2,8 @@
 import { launch, openPage, STATES } from "./lib.mjs";
 const cases = [
   ["fusion-prepared", ["Settings", "Diagnostics"], ["FRAME FUSION", "Waiting for a compatible frame"]],
+  ["temporal-shadow", ["Settings", "Diagnostics"], ["TEMPORAL ENGINE · EXPERIMENTAL", "Measuring in the background", "30% / 30% / 40%", "200 / 198"]],
+  ["temporal-fallback", ["Settings", "Diagnostics"], ["regular frame generation kept the work", "no-external-semaphore-fd"]],
   ["fusion-observed", ["Settings", "Diagnostics"], ["direct processing path has been used", "Power benefit is not measured yet"]],
   ["fusion-restart", ["Settings", "Diagnostics"], ["Restart the game to apply your choice"]],
   ["fusion-unsupported", ["Settings", "Diagnostics"], ["current engine has no Fusion support", "native 64-bit games only"]],

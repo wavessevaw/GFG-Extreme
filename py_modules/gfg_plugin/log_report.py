@@ -206,8 +206,23 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
         a.get("kind") == "set_governor_frame_fusion" and isinstance(a.get("args"), dict)
         and a["args"].get("enabled") is True
         for a in actions)
+    report["temporal_engine"] = temporal_engine_summary(samples)
     report["findings"] = findings(report, names)
     return report
+
+
+def temporal_engine_summary(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Experimental engine across the recording. GPU times are the engine's own
+    timestamp queries; presentation is not observable there and stays unknown."""
+    rows = [r["temporal_engine"] for r in samples if isinstance(r.get("temporal_engine"), dict)]
+    active = [r for r in rows if r.get("state") in ("generating", "shadow-measuring")]
+    last = active[-1] if active else (rows[-1] if rows else None)
+    reasons = sorted({x for r in rows for x in (r.get("fallback_reasons") or []) if isinstance(x, str)})
+    return {"available": bool(rows), "samples": len(rows),
+            "requested_modes": dict(Counter(str(r.get("requested_mode", "off")) for r in rows)),
+            "states": dict(Counter(str(r.get("state", "unknown")) for r in rows)),
+            "active_samples": len(active), "fallback_reasons": reasons[:8],
+            "last_active": last, "presented": None, "verified_on_hardware": False}
 
 
 def stick_touch_boost_summary(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -485,6 +500,18 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
                    f"a setting (rejections by reason: {report.get('rejections_by_reason')}).")
     if report.get("mode_switches"):
         out.append(f"The mode was switched {report['mode_switches']} times during the recording; each switch starts a new search.")
+    temporal = report.get("temporal_engine") or {}
+    if temporal.get("available") and set(temporal.get("requested_modes") or {}) - {"off"}:
+        last = temporal.get("last_active") or {}
+        text = (f"Temporal Engine (experimental): states {temporal['states']}; active in "
+                f"{temporal['active_samples']} of {temporal['samples']} samples.")
+        if last.get("state") in ("generating", "shadow-measuring"):
+            text += (f" Last: shares {last.get('shares')}, GPU ms {last.get('gpu_ms')}, dispatched "
+                     f"{last.get('outputs_dispatched')} / GPU-completed {last.get('outputs_gpu_completed')}, "
+                     f"dropped {last.get('dropped')}, recommendation {last.get('recommendation')}.")
+        if temporal.get("fallback_reasons"):
+            text += " LSFG kept frame generation: " + ", ".join(temporal["fallback_reasons"]) + "."
+        out.append(text + " Presentation is not observed by the engine; no FPS, latency or energy gain is implied.")
     fusion = report.get("frame_fusion") or {}
     if fusion.get("available"):
         out.append(f"Frame Fusion: states {fusion['states']}; native direct path observed in "
