@@ -386,12 +386,26 @@ func _update_status() -> void:
 	_bridge_dot.add_theme_color_override("font_color", UI.GREEN if Shell.bridge.connected else UI.MUTED)
 
 
+var _focus_lost_at := -1.0
+
+
 func _notification(what: int) -> void:
 	# Out of focus (a game or Steam on top): idle at a few frames per second.
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
 		Engine.max_fps = 10
-	elif what == NOTIFICATION_APPLICATION_FOCUS_IN and Shell.runner.state != "running":
-		Engine.max_fps = 0
+		_focus_lost_at = Time.get_ticks_msec() / 1000.0
+	elif what == NOTIFICATION_APPLICATION_FOCUS_IN:
+		if Shell.runner.state != "running":
+			Engine.max_fps = 0
+		# Fallback for titles without a launch marker: the game took the screen and we
+		# got it back, so it has ended — stop waiting instead of hanging on "Запуск…".
+		var away := Time.get_ticks_msec() / 1000.0 - _focus_lost_at if _focus_lost_at > 0 else 0.0
+		_focus_lost_at = -1.0
+		if _launch.visible and _launch.phase == "launching" and away > 4.0:
+			Log.warn("runner", "focus back after %.0f s without a detected game process; closing the launch screen" % away)
+			Shell.runner.cancel_wait()
+			_launch.close()
+			toast("С возвращением в GFG Shell")
 
 
 ## Test/CI hooks: --gfg-page=<page|game:ID|quick|menu|power|launch> and --gfg-screenshot=<png>.

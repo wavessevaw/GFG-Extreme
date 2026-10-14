@@ -16,6 +16,10 @@ concurrency:
   group: gfg-shell-beta
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash -eo pipefail {0}
+
 jobs:
   beta:
     runs-on: ubuntu-22.04
@@ -123,9 +127,11 @@ jobs:
           "$GODOT" --headless --path shell --import > "$RUNNER_TEMP/import.log" 2>&1 || true
           if grep -E "SCRIPT ERROR|Parse Error|Compile Error" "$RUNNER_TEMP/import.log"; then exit 1; fi
           python3 shell/tools/make_fake_steam.py "$RUNNER_TEMP/fake" --art
-          GFG_SHELL_LOG_DIR="$RUNNER_TEMP/logs" "$GODOT" --headless --path shell -s res://tests/run_tests.gd -- --fixture="$RUNNER_TEMP/fake"
+          GFG_SHELL_LOG_DIR="$RUNNER_TEMP/logs" "$GODOT" --headless --path shell -s res://tests/run_tests.gd -- --fixture="$RUNNER_TEMP/fake" 2>&1 | tee "$RUNNER_TEMP/tests.log"
+          ! grep -q "SCRIPT ERROR" "$RUNNER_TEMP/tests.log"
           GFG_SHELL_DRY_POWER=1 GFG_SHELL_LOG_DIR="$RUNNER_TEMP/logs" GFG_SHELL_STEAM_ROOT="$RUNNER_TEMP/fake/Steam" HOME="$RUNNER_TEMP/navhome" \
-            "$GODOT" --headless --path shell -s res://tests/ui_nav.gd
+            "$GODOT" --headless --path shell -s res://tests/ui_nav.gd 2>&1 | tee "$RUNNER_TEMP/nav.log"
+          ! grep -q "SCRIPT ERROR" "$RUNNER_TEMP/nav.log"
 
       - name: Build zip
         run: |

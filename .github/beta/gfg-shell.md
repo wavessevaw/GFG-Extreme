@@ -1,6 +1,8 @@
-# GFG Extreme 2.1.2-shell.4 — GFG Shell beta (pre-release)
+# GFG Extreme 2.1.2-shell.5 — GFG Shell beta (pre-release)
 
 **Experimental build for hardware trials. Not verified on a Steam Deck.** Everything else is GFG Extreme 2.1.1.
+
+**Fixed in shell.5 (GFG Shell 0.2.2):** after quitting a non-Steam game the shell could hang on "Запуск через Steam…". The game is now recognised by any of its ids (Steam AppId, the 32-bit shortcut id, the 64-bit game id) in Steam's launch marker or in the game's `SteamGameId`; and if the game window took the screen and the shell gets it back, the launch screen closes on its own. B also stops waiting.
 
 **Fixed in shell.4 (GFG Shell 0.2.1):** not every installed game was listed. Tools are now recognised by name only (a guessed list of tool ids could hide real games), and a game on disk counts as installed even while Steam has its "fully installed" flag cleared for an update. **Настройки → Хранилище** shows how many games each Steam library contributed, and the diagnostics zip lists every game found.
 

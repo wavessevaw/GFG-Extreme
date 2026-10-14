@@ -153,7 +153,7 @@ static func _game() -> Dictionary:
 		"update_pending": false, "downloading": false}
 
 
-static func is_tool(appid: int, name: String) -> bool:
+static func is_tool_app(appid: int, name: String) -> bool:
 	if TOOL_APPIDS.has(appid):
 		return true
 	for p in TOOL_NAME_PREFIXES:
@@ -210,7 +210,7 @@ func _read_manifests(library: String, report: Dictionary = {}) -> Array:
 			errors.append("bad-manifest:" + f)
 			report["bad"] = int(report.get("bad", 0)) + 1
 			continue
-		if is_tool(g.appid, g.name):
+		if is_tool_app(g.appid, g.name):
 			report["tools"] = int(report.get("tools", 0)) + 1
 			continue
 		out.append(g)

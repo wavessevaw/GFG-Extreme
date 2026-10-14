@@ -28,7 +28,7 @@ func _ready() -> void:
 	_load_state()
 	runner = GameRunner.new()
 	runner.name = "GameRunner"
-	runner.resolve_game = library_game_by_appid
+	runner.resolve_game = library_game_by_launch
 	add_child(runner)
 	runner.state_changed.connect(_on_runner_state)
 	runner.launch_failed.connect(func(g, reason): Log.warn("runner", "launch failed: %s (%s)" % [g.get("name", "?"), reason]))
@@ -81,6 +81,13 @@ func reload_library() -> void:
 func library_game_by_appid(appid: int) -> Dictionary:
 	for g in games:
 		if int(g.appid) == appid:
+			return g
+	return {}
+
+
+func library_game_by_launch(id: String) -> Dictionary:
+	for g in games:
+		if GameRunner.game_ids(g).has(id):
 			return g
 	return {}
 

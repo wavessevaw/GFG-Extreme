@@ -131,8 +131,8 @@ func test_library() -> void:
 	eq(lib.scan[0].tools + lib.scan[1].tools, 1, "one tool skipped (Proton)")
 	eq(lib.scan[0].bad + lib.scan[1].bad, 1, "one broken manifest reported")
 	eq(lib.scan[0].games + lib.scan[1].games, 8, "8 Steam games counted")
-	check(not SteamLibrary.is_tool(1245040, "Some Game"), "unknown ids are not filtered as tools")
-	check(SteamLibrary.is_tool(2805730, "Proton 9.0"), "tools recognised by name")
+	check(not SteamLibrary.is_tool_app(1245040, "Some Game"), "unknown ids are not filtered as tools")
+	check(SteamLibrary.is_tool_app(2805730, "Proton 9.0"), "tools recognised by name")
 	eq(SteamLibrary.new().load_library(fixture + "/nope"), [], "missing root yields empty library")
 
 
@@ -196,6 +196,46 @@ func test_runner_lifecycle() -> void:
 	eq(r.state, "idle", "outside game exit")
 	r.free()
 	OS.set_environment("GFG_SHELL_STEAM_CMD", "")
+	test_shortcut_detection()
+
+
+func _proc(root: String, pid: String, cmd: Array, env: Array = []) -> void:
+	DirAccess.make_dir_recursive_absolute(root + "/" + pid)
+	var f := FileAccess.open(root + "/" + pid + "/cmdline", FileAccess.WRITE)
+	f.store_buffer(_cmd(cmd))
+	f.close()
+	if not env.is_empty():
+		f = FileAccess.open(root + "/" + pid + "/environ", FileAccess.WRITE)
+		f.store_buffer(_cmd(env))
+		f.close()
+
+
+## Non-Steam shortcuts: the marker may carry the 64-bit game id, a signed 32-bit id, or
+## only SteamGameId in the environment (no reaper at all).
+func test_shortcut_detection() -> void:
+	OS.set_environment("GFG_SHELL_STEAM_CMD", "/bin/true")
+	var g := {"appid": 2474520780, "name": "Arcade", "launch_id": "10627985823405965312", "kind": "shortcut"}
+	eq(GameRunner.game_ids(g), ["2474520780", "-1820446516", "10627985823405965312"], "shortcut ids")
+	for variant in [["reaper", "SteamLaunch", "AppId=10627985823405965312", "--", "x"],
+			["reaper", "SteamLaunch", "AppId=-1820446516", "--", "x"], ["wine", "game.exe"]]:
+		var proc := OS.get_cache_dir() + "/gfg-shell-test-sc-%d" % OS.get_process_id()
+		DirAccess.make_dir_recursive_absolute(proc)
+		_proc(proc, "10", ["bash"])
+		var r := GameRunner.new()
+		r._proc_root = proc
+		check(r.launch(g), "shortcut launch accepted")
+		var env := ["HOME=/home/deck", "SteamGameId=10627985823405965312"] if variant[0] == "wine" else []
+		_proc(proc, "4000", variant, env)
+		r.poll()
+		eq(r.state, "running", "shortcut detected: %s" % variant[2] if variant.size() > 2 else "shortcut detected by environ")
+		OS.execute("rm", ["-rf", proc + "/4000"])
+		r.poll()
+		eq(r.state, "idle", "shortcut exit detected (%s)" % variant[0])
+		r.free()
+		OS.execute("rm", ["-rf", proc])
+	OS.set_environment("GFG_SHELL_STEAM_CMD", "")
+	eq(GameRunner.env_value(_cmd(["A=1", "SteamGameId=42", "B=2"]), "SteamGameId"), "42", "env value")
+	eq(GameRunner.parse_steamlaunch_value(_cmd(["reaper", "SteamLaunch", "AppId=10627985823405965312", "--"])), "10627985823405965312", "64-bit AppId kept as text")
 
 
 func test_input_map() -> void:
