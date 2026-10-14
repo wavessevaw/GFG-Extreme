@@ -46,12 +46,12 @@ jobs:
           pip install pillow
           python3 shell/tools/make_fake_steam.py "$RUNNER_TEMP/fake" --art
           GFG_SHELL_LOG_DIR="$RUNNER_TEMP/logs" "$GODOT" --headless --path shell -s res://tests/run_tests.gd -- --fixture="$RUNNER_TEMP/fake" 2>&1 | tee "$RUNNER_TEMP/tests.log"
-          ! grep -q "SCRIPT ERROR" "$RUNNER_TEMP/tests.log"
+          if grep -q "SCRIPT ERROR" "$RUNNER_TEMP/tests.log"; then exit 1; fi
       - name: Controller navigation on the real main scene
         run: |
           GFG_SHELL_DRY_POWER=1 GFG_SHELL_LOG_DIR="$RUNNER_TEMP/logs" GFG_SHELL_STEAM_ROOT="$RUNNER_TEMP/fake/Steam" HOME="$RUNNER_TEMP/navhome" \
             "$GODOT" --headless --path shell -s res://tests/ui_nav.gd 2>&1 | tee "$RUNNER_TEMP/nav.log"
-          ! grep -q "SCRIPT ERROR" "$RUNNER_TEMP/nav.log"
+          if grep -q "SCRIPT ERROR" "$RUNNER_TEMP/nav.log"; then exit 1; fi
       - name: Godot <-> Python bridge end to end
         run: |
           mkdir -p "$RUNNER_TEMP/e2e"
