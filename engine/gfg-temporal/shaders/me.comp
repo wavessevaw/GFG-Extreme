@@ -1,0 +1,71 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Hierarchical bilateral motion estimation, one thread per tile and level
+// (reference: MotionEstimator.estimate).  Coarsest level: full search plus
+// temporal predictor.  Finer levels: predictors from the coarser level, then
+// 3x3 refinement (step 1, and step 0.5 at level 0).
+#include "common.glsl"
+layout(local_size_x = 64) in;
+
+float me_cost(int l, vec2 c, vec2 v, bool bias) {
+    int n = me_n(l);
+    float st = me_step(l);
+    float acc = 0.0;
+    vec2 h = v * 0.5;
+    for (int j = 0; j < n; ++j) {
+        for (int i = 0; i < n; ++i) {
+            vec2 q = c + (vec2(i, j) - float(n - 1) * 0.5) * st;
+            acc += abs(luma_a(l, q - h) - luma_b(l, q + h));
+        }
+    }
+    acc /= float(n * n);
+    if (bias) acc += P.me_bias * (abs(v.x) + abs(v.y));
+    return acc;
+}
+
+void consider(int l, vec2 c, vec2 v, inout vec2 best, inout float bc) {
+    float cc = me_cost(l, c, v, true);
+    if (cc < bc) { bc = cc; best = v; }
+}
+
+void main() {
+    int id = int(gl_GlobalInvocationID.x);
+    if (id >= tile_count()) return;
+    ivec2 tc = ivec2(id % P.tiles.x, id / P.tiles.x);
+    int l = PC.level;
+    float s = float(1 << l);
+    float T = float(P.tile);
+    vec2 c0 = vec2(tc) * T + (T - 1.0) * 0.5;
+    vec2 c = (c0 - (s - 1.0) * 0.5) / s;
+    bool hist = G.history_valid[PC.parity ^ 1] != 0u;
+    vec2 tp = hist ? vec_prev[id] / s : vec2(0.0);
+    vec2 best = tp;
+    float bc;
+    if (l == P.levels) {
+        bc = me_cost(l, c, tp, true);
+        int r = P.coarse_range;
+        for (int dy = -r; dy <= r; ++dy)
+            for (int dx = -r; dx <= r; ++dx)
+                consider(l, c, vec2(dx, dy), best, bc);
+    } else {
+        best = 2.0 * tile_vector(l + 1, tc);
+        bc = me_cost(l, c, best, true);
+        consider(l, c, 2.0 * tile_vector(l + 1, tc + ivec2(0, -1)), best, bc);
+        consider(l, c, 2.0 * tile_vector(l + 1, tc + ivec2(0, 1)), best, bc);
+        consider(l, c, 2.0 * tile_vector(l + 1, tc + ivec2(-1, 0)), best, bc);
+        consider(l, c, 2.0 * tile_vector(l + 1, tc + ivec2(1, 0)), best, bc);
+        consider(l, c, vec2(0.0), best, bc);
+        consider(l, c, tp, best, bc);
+        int passes = l == 0 ? 2 : 1;
+        for (int k = 0; k < passes; ++k) {
+            float stp = k == 0 ? 1.0 : 0.5;
+            vec2 centre = best;
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx)
+                    if (dx != 0 || dy != 0)
+                        consider(l, c, centre + vec2(dx, dy) * stp, best, bc);
+        }
+    }
+    vec_cur[l * tile_count() + id] = best;
+    if (l == 0) stats[id].err = me_cost(0, c0, best, false);
+}
