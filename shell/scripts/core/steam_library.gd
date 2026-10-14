@@ -63,10 +63,11 @@ func load_library(root: String = "") -> Array:
 	for g in _read_shortcuts():
 		games.append(g)
 	for g in games:
+		# Steam writes LastPlayed both in the manifest and in localconfig; either may be
+		# missing or stale, so the newer one wins (non-Steam shortcuts use the same key).
 		var a: Dictionary = activity.get(str(g.appid), {})
-		if g.kind == "steam":
-			g.last_played = int(a.get("last_played", 0))
-			g.playtime_min = int(a.get("playtime_min", 0))
+		g.last_played = max(int(g.last_played), int(a.get("last_played", 0)))
+		g.playtime_min = max(int(g.playtime_min), int(a.get("playtime_min", 0)))
 		g.steam_favorite = favorites.has(int(g.appid))
 		g.art = resolve_art(g)
 	games.sort_custom(func(x, y): return x.name.naturalnocasecmp_to(y.name) < 0)
@@ -118,11 +119,28 @@ static func active_account_id(root: String) -> String:
 	return best
 
 
+## Display name and avatar of the active account (Steam menu header).
+func persona() -> Dictionary:
+	var out := {"name": "", "avatar": ""}
+	if steam_root == "" or account_id == "" or not account_id.is_valid_int():
+		return out
+	var sid := str(int(account_id) + STEAMID64_BASE)
+	var d := Vdf.parse_text(read_text(steam_root + "/config/loginusers.vdf"))
+	var u: Variant = Vdf.get_path_ci(d, ["users", sid], {})
+	if u is Dictionary:
+		out.name = str(Vdf.get_ci(u, "PersonaName", ""))
+	for f in [steam_root + "/config/avatarcache/" + sid + ".png"]:
+		if FileAccess.file_exists(f):
+			out.avatar = f
+	return out
+
+
 static func _game() -> Dictionary:
 	return {"id": "", "appid": 0, "kind": "steam", "name": "", "installed": false,
 		"state_flags": 0, "size_bytes": 0, "last_played": 0, "playtime_min": 0,
 		"library": "", "install_dir": "", "exe": "", "launch_options": "", "launch_id": "",
-		"steam_favorite": false, "art": {}}
+		"steam_favorite": false, "art": {}, "bytes_to_download": 0, "bytes_downloaded": 0,
+		"update_pending": false, "downloading": false}
 
 
 static func is_tool(appid: int, name: String) -> bool:
@@ -155,6 +173,12 @@ static func parse_manifest(text: String, library: String) -> Dictionary:
 	g.install_dir = library + "/steamapps/common/" + str(Vdf.get_ci(st, "installdir", ""))
 	g.last_played = int(str(Vdf.get_ci(st, "LastPlayed", "0")))
 	g.launch_id = str(appid)
+	# Download / update progress as Steam records it (Загрузки screen).
+	g.bytes_to_download = int(str(Vdf.get_ci(st, "BytesToDownload", "0")))
+	g.bytes_downloaded = int(str(Vdf.get_ci(st, "BytesDownloaded", "0")))
+	g.update_pending = (g.state_flags & 2) != 0 or (g.state_flags & 1024) != 0 \
+		or (g.bytes_to_download > 0 and g.bytes_downloaded < g.bytes_to_download)
+	g.downloading = (g.state_flags & 1024) != 0
 	return g
 
 

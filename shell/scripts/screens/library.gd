@@ -1,62 +1,83 @@
-## Библиотека: filters Все / Установлено / Избранное / Недавние / Не Steam, sort, portrait grid.
+## Библиотека (mockup 02): title + count, segmented filter (Все / Установлено /
+## Избранное / Не Steam) and search, a 4-column grid of art tiles with the red ring.
 extends Screen
 
-const FILTERS := [["all", "Все"], ["installed", "Установлено"], ["favorites", "Избранное"], ["recent", "Недавние"], ["nonsteam", "Не Steam"]]
-const COLS := 6
+const FILTERS := [["all", "Все"], ["installed", "Установлено"], ["favorites", "Избранное"], ["nonsteam", "Не Steam"]]
+const COLS := 4
 
-var _chips: HBoxContainer
+var _seg: HBoxContainer
 var _grid: GridContainer
 var _count: Label
-var _sort_btn: Button
+var _search: Button
+var _scroll: ScrollContainer
 var _filter := "all"
-var _sort := "name"
 
 
 func _ready() -> void:
 	title = "Библиотека"
 	_filter = str(Shell.settings.get("filter", "all"))
-	_sort = str(Shell.settings.get("sort", "name"))
-	var v := UI.vbox(14)
+	if not FILTERS.any(func(f): return f[0] == _filter):
+		_filter = "all"
+	var v := UI.vbox(18)
 	v.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	add_child(UI.margin(v, 32, 12, 32, 12))
-	get_child(0).set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var bar := UI.hbox(10)
+	v.offset_left = 52
+	v.offset_right = -52
+	v.offset_top = 16
+	add_child(v)
+	var bar := UI.hbox(16)
 	v.add_child(bar)
-	_chips = UI.hbox(10)
-	bar.add_child(_chips)
+	bar.add_child(UI.label("Библиотека", 40, UI.TEXT, "bold"))
+	_count = UI.label("", 18, UI.TEXT_DIM, "medium")
+	_count.size_flags_vertical = Control.SIZE_SHRINK_END
+	bar.add_child(UI.margin(_count, 0, 0, 0, 8))
+	bar.add_child(UI.spacer())
+	var segp := UI.panel(Color(0.08, 0.08, 0.1, 0.9), 4, 14)
+	segp.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_seg = UI.hbox(4)
+	segp.add_child(_seg)
 	for f in FILTERS:
-		var b := UI.button(f[1], false, 0, 42)
-		b.toggle_mode = true
+		var b := Button.new()
+		b.text = f[1]
+		b.focus_mode = Control.FOCUS_ALL
+		b.custom_minimum_size = Vector2(124, 42)
+		b.add_theme_font_override("font", UI.font("semibold"))
+		b.add_theme_font_size_override("font_size", 16)
+		b.add_theme_stylebox_override("focus", UI.focus_box(UI.TEXT, 11))
 		b.set_meta("filter", f[0])
 		b.pressed.connect(_set_filter.bind(f[0]))
-		_chips.add_child(b)
-	bar.add_child(UI.spacer())
-	_count = UI.label("", 16, UI.TEXT_DIM)
-	bar.add_child(_count)
-	_sort_btn = UI.button("", false, 190, 42)
-	_sort_btn.pressed.connect(func():
-		_sort = "recent" if _sort == "name" else "name"
-		Shell.set_setting("sort", _sort)
-		_rebuild())
-	bar.add_child(_sort_btn)
-	var sc := ScrollContainer.new()
-	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	sc.follow_focus = true
-	v.add_child(sc)
+		_seg.add_child(b)
+	bar.add_child(segp)
+	_search = UI.icon_button("search", 50)
+	_search.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_search.pressed.connect(func(): app.push("search"))
+	bar.add_child(_search)
+	_scroll = ScrollContainer.new()
+	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
+	_scroll.follow_focus = true
+	v.add_child(_scroll)
 	_grid = GridContainer.new()
 	_grid.columns = COLS
 	_grid.add_theme_constant_override("h_separation", 18)
 	_grid.add_theme_constant_override("v_separation", 18)
-	sc.add_child(UI.margin(_grid, 8, 8, 8, 8))
+	_scroll.add_child(UI.margin(_grid, 4, 4, 4, 24))
 	Shell.library_changed.connect(_rebuild)
 	Shell.favorites_changed.connect(func(): if _filter == "favorites": _rebuild())
 	_rebuild()
 
 
-func enter(args: Dictionary = {}) -> void:
-	if args.has("filter"):
-		_set_filter(args.filter)
+func hints() -> Array:
+	return [["A", "Выбрать"], ["B", "Назад"], ["Y", "Избранное"], ["X", "Поиск"]]
+
+
+func option() -> bool:
+	var f := get_viewport().gui_get_focus_owner()
+	if f is GameCard:
+		Shell.toggle_favorite(f.game)
+		app.toast(("★ В избранном: " if Shell.is_favorite(f.game) else "Убрано из избранного: ") + f.game.name)
+		return true
+	return false
 
 
 func _set_filter(f: String) -> void:
@@ -66,16 +87,19 @@ func _set_filter(f: String) -> void:
 
 
 func _rebuild() -> void:
-	for b in _chips.get_children():
-		b.button_pressed = b.get_meta("filter") == _filter
-		b.add_theme_stylebox_override("normal", UI.box(UI.RED if b.button_pressed else UI.CARD))
-	_sort_btn.text = "Сортировка: " + ("имя" if _sort == "name" else "недавние")
+	for b in _seg.get_children():
+		var on: bool = b.get_meta("filter") == _filter
+		var sb := UI.box(UI.RED if on else Color(0, 0, 0, 0), Color.TRANSPARENT, 11, 14)
+		for st in ["normal", "hover", "pressed"]:
+			b.add_theme_stylebox_override(st, sb)
+		b.add_theme_color_override("font_color", UI.TEXT if on else UI.TEXT_DIM)
 	for c in _grid.get_children():
+		_grid.remove_child(c)
 		c.queue_free()
-	var list := Shell.filtered_games(_filter, _sort)
+	var list := Shell.filtered_games(_filter, str(Shell.settings.get("sort", "name")))
 	_count.text = "%d игр" % list.size()
 	for g in list:
-		var c := GameCard.make(g, Vector2(172, 258), "grid")
+		var c := GameCard.make(g, Vector2(282, 214), "header")
 		c.chosen.connect(app.open_game)
 		_grid.add_child(c)
 	if list.is_empty():
@@ -87,4 +111,4 @@ func focus_default() -> void:
 	if _grid.get_child_count() > 0 and _grid.get_child(0) is Button:
 		_grid.get_child(0).grab_focus()
 	else:
-		_chips.get_child(0).grab_focus()
+		_seg.get_child(0).grab_focus()

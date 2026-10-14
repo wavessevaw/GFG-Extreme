@@ -118,3 +118,56 @@ static func power(action: String) -> int:
 	if OS.get_environment("GFG_SHELL_DRY_POWER") == "1":
 		return 0
 	return OS.execute("systemctl", [action], [])
+
+
+static func _backlight_path() -> String:
+	var dir := DirAccess.open(sys_root() + "/class/backlight")
+	if dir == null:
+		return ""
+	for n in dir.get_directories() + dir.get_files():
+		return sys_root() + "/class/backlight/" + n
+	return ""
+
+
+## Writes brightness the way SteamOS's own tools do (polkit helper steamos-priv-write);
+## returns false when the helper is missing or refuses (then Steam keeps control).
+static func set_brightness_pct(pct: int) -> bool:
+	var base := _backlight_path()
+	var helper := "/usr/bin/steamos-polkit-helpers/steamos-priv-write"
+	if base == "" or not FileAccess.file_exists(helper):
+		return false
+	var m := _read(base + "/max_brightness")
+	if not m.is_valid_int():
+		return false
+	var raw := int(round(int(m) * clampi(pct, 3, 100) / 100.0))
+	var code := OS.execute(helper, [base + "/brightness", str(raw)], [])
+	Log.info("system", "brightness %d%% -> %d (exit %d)" % [pct, raw, code])
+	return code == 0
+
+
+static func set_volume_pct(pct: int) -> void:
+	OS.execute("wpctl", ["set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", "%.2f" % (clampi(pct, 0, 100) / 100.0)], [])
+
+
+static func wifi_name() -> String:
+	var out := []
+	if OS.execute("nmcli", ["-t", "-f", "active,ssid", "dev", "wifi"], out) != 0 or out.is_empty():
+		return ""
+	for line in (out[0] as String).split("\n"):
+		if line.begins_with("yes:"):
+			return line.substr(4)
+	return ""
+
+
+## {total, free} bytes of the filesystem holding path (df -B1).
+static func storage(path: String) -> Dictionary:
+	var out := []
+	if OS.execute("df", ["-B1", "--output=size,avail", path], out) != 0 or out.is_empty():
+		return {}
+	var lines := (out[0] as String).strip_edges().split("\n")
+	if lines.size() < 2:
+		return {}
+	var parts := lines[1].split(" ", false)
+	if parts.size() < 2 or not parts[0].is_valid_int():
+		return {}
+	return {"total": int(parts[0]), "free": int(parts[1])}

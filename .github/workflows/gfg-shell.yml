@@ -42,6 +42,10 @@ jobs:
           pip install pillow
           python3 shell/tools/make_fake_steam.py "$RUNNER_TEMP/fake" --art
           GFG_SHELL_LOG_DIR="$RUNNER_TEMP/logs" "$GODOT" --headless --path shell -s res://tests/run_tests.gd -- --fixture="$RUNNER_TEMP/fake"
+      - name: Controller navigation on the real main scene
+        run: |
+          GFG_SHELL_DRY_POWER=1 GFG_SHELL_LOG_DIR="$RUNNER_TEMP/logs" GFG_SHELL_STEAM_ROOT="$RUNNER_TEMP/fake/Steam" HOME="$RUNNER_TEMP/navhome" \
+            "$GODOT" --headless --path shell -s res://tests/ui_nav.gd
       - name: Godot <-> Python bridge end to end
         run: |
           mkdir -p "$RUNNER_TEMP/e2e"
@@ -59,7 +63,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/shots" "$RUNNER_TEMP/home"
           python3 shell/tools/fake_bridge.py "$RUNNER_TEMP/home" --seconds 600 &
           sleep 2
-          for p in home library game:4100020 search gfg settings quick power launch; do
+          for p in home library game:4100020 search settings downloads gfg store quick menu power launch; do
             GFG_SHELL_LOG_DIR="$RUNNER_TEMP/logs" GFG_SHELL_STEAM_ROOT="$RUNNER_TEMP/fake/Steam" HOME="$RUNNER_TEMP/home" \
               xvfb-run -a -s "-screen 0 1280x800x24" "$GODOT" --path shell --resolution 1280x800 --rendering-driver opengl3 --audio-driver Dummy \
               -- --gfg-page=$p --gfg-screenshot="$RUNNER_TEMP/shots/$(echo $p | tr : _).png"

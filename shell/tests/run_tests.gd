@@ -28,6 +28,7 @@ func _initialize() -> void:
 	test_cmdline()
 	test_proc_scan()
 	test_runner_lifecycle()
+	test_input_map()
 	if fixture != "":
 		test_library()
 		test_state_queries()
@@ -123,6 +124,9 @@ func test_library() -> void:
 	check(str(by["Пепел Севера"].art.get("grid", "")).ends_with("4100020/a1b2c3d4e5/library_600x900.jpg"), "per-app hashed art")
 	check(str(by["Пепел Севера"].art.get("hero", "")).ends_with("4100020/library_hero.jpg"), "per-app hero art")
 	check(not by["Quiet Engine"].art.has("grid"), "no art -> placeholder")
+	check(by["Sky Courier"].last_played > by["Neon Drift"].last_played, "manifest LastPlayed kept when localconfig lacks it")
+	check(by["Hollow Lantern"].update_pending and by["Hollow Lantern"].bytes_downloaded == 5300000000, "update progress from manifest")
+	check(not by["Neon Drift"].update_pending, "no update pending")
 	eq(SteamLibrary.new().load_library(fixture + "/nope"), [], "missing root yields empty library")
 
 
@@ -134,7 +138,7 @@ func test_state_queries() -> void:
 	shell.games = shell.library.load_library(fixture + "/Steam")
 	shell.favorites = {}
 	var recent: Array = shell.recent_games(3)
-	eq(recent.map(func(g): return g.name), ["Neon Drift", "Пепел Севера", "Retro Arcade Hub"], "recent order")
+	eq(recent.map(func(g): return g.name), ["Sky Courier", "Neon Drift", "Пепел Севера"], "recent order")
 	eq(shell.favorite_games().size(), 2, "favorites from Steam")
 	var nd: Dictionary = shell.games.filter(func(g): return g.name == "Neon Drift")[0]
 	shell.favorites[nd.id] = true
@@ -186,3 +190,13 @@ func test_runner_lifecycle() -> void:
 	eq(r.state, "idle", "outside game exit")
 	r.free()
 	OS.set_environment("GFG_SHELL_STEAM_CMD", "")
+
+
+func test_input_map() -> void:
+	var shell: Node = root.get_node_or_null("Shell")
+	if shell != null and not shell.is_node_ready():
+		shell._setup_input()   # -s runs before autoloads are ready
+	var has_a := InputMap.action_get_events("ui_accept").any(func(e): return e is InputEventJoypadButton and e.button_index == JOY_BUTTON_A)
+	var has_b := InputMap.action_get_events("ui_cancel").any(func(e): return e is InputEventJoypadButton and e.button_index == JOY_BUTTON_B)
+	check(shell != null and has_a, "A selects (ui_accept)")
+	check(shell != null and has_b, "B goes back (ui_cancel)")

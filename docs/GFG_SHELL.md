@@ -95,3 +95,4 @@ GitHub один раз и проверяет SHA-256 из `godot.json` (`py_modu
 | ![Игра](gfg_shell_screens/game_4100020.png) | ![Центр GFG](gfg_shell_screens/gfg.png) |
 | ![Быстрые настройки](gfg_shell_screens/quick.png) | ![Поиск](gfg_shell_screens/search.png) |
 | ![Настройки](gfg_shell_screens/settings.png) | ![Питание](gfg_shell_screens/power.png) |
+| ![Меню](gfg_shell_screens/menu.png) | ![Загрузки](gfg_shell_screens/downloads.png) |

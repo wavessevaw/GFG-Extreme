@@ -1,38 +1,62 @@
-## Настройки: Steam-style sidebar (Экран, Звук, Сеть, Загрузки, Питание, Система, GFG Extreme,
-## Диагностика, О GFG Shell) and a detail pane.
+## Настройки (mockup 05): icon sidebar (Система, Экран, Звук, Интернет, Контроллер,
+## Хранилище, GFG Extreme, Диагностика, О GFG Shell) and grouped rows on the right.
+## Values the shell cannot own (Wi-Fi choice, refresh rate) open Steam's own page.
 extends Screen
 
-const SECTIONS := [["display", "Экран"], ["audio", "Звук"], ["network", "Сеть"], ["downloads", "Загрузки"],
-	["power", "Питание"], ["system", "Система"], ["gfg", "GFG Extreme"], ["diag", "Диагностика"], ["about", "О GFG Shell"]]
+const SECTIONS := [["system", "Система", "settings"], ["display", "Экран", "monitor"], ["audio", "Звук", "volume"],
+	["internet", "Интернет", "wifi"], ["controller", "Контроллер", "gamepad"], ["storage", "Хранилище", "storage"],
+	["gfg", "GFG Extreme", "bolt"], ["diag", "Диагностика", "info"], ["about", "О GFG Shell", "brush"]]
 
 var _side: VBoxContainer
+var _title: Label
 var _pane: VBoxContainer
 var _section := "display"
 
 
 func _ready() -> void:
 	title = "Настройки"
-	var h := UI.hbox(24)
+	var h := UI.hbox(0)
 	h.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	add_child(UI.margin(h, 32, 12, 32, 12))
-	get_child(0).set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var sp := UI.panel(UI.BG2, 10)
-	sp.custom_minimum_size = Vector2(280, 0)
+	h.offset_left = 36
+	h.offset_right = -36
+	h.offset_top = 6
+	h.offset_bottom = -14
+	add_child(h)
+	var sp := UI.panel(Color(0, 0, 0, 0), 8, 0)
+	sp.custom_minimum_size = Vector2(330, 0)
 	h.add_child(sp)
-	_side = UI.vbox(6)
+	_side = UI.vbox(4)
 	sp.add_child(_side)
 	for s in SECTIONS:
-		var b := UI.button(s[1], false, 0, 50)
-		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		var b := UI.row(s[2], s[1], "", null, 56)
 		b.set_meta("section", s[0])
 		b.focus_entered.connect(_show.bind(s[0]))
-		b.pressed.connect(func(): _show(s[0]); var f := Screen._first_focusable(_pane); if f: f.grab_focus())
+		b.pressed.connect(func():
+			_show(s[0])
+			var f := Screen._first_focusable(_pane)
+			if f:
+				f.grab_focus())
 		_side.add_child(b)
-	var pp := UI.panel(UI.CARD, 22)
-	pp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	h.add_child(pp)
-	_pane = UI.vbox(14)
-	pp.add_child(_pane)
+	var sep := ColorRect.new()
+	sep.color = UI.LINE
+	sep.custom_minimum_size = Vector2(1, 0)
+	h.add_child(UI.margin(sep, 14, 0, 18, 0))
+	var right := UI.vbox(16)
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(right)
+	_title = UI.label("", 38, UI.TEXT, "bold")
+	right.add_child(_title)
+	var sc := ScrollContainer.new()
+	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	sc.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
+	sc.follow_focus = true
+	right.add_child(sc)
+	_pane = UI.vbox(16)
+	_pane.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var pm := UI.margin(_pane, 4, 4, 6, 20)
+	pm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sc.add_child(pm)
 	_show(_section)
 
 
@@ -44,128 +68,147 @@ func enter(args: Dictionary = {}) -> void:
 func _show(sec: String) -> void:
 	_section = sec
 	for b in _side.get_children():
-		b.add_theme_stylebox_override("normal", UI.box(UI.RED_DIM if b.get_meta("section") == sec else UI.CARD))
+		var on: bool = b.get_meta("section") == sec
+		b.add_theme_stylebox_override("normal", UI.box(UI.RED if on else Color(0, 0, 0, 0), Color.TRANSPARENT, 10))
 	for c in _pane.get_children():
+		_pane.remove_child(c)
 		c.queue_free()
-	var name: String = ""
 	for s in SECTIONS:
 		if s[0] == sec:
-			name = s[1]
-	_pane.add_child(UI.label(name, 26, UI.TEXT, true))
+			_title.text = s[1]
 	call("_sec_" + sec)
 
 
-func _row(k: String, v: String) -> void:
-	var h := UI.hbox(12)
-	var kl := UI.label(k, 17, UI.TEXT_DIM)
-	kl.custom_minimum_size = Vector2(260, 0)
-	h.add_child(kl)
-	var vl := UI.label(v, 17, UI.TEXT)
-	vl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	h.add_child(vl)
-	_pane.add_child(h)
+func _card() -> VBoxContainer:
+	var p := UI.panel(UI.CARD, 6, 14)
+	var v := UI.vbox(2)
+	p.add_child(v)
+	_pane.add_child(p)
+	return v
+
+
+func _info(card: VBoxContainer, icon: String, title: String, sub: String, value: String, cb: Callable = Callable()) -> Button:
+	var r := UI.row(icon, title, sub, UI.value_box(value) if cb.is_valid() else UI.label(value, 16, UI.TEXT_DIM, "medium"), 64)
+	if cb.is_valid():
+		r.pressed.connect(cb)
+	card.add_child(r)
+	return r
+
+
+func _steam(uri: String) -> Callable:
+	return func(): OS.create_process(GameRunner.steam_command(), [uri])
 
 
 func _note(t: String) -> void:
-	var l := UI.label(t, 14, UI.TEXT_DIM)
+	var l := UI.label(t, 14, UI.TEXT_DIM, "regular")
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_pane.add_child(l)
-
-
-func _sec_display() -> void:
-	var b := SystemInfo.brightness_pct()
-	_row("Яркость", ("%d%%" % b) if b >= 0 else "—")
-	_row("Разрешение", "%dx%d" % [DisplayServer.screen_get_size().x, DisplayServer.screen_get_size().y])
-	var hz := DisplayServer.screen_get_refresh_rate()
-	_row("Частота", ("%d Гц" % int(round(hz))) if hz > 0 else "—")
-	_note("Яркостью и частотой экрана управляет Steam/gamescope (кнопки быстрого меню Steam). GFG Shell их только показывает.")
-
-
-func _sec_audio() -> void:
-	var lbl := UI.label("", 17)
-	var upd := func(): var v := SystemInfo.volume_pct(); lbl.text = "Громкость: " + (("%d%%" % v) if v >= 0 else "—")
-	upd.call()
-	_pane.add_child(lbl)
-	var h := UI.hbox(10)
-	for step in [-10, 10]:
-		var bt := UI.button("Громкость %s" % ("−" if step < 0 else "+"), false, 200, 50)
-		bt.pressed.connect(func(): SystemInfo.change_volume(step); upd.call())
-		h.add_child(bt)
-	_pane.add_child(h)
-
-
-func _sec_network() -> void:
-	var n := SystemInfo.network()
-	_row("Подключение", ("в сети (%s)" % n.iface) if n.online else "нет подключения")
-	_row("Тип", ("Wi-Fi" if n.get("wifi", false) else "проводное/другое") if n.online else "—")
-	_note("Выбор сети Wi-Fi — в настройках Steam (кнопка ниже откроет их).")
-	var b := UI.button("Открыть настройки Steam", false, 300, 50)
-	b.pressed.connect(func(): OS.create_process(GameRunner.steam_command(), ["steam://open/settings"]))
-	_pane.add_child(b)
-
-
-func _sec_downloads() -> void:
-	_note("Загрузки, обновления и установка игр выполняет Steam.")
-	var b := UI.button("Открыть загрузки Steam", true, 300, 50)
-	b.pressed.connect(func(): OS.create_process(GameRunner.steam_command(), ["steam://open/downloads"]))
-	_pane.add_child(b)
-	var r := UI.button("Обновить библиотеку", false, 300, 50)
-	r.pressed.connect(func(): Shell.reload_library(); app.toast("Библиотека: %d игр" % Shell.games.size()))
-	_pane.add_child(r)
-
-
-func _sec_power() -> void:
-	var bat := SystemInfo.battery()
-	_row("Батарея", ("%d%% %s" % [bat.percent, "(заряжается)" if bat.charging else ""]) if bat.available else "—")
-	var b := UI.button("Меню питания", true, 300, 50)
-	b.pressed.connect(app.show_power_menu)
-	_pane.add_child(b)
+	_pane.add_child(UI.margin(l, 6, 0, 6, 0))
 
 
 func _sec_system() -> void:
 	var s := SystemInfo.summary()
-	for k in [["Устройство", "device"], ["ОС", "os"], ["Сборка", "build"], ["Ядро", "kernel"], ["CPU", "cpu"], ["GPU", "gpu"], ["Память", "memory"]]:
-		_row(k[0], str(s.get(k[1], "—")))
-	_row("Steam", Shell.library.steam_root if Shell.library.steam_root != "" else "не найден")
-	_row("Игр в библиотеке", str(Shell.games.size()))
+	var c := _card()
+	_info(c, "gamepad", "Устройство", "", str(s.get("device", "—")))
+	_info(c, "settings", "SteamOS", str(s.get("build", "")), str(s.get("os_version", s.get("os", "—"))))
+	_info(c, "info", "Ядро", "", str(s.get("kernel", "—")))
+	var c2 := _card()
+	_info(c2, "bolt", "Процессор", "", str(s.get("cpu", "—")).replace("AMD Custom APU", "APU"))
+	_info(c2, "monitor", "Графика", "", str(s.get("gpu", "—")))
+	_info(c2, "storage", "Память", "", str(s.get("memory", "—")))
+
+
+func _sec_display() -> void:
+	var c := _card()
+	var bright := GSliderRow.make("sun", "Яркость", SystemInfo.brightness_pct())
+	bright.value_committed.connect(func(v):
+		if not SystemInfo.set_brightness_pct(v):
+			app.toast("Яркостью сейчас управляет Steam: «…» → Яркость"))
+	c.add_child(bright)
+	var hz := DisplayServer.screen_get_refresh_rate()
+	_info(c, "monitor", "Частота обновления", "Более плавное изображение", ("%d Гц" % int(round(hz))) if hz > 0 else "—",
+		_steam("steam://open/settings/display"))
+	var s := DisplayServer.screen_get_size()
+	_info(c, "display", "Разрешение", "Экран Steam Deck", "%d×%d" % [s.x, s.y])
+	_note("Частоту, ночной режим и масштаб интерфейса задаёт Steam — строки открывают его настройки.")
+
+
+func _sec_audio() -> void:
+	var c := _card()
+	var vol := GSliderRow.make("volume", "Громкость", SystemInfo.volume_pct())
+	vol.value_committed.connect(func(v): SystemInfo.set_volume_pct(v))
+	c.add_child(vol)
+	_info(c, "volume", "Устройства вывода", "Наушники, Bluetooth, HDMI", "Steam", _steam("steam://open/settings/audio"))
+
+
+func _sec_internet() -> void:
+	var n := SystemInfo.network()
+	var ssid := SystemInfo.wifi_name()
+	var c := _card()
+	_info(c, "wifi", "Wi-Fi", "Выбор сети и пароль — в настройках Steam",
+		ssid if ssid != "" else ("подключено" if n.get("online", false) else "нет сети"), _steam("steam://open/settings/internet"))
+	_info(c, "globe", "Подключение", str(n.get("iface", "")), "в сети" if n.get("online", false) else "нет")
+
+
+func _sec_controller() -> void:
+	var c := _card()
+	var pads := Input.get_connected_joypads()
+	if pads.is_empty():
+		_info(c, "gamepad", "Контроллер", "Не найден", "—")
+	for id in pads:
+		_info(c, "gamepad", Input.get_joy_name(id), "Через Steam Input", "#%d" % id)
+	_info(c, "settings", "Раскладка Steam Input", "Кнопки, гироскоп, тачпады", "Steam", _steam("steam://open/settings/controller"))
+	_note("GFG Shell не перехватывает контроллер: он получает геймпад от Steam Input, как любая игра.")
+
+
+func _sec_storage() -> void:
+	var c := _card()
+	var seen := {}
+	for lib in SteamLibrary.library_paths(Shell.library.steam_root) if Shell.library.steam_root != "" else []:
+		var st := SystemInfo.storage(lib)
+		if st.is_empty():
+			continue
+		var key := "%d" % st.total
+		if seen.has(key):
+			continue
+		seen[key] = true
+		var used: float = 1.0 - float(st.free) / max(1.0, float(st.total))
+		var name := "Карта microSD" if lib.contains("/run/media") else "Внутренний SSD"
+		_info(c, "storage", name, "%s · занято %d%%" % [UI.fmt_size(st.total), int(used * 100)], "свободно " + UI.fmt_size(st.free))
+	if seen.is_empty():
+		_info(c, "storage", "Хранилище", "Steam не найден", "—")
+	_info(_card(), "download", "Загрузки", "Обновления и очередь", "Открыть", func(): app.push("downloads"))
 
 
 func _sec_gfg() -> void:
-	_row("Подключение", "есть" if Shell.bridge.connected else "нет (%s)" % Shell.bridge.last_error)
-	var b := UI.button("Открыть центр GFG", true, 300, 50)
-	b.pressed.connect(func(): app.go_tab("gfg"))
-	_pane.add_child(b)
+	var c := _card()
+	_info(c, "bolt", "GFG Extreme", "Связь с плагином (GFG Bridge)",
+		"подключено" if Shell.bridge.connected else "нет (%s)" % Shell.bridge.last_error)
+	_info(c, "gauge", "Центр GFG", "FPS, температура, TDP, режимы", "Открыть", func(): app.push("gfg"))
 	_note("TDP и частоты GPU выставляет только Governor GFG Extreme. GFG Shell передаёт выбор режима и не управляет питанием сам.")
 
 
 func _sec_diag() -> void:
-	_note("Соберёт архив на рабочий стол: журналы оболочки, сводку библиотеки, окружение сессии, атомы gamescope, процессы Steam. Пришлите его разработчику.")
-	var b := UI.button("Собрать диагностику", true, 300, 50)
-	b.pressed.connect(func():
+	var c := _card()
+	_info(c, "download", "Собрать диагностику", "Архив на рабочий стол: журналы, библиотека, сессия", "Собрать", func():
 		var p := Diagnostics.write_package()
 		app.toast(("Сохранено: " + p) if p != "" else "Не удалось сохранить архив"))
-	_pane.add_child(b)
-	_row("Журнал", Log.path)
-	_note("Проверка восстановления (тест H6): оболочка аварийно завершится, Steam должен остаться рабочим. Запущенные игры не затрагиваются.")
-	var crash := UI.button("Аварийно завершить оболочку", false, 300, 50)
-	crash.pressed.connect(func():
+	var crash: Button
+	crash = _info(c, "close", "Проверка восстановления", "Аварийно завершить оболочку (Steam должен остаться)", "Нажать дважды", func():
 		if crash.get_meta("armed", false):
 			Log.warn("diag", "user-triggered crash test")
 			OS.crash("GFG Shell recovery test (user-triggered)")
 		crash.set_meta("armed", true)
-		crash.text = "Нажмите ещё раз для подтверждения")
-	_pane.add_child(crash)
+		app.toast("Нажмите ещё раз, чтобы аварийно завершить GFG Shell"))
+	_note("Журнал: " + Log.path)
 
 
 func _sec_about() -> void:
-	_row("Версия", str(ProjectSettings.get_setting("application/config/version")))
-	_row("Движок", "Godot " + Engine.get_version_info().string)
-	_row("Игровой клиент", "Steam (запуск через steam://rungameid)")
-	_note("GFG Shell — оболочка GFG Extreme. Лицензия GPL-3.0-or-later. Выход из оболочки возвращает в штатный режим Steam.")
-	var b := UI.button("Выйти из GFG Shell", false, 300, 50)
-	b.pressed.connect(app.quit_shell)
-	_pane.add_child(b)
+	var c := _card()
+	_info(c, "info", "Версия", "GFG Shell", str(ProjectSettings.get_setting("application/config/version")))
+	_info(c, "settings", "Движок", "Godot", Engine.get_version_info().string)
+	_info(c, "play", "Игровой клиент", "Запуск через steam://rungameid", "Steam")
+	_info(_card(), "close", "Выйти из GFG Shell", "Вернуться в Steam", "Выйти", app.quit_shell)
+	_note("GFG Shell — часть GFG Extreme, GPL-3.0-or-later. Шрифт Inter (OFL), движок Godot (MIT).")
 
 
 func focus_default() -> void:

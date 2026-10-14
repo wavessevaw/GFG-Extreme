@@ -52,6 +52,13 @@ func _setup_input() -> void:
 		"shell_option": [JOY_BUTTON_Y, KEY_F],
 		"shell_search": [JOY_BUTTON_X, KEY_SLASH],
 	}
+	# Godot 4 leaves A/B unbound for ui_accept/ui_cancel (only Enter/Escape): bind them.
+	var a := InputEventJoypadButton.new()
+	a.button_index = JOY_BUTTON_A
+	InputMap.action_add_event("ui_accept", a)
+	var b := InputEventJoypadButton.new()
+	b.button_index = JOY_BUTTON_B
+	InputMap.action_add_event("ui_cancel", b)
 	for action in map.keys():
 		if not InputMap.has_action(action):
 			InputMap.add_action(action)

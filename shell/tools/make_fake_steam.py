@@ -37,10 +37,12 @@ SHORTCUTS = [  # signed int32 appid as Steam stores it
 PALETTE = [(227, 38, 47), (40, 90, 200), (30, 160, 120), (200, 140, 40), (120, 60, 180), (60, 60, 70), (20, 130, 170), (170, 60, 90)]
 
 
-def acf(appid, name, flags, size, installdir):
+def acf(appid, name, flags, size, installdir, last_played=0, to_download=0, downloaded=0):
     return ('"AppState"\n{\n\t"appid"\t\t"%d"\n\t"universe"\t\t"1"\n\t"name"\t\t"%s"\n'
-            '\t"StateFlags"\t\t"%d"\n\t"installdir"\t\t"%s"\n\t"SizeOnDisk"\t\t"%d"\n'
-            '\t"UserConfig"\n\t{\n\t\t"language"\t\t"russian"\n\t}\n}\n') % (appid, name, flags, installdir, size)
+            '\t"StateFlags"\t\t"%d"\n\t"installdir"\t\t"%s"\n\t"LastPlayed"\t\t"%d"\n\t"SizeOnDisk"\t\t"%d"\n'
+            '\t"BytesToDownload"\t\t"%d"\n\t"BytesDownloaded"\t\t"%d"\n'
+            '\t"UserConfig"\n\t{\n\t\t"language"\t\t"russian"\n\t}\n}\n') % (
+                appid, name, flags, installdir, last_played, size, to_download, downloaded)
 
 
 def bin_str(k, v):
@@ -102,7 +104,12 @@ def main():
     apps_cfg = ""
     for appid, name, lib, flags, days, minutes, size in GAMES:
         with open(libs[lib] + "/steamapps/appmanifest_%d.acf" % appid, "w") as f:
-            f.write(acf(appid, name, flags, size, name.replace(" ", "")))
+            # Sky Courier: LastPlayed only in its manifest (localconfig has no entry), the
+            # newest of all: the shell must still list it first. Hollow Lantern: an update
+            # half downloaded.
+            last = a.now - 600 if name == "Sky Courier" else 0
+            todo, done = (12_400_000_000, 5_300_000_000) if name == "Hollow Lantern" else (0, 0)
+            f.write(acf(appid, name, flags, size, name.replace(" ", ""), last, todo, done))
         if days is not None:
             apps_cfg += '\t\t\t\t\t"%d"\n\t\t\t\t\t{\n\t\t\t\t\t\t"LastPlayed"\t\t"%d"\n\t\t\t\t\t\t"Playtime"\t\t"%d"\n\t\t\t\t\t}\n' % (
                 appid, a.now - days * 86400 - 3600, minutes)

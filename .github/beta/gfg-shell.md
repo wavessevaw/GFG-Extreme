@@ -1,6 +1,14 @@
-# GFG Extreme 2.1.2-shell.2 — GFG Shell beta (pre-release)
+# GFG Extreme 2.1.2-shell.3 — GFG Shell beta (pre-release)
 
 **Experimental build for hardware trials. Not verified on a Steam Deck.** Everything else is GFG Extreme 2.1.1.
+
+**New in shell.3 (GFG Shell 0.2.0) — redesigned to the GFG/SteamOS concept sheets:**
+- **A selects and B goes back** (Godot leaves both unbound for gamepads; now bound).
+- Menus own the controller: in the power menu, the main menu and Quick settings the D-pad moves only inside them; B closes them.
+- No more overlapping: tiles are not zoomed any more; the focused tile gets a red ring.
+- **Недавно играли** uses the newest "last played" Steam recorded (app manifest or localconfig), so Steam games show up in the right order.
+- New look: full-bleed game art, red pill tabs Главная / Библиотека / Магазин, Inter font, vector icons, glyph hint bar; main menu (Menu button) with profile, Загрузки, Настройки, GFG Extreme, Питание; Quick settings (View button) with brightness and volume sliders, Wi-Fi, Autopilot / Frame Fusion / Continuous Boost switches and Сон; game page with the GFG Autopilot card (Battery / Balanced / Quality); settings with icon sidebar; Загрузки with update progress from Steam; QWERTY / ЙЦУКЕН keyboard.
+- After installing this zip, open **Settings → GFG Shell → Update GFG Shell** (the Godot runtime is not downloaded again).
 
 **Fixed in shell.2:** "Install GFG Shell" failed with `CERTIFICATE_VERIFY_FAILED`. The plugin now uses the SteamOS certificate store (and the system `curl` as a fallback); TLS verification stays on and the Godot download is still SHA-256 checked.
 
