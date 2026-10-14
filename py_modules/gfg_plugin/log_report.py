@@ -207,6 +207,7 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
         and a["args"].get("enabled") is True
         for a in actions)
     report["temporal_engine"] = temporal_engine_summary(samples)
+    report["temporal_engine"]["renderer_log"] = temporal_engine_log_summary(diag_text)
     report["findings"] = findings(report, names)
     return report
 
@@ -223,6 +224,43 @@ def temporal_engine_summary(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
             "states": dict(Counter(str(r.get("state", "unknown")) for r in rows)),
             "active_samples": len(active), "fallback_reasons": reasons[:8],
             "last_active": last, "presented": None, "verified_on_hardware": False}
+
+
+def temporal_engine_log_summary(text: str) -> Dict[str, Any]:
+    """The engine's own 10 s stats lines in the renderer log (te.3+)."""
+    rows = []
+    for line in (text or "").splitlines():
+        if "Temporal Engine stats " not in line:
+            continue
+        fields = dict(part.split("=", 1) for part in line.split("Temporal Engine stats ", 1)[1].split() if "=" in part)
+        rows.append(fields)
+    if not rows:
+        return {"available": False}
+
+    def nums(key):
+        out = []
+        for r in rows:
+            try:
+                out.append(float(r[key]))
+            except (KeyError, ValueError):
+                pass
+        return out
+
+    def med(key):
+        values = nums(key)
+        return round(statistics.median(values), 2) if values else None
+
+    shares = [r.get("shares", "") .split("/") for r in rows]
+    shares = [[float(x) for x in s] for s in shares if len(s) == 3 and all(x.replace(".", "", 1).isdigit() for x in s)]
+    return {"available": True, "lines": len(rows),
+            "levels": dict(Counter(r.get("level", "?") for r in rows)),
+            "reasons": dict(Counter(r.get("reason", "?") for r in rows)),
+            "holding_share": round(sum(r.get("holding") == "1" for r in rows) / len(rows), 2),
+            "cost_holds": max((int(r["cost_holds"]) for r in rows if r.get("cost_holds", "").isdigit()), default=0),
+            "fixed_ms_median": med("fixed_ms"), "frame_ms_median": med("frame_ms"),
+            "pair_p95_ms_median": med("pair_p95_ms"), "cap_ms": med("cap_ms"),
+            "interval_ms_median": med("interval_ms"),
+            "shares_median": [round(statistics.median(s[i] for s in shares), 3) for i in range(3)] if shares else None}
 
 
 def stick_touch_boost_summary(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -509,6 +547,12 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
             text += (f" Last: shares {last.get('shares')}, GPU ms {last.get('gpu_ms')}, dispatched "
                      f"{last.get('outputs_dispatched')} / GPU-completed {last.get('outputs_gpu_completed')}, "
                      f"dropped {last.get('dropped')}, recommendation {last.get('recommendation')}.")
+        tlog = temporal.get("renderer_log") or {}
+        if tlog.get("available"):
+            text += (f" Renderer log ({tlog['lines']} lines): levels {tlog['levels']}, holding "
+                     f"{int(tlog['holding_share'] * 100)}% of the time ({tlog['cost_holds']} cost holds), "
+                     f"fixed {tlog['fixed_ms_median']} ms + {tlog['frame_ms_median']} ms per generated frame "
+                     f"(cap {tlog['cap_ms']} ms), shares reuse/light/full {tlog['shares_median']}.")
         if temporal.get("fallback_reasons"):
             text += " LSFG kept frame generation: " + ", ".join(temporal["fallback_reasons"]) + "."
         out.append(text + " Presentation is not observed by the engine; no FPS, latency or energy gain is implied.")

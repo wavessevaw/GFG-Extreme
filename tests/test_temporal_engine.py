@@ -74,6 +74,63 @@ class StatusValidation(unittest.TestCase):
         self.assertEqual(out["fallback_reason"], "encoding-not-sdr8")
 
 
+# Byte-for-byte what the te.2 adapter writes (C++ streams print bool as 1/0). The
+# helper above used Python's True and hid that the reader refused every real record.
+TE2_RECORD = (
+    '{"schema":1,"engine":"gfg-temporal","version":"0.1.0-exp","pid":51,"process_start_ticks":11818,'
+    '"context":1,"updated_unix_ms":1791981755719,"mode":"experimental","role":"engine","active":true,'
+    '"device":"AMD Custom GPU 0932 (RADV VANGOGH)","width":1280,"height":800,"outputs_capacity":3,'
+    '"vram_bytes":41943040,"real_interval_ms":33.4,"counters":{"pairs_submitted":900,"history_frames":0,'
+    '"outputs_dispatched":2700,"outputs_gpu_completed":2697,"dropped":0,"scene_cuts":4,"promoted_tiles":120,'
+    '"cost_holds":2,"holding":1,"presented":null},"gpu_ms":{"pyramid":0.3,"analyze":2.1,"classify":0.1,'
+    '"lists":0.02,"reuse":0.1,"light":0.9,"full":0,"merge":0,"frame":1.1,"pair_p50":5.4,"pair_p95":7.9,'
+    '"pair_p99":9.2,"timed":1},"shares":{"reuse":0.2,"light":0.8,"full":0},"confidence":0.6,'
+    '"scheduler":{"level":4,"light_scale":1,"force_full":0,"force_light":1,"cap_ms":2,"budget_ms":12,'
+    '"predicted_ms":2.3,"recommended_outputs":3,"recommendation":"fallback","reason":"over-cap","misses":3,'
+    '"gpu_busy_known":false},"last_error":null}\n')
+
+
+class WriterFormat(unittest.TestCase):
+    def test_te2_record_is_accepted(self):
+        out = te.normalize_status(json.loads(TE2_RECORD))
+        self.assertIs(out["gpu_ms"]["timed"], True)
+        self.assertEqual(out["counters"]["holding"], 1)
+        self.assertEqual(out["scheduler"]["level"], 4)
+
+    def test_te3_record_with_json_bool(self):
+        out = te.normalize_status(json.loads(TE2_RECORD.replace('"timed":1', '"timed":true')))
+        self.assertIs(out["gpu_ms"]["timed"], True)
+        for bad in ('"timed":2', '"timed":"yes"'):
+            with self.assertRaises(ValueError):
+                te.normalize_status(json.loads(TE2_RECORD.replace('"timed":1', bad)))
+
+    def test_read_contexts_finds_record_in_governor_overlay_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "governor-overlay" / "runtime-state" / "temporal"
+            folder.mkdir(parents=True)
+            (folder / "51-11818-1.json").write_text(TE2_RECORD)
+            found = te.read_contexts([Path(tmp) / "runtime-state" / "temporal", folder],
+                                     live_check=lambda pid: 11818)
+            self.assertEqual(len(found), 1)
+            self.assertEqual(te.summarize("experimental", found)["state"], "generating")
+
+    def test_writer_source_prints_json_bools(self):
+        source = (ROOT / "engine/gfg-temporal/mako/gfg_temporal.cpp").read_text()
+        self.assertIn('"timed\\":" << ((this->haveStats && this->stats.timed) ? "true" : "false")', source)
+
+    def test_renderer_log_stats_summary(self):
+        from gfg_plugin.log_report import temporal_engine_log_summary
+        line = ("MAKO Renderer: Temporal Engine stats level=4 reason=over-cap holding=1 cost_holds=3 pairs=900 "
+                "dropped=0 interval_ms=33.30 fixed_ms=3.10 frame_ms=1.20 pair_p95_ms=7.50 cap_ms=2.00 "
+                "predicted_ms=2.30 shares=0.10/0.80/0.10 confidence=0.70 scene_cuts=2")
+        out = temporal_engine_log_summary("noise\n" + line + "\n" + line.replace("holding=1", "holding=0"))
+        self.assertEqual(out["lines"], 2)
+        self.assertEqual(out["holding_share"], 0.5)
+        self.assertEqual(out["cost_holds"], 3)
+        self.assertEqual(out["shares_median"], [0.1, 0.8, 0.1])
+        self.assertFalse(temporal_engine_log_summary("")["available"])
+
+
 class Summary(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

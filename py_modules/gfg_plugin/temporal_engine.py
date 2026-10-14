@@ -97,6 +97,9 @@ def normalize_status(raw: object) -> Dict[str, Any]:
         "pyramid", "analyze", "classify", "lists", "reuse", "light", "full", "merge", "frame",
         "pair_p50", "pair_p95", "pair_p99")}
     timed = gpu.get("timed")
+    # te.1/te.2 engines wrote this flag as 1/0 (C++ stream bool); accept both forms
+    if type(timed) is int and timed in (0, 1):
+        timed = bool(timed)
     if type(timed) is not bool:
         raise ValueError("gpu_ms.timed must be boolean")
     out["gpu_ms"]["timed"] = timed

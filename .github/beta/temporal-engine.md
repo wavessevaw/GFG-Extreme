@@ -1,19 +1,13 @@
-# GFG Extreme 2.1.2-te.2 — Temporal Engine beta (pre-release)
+# GFG Extreme 2.1.2-te.3 — Temporal Engine beta (pre-release)
 
 **Experimental build for hardware trials. Not verified on a Steam Deck.** Everything else is GFG Extreme 2.1.1.
 
-te.1 could cost more GPU time than regular frame generation. te.2 targets *no more GPU time than regular frame generation*:
+te.3 is a **diagnostic** build: te.2 ran on the Deck, but its measurements never reached the plugin, so the logs could not show why motion did not feel smooth or where the artifacts came from.
 
-- **Cost cap**: the engine may use at most **2 ms of GPU time per generated frame** (`GFG_TEMPORAL_CAP_MS` to change it). Over the cap it steps down at once, to LIGHT-only (no FULL tiles). If even that is over the cap, it holds — shows the newest real frame without analysis — for about 4 seconds, then measures again.
-- **Motion analysis** runs 64 threads per tile instead of one (same result, far better GPU occupancy).
-- **FULL tiles** take one decision per 2×2 pixels (quality within 0.05 dB in the bench, a quarter of the search work).
-- **Telemetry now works in Steam Runtime games**: the Diagnostics panel and logs show GPU time per stage, class shares, level, the cap and cost holds. The panel says when a changed mode waits for a game restart.
-- The bundled engine reports its own version (`4.0.0-gfg.fusion.3-te.2`), so Settings → System shows when it needs **Update engine**.
+- **Telemetry fixed.** The engine wrote one status field as `1` instead of `true`, and the plugin rejected the whole record — every te.2 log showed "waiting-for-game". The plugin now accepts both forms (so even the te.2 engine reports), and the te.3 engine writes `true`/`false`.
+- **Engine stats in the renderer log** every 10 seconds: quality level, whether it is holding (showing the newest real frame instead of generated ones because it is over the cost cap), GPU time per pair and per generated frame, and the REUSE/LIGHT/FULL shares. The log summary reports them.
+- No change to how frames are generated: this build is for measuring what te.2 does on the Deck.
 
-Off by default; pick a mode in **Settings → Diagnostics → Temporal Engine · Experimental**. Each choice applies from the next game start.
-
-Whether the cap of 2 ms per frame is at or below regular frame generation on the Deck is not measured yet: compare real FPS with Off and with Experimental in the same scene. No FPS, latency or battery gain is claimed. Interpolation always adds at least one real-frame interval of latency.
-
-Install **GFG-Extreme-v2_1_2-te_2.zip** through Decky, then **Settings → System → Update engine**, then restart the game through `/home/deck/.local/bin/gfg %command%`. To go back, install the 2.1.1 release and update the engine again.
+How to test: install **GFG-Extreme-v2_1_2-te_3.zip** through Decky, **Settings → System → Update engine**, restart the game through `/home/deck/.local/bin/gfg %command%`, keep **Temporal Engine · Experimental**, record a log (2–3 minutes in the scene with the shiny surface and the sword), then the same with Temporal Engine **Off**.
 
 SHA-256: `<sha256>` — also see **SHA256SUMS.txt**.

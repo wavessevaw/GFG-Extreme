@@ -126,4 +126,6 @@ namespace mako::backend::gfg_temporal {
     };
 
     [[nodiscard]] std::string statusPrefix(uint64_t contextId, std::string_view mode, std::string_view role);
+    /// JSON has no NaN/Infinity: a non-finite measurement is written as 0.
+    [[nodiscard]] double finite(double value) noexcept;
 }

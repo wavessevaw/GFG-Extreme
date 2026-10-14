@@ -292,7 +292,7 @@ namespace {
                   << ",\"width\":" << this->extent.width << ",\"height\":" << this->extent.height
                   << ",\"outputs_capacity\":" << te_context_outputs(this->ctx)
                   << ",\"vram_bytes\":" << te_context_memory_bytes(this->ctx)
-                  << ",\"real_interval_ms\":" << this->intervalMs
+                  << ",\"real_interval_ms\":" << finite(this->intervalMs)
                   << ",\"counters\":{\"pairs_submitted\":" << this->pairsSubmitted
                   << ",\"history_frames\":" << this->historyFrames
                   << ",\"outputs_dispatched\":" << this->outputsDispatched
@@ -303,26 +303,26 @@ namespace {
                   << ",\"cost_holds\":" << this->costHolds
                   << ",\"holding\":" << (this->holdPairs > 0 ? 1 : 0)
                   << ",\"presented\":null}"
-                  << ",\"gpu_ms\":{\"pyramid\":" << this->stageMs[TE_STAGE_PYRAMID]
-                  << ",\"analyze\":" << this->stageMs[TE_STAGE_ANALYZE]
-                  << ",\"classify\":" << this->stageMs[TE_STAGE_CLASSIFY]
-                  << ",\"lists\":" << this->listsMs
-                  << ",\"reuse\":" << this->classMs[0] << ",\"light\":" << this->classMs[1]
-                  << ",\"full\":" << this->classMs[2]
-                  << ",\"merge\":0,\"frame\":" << this->frameMs
-                  << ",\"pair_p50\":" << this->percentile(0.50) << ",\"pair_p95\":" << this->percentile(0.95)
-                  << ",\"pair_p99\":" << this->percentile(0.99) << ",\"timed\":" << (this->haveStats && this->stats.timed)
+                  << ",\"gpu_ms\":{\"pyramid\":" << finite(this->stageMs[TE_STAGE_PYRAMID])
+                  << ",\"analyze\":" << finite(this->stageMs[TE_STAGE_ANALYZE])
+                  << ",\"classify\":" << finite(this->stageMs[TE_STAGE_CLASSIFY])
+                  << ",\"lists\":" << finite(this->listsMs)
+                  << ",\"reuse\":" << finite(this->classMs[0]) << ",\"light\":" << finite(this->classMs[1])
+                  << ",\"full\":" << finite(this->classMs[2])
+                  << ",\"merge\":0,\"frame\":" << finite(this->frameMs)
+                  << ",\"pair_p50\":" << finite(this->percentile(0.50)) << ",\"pair_p95\":" << finite(this->percentile(0.95))
+                  << ",\"pair_p99\":" << finite(this->percentile(0.99)) << ",\"timed\":" << ((this->haveStats && this->stats.timed) ? "true" : "false")
                   << '}'
-                  << ",\"shares\":{\"reuse\":" << this->share[0] << ",\"light\":" << this->share[1]
-                  << ",\"full\":" << this->share[2] << '}'
-                  << ",\"confidence\":" << this->confidence
+                  << ",\"shares\":{\"reuse\":" << finite(this->share[0]) << ",\"light\":" << finite(this->share[1])
+                  << ",\"full\":" << finite(this->share[2]) << '}'
+                  << ",\"confidence\":" << finite(this->confidence)
                   << ",\"scheduler\":{\"level\":" << this->decision.level
-                  << ",\"light_scale\":" << this->decision.light_scale
+                  << ",\"light_scale\":" << finite(this->decision.light_scale)
                   << ",\"force_full\":" << this->decision.force_full
                   << ",\"force_light\":" << this->decision.force_light
-                  << ",\"cap_ms\":" << this->scheduler.cap_ms
-                  << ",\"budget_ms\":" << this->decision.budget_ms
-                  << ",\"predicted_ms\":" << this->decision.predicted_ms
+                  << ",\"cap_ms\":" << finite(this->scheduler.cap_ms)
+                  << ",\"budget_ms\":" << finite(this->decision.budget_ms)
+                  << ",\"predicted_ms\":" << finite(this->decision.predicted_ms)
                   << ",\"recommended_outputs\":" << this->decision.outputs
                   << ",\"recommendation\":" << jsonString(this->decision.action == TE_SCHED_FALLBACK ? "fallback"
                         : (this->decision.outputs < this->stats.outputs ? "fewer-outputs" : "keep"))
@@ -332,6 +332,29 @@ namespace {
                   << ",\"last_error\":" << (this->lastError.empty() ? "null" : jsonString(this->lastError))
                   << "}\n";
                 this->status.write(o.str());
+                // the same facts in the renderer log every 10 s: readable even when
+                // no status reader is available
+                if (!this->shadow && now - this->lastLog >= std::chrono::seconds(10)) {
+                    this->lastLog = now;
+                    std::ostringstream l;
+                    l.imbue(std::locale::classic());
+                    l.setf(std::ios::fixed);
+                    l.precision(2);
+                    l << "MAKO Renderer: Temporal Engine stats level=" << this->decision.level
+                      << " reason=" << reasonName(this->decision.reason)
+                      << " holding=" << (this->holdPairs > 0 ? 1 : 0) << " cost_holds=" << this->costHolds
+                      << " pairs=" << this->pairsSubmitted << " dropped=" << this->dropped
+                      << " interval_ms=" << finite(this->intervalMs)
+                      << " fixed_ms=" << finite(this->stageMs[TE_STAGE_PYRAMID] + this->stageMs[TE_STAGE_ANALYZE]
+                                                + this->stageMs[TE_STAGE_CLASSIFY])
+                      << " frame_ms=" << finite(this->frameMs) << " pair_p95_ms=" << finite(this->percentile(0.95))
+                      << " cap_ms=" << finite(this->scheduler.cap_ms)
+                      << " predicted_ms=" << finite(this->decision.predicted_ms)
+                      << " shares=" << finite(this->share[0]) << '/' << finite(this->share[1]) << '/'
+                      << finite(this->share[2]) << " confidence=" << finite(this->confidence)
+                      << " scene_cuts=" << this->sceneCuts << '\n';
+                    std::clog << l.str();
+                }
             } catch (...) {
             }
         }
@@ -362,7 +385,7 @@ namespace {
         std::array<double, 240> window{};
         size_t windowNext{0}, windowCount{0};
         std::string lastError;
-        Clock::time_point opened{}, lastCall{}, lastPublish{};
+        Clock::time_point opened{}, lastCall{}, lastPublish{}, lastLog{};
     };
 
     /// LSFG context plus optional shadow engine and a status record.
@@ -426,6 +449,9 @@ const char* modeName(Mode mode) noexcept {
     }
     return "off";
 }
+
+/// JSON has no NaN/Infinity: a non-finite measurement is written as 0.
+double finite(double value) noexcept { return std::isfinite(value) ? value : 0.0; }
 
 std::string statusPrefix(uint64_t contextId, std::string_view mode, std::string_view role) {
     std::ostringstream o;
