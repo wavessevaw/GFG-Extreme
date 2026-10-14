@@ -405,6 +405,8 @@ def full_executor(fa, fb, vectors, xs, ys, valid, t, p: Params, ops, experiments
     ops.add("full", buf=(8 + 9) * xs.size)
     xf, yf = xs.astype(F32), ys.astype(F32)
     density = next((e[1:] for e in ("B2x1", "B1x2", "B2x2") if e in experiments), None)
+    if density is None and p.full_density == 2 and "A" not in experiments:
+        density = "2x2"  # production default since te.2: one FULL decision per 2x2 block
     if density:
         bx, by = int(density[0]), int(density[2])
         lx = (xs % tile) // bx * bx

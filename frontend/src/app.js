@@ -1126,12 +1126,14 @@ function TemporalEnginePanel({ s }) {
       h(Row, { icon: "cog", title: "Use Experimental", sub: "Applies from the next game start", onClick: () => save("experimental", true) }),
       h(Row, { icon: "stop", title: "Cancel", onClick: () => setConfirm(false) })) : null,
     h(Note, { quiet: true }, TE_STATE[te.state] || "Waiting for the engine."),
+    te.restart_required ? h(Note, null, "Still running in " + te.running_mode + " until the game restarts.") : null,
     te.state === "fallback" && te.fallback_reasons && te.fallback_reasons.length ? h(Note, { quiet: true }, "Reason: " + te.fallback_reasons.join(", ")) : null,
     te.state === "shadow-measuring" || te.state === "generating" ? h("div", { className: "kv" },
       h("span", null, "Tiles reuse / light / full"), h("b", null, pct(sh.reuse) + " / " + pct(sh.light) + " / " + pct(sh.full)),
       h("span", null, "GPU per frame pair"), h("b", null, g.pair_p50 != null ? num(g.pair_p50, 2) + " ms (p95 " + num(g.pair_p95, 2) + ")" : "–"),
       h("span", null, "Dispatched / GPU-completed"), h("b", null, (te.outputs_dispatched || 0) + " / " + (te.outputs_gpu_completed || 0)),
-      h("span", null, "Dropped pairs"), h("b", null, String(te.dropped || 0))) : null,
+      h("span", null, "Dropped pairs"), h("b", null, String(te.dropped || 0)),
+      h("span", null, "Cost cap"), h("b", null, te.scheduler && te.scheduler.cap_ms ? num(te.scheduler.cap_ms, 1) + " ms per frame" + (te.scheduler.force_light ? " · light only" : " · level " + te.scheduler.level) : "–")) : null,
     msg ? h(Note, { quiet: true }, msg) : null);
 }
 

@@ -30,6 +30,8 @@ layout(std140, set = 0, binding = 0) uniform Params {
     int force_class;
     int tile;
     int probe;
+    int full_density;      // FULL decision per 1x1 or 2x2 block
+    int pad_a, pad_b, pad_c;
     vec4 level_size[4];    // xy = level width, height
 } P;
 

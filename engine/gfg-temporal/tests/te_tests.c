@@ -423,6 +423,8 @@ static te_sched_observation obs(double fixed, double per_frame, uint32_t outputs
 static void test_scheduler(void) {
     te_scheduler s;
     te_scheduler_init(&s);
+    EXPECT(s.cap_ms == TE_SCHED_DEFAULT_CAP_MS, "a cost cap is on by default");
+    s.cap_ms = 0.0; /* budget-only behaviour first */
     te_sched_input in = {.real_interval_ms = 33.3, .gpu_busy = 0.5, .requested = 2};
     te_sched_decision d = te_scheduler_decide(&s, &in);
     EXPECT(d.action == TE_SCHED_GENERATE && d.reason == TE_REASON_WARMUP && d.profile, "warm-up generates and profiles");
@@ -449,6 +451,7 @@ static void test_scheduler(void) {
     EXPECT(fell_back && d.reason == TE_REASON_OVER_BUDGET, "unmeetable budget falls back (reason %d)", d.reason);
     /* adaptivity that does not pay is switched off */
     te_scheduler_init(&s);
+    s.cap_ms = 0.0;
     for (int i = 0; i < 20; ++i) {
         te_sched_observation o = obs(1.0, 2.0, 2, 100, 0, 100, 1);
         te_scheduler_observe(&s, &o, 30.0);
@@ -463,8 +466,23 @@ static void test_scheduler(void) {
     }
     d = te_scheduler_decide(&s, &roomy);
     EXPECT(!d.force_full, "classification is re-evaluated after a while");
+    /* hard cap: over cap_ms per output climbs to LIGHT-only, then recommends fewer outputs */
+    te_scheduler_init(&s);
+    s.cap_ms = 2.0;
+    te_sched_input roomy2 = {.real_interval_ms = 100.0, .gpu_busy = 0.0, .requested = 2};
+    int light_only = 0;
+    for (int i = 0; i < 12; ++i) {
+        d = te_scheduler_decide(&s, &roomy2);
+        light_only |= d.force_light;
+        te_sched_observation o = obs(2.0, 3.0, 2, 100, 40, 60, 0);   /* 4 ms per output measured */
+        te_scheduler_observe(&s, &o, d.budget_ms);
+    }
+    EXPECT(d.budget_ms <= 4.0 + 1e-9, "cap bounds the budget (%.2f)", d.budget_ms);
+    EXPECT(light_only && d.level == TE_SCHED_LEVELS - 1, "over the cap reaches LIGHT-only (level %u)", d.level);
+    EXPECT(d.outputs < 2, "still over the cap at LIGHT-only: fewer outputs recommended (%u)", d.outputs);
     /* recovery: calm pairs lower the level again */
     te_scheduler_init(&s);
+    s.cap_ms = 0.0;
     s.level = 2;
     s.samples = 10;
     for (int i = 0; i < 31; ++i) {

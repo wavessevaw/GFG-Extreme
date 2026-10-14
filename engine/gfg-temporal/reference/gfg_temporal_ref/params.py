@@ -42,6 +42,7 @@ class Params:
     hysteresis: int = 2            # consecutive eligible pairs before a tile is downgraded
     adaptive: bool = True          # False: every tile uses `force_class`
     force_class: int = CLASS_FULL
+    full_density: int = 2          # FULL candidate decision per 1x1 or 2x2 pixel block
     e_motion_thr: float = 0.5      # experiment E: LIGHT tiles moving less than this (px) become REUSE
 
     def as_dict(self):
@@ -63,4 +64,5 @@ C_HEADER_FIELDS = (  # name in Params -> macro in te_params.h
     ("occ_hi", "TE_DEFAULT_OCC_HI"),
     ("smooth_bias", "TE_DEFAULT_SMOOTH_BIAS"),
     ("hysteresis", "TE_DEFAULT_HYSTERESIS"),
+    ("full_density", "TE_DEFAULT_FULL_DENSITY"),
 )

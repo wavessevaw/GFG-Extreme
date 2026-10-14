@@ -16,7 +16,7 @@ void main() {
     if (G.cut[par] != 0u) {
         c = CLASS_REUSE;
     } else {
-        if (PC.frame > 0 && ts.frame_cls == CLASS_LIGHT && residual[id] > P.residual_thr) {
+        if ((PC.flags & 2) == 0 && PC.frame > 0 && ts.frame_cls == CLASS_LIGHT && residual[id] > P.residual_thr) {
             ts.state = CLASS_FULL;
             ts.count = 0u;
             atomicAdd(G.promoted, 1u);

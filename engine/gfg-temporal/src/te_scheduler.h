@@ -15,7 +15,8 @@
 extern "C" {
 #endif
 
-#define TE_SCHED_LEVELS 4
+#define TE_SCHED_LEVELS 5          /* last level: FULL tiles run as LIGHT */
+#define TE_SCHED_DEFAULT_CAP_MS 2.0 /* GPU ms per generated frame, see docs */
 
 typedef enum {
     TE_SCHED_GENERATE = 0,   /* run the engine with the returned knobs */
@@ -44,12 +45,14 @@ typedef struct {
     uint32_t level;            /* 0 = best quality .. TE_SCHED_LEVELS-1 = cheapest */
     float light_scale;         /* LIGHT threshold multiplier for this level */
     int force_full;            /* classification disabled */
+    int force_light;           /* cheapest level: FULL tiles run as LIGHT */
     int profile;               /* time executors separately on this pair (calibration) */
     double budget_ms;          /* GPU time available to frame generation per pair */
     double predicted_ms;       /* predicted GPU time of the pair with these knobs */
 } te_sched_decision;
 
 typedef struct {
+    double cap_ms;             /* hard GPU cost cap per generated frame (0: none) */
     double fixed_ms;           /* pyramid + analyze + classify, EMA */
     double lists_ms;           /* per output, EMA */
     double tile_ms[3];         /* per tile per output: reuse, light, full (from profiled pairs) */

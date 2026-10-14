@@ -43,6 +43,7 @@ typedef struct {
     uint32_t hysteresis;
     int32_t adaptive;          /* 0: every tile uses force_class */
     int32_t force_class;       /* 0 reuse, 1 light, 2 full */
+    uint32_t full_density;     /* FULL decision per 1x1 or 2x2 block */
 } te_params;
 
 void te_params_default(te_params* params);
@@ -93,7 +94,9 @@ typedef struct {
     int profile;                /* time each executor on its own for this pair */
     float light_scale;          /* scheduler: LIGHT threshold multiplier (0 means 1) */
     int force_full;             /* scheduler: classification off, every tile FULL */
+    int force_light;            /* scheduler: cheapest level, FULL tiles run as LIGHT */
     int discontinuity;          /* the previous frame was skipped: slot may repeat, outputs hold */
+    int hold;                   /* cost guard: no analysis, outputs copy the new real frame */
 } te_submit;
 
 const char* te_last_error(void);

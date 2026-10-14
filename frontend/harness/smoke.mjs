@@ -2,7 +2,7 @@
 import { launch, openPage, STATES } from "./lib.mjs";
 const cases = [
   ["fusion-prepared", ["Settings", "Diagnostics"], ["FRAME FUSION", "Waiting for a compatible frame"]],
-  ["temporal-shadow", ["Settings", "Diagnostics"], ["TEMPORAL ENGINE · EXPERIMENTAL", "Measuring in the background", "30% / 30% / 40%", "200 / 198"]],
+  ["temporal-shadow", ["Settings", "Diagnostics"], ["TEMPORAL ENGINE · EXPERIMENTAL", "Measuring in the background", "30% / 30% / 40%", "200 / 198", "Still running in shadow until the game restarts", "2 ms per frame · level 1"]],
   ["temporal-fallback", ["Settings", "Diagnostics"], ["regular frame generation kept the work", "no-external-semaphore-fd"]],
   ["fusion-observed", ["Settings", "Diagnostics"], ["direct processing path has been used", "Power benefit is not measured yet"]],
   ["fusion-restart", ["Settings", "Diagnostics"], ["Restart the game to apply your choice"]],

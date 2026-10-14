@@ -32,7 +32,8 @@ void main() {
         target = CLASS_REUSE;
     if (P.adaptive == 0) target = uint(P.force_class);
     if ((PC.flags & 1) != 0) target = CLASS_FULL;
-    if (hist && ts.frame_cls == CLASS_LIGHT && residual[id] > P.residual_thr) {
+    if ((PC.flags & 2) != 0 && target == CLASS_FULL) target = CLASS_LIGHT;  // cost cap: cheapest level
+    if ((PC.flags & 2) == 0 && hist && ts.frame_cls == CLASS_LIGHT && residual[id] > P.residual_thr) {
         ts.state = CLASS_FULL;
         ts.count = 0u;
         atomicAdd(G.promoted, 1u);

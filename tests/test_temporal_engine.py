@@ -106,6 +106,22 @@ class Summary(unittest.TestCase):
         self.assertEqual(compact["recommendation"], "keep")
         self.assertIn("gpu_ms", compact)
 
+    def test_lock_keeps_a_namespaced_writer_alive(self):
+        import fcntl
+        self.write("ns.json", engine_record(pid=7, process_start_ticks=5))
+        dead = lambda pid: None  # noqa: E731  PID from another namespace
+        self.assertEqual(te.read_contexts([self.dir], live_check=dead), [])
+        with open(self.dir / "ns.json.lock", "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            self.assertEqual(len(te.read_contexts([self.dir], live_check=dead)), 1)
+
+    def test_engine_keeps_running_until_restart(self):
+        self.write("a.json", engine_record(mode="experimental"))
+        s = te.summarize("off", te.read_contexts([self.dir], live_check=LIVE))
+        self.assertEqual(s["state"], "generating")
+        self.assertTrue(s["restart_required"])
+        self.assertTrue(te.blocks_experiments(s))
+
     def test_fallback_is_reported_with_reason(self):
         record = engine_record(role="fallback", active=False, eligible=False, mode="experimental",
                                fallback_reason="no-external-semaphore-fd")

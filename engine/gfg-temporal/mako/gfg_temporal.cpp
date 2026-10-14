@@ -24,6 +24,7 @@ extern "C" {
 #include <string_view>
 
 #include <fcntl.h>
+#include <sys/file.h>
 #include <unistd.h>
 
 namespace mako::backend::gfg_temporal {
@@ -96,6 +97,7 @@ namespace {
             runtime(std::move(runtime)), ctx(context), shadow(shadow), extent(extent),
             status(this->runtime->statusDirectory(), this->runtime->nextContextId()) {
             te_scheduler_init(&this->scheduler);
+            this->scheduler.cap_ms = this->runtime->capMs();
             this->opened = Clock::now();
             this->publish(true);
         }
@@ -228,7 +230,15 @@ namespace {
             this->collect();
             te_sched_input in{.real_interval_ms = this->intervalMs, .gpu_busy = -1.0,
                               .requested = static_cast<uint32_t>(timestamps.size())};
-            if (!timestamps.empty()) this->decision = te_scheduler_decide(&this->scheduler, &in);
+            if (!timestamps.empty()) {
+                this->decision = te_scheduler_decide(&this->scheduler, &in);
+                // over the cost cap even at LIGHT-only: hold (copy the real frame,
+                // no analysis) for a while, then measure again
+                if (this->decision.action == TE_SCHED_FALLBACK && this->holdPairs == 0) {
+                    this->holdPairs = 120;
+                    this->costHolds++;
+                }
+            }
             te_submit s{};
             s.slot = slot;
             s.count = static_cast<uint32_t>(timestamps.size());
@@ -236,9 +246,15 @@ namespace {
             s.wait_value = step.wait;
             s.signal_first = this->shadow ? 0 : step.firstSignal;
             s.discontinuity = this->skipped ? 1 : 0;
+            if (this->holdPairs > 0 && s.count) {
+                s.hold = 1;
+                // measure afresh when the hold ends (the averages are from before it)
+                if (--this->holdPairs == 0) this->scheduler.samples = 0;
+            }
             s.profile = this->decision.profile;
             s.light_scale = this->decision.light_scale;
             s.force_full = this->decision.force_full;
+            s.force_light = this->decision.force_light;
             if (this->shadow && s.count) {
                 // duty cycle: runs of 16 measured pairs, history-only in between
                 const uint32_t duty = this->runtime->shadowDutyPercent();
@@ -284,6 +300,8 @@ namespace {
                   << ",\"dropped\":" << this->dropped
                   << ",\"scene_cuts\":" << this->sceneCuts
                   << ",\"promoted_tiles\":" << this->promoted
+                  << ",\"cost_holds\":" << this->costHolds
+                  << ",\"holding\":" << (this->holdPairs > 0 ? 1 : 0)
                   << ",\"presented\":null}"
                   << ",\"gpu_ms\":{\"pyramid\":" << this->stageMs[TE_STAGE_PYRAMID]
                   << ",\"analyze\":" << this->stageMs[TE_STAGE_ANALYZE]
@@ -301,6 +319,8 @@ namespace {
                   << ",\"scheduler\":{\"level\":" << this->decision.level
                   << ",\"light_scale\":" << this->decision.light_scale
                   << ",\"force_full\":" << this->decision.force_full
+                  << ",\"force_light\":" << this->decision.force_light
+                  << ",\"cap_ms\":" << this->scheduler.cap_ms
                   << ",\"budget_ms\":" << this->decision.budget_ms
                   << ",\"predicted_ms\":" << this->decision.predicted_ms
                   << ",\"recommended_outputs\":" << this->decision.outputs
@@ -332,6 +352,8 @@ namespace {
         uint64_t pairsSubmitted{0}, historyFrames{0}, outputsDispatched{0}, outputsCompleted{0};
         uint64_t dropped{0}, sceneCuts{0}, pairsSeen{0};
         uint32_t promoted{0};
+        uint32_t holdPairs{0};
+        uint64_t costHolds{0};
         double intervalMs{0.0};
         double stageMs[TE_STAGE_COUNT]{};
         double classMs[3]{};
@@ -430,6 +452,10 @@ std::shared_ptr<Runtime> Runtime::create(Mode mode, VkPhysicalDevice physical,
             const long value = std::strtol(duty, nullptr, 10);
             if (value >= 1 && value <= 100) rt->m_shadowDuty = static_cast<uint32_t>(value);
         }
+        if (const char* cap = std::getenv("GFG_TEMPORAL_CAP_MS")) {
+            const double value = std::strtod(cap, nullptr);
+            if (value >= 0.0 && value <= 50.0) rt->m_capMs = value;
+        }
     } catch (...) {
         return nullptr;
     }
@@ -470,11 +496,24 @@ Runtime::~Runtime() {
 StatusFile::StatusFile(const std::filesystem::path& directory, uint64_t contextId) : id(contextId) {
     this->path = directory / (std::to_string(::getpid()) + "-" + std::to_string(processStartTicks()) + "-" +
                               std::to_string(contextId) + ".json");
+    // Liveness that survives a private PID namespace (Steam Runtime): the
+    // reader checks whether this lock is held, as for the renderer's own status.
+    auto lock = this->path;
+    lock += ".lock";
+    this->lockFd = ::open(lock.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (this->lockFd >= 0 && ::flock(this->lockFd, LOCK_EX | LOCK_NB) != 0) {
+        ::close(this->lockFd);
+        this->lockFd = -1;
+    }
 }
 
 StatusFile::~StatusFile() {
     std::error_code error;
     std::filesystem::remove(this->path, error);
+    auto lock = this->path;
+    lock += ".lock";
+    std::filesystem::remove(lock, error);
+    if (this->lockFd >= 0) ::close(this->lockFd);
 }
 
 void StatusFile::write(const std::string& json) noexcept {

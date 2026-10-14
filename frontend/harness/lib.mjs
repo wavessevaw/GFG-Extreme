@@ -99,7 +99,7 @@ export const STATES = {
   "home-effort-reason": { ...base, enabled: true, state: "LOCKED", mode: "quality", device: dev("oled", 90), target_output_fps: 90, telemetry: tel(30, 90, 3), active_point: { multiplier: 3, render_scale_pct: 100 }, effort: { level: "hard", reason: "x3 required" } },
   "frame-os-refused": { ...base, device: dev("oled", 90), target_output_fps: 90, frame_os: { mode: "off" }, __frameOsFail: true },
   "fusion-prepared": { ...base, mode: "autopilot", frame_fusion: { enabled: true, state: "prepared", path_observed: false } },
-  "temporal-shadow": { ...base, temporal_engine: { requested_mode: "shadow", state: "shadow-measuring", applied: true, shares: { reuse: 0.3, light: 0.3, full: 0.4 }, gpu_ms: { pair_p50: 2.4, pair_p95: 3.1 }, outputs_dispatched: 200, outputs_gpu_completed: 198, dropped: 4 } },
+  "temporal-shadow": { ...base, temporal_engine: { requested_mode: "off", running_mode: "shadow", restart_required: true, scheduler: { cap_ms: 2, level: 1, force_light: 0 }, state: "shadow-measuring", applied: true, shares: { reuse: 0.3, light: 0.3, full: 0.4 }, gpu_ms: { pair_p50: 2.4, pair_p95: 3.1 }, outputs_dispatched: 200, outputs_gpu_completed: 198, dropped: 4 } },
   "temporal-fallback": { ...base, temporal_engine: { requested_mode: "experimental", state: "fallback", applied: false, fallback_reasons: ["no-external-semaphore-fd"] } },
   "fusion-observed": { ...base, mode: "autopilot", frame_fusion: { enabled: true, state: "observed", path_observed: true, gain_measured: false } },
   "fusion-restart": { ...base, mode: "autopilot", frame_fusion: { enabled: false, state: "restart-required", path_observed: true } },

@@ -31,10 +31,11 @@ typedef struct {
     float static_thr, static_max_thr, light_thr, cut_thr, residual_thr;
     float occ_lo, occ_hi, smooth_bias, me_bias;
     int32_t coarse_range, hysteresis, levels, adaptive, force_class, tile, probe;
+    int32_t full_density, pad[3];
     float level_size[4][4];
 } te_ubo;
-_Static_assert(offsetof(te_ubo, level_size) == 80, "std140 layout of Params");
-_Static_assert(sizeof(te_ubo) == 144, "std140 size of Params");
+_Static_assert(offsetof(te_ubo, level_size) == 96, "std140 layout of Params");
+_Static_assert(sizeof(te_ubo) == 160, "std140 size of Params");
 
 typedef struct {
     float t;
@@ -232,6 +233,7 @@ void te_params_default(te_params* p) {
     p->hysteresis = TE_DEFAULT_HYSTERESIS;
     p->adaptive = 1;
     p->force_class = 2;
+    p->full_density = TE_DEFAULT_FULL_DENSITY;
 }
 
 void te_context_desc_default(te_context_desc* d, uint32_t width, uint32_t height, uint32_t outputs) {
@@ -782,6 +784,10 @@ static VkResult validate_desc(te_device* dev, const te_context_desc* d) {
     if (p->tile != 8 && p->tile != 16 && p->tile != 32) return fail(VK_ERROR_INITIALIZATION_FAILED, "tile must be 8, 16 or 32");
     if (p->levels < 1 || p->levels > TE_MAX_LEVELS) return fail(VK_ERROR_INITIALIZATION_FAILED, "levels must be 1..3");
     if (p->probe < 1 || p->probe > 8) return fail(VK_ERROR_INITIALIZATION_FAILED, "probe must be 1..8");
+    if (p->full_density != 1 && p->full_density != 2)
+        return fail(VK_ERROR_INITIALIZATION_FAILED, "full_density must be 1 or 2");
+    if (p->coarse_range < 1 || p->coarse_range > 8)
+        return fail(VK_ERROR_INITIALIZATION_FAILED, "coarse_range must be 1..8");
     if (d->outputs < 1 || d->outputs > TE_MAX_OUTPUTS) return fail(VK_ERROR_INITIALIZATION_FAILED, "outputs must be 1..4");
     if (d->width < 16 || d->height < 16 || d->width > 8192 || d->height > 8192)
         return fail(VK_ERROR_INITIALIZATION_FAILED, "unsupported extent %ux%u", d->width, d->height);
@@ -907,6 +913,7 @@ VkResult te_context_create(te_device* dev, const te_context_desc* desc, te_conte
     ubo.force_class = p->force_class;
     ubo.tile = (int32_t)T;
     ubo.probe = (int32_t)p->probe;
+    ubo.full_density = (int32_t)p->full_density;
     for (int l = 0; l < TE_LUMA_IMAGES; ++l) {
         ubo.level_size[l][0] = (float)ctx->lw[l];
         ubo.level_size[l][1] = (float)ctx->lh[l];
@@ -1061,7 +1068,7 @@ static void record_analysis(te_context* ctx, te_slot* slot, const te_submit* s, 
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, ctx->pipe[PIPE_ME]);
     for (int l = (int)p->levels; l >= 0; --l) {
         push(ctx, cb, 0.5f, l, 0, (int)par);
-        vkCmdDispatch(cb, groups(ctx->tiles, 64), 1, 1);
+        vkCmdDispatch(cb, ctx->tiles, 1, 1); /* one workgroup per tile */
         compute_barrier(cb);
     }
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, ctx->pipe[PIPE_STATS]);
@@ -1070,7 +1077,8 @@ static void record_analysis(te_context* ctx, te_slot* slot, const te_submit* s, 
     compute_barrier(cb);
     vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, slot->queries, 2);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, ctx->pipe[PIPE_CLASSIFY]);
-    push_knobs(ctx, cb, 0.5f, 0, 0, (int)par, s->light_scale > 0.0f ? s->light_scale : 1.0f, s->force_full ? 1 : 0);
+    push_knobs(ctx, cb, 0.5f, 0, 0, (int)par, s->light_scale > 0.0f ? s->light_scale : 1.0f,
+               (s->force_full ? 1 : 0) | (s->force_light ? 2 : 0));
     vkCmdDispatch(cb, groups(ctx->tiles, 64), 1, 1);
     compute_barrier(cb);
     vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, slot->queries, 3);
@@ -1094,7 +1102,7 @@ static void record_output(te_context* ctx, te_slot* slot, const te_submit* s, ui
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, ctx->layout, 0, 2, sets, 0, NULL);
     float t = hold ? 1.0f : s->timestamps[i]; /* a hold shows the newest real frame */
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, ctx->pipe[PIPE_LISTS]);
-    push(ctx, cb, t, 0, (int)i, (int)par);
+    push_knobs(ctx, cb, t, 0, (int)i, (int)par, 1.0f, s->force_light ? 2 : 0);
     vkCmdDispatch(cb, groups(ctx->tiles, 64), 1, 1);
     barrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
@@ -1216,7 +1224,7 @@ VkResult te_submit_frame(te_context* ctx, const te_submit* s) {
             return fail(VK_ERROR_INITIALIZATION_FAILED, "timestamps must increase strictly inside (0, 1)");
     }
     /* No previous frame (first frame, or a skipped one): outputs hold the new frame */
-    int generate = ctx->frames > 0 && s->count > 0 && !repeat && !s->discontinuity;
+    int generate = ctx->frames > 0 && s->count > 0 && !repeat && !s->discontinuity && !s->hold;
     uint32_t r_index = ctx->ring_next;
     te_slot* slot = &ctx->ring[r_index];
     VkResult r = wait_slot(ctx, slot, s->nonblocking);

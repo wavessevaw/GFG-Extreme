@@ -53,6 +53,7 @@ namespace {
         std::vector<std::string> out;
         std::error_code error;
         for (const auto& entry : std::filesystem::directory_iterator(dir, error)) {
+            if (entry.path().extension() != ".json") continue;  // skip the liveness lock
             std::ifstream in(entry.path());
             std::stringstream text;
             text << in.rdbuf();
@@ -135,6 +136,12 @@ int main() {
             }
         }
         expect(statusFiles(statusDir).empty(), "status record removed with the context");
+        {
+            std::error_code ec;
+            bool locks = false;
+            for (const auto& e : std::filesystem::directory_iterator(statusDir, ec)) locks |= e.path().extension() == ".lock";
+            expect(!locks, "liveness lock removed with the context");
+        }
         expect(openFds() == before, "no descriptor leaked (" + std::to_string(openFds()) + " vs " +
                std::to_string(before) + ")");
         for (int fd : {src[0], src[1], dst[0], sync[0]})

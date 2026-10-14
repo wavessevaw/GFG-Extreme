@@ -17,6 +17,9 @@
 
 #include <vulkan/vulkan_core.h>
 
+/* keep in step with TE_SCHED_DEFAULT_CAP_MS in src/te_scheduler.h */
+#define TE_SCHED_DEFAULT_CAP_MS_VALUE 2.0
+
 struct te_device;
 struct te_context;
 
@@ -61,6 +64,8 @@ namespace mako::backend::gfg_temporal {
         [[nodiscard]] const std::string& deviceName() const noexcept { return this->m_deviceName; }
         [[nodiscard]] uint64_t nextContextId() noexcept { return ++this->m_contexts; }
         [[nodiscard]] uint32_t shadowDutyPercent() const noexcept { return this->m_shadowDuty; }
+        /// GPU ms per generated frame the engine may use (GFG_TEMPORAL_CAP_MS, 0 = no cap)
+        [[nodiscard]] double capMs() const noexcept { return this->m_capMs; }
         [[nodiscard]] const std::filesystem::path& statusDirectory() const noexcept { return this->m_statusDir; }
     private:
         explicit Runtime(Mode mode) noexcept;
@@ -70,6 +75,7 @@ namespace mako::backend::gfg_temporal {
         std::string m_deviceName;
         uint64_t m_contexts{0};
         uint32_t m_shadowDuty{25};
+        double m_capMs{TE_SCHED_DEFAULT_CAP_MS_VALUE};
         std::filesystem::path m_statusDir;
     };
 
@@ -116,6 +122,7 @@ namespace mako::backend::gfg_temporal {
     private:
         std::filesystem::path path;
         uint64_t id;
+        int lockFd{-1};
     };
 
     [[nodiscard]] std::string statusPrefix(uint64_t contextId, std::string_view mode, std::string_view role);

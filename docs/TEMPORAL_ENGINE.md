@@ -113,6 +113,26 @@ backend does not know it today; it assumes 50 % and reports
   saves less than classification + list building for 8 profiled pairs, every
   tile runs FULL; this is re-evaluated after 240 pairs.
 
+### 2.4 Cost cap (te.2)
+
+The goal is **no more GPU time than the regular frame generator**. The
+scheduler therefore bounds its budget by a hard cap per generated frame
+(default 2 ms, `GFG_TEMPORAL_CAP_MS`). A pair measured over the cap moves up
+one level immediately; the last level runs FULL tiles as LIGHT and disables
+promotions. If the LIGHT-only path is still over the cap (for example when
+analysis alone is too expensive), the adapter holds — outputs copy the newest
+real frame and no analysis runs — for 120 pairs, then measures again. Whether
+2 ms is at or below LSFG on a Deck must be confirmed by an Off/Experimental
+comparison in the same scene.
+
+Since te.2 motion estimation runs one 64-thread workgroup per tile (8
+candidates × 8 window rows at a time; the first minimum in candidate order
+wins, so results equal the sequential reference) and FULL takes one decision
+per 2×2 block (`full_density = 2`, experiment B 2×2). On lavapipe the
+executors became 65–69 % cheaper while the analysis became slower (a CPU
+emulator penalises barrier-parallel code); GPU behaviour must be measured on
+hardware.
+
 ## 3. Native implementation (`engine/gfg-temporal/src/te_engine.c`)
 
 * Vulkan 1.2, loaded at run time with `dlopen` (like MAKO inside the layer);

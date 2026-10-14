@@ -13,10 +13,11 @@
 #define WARMUP 4
 #define RECHECK_PAIRS 240
 
-static const float k_scale[TE_SCHED_LEVELS] = {1.0f, 1.5f, 2.5f, 4.0f};
+static const float k_scale[TE_SCHED_LEVELS] = {1.0f, 1.5f, 2.5f, 4.0f, 4.0f};
 
 void te_scheduler_init(te_scheduler* s) {
     memset(s, 0, sizeof *s);
+    s->cap_ms = TE_SCHED_DEFAULT_CAP_MS;
     s->since_profile = PROFILE_EVERY; /* calibrate on the first pair */
 }
 
@@ -26,41 +27,34 @@ float te_scheduler_light_scale(uint32_t level) {
 
 static double ema(double old, double value, uint32_t n) { return n == 0 ? value : old + (value - old) * EMA; }
 
-/* Light-share response to the threshold scale is unknown in general, so the
- * prediction at another level keeps the measured shares and only the level
- * actually observed is trusted; cheaper levels can only move tiles from FULL
- * to LIGHT, so the current-level prediction is an upper bound for them. */
-static double per_output_ms(const te_scheduler* s, int force_full) {
-    if (s->calibrated == 0) return s->frame_ms;
-    double tiles = s->share[0] + s->share[1] + s->share[2];
-    if (tiles <= 0.0) return s->frame_ms;
-    double work = force_full ? tiles * s->tile_ms[2]
-                             : s->share[0] * s->tile_ms[0] + s->share[1] * s->tile_ms[1] + s->share[2] * s->tile_ms[2];
-    return s->lists_ms + work;
-}
-
 te_sched_decision te_scheduler_decide(te_scheduler* s, const te_sched_input* in) {
     te_sched_decision d;
     memset(&d, 0, sizeof d);
     d.outputs = in->requested;
     double busy = in->gpu_busy >= 0.0 && in->gpu_busy <= 1.0 ? in->gpu_busy : 0.5;
     d.budget_ms = in->real_interval_ms > 0.0 ? in->real_interval_ms * (1.0 - busy) * SAFETY : 0.0;
+    /* hard cap: never more than cap_ms of GPU time per generated frame */
+    if (s->cap_ms > 0.0 && in->requested > 0) {
+        double cap = s->cap_ms * in->requested;
+        if (d.budget_ms <= 0.0 || cap < d.budget_ms) d.budget_ms = cap;
+    }
     d.profile = s->since_profile >= PROFILE_EVERY;
     if (s->samples < WARMUP) {
         d.level = s->level;
         d.light_scale = te_scheduler_light_scale(d.level);
+        d.force_light = d.level + 1 >= TE_SCHED_LEVELS;
         d.reason = TE_REASON_WARMUP;
         d.predicted_ms = s->samples ? s->fixed_ms + in->requested * s->frame_ms : 0.0;
         return d;
     }
-    d.force_full = s->force_full;
-    d.reason = s->force_full ? TE_REASON_ADAPTIVE_NOT_WORTH : (s->last_cut ? TE_REASON_SCENE_CUT : TE_REASON_NONE);
     uint32_t level = s->level;
-    double per = per_output_ms(s, d.force_full);
-    double predicted = s->fixed_ms + in->requested * per;
-    if (d.budget_ms > 0.0 && predicted > d.budget_ms && level + 1 < TE_SCHED_LEVELS) {
-        level++;
+    /* measured cost at the current level (EMA), not a model of other levels */
+    double measured = s->fixed_ms + in->requested * s->frame_ms;
+    d.reason = s->last_cut ? TE_REASON_SCENE_CUT : TE_REASON_NONE;
+    if (d.budget_ms > 0.0 && measured > d.budget_ms) {
+        s->force_full = 0;  /* uniform FULL is the most expensive path */
         s->calm = 0;
+        if (level + 1 < TE_SCHED_LEVELS) level++;
         d.reason = TE_REASON_OVER_BUDGET;
     } else if (s->misses >= MISS_PAIRS && level + 1 < TE_SCHED_LEVELS) {
         level++;
@@ -71,23 +65,25 @@ te_sched_decision te_scheduler_decide(te_scheduler* s, const te_sched_input* in)
         level--;
         s->calm = 0;
     }
+    if (s->force_full && d.reason == TE_REASON_NONE) d.reason = TE_REASON_ADAPTIVE_NOT_WORTH;
+    d.force_full = s->force_full;
     s->level = level;
     d.level = level;
     d.light_scale = te_scheduler_light_scale(level);
-    /* at the cheapest level, shed synthetic frames before giving up */
-    uint32_t outs = in->requested;
-    if (level + 1 >= TE_SCHED_LEVELS)
-        while (outs > 0 && s->fixed_ms + outs * per > d.budget_ms) outs--;
-    if (outs == 0 || d.budget_ms <= 0.0) {
-        d.action = TE_SCHED_FALLBACK;
-        d.reason = TE_REASON_OVER_BUDGET;
-        d.outputs = 0;
-        d.predicted_ms = predicted;
-        s->fallbacks++;
-        return d;
+    d.force_light = level + 1 >= TE_SCHED_LEVELS;
+    d.predicted_ms = measured;
+    /* the cheapest level still over the cap: recommend generating fewer frames
+     * or none; the caller (pacing owner) decides */
+    if (d.force_light && d.budget_ms > 0.0 && measured > d.budget_ms) {
+        uint32_t outs = in->requested;
+        while (outs > 0 && s->fixed_ms + outs * s->frame_ms > d.budget_ms * outs / in->requested) outs--;
+        d.outputs = outs;
+        if (outs == 0) {
+            d.action = TE_SCHED_FALLBACK;
+            d.reason = TE_REASON_OVER_BUDGET;
+            s->fallbacks++;
+        }
     }
-    d.outputs = outs;
-    d.predicted_ms = s->fixed_ms + outs * per;
     return d;
 }
 

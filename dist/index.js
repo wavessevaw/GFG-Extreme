@@ -1888,6 +1888,7 @@ function TemporalEnginePanel({ s }) {
       h(Row, { icon: "stop", title: "Cancel", onClick: () => setConfirm(false) })
     ) : null,
     h(Note, { quiet: true }, TE_STATE[te.state] || "Waiting for the engine."),
+    te.restart_required ? h(Note, null, "Still running in " + te.running_mode + " until the game restarts.") : null,
     te.state === "fallback" && te.fallback_reasons && te.fallback_reasons.length ? h(Note, { quiet: true }, "Reason: " + te.fallback_reasons.join(", ")) : null,
     te.state === "shadow-measuring" || te.state === "generating" ? h(
       "div",
@@ -1899,7 +1900,9 @@ function TemporalEnginePanel({ s }) {
       h("span", null, "Dispatched / GPU-completed"),
       h("b", null, (te.outputs_dispatched || 0) + " / " + (te.outputs_gpu_completed || 0)),
       h("span", null, "Dropped pairs"),
-      h("b", null, String(te.dropped || 0))
+      h("b", null, String(te.dropped || 0)),
+      h("span", null, "Cost cap"),
+      h("b", null, te.scheduler && te.scheduler.cap_ms ? num(te.scheduler.cap_ms, 1) + " ms per frame" + (te.scheduler.force_light ? " \xB7 light only" : " \xB7 level " + te.scheduler.level) : "\u2013")
     ) : null,
     msg ? h(Note, { quiet: true }, msg) : null
   );

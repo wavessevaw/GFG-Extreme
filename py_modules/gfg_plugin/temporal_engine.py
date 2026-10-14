@@ -8,6 +8,7 @@ is reported as unknown because the backend cannot observe presentation.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import math
 import os
@@ -88,6 +89,8 @@ def normalize_status(raw: object) -> Dict[str, Any]:
     if counters.get("presented") is not None:
         raise ValueError("presented is not observable in the backend")
     out["counters"]["presented"] = None
+    out["counters"]["cost_holds"] = _int(counters.get("cost_holds", 0), "cost_holds")
+    out["counters"]["holding"] = _int(counters.get("holding", 0), "holding")
     if out["counters"]["outputs_gpu_completed"] > out["counters"]["outputs_dispatched"]:
         raise ValueError("more outputs completed than dispatched")
     out["gpu_ms"] = {k: _num(gpu.get(k), "gpu_ms." + k) for k in (
@@ -115,6 +118,8 @@ def normalize_status(raw: object) -> Dict[str, Any]:
         "reason": _str(sched.get("reason"), "reason", 40),
         "misses": _int(sched.get("misses"), "misses"),
         "gpu_busy_known": sched.get("gpu_busy_known") is True,
+        "force_light": _int(sched.get("force_light", 0), "force_light"),
+        "cap_ms": _num(sched.get("cap_ms", 0.0), "cap_ms"),
     }
     out["last_error"] = _str(raw.get("last_error"), "last_error")
     return out
@@ -127,6 +132,24 @@ def _process_start_ticks(pid: int) -> Optional[int]:
         return int(fields[19]) if len(fields) >= 20 else None
     except (OSError, UnicodeError, ValueError):
         return None
+
+
+def _lock_held(status_path: Path) -> bool:
+    """The writer holds <file>.lock; valid across the Steam Runtime's PID namespace."""
+    flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(str(status_path) + ".lock", flags)
+    except OSError:
+        return False
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(fd)
 
 
 def read_contexts(folders: Iterable[Path], live_check=_process_start_ticks) -> List[Dict[str, Any]]:
@@ -148,7 +171,7 @@ def read_contexts(folders: Iterable[Path], live_check=_process_start_ticks) -> L
                 record = normalize_status(json.loads(data.decode("utf-8")))
             except (OSError, UnicodeError, ValueError):
                 continue
-            if live_check(record["pid"]) != record["process_start_ticks"]:
+            if live_check(record["pid"]) != record["process_start_ticks"] and not _lock_held(path):
                 continue
             key = (record["pid"], record["process_start_ticks"], record["context"])
             if key not in found or record["updated_unix_ms"] > found[key]["updated_unix_ms"]:
@@ -175,7 +198,10 @@ def summarize(requested_mode: str, contexts: List[Dict[str, Any]]) -> Dict[str, 
         "performance_basis": "gpu-timestamp-queries" if engines else "none",
         "verified_on_hardware": False,
     }
-    if mode == "off":
+    running = engines[0]["mode"] if engines else (passive[0]["mode"] if passive else None)
+    out["running_mode"] = running
+    out["restart_required"] = bool(running and running != mode)
+    if mode == "off" and not contexts:
         out["state"] = "off"
     elif not contexts:
         out["state"] = "waiting-for-game"
@@ -196,6 +222,7 @@ def summarize(requested_mode: str, contexts: List[Dict[str, Any]]) -> Dict[str, 
             pairs_submitted=c["pairs_submitted"], outputs_dispatched=c["outputs_dispatched"],
             outputs_gpu_completed=c["outputs_gpu_completed"], dropped=c["dropped"],
             scene_cuts=c["scene_cuts"], promoted_tiles=c["promoted_tiles"],
+            cost_holds=c["cost_holds"], holding=bool(c["holding"]),
             gpu_ms={k: round(v, 4) if isinstance(v, float) else v for k, v in e["gpu_ms"].items()},
             shares={k: round(v, 4) for k, v in e["shares"].items()},
             confidence=round(e["confidence"], 4), scheduler=dict(e["scheduler"]),
