@@ -111,6 +111,9 @@ jobs:
       - name: Build zip
         run: |
           python3 scripts/bump_version.py "${{ steps.version.outputs.version }}"
+          # build_release.sh packages HEAD (git archive): record the beta version in a
+          # local commit inside this job only; nothing is pushed
+          git -c user.name=gfg-beta -c user.email=gfg-beta@localhost commit -qam "beta ${{ steps.version.outputs.version }}"
           git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
           FRAME_FUSION_BUILD="$RUNNER_TEMP/fusion/build" VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" scripts/build_release.sh "${{ steps.version.outputs.version }}" payloads out
 
