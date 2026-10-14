@@ -40,7 +40,15 @@ COARSE_R = 10       # full search radius at 1/16 (+-160 px at full resolution)
 HUD_PAIRS = 6       # pairs a pixel must stay still (while the scene moves) to be HUD
 STILL = 2.0 / 255
 PEN_UPDATE = 0.004
-PIX_MARGIN = 0.25   # 3x3 RGB SAD a pixel's other candidates must beat its own block by  # 3DRS-style penalty for update candidates (per level pixel of change)
+PROPAGATE = 2       # spatial propagation sweeps per level
+SMOOTH = 0.002      # cost per level pixel of deviation from the 3x3 median
+ORPHAN_BLEND = True
+ORPHANS = True
+PIX_MARGIN = 0.25
+RESID = 0.12        # per-pixel 3x3 cost above which a pixel is "unexplained"
+ORPHAN_SHARE = 0.08 # share of unexplained pixels that makes an 8x8 block an orphan
+ORPHAN_R = 112      # orphan search radius, full-res pixels
+ORPHAN_MAX_COST = 0.08   # 3x3 RGB SAD a pixel's other candidates must beat its own block by  # 3DRS-style penalty for update candidates (per level pixel of change)
 
 
 def luma(rgb):
@@ -54,16 +62,30 @@ def down(y):
 
 
 def bilinear(img, x, y):
-    if img.ndim == 2:
-        return bilinear(img[..., None], x, y)[..., 0]
+    """Bilinear fetch with edge clamp (flat-index gathers: much faster in numpy)."""
+    squeeze = img.ndim == 2
+    if squeeze:
+        img = img[..., None]
+    h, w, c = img.shape
+    x = np.clip(x, 0, w - 1.0001).astype(np.float32)
+    y = np.clip(y, 0, h - 1.0001).astype(np.float32)
+    x0 = x.astype(np.int32)
+    y0 = y.astype(np.int32)
+    fx = (x - x0)[..., None]
+    fy = (y - y0)[..., None]
+    flat = img.reshape(-1, c)
+    i = y0 * w + x0
+    p00, p01 = flat[i], flat[i + 1]
+    p10, p11 = flat[i + w], flat[i + w + 1]
+    out = (p00 + (p01 - p00) * fx) * (1 - fy) + (p10 + (p11 - p10) * fx) * fy
+    return out[..., 0] if squeeze else out
+
+
+def nearest(img, x, y):
     h, w = img.shape[:2]
-    x = np.clip(x, 0, w - 1.0001)
-    y = np.clip(y, 0, h - 1.0001)
-    x0, y0 = np.floor(x).astype(np.int32), np.floor(y).astype(np.int32)
-    fx, fy = (x - x0)[..., None], (y - y0)[..., None]
-    a = img[y0, x0] * (1 - fx) + img[y0, x0 + 1] * fx
-    b = img[y0 + 1, x0] * (1 - fx) + img[y0 + 1, x0 + 1] * fx
-    return a * (1 - fy) + b * fy
+    xi = np.clip(np.rint(x), 0, w - 1).astype(np.int32)
+    yi = np.clip(np.rint(y), 0, h - 1).astype(np.int32)
+    return img.reshape(h * w, -1)[yi * w + xi]
 
 
 def inside(x, y, w, h):
@@ -209,8 +231,8 @@ def estimate(pyr_a, pyr_b, grid, H, temporal):
         if temporal is not None:
             cands.append(resample_field(temporal, lv.bh, lv.bw, 1.0 / lv.s))
             pens.append(0.0)
-        if H is not None:
-            cands.append(camera_field(H, lv, grid))
+        for Hk in ([] if H is None else (H if isinstance(H, list) else [H])):
+            cands.append(camera_field(Hk, lv, grid))
             pens.append(0.0)
         cands.append(np.zeros((lv.bh, lv.bw, 2), np.float32))
         pens.append(PEN_UPDATE)
@@ -224,6 +246,18 @@ def estimate(pyr_a, pyr_b, grid, H, temporal):
                         cands.append(v + np.array([dx, dy], np.float32) * st)
                         pens.append(PEN_UPDATE * st)
             v, c = best_of(lv, cands, pens, grid)
+        # 3DRS-style spatial propagation: each block tries its neighbours'
+        # vectors from this level; a smoothness term against the 3x3 median
+        # lets the true motion spread over periodic textures (tiles, grass)
+        for _ in range(PROPAGATE):
+            med = vector_median(v)
+            cands = [v, med]
+            p = np.pad(v, ((1, 1), (1, 1), (0, 0)), mode="edge")
+            for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                cands.append(p[1 + dy:1 + dy + lv.bh, 1 + dx:1 + dx + lv.bw])
+            costs = np.stack([lv.cost(cnd, grid) + SMOOTH * np.abs(cnd - med).sum(-1) for cnd in cands])
+            i = np.argmin(costs, 0)
+            v = np.take_along_axis(np.stack(cands), i[None, ..., None], 0)[0]
         v = vector_median(v)
         c = lv.cost(v, grid)
     return v * 2.0, c  # level 1 -> full-res pixels; 8x8 full-res blocks
@@ -236,7 +270,7 @@ def patch_cost(own, other):
     return uniform_filter(d, 3, mode="nearest")
 
 
-def pixel_field(a, b, blocks, H, grid, hud):
+def pixel_field(a, b, blocks, H, grid, hud, extra=None):
     """Per-pixel vectors on frame A's or B's grid: best of 3x3 blocks + camera."""
     h, w = a.shape[:2]
     bh, bw = blocks.shape[:2]
@@ -250,6 +284,12 @@ def pixel_field(a, b, blocks, H, grid, hud):
     for dy in (0, -1, 1):
         for dx in (0, -1, 1):
             cands.append(blocks[np.clip(bi + dy, 0, bh - 1), np.clip(bj + dx, 0, bw - 1)])
+    if extra is not None:
+        ev, eok = extra
+        for dy in (0, -1, 1):
+            for dx in (0, -1, 1):
+                yy, xx = np.clip(bi + dy, 0, bh - 1), np.clip(bj + dx, 0, bw - 1)
+                cands.append(np.where(eok[yy, xx][..., None], ev[yy, xx], blocks[bi, bj]))
     if H is not None:
         if grid == "a":
             qx, qy = apply_h(H, px, py)
@@ -269,6 +309,84 @@ def pixel_field(a, b, blocks, H, grid, hud):
         best_v = np.where(better[..., None], v, best_v)
     best_v[hud] = 0.0
     return best_v, best_c
+
+
+# ----------------------------------------------------------------- orphan objects
+
+def masked_down(y, m, f):
+    """Downsample by f keeping thin structures: masked mean of y, max of m."""
+    h, w = y.shape[0] // f * f, y.shape[1] // f * f
+    yy = (y * m)[:h, :w].reshape(h // f, f, w // f, f).sum(axis=(1, 3))
+    mm = m[:h, :w].reshape(h // f, f, w // f, f)
+    cnt = mm.sum(axis=(1, 3))
+    return yy / np.maximum(cnt, 1e-6), mm.max(axis=(1, 3))
+
+
+def orphan_search(y_own, m_own, y_oth, m_oth, sign, blocks):
+    """Wide search for blocks the camera and block field leave unexplained.
+
+    Only residual pixels take part on both sides (an object is matched to the
+    object, not to the background around it), and the 1/4-resolution images
+    keep a thin object alive by max-pooling the residual mask.  Returns
+    full-resolution vectors (A -> B) per 8x8 block and a validity mask.
+    """
+    bh, bw = blocks.shape[:2]
+    f = 4
+    yo, mo = masked_down(y_own, m_own, f)
+    yt, mt = masked_down(y_oth, m_oth, f)
+    # orphan blocks: 8x8 full-res blocks with residual pixels
+    share = m_own[: bh * 8, : bw * 8].reshape(bh, 8, bw, 8).mean(axis=(1, 3))
+    oi, oj = np.nonzero(share > ORPHAN_SHARE)
+    out = np.zeros((bh, bw, 2), np.float32)
+    ok = np.zeros((bh, bw), bool)
+    if oi.size == 0:
+        return out, ok
+    # each orphan block = 2x2 cells at 1/4 res
+    cy = (oi[:, None] * 2 + np.array([0, 0, 1, 1])[None]).astype(np.float32)
+    cx = (oj[:, None] * 2 + np.array([0, 1, 0, 1])[None]).astype(np.float32)
+    own = yo[np.minimum(cy.astype(int), yo.shape[0] - 1), np.minimum(cx.astype(int), yo.shape[1] - 1)]
+    wown = mo[np.minimum(cy.astype(int), mo.shape[0] - 1), np.minimum(cx.astype(int), mo.shape[1] - 1)]
+    r = ORPHAN_R // f
+    best = np.full(oi.size, np.inf, np.float32)
+    bv = np.zeros((oi.size, 2), np.float32)
+    H, W = yt.shape
+    for dy in range(-r, r + 1):
+        for dx in range(-r, r + 1):
+            ty, tx = cy + sign * dy, cx + sign * dx
+            iny = (ty >= 0) & (ty < H) & (tx >= 0) & (tx < W)
+            tyi, txi = np.clip(ty, 0, H - 1).astype(int), np.clip(tx, 0, W - 1).astype(int)
+            wt = mt[tyi, txi] * iny
+            wgt = wown * wt
+            c = (np.abs(own - yt[tyi, txi]) * wgt).sum(1) / np.maximum(wgt.sum(1), 1e-6)
+            # target must be residual too; prefer covering more of the block
+            c = np.where(wgt.sum(1) >= 0.5 * np.maximum(wown.sum(1), 1e-6), c, np.inf)
+            c = c + 0.0005 * (abs(dx) + abs(dy))
+            better = c < best
+            best = np.where(better, c, best)
+            bv[better] = (dx * f, dy * f)
+    # refine at full resolution, +-3 px, on the residual pixels of each block
+    py0, px0 = oi * 8, oj * 8
+    oy, ox = np.meshgrid(np.arange(8), np.arange(8), indexing="ij")
+    ys = (py0[:, None, None] + oy).astype(np.float32)
+    xs = (px0[:, None, None] + ox).astype(np.float32)
+    Hf, Wf = y_oth.shape
+    yown = y_own[np.minimum(ys.astype(int), Hf - 1), np.minimum(xs.astype(int), Wf - 1)]
+    wmask = m_own[np.minimum(ys.astype(int), Hf - 1), np.minimum(xs.astype(int), Wf - 1)]
+    fb = np.full(oi.size, np.inf, np.float32)
+    fv = bv.copy()
+    for ddy in range(-3, 4):
+        for ddx in range(-3, 4):
+            v = bv + np.array([ddx, ddy], np.float32)
+            tx = xs + sign * v[:, 0, None, None]
+            ty = ys + sign * v[:, 1, None, None]
+            c = (np.abs(yown - bilinear(y_oth, tx, ty)) * wmask).sum((1, 2)) / np.maximum(wmask.sum((1, 2)), 1)
+            better = c < fb
+            fb = np.where(better, c, fb)
+            fv[better] = v[better]
+    good = np.isfinite(best) & (fb < ORPHAN_MAX_COST)
+    out[oi[good], oj[good]] = fv[good]
+    ok[oi[good], oj[good]] = True
+    return out, ok
 
 
 # ----------------------------------------------------------------- generator
@@ -311,6 +429,18 @@ class LMC:
         # 4. per-pixel fields on both grids
         pvb, pcb = pixel_field(a, b, vb, H, "b", hud)
         pva, pca = pixel_field(a, b, va, H, "a", hud)
+        self.orphans = None
+        if ORPHANS:
+            rb = ((pcb > RESID) & ~hud).astype(np.float32)
+            ra = ((pca > RESID) & ~hud).astype(np.float32)
+            ob = orphan_search(pyr_b[0], rb, pyr_a[0], ra, -1.0, vb)
+            oa = orphan_search(pyr_a[0], ra, pyr_b[0], rb, 1.0, va)
+            self.orphans = (ob, oa)
+            if ob[1].any():
+                pvb, pcb = pixel_field(a, b, vb, H, "b", hud, ob)
+            if oa[1].any():
+                pva, pca = pixel_field(a, b, va, H, "a", hud, oa)
+            self.debug["orphans"] = (int(ob[1].sum()), int(oa[1].sum()))
         return [self._synth(a, b, vb, pva, pvb, H, hud, t) for t in ts]
 
     def _fit_camera(self, vb, cb, hud, yb):
@@ -334,6 +464,13 @@ class LMC:
         bi = np.clip((py // 8).astype(int), 0, bh - 1)
         bj = np.clip((px // 8).astype(int), 0, bw - 1)
         cands = [pvb, pva]
+        if self.orphans is not None:
+            for ev, eok in self.orphans:
+                if eok.any():
+                    for dy in (-1, 0, 1):
+                        for dx in (-1, 0, 1):
+                            yy, xx = np.clip(bi + dy, 0, bh - 1), np.clip(bj + dx, 0, bw - 1)
+                            cands.append(np.where(eok[yy, xx][..., None], ev[yy, xx], pvb))
         for dy in (-1, 0, 1):
             for dx in (-1, 0, 1):
                 cands.append(vb[np.clip(bi + dy, 0, bh - 1), np.clip(bj + dx, 0, bw - 1)])
@@ -343,23 +480,47 @@ class LMC:
         cands.append(np.zeros((h, w, 2), np.float32))
         best_s = np.full((h, w), -np.inf, np.float32)
         out = a * (1 - t) + b * t
+        offs = [(dy, dx) for dy in (-1, 0, 1) for dx in (-1, 0, 1)]
         for k, v in enumerate(cands):
-            ax, ay = px - t * v[..., 0], py - t * v[..., 1]
-            bx, by = px + (1 - t) * v[..., 0], py + (1 - t) * v[..., 1]
+            # evaluate only where this candidate differs from the per-pixel
+            # fields (evaluated everywhere first): same result, far cheaper
+            if k < 2:
+                sel = np.ones((h, w), bool)
+            else:
+                sel = (np.abs(v - pvb).max(-1) > 0.25) & (np.abs(v - pva).max(-1) > 0.25)
+            ys, xs = np.nonzero(sel)
+            if ys.size == 0:
+                continue
+            vv = v[ys, xs]
+            fx, fy = xs.astype(np.float32), ys.astype(np.float32)
+            ax, ay = fx - t * vv[:, 0], fy - t * vv[:, 1]
+            bx, by = fx + (1 - t) * vv[:, 0], fy + (1 - t) * vv[:, 1]
             ia, ib = inside(ax, ay, w, h), inside(bx, by, w, h)
-            tol = 1.0 + 0.1 * np.hypot(v[..., 0], v[..., 1])
+            tol = 1.0 + 0.1 * np.hypot(vv[:, 0], vv[:, 1])
             # validity: the frame's own pixel at the trajectory end moves with v
-            ok_a = ia & (np.hypot(*(bilinear(pva, ax, ay) - v).transpose(2, 0, 1)) < tol)
-            ok_b = ib & (np.hypot(*(bilinear(pvb, bx, by) - v).transpose(2, 0, 1)) < tol)
+            ok_a = ia & (np.hypot(*(bilinear(pva, ax, ay) - vv).T) < tol)
+            ok_b = ib & (np.hypot(*(bilinear(pvb, bx, by) - vv).T) < tol)
             ca, cbb = bilinear(a, ax, ay), bilinear(b, bx, by)
-            err = patch_cost(ca, cbb) / 9.0
+            err = np.zeros(ys.size, np.float32)
+            for dy, dx in offs:  # 3x3 two-sided match along the trajectory
+                if dy == 0 and dx == 0:
+                    err += np.abs(ca - cbb).sum(-1)
+                else:
+                    err += np.abs(nearest(a, ax + dx, ay + dy) - nearest(b, bx + dx, by + dy)).sum(-1)
+            err /= 81.0
             both = ok_a & ok_b
             pen = 0.0 if k < 2 else 0.01
             score = np.where(both, 2.0 - err, np.where(ok_a | ok_b, 1.0, -err)) - pen
-            better = score > best_s
-            col = np.where(both[..., None], ca * (1 - t) + cbb * t,
-                           np.where(ok_a[..., None], ca, np.where(ok_b[..., None], cbb, ca * (1 - t) + cbb * t)))
-            best_s = np.where(better, score, best_s)
-            out = np.where(better[..., None], col, out)
+            col = np.where(both[:, None], ca * (1 - t) + cbb * t,
+                           np.where(ok_a[:, None], ca, np.where(ok_b[:, None], cbb, ca * (1 - t) + cbb * t)))
+            better = score > best_s[ys, xs]
+            best_s[ys[better], xs[better]] = score[better]
+            out[ys[better], xs[better]] = col[better]
+        # no trajectory valid on either side: the motion was not found (thin,
+        # fast or rotating object).  A co-located blend reads as motion blur
+        # and is stable from frame to frame; a guessed vector would boil.
+        if ORPHAN_BLEND:
+            orphan = best_s < 0.5
+            out = np.where(orphan[..., None], a * (1 - t) + b * t, out)
         out[hud] = (b if t >= 0.5 else a)[hud]
         return out

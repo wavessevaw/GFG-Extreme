@@ -68,24 +68,31 @@ def flip_map(ref, test):
     return np.asarray(err).reshape(ref.shape[:2])
 
 
-def run_scene(frames: np.ndarray, method_name: str, pairs: int | None, dump: Path | None):
+def run_scene(frames: np.ndarray, method_name: str, pairs: int | None, dump: Path | None, stride: int = 1):
     n = frames.shape[0]
     reals = list(range(0, n, K))
     if pairs:
         reals = reals[: pairs + 1]
+    # stride > 1: score every stride-th pair, but feed the generator the pair
+    # before it too so temporal methods have one pair of history
+    scored = set(range(1, len(reals), stride)) if stride > 1 else set(range(1, len(reals)))
     h, w = frames.shape[1:3]
     hud = hud_mask(h, w)
     gen = methods.make(method_name, w, h)
     ts = [k / K for k in range(1, K)]
-    per_frame, seq_out, seq_gt = [], [], []
+    per_frame, seq_out, seq_gt, temps = [], [], [], []
     hard_sum = hard_n = hud_sum = hud_n = 0.0
     psnrs = []
     t0 = time.time()
     for i, r in enumerate(reals):
+        if stride > 1 and i not in scored and (i + 1) not in scored and (i + 2) not in scored:
+            gen = methods.make(method_name, w, h)  # restart: history must be real
+            continue
         outs = gen.push(frames[r], ts)
-        if i == 0:
-            seq_out.append(to_f(frames[r]))
-            seq_gt.append(to_f(frames[r]))
+        if i == 0 or i not in scored:
+            if i == 0 or stride == 1:
+                seq_out.append(to_f(frames[r]))
+                seq_gt.append(to_f(frames[r]))
             continue
         a, b = to_f(frames[reals[i - 1]]), to_f(frames[r])
         for k, out in enumerate(outs):
@@ -110,9 +117,16 @@ def run_scene(frames: np.ndarray, method_name: str, pairs: int | None, dump: Pat
                 Image.fromarray((gt * 255 + 0.5).astype(np.uint8)).save(dump / f"truth_{k}.png")
         seq_out.append(b)
         seq_gt.append(b)
-    temporal = float(np.mean([np.mean(np.abs((luma(seq_out[j]) - luma(seq_out[j - 1]))
-                                             - (luma(seq_gt[j]) - luma(seq_gt[j - 1]))))
-                              for j in range(1, len(seq_out))]))
+        if stride > 1:  # temporal error within the scored pair only
+            temps.extend(float(np.mean(np.abs((luma(seq_out[j]) - luma(seq_out[j - 1]))
+                                              - (luma(seq_gt[j]) - luma(seq_gt[j - 1])))))
+                         for j in range(len(seq_out) - K, len(seq_out)) if j > 0)
+            seq_out, seq_gt = [b], [b]
+    if stride == 1:
+        temps = [float(np.mean(np.abs((luma(seq_out[j]) - luma(seq_out[j - 1]))
+                                      - (luma(seq_gt[j]) - luma(seq_gt[j - 1])))))
+                 for j in range(1, len(seq_out))]
+    temporal = float(np.mean(temps))
     pf = np.array(per_frame)
     return {
         "flip": float(pf.mean()),
@@ -123,6 +137,7 @@ def run_scene(frames: np.ndarray, method_name: str, pairs: int | None, dump: Pat
         "worst": float(np.percentile(pf, 95)),
         "hard_share": hard_n / (len(per_frame) * h * w),
         "frames": len(per_frame),
+        "per_frame": per_frame,
         "seconds": time.time() - t0,
     }
 
@@ -130,11 +145,12 @@ def run_scene(frames: np.ndarray, method_name: str, pairs: int | None, dump: Pat
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("frames")
-    ap.add_argument("--scenes", default="pan,sword,specular,particles,walk,orbit")
+    ap.add_argument("--scenes", default="pan,sword,specular,particles,walk,orbit,carry")
     ap.add_argument("--methods", default="repeat,blend,te2")
     ap.add_argument("--pairs", type=int, default=0)
     ap.add_argument("--out", default="")
     ap.add_argument("--dump", default="")
+    ap.add_argument("--stride", type=int, default=1, help="score every n-th pair (dev set)")
     args = ap.parse_args()
     root = Path(args.frames)
     results = {}
@@ -144,7 +160,7 @@ def main():
         frames = load_scene(root / s)
         results[s] = {}
         for m in args.methods.split(","):
-            r = run_scene(frames, m, args.pairs or None, Path(args.dump) / s if args.dump else None)
+            r = run_scene(frames, m, args.pairs or None, Path(args.dump) / s if args.dump else None, args.stride)
             results[s][m] = r
             print(f"{s:10s} {m:12s} " + " ".join(f"{r[c]:9.4f}" for c in cols) + f" {r['seconds']:8.1f}",
                   flush=True)
