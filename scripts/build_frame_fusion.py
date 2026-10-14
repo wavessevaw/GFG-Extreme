@@ -44,12 +44,18 @@ def build(work: Path, headers: Path, sanitize=False):
     # Neither the review patch nor this builder edits embedded arrays by hand.
     if metadata.get("shader_source_changed"):
         run(sys.executable, source / "engine/scripts/generate-spatial-scaling-spirv.py")
+    # GFG Temporal Engine library (off at run time unless GFG_TEMPORAL_ENGINE selects it)
+    temporal = ROOT / "engine/gfg-temporal"
+    temporal_build = work / ("temporal-sanitized" if sanitize else "temporal")
+    run("make", "-C", temporal, f"BUILD={temporal_build}", "lib")
     run("cmake", "-S", source / "engine", "-B", output,
         "-DCMAKE_BUILD_TYPE=RelWithDebInfo" if sanitize else "-DCMAKE_BUILD_TYPE=Release",
         "-DMAKO_BUILD_UI=OFF", "-DMAKO_BUILD_CLI=ON", "-DMAKO_BUILD_VK_LAYER=ON",
         "-DBUILD_TESTING=ON", "-DMAKO_REQUIRE_NATIVE_PACKAGE_HEADERS=ON",
         f"-DMAKO_VULKAN_HEADERS_INCLUDE_DIR={headers}",
         f"-DGFG_FUSION_TEST_SOURCE={FUSION / 'tests/integration.cpp'}",
+        f"-DGFG_TEMPORAL_SOURCE_DIR={temporal}",
+        f"-DGFG_TEMPORAL_LIBRARY={temporal_build / 'libgfg-temporal.a'}",
         f"-DMAKO_ENABLE_SANITIZERS={'ON' if sanitize else 'OFF'}")
     run("cmake", "--build", output, "--parallel", "2")
     if not sanitize:
