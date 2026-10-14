@@ -1,6 +1,8 @@
-# GFG Extreme 2.1.2-shell.1 — GFG Shell beta (pre-release)
+# GFG Extreme 2.1.2-shell.2 — GFG Shell beta (pre-release)
 
 **Experimental build for hardware trials. Not verified on a Steam Deck.** Everything else is GFG Extreme 2.1.1.
+
+**Fixed in shell.2:** "Install GFG Shell" failed with `CERTIFICATE_VERIFY_FAILED`. The plugin now uses the SteamOS certificate store (and the system `curl` as a fallback); TLS verification stays on and the Godot download is still SHA-256 checked.
 
 New: **GFG Shell**, a controller game shell (Godot 4), installed and launched from the plugin.
 

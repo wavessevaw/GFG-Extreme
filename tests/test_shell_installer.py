@@ -150,5 +150,23 @@ class InstallerTests(unittest.TestCase):
         self.assertIsNone(st["shortcut_appid"])
 
 
+class SystemTlsTests(unittest.TestCase):
+    def test_context_uses_first_existing_bundle(self):
+        from gfg_plugin import shell_installer as si
+        with tempfile.TemporaryDirectory() as tmp:
+            import ssl
+            bundle = ssl.get_default_verify_paths().cafile or "/etc/ssl/certs/ca-certificates.crt"
+            if not os.path.isfile(bundle):
+                self.skipTest("no CA bundle on this host")
+            ctx = si.ssl_context((os.path.join(tmp, "missing.pem"), bundle))
+            self.assertEqual(ctx.verify_mode, ssl.CERT_REQUIRED)
+            self.assertTrue(ctx.check_hostname)
+            self.assertGreater(len(ctx.get_ca_certs()), 0)
+
+    def test_default_opener_is_system_tls(self):
+        from gfg_plugin import shell_installer as si
+        self.assertIs(si.ShellInstaller(Path("/tmp")).opener, si.system_urlopen)
+
+
 if __name__ == "__main__":
     unittest.main()

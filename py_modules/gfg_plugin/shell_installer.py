@@ -15,6 +15,8 @@ import hashlib
 import json
 import os
 import shutil
+import ssl
+import subprocess
 import tempfile
 import threading
 import urllib.request
@@ -31,6 +33,63 @@ DOWNLOAD_TIMEOUT_S = 30
 MAX_RUNTIME_ZIP = 200 * 1024 * 1024
 
 
+# Decky's bundled Python does not know where SteamOS keeps its CA certificates, so the
+# default context fails with CERTIFICATE_VERIFY_FAILED. Point it at the system bundle;
+# verification stays on (and the download is SHA-256 checked as well).
+CA_BUNDLES = ("/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt",
+              "/etc/ssl/cert.pem", "/etc/ca-certificates/extracted/tls-ca-bundle.pem")
+
+
+def ssl_context(bundles=CA_BUNDLES) -> ssl.SSLContext:
+    for path in bundles:
+        if os.path.isfile(path):
+            return ssl.create_default_context(cafile=path)
+    return ssl.create_default_context()
+
+
+class _CurlResponse:
+    """Minimal urlopen-like response over a file downloaded by the system curl."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._fh = open(path, "rb")
+        self.headers = {"Content-Length": str(path.stat().st_size)}
+
+    def read(self, n: int = -1) -> bytes:
+        return self._fh.read(n)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self._fh.close()
+        try:
+            self._path.unlink()
+        except OSError:
+            pass
+
+
+def system_urlopen(url: str, timeout: float):
+    """urlopen with the system CA bundle; falls back to the system curl on TLS trouble."""
+    try:
+        return urllib.request.urlopen(url, timeout=timeout, context=ssl_context())
+    except Exception as error:  # ssl.SSLError arrives wrapped in URLError
+        if "CERTIFICATE" not in str(error).upper() and "SSL" not in str(error).upper():
+            raise
+        curl = shutil.which("curl", path="/usr/bin:/bin")
+        if not curl:
+            raise
+        fd, name = tempfile.mkstemp(prefix=".godot-", suffix=".zip")
+        os.close(fd)
+        env = {k: v for k, v in os.environ.items() if k not in ("LD_LIBRARY_PATH", "LD_PRELOAD", "SSL_CERT_FILE")}
+        result = subprocess.run([curl, "-fsSL", "--proto", "=https", "--max-time", "600", "-o", name, url],
+                                env=env, capture_output=True, text=True)
+        if result.returncode != 0:
+            os.unlink(name)
+            raise OSError("curl failed: " + (result.stderr.strip() or str(result.returncode)))
+        return _CurlResponse(Path(name))
+
+
 def _read(path: Path) -> str:
     try:
         return path.read_text().strip()
@@ -40,7 +99,7 @@ def _read(path: Path) -> str:
 
 class ShellInstaller:
     def __init__(self, home: Path, packaged: Path = PACKAGED,
-                 opener: Callable[..., Any] = urllib.request.urlopen,
+                 opener: Callable[..., Any] = system_urlopen,
                  uid: Optional[int] = None, gid: Optional[int] = None) -> None:
         self.home = Path(home)
         self.packaged = Path(packaged)
