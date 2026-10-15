@@ -97,6 +97,7 @@ typedef struct {
 
 struct te_device {
     int borrowed;
+    int subgroup_arithmetic;
     struct te_dispatch* dispatch;
     te_set_device_loader_data set_loader_data;
     VkInstance instance;
@@ -431,6 +432,11 @@ VkResult te_device_create(const te_device_desc* desc, te_device** out) {
                     desc && desc->match_uuid ? " with the requested device UUID" : "");
     }
     vkGetPhysicalDeviceMemoryProperties(dev->phys, &dev->mem);
+    VkPhysicalDeviceSubgroupProperties subgroup={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+    VkPhysicalDeviceProperties2 subgroup_props={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,.pNext=&subgroup};
+    vkGetPhysicalDeviceProperties2(dev->phys,&subgroup_props);
+    dev->subgroup_arithmetic=(subgroup.supportedStages&VK_SHADER_STAGE_COMPUTE_BIT) &&
+        (subgroup.supportedOperations&VK_SUBGROUP_FEATURE_ARITHMETIC_BIT) && subgroup.subgroupSize>=4;
     const VkFormatFeatureFlags luma_need = VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
                                            VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
     if (format_ok(dev->phys, VK_FORMAT_R16_SFLOAT, luma_need)) dev->luma_format = VK_FORMAT_R16_SFLOAT;
@@ -558,6 +564,15 @@ VkResult te_device_borrow(VkInstance instance, PFN_vkGetInstanceProcAddr instanc
     dev->luma_format = VK_FORMAT_R32_SFLOAT;
     properties(physical, &dev->props);
     memory(physical, &dev->mem);
+    PFN_vkGetPhysicalDeviceProperties2 properties2=(PFN_vkGetPhysicalDeviceProperties2)
+        instance_dispatch(instance,"vkGetPhysicalDeviceProperties2");
+    if(properties2){
+        VkPhysicalDeviceSubgroupProperties subgroup={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES};
+        VkPhysicalDeviceProperties2 props2={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,.pNext=&subgroup};
+        properties2(physical,&props2);
+        dev->subgroup_arithmetic=(subgroup.supportedStages&VK_SHADER_STAGE_COMPUTE_BIT) &&
+            (subgroup.supportedOperations&VK_SUBGROUP_FEATURE_ARITHMETIC_BIT) && subgroup.subgroupSize>=4;
+    }
     if (pthread_mutex_init(&dev->queue_lock, NULL) != 0) { free(dev->dispatch); free(dev); return VK_ERROR_INITIALIZATION_FAILED; }
     dev->queue_lock_ok = 1;
     *out = dev;
@@ -929,14 +944,21 @@ static VkResult validate_desc(te_device* dev, const te_context_desc* d) {
     const te_params* p = &d->params;
     if (d->application_timeline && !dev->borrowed)
         return fail(VK_ERROR_FEATURE_NOT_PRESENT, "application timeline requires borrowed device");
-    if (dev->borrowed && (p->algorithm != TE_ALGO_TILES || d->export_fds || d->sync_fd >= 0 ||
+    if(p->algorithm>TE_ALGO_LMC_GPU) return VK_ERROR_FEATURE_NOT_PRESENT;
+    if(p->algorithm==TE_ALGO_LMC_GPU &&
+        (dev->props.limits.maxComputeWorkGroupInvocations<512 || dev->props.limits.maxComputeWorkGroupSize[0]<512 ||
+         dev->props.limits.maxComputeSharedMemorySize<16896))
+        return fail(VK_ERROR_FEATURE_NOT_PRESENT,"GPU LMC requires 512-thread groups and 16896 bytes shared memory");
+    if(p->algorithm==TE_ALGO_LMC_GPU && !dev->subgroup_arithmetic)
+        return fail(VK_ERROR_FEATURE_NOT_PRESENT,"GPU LMC requires compute subgroup arithmetic");
+    if (dev->borrowed && ((p->algorithm != TE_ALGO_TILES && p->algorithm != TE_ALGO_LMC_GPU) || d->export_fds || d->sync_fd >= 0 ||
             d->source_fds[0] >= 0 || d->source_fds[1] >= 0))
-        return fail(VK_ERROR_FEATURE_NOT_PRESENT, "borrowed device requires GPU tile path without external descriptors");
+        return fail(VK_ERROR_FEATURE_NOT_PRESENT, "borrowed device requires same-queue GPU algorithm without external descriptors");
     if (dev->borrowed)
         for (uint32_t i = 0; i < TE_MAX_OUTPUTS; ++i)
             if (d->dest_fds[i] >= 0) return VK_ERROR_FEATURE_NOT_PRESENT;
-    if (d->output_bgra && p->algorithm != TE_ALGO_TILES)
-        return fail(VK_ERROR_FEATURE_NOT_PRESENT, "BGRA output packing requires tile algorithm");
+    if (d->output_bgra && p->algorithm == TE_ALGO_LMC)
+        return fail(VK_ERROR_FEATURE_NOT_PRESENT, "BGRA output packing requires tile or GPU LMC algorithm");
     if (p->tile != 8 && p->tile != 16 && p->tile != 32) return fail(VK_ERROR_INITIALIZATION_FAILED, "tile must be 8, 16 or 32");
     if (p->levels < 1 || p->levels > TE_MAX_LEVELS) return fail(VK_ERROR_INITIALIZATION_FAILED, "levels must be 1..3");
     if (p->probe < 1 || p->probe > 8) return fail(VK_ERROR_INITIALIZATION_FAILED, "probe must be 1..8");
@@ -1089,7 +1111,7 @@ VkResult te_context_create(te_device* dev, const te_context_desc* desc, te_conte
     TRY(vkAllocateDescriptorSets(d, &dsai, ctx->set1));
     write_sets(ctx);
     TRY(create_pipelines(ctx));
-    if (p->algorithm == TE_ALGO_LMC) TRY(lmc_create(ctx));
+    if (p->algorithm == TE_ALGO_LMC || p->algorithm == TE_ALGO_LMC_GPU) TRY(lmc_create(ctx));
     for (int s = 0; s < TE_RING; ++s) {
         te_slot* slot = &ctx->ring[s];
         VkCommandBufferAllocateInfo cai = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -1351,7 +1373,8 @@ static void collect(te_context* ctx, te_slot* slot) {
                               VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) == VK_SUCCESS)
         for (int k = 0; k < TE_LMC_PROF_COUNT; ++k) st->lmc_ms[k] = DELTA(TE_LMC_Q0 + k, TE_LMC_Q0 + k + 1);
     /* the wait for the CPU motion fit sits between stage points 2 and 3: GPU time is without it */
-    if (st->lmc_ms[TE_LMC_FIT_WAIT] > 0.0) {
+    st->model_gpu = ctx->lmc && ctx->lmc->gpu_fit;
+    if (!st->model_gpu && st->lmc_ms[TE_LMC_FIT_WAIT] > 0.0) {
         st->stage_ms[TE_STAGE_CLASSIFY] -= st->lmc_ms[TE_LMC_FIT_WAIT];
         if (st->stage_ms[TE_STAGE_CLASSIFY] < 0.0) st->stage_ms[TE_STAGE_CLASSIFY] = 0.0;
     }

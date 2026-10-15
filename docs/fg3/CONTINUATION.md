@@ -15,10 +15,12 @@ experimental binaries. Session end is not task completion.
   `2d35262` adds application-device TE, both layer dispatch orders, caller-owned
   timeline, BGRA shader packing and a core TRANSFER-read synchronization fix.
 - PR #133's implementing agent acknowledged direct ownership coordination:
-  Codex owns transport/core/quality; the other agent owns present monitor,
-  shared-fd self-test, deadline/drop policy, acceptance capture/report/runner,
-  and the targeted SteamOS/Gamescope source spike. Read new PR comments before
-  further overlapping changes. Never replace its branch wholesale.
+  The other agent subsequently exhausted its token budget (PR comment,
+  2026-10-15 16:47 UTC). Codex is now sole implementer and owns ALL remaining
+  transport, monitor, shared-fd self-test, deadline/drop, acceptance and
+  SteamOS/Gamescope tasks. Do not wait for that agent or its unpublished code.
+  It explicitly authorized integrating this branch into the existing #133
+  branch while preserving stable main and rollback.
 - Direct api.github.com is blocked by this executor's network (403). Git push
   and public GitHub HTML work. The scoped `fg3-coordination.yml` posts/updates
   `docs/fg3/COORDINATION.md` in PR #133. PR creation with its GITHUB_TOKEN was
@@ -36,7 +38,7 @@ experimental binaries. Session end is not task completion.
    its real-ready semaphore, then forwards the original. Unrecoverable acquire
    failures forward real and request OUT_OF_DATE / swapchain retirement.
    Three fault-injection cases and independent WSI-pixel observation pass.
-3. Implement explicit GPU LMC fit, evaluate against CPU LMC before selecting
+3. Explicit GPU LMC fit is implemented and under validation; evaluate against CPU LMC before selecting
    final quality/performance settings. Earlier GPU kernels exist at `7f445f2`:
    lmc_layers.comp, lmc_irls.comp, lmc_palette.comp, lmc_plane.glsl and the host
    dispatch sequence in te_lmc.inc. Current kernels have better coalesced
@@ -88,3 +90,52 @@ Mesa 26.0.0-devel d246f60ddf / RADV VANGOGH, kernel
 6.18.50-valve2-1-neptune-618-gc7289a96b14d. No current authenticated remote
 executor. The DLL and private extracted data remain outside git and must not
 be distributed. Existing synthetic/software tests are never acceptance.
+
+
+## New GPU LMC and package checkpoint
+
+TE_ALGO_LMC_GPU=2 / GFG_NATIVE_ALGO=lmc-gpu restores the repository's 7f445f2
+GPU RANSAC/IRLS/palette solvers, retaining current coalesced flow/stats/orphan
+passes and cost tiers. No fit thread, model staging/readback or delayed queue
+submission in this mode. It works on a borrowed device with no optional
+features enabled, except that the native bridge enables its timeline. All
+output signals are submitted before WSI calls. BGRA packing is in LMC compose.
+
+GPU fitting now matches CPU LMC_FIT_SUB=2 and deterministic 512-point hypothesis
+ranking; floating-point IRLS still differs from CPU double precision. A first
+3-scene/8-pair comparison exists in /tmp/gfg-integration-*-lmc-quality.json:
+GPU mean FLIP ≈0.0408/0.0296/0.0370 vs CPU ≈0.0408/0.0296/0.0366 on
+specular/sword/walk. Small HUD/walk regression remains; NOT quality acceptance.
+Those scenes are under /workspace/.gfg-bench-scenes (Godot 4.4.1). Do not claim
+these procedural scenes are games or physical Deck output. GPU model time is
+kept IN GPU totals and labelled gpu_model, never excluded as CPU fit_wait.
+
+Package/install/rollback code and 4 tests were brought forward from the
+preserved source branch, adapted to GFG_NATIVE_GPU_BRIDGE and lmc-gpu. Default
+GPU binary no longer compiles cpu_bridge.c; ENABLE_CPU_BRIDGE=1 explicitly
+builds the legacy regression. Full source includes .inc and GPU solvers.
+Internal package only, hardware_acceptance=false; no public artifacts.
+CI restores loader/pass-through, CPU UNORM/sRGB, bootstrap, private package,
+installed GPU runtime, rollback/uninstall and byte-identical source rebuild,
+in addition to GPU/sync/fault checks. Do not remove mandatory regression gates.
+
+## Gamescope source spike underway
+
+Read-only upstream checkout: /workspace/gfg-research-sources/gamescope,
+2b5cf191d1047d6895516a834de8a72ac1c342f3 (2026-10-13). It is NOT proven to
+match the installed SteamOS build; package index access returned 403 and the
+uploaded device report lacks Gamescope's package version.
+
+Findings from that pinned source: its WSI forces underlying MAILBOX and
+implements FIFO through the gamescope-swapchain protocol. steamcompmgr's
+handle_done_commits_* admits at most one FIFO commit/window per vblank;
+window_refresh_cycle includes the Gamescope app FPS limiter. Thus a 30 FPS
+Gamescope limiter can cap FG outputs as well. The new timing protocol itself
+labels pixel_out as PREDICTED scanout, with zero timestamps on dropped commits.
+DRMBackend.cpp page_flip_handler obtains the actual KMS vblank timestamp,
+updates visible framebuffer IDs and wakes the compositor. Vulkan present-wait
+or predicted pixel_out alone is not physical scanout evidence. Need explicit
+frame/commit→KMS visibility correlation or an independent physical observer.
+No nested Gamescope build has been completed yet. Dependencies include pinned
+wlroots, liftoff, vkroots, Wayland/X11/SDL and optional DRM; preserve exact
+submodule commits if building. Do not replace the owner's SteamOS compositor.

@@ -3,11 +3,16 @@ CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Werror -fPIC
 BUILD ?= build
 VULKAN_HEADERS ?= /usr/include
 ENABLE_TE ?= 0
+ENABLE_CPU_BRIDGE ?= 0
 TE_LIB ?= ../gfg-temporal/build/libgfg-temporal.a
 ifeq ($(ENABLE_TE),1)
-NATIVE_SOURCES := src/layer.c src/cpu_bridge.c src/gpu_bridge.c
+NATIVE_SOURCES := src/layer.c src/gpu_bridge.c
 NATIVE_HEADERS := src/cpu_bridge.h src/gpu_bridge.h src/present_ids.h src/memory_policy.h
 NATIVE_CPPFLAGS := -DGFG_NATIVE_WITH_TE -I../gfg-temporal/src
+ifeq ($(ENABLE_CPU_BRIDGE),1)
+NATIVE_SOURCES += src/cpu_bridge.c
+NATIVE_CPPFLAGS += -DGFG_NATIVE_WITH_CPU_BRIDGE
+endif
 NATIVE_LDLIBS := $(TE_LIB) -ldl -lm
 NATIVE_DEPS := $(TE_LIB)
 else
@@ -78,11 +83,11 @@ wsi-smoke: layer $(BUILD)/wsi-smoke
 	VK_LAYER_PATH="$(abspath $(BUILD))" $(BUILD)/wsi-smoke
 
 wsi-smoke-te:
-	$(MAKE) ENABLE_TE=1 BUILD=build-te layer
-	$(MAKE) ENABLE_TE=1 BUILD=build-te WSI_EXTRA_CFLAGS=-DGFG_NATIVE_TEST_SMALL build-te/wsi-smoke
+	$(MAKE) ENABLE_TE=1 ENABLE_CPU_BRIDGE=1 BUILD=build-cpu layer
+	$(MAKE) ENABLE_TE=1 ENABLE_CPU_BRIDGE=1 BUILD=build-cpu WSI_EXTRA_CFLAGS=-DGFG_NATIVE_TEST_SMALL build-cpu/wsi-smoke
 	GFG_NATIVE_FG=1 GFG_NATIVE_CPU_BRIDGE=1 GFG_NATIVE_BUDGET_MS=5000 GFG_NATIVE_MAX_FRAME_MS=10000 GFG_NATIVE_ALGO=tiles GFG_NATIVE_LMC_TIER=2 GFG_LMC_ORPHAN_CAP=0 GFG_NATIVE_TRACE=1 \
-	VK_INSTANCE_LAYERS=VK_LAYER_GFG_native VK_LAYER_PATH="$(abspath build-te)" \
-	build-te/wsi-smoke
+	VK_INSTANCE_LAYERS=VK_LAYER_GFG_native VK_LAYER_PATH="$(abspath build-cpu)" \
+	build-cpu/wsi-smoke
 
 $(BUILD)/wsi-gpu-smoke: tests/wsi_gpu_smoke.c
 	@test -f $(VULKAN_HEADERS)/vulkan/vulkan_xcb.h || { echo "Vulkan XCB headers required"; exit 1; }

@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     env:
+      CC: gcc-12
+      CXX: g++-12
       VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
       VK_LAYER_PATH: /usr/share/vulkan/explicit_layer.d
     steps:
@@ -22,7 +24,7 @@ jobs:
       - name: Prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc make libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers libxcb1-dev xvfb glslang-tools spirv-tools
+          sudo apt-get install -y g++-12 make cmake p7zip-full libx11-dev libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers libxcb1-dev xvfb glslang-tools spirv-tools
           git clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
       - name: Core and native contracts
         run: |
@@ -30,15 +32,29 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_native*.py' -v
           make -C engine/gfg-temporal all lib
           engine/gfg-temporal/build/te-tests 2>&1 | tee core.log
+          GFG_TEST_GPU_LMC=1 engine/gfg-temporal/build/te-tests 2>&1 | tee core-gpu-lmc.log
           make -C engine/gfg-native ENABLE_TE=1 BUILD=build-te VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" layer build-te/wsi-gpu-smoke build-te/borrowed-device build-te/gpu-wsi-observer swapchain-policy memory-policy present-ids
+      - name: Loader, real-frame fallback and legacy CPU regression
+        run: |
+          set -euo pipefail
+          make -C engine/gfg-native BUILD=build-pass VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" smoke
+          xvfb-run -a make -C engine/gfg-native BUILD=build-pass VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" wsi-smoke 2>&1 | tee pass.log
+          grep -q '4 real WSI acquire/submit/present cycles PASS' pass.log
+          xvfb-run -a make -C engine/gfg-native VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" wsi-smoke-te 2>&1 | tee cpu.log
+          GFG_NATIVE_TEST_SRGB=1 xvfb-run -a make -C engine/gfg-native VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" wsi-smoke-te 2>&1 | tee cpu-srgb.log
+          grep -q '4 real WSI acquire/submit/present cycles PASS' cpu.log
+          grep -q '4 real WSI acquire/submit/present cycles PASS' cpu-srgb.log
       - name: Borrowed device, actual WSI image contents and sync validation
         env:
           VK_INSTANCE_LAYERS: VK_LAYER_KHRONOS_validation
         run: |
           set -euo pipefail
           engine/gfg-native/build-te/borrowed-device 2>&1 | tee borrowed.log
+          GFG_TEST_GPU_LMC=1 engine/gfg-native/build-te/borrowed-device 2>&1 | tee borrowed-gpu-lmc.log
           xvfb-run -a engine/gfg-native/build-te/gpu-wsi-observer 2>&1 | tee observer.log
           GFG_NATIVE_TEST_SRGB=1 xvfb-run -a engine/gfg-native/build-te/gpu-wsi-observer 2>&1 | tee observer-srgb.log
+          GFG_NATIVE_ALGO=lmc-gpu xvfb-run -a engine/gfg-native/build-te/gpu-wsi-observer 2>&1 | tee observer-gpu-lmc.log
+          grep -q 'content=PASS handoff_order=PASS' observer-gpu-lmc.log
           grep -q 'synthetic=6 content=PASS handoff_order=PASS' observer.log
           grep -q 'synthetic=6 content=PASS handoff_order=PASS' observer-srgb.log
           for order in VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation VK_LAYER_KHRONOS_validation:VK_LAYER_GFG_native; do
@@ -55,5 +71,33 @@ jobs:
           done
           GFG_NATIVE_GPU_FAULT=record xvfb-run -a engine/gfg-native/build-te/gpu-wsi-observer 2>&1 | tee recovery.log
           grep -q 'synthetic=0 recovery_duplicate=1 content=PASS real_handoffs=PASS' recovery.log
-          if grep -E 'VALIDATION ERROR|Validation Error|VUID-' borrowed.log observer*.log gpu-*.log skip-*.log fault-*.log recovery.log; then exit 1; fi
+          if grep -E 'VALIDATION ERROR|Validation Error|VUID-' borrowed*.log observer*.log gpu-*.log skip-*.log fault-*.log recovery.log; then exit 1; fi
+      - name: Private package, installed GPU path, rollback and reproducible source
+        run: |
+          set -euo pipefail
+          python3 scripts/package_native_fg.py --binary engine/gfg-native/build-te/libVkLayer_gfg_native.so --outdir "$RUNNER_TEMP/fg3-private"
+          (cd "$RUNNER_TEMP/fg3-private" && sha256sum --check SHA256SUMS.txt)
+          mkdir -p "$RUNNER_TEMP/fg3-stage" "$RUNNER_TEMP/fg3-home"
+          unzip -q "$RUNNER_TEMP"/fg3-private/*.zip -d "$RUNNER_TEMP/fg3-stage"
+          cd "$RUNNER_TEMP/fg3-stage/GFG-Native-FG"
+          sha256sum --check --status SHA256SUMS.txt
+          HOME="$RUNNER_TEMP/fg3-home" bash install.sh
+          HOME="$RUNNER_TEMP/fg3-home" "$RUNNER_TEMP/fg3-home/.local/bin/gfg-native" --off /bin/true
+          HOME="$RUNNER_TEMP/fg3-home" GFG_TEST_FRAMES=24 GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=4 VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation xvfb-run -a "$RUNNER_TEMP/fg3-home/.local/bin/gfg-native" "$GITHUB_WORKSPACE/engine/gfg-native/build-te/wsi-gpu-smoke" 2>&1 | tee installed.log
+          grep -q 'algo=lmc-gpu' installed.log
+          grep -q 'validation errors=0' installed.log
+          if grep -E 'VUID-|VALIDATION ERROR' installed.log; then exit 1; fi
+          HOME="$RUNNER_TEMP/fg3-home" bash rollback.sh
+          HOME="$RUNNER_TEMP/fg3-home" "$RUNNER_TEMP/fg3-home/.local/bin/gfg-native" /bin/true
+          HOME="$RUNNER_TEMP/fg3-home" bash install.sh
+          HOME="$RUNNER_TEMP/fg3-home" bash uninstall.sh
+          test ! -e "$RUNNER_TEMP/fg3-home/.local/share/gfg-native/libVkLayer_gfg_native.so"
+          HOME="$RUNNER_TEMP/fg3-home" "$RUNNER_TEMP/fg3-home/.local/bin/gfg-native" /bin/true
+          make -C SOURCE/engine/gfg-temporal -j2 BUILD="$RUNNER_TEMP/fg3-source-core" lib
+          make -C SOURCE/engine/gfg-native ENABLE_TE=1 BUILD="$RUNNER_TEMP/fg3-source-native" TE_LIB="$RUNNER_TEMP/fg3-source-core/libgfg-temporal.a" VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" layer
+          cmp libVkLayer_gfg_native.so "$RUNNER_TEMP/fg3-source-native/libVkLayer_gfg_native.so"
+      - name: Retain native no-DLL compatibility bootstrap check
+        run: |
+          python3 scripts/build_frame_fusion.py --native-no-dll --work "$RUNNER_TEMP/gfg-native-compatibility" --headers "$RUNNER_TEMP/vkh/include"
+          python3 scripts/check_native_independence.py --source "$RUNNER_TEMP/gfg-native-compatibility/source"
       # Intentionally no patch/ZIP artifact upload, prerelease, or hardware claim.

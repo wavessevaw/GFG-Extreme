@@ -516,7 +516,7 @@ static te_context* make_lmc(te_device* dev, uint32_t outputs) {
     te_context_desc d;
     te_context_desc_default(&d, W, H, outputs);
     d.host_io = 1;
-    d.params.algorithm = TE_ALGO_LMC;
+    d.params.algorithm = getenv("GFG_TEST_GPU_LMC")?TE_ALGO_LMC_GPU:TE_ALGO_LMC;
     te_context* ctx = NULL;
     if (te_context_create(dev, &d, &ctx) != VK_SUCCESS) return NULL;
     return ctx;
@@ -562,8 +562,9 @@ static void test_lmc_readiness_deadline(te_device* dev) {
         te_submit next = {.slot = 0, .nonblocking = 1};
         begin = monotonic_ms();
         VkResult rc = te_submit_frame(ctx, &next);
-        EXPECT(rc == VK_NOT_READY && monotonic_ms() - begin < 100.0,
-               "nonblocking submit must not drain the fit worker (%d)", rc);
+        int gpu_model=getenv("GFG_TEST_GPU_LMC")!=NULL;
+        EXPECT((rc==VK_NOT_READY || (gpu_model && rc==VK_SUCCESS)) && monotonic_ms()-begin<100.0,
+               "nonblocking submit must not wait for unavailable GPU work or a fit worker (%d)",rc);
         pthread_join(thread, NULL);
     }
     EXPECT(te_context_idle(ctx, 5000000000ull), "same pair finishes after its source arrives");

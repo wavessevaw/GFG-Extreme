@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package the *independent* TE8 Vulkan layer for a Steam Deck device trial.
+"""Package a private FG3 GPU development artifact; never a release candidate.
 
 No MAKO binaries, Lossless.dll, commercial models or installer mutation.
 The full corresponding GFG native/Temporal source is bundled.
@@ -16,7 +16,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACT_ROOT = "GFG-Native-FG"
-EXTENSIONS = {".c", ".h", ".comp", ".glsl", ".py", ".md", ".json", ".sh", ".txt", ".gd", ".tscn", ".godot"}
+EXTENSIONS = {".c", ".h", ".inc", ".comp", ".glsl", ".py", ".md", ".json", ".sh", ".txt", ".gd", ".tscn", ".godot"}
 
 
 def digest(data: bytes) -> str:
@@ -35,6 +35,10 @@ def native_elf(binary: Path) -> bytes:
     if "libvulkan" in dynamic.lower():
         # libvulkan is allowed. This path does not require MAKO/LSFG.
         pass
+    if b"[gfg-native] GPU bridge active" not in raw:
+        raise ValueError("GPU transport is missing; refusing CPU/pass-through artifact")
+    if b"rgba_to_rgb" in raw or b"OWN TE8 CPU bridge active" in raw:
+        raise ValueError("Legacy CPU pixel transport must not ship in FG3 GPU artifact")
     return raw
 
 
@@ -55,19 +59,20 @@ def source_files() -> dict[str, bytes]:
             selected["SOURCE/" + path.relative_to(ROOT).as_posix()] = path.read_bytes()
     if not any(name.endswith("src/te_engine.c") for name in selected):
         raise ValueError("Corresponding Temporal Engine source missing")
-    if not any(name.endswith("src/cpu_bridge.c") for name in selected):
+    if not any(name.endswith("src/gpu_bridge.c") for name in selected):
         raise ValueError("Corresponding Vulkan transport source missing")
     return selected
 
 
 def package(binary: Path, outdir: Path, version: str) -> Path:
-    if not re.fullmatch(r"2\.1\.2-native\.[0-9]+", version):
-        raise ValueError("Expected prerelease version 2.1.2-native.N")
+    if not re.fullmatch(r"0\.0\.0-fg3-internal\.[0-9]+", version):
+        raise ValueError("Only 0.0.0-fg3-internal.N development artifacts are authorized before hardware acceptance")
     files = {
         "libVkLayer_gfg_native.so": native_elf(binary),
         "VkLayer_gfg_native.json": (ROOT / "engine/gfg-native/VkLayer_gfg_native.json").read_bytes(),
         "install.sh": (ROOT / "engine/gfg-native/package/install.sh").read_bytes(),
         "uninstall.sh": (ROOT / "engine/gfg-native/package/uninstall.sh").read_bytes(),
+        "rollback.sh": (ROOT / "engine/gfg-native/package/rollback.sh").read_bytes(),
         "gfg-native.sh": (ROOT / "engine/gfg-native/package/gfg-native.sh").read_bytes(),
         "README.ru.md": (ROOT / "engine/gfg-native/package/README.ru.md").read_bytes(),
         "LICENSE.md": (ROOT / "LICENSE.md").read_bytes(),
@@ -78,16 +83,23 @@ def package(binary: Path, outdir: Path, version: str) -> Path:
        manifest["layer"]["library_path"] != "./libVkLayer_gfg_native.so":
         raise ValueError("Native manifest identity mismatch")
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip())
     provenance = {
         "schema": 1,
         "version": version,
-        "source_commit": commit,
-        "algorithm": "GFG Temporal Engine TE8: tiles default, LMC opt-in",
-        "transport": "Vulkan GPU/CPU host-io/CPU/GPU",
+        "source_commit": None if dirty else commit,
+        "source_base_commit": commit,
+        "source_worktree_dirty": dirty,
+        "source_identity": "SHA256SUMS.txt covers included corresponding source",
+        "algorithm": "GFG LMC GPU model fit; shared analysis; t=1/3,2/3 (tiles diagnostic opt-in)",
+        "transport": "application-device GPU image copies; no CPU pixel staging",
+        "multiplier": 3,
         "architecture": "linux-x86_64",
         "runtime_requires": ["Vulkan 1.2", "64-bit Linux"],
         "runtime_forbidden": ["MAKO Renderer", "Lossless Scaling", "Lossless.dll"],
-        "stage": "opt-in hardware-trial, physical display unverified",
+        "stage": "internal development; NOT COMPLETED",
+        "hardware_acceptance": False,
+        "physical_display_verified": False,
         "elf_sha256": digest(files["libVkLayer_gfg_native.so"]),
     }
     files["MANIFEST.json"] = (json.dumps(provenance, sort_keys=True, indent=2) + "\n").encode()
@@ -117,6 +129,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--outdir", type=Path, required=True)
-    parser.add_argument("--version", default="2.1.2-native.1")
+    parser.add_argument("--version", default="0.0.0-fg3-internal.1")
     args = parser.parse_args()
     package(args.binary.resolve(), args.outdir.resolve(), args.version)

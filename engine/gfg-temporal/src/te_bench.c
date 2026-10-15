@@ -83,7 +83,7 @@ static FILE* npy_create(const char* path, size_t n, size_t h, size_t w) {
 static void usage(void) {
     fprintf(stderr,
             "usage: te-bench --frames seq.npy [--start S] [--pairs N] [--step K] [--crop WxH]\n"
-            "                [--algo tiles|lmc] [--tier 0..2] [--mode adaptive|full|light|reuse] [--tile 8|16|32] [--levels L] [--range R]\n"
+            "                [--algo tiles|lmc|lmc-gpu] [--tier 0..2] [--mode adaptive|full|light|reuse] [--tile 8|16|32] [--levels L] [--range R]\n"
             "                [--light-thr X] [--probe N] [--profile] [--out gen.npy] [--json stats.jsonl]\n"
             "                [--analysis DIR] [--device NAME] [--validation] [--no-download]\n");
 }
@@ -119,7 +119,8 @@ int main(int argc, char** argv) {
                 else { usage(); return 2; }
             }
         } else if (ARG("--algo")) {
-            if (strcmp(v, "lmc") == 0) params.algorithm = TE_ALGO_LMC;
+            if (strcmp(v,"lmc-gpu")==0) params.algorithm=TE_ALGO_LMC_GPU;
+            else if (strcmp(v, "lmc") == 0) params.algorithm = TE_ALGO_LMC;
             else if (strcmp(v, "tiles") == 0) params.algorithm = TE_ALGO_TILES;
             else { usage(); return 2; }
         } else if (ARG("--tile")) params.tile = (uint32_t)strtoul(v, NULL, 10);
@@ -170,7 +171,7 @@ int main(int argc, char** argv) {
     uint32_t tx, ty;
     uint32_t tiles = te_tile_count(ctx, &tx, &ty);
     fprintf(stderr, "te-bench: %s %zux%zu algo %s tiles %ux%u pairs %zu step %zu mode %s%s\n", te_device_name(dev), W, H,
-            params.algorithm == TE_ALGO_LMC ? "lmc" : "tiles", tx, ty, pairs, step, params.adaptive ? "adaptive" : (params.force_class == 2 ? "full" : params.force_class == 1 ? "light" : "reuse"),
+            params.algorithm == TE_ALGO_LMC_GPU ? "lmc-gpu" : params.algorithm == TE_ALGO_LMC ? "lmc" : "tiles", tx, ty, pairs, step, params.adaptive ? "adaptive" : (params.force_class == 2 ? "full" : params.force_class == 1 ? "light" : "reuse"),
             profile ? " profile" : "");
     FILE* out = out_path ? npy_create(out_path, pairs * (step - 1), H, W) : NULL;
     FILE* json = json_path ? fopen(json_path, "w") : NULL;
@@ -237,7 +238,7 @@ int main(int argc, char** argv) {
                                                                "field", "masked", "orphan", "field2"};
                 fprintf(json, ", \"lmc_ms\": {");
                 for (int k = 0; k < TE_LMC_PROF_COUNT; ++k)
-                    fprintf(json, "%s\"%s\": %.4f", k ? ", " : "", names[k], ps.lmc_ms[k]);
+                    fprintf(json, "%s\"%s\": %.4f", k ? ", " : "", ps.model_gpu && k==TE_LMC_FIT_WAIT?"gpu_model":names[k], ps.lmc_ms[k]);
                 fprintf(json, "}, \"cpu_fit_ms\": %.4f, \"first_ready_ms\": %.4f, \"pair_ready_ms\": %.4f, "
                               "\"lmc_counts\": [%u, %u, %u]", ps.lmc_fit_ms, ps.ready_ms[0],
                         ps.ready_ms[ps.outputs - 1], ps.tiles[0][0], ps.tiles[0][1], ps.tiles[0][2]);

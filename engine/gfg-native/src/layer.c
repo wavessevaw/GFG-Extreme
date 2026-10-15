@@ -662,7 +662,9 @@ static void native_swapchain_free(native_swapchain *sc) {
             v[n / 2], v[(uint32_t)((n - 1) * 0.95)], v[n - 1]);
     }
 #ifdef GFG_NATIVE_WITH_TE
+#ifdef GFG_NATIVE_WITH_CPU_BRIDGE
     if (sc->bridge) gfg_cpu_fg_destroy(sc->bridge);
+#endif
     if (sc->gpu) gfg_gpu_fg_destroy(sc->gpu);
     native_ids_destroy(sc->ids); /* stops the monitor before the swapchain goes */
 #endif
@@ -960,10 +962,12 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
     clock_gettime(CLOCK_MONOTONIC, &present_start);
     const char *path = "none";
 #ifdef GFG_NATIVE_WITH_TE
+#ifdef GFG_NATIVE_WITH_CPU_BRIDGE
     gfg_cpu_fg *bridge = NULL;
+    const char *flag = getenv("GFG_NATIVE_CPU_BRIDGE");
+#endif
     gfg_gpu_fg *gpu = NULL;
     gfg_present_id_hooks ids = {0};
-    const char *flag = getenv("GFG_NATIVE_CPU_BRIDGE");
     /* GPU bridge takes precedence; when requested it never falls back to
      * the CPU bridge (a failed GPU bridge means real-frame pass-through). */
     const int want_gpu = native_env_is_1("GFG_NATIVE_GPU_BRIDGE");
@@ -1004,6 +1008,7 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
         }
         pthread_mutex_unlock(&d->lock);
     }
+#ifdef GFG_NATIVE_WITH_CPU_BRIDGE
     if (!want_gpu && info && info->swapchainCount == 1 && info->pSwapchains &&
         info->pImageIndices && flag && !strcmp(flag, "1") &&
         d->instance && d->instance->enabled) {
@@ -1028,13 +1033,18 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
         }
         pthread_mutex_unlock(&d->lock);
     }
+    #endif
     if (gpu) {
         path = "gpu";
         result = gfg_gpu_fg_present(gpu, queue, info, d->present, &ids);
-    } else if (bridge) {
+    }
+#ifdef GFG_NATIVE_WITH_CPU_BRIDGE
+    else if (bridge) {
         path = "cpu";
         result = gfg_cpu_fg_present(bridge, info, d->present);
-    } else {
+    }
+#endif
+    else {
         result = d->present(queue, info);
     }
 #else

@@ -23,7 +23,14 @@ void main() {
     int i = int(gl_WorkGroupID.x);
     int n = NB;
     if (i >= n) return;   // uniform: one block per workgroup
-    if (i == 0 && lid == 0u) G.pairs += 1u;
+    if (i == 0 && lid == 0u){
+        G.pairs+=1u;
+        if((PC.flags&1)!=0){
+            LY.prev_count=LY.layer_count;
+            for(int k=0;k<LMC_MAX_LAYERS;++k) LY.prev_layers[k]=LY.layers[k];
+            LY.layer_count=0u;
+        }
+    }
     int w = lblocks(1).x;
     ivec2 bb = ivec2(i % w, i / w);
     // texture: |dx| + |dy| of B's luma (np.diff, prepend), HUD count
@@ -46,6 +53,9 @@ void main() {
     uint hud = s_hud[0];
     // reference: (tex > 0.01) & ~hudb & (cb < 0.05), hudb = HUD share > 0.2
     uint usable = (tex > 0.01 && float(hud) <= 0.2 * 64.0 && vb[P.blk_off.x + i].z < 0.05) ? 1u : 0u;
+    // Match the production CPU model's LMC_FIT_SUB=2 spatial sampling. This
+    // changes model fitting only; flow, palette, HUD and synthesis remain dense.
+    if((PC.flags&1)!=0 && ((bb.x&1)!=0 || (bb.y&1)!=0)) usable=0u;
     LY.live[i] = usable;
     vb[P.blk_off.x + i].w = float(hud) > 0.2 * 64.0 ? 1.0 : 0.0;  // hudb, left out of the palette
     if (usable != 0u) atomicAdd(TOTAL, 1u);

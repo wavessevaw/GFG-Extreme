@@ -8,7 +8,9 @@
  * Explicit shared/relay modes below preserve the research fd implementation;
  * relay is NOT validated as a conformant WSI path (VUID 03268).
  * No CPU pixel access and no CPU wait on the present path in steady state.
- * TE8 runs on its own VkDevice (same physical GPU, matched by deviceUUID); its
+ * The explicit fd research mode below uses a separate device; the default
+ * same-device mode uses ordinary image barriers and the caller-owned timeline.
+ * TE8 in fd mode runs on its own VkDevice (same physical GPU, matched by deviceUUID); its
  * two source images and two destination images are exported as OPAQUE_FD
  * memory and imported into the APP's VkDevice with identical create info and
  * a dedicated allocation.
@@ -793,7 +795,8 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     te_context_desc cd;
     te_context_desc_default(&cd, fg->extent.width, fg->extent.height, 2);
     const char *algorithm = getenv("GFG_NATIVE_ALGO");
-    cd.params.algorithm = (!algorithm || strcmp(algorithm, "lmc")) ? TE_ALGO_TILES : TE_ALGO_LMC;
+    cd.params.algorithm=algorithm && !strcmp(algorithm,"lmc-gpu")?TE_ALGO_LMC_GPU:
+        algorithm && !strcmp(algorithm,"lmc")?TE_ALGO_LMC:TE_ALGO_TILES;
     cd.export_fds = !fg->same_device;
     cd.application_timeline = fg->same_device ? fg->timeline : VK_NULL_HANDLE;
     cd.host_io = 0;
@@ -906,7 +909,7 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
         fg->out_mode == OUT_COPY ? "copy" : fg->out_mode == OUT_BLIT ? "blit" : "blit+copy",
         fg->same_device ? "same-device" : fg->shared_sync ? "shared-timeline-fd" : "host-relay", fg->image_count,
         (int)fg->present_mode, fg->ring_size,
-        cd.params.algorithm == TE_ALGO_LMC ? "lmc" : "tiles", fg->verify,
+        cd.params.algorithm == TE_ALGO_LMC_GPU ? "lmc-gpu" : cd.params.algorithm == TE_ALGO_LMC ? "lmc" : "tiles", fg->verify,
         (now_us() - t0) / 1000.0);
     if (fg->present_mode != VK_PRESENT_MODE_FIFO_KHR &&
         fg->present_mode != VK_PRESENT_MODE_FIFO_RELAXED_KHR)

@@ -44,10 +44,10 @@ typedef struct {
     int32_t adaptive;          /* 0: every tile uses force_class */
     int32_t force_class;       /* 0 reuse, 1 light, 2 full */
     uint32_t full_density;     /* FULL decision per 1x1 or 2x2 block */
-    uint32_t algorithm;        /* TE_ALGO_TILES (te.2 tile classes) or TE_ALGO_LMC (layered motion) */
+    uint32_t algorithm;        /* TE_ALGO_TILES, TE_ALGO_LMC (CPU fit), TE_ALGO_LMC_GPU */
 } te_params;
 
-enum { TE_ALGO_TILES = 0, TE_ALGO_LMC = 1 };
+enum { TE_ALGO_TILES = 0, TE_ALGO_LMC = 1, TE_ALGO_LMC_GPU = 2 };
 #define TE_LMC_TIERS 3
 
 void te_params_default(te_params* params);
@@ -70,8 +70,9 @@ typedef struct {
 void te_context_desc_default(te_context_desc* desc, uint32_t width, uint32_t height, uint32_t outputs);
 
 enum { TE_STAGE_PYRAMID, TE_STAGE_ANALYZE, TE_STAGE_CLASSIFY, TE_STAGE_COUNT };
-/* LMC analysis passes, timed once per generated pair (lmc_ms).  TE_LMC_FIT_WAIT is not GPU work: the
-   engine's queue waits for the CPU motion fit of the pair (it is left out of stage_ms) */
+/* LMC analysis passes, timed once per pair. TE_LMC_FIT_WAIT is a CPU-fit gap
+ * only for TE_ALGO_LMC (excluded from GPU stage_ms). For TE_ALGO_LMC_GPU the
+ * same slot times the GPU model solver and remains included in GPU totals. */
 enum { TE_LMC_SEARCH_B, TE_LMC_SEARCH_A, TE_LMC_LAYERS, TE_LMC_FIT_WAIT, TE_LMC_FIELD, TE_LMC_MASKED,
        TE_LMC_ORPHAN, TE_LMC_FIELD2, TE_LMC_PROF_COUNT };
 enum { TE_FRAME_LISTS, TE_FRAME_REUSE, TE_FRAME_LIGHT, TE_FRAME_FULL, TE_FRAME_TOTAL, TE_FRAME_COUNT };
@@ -88,6 +89,7 @@ typedef struct {
     double lmc_ms[TE_LMC_PROF_COUNT];    /* LMC: per analysis pass (-1 when not timed) */
     double lmc_fit_ms;                   /* LMC: CPU time of this pair's motion-model fit */
     double ready_ms[TE_MAX_OUTPUTS];     /* analysis start to each output ready, includes fit/queue gaps */
+    int model_gpu;                      /* LMC model/IRLS/palette execute on GPU, no fit worker */
     int lmc_tier;                        /* LMC: cost tier of the pair */
     double frame_ms[TE_MAX_OUTPUTS][TE_FRAME_COUNT];
     uint32_t tiles[TE_MAX_OUTPUTS][3];   /* reuse, light, full tile counts per output */
@@ -126,7 +128,7 @@ uint32_t te_device_validation_errors(const te_device* dev);
 VkResult te_context_create(te_device* dev, const te_context_desc* desc, te_context** out);
 /* Borrow a compute-capable application device/queue. No ownership transfer,
  * new device, timeline feature requirement or external-memory import. The
- * caller externally synchronizes ALL use of this queue. Tile algorithm only.
+ * caller externally synchronizes ALL use of this queue. Tile or GPU LMC only.
  * Instance/device dispatch must refer to the SAME layer chain. Supply the
  * loader data callback when allocating below the loader, NULL at top level. */
 typedef VkResult (VKAPI_PTR *te_set_device_loader_data)(VkDevice device, void* object);

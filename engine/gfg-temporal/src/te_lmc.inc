@@ -14,7 +14,7 @@
 
 enum {
     LMC_PREP, LMC_DOWN, LMC_SEARCH, LMC_LAYERS, LMC_FIELD, LMC_MASKED, LMC_ORPHAN, LMC_SELECT,
-    LMC_COMPOSE, LMC_PIPES
+    LMC_COMPOSE, LMC_GPU_HYP, LMC_GPU_IRLS, LMC_GPU_PALETTE, LMC_PIPES
 };
 
 typedef struct {
@@ -66,6 +66,8 @@ struct te_lmc {
     VkPipeline pipe[LMC_PIPES];
     VkPipeline search[LMC_LEVELS + 1][2];  /* block search specialised per level (1..4) and grid */
     int have_temporal;
+    int gpu_fit;
+    unsigned fit_sync_ok;
     /* motion model on the CPU (te_lmc_fit.c), fitted on this pair's vectors: the analysis is two
        submissions.  The first (pyramid, block search, block statistics) ends with a copy of the
        level-1 B vectors, usable flags and motion votes to fitrb and signals fit_tl = 2k + 1; the
@@ -267,6 +269,18 @@ static VkResult lmc_create(te_context* ctx) {
     struct te_lmc* m = calloc(1, sizeof *m);
     if (!m) return fail(VK_ERROR_OUT_OF_HOST_MEMORY, "out of memory");
     ctx->lmc = m;
+    m->gpu_fit=ctx->desc.params.algorithm==TE_ALGO_LMC_GPU;
+    if(pthread_mutex_init(&m->fit_lock,NULL)) return VK_ERROR_INITIALIZATION_FAILED;
+    m->fit_sync_ok|=1;
+    if(pthread_cond_init(&m->fit_cond,NULL)) return VK_ERROR_INITIALIZATION_FAILED;
+    m->fit_sync_ok|=2;
+    pthread_condattr_t attr;
+    pthread_condattr_init(&attr);
+    pthread_condattr_setclock(&attr,CLOCK_MONOTONIC);
+    int cond_error=pthread_cond_init(&m->fit_done,&attr);
+    pthread_condattr_destroy(&attr);
+    if(cond_error) return VK_ERROR_INITIALIZATION_FAILED;
+    m->fit_sync_ok|=4;
     uint32_t W = ctx->desc.width, H = ctx->desc.height;
     m->w2 = W / 2;
     m->h2 = H / 2;
@@ -327,6 +341,7 @@ static VkResult lmc_create(te_context* ctx) {
     u.pen_update = 0.004f; u.smooth = 0.002f; u.margin = 0.06f; u.tol_px = 0.75f;
     u.still = 2.0f / 255.0f; u.orphan_resid = 0.15f; u.orphan_share = 0.08f; u.orphan_max_cost = 0.08f;
     u.coarse_r = 10; u.propagate = 2; u.hud_pairs = 6; u.orphan_r = 112;
+    u.pad1=ctx->desc.output_bgra;
     u.min_layer_share = 0.10f; u.ransac_iters = LMC_HYPS;
     m->ocap = LMC_ORPHAN_CAP;
     const char* cap = getenv("GFG_LMC_ORPHAN_CAP");
@@ -439,8 +454,12 @@ static VkResult lmc_create(te_context* ctx) {
         [LMC_ORPHAN] = {te_spv_lmc_orphan, sizeof te_spv_lmc_orphan},
         [LMC_SELECT] = {te_spv_lmc_select, sizeof te_spv_lmc_select},
         [LMC_COMPOSE] = {te_spv_lmc_compose, sizeof te_spv_lmc_compose},
+        [LMC_GPU_HYP] = {te_spv_lmc_hyp, sizeof te_spv_lmc_hyp},
+        [LMC_GPU_IRLS] = {te_spv_lmc_irls, sizeof te_spv_lmc_irls},
+        [LMC_GPU_PALETTE] = {te_spv_lmc_palette, sizeof te_spv_lmc_palette},
     };
     for (int i = 0; i < LMC_PIPES; ++i) {
+        if (i >= LMC_GPU_HYP && !m->gpu_fit) continue;
         if (i == LMC_SEARCH) continue;  /* specialised per level and grid below */
         VkShaderModuleCreateInfo smci = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
                                          .codeSize = src[i].size, .pCode = src[i].code};
@@ -477,6 +496,7 @@ static VkResult lmc_create(te_context* ctx) {
         vkDestroyShaderModule(d, mod, NULL);
         if (r != VK_SUCCESS) return fail(r, "vkCreateComputePipelines(lmc search) failed (%d)", r);
     }
+    if(!m->gpu_fit){
     for (int k = 0; k < TE_RING; ++k) {
         LTRY(buffer_create(dev, &m->fitrb[k], LMC_FITRB_SIZE(m->n1), VK_BUFFER_USAGE_TRANSFER_DST_BIT, 1));
         LTRY(buffer_create(dev, &m->stage[k], LMC_STAGE_SIZE, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 1));
@@ -492,15 +512,9 @@ static VkResult lmc_create(te_context* ctx) {
     m->job_hudb = malloc(m->n1);
     if (!m->fit_work || !m->job_vec || !m->job_usable || !m->job_hudb)
         return fail(VK_ERROR_OUT_OF_HOST_MEMORY, "out of memory (lmc fit)");
-    pthread_mutex_init(&m->fit_lock, NULL);
-    pthread_cond_init(&m->fit_cond, NULL);
-    pthread_condattr_t attr;
-    pthread_condattr_init(&attr);
-    pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
-    pthread_cond_init(&m->fit_done, &attr);
-    pthread_condattr_destroy(&attr);
     m->fit_thread_ok = pthread_create(&m->fit_thread, NULL, lmc_fit_main, m) == 0;
     if (!m->fit_thread_ok) return fail(VK_ERROR_INITIALIZATION_FAILED, "cannot start the LMC fit thread");
+    }
 #undef LTRY
     return VK_SUCCESS;
 }
@@ -518,11 +532,9 @@ static void lmc_destroy(te_context* ctx) {
         pthread_mutex_unlock(&m->fit_lock);
         pthread_join(m->fit_thread, NULL);
     }
-    if (m->fit_work) {
-        pthread_mutex_destroy(&m->fit_lock);
-        pthread_cond_destroy(&m->fit_cond);
-        pthread_cond_destroy(&m->fit_done);
-    }
+    if(m->fit_sync_ok&1) pthread_mutex_destroy(&m->fit_lock);
+    if(m->fit_sync_ok&2) pthread_cond_destroy(&m->fit_cond);
+    if(m->fit_sync_ok&4) pthread_cond_destroy(&m->fit_done);
     if (m->fit_tl) vkDestroySemaphore(d, m->fit_tl, NULL);
     te_lmc_fit_free(m->fit_work);
     free(m->job_vec);
@@ -720,10 +732,23 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
     /* block statistics for the CPU motion model (usable blocks, HUD blocks, motion
        votes); the planes and the palette themselves are fitted on the CPU */
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_LAYERS]);
-    lmc_push_c(ctx, cb, 0.0f, 1, 0, 0, 0);
+    lmc_push_c(ctx, cb, 0.0f, 1, 0, 0, m->gpu_fit?1:0);
     vkCmdDispatch(cb, m->n1, 1, 1);   /* one workgroup per block */
     compute_barrier(cb);
     LMC_TS(1 + TE_LMC_LAYERS);
+    if(m->gpu_fit){
+        for(int layer=0;layer<LMC_MAX_LAYERS;++layer){
+            vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_GPU_IRLS]);
+            lmc_push_c(ctx,cb,0,1,0,1,0);vkCmdDispatch(cb,1,1,1);compute_barrier(cb);
+            vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_GPU_HYP]);
+            lmc_push_c(ctx,cb,0,1,0,2,0);vkCmdDispatch(cb,LMC_HYPS+LMC_MAX_LAYERS,1,1);compute_barrier(cb);
+            vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_GPU_IRLS]);
+            lmc_push_c(ctx,cb,0,1,0,3,0);vkCmdDispatch(cb,1,1,1);compute_barrier(cb);
+        }
+        vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_GPU_PALETTE]);
+        lmc_push_c(ctx,cb,0,1,0,0,0);vkCmdDispatch(cb,1,1,1);compute_barrier(cb);
+        vkCmdWriteTimestamp(cb,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,slot->queries,2);
+    } else {
     /* the input of the CPU motion model: vectors (+ HUD flag in w), usable flags, votes */
     int rs = (int)(slot - ctx->ring);
     barrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -752,6 +777,7 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
     VkBufferCopy mg[2] = {{LMC_STAGE_HEAD, 0, 8}, {LMC_STAGE_PAL, 16, 16u * LMC_PALETTE}};
     vkCmdCopyBuffer(cb, m->stage[rs].buf, m->globals.buf, 2, mg);
     lmc_transfer_barrier(cb);
+    }
     LMC_TS(1 + TE_LMC_FIT_WAIT);   /* end of the wait for the CPU fit (not GPU work) */
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->layout, 0, 1, &m->set0[par], 0, NULL);
     /* per-pixel fields, orphan objects, fields again next to orphans */
@@ -812,7 +838,7 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
     barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, slot->queries, 3);
-    vkEndCommandBuffer(cb);
+    if(!m->gpu_fit) vkEndCommandBuffer(cb);
 }
 
 static void lmc_record_output(te_context* ctx, te_slot* slot, const te_submit* s, uint32_t i, int hold) {
