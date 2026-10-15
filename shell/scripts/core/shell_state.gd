@@ -47,8 +47,9 @@ func _setup_input() -> void:
 	var map := {
 		"shell_tab_prev": [JOY_BUTTON_LEFT_SHOULDER, KEY_Q],
 		"shell_tab_next": [JOY_BUTTON_RIGHT_SHOULDER, KEY_E],
-		"shell_quick": [JOY_BUTTON_BACK, KEY_TAB],
-		"shell_menu": [JOY_BUTTON_START, KEY_M],
+		# Deck: ☰ (right of the screen, Start) opens quick settings, ⧉ (left, View/Back) the menu
+		"shell_quick": [JOY_BUTTON_START, KEY_TAB],
+		"shell_menu": [JOY_BUTTON_BACK, KEY_M],
 		"shell_option": [JOY_BUTTON_Y, KEY_F],
 		"shell_search": [JOY_BUTTON_X, KEY_SLASH],
 	}

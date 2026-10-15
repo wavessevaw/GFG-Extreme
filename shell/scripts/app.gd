@@ -164,10 +164,10 @@ func _build_hint_bar() -> void:
 	bar.offset_left = 36
 	bar.offset_right = -36
 	add_child(bar)
-	bar.add_child(UI.keycap("☰"))
+	bar.add_child(UI.keycap("⧉"))
 	bar.add_child(_vcenter(UI.label("МЕНЮ", 15, UI.TEXT_DIM, "semibold")))
 	bar.add_child(_gap(10))
-	bar.add_child(UI.keycap("⧉"))
+	bar.add_child(UI.keycap("☰"))
 	bar.add_child(_vcenter(UI.label("БЫСТРЫЕ НАСТРОЙКИ", 15, UI.TEXT_DIM, "semibold")))
 	bar.add_child(UI.spacer())
 	_hints = UI.hbox(10)
@@ -391,6 +391,8 @@ func _on_game_state(state: String, g: Dictionary) -> void:
 	# Only launches started from the shell show the launch screen; a game started
 	# from Steam's own UI is tracked silently.
 	var ours: bool = _launch.visible
+	if state == "running" or state == "launching":
+		_back_during_game = false
 	match state:
 		"running":
 			if ours:
@@ -417,6 +419,10 @@ func _input(event: InputEvent) -> void:
 	if _logged_inputs < 40 and (event is InputEventJoypadButton or event is InputEventKey) and event.is_pressed():
 		_logged_inputs += 1
 		Log.info("input", "%s device=%d %s" % [event.get_class(), event.device, event.as_text()])
+	if _input_blocked():
+		# a game (or Steam) is on top: its buttons are not ours
+		get_viewport().set_input_as_handled()
+		return
 	if _launch.visible:
 		if event.is_action_pressed("ui_cancel"):
 			_launch.on_back()
@@ -483,14 +489,31 @@ func _update_status() -> void:
 
 
 var _focus_lost_at := -1.0
+var _focused := true
+var _ignore_until := 0.0          # the press that brought the shell back is not a command
+var _back_during_game := false    # the player came back to the shell while the game still runs
+
+
+## Joypad events reach the shell even while a game has the screen (Godot reads the pads
+## directly). Nothing reacts to them while the shell is not focused, while a game runs
+## (unless the player came back to the shell), or for a moment after the focus returns.
+func _input_blocked() -> bool:
+	if not _focused or Time.get_ticks_msec() / 1000.0 < _ignore_until:
+		return true
+	return Shell.runner.state == "running" and not _back_during_game
 
 
 func _notification(what: int) -> void:
 	# Out of focus (a game or Steam on top): idle at a few frames per second.
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
 		Engine.max_fps = 10
+		_focused = false
 		_focus_lost_at = Time.get_ticks_msec() / 1000.0
 	elif what == NOTIFICATION_APPLICATION_FOCUS_IN:
+		_focused = true
+		_ignore_until = Time.get_ticks_msec() / 1000.0 + 0.4
+		if Shell.runner.state == "running" and _focus_lost_at > 0:
+			_back_during_game = true
 		if Shell.runner.state != "running":
 			Engine.max_fps = 0
 		# Fallback for titles without a launch marker: the game took the screen and we
