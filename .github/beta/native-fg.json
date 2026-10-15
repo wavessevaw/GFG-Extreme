@@ -1,0 +1,6 @@
+{
+  "version": "2.1.2-native.1",
+  "source": "feat/gfg-native-independent-backend",
+  "release_type": "hardware-trial-prerelease",
+  "engine": "TE8"
+}
