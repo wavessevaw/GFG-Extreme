@@ -22,6 +22,7 @@ var pages := {}
 var backdrop: Control
 var _content: Control
 var _tab_buttons := {}
+var _tab_pill: Panel
 var _clock: Label
 var _battery: Label
 var _battery_icon: GIcon
@@ -47,6 +48,13 @@ func _ready() -> void:
 	backdrop = UI.hero_backdrop()
 	backdrop.modulate.a = 0.0
 	add_child(backdrop)
+	var grain := ColorRect.new()
+	grain.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	grain.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var gm := ShaderMaterial.new()
+	gm.shader = preload("res://assets/shaders/grain.gdshader")
+	grain.material = gm
+	add_child(grain)
 	_content = Control.new()
 	_content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_content.offset_top = TOP_H
@@ -74,6 +82,7 @@ func _ready() -> void:
 	Shell.game_state_changed.connect(_on_game_state)
 	Shell.runner.launch_failed.connect(func(g, reason): _launch.failed(g, reason))
 	_update_status()
+	_start_drift.call_deferred()
 	go_tab("home")
 	_handle_cmdline()
 
@@ -98,6 +107,14 @@ func _build_top_bar() -> void:
 		logo.draw_string(f, Vector2(22 - ts.x / 2, 30), "G", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, UI.TEXT))
 	h.add_child(logo)
 	h.add_child(_gap(18))
+	_tab_pill = Panel.new()
+	var pill := UI.box(UI.RED, Color.TRANSPARENT, 22, 0)
+	pill.shadow_color = Color(UI.RED, 0.35)
+	pill.shadow_size = 10
+	_tab_pill.add_theme_stylebox_override("panel", pill)
+	_tab_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_tab_pill)
+	move_child(_tab_pill, h.get_index())
 	for t in TABS:
 		var b := Button.new()
 		b.text = t[1]
@@ -175,27 +192,57 @@ func set_hints(list: Array) -> void:
 
 var _backdrop_gen := 0
 var _backdrop_tween: Tween
+var _backdrop_path := ""
 
 
-func set_backdrop(path: String) -> void:
+## Shows game art behind the page: cross-fades from the art already there (or fades
+## in over the plain background) and keeps the slow drift going. "" hides it;
+## strength < 1 keeps it in the background (library, store).
+func set_backdrop(path: String, strength: float = 1.0) -> void:
 	# a generation counter: art that finishes loading after the page changed is dropped
 	_backdrop_gen += 1
 	var gen := _backdrop_gen
-	var tex: TextureRect = backdrop.get_node("Art")
 	if _backdrop_tween != null:
 		_backdrop_tween.kill()
 	if path == "":
+		_backdrop_path = ""
 		_backdrop_tween = create_tween()
-		_backdrop_tween.tween_property(backdrop, "modulate:a", 0.0, 0.15)
+		_backdrop_tween.tween_property(backdrop, "modulate:a", 0.0, FX.MED)
+		return
+	if path == _backdrop_path and backdrop.modulate.a > 0.0:
+		_backdrop_tween = create_tween()
+		_backdrop_tween.tween_property(backdrop, "modulate:a", strength, FX.MED)
 		return
 	Shell.load_art(path, func(t):
 		if gen != _backdrop_gen:
 			return
-		tex.texture = t
+		_backdrop_path = path
+		var cur: TextureRect = backdrop.get_node("Drift/Art")
+		var nxt: TextureRect = backdrop.get_node("Drift/ArtNext")
 		if _backdrop_tween != null:
 			_backdrop_tween.kill()
-		_backdrop_tween = create_tween()
-		_backdrop_tween.tween_property(backdrop, "modulate:a", 1.0, 0.25))
+		_backdrop_tween = create_tween().set_parallel(true)
+		if backdrop.modulate.a < 0.05 or cur.texture == null:
+			cur.texture = t
+			nxt.modulate.a = 0.0
+			_backdrop_tween.tween_property(backdrop, "modulate:a", strength, FX.SLOW)
+		else:
+			nxt.texture = t
+			nxt.modulate.a = 0.0
+			_backdrop_tween.tween_property(backdrop, "modulate:a", strength, FX.MED)
+			_backdrop_tween.tween_property(nxt, "modulate:a", 1.0, 0.45).set_trans(Tween.TRANS_SINE)
+			_backdrop_tween.chain().tween_callback(func():
+				cur.texture = nxt.texture
+				nxt.modulate.a = 0.0))
+
+
+## Ken Burns: a slow, endless zoom of the art (6 % over 24 s, there and back).
+func _start_drift() -> void:
+	var drift: Control = backdrop.get_node("Drift")
+	drift.pivot_offset = size * Vector2(0.62, 0.4)
+	var t := create_tween().set_loops()
+	t.tween_property(drift, "scale", Vector2(1.06, 1.06), 24.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	t.tween_property(drift, "scale", Vector2(1.0, 1.0), 24.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 
 # ---------------------------------------------------------------- navigation
@@ -223,6 +270,7 @@ func _show_only(name: String, args: Dictionary = {}) -> void:
 	p.enter(args)
 	set_hints(p.hints())
 	p.focus_default.call_deferred()
+	FX.enter(p, Vector2(28, 0) if not stack.is_empty() else Vector2(0, 12), FX.MED)
 
 
 func go_tab(name: String, args: Dictionary = {}) -> void:
@@ -231,13 +279,30 @@ func go_tab(name: String, args: Dictionary = {}) -> void:
 	for t in _tab_buttons.keys():
 		var b: Button = _tab_buttons[t]
 		var active: bool = t == name
-		var sb := UI.box(UI.RED if active else Color(0, 0, 0, 0), Color.TRANSPARENT, 22, 22)
+		var sb := UI.box(Color(0, 0, 0, 0), Color.TRANSPARENT, 22, 22)
 		for st in ["normal", "hover", "pressed"]:
 			b.add_theme_stylebox_override(st, sb)
-		b.add_theme_color_override("font_color", UI.TEXT)
+		b.add_theme_color_override("font_color", UI.TEXT if active else UI.TEXT_DIM)
 		b.add_theme_color_override("font_hover_color", UI.TEXT)
+	_move_tab_pill.call_deferred(name)
 	_show_only(name, args)
 	Log.info("nav", "tab " + name)
+
+
+## The red pill slides to the active tab (instant the first time).
+func _move_tab_pill(name: String) -> void:
+	var b: Button = _tab_buttons.get(name)
+	if b == null or _tab_pill == null:
+		return
+	while b.size.x < 1.0 and is_inside_tree():   # first layout pass not done yet
+		await get_tree().process_frame
+	var r := Rect2(b.global_position - global_position, b.size)
+	if _tab_pill.size.x < 1.0:
+		_tab_pill.position = r.position
+		_tab_pill.size = r.size
+		return
+	FX.to(_tab_pill, "position", r.position, FX.MED + 0.05, Tween.TRANS_QUART)
+	FX.to(_tab_pill, "size", r.size, FX.MED + 0.05, Tween.TRANS_QUART)
 
 
 func push(name: String, args: Dictionary = {}) -> void:

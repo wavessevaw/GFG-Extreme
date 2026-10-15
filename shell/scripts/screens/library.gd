@@ -1,9 +1,9 @@
 ## Библиотека (mockup 02): title + count, segmented filter (Все / Установлено /
-## Избранное / Не Steam) and search, a 4-column grid of art tiles with the red ring.
+## Избранное / Не Steam) and search, a 6-column grid of portrait capsules that lift on focus.
 extends Screen
 
 const FILTERS := [["all", "Все"], ["installed", "Установлено"], ["favorites", "Избранное"], ["nonsteam", "Не Steam"]]
-const COLS := 4
+const COLS := 6
 
 var _seg: HBoxContainer
 var _grid: GridContainer
@@ -51,17 +51,23 @@ func _ready() -> void:
 	_search.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_search.pressed.connect(func(): app.push("search"))
 	bar.add_child(_search)
+	var grid_area := Control.new()
+	grid_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	grid_area.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(grid_area)
 	_scroll = ScrollContainer.new()
-	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_scroll.offset_left = -Screen.ROW_PAD   # lifted tiles keep their glow; columns stay aligned
+	_scroll.offset_right = Screen.ROW_PAD
 	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
 	_scroll.follow_focus = true
-	v.add_child(_scroll)
+	grid_area.add_child(_scroll)
 	_grid = GridContainer.new()
 	_grid.columns = COLS
-	_grid.add_theme_constant_override("h_separation", 18)
-	_grid.add_theme_constant_override("v_separation", 18)
-	_scroll.add_child(UI.margin(_grid, 4, 4, 4, 24))
+	_grid.add_theme_constant_override("h_separation", 24)
+	_grid.add_theme_constant_override("v_separation", 24)
+	_scroll.add_child(UI.margin(_grid, Screen.ROW_PAD, 14, Screen.ROW_PAD, 30))
 	Shell.library_changed.connect(_rebuild)
 	Shell.favorites_changed.connect(func(): if _filter == "favorites": _rebuild())
 	_rebuild()
@@ -99,7 +105,8 @@ func _rebuild() -> void:
 	var list := Shell.filtered_games(_filter, str(Shell.settings.get("sort", "name")))
 	_count.text = "%d игр" % list.size()
 	for g in list:
-		var c := GameCard.make(g, Vector2(282, 214), "header")
+		var c := GameCard.make(g, Vector2(176, 264), "grid")
+		c.focused.connect(_ambient)
 		c.chosen.connect(app.open_game)
 		_grid.add_child(c)
 	if list.is_empty():
@@ -112,3 +119,10 @@ func focus_default() -> void:
 		_grid.get_child(0).grab_focus()
 	else:
 		_seg.get_child(0).grab_focus()
+
+
+## The focused game's art, faint, behind the grid.
+func _ambient(g: Dictionary) -> void:
+	var art: Dictionary = g.get("art", {})
+	if visible:
+		app.set_backdrop(art.get("hero", art.get("header", "")), 0.38)

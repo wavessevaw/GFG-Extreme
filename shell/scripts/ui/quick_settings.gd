@@ -23,9 +23,17 @@ func _ready() -> void:
 	dim.color = Color(0, 0, 0, 0.45)
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(dim)
-	var p := UI.panel(Color("111116"), 18, 0)
+	var p := UI.panel(Color(0.067, 0.067, 0.086), 18, 0)
+	var ps: StyleBoxFlat = p.get_theme_stylebox("panel")
+	ps.shadow_color = Color(0, 0, 0, 0.55)
+	ps.shadow_size = 40
+	ps.border_width_right = 0
+	ps.border_width_top = 0
+	ps.border_width_bottom = 0
 	p.set_anchors_and_offsets_preset(Control.PRESET_RIGHT_WIDE)
 	p.offset_left = -560
+	sheet = p
+	sheet_from = Vector2(140, 0)
 	add_child(p)
 	var v := UI.vbox(10)
 	p.add_child(UI.margin(v, 6, 10, 6, 10))
@@ -52,7 +60,7 @@ func _ready() -> void:
 	_wifi.pressed.connect(func(): close(); OS.create_process(GameRunner.steam_command(), ["steam://open/settings/internet"]))
 	v1.add_child(_wifi)
 	v.add_child(c1)
-	v.add_child(UI.margin(UI.label("GFG", 16, UI.TEXT_DIM, "semibold"), 6, 6, 0, 0))
+	v.add_child(UI.margin(UI.kicker("GFG"), 6, 10, 0, 2))
 	var c2 := UI.panel(UI.CARD, 6, 14)
 	var v2 := UI.vbox(2)
 	c2.add_child(v2)

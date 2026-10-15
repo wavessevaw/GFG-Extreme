@@ -6,6 +6,9 @@ const MODES := [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Qu
 
 var game: Dictionary = {}
 var _logo: TextureRect
+var _logo_box: Control
+const TITLE_BOX := 120.0
+const LOGO_MAX := Vector2(560, 130)
 var _name: Label
 var _play: Button
 var _gear: Button
@@ -30,16 +33,17 @@ func _ready() -> void:
 	v.offset_bottom = -24
 	add_child(v)
 	var logo_box := Control.new()
-	logo_box.custom_minimum_size = Vector2(0, 150)
+	_logo_box = logo_box
+	logo_box.custom_minimum_size = Vector2(0, TITLE_BOX)
 	v.add_child(logo_box)
 	_logo = TextureRect.new()
 	_logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
 	_logo.position = Vector2(0, 6)
-	_logo.size = Vector2(560, 138)
+	_logo.size = LOGO_MAX
 	logo_box.add_child(_logo)
 	_name = UI.label("", 58, UI.TEXT, "bold")
-	_name.position = Vector2(0, 40)
+	_name.position = Vector2(0, 18)
 	_name.size = Vector2(1100, 90)
 	_name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	logo_box.add_child(_name)
@@ -71,6 +75,7 @@ func _ready() -> void:
 	_auto_row.add_theme_stylebox_override("normal", UI.box(Color(0, 0, 0, 0), Color.TRANSPARENT, 10))
 	_auto_row.add_theme_stylebox_override("hover", UI.box(Color(1, 1, 1, 0.04), Color.TRANSPARENT, 10))
 	_auto_row.add_theme_stylebox_override("focus", UI.focus_box(UI.RED, 10))
+	_auto_row.add_theme_stylebox_override("disabled", UI.box(Color(0, 0, 0, 0), Color.TRANSPARENT, 10))
 	var ah := UI.hbox(10)
 	ah.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var am := UI.margin(ah, 8, 0, 8, 0)
@@ -142,11 +147,17 @@ func enter(args: Dictionary = {}) -> void:
 		game = args.game
 	title = str(game.get("name", "Игра"))
 	_logo.texture = null
+	_logo_box.custom_minimum_size.y = TITLE_BOX
 	_name.visible = true
 	var art: Dictionary = game.get("art", {})
 	app.set_backdrop(art.get("hero", art.get("header", "")))
 	if art.has("logo"):
-		Shell.load_art(art.logo, func(t): _logo.texture = t; _name.visible = false)
+		Shell.load_art(art.logo, func(t):
+			_logo.texture = t
+			_name.visible = false
+			# the box follows the logo's drawn height: the buttons sit right under it
+			_logo_box.custom_minimum_size.y = 18.0 + minf(LOGO_MAX.y,
+				LOGO_MAX.x * float(t.get_height()) / maxf(1.0, float(t.get_width()))))
 	_refresh()
 
 

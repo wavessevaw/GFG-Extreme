@@ -5,8 +5,12 @@ extends Screen
 
 var _hero_game: Dictionary = {}
 var _kicker: Label
+var _kicker_box: HBoxContainer
 var _logo: TextureRect
 var _title: Label
+var _logo_box: Control
+const TITLE_BOX := 118.0
+const LOGO_MAX := Vector2(520, 110)
 var _sub: Label
 var _play: Button
 var _more: Button
@@ -23,19 +27,24 @@ func _ready() -> void:
 	v.offset_top = 34
 	v.offset_bottom = -26
 	add_child(v)
-	_kicker = UI.label("Продолжить игру", 19, UI.TEXT, "semibold")
-	v.add_child(_kicker)
+	_kicker_box = UI.kicker("Продолжить игру")
+	_kicker = _kicker_box.get_node("Text")
+	v.add_child(_kicker_box)
 	var logo_box := Control.new()
-	logo_box.custom_minimum_size = Vector2(0, 150)
+	_logo_box = logo_box
+	logo_box.custom_minimum_size = Vector2(0, TITLE_BOX)
 	v.add_child(logo_box)
 	_logo = TextureRect.new()
 	_logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
-	_logo.position = Vector2(0, 8)
-	_logo.size = Vector2(560, 134)
+	_logo.position = Vector2(0, 14)
+	_logo.size = LOGO_MAX
 	logo_box.add_child(_logo)
-	_title = UI.label("", 60, UI.TEXT, "bold")
-	_title.position = Vector2(0, 30)
+	_title = UI.label("", 64, UI.TEXT, "bold")
+	_title.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.45))
+	_title.add_theme_constant_override("shadow_offset_y", 3)
+	_title.add_theme_constant_override("shadow_outline_size", 8)
+	_title.position = Vector2(0, 22)
 	_title.size = Vector2(1000, 90)
 	_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	logo_box.add_child(_title)
@@ -85,14 +94,14 @@ func _rebuild() -> void:
 		_title.text = "GFG Shell"
 		_sub.text = ""
 		return
-	_row_box.add_child(UI.label("Недавно играли" if not recent.is_empty() else "Библиотека", 20, UI.TEXT, "bold"))
+	_row_box.add_child(UI.label("Недавно играли" if not recent.is_empty() else "Библиотека", 21, UI.TEXT, "bold"))
 	var cards := []
 	for g in list:
-		var c := GameCard.make(g, Vector2(278, 196), "header")
+		var c := GameCard.make(g, Vector2(156, 234), "grid")
 		c.chosen.connect(app.open_game)
 		c.focused.connect(_show_hero)
 		cards.append(c)
-	_row_box.add_child(card_row(cards, 206, 16))
+	_row_box.add_child(card_row(cards, 236, 20))
 	_show_hero(list[0])
 
 
@@ -101,10 +110,11 @@ func _show_hero(g: Dictionary) -> void:
 		return
 	_hero_game = g
 	var recent := Shell.recent_games(1)
-	_kicker.text = "Продолжить игру" if (not recent.is_empty() and recent[0].id == g.id) else "Недавно играли"
+	_kicker.text = ("Продолжить игру" if (not recent.is_empty() and recent[0].id == g.id) else "Недавно играли").to_upper()
 	_title.text = g.name
 	_title.visible = true
 	_logo.texture = null
+	_logo_box.custom_minimum_size.y = TITLE_BOX
 	var played := UI.fmt_last_played(int(g.last_played))
 	var pt := UI.fmt_playtime(int(g.playtime_min))
 	_sub.text = "Последний запуск: %s%s" % [played, ("  ·  " + pt) if pt != "—" else ""]
@@ -117,7 +127,10 @@ func _show_hero(g: Dictionary) -> void:
 		Shell.load_art(art.logo, func(t):
 			if _hero_game.get("id") == gid:
 				_logo.texture = t
-				_title.visible = false)
+				_title.visible = false
+				# the box follows the logo's drawn height: the buttons sit right under it
+				var hs := minf(LOGO_MAX.y, LOGO_MAX.x * float(t.get_height()) / maxf(1.0, float(t.get_width())))
+				_logo_box.custom_minimum_size.y = hs + 30.0)
 
 
 func _activate(g: Dictionary) -> void:

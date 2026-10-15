@@ -6,6 +6,11 @@ extends Control
 
 var app: Node
 var _prev_focus: Control
+## The overlay's card and where it comes from: subclasses set them in _ready
+## (side menu from the left, Quick settings from the right, power menu grows).
+var sheet: Control
+var sheet_from := Vector2.ZERO
+var sheet_grow := false
 
 
 func _init() -> void:
@@ -20,6 +25,23 @@ func open() -> void:
 	visible = true
 	_on_open()
 	_focus_first.call_deferred()
+	_animate_in()
+
+
+func _animate_in() -> void:
+	modulate.a = 0.0
+	FX.to(self, "modulate:a", 1.0, FX.FAST)
+	if sheet == null:
+		return
+	if sheet_grow:
+		sheet.pivot_offset = sheet.size / 2.0
+		sheet.scale = Vector2(0.94, 0.94)
+		FX.to(sheet, "scale", Vector2.ONE, FX.MED, Tween.TRANS_BACK)
+	elif sheet_from != Vector2.ZERO:
+		var base: Vector2 = sheet.get_meta("_overlay_base") if sheet.has_meta("_overlay_base") else sheet.position
+		sheet.set_meta("_overlay_base", base)
+		sheet.position = base + sheet_from
+		FX.to(sheet, "position", base, FX.MED + 0.04, Tween.TRANS_QUART)
 
 
 func close() -> void:

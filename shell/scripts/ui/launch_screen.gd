@@ -72,7 +72,7 @@ func begin(g: Dictionary) -> void:
 	_status.text = "Запуск через Steam…"
 	_hint.text = "Steam может сначала синхронизировать сохранения или обновить игру.      Ⓑ  Перестать ждать"
 	var art: Dictionary = g.get("art", {})
-	var tex: TextureRect = _back.get_node("Art")
+	var tex: TextureRect = _back.get_node("Drift/Art")
 	tex.texture = null
 	Shell.load_art(art.get("hero", art.get("header", "")), func(t): tex.texture = t)
 	if art.has("logo"):

@@ -14,9 +14,11 @@ func _ready() -> void:
 	dim.color = Color(0, 0, 0, 0.55)
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(dim)
-	var p := UI.panel(Color("111116"), 14, 16)
+	var p := UI.elevated(UI.panel(Color("111116"), 14, 16))
 	p.set_anchors_and_offsets_preset(Control.PRESET_LEFT_WIDE)
 	p.offset_left = 18
+	sheet = p
+	sheet_from = Vector2(-120, 0)
 	p.offset_top = 86
 	p.offset_bottom = -70
 	p.offset_right = 18 + 380

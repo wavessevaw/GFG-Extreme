@@ -12,9 +12,11 @@ func _ready() -> void:
 	dim.color = Color(0, 0, 0, 0.6)
 	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(dim)
-	var p := UI.panel(Color("111116"), 22, 16)
+	var p := UI.elevated(UI.panel(Color("111116"), 22, 16))
 	p.custom_minimum_size = Vector2(460, 0)
 	p.set_anchors_preset(Control.PRESET_CENTER)
+	sheet = p
+	sheet_grow = true
 	p.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	p.grow_vertical = Control.GROW_DIRECTION_BOTH
 	add_child(p)
@@ -33,7 +35,7 @@ func _build() -> void:
 		c.queue_free()
 	if _confirm == "":
 		var t := UI.label("Питание", 26, UI.TEXT, "bold")
-		_box.add_child(UI.margin(t, 8, 0, 0, 8))
+		_box.add_child(UI.margin(t, 8, 6, 0, 10))
 		for a in [["sleep", "Сон", "suspend"], ["refresh", "Перезагрузка", "reboot"], ["power", "Выключение", "poweroff"],
 				["close", "Выйти из GFG Shell", "exit"]]:
 			var b := UI.row(a[0], a[1], "", null, 60)

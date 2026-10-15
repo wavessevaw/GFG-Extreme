@@ -37,6 +37,34 @@ static func font(weight: String = "medium") -> Font:
 	return f
 
 
+## The same face with extra letter spacing, for small uppercase kickers.
+static func tracked(weight: String = "semibold", spacing: int = 2) -> Font:
+	var key := "%s+%d" % [weight, spacing]
+	if _fonts.has(key):
+		return _fonts[key]
+	var fv := FontVariation.new()
+	fv.base_font = font(weight)
+	fv.spacing_glyph = spacing
+	_fonts[key] = fv
+	return fv
+
+
+## Small uppercase kicker with a short red bar before it ("ПРОДОЛЖИТЬ ИГРУ").
+static func kicker(text: String) -> HBoxContainer:
+	var h := hbox(10)
+	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bar := ColorRect.new()
+	bar.color = RED
+	bar.custom_minimum_size = Vector2(22, 3)
+	bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(bar)
+	var l := label(text.to_upper(), 14, TEXT_DIM, "semibold")
+	l.name = "Text"
+	l.add_theme_font_override("font", tracked("semibold", 2))
+	h.add_child(l)
+	return h
+
+
 static func theme() -> Theme:
 	if _theme != null:
 		return _theme
@@ -145,6 +173,7 @@ static func row(icon: String, title: String, subtitle: String = "", right: Contr
 	b.add_theme_stylebox_override("hover", box(Color(1, 1, 1, 0.04), Color.TRANSPARENT, 10))
 	b.add_theme_stylebox_override("pressed", box(Color(1, 1, 1, 0.06), Color.TRANSPARENT, 10))
 	b.add_theme_stylebox_override("focus", focus_box(RED, 10))
+	b.add_theme_stylebox_override("disabled", box(Color(0, 0, 0, 0), Color.TRANSPARENT, 10))
 	var m := MarginContainer.new()
 	m.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	m.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -254,6 +283,15 @@ static func panel(bg: Color = CARD, pad: int = 18, radius: int = RADIUS) -> Pane
 	return p
 
 
+## A floating panel (menus, dialogs): a soft shadow lifts it off the page.
+static func elevated(p: PanelContainer, shadow: int = 36) -> PanelContainer:
+	var sb: StyleBoxFlat = p.get_theme_stylebox("panel")
+	sb.shadow_color = Color(0, 0, 0, 0.55)
+	sb.shadow_size = shadow
+	sb.shadow_offset = Vector2(0, 10)
+	return p
+
+
 static func margin(c: Control, l: int, t: int, r: int, b: int) -> MarginContainer:
 	var m := MarginContainer.new()
 	m.add_theme_constant_override("margin_left", l)
@@ -274,33 +312,60 @@ static func spacer(h: bool = true) -> Control:
 	return c
 
 
-## Full-bleed art with the mockups' darkening: left-to-right and bottom-to-top gradients.
+## Full-bleed art with the mockups' darkening: left-to-right and bottom-to-top
+## gradients, an edge vignette and a low red bloom from the lower left. Two art
+## layers ("Art", "ArtNext") let the app cross-fade between games; both sit in
+## "Drift", which the app slowly zooms (a quiet Ken Burns, never distracting).
 static func hero_backdrop() -> Control:
 	var root := Control.new()
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var tex := TextureRect.new()
-	tex.name = "Art"
-	tex.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(tex)
-	for dir in [[Vector2(0, 0), Vector2(1, 0), 0.92, 0.0], [Vector2(0, 1), Vector2(0, 0), 1.0, 0.0], [Vector2(0, 0), Vector2(0, 1), 0.55, 0.0]]:
-		var g := TextureRect.new()
-		var gt := GradientTexture2D.new()
-		gt.gradient = Gradient.new()
-		gt.gradient.set_color(0, Color(BG, dir[2]))
-		gt.gradient.set_color(1, Color(BG, dir[3]))
-		gt.gradient.set_offset(1, 0.62 if dir[0] == Vector2(0, 0) and dir[1] == Vector2(1, 0) else 0.55)
-		gt.fill_from = dir[0]
-		gt.fill_to = dir[1]
-		g.texture = gt
-		g.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		g.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		g.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		root.add_child(g)
+	root.clip_contents = true
+	var drift := Control.new()
+	drift.name = "Drift"
+	drift.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	drift.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(drift)
+	for n in ["Art", "ArtNext"]:
+		var tex := TextureRect.new()
+		tex.name = n
+		tex.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if n == "ArtNext":
+			tex.modulate.a = 0.0
+		drift.add_child(tex)
+	for dir in [[Vector2(0, 0), Vector2(1, 0), 0.94, 0.0, 0.66], [Vector2(0, 1), Vector2(0, 0), 1.0, 0.0, 0.6],
+			[Vector2(0, 0), Vector2(0, 1), 0.6, 0.0, 0.3]]:
+		root.add_child(_gradient_layer(dir[0], dir[1], Color(BG, dir[2]), Color(BG, dir[3]), dir[4]))
+	var vig := _gradient_layer(Vector2(0.5, 0.45), Vector2(1.15, 1.1), Color(0, 0, 0, 0.0), Color(0, 0, 0, 0.55), 1.0)
+	(vig.texture as GradientTexture2D).fill = GradientTexture2D.FILL_RADIAL
+	(vig.texture as GradientTexture2D).gradient.set_offset(0, 0.45)
+	root.add_child(vig)
+	var bloom := _gradient_layer(Vector2(0.05, 1.05), Vector2(0.75, 0.35), Color(RED, 0.22), Color(RED, 0.0), 1.0)
+	(bloom.texture as GradientTexture2D).fill = GradientTexture2D.FILL_RADIAL
+	bloom.name = "Bloom"
+	root.add_child(bloom)
 	return root
+
+
+static func _gradient_layer(from: Vector2, to: Vector2, c0: Color, c1: Color, end: float) -> TextureRect:
+	var g := TextureRect.new()
+	var gt := GradientTexture2D.new()
+	gt.gradient = Gradient.new()
+	gt.gradient.set_color(0, c0)
+	gt.gradient.set_color(1, c1)
+	gt.gradient.set_offset(1, end)
+	gt.fill_from = from
+	gt.fill_to = to
+	gt.width = 256
+	gt.height = 256
+	g.texture = gt
+	g.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	g.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	g.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return g
 
 
 ## Rounded artwork: a Panel draws the rounded shape and clips its TextureRect child to

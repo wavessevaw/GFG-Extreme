@@ -65,22 +65,82 @@ def shortcuts_vdf(now):
     return out + b"\x08\x08"
 
 
-def art(path, size, color, text):
-    from PIL import Image, ImageDraw, ImageFont
+def art(path, size, color, text, logo=True):
+    """Stand-in game art that reads like real key art: a dark sky toward the
+    game's colour, a glow, layered silhouettes, grain, and the title as a logo
+    (left out on heroes, which Steam ships without one)."""
+    import random
+    from PIL import Image, ImageDraw, ImageFilter, ImageFont
     w, h = size
+    rnd = random.Random(text)
     img = Image.new("RGB", size)
     d = ImageDraw.Draw(img)
+    dark = (8, 8, 12)
     for y in range(h):
         t = y / max(1, h - 1)
-        d.line([(0, y), (w, y)], fill=tuple(int(c * (1 - 0.75 * t) + 10 * t) for c in color))
-    for i in range(0, w + h, 46):
-        d.line([(i, 0), (i - h, h)], fill=tuple(min(255, c + 25) for c in color), width=6)
+        k = (1 - t) ** 1.6
+        d.line([(0, y), (w, y)], fill=tuple(int(dark[i] + (color[i] * 0.85 - dark[i]) * k) for i in range(3)))
+    glow = Image.new("L", size, 0)
+    gd = ImageDraw.Draw(glow)
+    cx, cy, r = rnd.uniform(0.3, 0.8) * w, rnd.uniform(0.2, 0.45) * h, max(w, h) * 0.22
+    gd.ellipse([cx - r, cy - r, cx + r, cy + r], fill=200)
+    glow = glow.filter(ImageFilter.GaussianBlur(max(w, h) * 0.12))
+    img = Image.composite(Image.new("RGB", size, tuple(min(255, c + 90) for c in color)), img, glow)
+    d = ImageDraw.Draw(img)
+    for layer in range(3):
+        base = h * (0.55 + 0.13 * layer)
+        shade = tuple(int(c * (0.35 - 0.11 * layer)) for c in color)
+        pts, x = [(0, h)], 0
+        while x <= w:
+            pts.append((x, base - rnd.uniform(0, h * (0.28 - 0.06 * layer))))
+            x += rnd.uniform(w * 0.03, w * 0.09)
+        pts += [(w, h)]
+        d.polygon(pts, fill=shade)
+    noise = Image.effect_noise(size, 18).convert("RGB")
+    img = Image.blend(img, noise, 0.05)
+    if logo:
+        # a capsule logo: one word per line on portrait art, sized to fit 84 % of the width
+        lines = text.upper().split() if h > w else [text.upper()]
+        path_ttf = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+        size_px = min(h // 4, w // 3) if h > w else h // 4
+        while True:
+            try:
+                font = ImageFont.truetype(path_ttf, size_px)
+            except OSError:
+                font = ImageFont.load_default()
+                break
+            if max(d.textlength(t, font=font) for t in lines) <= w * 0.84 or size_px <= 12:
+                break
+            size_px -= 2
+        lh = int(font.size * 1.05)
+        y0 = h * 0.5 - lh * len(lines) / 2 if h > w else h * 0.36
+        shadow = Image.new("L", size, 0)
+        sd = ImageDraw.Draw(shadow)
+        for i, t in enumerate(lines):
+            sd.text(((w - d.textlength(t, font=font)) / 2, y0 + i * lh), t, fill=255, font=font)
+        shadow = shadow.filter(ImageFilter.GaussianBlur(6))
+        img = Image.composite(Image.new("RGB", size, (0, 0, 0)), img, shadow)
+        dd = ImageDraw.Draw(img)
+        for i, t in enumerate(lines):
+            dd.text(((w - d.textlength(t, font=font)) / 2, y0 + i * lh), t, fill=(250, 250, 250), font=font)
+    if path.endswith(".png"):
+        img.save(path)
+    else:
+        img.save(path, quality=90)
+
+
+def logo_art(path, text):
+    """Transparent title logo, as Steam's logo.png."""
+    from PIL import Image, ImageDraw, ImageFont
     try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", max(16, min(w // 12, h // 6)))
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 120)
     except OSError:
         font = ImageFont.load_default()
-    d.text((w // 14, h - h // 4), text, fill=(255, 255, 255), font=font)
-    img.save(path)
+    probe = ImageDraw.Draw(Image.new("L", (1, 1)))
+    tw = int(probe.textlength(text.upper(), font=font))
+    img = Image.new("RGBA", (tw + 40, 170), (0, 0, 0, 0))
+    ImageDraw.Draw(img).text((20, 15), text.upper(), fill=(255, 255, 255, 255), font=font)
+    img.crop(img.getbbox()).save(path)   # Steam's logos are cut to the artwork
 
 
 def main():
@@ -134,13 +194,15 @@ def main():
             if i % 2 == 0:   # legacy flat names
                 art("%s/%d_library_600x900.jpg" % (cache, appid), (300, 450), color, name)
                 art("%s/%d_header.jpg" % (cache, appid), (460, 215), color, name)
-                art("%s/%d_library_hero.jpg" % (cache, appid), (960, 310), color, name)
+                art("%s/%d_library_hero.jpg" % (cache, appid), (1920, 620), color, name, logo=False)
+                logo_art("%s/%d_logo.png" % (cache, appid), name)
             else:            # per-app directory, hashed subfolder
                 d = "%s/%d/%s" % (cache, appid, "a1b2c3d4e5")
                 os.makedirs(d, exist_ok=True)
                 art(d + "/library_600x900.jpg", (300, 450), color, name)
                 art("%s/%d/header.jpg" % (cache, appid), (460, 215), color, name)
-                art("%s/%d/library_hero.jpg" % (cache, appid), (960, 310), color, name)
+                art("%s/%d/library_hero.jpg" % (cache, appid), (1920, 620), color, name, logo=False)
+                logo_art("%s/%d/logo.png" % (cache, appid), name)
         grid = root + "/userdata/%d/config/grid" % ACCOUNT
         u = SHORTCUTS[0][0] & 0xFFFFFFFF
         art("%s/%dp.png" % (grid, u), (300, 450), (90, 90, 100), SHORTCUTS[0][1])
