@@ -82,7 +82,7 @@ def package(binary: Path, outdir: Path, version: str) -> Path:
         "schema": 1,
         "version": version,
         "source_commit": commit,
-        "algorithm": "GFG Temporal Engine TE8 LMC",
+        "algorithm": "GFG Temporal Engine TE8: tiles default, LMC opt-in",
         "transport": "Vulkan GPU/CPU host-io/CPU/GPU",
         "architecture": "linux-x86_64",
         "runtime_requires": ["Vulkan 1.2", "64-bit Linux"],

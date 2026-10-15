@@ -381,13 +381,16 @@ gfg_cpu_fg *gfg_cpu_fg_create(VkInstance instance,
     }
     te_context_desc cd;
     te_context_desc_default(&cd,extent.width,extent.height,1);
-    cd.params.algorithm=TE_ALGO_LMC;
+    const char *algorithm=getenv("GFG_NATIVE_ALGO");
+    cd.params.algorithm=(!algorithm || strcmp(algorithm,"lmc")) ?
+        TE_ALGO_TILES : TE_ALGO_LMC;
     cd.host_io=1;
     if(te_context_create(fg->engine,&cd,&fg->context)!=VK_SUCCESS){
         fprintf(stderr,"[gfg-native] TE context: %s\n",te_last_error());goto fail;
     }
-    if(fg->log)fprintf(stderr,"[gfg-native] OWN LMC CPU bridge active: %ux%u format=%d\n",
-        extent.width,extent.height,format);
+    if(fg->log)fprintf(stderr,"[gfg-native] OWN TE8 CPU bridge active: %ux%u format=%d algo=%s\n",
+        extent.width,extent.height,format,
+        cd.params.algorithm==TE_ALGO_LMC?"lmc":"tiles");
     return fg;
 fail:
     gfg_cpu_fg_destroy(fg);

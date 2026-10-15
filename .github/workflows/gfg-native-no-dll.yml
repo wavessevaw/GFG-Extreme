@@ -48,7 +48,7 @@ jobs:
           make -C engine/gfg-temporal lib
           xvfb-run -a make -C engine/gfg-native wsi-smoke-te \
             VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" 2>&1 | tee native-fg-wsi.log
-          grep -q '\[gfg-native\] OWN LMC CPU bridge active' native-fg-wsi.log
+          grep -q '\[gfg-native\] OWN TE8 CPU bridge active' native-fg-wsi.log
           grep -Eq '\[gfg-native\] generated=[1-9]' native-fg-wsi.log
           grep -q 'GFG native: 4 real WSI acquire/submit/present cycles PASS' native-fg-wsi.log
       - name: Package independent Steam Deck test build and verify installation

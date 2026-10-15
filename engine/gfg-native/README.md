@@ -75,3 +75,16 @@ Failure to satisfy any item must NOT be reported as full native independence.
 
 The Vulkan loader smoke exercises instance/device creation, selection and
 queue dispatch on a real Vulkan ICD. It does not test swapchain presentation.
+
+## Independent CPU-generation path (now implemented)
+
+The opt-in `GFG_NATIVE_CPU_BRIDGE=1` path (built with `ENABLE_TE=1`)
+performs application image capture, TE8 host-I/O synthesis and a distinct
+WSI acquire/present for every generated image. It is the first **fully
+MAKO-free runtime**; the older `bootstrap.py` path remains a separate
+transitional reference. TE8 `tiles` is the default for device-trial
+reliability, while `GFG_NATIVE_ALGO=lmc` explicitly opts in to LMC.
+The CPU transfer path is not cost-optimised and requires Deck testing.
+
+An installable standalone native trial archive can be generated with
+`scripts/package_native_fg.py` once WSI synthesis tests pass.
