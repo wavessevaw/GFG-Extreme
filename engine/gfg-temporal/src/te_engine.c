@@ -84,6 +84,12 @@ typedef struct {
     int lmc_timed;             /* LMC per-pass timestamps written */
     int lmc_tier;              /* LMC cost tier this pair was recorded at */
     int lmc_split;             /* LMC: analysis2 recorded (a generated pair) */
+    /* LMC: the second half and the outputs, submitted by the fit worker once the model is in */
+    VkSubmitInfo lsub[1 + TE_MAX_OUTPUTS];
+    VkTimelineSemaphoreSubmitInfo ltsi[1 + TE_MAX_OUTPUTS];
+    uint64_t lsig[TE_MAX_OUTPUTS];
+    uint32_t lnsub;
+    int lmc_pending;           /* LMC: the worker has not submitted lsub (nor the fence) yet */
     uint64_t lmc_seq;          /* LMC: the pair's fit number k (fit_tl 2k + 1, then 2k + 2) */
 } te_slot;
 
@@ -104,6 +110,8 @@ struct te_device {
     PFN_vkGetSemaphoreFdKHR get_semaphore_fd;
     PFN_vkImportSemaphoreFdKHR import_semaphore_fd;
     VkDeviceSize allocated;    /* bytes of device memory currently allocated by te */
+    pthread_mutex_t queue_lock;   /* the queue is used by the submitting thread and the LMC fit worker */
+    int queue_lock_ok;
 };
 
 struct te_lmc;
@@ -141,6 +149,8 @@ struct te_context {
 
 static VkResult lmc_create(te_context* ctx);
 static void lmc_destroy(te_context* ctx);
+static void lmc_drain(te_context* ctx);
+static int lmc_slot_pending(te_context* ctx, te_slot* slot);
 static void lmc_record_init(te_context* ctx, VkCommandBuffer cb);
 
 /* ------------------------------------------------------------------ loader */
@@ -220,6 +230,14 @@ static VkResult fail(VkResult res, const char* fmt, ...) {
     vsnprintf(g_error, sizeof g_error, fmt, ap);
     va_end(ap);
     return res;
+}
+
+/* every submission of the engine's queue (the submitting thread and the LMC fit worker) */
+static VkResult queue_submit(te_device* dev, uint32_t n, const VkSubmitInfo* si, VkFence fence) {
+    pthread_mutex_lock(&dev->queue_lock);
+    VkResult r = vkQueueSubmit(dev->queue, n, si, fence);
+    pthread_mutex_unlock(&dev->queue_lock);
+    return r;
 }
 
 #define CHECK(call, what)                                                     \
@@ -412,6 +430,8 @@ VkResult te_device_create(const te_device_desc* desc, te_device** out) {
         return fail(r, "vkCreateDevice failed (%d)", r);
     }
     vkGetDeviceQueue(dev->device, dev->qfi, 0, &dev->queue);
+    pthread_mutex_init(&dev->queue_lock, NULL);
+    dev->queue_lock_ok = 1;
     if (dev->ext_mem_fd)
         dev->get_memory_fd = (PFN_vkGetMemoryFdKHR)vkGetDeviceProcAddr(dev->device, "vkGetMemoryFdKHR");
     if (dev->ext_sem_fd) {
@@ -431,6 +451,7 @@ void te_device_destroy(te_device* dev) {
         if (destroy) destroy(dev->instance, dev->messenger, NULL);
     }
     if (dev->instance) vkDestroyInstance(dev->instance, NULL);
+    if (dev->queue_lock_ok) pthread_mutex_destroy(&dev->queue_lock);
     free(dev);
 }
 
@@ -714,7 +735,7 @@ static VkResult one_time(te_context* ctx, void (*record)(te_context*, VkCommandB
     VkFence fence;
     CHECK(vkCreateFence(d, &fci, NULL, &fence), "vkCreateFence");
     VkSubmitInfo si = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1, .pCommandBuffers = &cb};
-    VkResult r = vkQueueSubmit(ctx->dev->queue, 1, &si, fence);
+    VkResult r = queue_submit(ctx->dev, 1, &si, fence);
     if (r == VK_SUCCESS) r = vkWaitForFences(d, 1, &fence, VK_TRUE, UINT64_MAX);
     vkDestroyFence(d, fence, NULL);
     vkFreeCommandBuffers(d, ctx->cmdpool, 1, &cb);
@@ -989,7 +1010,10 @@ void te_context_destroy(te_context* ctx) {
     if (!ctx) return;
     te_device* dev = ctx->dev;
     VkDevice d = dev->device;
+    if (ctx->lmc) lmc_drain(ctx);   /* the worker's pending submissions first */
+    pthread_mutex_lock(&dev->queue_lock);
     vkDeviceWaitIdle(d);
+    pthread_mutex_unlock(&dev->queue_lock);
     lmc_destroy(ctx);
     for (int s = 0; s < TE_RING; ++s) {
         te_slot* slot = &ctx->ring[s];
@@ -1230,6 +1254,10 @@ static void collect(te_context* ctx, te_slot* slot) {
 
 static VkResult wait_slot(te_context* ctx, te_slot* slot, int nonblocking) {
     if (!slot->in_flight) return VK_SUCCESS;
+    if (ctx->lmc && lmc_slot_pending(ctx, slot)) {   /* the fence is the worker's until it submits */
+        if (nonblocking) return VK_NOT_READY;
+        lmc_drain(ctx);
+    }
     VkDevice d = ctx->dev->device;
     VkResult r = nonblocking ? vkGetFenceStatus(d, slot->fence) : vkWaitForFences(d, 1, &slot->fence, VK_TRUE, UINT64_MAX);
     if (r == VK_NOT_READY || r == VK_TIMEOUT) return VK_NOT_READY;
@@ -1269,6 +1297,8 @@ VkResult te_submit_frame(te_context* ctx, const te_submit* s) {
         if (!(t > 0.0f && t < 1.0f) || (i && !(t > s->timestamps[i - 1])))
             return fail(VK_ERROR_INITIALIZATION_FAILED, "timestamps must increase strictly inside (0, 1)");
     }
+    /* LMC: the previous pair's second half is submitted (by the fit worker) before anything else */
+    if (ctx->lmc) lmc_drain(ctx);
     /* No previous frame (first frame, or a skipped one): outputs hold the new frame */
     int generate = ctx->frames > 0 && s->count > 0 && !repeat && !s->discontinuity && !s->hold;
     uint32_t r_index = ctx->ring_next;
@@ -1290,66 +1320,62 @@ VkResult te_submit_frame(te_context* ctx, const te_submit* s) {
         else record_output(ctx, slot, s, i, !generate);
         CHECK(vkEndCommandBuffer(slot->out[i]), "vkEndCommandBuffer(output)");
     }
-    /* analysis (LMC: + its second half after the CPU fit), then the outputs */
-    VkSubmitInfo si[2 + TE_MAX_OUTPUTS];
-    VkTimelineSemaphoreSubmitInfo tsi[2 + TE_MAX_OUTPUTS];
+    /* analysis, then the outputs.  LMC generated pairs: the analysis' first half is submitted here; the
+       fit worker submits the second half and the outputs once the motion model of the pair is in */
+    int split = ctx->lmc && slot->lmc_split;
+    VkSubmitInfo si[1 + TE_MAX_OUTPUTS];
+    VkTimelineSemaphoreSubmitInfo tsi[1 + TE_MAX_OUTPUTS];
     uint64_t wait_values[1] = {s->wait_value};
     uint64_t signal_values[TE_MAX_OUTPUTS];
-    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-    int split = ctx->lmc && slot->lmc_split;
-    uint32_t n = 0;
-    si[n] = (VkSubmitInfo){.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1,
+    static const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    uint64_t fit_ready = split ? 2 * slot->lmc_seq + 1 : 0;
+    si[0] = (VkSubmitInfo){.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1,
                            .pCommandBuffers = &slot->analysis};
-    tsi[n] = (VkTimelineSemaphoreSubmitInfo){.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};
+    tsi[0] = (VkTimelineSemaphoreSubmitInfo){.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};
     if (s->wait_value) {
-        tsi[n].waitSemaphoreValueCount = 1;
-        tsi[n].pWaitSemaphoreValues = wait_values;
-        si[n].waitSemaphoreCount = 1;
-        si[n].pWaitSemaphores = &ctx->timeline;
-        si[n].pWaitDstStageMask = &wait_stage;
+        tsi[0].waitSemaphoreValueCount = 1;
+        tsi[0].pWaitSemaphoreValues = wait_values;
+        si[0].waitSemaphoreCount = 1;
+        si[0].pWaitSemaphores = &ctx->timeline;
+        si[0].pWaitDstStageMask = &wait_stage;
     }
-    uint64_t fit_ready = split ? 2 * slot->lmc_seq + 1 : 0, fit_done = fit_ready + 1;
-    if (split) {
-        tsi[n].signalSemaphoreValueCount = 1;
-        tsi[n].pSignalSemaphoreValues = &fit_ready;
-        si[n].signalSemaphoreCount = 1;
-        si[n].pSignalSemaphores = &ctx->lmc->fit_tl;
+    if (split) {   /* the worker waits for this before it reads the vectors */
+        tsi[0].signalSemaphoreValueCount = 1;
+        tsi[0].pSignalSemaphoreValues = &fit_ready;
+        si[0].signalSemaphoreCount = 1;
+        si[0].pSignalSemaphores = &ctx->lmc->fit_tl;
     }
-    if (s->wait_value || split) si[n].pNext = &tsi[n];
-    ++n;
-    if (split) {
-        tsi[n] = (VkTimelineSemaphoreSubmitInfo){.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-                                                 .waitSemaphoreValueCount = 1, .pWaitSemaphoreValues = &fit_done};
-        si[n] = (VkSubmitInfo){.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .pNext = &tsi[n], .waitSemaphoreCount = 1,
-                               .pWaitSemaphores = &ctx->lmc->fit_tl, .pWaitDstStageMask = &wait_stage,
-                               .commandBufferCount = 1, .pCommandBuffers = &slot->analysis2};
-        ++n;
-    }
+    if (s->wait_value || split) si[0].pNext = &tsi[0];
+    /* the outputs (after the second half), into the slot when the worker submits them */
+    VkSubmitInfo* os = split ? slot->lsub : si;
+    VkTimelineSemaphoreSubmitInfo* ot = split ? slot->ltsi : tsi;
+    uint64_t* ov = split ? slot->lsig : signal_values;
+    uint32_t n = 1;
+    if (split)
+        os[0] = (VkSubmitInfo){.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1,
+                               .pCommandBuffers = &slot->analysis2};
     for (uint32_t i = 0; i < outs; ++i, ++n) {
-        si[n] = (VkSubmitInfo){.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1,
+        os[n] = (VkSubmitInfo){.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1,
                                .pCommandBuffers = &slot->out[i]};
         if (s->signal_first) {
-            signal_values[i] = s->signal_first + i;
-            tsi[n] = (VkTimelineSemaphoreSubmitInfo){.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-                                                     .signalSemaphoreValueCount = 1,
-                                                     .pSignalSemaphoreValues = &signal_values[i]};
-            si[n].pNext = &tsi[n];
-            si[n].signalSemaphoreCount = 1;
-            si[n].pSignalSemaphores = &ctx->timeline;
+            ov[i] = s->signal_first + i;
+            ot[n] = (VkTimelineSemaphoreSubmitInfo){.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+                                                    .signalSemaphoreValueCount = 1, .pSignalSemaphoreValues = &ov[i]};
+            os[n].pNext = &ot[n];
+            os[n].signalSemaphoreCount = 1;
+            os[n].pSignalSemaphores = &ctx->timeline;
         }
     }
-    /* LMC: the first half is a submission of its own (a driver may gather the waits of every batch in
-       one vkQueueSubmit before running any of them), and the fit is queued before the second half */
-    VkResult sr = VK_SUCCESS;
-    uint32_t first = 0;
+    VkResult sr;
     if (split) {
-        sr = vkQueueSubmit(ctx->dev->queue, 1, si, VK_NULL_HANDLE);
+        slot->lnsub = n;
+        sr = queue_submit(ctx->dev, 1, si, VK_NULL_HANDLE);
         if (sr != VK_SUCCESS) return fail(sr, "vkQueueSubmit(analysis) failed (%d)", sr);
         lmc_fit_enqueue(ctx, slot);
-        first = 1;
+    } else {
+        sr = queue_submit(ctx->dev, n, si, slot->fence);
+        if (sr != VK_SUCCESS) return fail(sr, "vkQueueSubmit failed (%d)", sr);
     }
-    sr = vkQueueSubmit(ctx->dev->queue, n - first, si + first, slot->fence);
-    if (sr != VK_SUCCESS) return fail(sr, "vkQueueSubmit failed (%d)", sr);   /* the worker still signals */
     slot->in_flight = 1;
     slot->outputs = outs;
     slot->generated = outs > 0;
@@ -1383,6 +1409,10 @@ int te_context_idle(te_context* ctx, uint64_t timeout_ns) {
     for (uint32_t k = 0; k < TE_RING; ++k) {
         te_slot* slot = &ctx->ring[(ctx->ring_next + k) % TE_RING];
         if (!slot->in_flight) continue;
+        if (ctx->lmc && lmc_slot_pending(ctx, slot)) {
+            if (!timeout_ns) return 0;
+            lmc_drain(ctx);   /* the CPU fit: milliseconds */
+        }
         VkResult r = vkWaitForFences(d, 1, &slot->fence, VK_TRUE, timeout_ns);
         if (r != VK_SUCCESS) return 0;
         if (wait_slot(ctx, slot, 0) != VK_SUCCESS) return 0;

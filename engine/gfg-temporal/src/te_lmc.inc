@@ -69,9 +69,9 @@ struct te_lmc {
     /* motion model on the CPU (te_lmc_fit.c), fitted on this pair's vectors: the analysis is two
        submissions.  The first (pyramid, block search, block statistics) ends with a copy of the
        level-1 B vectors, usable flags and motion votes to fitrb and signals fit_tl = 2k + 1; the
-       worker waits for it, fits planes and palette, writes them to stage and signals 2k + 2 from
-       the host; the second submission waits for that, copies the model in and builds the fields.
-       The engine has its own device and queue: the wait holds only the engine's work. */
+       worker waits for it, fits planes and palette, writes them to stage, then submits the second
+       half (copies the model in, builds the fields) and the outputs.  Nothing on the queue waits
+       for the host, and the engine has its own device and queue: the game's work never waits. */
     te_device* dev;
     te_buffer fitrb[TE_RING];
     te_buffer stage[TE_RING];   /* host-visible model for the second submission (LMC_STAGE_*) */
@@ -82,8 +82,9 @@ struct te_lmc {
     int fit_thread_ok;
     pthread_mutex_t fit_lock;
     pthread_cond_t fit_cond;
-    int fit_quit;
-    struct { int slot; uint64_t seq; uint32_t gen; } jobs[TE_RING];
+    pthread_cond_t fit_done;    /* a job finished */
+    int fit_quit, fit_busy;
+    struct { te_slot* slot; int rs; uint64_t seq; uint32_t gen; } jobs[TE_RING];
     int job_head, job_count;
     float* job_vec;
     unsigned char *job_usable, *job_hudb;
@@ -110,7 +111,7 @@ static double lmc_now_ms(void) {
 #define LMC_STAGE_SIZE 512u
 
 /* one fit: pair seq k of ring slot rs (its first submission signals 2k + 1) */
-static void lmc_fit_job(struct te_lmc* m, int rs, uint64_t k, uint32_t gen) {
+static void lmc_fit_job(struct te_lmc* m, te_slot* slot, int rs, uint64_t k, uint32_t gen) {
     te_device* dev = m->dev;
     uint64_t want = 2 * k + 1;
     VkSemaphoreWaitInfo wi = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, .semaphoreCount = 1,
@@ -165,10 +166,12 @@ static void lmc_fit_job(struct te_lmc* m, int rs, uint64_t k, uint32_t gen) {
         m->fit_ms = lmc_now_ms() - t0;
         pthread_mutex_unlock(&m->fit_lock);
     }
-    /* always released, also after a device loss: the second submission must never wait forever */
-    VkSemaphoreSignalInfo si = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO, .semaphore = m->fit_tl,
-                                .value = 2 * k + 2};
-    vkSignalSemaphore(dev->device, &si);
+    /* the second half and the outputs; on a failure the fence alone, so that nobody waits forever */
+    if (queue_submit(dev, slot->lnsub, slot->lsub, slot->fence) != VK_SUCCESS)
+        queue_submit(dev, 0, NULL, slot->fence);
+    pthread_mutex_lock(&m->fit_lock);
+    slot->lmc_pending = 0;
+    pthread_mutex_unlock(&m->fit_lock);
 }
 
 static void* lmc_fit_main(void* arg) {
@@ -178,14 +181,18 @@ static void* lmc_fit_main(void* arg) {
         /* the queue is drained before quitting: a submitted second half waits for its signal */
         while (!m->job_count && !m->fit_quit) pthread_cond_wait(&m->fit_cond, &m->fit_lock);
         if (!m->job_count) break;
-        int rs = m->jobs[m->job_head].slot;
+        te_slot* slot = m->jobs[m->job_head].slot;
+        int rs = m->jobs[m->job_head].rs;
         uint64_t k = m->jobs[m->job_head].seq;
         uint32_t gen = m->jobs[m->job_head].gen;
         m->job_head = (m->job_head + 1) % TE_RING;
         m->job_count--;
+        m->fit_busy = 1;
         pthread_mutex_unlock(&m->fit_lock);
-        lmc_fit_job(m, rs, k, gen);
+        lmc_fit_job(m, slot, rs, k, gen);
         pthread_mutex_lock(&m->fit_lock);
+        m->fit_busy = 0;
+        pthread_cond_broadcast(&m->fit_done);
     }
     pthread_mutex_unlock(&m->fit_lock);
     return NULL;
@@ -196,11 +203,30 @@ static void lmc_fit_enqueue(te_context* ctx, te_slot* slot) {
     struct te_lmc* m = ctx->lmc;
     pthread_mutex_lock(&m->fit_lock);
     int t = (m->job_head + m->job_count) % TE_RING;
-    m->jobs[t].slot = (int)(slot - ctx->ring);
+    slot->lmc_pending = 1;
+    m->jobs[t].slot = slot;
+    m->jobs[t].rs = (int)(slot - ctx->ring);
     m->jobs[t].seq = slot->lmc_seq;
     m->jobs[t].gen = m->fit_gen;
     m->job_count++;
     pthread_cond_signal(&m->fit_cond);
+    pthread_mutex_unlock(&m->fit_lock);
+}
+
+static int lmc_slot_pending(te_context* ctx, te_slot* slot) {
+    struct te_lmc* m = ctx->lmc;
+    pthread_mutex_lock(&m->fit_lock);
+    int p = slot->lmc_pending;
+    pthread_mutex_unlock(&m->fit_lock);
+    return p;
+}
+
+/* until every queued fit has run and submitted its second half */
+static void lmc_drain(te_context* ctx) {
+    struct te_lmc* m = ctx->lmc;
+    if (!m->fit_thread_ok) return;
+    pthread_mutex_lock(&m->fit_lock);
+    while (m->job_count || m->fit_busy) pthread_cond_wait(&m->fit_done, &m->fit_lock);
     pthread_mutex_unlock(&m->fit_lock);
 }
 
@@ -450,6 +476,7 @@ static VkResult lmc_create(te_context* ctx) {
         return fail(VK_ERROR_OUT_OF_HOST_MEMORY, "out of memory (lmc fit)");
     pthread_mutex_init(&m->fit_lock, NULL);
     pthread_cond_init(&m->fit_cond, NULL);
+    pthread_cond_init(&m->fit_done, NULL);
     m->fit_thread_ok = pthread_create(&m->fit_thread, NULL, lmc_fit_main, m) == 0;
     if (!m->fit_thread_ok) return fail(VK_ERROR_INITIALIZATION_FAILED, "cannot start the LMC fit thread");
 #undef LTRY
@@ -472,6 +499,7 @@ static void lmc_destroy(te_context* ctx) {
     if (m->fit_work) {
         pthread_mutex_destroy(&m->fit_lock);
         pthread_cond_destroy(&m->fit_cond);
+        pthread_cond_destroy(&m->fit_done);
     }
     if (m->fit_tl) vkDestroySemaphore(d, m->fit_tl, NULL);
     te_lmc_fit_free(m->fit_work);
@@ -687,7 +715,7 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
     barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_HOST_BIT,
             VK_ACCESS_HOST_READ_BIT);
     vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, slot->queries, 2);
-    /* second submission: after the CPU fit of this pair (fit_tl = 2k + 2) */
+    /* second submission: the fit worker submits it once the model of this pair is in stage */
     slot->lmc_seq = ++m->fit_seq;
     slot->lmc_split = 1;
     cb = slot->analysis2;
