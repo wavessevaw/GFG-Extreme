@@ -62,6 +62,14 @@ class NativeLayerTests(unittest.TestCase):
         self.assertIn("watchdog disabled generator", bridge)
         self.assertIn("GFG_NATIVE_MAX_FRAME_MS", bridge)
         self.assertIn("capture_ms=", bridge)
+        self.assertIn("TE stages frame=", bridge)
+        self.assertIn("upload_ms=", bridge)
+        self.assertIn("submit_ms=", bridge)
+        self.assertIn("download_ms=", bridge)
+        self.assertIn("CPU convert frame=", bridge)
+        self.assertIn("process breaker: skip CPU bridge", bridge)
+        self.assertIn("process_cpu_bridge_slow", bridge)
+        self.assertIn('disable_slow_bridge(fg,"before-real-present"', bridge)
 
 if __name__ == "__main__":
     unittest.main()

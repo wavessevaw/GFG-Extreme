@@ -140,6 +140,36 @@ jobs:
           path: out-patch-03/*
           retention-days: 30
           if-no-files-found: error
+      - name: Produce and verify Deck diagnostic/anti-stall Patch 04
+        run: |
+          set -euo pipefail
+          mkdir -p out-patch-04
+          cp engine/gfg-native/build-te/libVkLayer_gfg_native.so out-patch-04/
+          cp patches/native-04/apply.sh patches/native-04/rollback.sh patches/native-04/README.md out-patch-04/
+          (cd out-patch-04 && sha256sum libVkLayer_gfg_native.so > SHA256SUMS.txt && sha256sum --check SHA256SUMS.txt)
+          baseline="$RUNNER_TEMP/native-baseline-4"
+          target="$baseline/.local/share/gfg-native/libVkLayer_gfg_native.so"
+          mkdir -p "$(dirname "$target")"
+          # Use the real installed native.2 binary as a compatibility baseline.
+          # The same installer supports installed Patch 03 libraries.
+          cp "$RUNNER_TEMP/original-2.so" "$target"
+          chmod 755 "$target"
+          cp "$target" "$RUNNER_TEMP/pre-patch-04.so"
+          (cd out-patch-04 && HOME="$baseline" XDG_DATA_HOME= bash ./apply.sh)
+          cmp "$target" out-patch-04/libVkLayer_gfg_native.so
+          test -s "${target}.before-patch-04"
+          (cd out-patch-04 && HOME="$baseline" XDG_DATA_HOME= bash ./rollback.sh)
+          cmp "$target" "$RUNNER_TEMP/pre-patch-04.so"
+          test ! -e "${target}.before-patch-04"
+          readelf -d out-patch-04/libVkLayer_gfg_native.so | tee out-patch-04/dependencies.txt
+          ! grep -Ei 'NEEDED.*(mako|lsfg|lossless)' out-patch-04/dependencies.txt
+      - name: Upload Patch 04 replacement library (no release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: GFG-Native-FG-Patch-04-TE-Profiler
+          path: out-patch-04/*
+          retention-days: 30
+          if-no-files-found: error
       - name: Compile DLL-free Temporal Engine bootstrap using pinned production renderer
         run: |
           python3 scripts/build_frame_fusion.py --native-no-dll \

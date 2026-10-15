@@ -18,15 +18,21 @@
 #include "te_engine.h"
 #include <limits.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #define LOAD(d, name) ((PFN_vk##name)(d)->gdpa((d)->device,"vk" #name))
 #define FN(name) PFN_vk##name name
 #define COLOR_BPP 4u
+
+/* Fail closed across repeated swapchain lifetimes within one game process.
+ * Do not keep paying a half-second first-frame stall at every recreation. */
+static atomic_int process_cpu_bridge_slow = ATOMIC_VAR_INIT(0);
 
 struct gfg_cpu_fg {
     VkDevice device;
@@ -110,11 +116,12 @@ static void disable_slow_bridge(gfg_cpu_fg *fg, const char *stage,
                                 double duration_ms) {
     if (fg->permanently_disabled) return;
     fg->permanently_disabled = 1;
+    atomic_store_explicit(&process_cpu_bridge_slow, 1, memory_order_relaxed);
     ++fg->bypasses;
     fprintf(stderr,
         "[gfg-native] watchdog disabled generator stage=%s elapsed_ms=%.2f"
-        " budget_ms=%u: forwarding real frames only\n",
-        stage, duration_ms, fg->max_frame_ms);
+        " budget_ms=%u pid=%ld: forwarding real frames only; process breaker active\n",
+        stage, duration_ms, fg->max_frame_ms, (long)getpid());
 }
 static bool coherent_flush(gfg_cpu_fg *fg, VkBool32 invalidate) {
     if(fg->coherent) return true;
@@ -228,8 +235,13 @@ static void rgb_to_rgba(gfg_cpu_fg *fg) {
 }
 static bool run_te(gfg_cpu_fg *fg) {
     uint32_t slot=fg->source_slot;
-    if(te_upload_rgb(fg->context,slot,fg->rgb_real)!=VK_SUCCESS) {
-        fprintf(stderr,"[gfg-native] TE upload: %s\n",te_last_error());return false;
+    struct timespec start={0};
+    clock_gettime(CLOCK_MONOTONIC,&start);
+    const VkResult upload_result=te_upload_rgb(fg->context,slot,fg->rgb_real);
+    const double upload_ms=elapsed_ms_since(start);
+    if(upload_result!=VK_SUCCESS) {
+        fprintf(stderr,"[gfg-native] TE upload: %s\n",te_last_error());
+        return false;
     }
     te_submit s={0};
     s.slot=slot;
@@ -239,10 +251,9 @@ static bool run_te(gfg_cpu_fg *fg) {
     const char *tier=getenv("GFG_NATIVE_LMC_TIER");
     if(tier && tier[0]>='0' && tier[0]<='2' && tier[1]=='\0')
         s.lmc_tier=tier[0]-'0';
-    VkResult v=te_submit_frame(fg->context,&s);
-    if(v!=VK_SUCCESS){fail("te-submit",v);return false;}
-    /* This is a correctness-first CPU bridge: a bounded wait lets the game
-     * still see a real frame when compute is too slow. */
+    const VkResult v=te_submit_frame(fg->context,&s);
+    const double submitted_ms=elapsed_ms_since(start);
+    if(v!=VK_SUCCESS) { fail("te-submit",v); return false; }
     uint64_t budget=250000000ULL;
     const char *budget_env=getenv("GFG_NATIVE_BUDGET_MS");
     if(budget_env && *budget_env) {
@@ -251,23 +262,32 @@ static bool run_te(gfg_cpu_fg *fg) {
         if(end && !*end && raw>=10 && raw<=5000)
             budget=(uint64_t)raw*1000000ULL;
     }
-    struct timespec since={0}, until={0};
-    clock_gettime(CLOCK_MONOTONIC,&since);
     const int ready=te_context_idle(fg->context,budget);
-    clock_gettime(CLOCK_MONOTONIC,&until);
+    const double finished_wait_ms=elapsed_ms_since(start);
     if(fg->log) fprintf(stderr,
         "[gfg-native] TE pair slot=%u frame=%llu tier=%d ready=%d waited_ms=%.1f\n",
         slot,(unsigned long long)fg->real_frames,s.lmc_tier,ready,
-        (until.tv_sec-since.tv_sec)*1000.0+(until.tv_nsec-since.tv_nsec)/1000000.0);
-    if(!ready){
-        ++fg->skipped;
-        return false;
+        finished_wait_ms-submitted_ms);
+    double download_ms=0.0;
+    if(ready && fg->real_frames) {
+        const VkResult downloaded=te_download_rgb(fg->context,0,fg->rgb_generated);
+        download_ms=elapsed_ms_since(start)-finished_wait_ms;
+        if(downloaded!=VK_SUCCESS) {
+            fprintf(stderr,"[gfg-native] TE download: %s\n",te_last_error());
+            return false;
+        }
     }
-    if(!fg->real_frames)return true;
-    if(te_download_rgb(fg->context,0,fg->rgb_generated)!=VK_SUCCESS) {
-        fprintf(stderr,"[gfg-native] TE download: %s\n",te_last_error());return false;
-    }
-    return true;
+    if(fg->log && (fg->real_frames<5 || fg->real_frames%30==0 ||
+                   elapsed_ms_since(start)>30.0))
+        fprintf(stderr,
+            "[gfg-native] TE stages frame=%llu upload_ms=%.2f"
+            " submit_ms=%.2f wait_ms=%.2f download_ms=%.2f"
+            " total_ms=%.2f ready=%d pid=%ld\n",
+            (unsigned long long)fg->real_frames,upload_ms,
+            submitted_ms-upload_ms,finished_wait_ms-submitted_ms,
+            download_ms,elapsed_ms_since(start),ready,(long)getpid());
+    if(!ready) ++fg->skipped;
+    return ready;
 }
 static bool present_generated(gfg_cpu_fg *fg, PFN_vkQueuePresentKHR next) {
     uint32_t idx=0;
@@ -319,6 +339,13 @@ gfg_cpu_fg *gfg_cpu_fg_create(VkInstance instance,
        !extent.width || !extent.height || extent.width>3840 || extent.height>2160 ||
        !supported_sdr8_format(format))
         return NULL;
+    if(atomic_load_explicit(&process_cpu_bridge_slow,memory_order_relaxed)) {
+        if(getenv("GFG_NATIVE_TRACE"))
+            fprintf(stderr,
+                "[gfg-native] process breaker: skip CPU bridge on new swapchain pid=%ld\n",
+                (long)getpid());
+        return NULL;
+    }
     gfg_cpu_fg *fg=calloc(1,sizeof(*fg));
     if(!fg)return NULL;
     fg->device=device;fg->physical=physical;fg->queue=queue;
@@ -415,6 +442,8 @@ gfg_cpu_fg *gfg_cpu_fg_create(VkInstance instance,
         if(!ok(fg->CreateSemaphore(device,&sci,NULL,&fg->ready_per_image[i])))
             goto fail;
 
+    struct timespec te_start={0};
+    clock_gettime(CLOCK_MONOTONIC,&te_start);
     VkPhysicalDeviceIDProperties id={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
     VkPhysicalDeviceProperties2 properties={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
         .pNext=&id};
@@ -433,9 +462,12 @@ gfg_cpu_fg *gfg_cpu_fg_create(VkInstance instance,
     if(te_context_create(fg->engine,&cd,&fg->context)!=VK_SUCCESS){
         fprintf(stderr,"[gfg-native] TE context: %s\n",te_last_error());goto fail;
     }
-    if(fg->log)fprintf(stderr,"[gfg-native] OWN TE8 CPU bridge active: %ux%u format=%d algo=%s\n",
+    if(fg->log)fprintf(stderr,
+        "[gfg-native] OWN TE8 CPU bridge active: %ux%u format=%d"
+        " algo=%s startup_ms=%.2f pid=%ld\n",
         extent.width,extent.height,format,
-        cd.params.algorithm==TE_ALGO_LMC?"lmc":"tiles");
+        cd.params.algorithm==TE_ALGO_LMC?"lmc":"tiles",
+        elapsed_ms_since(te_start),(long)getpid());
     return fg;
 fail:
     gfg_cpu_fg_destroy(fg);
@@ -467,7 +499,15 @@ VkResult gfg_cpu_fg_present(gfg_cpu_fg *fg, const VkPresentInfoKHR *original,
     if(!fg->permanently_disabled && !coherent_flush(fg,VK_TRUE))
         fg->permanently_disabled=1;
     if(!fg->permanently_disabled) {
+        const double convert_start_ms=elapsed_ms_since(start);
         rgba_to_rgb(fg);
+        const double converted_ms=elapsed_ms_since(start);
+        if(fg->log && fg->real_frames<5)
+            fprintf(stderr,
+                "[gfg-native] CPU convert frame=%llu invalidate_ms=%.2f"
+                " rgba_to_rgb_ms=%.2f\n",
+                (unsigned long long)fg->real_frames,
+                convert_start_ms-capture_ms,converted_ms-convert_start_ms);
         const bool completed=run_te(fg);
         if(completed && fg->real_frames) {
             const size_t count=(size_t)fg->extent.width*fg->extent.height*3u;
@@ -506,7 +546,7 @@ VkResult gfg_cpu_fg_present(gfg_cpu_fg *fg, const VkPresentInfoKHR *original,
     fg->real_frames++;
     const double before_real_ms=elapsed_ms_since(start);
     if(before_real_ms > (double)fg->max_frame_ms)
-        disable_slow_bridge(fg,"synthetic-present",before_real_ms);
+        disable_slow_bridge(fg,"before-real-present",before_real_ms);
     const VkResult presented=next(fg->queue,&real);
     const double total_ms=elapsed_ms_since(start);
     if(total_ms > (double)fg->max_frame_ms)
