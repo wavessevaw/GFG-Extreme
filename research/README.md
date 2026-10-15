@@ -28,6 +28,8 @@ DEVICE VERIFIED (пользовательский запуск inventory, не �
 
 ## Навигация
 
+[Исполняемый host-call эксперимент:36 конфигураций](MAKO_HOST_CALL_EXPERIMENT.md), [статус прямого доступа](REMOTE_ACCESS_STATUS.md).
+
 [Источники и SHA](SOURCES.md), [LSFG: бинарные границы](LSFG_BINARY_ANALYSIS.md), [граф](LSFG_COMPUTE_GRAPH.md), [шейдеры](LSFG_SHADER_ARCHITECTURE.md), [модели](LSFG_MODEL_ANALYSIS.md), [oracle](LSFG_REFERENCE_ORACLE.md), [стоимость](LSFG_COST_MODEL.md).
 
 [MAKO: архитектура](MAKO_ARCHITECTURE.md), [жизненный цикл](MAKO_FRAME_LIFECYCLE.md), [стоимость](MAKO_GPU_COST.md), [синхронизация](MAKO_SYNC_ANALYSIS.md), [pacing](MAKO_FRAME_PACING.md), [ограничения](MAKO_LIMITATIONS.md).
