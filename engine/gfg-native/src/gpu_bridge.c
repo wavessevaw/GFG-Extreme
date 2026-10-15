@@ -155,6 +155,9 @@ struct gfg_gpu_fg {
 
     uint32_t inject_every;       /* test-only fault injection (GFG_NATIVE_GPU_BRIDGE_INJECT_SKIP) */
     int disabled;
+    int recreate_required;
+    const char *fault; /* test-only, first generated present */
+    int fault_used;
     int log;
     int in_present;
     double *timing_total_us, *timing_own_us;
@@ -425,6 +428,42 @@ static int record_generated(gfg_gpu_fg *fg, VkCommandBuffer cb, VkImage out, VkI
                       VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED)};
     cmd_barrier(fg, cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 2, post);
     return ok(fg->EndCommandBuffer(cb));
+}
+
+/* Recovery after acquire: copy the current real image, never present undefined
+ * contents as a generated frame. If recording itself is unavailable, retire
+ * the acquired image with the swapchain after forwarding the game's frame. */
+static int record_duplicate(gfg_gpu_fg *fg,VkCommandBuffer cb,VkImage real,VkImage target){
+    if(!begin(fg,cb)) return 0;
+    VkImageMemoryBarrier b[2]={
+        image_barrier(real,0,VK_ACCESS_TRANSFER_READ_BIT,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_QUEUE_FAMILY_IGNORED,VK_QUEUE_FAMILY_IGNORED),
+        image_barrier(target,0,VK_ACCESS_TRANSFER_WRITE_BIT,VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_QUEUE_FAMILY_IGNORED,VK_QUEUE_FAMILY_IGNORED)};
+    cmd_barrier(fg,cb,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,2,b);
+    VkImageCopy copy={.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
+        .dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},.extent={fg->extent.width,fg->extent.height,1}};
+    fg->CmdCopyImage(cb,real,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,target,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&copy);
+    b[0]=image_barrier(real,VK_ACCESS_TRANSFER_READ_BIT,0,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,VK_QUEUE_FAMILY_IGNORED,VK_QUEUE_FAMILY_IGNORED);
+    b[1]=image_barrier(target,VK_ACCESS_TRANSFER_WRITE_BIT,0,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,VK_QUEUE_FAMILY_IGNORED,VK_QUEUE_FAMILY_IGNORED);
+    cmd_barrier(fg,cb,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,2,b);
+    return ok(fg->EndCommandBuffer(cb));
+}
+static int inject_fault(gfg_gpu_fg *fg,const char *kind){
+    if(!fg->fault_used && fg->fault && !strcmp(fg->fault,kind)){
+        fg->fault_used=1;return 1;
+    }
+    return 0;
+}
+/* Used only when it is known no submit has consumed this acquire semaphore. */
+static void retire_acquired(gfg_gpu_fg *fg,VkSemaphore acquired){
+    const VkPipelineStageFlags stage=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    VkSubmitInfo drain={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.waitSemaphoreCount=1,
+        .pWaitSemaphores=&acquired,.pWaitDstStageMask=&stage};
+    (void)fg->QueueSubmit(fg->queue,1,&drain,VK_NULL_HANDLE);
+    fg->disabled=1;fg->recreate_required=1;
 }
 
 /* ------------------------------------------------------------ relay mode */
@@ -812,6 +851,7 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
 
     fg->verify = env_flag("GFG_NATIVE_GPU_BRIDGE_VERIFY");
     fg->verify_every = env_uint("GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY", 8, 1, 100000);
+    fg->fault=getenv("GFG_NATIVE_GPU_FAULT");
     fg->inject_every = env_uint("GFG_NATIVE_GPU_BRIDGE_INJECT_SKIP", 0, 2, 100000);
     why = "verify";
     if (fg->verify && !verify_setup(fg)) goto fail;
@@ -1085,7 +1125,7 @@ static VkResult forward_real(VkQueue queue, const VkPresentInfoKHR *app, const V
 }
 
 /* acquire + copy + present one synthetic output; 1 presented, 0 skipped, -1 error */
-static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v,
+static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v, uint32_t real_index,
                              PFN_vkQueuePresentKHR next, const gfg_present_id_hooks *ids,
                              double *next_us) {
     uint32_t img = UINT32_MAX;
@@ -1098,12 +1138,22 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v,
     if ((r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) || img >= fg->image_count) {
         if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR) {
             /* impossible index: acquire semaphore is pending, never reuse it */
-            fg->disabled = 1;
+            retire_acquired(fg,rs->acquire_sem[k]);
         }
         return -1;
     }
     /* From here the acquire semaphore is signalled: it MUST be waited. */
-    int recorded = record_generated(fg, rs->gen_cb[k], fg->dst[k].image, fg->images[img]);
+    if(inject_fault(fg,"index") || inject_fault(fg,"submit")){
+        retire_acquired(fg,rs->acquire_sem[k]);return -1;
+    }
+    const int generated=!inject_fault(fg,"record") &&
+        record_generated(fg,rs->gen_cb[k],fg->dst[k].image,fg->images[img]);
+    if(!generated){
+        fg->disabled=1;
+        if(!record_duplicate(fg,rs->gen_cb[k],fg->images[real_index],fg->images[img])){
+            retire_acquired(fg,rs->acquire_sem[k]);return -1;
+        }
+    }
     const uint64_t value = v + 1 + (uint64_t)k;
     VkSemaphore waits[2] = {rs->acquire_sem[k], fg->timeline};
     VkPipelineStageFlags stages[2] = {VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT};
@@ -1111,22 +1161,30 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v,
     VkTimelineSemaphoreSubmitInfo tsi = {.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
         .waitSemaphoreValueCount = 2, .pWaitSemaphoreValues = wait_values};
     VkSubmitInfo si = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .pNext = &tsi,
-        .waitSemaphoreCount = 2, .pWaitSemaphores = waits, .pWaitDstStageMask = stages,
-        .commandBufferCount = recorded ? 1u : 0u, .pCommandBuffers = &rs->gen_cb[k],
+        .waitSemaphoreCount = generated?2u:1u, .pWaitSemaphores = waits, .pWaitDstStageMask = stages,
+        .commandBufferCount = 1, .pCommandBuffers = &rs->gen_cb[k],
         .signalSemaphoreCount = 1, .pSignalSemaphores = &fg->ready[img]};
-    /* Even if recording failed we still submit the semaphore hop so the
-     * acquired image is returned (presented with undefined content is worse
-     * than an error, so a failed record disables the bridge after this). */
+    tsi.waitSemaphoreValueCount=si.waitSemaphoreCount;
+    /* Recovery copies the real image and never claims an intermediate. */
+    VkSemaphore signals[2]={fg->ready[img],fg->ready[real_index]};
+    if(!generated){
+        /* The recovery also transitions the retained real image. Consume its
+         * capture-ready signal and replace it after recovery, so the real
+         * presentation cannot race that later layout transition. */
+        waits[1]=fg->ready[real_index];wait_values[1]=0;
+        stages[0]=stages[1]=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        si.waitSemaphoreCount=tsi.waitSemaphoreValueCount=2;
+        si.signalSemaphoreCount=2;si.pSignalSemaphores=signals;
+    }
     r = fg->QueueSubmit(fg->queue, 1, &si, VK_NULL_HANDLE);
     fg->phase_us[3] += now_us() - tp;
-    if (!ok(r)) { fail_log(fg, "synthetic submit", r); fg->disabled = 1; return -1; }
-    if (!recorded) fg->disabled = 1;
+    if (!ok(r)) { fail_log(fg, "synthetic submit", r); fg->disabled = 1; fg->recreate_required=1; return -1; }
     VkPresentInfoKHR pi = {.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1, .pWaitSemaphores = &fg->ready[img],
         .swapchainCount = 1, .pSwapchains = &fg->swapchain, .pImageIndices = &img};
     uint64_t layer_id = 0;
     VkPresentIdKHR pid = {0};
-    if (ids && ids->mode && ids->assign && (layer_id = ids->assign(ids->user, k + 1, 0)) != 0) {
+    if (ids && ids->mode && ids->assign && (layer_id = ids->assign(ids->user, generated?k+1:3, 0)) != 0) {
         pid.sType = ids->mode == 2 ? VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR : VK_STRUCTURE_TYPE_PRESENT_ID_KHR;
         pid.swapchainCount = 1;
         pid.pPresentIds = &layer_id;
@@ -1137,6 +1195,11 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v,
     *next_us += now_us() - t;
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) {
         fail_log(fg, "synthetic present", r);
+        fg->disabled=1;fg->recreate_required=1;
+        return -1;
+    }
+    if(!generated){
+        fprintf(stderr,"[gfg-native] fallback_duplicate=1 synthetic=0 reason=record-failure\n");
         return -1;
     }
     STAT_ADD(synthetic_presents, 1);
@@ -1234,7 +1297,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
         if (!generate) STAT_ADD(holds, 1);
         if (generate) {
             for (int k = 0; k < 2; ++k) {
-                int g = present_synthetic(fg, rs, k, v, next, ids, &next_us);
+                int g = present_synthetic(fg, rs, k, v, idx, next, ids, &next_us);
                 if (g <= 0) {
                     if (g < 0) STAT_ADD(errors, 1);
                     break;
@@ -1263,6 +1326,10 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     fg->in_present = 0;
     /* pNext (fences, present modes, ...) untouched; only the present id is remapped */
     result = forward_real(queue, app, &fg->ready[idx], next, ids, &next_us);
+    if(fg->recreate_required && (result==VK_SUCCESS || result==VK_SUBOPTIMAL_KHR)){
+        result=VK_ERROR_OUT_OF_DATE_KHR;
+        if(app->pResults) app->pResults[0]=result;
+    }
     if (fg->log && (frame < 4 || frame % 120 == 0))
         fprintf(stderr, "[gfg-native] gpu-bridge frame=%llu te=%d generated=%d presented=%d\n",
                 (unsigned long long)frame, (int)tr, generate, presented);

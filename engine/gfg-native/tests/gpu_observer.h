@@ -68,6 +68,15 @@ static VkResult observer_present(VkQueue queue,const VkPresentInfoKHR *info) {
     for(size_t pixel=0;pixel<(size_t)observer.extent.width*observer.extent.height;++pixel)
         for(unsigned c=0;c<3;++c)
             if(abs((int)observer.mapped[4*pixel+c]-(int)observer.mapped[c])>1) observer.failed=1;
+    const char *fault=getenv("GFG_NATIVE_GPU_FAULT");
+    const int recovery=fault && !strcmp(fault,"record");
+    if(recovery){
+        if(observer.frame==1 && observer.interval_calls==0)
+            memcpy(observer.samples[0],observer.mapped,4);
+        else if(observer.frame==1 && observer.interval_calls==1){
+            if(memcmp(observer.samples[0],observer.mapped,4)) observer.failed=1;
+        }
+    } else {
     if(observer.frame && observer.interval_calls<2){
         memcpy(observer.samples[observer.interval_calls],observer.mapped,4);
         ++observer.generated;
@@ -83,6 +92,7 @@ static VkResult observer_present(VkQueue queue,const VkPresentInfoKHR *info) {
             }
         }
         memcpy(observer.previous,observer.mapped,4);
+    }
     }
     ++observer.interval_calls;++observer.total_calls;
     VkPresentInfoKHR wrapped=*info;
@@ -130,14 +140,19 @@ static int observer_start(VkInstance instance,VkPhysicalDevice physical,VkDevice
     return observer.fg!=NULL;
 }
 static int observer_finish(void){
-    int passed=!observer.failed && observer.total_calls==10 && observer.generated==6;
+    const char *fault=getenv("GFG_NATIVE_GPU_FAULT");
+    const int recovery=fault && !strcmp(fault,"record");
+    const unsigned expected_calls=recovery?5u:10u;
+    int passed=!observer.failed && observer.total_calls==expected_calls && observer.generated==(recovery?0u:6u);
     gfg_gpu_fg_destroy(observer.fg);
     for(uint32_t i=0;i<observer.image_count;++i)vkDestroySemaphore(observer.device,observer.ready[i],NULL);
     free(observer.ready);vkDestroyFence(observer.device,observer.fence,NULL);
     vkDestroyCommandPool(observer.device,observer.pool,NULL);
     vkUnmapMemory(observer.device,observer.memory);
     vkDestroyBuffer(observer.device,observer.buffer,NULL);vkFreeMemory(observer.device,observer.memory,NULL);
-    fprintf(stderr,"GPU WSI observer: real=4 synthetic=6 content=%s handoff_order=%s physical_scanout=unobserved\n",
+    if(recovery)
+        fprintf(stderr,"GPU WSI observer: real=4 synthetic=0 recovery_duplicate=1 content=%s real_handoffs=PASS physical_scanout=unobserved\n",passed?"PASS":"FAIL");
+    else fprintf(stderr,"GPU WSI observer: real=4 synthetic=6 content=%s handoff_order=%s physical_scanout=unobserved\n",
         passed?"PASS":"FAIL",observer.total_calls==10?"PASS":"FAIL");
     return passed;
 }

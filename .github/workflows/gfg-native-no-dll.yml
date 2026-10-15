@@ -1,6 +1,9 @@
 name: Native FG3 GPU validation (software only)
 on:
   pull_request:
+  push:
+    branches: [codex/fg3-integration]
+    paths: ["engine/gfg-native/**", "engine/gfg-temporal/**", ".github/workflows/gfg-native-no-dll.yml"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -44,6 +47,13 @@ jobs:
             grep -q 'real=120 synthetic=238 skipped=0' "gpu-$order.log"
             GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=30 GFG_NATIVE_GPU_BRIDGE_INJECT_SKIP=5 GFG_TEST_ALLOW_SKIPS=1 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "skip-$order.log"
             grep -q 'validation errors=0' "skip-$order.log"
+            for fault in record submit index; do
+              recovery=''; if [ "$fault" != record ]; then recovery='GFG_TEST_EXPECT_RECREATE=1'; fi
+              env GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=2 GFG_TEST_EXPECT_FAULT=1 GFG_TEST_ALLOW_SKIPS=1 GFG_NATIVE_GPU_FAULT="$fault" $recovery VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "fault-$fault-$order.log"
+              grep -q 'validation errors=0' "fault-$fault-$order.log"
+            done
           done
-          if grep -E 'VALIDATION ERROR|Validation Error|VUID-' borrowed.log observer*.log gpu-*.log skip-*.log; then exit 1; fi
+          GFG_NATIVE_GPU_FAULT=record xvfb-run -a engine/gfg-native/build-te/gpu-wsi-observer 2>&1 | tee recovery.log
+          grep -q 'synthetic=0 recovery_duplicate=1 content=PASS real_handoffs=PASS' recovery.log
+          if grep -E 'VALIDATION ERROR|Validation Error|VUID-' borrowed.log observer*.log gpu-*.log skip-*.log fault-*.log recovery.log; then exit 1; fi
       # Intentionally no patch/ZIP artifact upload, prerelease, or hardware claim.

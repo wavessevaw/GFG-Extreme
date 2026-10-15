@@ -272,6 +272,8 @@ int main(void) {
 #ifdef GFG_NATIVE_TEST_GPU_OBSERVER
         observer.frame=frame;observer.interval_calls=0;
         TRY(gfg_gpu_fg_present(observer.fg,queue,&pi,observer_present,NULL));
+        const char *fault=getenv("GFG_NATIVE_GPU_FAULT");
+        if(fault && !strcmp(fault,"record")) REQUIRE(observer.interval_calls==(frame==1?2u:1u));
 #else
         if(frame%2==0) TRY(present_gipa(queue,&pi));
         else TRY(present_gdpa(queue,&pi));

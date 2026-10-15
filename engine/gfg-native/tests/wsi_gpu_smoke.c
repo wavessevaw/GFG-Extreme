@@ -329,7 +329,10 @@ int main(void) {
         VkPresentInfoKHR pi = {.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
             .waitSemaphoreCount = 1, .pWaitSemaphores = &rendered[index],
             .swapchainCount = 1, .pSwapchains = &swapchain, .pImageIndices = &index};
-        TRY(vkQueuePresentKHR(queue, &pi));
+        VkResult presented=vkQueuePresentKHR(queue,&pi);
+        if(env_1("GFG_TEST_EXPECT_RECREATE") && frame+1==frames)
+            REQUIRE(presented==VK_ERROR_OUT_OF_DATE_KHR);
+        else TRY(presented);
         if (pace_idle) TRY(vkQueueWaitIdle(queue)); /* app-side pacing, outside the layer */
     }
     TRY(vkDeviceWaitIdle(device));
@@ -364,7 +367,7 @@ int main(void) {
         CHECK(st.real_presents == frames);
         CHECK(st.synthetic_presents + st.skipped_synthetic == 2ull * (frames - 1));
         if (!env_1("GFG_TEST_ALLOW_SKIPS")) CHECK(st.skipped_synthetic == 0);
-        CHECK(st.errors == 0);
+        CHECK(st.errors == (env_1("GFG_TEST_EXPECT_FAULT")?1u:0u));
         CHECK(st.present_path_host_pixel_reads == 0);
         CHECK(st.present_path_cpu_waits == 0);
         if (env_1("GFG_NATIVE_GPU_BRIDGE_VERIFY")) {

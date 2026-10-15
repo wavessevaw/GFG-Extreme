@@ -52,7 +52,7 @@ typedef struct {
  * increasing per-swapchain ID sequence: EVERY present the bridge issues
  * (G1, G2, the real one, pass-through) gets assign()'s id; the app's id on a
  * real present is handed to assign() so the layer can translate the app's own
- * vkWaitForPresent(2)KHR calls. kind: 0 real, 1 G1, 2 G2. */
+ * vkWaitForPresent(2)KHR calls. kind: 0 real, 1 G1, 2 G2, 3 recovery duplicate (not synthetic). */
 typedef struct {
     int mode;                         /* 0 none, 1 VkPresentIdKHR, 2 VkPresentId2KHR */
     uint64_t (*assign)(void *user, int kind, uint64_t app_id);

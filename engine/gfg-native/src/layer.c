@@ -514,7 +514,7 @@ static VkResult native_ids_driver_wait(native_present_ids *ids, uint64_t id, uin
 }
 static void *native_monitor_main(void *arg) {
     native_present_ids *ids = arg;
-    static const char *kinds[3] = {"R", "G1", "G2"};
+    static const char *kinds[4] = {"R", "G1", "G2", "D"};
     pthread_mutex_lock(&ids->lock);
     for (;;) {
         while (!ids->qcount && !ids->stop) pthread_cond_wait(&ids->cond, &ids->lock);
@@ -529,13 +529,13 @@ static void *native_monitor_main(void *arg) {
         const uint64_t t = native_now_ns();
         if (r == VK_SUCCESS) {
             fprintf(stderr, "[gfg-native] present_done id=%llu kind=%s t_ns=%llu dt_us=%.1f\n",
-                    (unsigned long long)id, kinds[kind < 3 && kind >= 0 ? kind : 0],
+                    (unsigned long long)id, kinds[kind < 4 && kind >= 0 ? kind : 0],
                     (unsigned long long)t,
                     ids->last_done_ns ? (double)(t - ids->last_done_ns) / 1000.0 : 0.0);
             ids->last_done_ns = t;
         } else if (r != VK_TIMEOUT) {
             fprintf(stderr, "[gfg-native] present_wait id=%llu kind=%s vkresult=%d\n",
-                    (unsigned long long)id, kinds[kind < 3 && kind >= 0 ? kind : 0], (int)r);
+                    (unsigned long long)id, kinds[kind < 4 && kind >= 0 ? kind : 0], (int)r);
         }
         pthread_mutex_lock(&ids->lock);
         if (r == VK_SUCCESS) ++ids->done;
