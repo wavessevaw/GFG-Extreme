@@ -64,6 +64,26 @@ jobs:
           grep -Eq 'candidate=1 output=real-only reason=(existing-usage-ready|extended-usage-ready)' native-fg-wsi-srgb.log
           grep -Eq '\[gfg-native\] candidate distinct=1' native-fg-wsi-srgb.log
           grep -Eq '\[gfg-native\] generated=[1-9]' native-fg-wsi-srgb.log
+      - name: GPU-resident TE8 bridge on a real XCB swapchain (lavapipe, SIMULATED)
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+        run: |
+          xvfb-run -a make -C engine/gfg-native wsi-smoke-gpu \
+            VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" 2>&1 | tee native-gpu-wsi.log
+          grep -q '\[gfg-native\] GPU bridge active' native-gpu-wsi.log
+          grep -q 'wsi-smoke-gpu: run 1 with VK_LAYER_KHRONOS_validation' native-gpu-wsi.log
+          grep -q 'GFG native: validation errors=0' native-gpu-wsi.log
+          grep -Eq '\[gfg-native\] gpu-verify frame=[0-9]+ distinct=1' native-gpu-wsi.log
+          ! grep -Eq '\[gfg-native\] gpu-verify frame=[0-9]+ distinct=0' native-gpu-wsi.log
+          grep -Eq 'skipped=0 .*present_path_host_pixel_reads=0 present_path_cpu_waits=0' native-gpu-wsi.log
+          ! grep -q 'GPU bridge WSI smoke FAIL' native-gpu-wsi.log
+          ! grep -Eq 'validation errors=[1-9]' native-gpu-wsi.log
+          test "$(grep -c 'real frames GPU bridge WSI smoke PASS' native-gpu-wsi.log)" -eq 3
+          GFG_NATIVE_TEST_SRGB=1 xvfb-run -a make -C engine/gfg-native wsi-smoke-gpu \
+            VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" 2>&1 | tee native-gpu-wsi-srgb.log
+          grep -q 'out=blit+copy' native-gpu-wsi-srgb.log
+          ! grep -q 'GPU bridge WSI smoke FAIL' native-gpu-wsi-srgb.log
+          test "$(grep -c 'real frames GPU bridge WSI smoke PASS' native-gpu-wsi-srgb.log)" -eq 3
       - name: Package independent Steam Deck test build and verify installation
         run: |
           python3 scripts/package_native_fg.py \

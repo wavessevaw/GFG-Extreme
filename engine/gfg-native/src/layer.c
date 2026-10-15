@@ -17,7 +17,9 @@
 #include <vulkan/vk_layer.h>
 #ifdef GFG_NATIVE_WITH_TE
 #include "cpu_bridge.h"
+#include "gpu_bridge.h"
 #endif
+#include <time.h>
 
 #define EXPORT __attribute__((visibility("default")))
 
@@ -28,6 +30,7 @@ typedef struct native_instance {
     PFN_vkGetInstanceProcAddr gipa;
     PFN_vkDestroyInstance destroy;
     PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR surface_caps;
+    uint32_t api_version;
     int enabled;
 } native_instance;
 
@@ -51,8 +54,14 @@ typedef struct native_swapchain {
 #ifdef GFG_NATIVE_WITH_TE
     gfg_cpu_fg *bridge;
     int bridge_attempted;
+    gfg_gpu_fg *gpu;
+    int gpu_attempted;
 #endif
     int copy_eligible; /* enabled transfer usage only; never means captured */
+    VkPresentModeKHR present_mode;
+    const char *path; /* "gpu", "cpu" or "none": which transport handled presents */
+    double *present_us; /* GFG_NATIVE_TIMING=1: CPU time per app present */
+    uint32_t present_samples;
 } native_swapchain;
 
 typedef struct native_device {
@@ -71,6 +80,9 @@ typedef struct native_device {
     PFN_vkAcquireNextImageKHR acquire;
     PFN_vkAcquireNextImage2KHR acquire2;
     native_instance *instance;
+    int gpu_capable;  /* external memory fd + timeline enabled by this layer */
+    int semaphore_fd; /* VK_KHR_external_semaphore_fd enabled */
+    PFN_vkSetDeviceLoaderData set_loader_data; /* for layer-created command buffers */
     pthread_mutex_t lock;
     native_swapchain *swapchains;
     native_queue *queues;
@@ -145,6 +157,8 @@ native_CreateInstance(const VkInstanceCreateInfo *ci,
                      strcmp(engine, "gfg-temporal-bootstrap") == 0));
     i->handle = *out;
     i->key = dispatch_key(*out);
+    i->api_version = ci->pApplicationInfo && ci->pApplicationInfo->apiVersion
+        ? ci->pApplicationInfo->apiVersion : VK_API_VERSION_1_0;
     i->gipa = gipa;
     i->destroy = destroy;
     i->surface_caps = (PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR)
@@ -174,6 +188,113 @@ native_DestroyInstance(VkInstance instance, const VkAllocationCallbacks *alloc) 
     free(found);
 }
 
+/* GPU bridge prerequisites on the APP device: external memory fd (import of
+ * TE's images), timeline semaphores, and external semaphore fd when present
+ * (shared timeline; otherwise the bridge relays on a host thread).
+ * Only when GFG_NATIVE_FG=1 and GFG_NATIVE_GPU_BRIDGE=1 and Vulkan >= 1.2.
+ * The app's pNext chain is never rewritten: a VkPhysicalDeviceVulkan12Features
+ * or VkPhysicalDeviceTimelineSemaphoreFeatures it already chains is patched
+ * for the duration of the call and restored; otherwise our own timeline
+ * feature struct is prepended to the (unchanged) chain. */
+typedef struct {
+    VkDeviceCreateInfo ci;
+    const char **extensions;
+    VkPhysicalDeviceTimelineSemaphoreFeatures timeline;
+    VkBool32 *patched;
+    VkBool32 saved;
+    int active;
+    int semaphore_fd;
+} native_device_patch;
+
+static int native_env_is_1(const char *name) {
+    const char *v = getenv(name);
+    return v && v[0] == '1' && v[1] == '\0';
+}
+static int native_has_extension(const VkExtensionProperties *p, uint32_t n, const char *name) {
+    for (uint32_t i = 0; i < n; ++i)
+        if (!strcmp(p[i].extensionName, name)) return 1;
+    return 0;
+}
+static int native_requested_extension(const VkDeviceCreateInfo *ci, const char *name) {
+    for (uint32_t i = 0; i < ci->enabledExtensionCount; ++i)
+        if (ci->ppEnabledExtensionNames[i] && !strcmp(ci->ppEnabledExtensionNames[i], name))
+            return 1;
+    return 0;
+}
+static const char *native_patch_device(native_instance *inst, VkPhysicalDevice phys,
+        const VkDeviceCreateInfo *ci, native_device_patch *p) {
+    memset(p, 0, sizeof(*p));
+    p->ci = *ci;
+    if (!inst || !inst->enabled) return "layer-not-enabled";
+    if (!native_env_is_1("GFG_NATIVE_GPU_BRIDGE")) return "gpu-bridge-not-requested";
+    if (inst->api_version < VK_API_VERSION_1_2) return "instance-api-below-1.2";
+    PFN_vkGetPhysicalDeviceProperties props = (PFN_vkGetPhysicalDeviceProperties)
+        inst->gipa(inst->handle, "vkGetPhysicalDeviceProperties");
+    PFN_vkGetPhysicalDeviceFeatures2 feats2 = (PFN_vkGetPhysicalDeviceFeatures2)
+        inst->gipa(inst->handle, "vkGetPhysicalDeviceFeatures2");
+    PFN_vkEnumerateDeviceExtensionProperties enumerate =
+        (PFN_vkEnumerateDeviceExtensionProperties)
+        inst->gipa(inst->handle, "vkEnumerateDeviceExtensionProperties");
+    if (!props || !feats2 || !enumerate) return "entrypoints";
+    VkPhysicalDeviceProperties pp;
+    props(phys, &pp);
+    if (pp.apiVersion < VK_API_VERSION_1_2) return "device-api-below-1.2";
+    VkPhysicalDeviceTimelineSemaphoreFeatures tf = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
+    VkPhysicalDeviceFeatures2 f2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+        .pNext = &tf};
+    feats2(phys, &f2);
+    if (!tf.timelineSemaphore) return "no-timeline-semaphore";
+    uint32_t n = 0;
+    if (enumerate(phys, NULL, &n, NULL) != VK_SUCCESS || !n) return "extension-query";
+    VkExtensionProperties *ext = calloc(n, sizeof(*ext));
+    if (!ext) return "oom";
+    if (enumerate(phys, NULL, &n, ext) != VK_SUCCESS) { free(ext); return "extension-query"; }
+    const int mem_fd = native_has_extension(ext, n, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+    const int sem_fd = native_has_extension(ext, n, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+    free(ext);
+    if (!mem_fd) return "no-external-memory-fd";
+    p->extensions = calloc(ci->enabledExtensionCount + 2u, sizeof(char *));
+    if (!p->extensions) return "oom";
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < ci->enabledExtensionCount; ++i)
+        p->extensions[count++] = ci->ppEnabledExtensionNames[i];
+    if (!native_requested_extension(ci, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME))
+        p->extensions[count++] = VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME;
+    if (sem_fd && !native_requested_extension(ci, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME))
+        p->extensions[count++] = VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME;
+    p->ci.enabledExtensionCount = count;
+    p->ci.ppEnabledExtensionNames = p->extensions;
+    for (VkBaseOutStructure *node = (VkBaseOutStructure *)ci->pNext; node; node = node->pNext) {
+        if (node->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES) {
+            p->patched = &((VkPhysicalDeviceVulkan12Features *)node)->timelineSemaphore;
+            break;
+        }
+        if (node->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES) {
+            p->patched = &((VkPhysicalDeviceTimelineSemaphoreFeatures *)node)->timelineSemaphore;
+            break;
+        }
+    }
+    if (p->patched) {
+        p->saved = *p->patched;
+        *p->patched = VK_TRUE;
+    } else {
+        p->timeline.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
+        p->timeline.pNext = (void *)ci->pNext;
+        p->timeline.timelineSemaphore = VK_TRUE;
+        p->ci.pNext = &p->timeline;
+    }
+    p->active = 1;
+    p->semaphore_fd = sem_fd;
+    return NULL;
+}
+static void native_unpatch_device(native_device_patch *p) {
+    if (p->patched) *p->patched = p->saved;
+    p->patched = NULL;
+    free(p->extensions);
+    p->extensions = NULL;
+}
+
 static VKAPI_ATTR VkResult VKAPI_CALL
 native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     const VkAllocationCallbacks *alloc, VkDevice *out) {
@@ -184,11 +305,34 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     if (!link || !link->u.pLayerInfo) return VK_ERROR_INITIALIZATION_FAILED;
     PFN_vkGetInstanceProcAddr gipa = link->u.pLayerInfo->pfnNextGetInstanceProcAddr;
     PFN_vkGetDeviceProcAddr gdpa = link->u.pLayerInfo->pfnNextGetDeviceProcAddr;
+    PFN_vkSetDeviceLoaderData set_loader_data = NULL;
+    for (VkLayerDeviceCreateInfo *cb = (VkLayerDeviceCreateInfo *)ci->pNext; cb;
+         cb = (VkLayerDeviceCreateInfo *)cb->pNext)
+        if (cb->sType == VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO &&
+            cb->function == VK_LOADER_DATA_CALLBACK) {
+            set_loader_data = cb->u.pfnSetDeviceLoaderData;
+            break;
+        }
     link->u.pLayerInfo = link->u.pLayerInfo->pNext;
     PFN_vkCreateDevice next = (PFN_vkCreateDevice)
         gipa(VK_NULL_HANDLE, "vkCreateDevice");
     if (!next) return VK_ERROR_INITIALIZATION_FAILED;
-    VkResult result = next(phys, ci, alloc, out);
+    native_device_patch patch;
+    const char *patch_reason = native_patch_device(find_instance(dispatch_key(phys)),
+                                                   phys, ci, &patch);
+    VkResult result = next(phys, patch.active ? &patch.ci : ci, alloc, out);
+    const int gpu_capable = patch.active && result == VK_SUCCESS;
+    const int semaphore_fd = gpu_capable && patch.semaphore_fd;
+    const int patched = patch.active;
+    native_unpatch_device(&patch);
+    if (patched && result != VK_SUCCESS) {
+        /* Never prevent the game's own device: retry exactly as requested. */
+        patch_reason = "patched-create-failed";
+        result = next(phys, ci, alloc, out);
+    }
+    if (tracing())
+        fprintf(stderr, "[gfg-native] device gpu_bridge_capable=%d semaphore_fd=%d reason=%s\n",
+                gpu_capable, semaphore_fd, patch_reason ? patch_reason : "enabled");
     if (result != VK_SUCCESS) return result;
     native_device *d = calloc(1, sizeof(*d));
     PFN_vkDestroyDevice destroy = (PFN_vkDestroyDevice)
@@ -205,6 +349,9 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     d->handle = *out;
     d->key = dispatch_key(*out);
     d->physical = phys;
+    d->gpu_capable = gpu_capable;
+    d->set_loader_data = set_loader_data;
+    d->semaphore_fd = semaphore_fd;
     d->gdpa = gdpa;
     d->destroy = destroy;
     d->get_queue = (PFN_vkGetDeviceQueue)gdpa(*out, "vkGetDeviceQueue");
@@ -232,6 +379,32 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     return VK_SUCCESS;
 }
 
+#define NATIVE_TIMING_CAP 8192
+static int native_cmp_double(const void *a, const void *b) {
+    const double x = *(const double *)a, y = *(const double *)b;
+    return x < y ? -1 : x > y;
+}
+static void native_swapchain_free(native_swapchain *sc) {
+    if (sc->present_us && sc->present_samples > 2) {
+        /* the first two presents carry one-time bridge creation; excluded */
+        const uint32_t n = sc->present_samples - 2;
+        double *v = sc->present_us + 2;
+        qsort(v, n, sizeof(double), native_cmp_double);
+        fprintf(stderr,
+            "[gfg-native] present-timing path=%s %ux%u frames=%u median_us=%.1f p95_us=%.1f"
+            " max_us=%.1f (CPU time inside the layer's vkQueuePresentKHR, incl. downstream presents)\n",
+            sc->path ? sc->path : "none", sc->extent.width, sc->extent.height, n,
+            v[n / 2], v[(uint32_t)((n - 1) * 0.95)], v[n - 1]);
+    }
+#ifdef GFG_NATIVE_WITH_TE
+    if (sc->bridge) gfg_cpu_fg_destroy(sc->bridge);
+    if (sc->gpu) gfg_gpu_fg_destroy(sc->gpu);
+#endif
+    free(sc->present_us);
+    free(sc->owned);
+    free(sc);
+}
+
 static VKAPI_ATTR void VKAPI_CALL
 native_DestroyDevice(VkDevice device, const VkAllocationCallbacks *alloc) {
     if (!device) return;
@@ -246,11 +419,7 @@ native_DestroyDevice(VkDevice device, const VkAllocationCallbacks *alloc) {
     native_swapchain *sc = found->swapchains;
     while (sc) {
         native_swapchain *next = sc->next;
-#ifdef GFG_NATIVE_WITH_TE
-        if (sc->bridge) gfg_cpu_fg_destroy(sc->bridge);
-#endif
-        free(sc->owned);
-        free(sc);
+        native_swapchain_free(sc);
         sc = next;
     }
     native_queue *queue = found->queues;
@@ -345,20 +514,19 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
     VkResult caps_result = VK_SUCCESS;
     VkResult extended_result = VK_SUCCESS;
     VkSwapchainCreateInfoKHR extended = *ci;
+    VkSurfaceCapabilitiesKHR caps = {0};
     if (!d->instance || !d->instance->enabled) {
         reason = "layer-not-enabled";
     } else if ((reason = native_ineligible_reason(ci)) != NULL) {
         /* Keep the original WSI path untouched on unsupported shapes. */
     } else if (native_copy_usage_ready(ci->imageUsage)) {
-        /* The game already requested both copy operations. Use its exact
-         * original swapchain create info: flags, pNext, usage, everything.
-         * No reason to alter a working Gamescope WSI contract. */
+        /* The game already requested both copy operations. Keep its
+         * flags, pNext and usage; only the image count grows (below). */
         candidate = 1;
         reason = "existing-usage-ready";
     } else if (!d->instance->surface_caps) {
         reason = "surface-capabilities-entrypoint-missing";
     } else {
-        VkSurfaceCapabilitiesKHR caps = {0};
         caps_queried = 1;
         caps_result = d->instance->surface_caps(d->physical, ci->surface, &caps);
         supported_usage = caps.supportedUsageFlags;
@@ -373,6 +541,20 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
             candidate = 1;
             reason = "extended-usage-ready";
         }
+    }
+    if (candidate) {
+        /* Two synthetic presents per real frame need two spare images
+         * beyond what the game keeps acquired (B3). The game still sees the
+         * real count from vkGetSwapchainImagesKHR and indexes what it acquires. */
+        if (!caps_queried && d->instance->surface_caps) {
+            caps_queried = 1;
+            caps_result = d->instance->surface_caps(d->physical, ci->surface, &caps);
+        }
+        uint32_t wanted_images = ci->minImageCount + 2u;
+        if (caps_queried && caps_result == VK_SUCCESS && caps.maxImageCount &&
+                wanted_images > caps.maxImageCount)
+            wanted_images = caps.maxImageCount;
+        if (wanted_images > extended.minImageCount) extended.minImageCount = wanted_images;
     }
     VkResult result = d->create_swapchain(device, candidate ? &extended : ci,
                                            alloc, out);
@@ -395,6 +577,12 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
     sc->format = ci->imageFormat;
     sc->extent = ci->imageExtent;
     sc->copy_eligible = candidate;
+    sc->present_mode = ci->presentMode;
+    {
+        const char *timing = getenv("GFG_NATIVE_TIMING");
+        if (timing && timing[0] == '1')
+            sc->present_us = calloc(NATIVE_TIMING_CAP, sizeof(double));
+    }
     if (d->get_images) {
         uint32_t image_count = 0;
         if (d->get_images(device, *out, &image_count, NULL) == VK_SUCCESS &&
@@ -412,13 +600,15 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
             "[gfg-native] swapchain %ux%u candidate=%d output=real-only"
             " reason=%s format=%d flags=0x%x layers=%u sharing=%d"
             " requested_usage=0x%x supported_usage=0x%x caps_queried=%d"
-            " caps_result=%d extended_result=%d\n",
+            " caps_result=%d extended_result=%d min_images=%u->%u images=%u present_mode=%d\n",
             sc->extent.width, sc->extent.height, sc->copy_eligible,
             reason ? reason : "accepted", (int)ci->imageFormat,
             (unsigned)ci->flags, ci->imageArrayLayers,
             (int)ci->imageSharingMode, (unsigned)ci->imageUsage,
             (unsigned)supported_usage, caps_queried,
-            (int)caps_result, (int)extended_result);
+            (int)caps_result, (int)extended_result, ci->minImageCount,
+            candidate ? extended.minImageCount : ci->minImageCount, sc->image_count,
+            (int)ci->presentMode);
     return VK_SUCCESS;
 }
 
@@ -432,11 +622,7 @@ native_DestroySwapchainKHR(VkDevice device, VkSwapchainKHR sc,
         if ((*p)->handle == sc) {
             native_swapchain *old = *p;
             *p = old->next;
-#ifdef GFG_NATIVE_WITH_TE
-            if (old->bridge) gfg_cpu_fg_destroy(old->bridge);
-#endif
-            free(old->owned);
-            free(old);
+            native_swapchain_free(old);
             break;
         }
     pthread_mutex_unlock(&d->lock);
@@ -503,10 +689,48 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
     // Exactly one forward: no synthetic present or extra swapchain acquisition
     // until the independent image/queue/timeline ownership contract is proven.
     VkResult result;
+    struct timespec present_start;
+    clock_gettime(CLOCK_MONOTONIC, &present_start);
+    const char *path = "none";
 #ifdef GFG_NATIVE_WITH_TE
     gfg_cpu_fg *bridge = NULL;
+    gfg_gpu_fg *gpu = NULL;
     const char *flag = getenv("GFG_NATIVE_CPU_BRIDGE");
-    if (info && info->swapchainCount == 1 && info->pSwapchains &&
+    /* GPU bridge takes precedence; when requested it never falls back to
+     * the CPU bridge (a failed GPU bridge means real-frame pass-through). */
+    const int want_gpu = native_env_is_1("GFG_NATIVE_GPU_BRIDGE");
+    if (want_gpu && info && info->swapchainCount == 1 && info->pSwapchains &&
+        info->pImageIndices && d->instance && d->instance->enabled) {
+        pthread_mutex_lock(&d->lock);
+        for (native_swapchain *sc = d->swapchains; sc; sc = sc->next) {
+            if (sc->handle != info->pSwapchains[0]) continue;
+            if (sc->copy_eligible && d->gpu_capable && !sc->gpu_attempted) {
+                sc->gpu_attempted = 1;
+                for (native_queue *q = d->queues; q; q = q->next) {
+                    if (q->handle != queue) continue;
+                    gfg_gpu_fg_create_info gi = {
+                        .instance = d->instance->handle, .gipa = d->instance->gipa,
+                        .physical = d->physical, .device = d->handle, .gdpa = d->gdpa,
+                        .swapchain = sc->handle, .extent = sc->extent, .format = sc->format,
+                        .present_mode = sc->present_mode, .queue = queue,
+                        .family = q->family, .semaphore_fd = d->semaphore_fd,
+                        .set_loader_data = d->set_loader_data};
+                    sc->gpu = gfg_gpu_fg_create(&gi);
+                    break;
+                }
+                if (!sc->gpu)
+                    fprintf(stderr, "[gfg-native] GPU bridge not available; real-frame pass-through\n");
+            } else if (!sc->gpu_attempted && !d->gpu_capable) {
+                sc->gpu_attempted = 1;
+                fprintf(stderr, "[gfg-native] GPU bridge not available (device lacks"
+                        " external memory fd / timeline); real-frame pass-through\n");
+            }
+            gpu = sc->gpu;
+            break;
+        }
+        pthread_mutex_unlock(&d->lock);
+    }
+    if (!want_gpu && info && info->swapchainCount == 1 && info->pSwapchains &&
         info->pImageIndices && flag && !strcmp(flag, "1") &&
         d->instance && d->instance->enabled) {
         pthread_mutex_lock(&d->lock);
@@ -530,17 +754,32 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
         }
         pthread_mutex_unlock(&d->lock);
     }
-    result = bridge ? gfg_cpu_fg_present(bridge, info, d->present) :
-                      d->present(queue, info);
+    if (gpu) {
+        path = "gpu";
+        result = gfg_gpu_fg_present(gpu, queue, info, d->present);
+    } else if (bridge) {
+        path = "cpu";
+        result = gfg_cpu_fg_present(bridge, info, d->present);
+    } else {
+        result = d->present(queue, info);
+    }
 #else
     result = d->present(queue, info);
 #endif
-    if ((result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) && info) {
+    struct timespec present_end;
+    clock_gettime(CLOCK_MONOTONIC, &present_end);
+    const double present_us = 1e6 * (double)(present_end.tv_sec - present_start.tv_sec) +
+        (double)(present_end.tv_nsec - present_start.tv_nsec) / 1e3;
+    if (info && info->pSwapchains) {
         pthread_mutex_lock(&d->lock);
         for (uint32_t n = 0; n < info->swapchainCount; ++n)
             for (native_swapchain *sc = d->swapchains; sc; sc = sc->next)
                 if (sc->handle == info->pSwapchains[n]) {
-                    ++sc->presents; break;
+                    if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) ++sc->presents;
+                    sc->path = path;
+                    if (sc->present_us && sc->present_samples < NATIVE_TIMING_CAP)
+                        sc->present_us[sc->present_samples++] = present_us;
+                    break;
                 }
         pthread_mutex_unlock(&d->lock);
     }
@@ -599,6 +838,11 @@ native_gipa(VkInstance instance, const char *symbol) {
     return i ? i->gipa(instance, symbol) : NULL;
 }
 #undef HOOK
+
+#ifdef GFG_NATIVE_WITH_TE
+/* Test hook: process-wide GPU bridge counters (see gpu_bridge.h). */
+EXPORT void gfg_native_gpu_bridge_stats(gfg_gpu_stats *out) { gfg_gpu_fg_stats(out); }
+#endif
 
 EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
 vkGetInstanceProcAddr(VkInstance instance, const char *name) {

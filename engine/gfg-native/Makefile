@@ -5,8 +5,8 @@ VULKAN_HEADERS ?= /usr/include
 ENABLE_TE ?= 0
 TE_LIB ?= ../gfg-temporal/build/libgfg-temporal.a
 ifeq ($(ENABLE_TE),1)
-NATIVE_SOURCES := src/layer.c src/cpu_bridge.c
-NATIVE_HEADERS := src/cpu_bridge.h src/memory_policy.h
+NATIVE_SOURCES := src/layer.c src/cpu_bridge.c src/gpu_bridge.c
+NATIVE_HEADERS := src/cpu_bridge.h src/gpu_bridge.h src/memory_policy.h
 NATIVE_CPPFLAGS := -DGFG_NATIVE_WITH_TE -I../gfg-temporal/src
 NATIVE_LDLIBS := $(TE_LIB) -ldl -lm
 NATIVE_DEPS := $(TE_LIB)
@@ -18,7 +18,7 @@ NATIVE_LDLIBS :=
 NATIVE_DEPS :=
 endif
 
-.PHONY: layer abi smoke wsi-smoke swapchain-policy memory-policy clean
+.PHONY: layer abi smoke wsi-smoke wsi-smoke-te wsi-smoke-gpu swapchain-policy memory-policy clean
 layer: $(BUILD)/libVkLayer_gfg_native.so $(BUILD)/VkLayer_gfg_native.json
 
 $(BUILD)/libVkLayer_gfg_native.so: $(NATIVE_SOURCES) $(NATIVE_HEADERS) $(NATIVE_DEPS)
@@ -68,6 +68,44 @@ wsi-smoke-te:
 	GFG_NATIVE_FG=1 GFG_NATIVE_CPU_BRIDGE=1 GFG_NATIVE_BUDGET_MS=5000 GFG_NATIVE_MAX_FRAME_MS=10000 GFG_NATIVE_ALGO=tiles GFG_NATIVE_LMC_TIER=2 GFG_LMC_ORPHAN_CAP=0 GFG_NATIVE_TRACE=1 \
 	VK_INSTANCE_LAYERS=VK_LAYER_GFG_native VK_LAYER_PATH="$(abspath build-te)" \
 	build-te/wsi-smoke
+
+$(BUILD)/wsi-gpu-smoke: tests/wsi_gpu_smoke.c
+	@test -f $(VULKAN_HEADERS)/vulkan/vulkan_xcb.h || { echo "Vulkan XCB headers required"; exit 1; }
+	mkdir -p $(BUILD)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -DVK_USE_PLATFORM_XCB_KHR -I$(VULKAN_HEADERS) -o $@ $< -lvulkan -lxcb -ldl
+
+# GPU-resident bridge on a real XCB swapchain (lavapipe under Xvfb in CI).
+# Run 1: validation layer below ours (+ sync validation) and the test-only
+#        GFG_NATIVE_GPU_BRIDGE_VERIFY distinctness readback.
+# Run 1b: test-only fault injection of both skip paths (TE busy, ring busy)
+#        under validation: binary-semaphore invariants on every skip path.
+# Run 2: no validation/verify, layer CPU-time measurement (GFG_NATIVE_TIMING).
+# The skipped run-1 validation is reported, never silently passed.
+GPU_SMOKE_FRAMES ?= 24
+VALIDATION_LAYER_DIR ?= /usr/share/vulkan/explicit_layer.d
+GPU_SMOKE_ENV := GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_TRACE=1 GFG_NATIVE_ALGO=tiles \
+	GFG_TEST_EXPECT_GPU=1 GFG_TEST_FRAMES=$(GPU_SMOKE_FRAMES)
+wsi-smoke-gpu:
+	$(MAKE) ENABLE_TE=1 BUILD=build-te layer
+	$(MAKE) ENABLE_TE=1 BUILD=build-te build-te/wsi-gpu-smoke
+	@if [ -f "$(VALIDATION_LAYER_DIR)/VkLayer_khronos_validation.json" ]; then \
+	  echo "wsi-smoke-gpu: run 1 with VK_LAYER_KHRONOS_validation"; \
+	  $(GPU_SMOKE_ENV) GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=4 \
+	  GFG_TEST_VALIDATION=1 GFG_TEST_CHAIN_VK12=1 \
+	  VK_INSTANCE_LAYERS=VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation \
+	  VK_LAYER_PATH="$(abspath build-te):$(VALIDATION_LAYER_DIR)" build-te/wsi-gpu-smoke && \
+	  echo "wsi-smoke-gpu: run 1b skip-path fault injection with VK_LAYER_KHRONOS_validation" && \
+	  $(GPU_SMOKE_ENV) GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=3 \
+	  GFG_NATIVE_GPU_BRIDGE_INJECT_SKIP=5 GFG_TEST_ALLOW_SKIPS=1 GFG_TEST_FRAMES=30 GFG_TEST_VALIDATION=1 \
+	  VK_INSTANCE_LAYERS=VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation \
+	  VK_LAYER_PATH="$(abspath build-te):$(VALIDATION_LAYER_DIR)" build-te/wsi-gpu-smoke; \
+	else \
+	  echo "wsi-smoke-gpu: SKIP validation (VK_LAYER_KHRONOS_validation not installed)"; \
+	  $(GPU_SMOKE_ENV) GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=4 \
+	  VK_INSTANCE_LAYERS=VK_LAYER_GFG_native VK_LAYER_PATH="$(abspath build-te)" build-te/wsi-gpu-smoke; \
+	fi
+	$(GPU_SMOKE_ENV) GFG_NATIVE_TIMING=1 \
+	VK_INSTANCE_LAYERS=VK_LAYER_GFG_native VK_LAYER_PATH="$(abspath build-te)" build-te/wsi-gpu-smoke
 
 GLIBC_MAX ?= 2.31
 abi: $(BUILD)/libVkLayer_gfg_native.so

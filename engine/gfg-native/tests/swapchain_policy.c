@@ -3,6 +3,7 @@
  * NEVER send present-id2 flags to an ICD lacking the corresponding extension.
  * The test exercises our eligibility filter only, not a fabricated surface.
  */
+#define _GNU_SOURCE /* layer.c uses clock_gettime; must precede the first libc header */
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
