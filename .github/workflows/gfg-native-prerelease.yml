@@ -123,6 +123,15 @@ jobs:
             2>&1 | tee "$GITHUB_WORKSPACE/native-installed-evidence.log"
           grep -q '\[gfg-native\] candidate distinct=1' "$GITHUB_WORKSPACE/native-installed-evidence.log"
           grep -Eq '\[gfg-native\] generated=[1-9]' "$GITHUB_WORKSPACE/native-installed-evidence.log"
+          GFG_NATIVE_TEST_SRGB=1 GFG_NATIVE_ALGO=tiles GFG_NATIVE_BUDGET_MS=5000 GFG_NATIVE_TRACE=1 \
+          HOME="$RUNNER_TEMP/native-home" \
+            xvfb-run -a "$RUNNER_TEMP/native-home/.local/bin/gfg-native" \
+            "$GITHUB_WORKSPACE/engine/gfg-native/build-te/wsi-smoke" \
+            2>&1 | tee "$GITHUB_WORKSPACE/native-installed-srgb-evidence.log"
+          grep -q 'GFG native: WSI SRGB format=' "$GITHUB_WORKSPACE/native-installed-srgb-evidence.log"
+          grep -q 'candidate=1 output=real-only reason=accepted' "$GITHUB_WORKSPACE/native-installed-srgb-evidence.log"
+          grep -q '\[gfg-native\] candidate distinct=1' "$GITHUB_WORKSPACE/native-installed-srgb-evidence.log"
+          grep -Eq '\[gfg-native\] generated=[1-9]' "$GITHUB_WORKSPACE/native-installed-srgb-evidence.log"
           HOME="$RUNNER_TEMP/native-home" bash ./uninstall.sh
           test ! -e "$RUNNER_TEMP/native-home/.local/bin/gfg-native"
 
@@ -136,6 +145,7 @@ jobs:
             native-wsi-evidence.log
             native-srgb-evidence.log
             native-installed-evidence.log
+            native-installed-srgb-evidence.log
             dependencies.txt
           retention-days: 30
           if-no-files-found: error
