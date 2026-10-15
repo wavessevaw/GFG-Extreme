@@ -9,6 +9,12 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 git -C "$root" archive --prefix=GFG-Extreme/ HEAD | tar -x -C "$work"
 rm -rf "$work/GFG-Extreme/.github"
+# GFG Shell: the plugin installs and launches it (bin/gfg-shell). Needs a Godot binary
+# (GODOT); without one the plugin reports that this build does not include the shell.
+if [ -n "${GODOT:-}" ]; then
+  "$root/shell/tools/build_bundle.sh" "$GODOT" "$work/GFG-Extreme/bin/gfg-shell"
+fi
+rm -rf "$work/GFG-Extreme/shell"
 cp "$payloads"/org.freedesktop.Platform.VulkanLayer.makorender-*.flatpak "$work/GFG-Extreme/bin/"
 chmod 644 "$work"/GFG-Extreme/bin/*.flatpak
 (cd "$work/GFG-Extreme/bin" && sha256sum -c --quiet SHA256SUMS.txt)

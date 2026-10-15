@@ -1,19 +1,14 @@
 name: Temporal Engine beta
 
-# Test build of the experimental GFG Temporal Engine from its feature branch.
-# Builds when .github/beta/temporal-engine.json changes (or on manual dispatch)
-# and keeps the zip as a workflow artifact.  Public pre-releases are closed:
-# a GitHub pre-release is created only on a manual dispatch with publish=true.
+# Pre-release of the experimental GFG Temporal Engine (with GFG Shell) from its
+# feature branch.  Publishes when .github/beta/temporal-engine.json changes (or
+# on manual dispatch), only as a GitHub pre-release; never "latest", never main.
+# The zip is also kept as a workflow artifact, so a refused publish loses nothing.
 on:
   push:
     branches: [claude/busy-bardeen-rmv05o]
     paths: [.github/beta/temporal-engine.json]
   workflow_dispatch:
-    inputs:
-      publish:
-        description: "Also create a GitHub pre-release"
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -25,6 +20,9 @@ concurrency:
 jobs:
   beta:
     runs-on: ubuntu-22.04
+    defaults:
+      run:
+        shell: bash -eo pipefail {0}
     env:
       GH_TOKEN: ${{ github.token }}
       CXX: g++-12
@@ -114,6 +112,27 @@ jobs:
           git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/fusion-vkh"
           python3 scripts/build_frame_fusion.py --work "$RUNNER_TEMP/fusion" --headers "$RUNNER_TEMP/fusion-vkh/include"
 
+      - name: Godot runtime for the shell bundle (pinned, sha256-checked)
+        run: |
+          . shell/tools/godot.env
+          mkdir -p "$RUNNER_TEMP/godot"
+          curl -fsSL -o "$RUNNER_TEMP/godot/godot.zip" "$GODOT_URL"
+          echo "$GODOT_SHA256  $RUNNER_TEMP/godot/godot.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/godot/godot.zip" -d "$RUNNER_TEMP/godot"
+          echo "GODOT=$RUNNER_TEMP/godot/$GODOT_BIN" >> "$GITHUB_ENV"
+
+      - name: GFG Shell tests
+        run: |
+          python3 -m pip install --quiet pillow
+          "$GODOT" --headless --path shell --import > "$RUNNER_TEMP/import.log" 2>&1 || true
+          if grep -E "SCRIPT ERROR|Parse Error|Compile Error" "$RUNNER_TEMP/import.log"; then exit 1; fi
+          python3 shell/tools/make_fake_steam.py "$RUNNER_TEMP/fake" --art
+          GFG_SHELL_LOG_DIR="$RUNNER_TEMP/logs" "$GODOT" --headless --path shell -s res://tests/run_tests.gd -- --fixture="$RUNNER_TEMP/fake" 2>&1 | tee "$RUNNER_TEMP/tests.log"
+          if grep -q "SCRIPT ERROR" "$RUNNER_TEMP/tests.log"; then exit 1; fi
+          GFG_SHELL_DRY_POWER=1 GFG_SHELL_LOG_DIR="$RUNNER_TEMP/logs" GFG_SHELL_STEAM_ROOT="$RUNNER_TEMP/fake/Steam" HOME="$RUNNER_TEMP/navhome" \
+            "$GODOT" --headless --path shell -s res://tests/ui_nav.gd 2>&1 | tee "$RUNNER_TEMP/nav.log"
+          if grep -q "SCRIPT ERROR" "$RUNNER_TEMP/nav.log"; then exit 1; fi
+
       - name: Build zip
         run: |
           python3 scripts/bump_version.py "${{ steps.version.outputs.version }}"
@@ -137,6 +156,15 @@ jobs:
             unzip -Z1 "$zip" | grep -Fx "GFG-Extreme/bin/gfg-frame-os/$payload"
           done
 
+      - name: GFG Shell bundled in the Decky zip
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          zip="out/GFG-Extreme-v${version//./_}.zip"
+          for f in gfg-shell.pck gfg-shell.sh godot.json VERSION licenses/GODOT-LICENSE.txt; do
+            unzip -Z1 "$zip" | grep -Fx "GFG-Extreme/bin/gfg-shell/$f"
+          done
+          if unzip -Z1 "$zip" | grep -q '^GFG-Extreme/shell/'; then echo "::error::shell sources leaked into the zip"; exit 1; fi
+
       - name: Temporal Engine native tests and GPU parity (lavapipe)
         env:
           VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
@@ -157,7 +185,6 @@ jobs:
           if-no-files-found: error
 
       - name: Publish pre-release
-        if: github.event_name == 'workflow_dispatch' && inputs.publish
         run: |
           sha="$(cut -d' ' -f1 out/SHA256SUMS.txt)"
           sed "s/\`<sha256>\`/\`$sha\`/" .github/beta/temporal-engine.md > notes.md

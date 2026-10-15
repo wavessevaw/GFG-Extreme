@@ -1,4 +1,4 @@
-# GFG Extreme 2.1.2-te.4 — Temporal Engine beta (private test build)
+# GFG Extreme 2.1.2-te.4 — Temporal Engine beta with GFG Shell (pre-release)
 
 **Experimental build for hardware trials. Not yet verified on a Steam Deck.** Everything else is GFG Extreme 2.1.1.
 
@@ -11,6 +11,8 @@ te.4 replaces the frame generator. The tile engine of te.1–te.3 is still there
 - **No cost hold.** The tile engine repeated the real frame for 120 pairs whenever it went over its cost cap; LMC never does.
 
 On the offline bench (rendered 90 FPS scenes, every third frame kept, the two between generated and compared with what was really rendered; NVIDIA FLIP, lower is better) LMC beats the tile engine and an FSR 3 frame-interpolation port without game vectors in camera pans, orbits, walks through thin posts, glossy surfaces and HUD, and ties on particles. A fast rotating thin blade is still hard for every generator.
+
+**GFG Shell 0.2.3 is included.** The alternative Gaming Mode shell (Godot; Steam stays the game client) installs and launches from the plugin: **GFG Extreme → GFG Shell → Install**, then **Launch**. Home with the game in focus and recently played, the library with filters, the game page with GFG Autopilot, search with an on-screen keyboard, downloads, settings, the side menu, quick settings and the power menu. A and B work on the pad, modal menus keep focus, recently played follows Steam's own records, every installed game is listed, and non-Steam shortcuts launch and return cleanly.
 
 The renderer log now has the engine's real GPU time per stage every 10 seconds (`Temporal Engine stats algo=lmc … pyramid_ms analyze_ms fields_ms frame_ms pair_p95_ms layers orphans`), and the log summary reports it: one recording answers whether it fits the Deck's budget.
 

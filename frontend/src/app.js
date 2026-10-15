@@ -12,6 +12,10 @@ const safeCallable = (name) => { const f = callable(name); return async (...a) =
 const rpc = {
   themeStatus: safeCallable("get_theme_status"),
   themeInstall: safeCallable("install_gfg_theme"),
+  shellStatus: safeCallable("get_shell_status"),
+  shellInstall: safeCallable("install_gfg_shell"),
+  shellUninstall: safeCallable("uninstall_gfg_shell"),
+  shellSetShortcut: safeCallable("set_shell_shortcut"),
   governor: safeCallable("get_governor_status"),
   setGovernor: safeCallable("set_governor_enabled"),
   setHud: safeCallable("set_governor_hud"),
@@ -943,6 +947,7 @@ function FlowControl({ s }) {
 function SettingsPage({ back, go, profile, s }) {
   return h(Page, { title: "Settings", onBack: back },
     h("div", { className: "list", style: { marginTop: 0 } },
+      h(Row, { icon: "play", title: "GFG Shell", sub: "Controller game shell (beta): install and launch", onClick: () => go("shell") }),
       h(Row, { icon: "filter", title: "GFG theme", sub: "Install the Steam interface theme for CSS Loader", onClick: () => go("theme") }),
       h(Row, { icon: "hud", title: "In-game overlay", sub: "FPS, ×N, TDP while playing", onClick: () => go("hud") }),
       h(Row, { icon: "user", title: "Profile", value: profileLabel(profile || "Default"), onClick: () => go("profiles") }),
@@ -984,6 +989,67 @@ function ThemePage({ back }) {
     msg ? h(Note, { quiet: true }, msg) : null,
     status && status.success === false ? h(Note, null, status.error) : null,
     h(Note, { quiet: true }, "After installing, open CSS Loader, reload themes and enable GFG Extreme."));
+}
+
+// GFG Shell is started by Steam as a non-Steam shortcut, so Steam stays the game client and
+// Steam Input keeps the controller. The shortcut is created once with Steam's own API.
+const SHELL_NAME = "GFG Shell";
+const shortcutGameId = (appId) => ((BigInt(appId >>> 0) << 32n) | 0x02000000n).toString();
+function shellOverview(appId) {
+  try { return appId && window.appStore ? window.appStore.GetAppOverviewByAppID(appId) : null; } catch (e) { return null; }
+}
+async function ensureShellShortcut(st) {
+  if (shellOverview(st.shortcut_appid)) return st.shortcut_appid;
+  const apps = window.SteamClient && window.SteamClient.Apps;
+  if (!apps || !apps.AddShortcut) throw new Error("Steam shortcut API unavailable");
+  const appId = await apps.AddShortcut(SHELL_NAME, st.path, st.start_dir, "");
+  if (!appId) throw new Error("Steam did not create the shortcut");
+  try { apps.SetShortcutName(appId, SHELL_NAME); apps.SetShortcutExe(appId, '"' + st.path + '"'); apps.SetShortcutStartDir(appId, '"' + st.start_dir + '"'); } catch (e) {}
+  await rpc.shellSetShortcut(appId);
+  return appId;
+}
+async function launchShell(st) {
+  const appId = await ensureShellShortcut(st);
+  const ov = shellOverview(appId);
+  const gameId = ov && ov.m_gameid ? String(ov.m_gameid) : shortcutGameId(appId);
+  window.SteamClient.Apps.RunGame(gameId, "", -1, 100);
+  return appId;
+}
+
+function ShellPage({ back }) {
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [msg, setMsg] = useState("");
+  const load = useCallback(async () => { try { setSt(await rpc.shellStatus()); } catch (e) { setMsg(String(e)); } }, []);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (!busy) return undefined; const t = setInterval(load, 1000); return () => clearInterval(t); }, [busy, load]);
+  const run = async (what, fn) => {
+    setBusy(what); setMsg("");
+    try { const r = await fn(); if (r && r.success === false) setMsg(r.error || "Failed."); else if (r && r.message) setMsg(r.message); }
+    catch (e) { setMsg(String((e && e.message) || e)); }
+    finally { setBusy(""); load(); }
+  };
+  const install = () => run("install", async () => { const r = await rpc.shellInstall(); return r && r.success ? { message: "GFG Shell " + r.version + " installed." } : r; });
+  const launch = () => run("launch", async () => { await launchShell(await rpc.shellStatus()); return { message: "Starting GFG Shell through Steam…" }; });
+  const remove = () => run("remove", async () => {
+    try { if (st && st.shortcut_appid && window.SteamClient) window.SteamClient.Apps.RemoveShortcut(st.shortcut_appid); } catch (e) {}
+    const r = await rpc.shellUninstall(); return r && r.success ? { message: "GFG Shell removed." } : r;
+  });
+  const p = st && st.progress || {};
+  const pct = p.total ? Math.round(100 * p.done / p.total) : null;
+  const state = !st ? "Checking…" : !st.packaged ? "Not included in this build" : st.installed ? (st.update_available ? "Update available" : "Installed " + st.installed_version) : "Not installed";
+  return h(Page, { title: "GFG Shell", onBack: back },
+    h(Note, { quiet: true }, "Beta, not verified on a Steam Deck yet. A controller game shell; games still start through Steam, so Steam Input, the overlay and cloud saves stay Steam's. Quit it any time to return to Steam."),
+    h("div", { className: "card" },
+      h("b", null, state),
+      busy === "install" ? h("div", { className: "hint", style: { textAlign: "left" } }, p.step === "download" ? "Downloading the Godot runtime" + (pct !== null ? " · " + pct + "%" : "…") : "Installing…") : null,
+      st && st.installed ? h("div", { className: "hint", style: { textAlign: "left", wordBreak: "break-all" } }, st.path) : null),
+    st && st.packaged ? h("div", { className: "list" },
+      st.installed ? h(Row, { icon: "play", title: busy === "launch" ? "Starting…" : "Launch GFG Shell", sub: "Opens it as a game in Steam", onClick: busy ? undefined : launch }) : null,
+      h(Row, { icon: "cog", title: busy === "install" ? "Installing…" : !st.installed ? "Install GFG Shell" : st.update_available ? "Update GFG Shell" : "Reinstall", sub: !st.installed ? "Downloads the official Godot runtime once (about 60 MB)" : undefined, onClick: busy ? undefined : install }),
+      st.installed ? h(Row, { icon: "cog", title: busy === "remove" ? "Removing…" : "Remove GFG Shell", onClick: busy ? undefined : remove }) : null) : null,
+    msg ? h(Note, { quiet: true }, msg) : null,
+    st && st.installed ? h(Note, { quiet: true }, "In GFG Shell: Settings → Диагностика → Собрать диагностику saves a zip on the Desktop for bug reports.") : null);
 }
 
 function SetupCheckPage({ back, profile }) {
@@ -1333,6 +1399,7 @@ function Content() {
   else if (screen === "hud") body = h(HudPage, { back: () => setScreen("settings"), s, profile, refresh });
   else if (screen === "profiles") body = h(ProfilesPage, { back: () => setScreen("settings"), profiles, current: profile, pick, reload: loadProfiles });
   else if (screen === "theme") body = h(ThemePage, { back: () => setScreen("settings") });
+  else if (screen === "shell") body = h(ShellPage, { back: () => setScreen("settings") });
   else if (screen === "settings") body = h(SettingsPage, { back, go, profile, s });
   else if (screen === "setup") body = h(SetupCheckPage, { back: () => setScreen("advanced"), profile });
   else if (screen === "launch") body = h(LaunchPage, { back: () => setScreen("settings"), launch });
