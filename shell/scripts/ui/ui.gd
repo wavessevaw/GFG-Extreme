@@ -108,16 +108,25 @@ static func box(bg: Color, border: Color = Color.TRANSPARENT, radius: int = RADI
 	return s
 
 
-static func focus_box(color: Color = RED, radius: int = RADIUS + 2) -> StyleBoxFlat:
+## Focus ring: a thin outline drawn a few pixels outside the control, its corners
+## concentric with the control's own (radius = control radius + gap), so it never
+## touches or cuts across the fill. `radius` is the control's corner radius.
+const FOCUS_GAP := 4
+
+
+static func focus_box(color: Color = RED, radius: int = RADIUS) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
 	s.draw_center = false
-	s.set_corner_radius_all(radius)
-	s.set_border_width_all(3)
+	s.set_corner_radius_all(radius + FOCUS_GAP)
+	s.corner_detail = 12
+	s.set_border_width_all(2)
 	s.border_color = color
-	s.expand_margin_left = 2
-	s.expand_margin_right = 2
-	s.expand_margin_top = 2
-	s.expand_margin_bottom = 2
+	s.anti_aliasing = true
+	s.anti_aliasing_size = 1.0
+	s.expand_margin_left = FOCUS_GAP
+	s.expand_margin_right = FOCUS_GAP
+	s.expand_margin_top = FOCUS_GAP
+	s.expand_margin_bottom = FOCUS_GAP
 	return s
 
 

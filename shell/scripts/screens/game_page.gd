@@ -8,7 +8,9 @@ const WOLF := preload("res://assets/gfg_wolf.png")
 var game: Dictionary = {}
 var _logo: TextureRect
 var _logo_box: Control
-const TITLE_BOX := 120.0
+## Title area: the name (or logo) plus a clear gap above the Play button and its glow.
+const TITLE_GAP := 30.0
+const TITLE_BOX := 74.0 + TITLE_GAP
 const LOGO_MAX := Vector2(560, 130)
 var _name: Label
 var _play: Button
@@ -40,12 +42,13 @@ func _ready() -> void:
 	_logo = TextureRect.new()
 	_logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
-	_logo.position = Vector2(0, 6)
+	_logo.position = Vector2(0, 0)
 	_logo.size = LOGO_MAX
 	logo_box.add_child(_logo)
-	_name = UI.label("", 58, UI.TEXT, "bold")
-	_name.position = Vector2(0, 18)
-	_name.size = Vector2(1100, 90)
+	_name = UI.label("", 54, UI.TEXT, "bold")
+	_name.position = Vector2(0, 0)
+	_name.size = Vector2(1100, 74)
+	_name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	logo_box.add_child(_name)
 	var actions := UI.hbox(14)
@@ -184,7 +187,7 @@ func enter(args: Dictionary = {}) -> void:
 			_logo.texture = t
 			_name.visible = false
 			# the box follows the logo's drawn height: the buttons sit right under it
-			_logo_box.custom_minimum_size.y = 18.0 + minf(LOGO_MAX.y,
+			_logo_box.custom_minimum_size.y = TITLE_GAP + minf(LOGO_MAX.y,
 				LOGO_MAX.x * float(t.get_height()) / maxf(1.0, float(t.get_width()))))
 	_refresh()
 

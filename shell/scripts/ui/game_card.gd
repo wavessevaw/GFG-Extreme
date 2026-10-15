@@ -99,12 +99,8 @@ func _ready() -> void:
 		badge.position = Vector2(10, 10)
 		add_child(badge)
 	_ring = Panel.new()
-	var ring := UI.focus_box(UI.RED, RADIUS + 3)
+	var ring := UI.focus_box(UI.RED, RADIUS)
 	ring.set_border_width_all(3)
-	ring.expand_margin_left = 4
-	ring.expand_margin_right = 4
-	ring.expand_margin_top = 4
-	ring.expand_margin_bottom = 4
 	_ring.add_theme_stylebox_override("panel", ring)
 	_ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE

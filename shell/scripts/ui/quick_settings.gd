@@ -66,7 +66,12 @@ func _ready() -> void:
 			app.toast("Яркостью управляет Steam: кнопка «…» → Яркость"))
 	v1.add_child(_bright)
 	_vol = GSliderRow.make("volume", "Громкость", SystemInfo.volume_pct())
-	_vol.value_committed.connect(func(val): SystemInfo.set_volume_pct(val))
+	_vol.value_committed.connect(func(val):
+		if not SystemInfo.set_volume_pct(val):
+			app.toast("Не удалось изменить громкость")
+		var now := SystemInfo.volume_pct()
+		if now >= 0:
+			_vol.set_value(now))
 	v1.add_child(_vol)
 	_wifi = UI.row("wifi", "Wi-Fi", "", UI.label("", 15, UI.TEXT_DIM, "medium"), 58)
 	_wifi.pressed.connect(func(): close(); OS.create_process(GameRunner.steam_command(), ["steam://open/settings/internet"]))
@@ -230,7 +235,7 @@ func _tile(icon: String, title: String, sub: String, sw: GSwitch) -> Button:
 	for st in ["normal", "pressed", "disabled"]:
 		b.add_theme_stylebox_override(st, sb)
 	b.add_theme_stylebox_override("hover", UI.box(Color(1, 1, 1, 0.06), Color(1, 1, 1, 0.09), 14))
-	b.add_theme_stylebox_override("focus", UI.focus_box(UI.RED, 15))
+	b.add_theme_stylebox_override("focus", UI.focus_box(UI.RED, 14))
 	var col := UI.vbox(4)
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var m := UI.margin(col, 14, 12, 14, 10)
