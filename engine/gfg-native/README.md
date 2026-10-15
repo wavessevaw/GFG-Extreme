@@ -88,3 +88,28 @@ The CPU transfer path is not cost-optimised and requires Deck testing.
 
 An installable standalone native trial archive can be generated with
 `scripts/package_native_fg.py` once WSI synthesis tests pass.
+
+## GPU-resident transport (`GFG_NATIVE_GPU_BRIDGE=1`, reference implementation)
+
+`src/gpu_bridge.c` replaces the CPU round trip for 3x generation (two TE8
+outputs per real frame, t = 1/3 and 2/3, presented G1, G2, then the real
+frame). It takes precedence over `GFG_NATIVE_CPU_BRIDGE=1` and never falls back
+to it. Steady state has no CPU pixel access and no CPU wait on the present
+thread: TE8's images are imported into the game's device (OPAQUE_FD), and a
+timeline semaphore orders the game queue and TE8. That timeline is shared by
+fd when the driver has `VK_KHR_external_semaphore_fd`; without it (lavapipe)
+a relay thread forwards the values.
+
+- The layer adds `VK_KHR_external_memory_fd`, `VK_KHR_external_semaphore_fd`
+  (when supported) and `timelineSemaphore` to the game's device. Requires
+  Vulkan 1.2; otherwise the game's frames pass through unchanged.
+- Candidate swapchains get `minImageCount + 2` images.
+- Variables: `GFG_NATIVE_GPU_INFLIGHT` (1..4, default 2),
+  `GFG_NATIVE_GPU_SYNC=relay` (force relay mode), `GFG_NATIVE_TIMING=1`
+  (CPU time inside vkQueuePresentKHR), and `GFG_NATIVE_PRESENT_TRACE=1`
+  (layer-owned present IDs + `present_done` monitor, experimental).
+- Test-only variables: `GFG_NATIVE_GPU_BRIDGE_VERIFY=1` and
+  `GFG_NATIVE_GPU_BRIDGE_INJECT_SKIP=K`.
+- `make wsi-smoke-gpu` runs on lavapipe/Xvfb, with the validation layer below
+  this one. Its results are SIMULATED: they say nothing about Steam Deck
+  pacing, latency or scanout.

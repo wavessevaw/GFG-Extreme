@@ -6,7 +6,7 @@ ENABLE_TE ?= 0
 TE_LIB ?= ../gfg-temporal/build/libgfg-temporal.a
 ifeq ($(ENABLE_TE),1)
 NATIVE_SOURCES := src/layer.c src/cpu_bridge.c src/gpu_bridge.c
-NATIVE_HEADERS := src/cpu_bridge.h src/gpu_bridge.h src/memory_policy.h
+NATIVE_HEADERS := src/cpu_bridge.h src/gpu_bridge.h src/present_ids.h src/memory_policy.h
 NATIVE_CPPFLAGS := -DGFG_NATIVE_WITH_TE -I../gfg-temporal/src
 NATIVE_LDLIBS := $(TE_LIB) -ldl -lm
 NATIVE_DEPS := $(TE_LIB)
@@ -18,7 +18,7 @@ NATIVE_LDLIBS :=
 NATIVE_DEPS :=
 endif
 
-.PHONY: layer abi smoke wsi-smoke wsi-smoke-te wsi-smoke-gpu swapchain-policy memory-policy clean
+.PHONY: layer abi smoke wsi-smoke wsi-smoke-te wsi-smoke-gpu swapchain-policy memory-policy present-ids clean
 layer: $(BUILD)/libVkLayer_gfg_native.so $(BUILD)/VkLayer_gfg_native.json
 
 $(BUILD)/libVkLayer_gfg_native.so: $(NATIVE_SOURCES) $(NATIVE_HEADERS) $(NATIVE_DEPS)
@@ -45,6 +45,13 @@ $(BUILD)/memory-policy: tests/memory_policy.c src/memory_policy.h
 
 memory-policy: $(BUILD)/memory-policy
 	$(BUILD)/memory-policy
+
+$(BUILD)/present-ids: tests/present_ids.c src/present_ids.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/present_ids.c
+
+present-ids: $(BUILD)/present-ids
+	$(BUILD)/present-ids
 
 $(BUILD)/swapchain-policy: tests/swapchain_policy.c src/layer.c
 	mkdir -p $(BUILD)

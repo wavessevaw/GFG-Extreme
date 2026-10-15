@@ -1006,9 +1006,55 @@ static VkResult submit_real(gfg_gpu_fg *fg, ring_slot *rs, const VkPresentInfoKH
     return fg->QueueSubmit(fg->queue, 1, &si, VK_NULL_HANDLE);
 }
 
+/* Forward the app's present (optionally with our wait semaphore), replacing
+ * its present id by a layer id when the layer owns the sequence. The app's
+ * VkPresentIdKHR/VkPresentId2KHR (identical layout) is patched in place for
+ * the call and restored; without one, ours is prepended. Rest of pNext as is. */
+static VkResult forward_real(VkQueue queue, const VkPresentInfoKHR *app, const VkSemaphore *wait,
+                             PFN_vkQueuePresentKHR next, const gfg_present_id_hooks *ids,
+                             double *next_us) {
+    VkPresentInfoKHR real = *app;
+    if (wait) {
+        real.waitSemaphoreCount = 1;
+        real.pWaitSemaphores = wait;
+    }
+    VkPresentIdKHR *app_ids = NULL;
+    const uint64_t *saved = NULL;
+    uint64_t layer_id = 0;
+    VkPresentIdKHR ours = {0};
+    if (ids && ids->mode && ids->assign && app->swapchainCount == 1) {
+        for (VkBaseInStructure *n = (VkBaseInStructure *)app->pNext; n; n = (VkBaseInStructure *)n->pNext)
+            if (n->sType == VK_STRUCTURE_TYPE_PRESENT_ID_KHR ||
+                n->sType == VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR) {
+                app_ids = (VkPresentIdKHR *)n;
+                break;
+            }
+        const uint64_t app_id = app_ids && app_ids->swapchainCount == 1 && app_ids->pPresentIds
+            ? app_ids->pPresentIds[0] : 0;
+        layer_id = ids->assign(ids->user, 0, app_id);
+        if (app_ids && app_ids->swapchainCount == 1) {
+            saved = app_ids->pPresentIds;
+            app_ids->pPresentIds = &layer_id;
+        } else if (!app_ids && layer_id) {
+            ours.sType = ids->mode == 2 ? VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR
+                                        : VK_STRUCTURE_TYPE_PRESENT_ID_KHR;
+            ours.pNext = app->pNext;
+            ours.swapchainCount = 1;
+            ours.pPresentIds = &layer_id;
+            real.pNext = &ours;
+        }
+    }
+    const double t = now_us();
+    VkResult r = next(queue, &real);
+    if (next_us) *next_us += now_us() - t;
+    if (app_ids && saved) app_ids->pPresentIds = saved;
+    return r;
+}
+
 /* acquire + copy + present one synthetic output; 1 presented, 0 skipped, -1 error */
 static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v,
-                             PFN_vkQueuePresentKHR next, double *next_us) {
+                             PFN_vkQueuePresentKHR next, const gfg_present_id_hooks *ids,
+                             double *next_us) {
     uint32_t img = UINT32_MAX;
     double tp = now_us();
     VkResult r = fg->AcquireNextImageKHR(fg->device, fg->swapchain, 0, rs->acquire_sem[k],
@@ -1045,6 +1091,14 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v,
     VkPresentInfoKHR pi = {.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1, .pWaitSemaphores = &fg->ready[img],
         .swapchainCount = 1, .pSwapchains = &fg->swapchain, .pImageIndices = &img};
+    uint64_t layer_id = 0;
+    VkPresentIdKHR pid = {0};
+    if (ids && ids->mode && ids->assign && (layer_id = ids->assign(ids->user, k + 1, 0)) != 0) {
+        pid.sType = ids->mode == 2 ? VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR : VK_STRUCTURE_TYPE_PRESENT_ID_KHR;
+        pid.swapchainCount = 1;
+        pid.pPresentIds = &layer_id;
+        pi.pNext = &pid;
+    }
     const double t = now_us();
     r = next(fg->queue, &pi);
     *next_us += now_us() - t;
@@ -1057,7 +1111,7 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v,
 }
 
 VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKHR *app,
-                            PFN_vkQueuePresentKHR next) {
+                            PFN_vkQueuePresentKHR next, const gfg_present_id_hooks *ids) {
     if (!fg || !app || !next) return VK_ERROR_INITIALIZATION_FAILED;
     const double t0 = now_us();
     double next_us = 0.0;
@@ -1069,9 +1123,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
         app->waitSemaphoreCount > 16) {
         fg->te_gap = 1;
         if (frame) STAT_ADD(skipped_synthetic, 2);
-        const double t = now_us();
-        result = next(queue, app);
-        next_us += now_us() - t;
+        result = forward_real(queue, app, NULL, next, ids, &next_us);
         goto timing;
     }
     fg->in_present = 1;
@@ -1106,9 +1158,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
         fg->te_gap = 1;
         if (frame) STAT_ADD(skipped_synthetic, 2);
         fg->in_present = 0;
-        const double t = now_us();
-        result = next(queue, app);
-        next_us += now_us() - t;
+        result = forward_real(queue, app, NULL, next, ids, &next_us);
         goto timing;
     }
     const uint64_t v = fg->next_value;
@@ -1151,7 +1201,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
         if (!generate) STAT_ADD(holds, 1);
         if (generate) {
             for (int k = 0; k < 2; ++k) {
-                int g = present_synthetic(fg, rs, k, v, next, &next_us);
+                int g = present_synthetic(fg, rs, k, v, next, ids, &next_us);
                 if (g <= 0) {
                     if (g < 0) STAT_ADD(errors, 1);
                     break;
@@ -1178,14 +1228,8 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     fg->phase_us[4] += now_us() - tp;
     fg->phase_n++;
     fg->in_present = 0;
-    {
-        VkPresentInfoKHR real = *app; /* pNext (present id, fences, ...) untouched */
-        real.waitSemaphoreCount = 1;
-        real.pWaitSemaphores = &fg->ready[idx];
-        const double t = now_us();
-        result = next(queue, &real);
-        next_us += now_us() - t;
-    }
+    /* pNext (fences, present modes, ...) untouched; only the present id is remapped */
+    result = forward_real(queue, app, &fg->ready[idx], next, ids, &next_us);
     if (fg->log && (frame < 4 || frame % 120 == 0))
         fprintf(stderr, "[gfg-native] gpu-bridge frame=%llu te=%d generated=%d presented=%d\n",
                 (unsigned long long)frame, (int)tr, generate, presented);

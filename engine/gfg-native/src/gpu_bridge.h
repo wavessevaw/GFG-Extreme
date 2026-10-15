@@ -48,10 +48,22 @@ typedef struct {
     uint64_t verify_host_reads;       /* GFG_NATIVE_GPU_BRIDGE_VERIFY readbacks (test-only, off hot path) */
 } gfg_gpu_stats;
 
+/* Present-ID ownership (B4). When mode != 0 the layer owns the strictly
+ * increasing per-swapchain ID sequence: EVERY present the bridge issues
+ * (G1, G2, the real one, pass-through) gets assign()'s id; the app's id on a
+ * real present is handed to assign() so the layer can translate the app's own
+ * vkWaitForPresent(2)KHR calls. kind: 0 real, 1 G1, 2 G2. */
+typedef struct {
+    int mode;                         /* 0 none, 1 VkPresentIdKHR, 2 VkPresentId2KHR */
+    uint64_t (*assign)(void *user, int kind, uint64_t app_id);
+    void *user;
+} gfg_present_id_hooks;
+
 gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info);
 VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue,
                             const VkPresentInfoKHR *original,
-                            PFN_vkQueuePresentKHR next_present);
+                            PFN_vkQueuePresentKHR next_present,
+                            const gfg_present_id_hooks *ids);
 void gfg_gpu_fg_destroy(gfg_gpu_fg *fg);
 void gfg_gpu_fg_stats(gfg_gpu_stats *out);
 #endif

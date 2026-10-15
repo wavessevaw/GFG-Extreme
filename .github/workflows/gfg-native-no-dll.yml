@@ -37,6 +37,7 @@ jobs:
       - name: Test cached readback memory-type selection
         run: |
           make -C engine/gfg-native memory-policy VULKAN_HEADERS="$RUNNER_TEMP/vkh/include"
+          make -C engine/gfg-native present-ids
       - name: Compile standalone GFG Native WSI layer (no MAKO linkage)
         run: |
           make -C engine/gfg-native layer VULKAN_HEADERS="$RUNNER_TEMP/vkh/include"

@@ -8,6 +8,7 @@
  */
 #define _GNU_SOURCE
 #include <pthread.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +19,7 @@
 #ifdef GFG_NATIVE_WITH_TE
 #include "cpu_bridge.h"
 #include "gpu_bridge.h"
+#include "present_ids.h"
 #endif
 #include <time.h>
 
@@ -56,7 +58,9 @@ typedef struct native_swapchain {
     int bridge_attempted;
     gfg_gpu_fg *gpu;
     int gpu_attempted;
+    struct native_present_ids *ids; /* B4: layer-owned present ids (PRESENT_TRACE) */
 #endif
+    VkSwapchainCreateFlagsKHR create_flags;
     int copy_eligible; /* enabled transfer usage only; never means captured */
     VkPresentModeKHR present_mode;
     const char *path; /* "gpu", "cpu" or "none": which transport handled presents */
@@ -82,6 +86,9 @@ typedef struct native_device {
     native_instance *instance;
     int gpu_capable;  /* external memory fd + timeline enabled by this layer */
     int semaphore_fd; /* VK_KHR_external_semaphore_fd enabled */
+    int present_caps; /* NATIVE_PRESENT_* enabled (by the app or, for tracing, by us) */
+    PFN_vkWaitForPresentKHR wait_present;
+    PFN_vkWaitForPresent2KHR wait_present2;
     PFN_vkSetDeviceLoaderData set_loader_data; /* for layer-created command buffers */
     pthread_mutex_t lock;
     native_swapchain *swapchains;
@@ -196,14 +203,22 @@ native_DestroyInstance(VkInstance instance, const VkAllocationCallbacks *alloc) 
  * or VkPhysicalDeviceTimelineSemaphoreFeatures it already chains is patched
  * for the duration of the call and restored; otherwise our own timeline
  * feature struct is prepended to the (unchanged) chain. */
+enum {
+    NATIVE_PRESENT_ID = 1, NATIVE_PRESENT_WAIT = 2,      /* VK_KHR_present_id / _wait */
+    NATIVE_PRESENT_ID2 = 4, NATIVE_PRESENT_WAIT2 = 8     /* VK_KHR_present_id2 / _wait2 */
+};
 typedef struct {
     VkDeviceCreateInfo ci;
     const char **extensions;
     VkPhysicalDeviceTimelineSemaphoreFeatures timeline;
-    VkBool32 *patched;
-    VkBool32 saved;
+    VkPhysicalDevicePresentIdFeaturesKHR present_id;
+    VkPhysicalDevicePresentWaitFeaturesKHR present_wait;
+    VkBool32 *patched[3];
+    VkBool32 saved[3];
+    int npatched;
     int active;
     int semaphore_fd;
+    int present_caps; /* NATIVE_PRESENT_* enabled on the created device */
 } native_device_patch;
 
 static int native_env_is_1(const char *name) {
@@ -221,10 +236,39 @@ static int native_requested_extension(const VkDeviceCreateInfo *ci, const char *
             return 1;
     return 0;
 }
+/* Enable a VkBool32 feature: patch the app's struct of that type for the
+ * call (restored by native_unpatch_device) or prepend ours to the chain. */
+static void native_enable_feature(native_device_patch *p, const VkDeviceCreateInfo *app,
+        VkStructureType type, size_t offset, VkBaseOutStructure *ours) {
+    for (VkBaseOutStructure *node = (VkBaseOutStructure *)app->pNext; node; node = node->pNext)
+        if (node->sType == type) {
+            VkBool32 *value = (VkBool32 *)((char *)node + offset);
+            if (p->npatched < 3) {
+                p->patched[p->npatched] = value;
+                p->saved[p->npatched++] = *value;
+                *value = VK_TRUE;
+            }
+            return;
+        }
+    ours->sType = type;
+    ours->pNext = (VkBaseOutStructure *)p->ci.pNext;
+    *(VkBool32 *)((char *)ours + offset) = VK_TRUE;
+    p->ci.pNext = ours;
+}
+static int native_chained_feature(const VkDeviceCreateInfo *ci, VkStructureType type, size_t offset) {
+    for (const VkBaseInStructure *node = ci->pNext; node; node = node->pNext)
+        if (node->sType == type) return *(const VkBool32 *)((const char *)node + offset) == VK_TRUE;
+    return 0;
+}
+
 static const char *native_patch_device(native_instance *inst, VkPhysicalDevice phys,
         const VkDeviceCreateInfo *ci, native_device_patch *p) {
     memset(p, 0, sizeof(*p));
     p->ci = *ci;
+#ifndef GFG_NATIVE_WITH_TE
+    (void)inst; (void)phys;
+    return "built-without-te";
+#endif
     if (!inst || !inst->enabled) return "layer-not-enabled";
     if (!native_env_is_1("GFG_NATIVE_GPU_BRIDGE")) return "gpu-bridge-not-requested";
     if (inst->api_version < VK_API_VERSION_1_2) return "instance-api-below-1.2";
@@ -252,9 +296,44 @@ static const char *native_patch_device(native_instance *inst, VkPhysicalDevice p
     if (enumerate(phys, NULL, &n, ext) != VK_SUCCESS) { free(ext); return "extension-query"; }
     const int mem_fd = native_has_extension(ext, n, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
     const int sem_fd = native_has_extension(ext, n, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+    const int has_pid = native_has_extension(ext, n, VK_KHR_PRESENT_ID_EXTENSION_NAME);
+    const int has_pwait = native_has_extension(ext, n, VK_KHR_PRESENT_WAIT_EXTENSION_NAME);
     free(ext);
     if (!mem_fd) return "no-external-memory-fd";
-    p->extensions = calloc(ci->enabledExtensionCount + 2u, sizeof(char *));
+    /* What the app itself enabled (extension + feature bit). */
+    if (native_requested_extension(ci, VK_KHR_PRESENT_ID_EXTENSION_NAME) &&
+        native_chained_feature(ci, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR,
+                               offsetof(VkPhysicalDevicePresentIdFeaturesKHR, presentId)))
+        p->present_caps |= NATIVE_PRESENT_ID;
+    if (native_requested_extension(ci, VK_KHR_PRESENT_WAIT_EXTENSION_NAME) &&
+        native_chained_feature(ci, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR,
+                               offsetof(VkPhysicalDevicePresentWaitFeaturesKHR, presentWait)))
+        p->present_caps |= NATIVE_PRESENT_WAIT;
+    if (native_requested_extension(ci, VK_KHR_PRESENT_ID_2_EXTENSION_NAME) &&
+        native_chained_feature(ci, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_2_FEATURES_KHR,
+                               offsetof(VkPhysicalDevicePresentId2FeaturesKHR, presentId2)))
+        p->present_caps |= NATIVE_PRESENT_ID2;
+    if (native_requested_extension(ci, VK_KHR_PRESENT_WAIT_2_EXTENSION_NAME) &&
+        native_chained_feature(ci, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_2_FEATURES_KHR,
+                               offsetof(VkPhysicalDevicePresentWait2FeaturesKHR, presentWait2)))
+        p->present_caps |= NATIVE_PRESENT_WAIT2;
+    /* GFG_NATIVE_PRESENT_TRACE=1: enable v1 present id/wait ourselves when
+     * supported and not already enabled (presented-frame instrumentation). */
+    int add_pid = 0, add_pwait = 0;
+    if (native_env_is_1("GFG_NATIVE_PRESENT_TRACE") && has_pid && has_pwait) {
+        VkPhysicalDevicePresentIdFeaturesKHR qid = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR};
+        VkPhysicalDevicePresentWaitFeaturesKHR qwait = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR, .pNext = &qid};
+        VkPhysicalDeviceFeatures2 q2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+            .pNext = &qwait};
+        feats2(phys, &q2);
+        if (qid.presentId && qwait.presentWait) {
+            add_pid = !(p->present_caps & NATIVE_PRESENT_ID);
+            add_pwait = !(p->present_caps & NATIVE_PRESENT_WAIT);
+        }
+    }
+    p->extensions = calloc(ci->enabledExtensionCount + 4u, sizeof(char *));
     if (!p->extensions) return "oom";
     uint32_t count = 0;
     for (uint32_t i = 0; i < ci->enabledExtensionCount; ++i)
@@ -263,34 +342,44 @@ static const char *native_patch_device(native_instance *inst, VkPhysicalDevice p
         p->extensions[count++] = VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME;
     if (sem_fd && !native_requested_extension(ci, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME))
         p->extensions[count++] = VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME;
+    if (add_pid && !native_requested_extension(ci, VK_KHR_PRESENT_ID_EXTENSION_NAME))
+        p->extensions[count++] = VK_KHR_PRESENT_ID_EXTENSION_NAME;
+    if (add_pwait && !native_requested_extension(ci, VK_KHR_PRESENT_WAIT_EXTENSION_NAME))
+        p->extensions[count++] = VK_KHR_PRESENT_WAIT_EXTENSION_NAME;
     p->ci.enabledExtensionCount = count;
     p->ci.ppEnabledExtensionNames = p->extensions;
-    for (VkBaseOutStructure *node = (VkBaseOutStructure *)ci->pNext; node; node = node->pNext) {
-        if (node->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES) {
-            p->patched = &((VkPhysicalDeviceVulkan12Features *)node)->timelineSemaphore;
-            break;
-        }
-        if (node->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES) {
-            p->patched = &((VkPhysicalDeviceTimelineSemaphoreFeatures *)node)->timelineSemaphore;
-            break;
-        }
+    /* timelineSemaphore: an app Vulkan12Features struct forbids also
+     * chaining the individual struct, so patch whichever the app has */
+    int vk12 = 0;
+    for (const VkBaseInStructure *node = ci->pNext; node; node = node->pNext)
+        if (node->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES) vk12 = 1;
+    if (vk12)
+        native_enable_feature(p, ci, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+            offsetof(VkPhysicalDeviceVulkan12Features, timelineSemaphore),
+            (VkBaseOutStructure *)&p->timeline /* never used: the app has one */);
+    else
+        native_enable_feature(p, ci, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES,
+            offsetof(VkPhysicalDeviceTimelineSemaphoreFeatures, timelineSemaphore),
+            (VkBaseOutStructure *)&p->timeline);
+    if (add_pid) {
+        native_enable_feature(p, ci, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR,
+            offsetof(VkPhysicalDevicePresentIdFeaturesKHR, presentId),
+            (VkBaseOutStructure *)&p->present_id);
+        p->present_caps |= NATIVE_PRESENT_ID;
     }
-    if (p->patched) {
-        p->saved = *p->patched;
-        *p->patched = VK_TRUE;
-    } else {
-        p->timeline.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
-        p->timeline.pNext = (void *)ci->pNext;
-        p->timeline.timelineSemaphore = VK_TRUE;
-        p->ci.pNext = &p->timeline;
+    if (add_pwait) {
+        native_enable_feature(p, ci, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR,
+            offsetof(VkPhysicalDevicePresentWaitFeaturesKHR, presentWait),
+            (VkBaseOutStructure *)&p->present_wait);
+        p->present_caps |= NATIVE_PRESENT_WAIT;
     }
     p->active = 1;
     p->semaphore_fd = sem_fd;
     return NULL;
 }
 static void native_unpatch_device(native_device_patch *p) {
-    if (p->patched) *p->patched = p->saved;
-    p->patched = NULL;
+    for (int i = 0; i < p->npatched; ++i) *p->patched[i] = p->saved[i];
+    p->npatched = 0;
     free(p->extensions);
     p->extensions = NULL;
 }
@@ -323,6 +412,7 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     VkResult result = next(phys, patch.active ? &patch.ci : ci, alloc, out);
     const int gpu_capable = patch.active && result == VK_SUCCESS;
     const int semaphore_fd = gpu_capable && patch.semaphore_fd;
+    const int present_caps = gpu_capable ? patch.present_caps : 0;
     const int patched = patch.active;
     native_unpatch_device(&patch);
     if (patched && result != VK_SUCCESS) {
@@ -331,8 +421,9 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
         result = next(phys, ci, alloc, out);
     }
     if (tracing())
-        fprintf(stderr, "[gfg-native] device gpu_bridge_capable=%d semaphore_fd=%d reason=%s\n",
-                gpu_capable, semaphore_fd, patch_reason ? patch_reason : "enabled");
+        fprintf(stderr, "[gfg-native] device gpu_bridge_capable=%d semaphore_fd=%d"
+                " present_caps=0x%x reason=%s\n", gpu_capable, semaphore_fd, present_caps,
+                patch_reason ? patch_reason : "enabled");
     if (result != VK_SUCCESS) return result;
     native_device *d = calloc(1, sizeof(*d));
     PFN_vkDestroyDevice destroy = (PFN_vkDestroyDevice)
@@ -352,6 +443,7 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     d->gpu_capable = gpu_capable;
     d->set_loader_data = set_loader_data;
     d->semaphore_fd = semaphore_fd;
+    d->present_caps = present_caps;
     d->gdpa = gdpa;
     d->destroy = destroy;
     d->get_queue = (PFN_vkGetDeviceQueue)gdpa(*out, "vkGetDeviceQueue");
@@ -366,6 +458,8 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
         gdpa(*out, "vkGetSwapchainImagesKHR");
     d->acquire = (PFN_vkAcquireNextImageKHR)
         gdpa(*out, "vkAcquireNextImageKHR");
+    d->wait_present = (PFN_vkWaitForPresentKHR)gdpa(*out, "vkWaitForPresentKHR");
+    d->wait_present2 = (PFN_vkWaitForPresent2KHR)gdpa(*out, "vkWaitForPresent2KHR");
     d->acquire2 = (PFN_vkAcquireNextImage2KHR)
         gdpa(*out, "vkAcquireNextImage2KHR");
     pthread_mutex_lock(&map_lock);
@@ -378,6 +472,177 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     pthread_mutex_unlock(&map_lock);
     return VK_SUCCESS;
 }
+
+#ifdef GFG_NATIVE_WITH_TE
+/* ---- B4: layer-owned present ids + optional presentation monitor ----
+ * Active only with GFG_NATIVE_PRESENT_TRACE=1 on a GPU-bridge swapchain whose
+ * device has present ids enabled. Every present the bridge issues gets a
+ * fresh layer id; the app's own ids are mapped (present_ids.h) and its
+ * vkWaitForPresent(2)KHR calls translated, so its semantics hold. */
+#define NATIVE_MONITOR_QUEUE 256u
+typedef struct native_present_ids {
+    pthread_mutex_t lock;
+    pthread_cond_t cond;          /* CLOCK_MONOTONIC */
+    gfg_present_map map;
+    int mode;                     /* 1 VkPresentIdKHR, 2 VkPresentId2KHR */
+    int wait_mode;                /* 0 none, 1 vkWaitForPresentKHR, 2 vkWaitForPresent2KHR */
+    VkDevice device;
+    VkSwapchainKHR swapchain;
+    PFN_vkWaitForPresentKHR wait1;
+    PFN_vkWaitForPresent2KHR wait2;
+    int monitor_started;
+    int stop;
+    pthread_t thread;
+    uint64_t queue_id[NATIVE_MONITOR_QUEUE];
+    int queue_kind[NATIVE_MONITOR_QUEUE];
+    uint32_t qhead, qcount;
+    uint64_t dropped, done, last_done_ns;
+} native_present_ids;
+
+static uint64_t native_now_ns(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec;
+}
+static VkResult native_ids_driver_wait(native_present_ids *ids, uint64_t id, uint64_t timeout) {
+    if (ids->wait_mode == 2) {
+        VkPresentWait2InfoKHR wi = {.sType = VK_STRUCTURE_TYPE_PRESENT_WAIT_2_INFO_KHR,
+            .presentId = id, .timeout = timeout};
+        return ids->wait2(ids->device, ids->swapchain, &wi);
+    }
+    return ids->wait1(ids->device, ids->swapchain, id, timeout);
+}
+static void *native_monitor_main(void *arg) {
+    native_present_ids *ids = arg;
+    static const char *kinds[3] = {"R", "G1", "G2"};
+    pthread_mutex_lock(&ids->lock);
+    for (;;) {
+        while (!ids->qcount && !ids->stop) pthread_cond_wait(&ids->cond, &ids->lock);
+        if (ids->stop) break;
+        const uint64_t id = ids->queue_id[ids->qhead];
+        const int kind = ids->queue_kind[ids->qhead];
+        pthread_mutex_unlock(&ids->lock);
+        VkResult r;
+        do {
+            r = native_ids_driver_wait(ids, id, 100000000ull);
+        } while (r == VK_TIMEOUT && !__atomic_load_n(&ids->stop, __ATOMIC_RELAXED));
+        const uint64_t t = native_now_ns();
+        if (r == VK_SUCCESS) {
+            fprintf(stderr, "[gfg-native] present_done id=%llu kind=%s t_ns=%llu dt_us=%.1f\n",
+                    (unsigned long long)id, kinds[kind < 3 && kind >= 0 ? kind : 0],
+                    (unsigned long long)t,
+                    ids->last_done_ns ? (double)(t - ids->last_done_ns) / 1000.0 : 0.0);
+            ids->last_done_ns = t;
+        } else if (r != VK_TIMEOUT) {
+            fprintf(stderr, "[gfg-native] present_wait id=%llu kind=%s vkresult=%d\n",
+                    (unsigned long long)id, kinds[kind < 3 && kind >= 0 ? kind : 0], (int)r);
+        }
+        pthread_mutex_lock(&ids->lock);
+        if (r == VK_SUCCESS) ++ids->done;
+        ids->qhead = (ids->qhead + 1) % NATIVE_MONITOR_QUEUE;
+        --ids->qcount;
+    }
+    pthread_mutex_unlock(&ids->lock);
+    return NULL;
+}
+static uint64_t native_ids_assign(void *user, int kind, uint64_t app_id) {
+    native_present_ids *ids = user;
+    pthread_mutex_lock(&ids->lock);
+    const uint64_t id = gfg_pm_next(&ids->map);
+    if (kind == 0) gfg_pm_map(&ids->map, app_id, id);
+    if (ids->monitor_started) {
+        if (ids->qcount < NATIVE_MONITOR_QUEUE) {
+            const uint32_t slot = (ids->qhead + ids->qcount++) % NATIVE_MONITOR_QUEUE;
+            ids->queue_id[slot] = id;
+            ids->queue_kind[slot] = kind;
+        } else {
+            ++ids->dropped;
+        }
+    }
+    pthread_cond_broadcast(&ids->cond);
+    pthread_mutex_unlock(&ids->lock);
+    return id;
+}
+static native_present_ids *native_ids_create(native_device *d, native_swapchain *sc) {
+    if (!native_env_is_1("GFG_NATIVE_PRESENT_TRACE")) return NULL;
+    int mode = 0, wait_mode = 0;
+    if ((sc->create_flags & VK_SWAPCHAIN_CREATE_PRESENT_ID_2_BIT_KHR) &&
+        (d->present_caps & NATIVE_PRESENT_ID2)) {
+        mode = 2;
+        if ((sc->create_flags & VK_SWAPCHAIN_CREATE_PRESENT_WAIT_2_BIT_KHR) &&
+            (d->present_caps & NATIVE_PRESENT_WAIT2) && d->wait_present2)
+            wait_mode = 2;
+    } else if (d->present_caps & NATIVE_PRESENT_ID) {
+        mode = 1;
+        if ((d->present_caps & NATIVE_PRESENT_WAIT) && d->wait_present) wait_mode = 1;
+    }
+    fprintf(stderr, "[gfg-native] present-ids mode=%d monitor=%d (present_caps=0x%x)\n",
+            mode, wait_mode, d->present_caps);
+    if (!mode) return NULL;
+    native_present_ids *ids = calloc(1, sizeof(*ids));
+    if (!ids) return NULL;
+    pthread_condattr_t ca;
+    pthread_condattr_init(&ca);
+    pthread_condattr_setclock(&ca, CLOCK_MONOTONIC);
+    pthread_mutex_init(&ids->lock, NULL);
+    pthread_cond_init(&ids->cond, &ca);
+    pthread_condattr_destroy(&ca);
+    ids->mode = mode;
+    ids->wait_mode = wait_mode;
+    ids->device = d->handle;
+    ids->swapchain = sc->handle;
+    ids->wait1 = d->wait_present;
+    ids->wait2 = d->wait_present2;
+    if (wait_mode && pthread_create(&ids->thread, NULL, native_monitor_main, ids) == 0)
+        ids->monitor_started = 1;
+    return ids;
+}
+static void native_ids_destroy(native_present_ids *ids) {
+    if (!ids) return;
+    pthread_mutex_lock(&ids->lock);
+    __atomic_store_n(&ids->stop, 1, __ATOMIC_RELAXED);
+    pthread_cond_broadcast(&ids->cond);
+    pthread_mutex_unlock(&ids->lock);
+    if (ids->monitor_started) pthread_join(ids->thread, NULL);
+    fprintf(stderr, "[gfg-native] present-ids retired last_layer_id=%llu last_app_id=%llu"
+            " monitored_done=%llu dropped=%llu\n",
+            (unsigned long long)ids->map.last_layer, (unsigned long long)ids->map.last_app,
+            (unsigned long long)ids->done, (unsigned long long)ids->dropped);
+    pthread_cond_destroy(&ids->cond);
+    pthread_mutex_destroy(&ids->lock);
+    free(ids);
+}
+/* app id -> layer id; waits (bounded by timeout) for the app's present */
+static VkResult native_ids_translate(native_present_ids *ids, uint64_t app_id, uint64_t timeout,
+                                     uint64_t *layer_id, uint64_t *remaining) {
+    const uint64_t start = native_now_ns();
+    VkResult r = VK_SUCCESS;
+    pthread_mutex_lock(&ids->lock);
+    while (!gfg_pm_translate(&ids->map, app_id, layer_id)) {
+        if (timeout == 0) { r = VK_TIMEOUT; break; }
+        if (timeout == UINT64_MAX) {
+            pthread_cond_wait(&ids->cond, &ids->lock);
+            continue;
+        }
+        const uint64_t elapsed = native_now_ns() - start;
+        if (elapsed >= timeout) { r = VK_TIMEOUT; break; }
+        struct timespec until;
+        clock_gettime(CLOCK_MONOTONIC, &until);
+        const uint64_t left = timeout - elapsed;
+        until.tv_sec += (time_t)(left / 1000000000ull);
+        until.tv_nsec += (long)(left % 1000000000ull);
+        if (until.tv_nsec >= 1000000000L) { until.tv_sec++; until.tv_nsec -= 1000000000L; }
+        pthread_cond_timedwait(&ids->cond, &ids->lock, &until);
+    }
+    pthread_mutex_unlock(&ids->lock);
+    if (timeout == UINT64_MAX) *remaining = UINT64_MAX;
+    else {
+        const uint64_t elapsed = native_now_ns() - start;
+        *remaining = elapsed < timeout ? timeout - elapsed : 0;
+    }
+    return r;
+}
+#endif
 
 #define NATIVE_TIMING_CAP 8192
 static int native_cmp_double(const void *a, const void *b) {
@@ -399,6 +664,7 @@ static void native_swapchain_free(native_swapchain *sc) {
 #ifdef GFG_NATIVE_WITH_TE
     if (sc->bridge) gfg_cpu_fg_destroy(sc->bridge);
     if (sc->gpu) gfg_gpu_fg_destroy(sc->gpu);
+    native_ids_destroy(sc->ids); /* stops the monitor before the swapchain goes */
 #endif
     free(sc->present_us);
     free(sc->owned);
@@ -578,6 +844,7 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
     sc->extent = ci->imageExtent;
     sc->copy_eligible = candidate;
     sc->present_mode = ci->presentMode;
+    sc->create_flags = ci->flags;
     {
         const char *timing = getenv("GFG_NATIVE_TIMING");
         if (timing && timing[0] == '1')
@@ -695,6 +962,7 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
 #ifdef GFG_NATIVE_WITH_TE
     gfg_cpu_fg *bridge = NULL;
     gfg_gpu_fg *gpu = NULL;
+    gfg_present_id_hooks ids = {0};
     const char *flag = getenv("GFG_NATIVE_CPU_BRIDGE");
     /* GPU bridge takes precedence; when requested it never falls back to
      * the CPU bridge (a failed GPU bridge means real-frame pass-through). */
@@ -716,6 +984,7 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
                         .family = q->family, .semaphore_fd = d->semaphore_fd,
                         .set_loader_data = d->set_loader_data};
                     sc->gpu = gfg_gpu_fg_create(&gi);
+                    if (sc->gpu) sc->ids = native_ids_create(d, sc);
                     break;
                 }
                 if (!sc->gpu)
@@ -726,6 +995,11 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
                         " external memory fd / timeline); real-frame pass-through\n");
             }
             gpu = sc->gpu;
+            if (sc->ids) {
+                ids.mode = sc->ids->mode;
+                ids.assign = native_ids_assign;
+                ids.user = sc->ids;
+            }
             break;
         }
         pthread_mutex_unlock(&d->lock);
@@ -756,7 +1030,7 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
     }
     if (gpu) {
         path = "gpu";
-        result = gfg_gpu_fg_present(gpu, queue, info, d->present);
+        result = gfg_gpu_fg_present(gpu, queue, info, d->present, &ids);
     } else if (bridge) {
         path = "cpu";
         result = gfg_cpu_fg_present(bridge, info, d->present);
@@ -786,6 +1060,44 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
     return result;
 }
 
+#ifdef GFG_NATIVE_WITH_TE
+static native_present_ids *native_find_ids(native_device *d, VkSwapchainKHR swapchain) {
+    native_present_ids *ids = NULL;
+    pthread_mutex_lock(&d->lock);
+    for (native_swapchain *sc = d->swapchains; sc; sc = sc->next)
+        if (sc->handle == swapchain) { ids = sc->ids; break; }
+    pthread_mutex_unlock(&d->lock);
+    return ids;
+}
+static VKAPI_ATTR VkResult VKAPI_CALL
+native_WaitForPresentKHR(VkDevice device, VkSwapchainKHR swapchain, uint64_t present_id,
+                         uint64_t timeout) {
+    native_device *d = find_device(dispatch_key(device));
+    if (!d || !d->wait_present) return VK_ERROR_INITIALIZATION_FAILED;
+    native_present_ids *ids = native_find_ids(d, swapchain);
+    if (!ids || !present_id) return d->wait_present(device, swapchain, present_id, timeout);
+    uint64_t layer_id = 0, remaining = 0;
+    VkResult r = native_ids_translate(ids, present_id, timeout, &layer_id, &remaining);
+    if (r != VK_SUCCESS) return r;
+    return d->wait_present(device, swapchain, layer_id, remaining);
+}
+static VKAPI_ATTR VkResult VKAPI_CALL
+native_WaitForPresent2KHR(VkDevice device, VkSwapchainKHR swapchain,
+                          const VkPresentWait2InfoKHR *info) {
+    native_device *d = find_device(dispatch_key(device));
+    if (!d || !d->wait_present2) return VK_ERROR_INITIALIZATION_FAILED;
+    native_present_ids *ids = native_find_ids(d, swapchain);
+    if (!ids || !info || !info->presentId) return d->wait_present2(device, swapchain, info);
+    uint64_t layer_id = 0, remaining = 0;
+    VkResult r = native_ids_translate(ids, info->presentId, info->timeout, &layer_id, &remaining);
+    if (r != VK_SUCCESS) return r;
+    VkPresentWait2InfoKHR translated = *info; /* pNext kept */
+    translated.presentId = layer_id;
+    translated.timeout = remaining;
+    return d->wait_present2(device, swapchain, &translated);
+}
+#endif
+
 #define HOOK(name) if (!strcmp(symbol, "vk" #name)) return (PFN_vkVoidFunction)native_##name
 
 static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
@@ -804,6 +1116,10 @@ native_gdpa(VkDevice device, const char *symbol) {
     if (d->present) HOOK(QueuePresentKHR);
     if (d->acquire) HOOK(AcquireNextImageKHR);
     if (d->acquire2) HOOK(AcquireNextImage2KHR);
+#ifdef GFG_NATIVE_WITH_TE
+    if (d->wait_present) HOOK(WaitForPresentKHR);
+    if (d->wait_present2) HOOK(WaitForPresent2KHR);
+#endif
     return d->gdpa(device, symbol);
 }
 
@@ -834,6 +1150,12 @@ native_gipa(VkInstance instance, const char *symbol) {
         return (PFN_vkVoidFunction)native_AcquireNextImageKHR;
     if (!strcmp(symbol, "vkAcquireNextImage2KHR"))
         return (PFN_vkVoidFunction)native_AcquireNextImage2KHR;
+#ifdef GFG_NATIVE_WITH_TE
+    if (!strcmp(symbol, "vkWaitForPresentKHR"))
+        return (PFN_vkVoidFunction)native_WaitForPresentKHR;
+    if (!strcmp(symbol, "vkWaitForPresent2KHR"))
+        return (PFN_vkVoidFunction)native_WaitForPresent2KHR;
+#endif
     native_instance *i = find_instance(dispatch_key(instance));
     return i ? i->gipa(instance, symbol) : NULL;
 }
