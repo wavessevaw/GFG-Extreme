@@ -67,6 +67,8 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(c["battery"]["percent"], 77.0)
         self.assertTrue(c["frame_fusion"]["setting"])
         self.assertTrue(c["continuous_boost"])
+        self.assertTrue(c["boost"])
+        self.assertFalse(compact_status({"frame_os": {"feature_settings": {"boost": False}}})["boost"])
 
     def test_compact_status_tolerates_empty_and_garbage(self):
         c = compact_status({"sensors": "x", "battery": None, "telemetry": {"summary": 3}})
@@ -97,6 +99,8 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(self.call({"id": 1, "method": "set_feature", "params": {"feature": "continuous_boost", "enabled": False}}, True)["ok"])
         self.assertTrue(self.call({"id": 1, "method": "set_frame_fusion", "params": {"enabled": True}}, True)["ok"])
         self.assertIn(("feature", "p1", "continuous_boost", False), self.plugin.calls)
+        self.assertTrue(self.call({"id": 1, "method": "set_feature", "params": {"feature": "boost", "enabled": False}}, True)["ok"])
+        self.assertIn(("feature", "p1", "boost", False), self.plugin.calls)
         self.assertIn(("fusion", True), self.plugin.calls)
 
     def test_end_to_end_socket_and_discovery_file(self):

@@ -96,15 +96,12 @@ func _build_top_bar() -> void:
 	h.offset_top = 14
 	h.custom_minimum_size = Vector2(0, 48)
 	add_child(h)
-	var logo := Control.new()
+	var logo := TextureRect.new()   # the GFG wolf, as in the plugin
+	logo.texture = preload("res://assets/gfg_wolf.png")
 	logo.custom_minimum_size = Vector2(44, 44)
+	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	logo.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	logo.draw.connect(func():
-		logo.draw_circle(Vector2(22, 22), 21, UI.TEXT)
-		logo.draw_circle(Vector2(22, 22), 17, UI.RED)
-		var f := UI.font("bold")
-		var ts := f.get_string_size("G", HORIZONTAL_ALIGNMENT_LEFT, -1, 22)
-		logo.draw_string(f, Vector2(22 - ts.x / 2, 30), "G", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, UI.TEXT))
 	h.add_child(logo)
 	h.add_child(_gap(18))
 	_tab_pill = Panel.new()
@@ -165,10 +162,10 @@ func _build_hint_bar() -> void:
 	bar.offset_right = -36
 	add_child(bar)
 	bar.add_child(UI.keycap("⧉"))
-	bar.add_child(_vcenter(UI.label("МЕНЮ", 15, UI.TEXT_DIM, "semibold")))
+	bar.add_child(_vcenter(UI.label("Меню", 17, Color(UI.TEXT, 0.82), "semibold")))
 	bar.add_child(_gap(10))
 	bar.add_child(UI.keycap("☰"))
-	bar.add_child(_vcenter(UI.label("БЫСТРЫЕ НАСТРОЙКИ", 15, UI.TEXT_DIM, "semibold")))
+	bar.add_child(_vcenter(UI.label("Быстрые настройки", 17, Color(UI.TEXT, 0.82), "semibold")))
 	bar.add_child(UI.spacer())
 	_hints = UI.hbox(10)
 	bar.add_child(_hints)
@@ -187,7 +184,7 @@ func set_hints(list: Array) -> void:
 		if i > 0:
 			_hints.add_child(_gap(14))
 		_hints.add_child(UI.glyph(list[i][0]))
-		_hints.add_child(_vcenter(UI.label(list[i][1], 16, UI.TEXT, "medium")))
+		_hints.add_child(_vcenter(UI.label(list[i][1], 17, UI.TEXT, "semibold")))
 
 
 var _backdrop_gen := 0

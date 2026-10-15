@@ -27,7 +27,7 @@ API_VERSION = 1
 DISCOVERY_RELATIVE = Path(".local/state/gfg-extreme/shell-bridge.json")
 MAX_LINE = 16 * 1024
 SHELL_MODES = ("budget", "balanced", "quality", "autopilot")
-SHELL_FEATURES = ("continuous_boost",)
+SHELL_FEATURES = ("boost", "continuous_boost")
 
 
 def _num(value: Any) -> Optional[float]:
@@ -79,6 +79,7 @@ def compact_status(status: Dict[str, Any]) -> Dict[str, Any]:
             "minutes_left": battery.get("minutes_left") if isinstance(battery.get("minutes_left"), int) else None,
         },
         "frame_fusion": {"setting": fusion.get("setting_enabled") is True, "state": str(fusion.get("state") or "")},
+        "boost": features.get("boost") is not False,
         "continuous_boost": features.get("continuous_boost") is True,
     }
 

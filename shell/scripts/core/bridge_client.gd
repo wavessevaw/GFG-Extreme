@@ -164,6 +164,11 @@ func set_frame_fusion(enabled: bool, cb: Callable = Callable()) -> void:
 	call_method("set_frame_fusion", {"enabled": enabled}, cb)
 
 
+func set_boost(enabled: bool, cb: Callable = Callable()) -> void:
+	Log.info("bridge", "set_feature boost %s" % enabled)
+	call_method("set_feature", {"feature": "boost", "enabled": enabled}, cb)
+
+
 func set_continuous_boost(enabled: bool, cb: Callable = Callable()) -> void:
 	Log.info("bridge", "set_feature continuous_boost %s" % enabled)
 	call_method("set_feature", {"feature": "continuous_boost", "enabled": enabled}, cb)
