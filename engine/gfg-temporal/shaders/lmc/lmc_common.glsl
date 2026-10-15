@@ -139,6 +139,26 @@ float luma_b(int l, vec2 q) {
 
 float luma_at(int which, int l, vec2 q) { return which == 0 ? luma_a(l, q) : luma_b(l, q); }
 
+// 2x2 texels of level l with top-left texel t (clamped to the edge like the
+// reference's clamp): x = (t.x, t.y + 1), y = (t.x + 1, t.y + 1), z = (t.x + 1, t.y), w = t
+vec4 gather_a(int l, ivec2 t) {
+    vec2 uv = vec2(t + 1) / vec2(lpix(l));
+    if (l == 0) return textureGather(lumaA0, uv, 0);
+    if (l == 1) return textureGather(lumaA1, uv, 0);
+    if (l == 2) return textureGather(lumaA2, uv, 0);
+    if (l == 3) return textureGather(lumaA3, uv, 0);
+    return textureGather(lumaA4, uv, 0);
+}
+
+vec4 gather_b(int l, ivec2 t) {
+    vec2 uv = vec2(t + 1) / vec2(lpix(l));
+    if (l == 0) return textureGather(lumaB0, uv, 0);
+    if (l == 1) return textureGather(lumaB1, uv, 0);
+    if (l == 2) return textureGather(lumaB2, uv, 0);
+    if (l == 3) return textureGather(lumaB3, uv, 0);
+    return textureGather(lumaB4, uv, 0);
+}
+
 vec3 half_rgb(int which, vec2 q) {
     vec2 s = vec2(P.size.zw);
     vec2 uv = (clamp(q, vec2(0.0), s - 1.0001) + 0.5) / s;

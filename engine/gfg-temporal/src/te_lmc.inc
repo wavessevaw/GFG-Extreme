@@ -116,7 +116,8 @@ static VkResult lmc_create(te_context* ctx) {
     }
     LTRY(buffer_create(dev, &m->scratch, (VkDeviceSize)m->nblk * 16, bu, 0));
     LTRY(buffer_create(dev, &m->temporal, (VkDeviceSize)m->n1 * 16, bu, 0));
-    LTRY(buffer_create(dev, &m->layers, LMC_LY_LIVE + (VkDeviceSize)(2 * m->n1 + 3) * 4, bu, 0));
+    /* live flags, ordered list, 3 counters, dense list (4 words per entry, 16-byte aligned start) */
+    LTRY(buffer_create(dev, &m->layers, LMC_LY_LIVE + (VkDeviceSize)(((2 * m->n1 + 6) & ~3u) + 4 * m->n1) * 4, bu, 0));
     LTRY(buffer_create(dev, &m->globals, LMC_G_SIZE, bu, 0));
     LTRY(buffer_create(dev, &m->masked, (VkDeviceSize)(W / 4) * (H / 4) * 16, bu, 0));
     LTRY(buffer_create(dev, &m->sel, (VkDeviceSize)m->w2 * m->h2 * 16, bu, 0));

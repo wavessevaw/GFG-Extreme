@@ -40,6 +40,20 @@ shared float s_red[64][4];
 shared Layer s_h;
 shared uint s_flag;
 
+#define LVB ((2 * NB + 6) & ~3)
+uvec4 lv_at(uint j) {
+    int b = LVB + 4 * int(j);
+    return uvec4(LY.live[b], LY.live[b + 1], LY.live[b + 2], LY.live[b + 3]);
+}
+
+float lv_inlier(Layer H, uvec4 e) {
+    vec2 s = uintBitsToFloat(e.xy);
+    vec2 d = blk_centre(int(e.w));
+    vec2 q = apply_h(H, s);
+    bool finite_ = !(isnan(q.x) || isnan(q.y) || isinf(q.x) || isinf(q.y));
+    return (finite_ && distance(q, d) < uintBitsToFloat(e.z)) ? 1.0 : 0.0;
+}
+
 float wg_sum(float v) {
     // subgroup sum, then across subgroups through LDS (64 threads)
     float s = subgroupAdd(v);
@@ -141,14 +155,15 @@ void main() {
         Layer H = s_h;
         uint nl = NLIVE;
         float cnt = 0.0;
-        for (uint j = lid; j < nl; j += 64u) {
-            int i = int(LIST(int(j)));
-            vec2 d = blk_centre(i);
-            vec2 s = d - blk_vec(i);
-            vec2 q = apply_h(H, s);
-            bool finite_ = !(isnan(q.x) || isnan(q.y) || isinf(q.x) || isinf(q.y));
-            if (finite_ && distance(q, d) < tol_of(blk_vec(i))) cnt += 1.0;
+        // the dense list of lmc_irls pass 1 (src, tolerance, index), four entries
+        // in flight per thread
+        uint j = lid;
+        for (; j + 192u < nl; j += 256u) {
+            uvec4 e[4];
+            [[unroll]] for (int u = 0; u < 4; ++u) e[u] = lv_at(j + 64u * uint(u));
+            [[unroll]] for (int u = 0; u < 4; ++u) cnt += lv_inlier(H, e[u]);
         }
+        for (; j < nl; j += 64u) cnt += lv_inlier(H, lv_at(j));
         float tot = wg_sum(cnt);
         if (lid == 0u) LY.hyp_inliers[wgi] = uint(tot + 0.5);
         return;

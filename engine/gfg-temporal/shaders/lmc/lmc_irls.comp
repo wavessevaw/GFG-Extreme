@@ -4,11 +4,11 @@
 #extension GL_KHR_shader_subgroup_arithmetic : require
 // The serial parts of the motion-plane fit, one workgroup of WG threads
 // (reference: gen_lmc2.fit_layers, irls_h, fit_h_ls).  Each thread keeps its
-// CK level-1 blocks (vector, live / inlier bits, IRLS weight) in registers, so
-// most of the six IRLS iterations never wait on memory.  WG * CK = 12288
-// blocks: the largest cache without register spills on RDNA2 (the compiler's
-// limit for a 512-thread group is 256 VGPRs); the rest of a 1280x800 frame
-// (16000 blocks) is read from memory, with 8 waves per CU to hide latency.
+// CK level-1 blocks (vector, live / inlier bits) in registers and recomputes a
+// block's IRLS weight from the previous iteration's plane when it needs it,
+// so the six iterations never wait on memory.  WG * CK = 16384 blocks covers
+// 1280x800 (16000); the blocks of a larger frame past that are read from
+// memory, their weights kept in scratch[].w.
 // Reductions are batched: one pair of barriers per group of sums.
 //
 // PC.pass_: 1 = ordered list of the blocks still unexplained
@@ -18,7 +18,7 @@
 #include "lmc_common.glsl"
 layout(local_size_x = 512) in;
 #define WG 512
-#define CK 24
+#define CK 32
 
 #define NB (P.counts.y)
 #define LIST(i) LY.live[NB + (i)]
@@ -37,6 +37,29 @@ shared float s_M[8][9];      // the normal equations | right side
 shared float s_hs[8];
 
 uint lid;
+
+// IRLS weight: Tukey of the residual under the previous iteration's plane (1 before the first)
+Layer g_hw;
+float g_cthw;
+bool g_first;
+
+float tukey_w(vec2 d, vec2 v) {
+    if (g_first) return 1.0;
+    float r = distance(apply_h(g_hw, d - v), d);
+    float u = r / g_cthw;
+    return r < g_cthw ? (1.0 - u * u) * (1.0 - u * u) : 0.0;
+}
+
+// dense list for the RANSAC pass: src.x, src.y, tolerance (float bits), block index
+#define LVB ((2 * NB + 6) & ~3)
+void store_lv(uint j, int i) {
+    vec2 v = blk_vec(i);
+    vec2 s = blk_centre(i) - v;
+    LY.live[LVB + 4 * int(j)] = floatBitsToUint(s.x);
+    LY.live[LVB + 4 * int(j) + 1] = floatBitsToUint(s.y);
+    LY.live[LVB + 4 * int(j) + 2] = floatBitsToUint(tol_of(v));
+    LY.live[LVB + 4 * int(j) + 3] = uint(i);
+}
 
 // ------------------------------------------------------------- reductions
 
@@ -128,15 +151,33 @@ void main() {
 
     if (PC.pass_ == 1) {
         if (STOP != 0u) return;
-        // ordered compaction: contiguous chunks + exclusive scan
+        // ordered compaction: contiguous chunks + exclusive scan; up to 32 blocks
+        // per thread the flags are loaded together (independent loads)
         int chunk = (n + WG - 1) / WG;
         int lo = int(lid) * chunk, hi = min(n, lo + chunk);
-        uint cnt = 0u;
-        for (int i = lo; i < hi; ++i) cnt += LY.live[i];
         uint total;
-        uint off = wg_scan(cnt, total);
-        for (int i = lo; i < hi; ++i)
-            if (LY.live[i] != 0u) LIST(int(off++)) = uint(i);
+        if (chunk <= 32) {
+            uint bits = 0u;
+            [[unroll]] for (int k = 0; k < 32; ++k)
+                if (lo + k < hi && LY.live[lo + k] != 0u) bits |= 1u << k;
+            uint off = wg_scan(uint(bitCount(bits)), total);
+            [[unroll]] for (int k = 0; k < 32; ++k)
+                if ((bits & (1u << k)) != 0u) {
+                    LIST(int(off)) = uint(lo + k);
+                    store_lv(off, lo + k);
+                    ++off;
+                }
+        } else {
+            uint cnt = 0u;
+            for (int i = lo; i < hi; ++i) cnt += LY.live[i];
+            uint off = wg_scan(cnt, total);
+            for (int i = lo; i < hi; ++i)
+                if (LY.live[i] != 0u) {
+                    LIST(int(off)) = uint(i);
+                    store_lv(off, i);
+                    ++off;
+                }
+        }
         if (lid == 0u) NLIVE = total;
         return;
     }
@@ -155,15 +196,14 @@ void main() {
     }
     Layer H = LY.hyps[best];
 
-    // this thread's blocks: vector, live bit, wref bit (inlier of the hypothesis), IRLS weight
+    // this thread's blocks: vector, live bit, wref bit (inlier of the hypothesis)
     vec2 cv[CK];
-    float cw[CK];
     uint live_bits = 0u, wref_bits = 0u;
     float nref = 0.0;
+    g_first = true;
     [[unroll]] for (int k = 0; k < CK; ++k) {
         int i = int(lid) + WG * k;
         cv[k] = vec2(0.0);
-        cw[k] = 0.0;
         if (i < n) {
             vec2 v = blk_vec(i);
             cv[k] = v;
@@ -172,7 +212,6 @@ void main() {
                 vec2 d = blk_centre(i);
                 if (distance(apply_h(H, d - v), d) < tol_of(v)) {
                     wref_bits |= 1u << k;
-                    cw[k] = 1.0;
                     nref += 1.0;
                 }
             }
@@ -199,9 +238,11 @@ void main() {
         vec4 a[6];
         [[unroll]] for (int k = 0; k < 6; ++k) a[k] = vec4(0.0);
         [[unroll]] for (int k = 0; k < CK; ++k) {
+            if ((wref_bits & (1u << k)) == 0u) continue;
             vec2 d = blk_centre(int(lid) + WG * k);
-            a[0] += cw[k] * vec4(d - cv[k], d);
-            a[1].x += cw[k];
+            float w = tukey_w(d, cv[k]);
+            a[0] += w * vec4(d - cv[k], d);
+            a[1].x += w;
         }
         for (int i = int(lid) + WG * CK; i < n; i += WG) {
             float w = scratch[P.blk_off.x + i].w;
@@ -214,9 +255,11 @@ void main() {
         vec4 c = a[0] / W;
         vec4 dsum = vec4(0.0);
         [[unroll]] for (int k = 0; k < CK; ++k) {
+            if ((wref_bits & (1u << k)) == 0u) continue;
             vec2 d = blk_centre(int(lid) + WG * k);
-            dsum.x += cw[k] * distance(d - cv[k], c.xy);
-            dsum.y += cw[k] * distance(d, c.zw);
+            float w = tukey_w(d, cv[k]);
+            dsum.x += w * distance(d - cv[k], c.xy);
+            dsum.y += w * distance(d, c.zw);
         }
         for (int i = int(lid) + WG * CK; i < n; i += WG) {
             float w = scratch[P.blk_off.x + i].w;
@@ -230,9 +273,11 @@ void main() {
         [[unroll]] for (int part = 0; part < 2; ++part) {
             [[unroll]] for (int k = 0; k < 6; ++k) a[k] = vec4(0.0);
             [[unroll]] for (int k = 0; k < CK; ++k) {
-                if (cw[k] <= 0.0) continue;
+                if ((wref_bits & (1u << k)) == 0u) continue;
                 vec2 d = blk_centre(int(lid) + WG * k);
-                accum_part(a, (d - cv[k] - ns.xy) * ns.z, (d - nd.xy) * nd.z, cw[k], part);
+                float w = tukey_w(d, cv[k]);
+                if (w <= 0.0) continue;
+                accum_part(a, (d - cv[k] - ns.xy) * ns.z, (d - nd.xy) * nd.z, w, part);
             }
             for (int i = int(lid) + WG * CK; i < n; i += WG) {
                 float w = scratch[P.blk_off.x + i].w;
@@ -242,7 +287,9 @@ void main() {
             }
             wg_reduce(a, part == 0 ? 6 : 5, part * 6);
         }
-        // the 8x8 solve by one thread, on the system in LDS (pivoting indexes it dynamically)
+        // the 8x8 solve.  M is symmetric positive definite (weighted normal
+        // equations + 1e-9 I), so elimination needs no pivoting: rows are reduced
+        // in parallel on the system in LDS, then one thread substitutes back.
         if (lid < 44u) {
             int e = int(lid);
             float m = s_out[e >> 2][e & 3];
@@ -257,26 +304,27 @@ void main() {
             }
         }
         barrier();
-        if (lid == 0u) {
-            for (int c = 0; c < 8; ++c) {
-                int piv = c;
-                for (int r = c + 1; r < 8; ++r)
-                    if (abs(s_M[r][c]) > abs(s_M[piv][c])) piv = r;
-                if (piv != c)
-                    for (int k = 0; k < 9; ++k) { float t = s_M[c][k]; s_M[c][k] = s_M[piv][k]; s_M[piv][k] = t; }
+        for (int c = 0; c < 7; ++c) {
+            // thread (r, k): row r > c, column k >= c of the augmented system
+            int r = c + 1 + int(lid) / 9, k = int(lid) % 9;
+            float upd = 0.0;
+            bool act = r < 8 && k >= c;
+            if (act) {
                 float d = s_M[c][c];
                 if (abs(d) < 1e-20) d = 1e-20;
-                for (int r = c + 1; r < 8; ++r) {
-                    float f = s_M[r][c] / d;
-                    for (int k = c; k < 9; ++k) s_M[r][k] -= f * s_M[c][k];
-                }
+                upd = s_M[r][k] - s_M[r][c] / d * s_M[c][k];
             }
+            barrier();
+            if (act) s_M[r][k] = upd;
+            barrier();
+        }
+        if (lid == 0u) {
             float h[8];
             for (int r = 7; r >= 0; --r) {
-                float sacc = s_M[r][8];
-                for (int k = r + 1; k < 8; ++k) sacc -= s_M[r][k] * s_hs[k];
+                float acc = s_M[r][8];
+                for (int k = r + 1; k < 8; ++k) acc -= s_M[r][k] * s_hs[k];
                 float d = s_M[r][r];
-                s_hs[r] = sacc / (abs(d) < 1e-20 ? 1e-20 : d);
+                s_hs[r] = acc / (abs(d) < 1e-20 ? 1e-20 : d);
             }
             [[unroll]] for (int k = 0; k < 8; ++k) h[k] = s_hs[k];
             s_h = denorm(h, ns, nd);
@@ -305,13 +353,9 @@ void main() {
         uint cum = wg_scan(hv, total) + hv;
         uint kmed = wg_umin((lid < 255u && cum >= half_) ? lid : 255u);
         float cth = max(2.0, 2.5 * (float(kmed) + 0.5) * 0.25);
-        [[unroll]] for (int k = 0; k < CK; ++k) {
-            vec2 d = blk_centre(int(lid) + WG * k);
-            float r = distance(apply_h(H, d - cv[k]), d);
-            float wr = (wref_bits & (1u << k)) != 0u ? 1.0 : 0.0;
-            float u = r / cth;
-            cw[k] = wr * (r < cth ? (1.0 - u * u) * (1.0 - u * u) : 0.0);
-        }
+        g_hw = H;  // the cached blocks' next weights follow from H and cth
+        g_cthw = cth;
+        g_first = false;
         for (int i = int(lid) + WG * CK; i < n; i += WG) {
             vec2 d = blk_centre(i);
             float r = distance(apply_h(H, d - blk_vec(i)), d);

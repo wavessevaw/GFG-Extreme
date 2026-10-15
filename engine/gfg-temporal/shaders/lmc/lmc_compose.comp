@@ -28,18 +28,28 @@ void main() {
     vec2 c = (pf + 0.5) / 2.0 - 0.5;
     ivec2 c0 = ivec2(floor(c));
     float best = 1e30;
-    for (int oy = 0; oy <= 1; ++oy)
-        for (int ox = 0; ox <= 1; ++ox) {
-            ivec2 q = clamp(c0 + ivec2(ox, oy), ivec2(0), hs - 1);
-            vec4 s = SEL.sel[q.y * hs.x + q.x];
+    // a choice equal to an earlier one gives the same error and colour and cannot
+    // win (strict <): neighbouring cells mostly agree, so most pixels fetch once
+    vec4 seen[4];
+    [[unroll]] for (int k = 0; k < 4; ++k) {
+        ivec2 q = clamp(c0 + ivec2(k & 1, k >> 1), ivec2(0), hs - 1);
+        vec4 s = SEL.sel[q.y * hs.x + q.x];
+        seen[k] = s;
+        bool rep = false;
+        [[unroll]] for (int u = 0; u < k; ++u) rep = rep || seen[u].xyz == s.xyz;
+        if (rep) continue;
+        {
             vec2 v = s.xy * 2.0;
             int m = int(s.z + 0.5);
             vec2 a = pf - t * v, b = pf + (1.0 - t) * v;
-            vec3 ca = full_rgb(0, a), cb = full_rgb(1, b);
+            // only the two-sided error needs both fetches; one-sided modes fetch their side
+            vec3 ca = (m == 3 || m == 1) ? full_rgb(0, a) : vec3(0.0);
+            vec3 cb = (m == 3 || m == 2) ? full_rgb(1, b) : vec3(0.0);
             vec3 d = abs(ca - cb);
             float e = m == 3 ? d.r + d.g + d.b : (m == 0 ? 9.0 : 1.5);
             vec3 col = m == 3 ? ca * (1.0 - t) + cb * t : (m == 1 ? ca : (m == 2 ? cb : ca0 * (1.0 - t) + cb0 * t));
             if (e < best) { best = e; outc = col; }
         }
+    }
     imageStore(dst, p, vec4(outc, 1.0));
 }

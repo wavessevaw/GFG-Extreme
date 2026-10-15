@@ -23,7 +23,7 @@ layout(local_size_x = 64) in;
 shared float s_c[64];
 shared int s_i[64];
 shared float s_y[64], s_w[64];
-shared int s_blk;
+shared uint s_oh[130];
 
 bool hud_at(ivec2 p) { return imageLoad(hudCount, p).r >= uint(P.hud_pairs); }
 
@@ -78,12 +78,14 @@ void main() {
     }
     if (PC.pass_ == 1) {
         uint lid = gl_LocalInvocationIndex;
+        for (uint k = lid; k < 130u; k += 64u) s_oh[k] = G.ohist[k];  // loads in parallel
+        barrier();
         if (lid >= 2u) return;
         int g = int(lid);
         uint acc = 0u;
         int thr = 64;
         for (int c = 64; c > cmin; --c) {
-            uint h = G.ohist[g * 65 + c];
+            uint h = s_oh[g * 65 + c];
             if (acc + h > uint(P.orphan_cap)) break;
             acc += h;
             thr = c - 1;

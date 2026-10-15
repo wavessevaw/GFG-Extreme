@@ -31,18 +31,34 @@ void store_v(ivec2 b, vec4 v) {
 // the block's own pixels, fetched once (constant indices only: stays in registers)
 float g_own[LMC_BLK * LMC_BLK];
 
-void load_own() {
-    [[unroll]] for (int oy = 0; oy < LMC_BLK; ++oy)
-        [[unroll]] for (int ox = 0; ox < LMC_BLK; ++ox) {
-            vec2 q = vec2(g_b * LMC_BLK + ivec2(ox, oy));
-            g_own[oy * LMC_BLK + ox] = PC.grid == 0 ? luma_b(g_l, q) : luma_a(g_l, q);
+// 4x4 texels with top-left t from four 2x2 gathers, in raster order
+void gather4x4(int which, ivec2 t, out float o[16]) {
+    [[unroll]] for (int gy = 0; gy < 2; ++gy)
+        [[unroll]] for (int gx = 0; gx < 2; ++gx) {
+            ivec2 c = t + ivec2(gx, gy) * 2;
+            vec4 g = which == 0 ? gather_a(g_l, c) : gather_b(g_l, c);
+            int i = gy * 8 + gx * 2;
+            o[i] = g.w;
+            o[i + 1] = g.z;
+            o[i + 4] = g.x;
+            o[i + 5] = g.y;
         }
 }
 
-// mean |own - other| over the 4x4 block (reference: Level.cost)
+void load_own() { gather4x4(PC.grid == 0 ? 1 : 0, g_b * LMC_BLK, g_own); }
+
+// mean |own - other| over the 4x4 block (reference: Level.cost).  Whole-pixel
+// offsets (the full search, parents, +-1 steps) take four gathers instead of 16
+// bilinear fetches; fractional ones (temporal, layers, +-0.5) are filtered.
 float cost(vec2 v) {
     float acc = 0.0;
     vec2 o = PC.grid == 0 ? -v : v;
+    if (o == floor(o)) {
+        float t[16];
+        gather4x4(PC.grid == 0 ? 0 : 1, g_b * LMC_BLK + ivec2(o), t);
+        [[unroll]] for (int k = 0; k < 16; ++k) acc += abs(g_own[k] - t[k]);
+        return acc / float(LMC_BLK * LMC_BLK);
+    }
     [[unroll]] for (int oy = 0; oy < LMC_BLK; ++oy) {
         [[unroll]] for (int ox = 0; ox < LMC_BLK; ++ox) {
             vec2 q = vec2(g_b * LMC_BLK + ivec2(ox, oy)) + o;
