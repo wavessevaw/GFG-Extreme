@@ -29,7 +29,7 @@ jobs:
       - name: Build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++-12 cmake libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers libx11-dev libxcb1-dev glslang-tools spirv-tools p7zip-full
+          sudo apt-get install -y g++-12 cmake libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers libx11-dev libxcb1-dev xvfb glslang-tools spirv-tools p7zip-full
           git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
       - name: Compile standalone GFG Native WSI layer (no MAKO linkage)
         run: |
@@ -38,6 +38,9 @@ jobs:
           make -C engine/gfg-native smoke VULKAN_HEADERS="$RUNNER_TEMP/vkh/include"             VK_ICD_FILENAMES="$VK_ICD_FILENAMES" 2>&1 | tee native-loader-smoke.log
           grep -q 'GFG native: Vulkan loader/instance/device dispatch smoke PASS' native-loader-smoke.log
           grep -q '\[gfg-native\] instance initialized enabled=1' native-loader-smoke.log
+          xvfb-run -a make -C engine/gfg-native wsi-smoke \
+            VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" 2>&1 | tee native-wsi-smoke.log
+          grep -q 'GFG native: 4 real WSI acquire/submit/present cycles PASS' native-wsi-smoke.log
       - name: Compile DLL-free Temporal Engine bootstrap using pinned production renderer
         run: |
           python3 scripts/build_frame_fusion.py --native-no-dll \

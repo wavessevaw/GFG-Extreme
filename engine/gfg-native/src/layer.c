@@ -34,6 +34,11 @@ typedef struct native_swapchain {
     VkFormat format;
     VkExtent2D extent;
     uint64_t presents;
+    uint64_t acquired;
+    uint64_t acquire_misses;
+    uint64_t present_misses;
+    uint32_t image_count;
+    unsigned char *owned; /* only exact acquired image indices, never fabricated */
     int copy_eligible; /* enabled transfer usage only; never means captured */
 } native_swapchain;
 
@@ -49,6 +54,7 @@ typedef struct native_device {
     PFN_vkQueuePresentKHR present;
     PFN_vkGetSwapchainImagesKHR get_images;
     PFN_vkAcquireNextImageKHR acquire;
+    PFN_vkAcquireNextImage2KHR acquire2;
     native_instance *instance;
     pthread_mutex_t lock;
     native_swapchain *swapchains;
@@ -195,6 +201,8 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
         gdpa(*out, "vkGetSwapchainImagesKHR");
     d->acquire = (PFN_vkAcquireNextImageKHR)
         gdpa(*out, "vkAcquireNextImageKHR");
+    d->acquire2 = (PFN_vkAcquireNextImage2KHR)
+        gdpa(*out, "vkAcquireNextImage2KHR");
     pthread_mutex_lock(&map_lock);
     for (native_instance *i = instances; i; i = i->next)
         if (i->key == dispatch_key(phys)) {
@@ -220,6 +228,7 @@ native_DestroyDevice(VkDevice device, const VkAllocationCallbacks *alloc) {
     native_swapchain *sc = found->swapchains;
     while (sc) {
         native_swapchain *next = sc->next;
+        free(sc->owned);
         free(sc);
         sc = next;
     }
@@ -275,6 +284,14 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
     sc->format = ci->imageFormat;
     sc->extent = ci->imageExtent;
     sc->copy_eligible = candidate;
+    if (d->get_images) {
+        uint32_t image_count = 0;
+        if (d->get_images(device, *out, &image_count, NULL) == VK_SUCCESS &&
+                image_count > 0 && image_count <= 256) {
+            sc->owned = calloc(image_count, sizeof(*sc->owned));
+            if (sc->owned) sc->image_count = image_count;
+        }
+    }
     pthread_mutex_lock(&d->lock);
     sc->next = d->swapchains;
     d->swapchains = sc;
@@ -295,6 +312,7 @@ native_DestroySwapchainKHR(VkDevice device, VkSwapchainKHR sc,
         if ((*p)->handle == sc) {
             native_swapchain *old = *p;
             *p = old->next;
+            free(old->owned);
             free(old);
             break;
         }
@@ -302,10 +320,63 @@ native_DestroySwapchainKHR(VkDevice device, VkSwapchainKHR sc,
     d->destroy_swapchain(device, sc, alloc);
 }
 
+static void native_acquired(native_device *d, VkSwapchainKHR handle, uint32_t index) {
+    pthread_mutex_lock(&d->lock);
+    for (native_swapchain *sc = d->swapchains; sc; sc = sc->next) {
+        if (sc->handle != handle) continue;
+        if (!sc->owned || index >= sc->image_count || sc->owned[index]) {
+            ++sc->acquire_misses;
+        } else {
+            sc->owned[index] = 1;
+            ++sc->acquired;
+        }
+        break;
+    }
+    pthread_mutex_unlock(&d->lock);
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL
+native_AcquireNextImageKHR(VkDevice device, VkSwapchainKHR swapchain,
+        uint64_t timeout, VkSemaphore semaphore, VkFence fence, uint32_t *index) {
+    native_device *d = find_device(dispatch_key(device));
+    if (!d || !d->acquire) return VK_ERROR_INITIALIZATION_FAILED;
+    VkResult result = d->acquire(device, swapchain, timeout, semaphore, fence, index);
+    if ((result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) && index)
+        native_acquired(d, swapchain, *index);
+    return result;
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL
+native_AcquireNextImage2KHR(VkDevice device, const VkAcquireNextImageInfoKHR *info,
+        uint32_t *index) {
+    native_device *d = find_device(dispatch_key(device));
+    if (!d || !d->acquire2) return VK_ERROR_INITIALIZATION_FAILED;
+    VkResult result = d->acquire2(device, info, index);
+    if ((result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) && index && info)
+        native_acquired(d, info->swapchain, *index);
+    return result;
+}
+
 static VKAPI_ATTR VkResult VKAPI_CALL
 native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
     native_device *d = find_device(dispatch_key(queue));
     if (!d || !d->present) return VK_ERROR_INITIALIZATION_FAILED;
+    // Observe acquisition ownership. Do NOT consume the application's semaphores
+    // or mutate VkPresentInfoKHR; those belong to the game/real-frame path.
+    if (info && info->pImageIndices && info->pSwapchains) {
+        pthread_mutex_lock(&d->lock);
+        for (uint32_t n = 0; n < info->swapchainCount; ++n) {
+            for (native_swapchain *sc = d->swapchains; sc; sc = sc->next) {
+                if (sc->handle != info->pSwapchains[n]) continue;
+                const uint32_t idx = info->pImageIndices[n];
+                if (!sc->owned || idx >= sc->image_count || !sc->owned[idx])
+                    ++sc->present_misses;
+                else sc->owned[idx] = 0;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&d->lock);
+    }
     // Exactly one forward: no synthetic present or extra swapchain acquisition
     // until the independent image/queue/timeline ownership contract is proven.
     VkResult result = d->present(queue, info);
@@ -335,6 +406,8 @@ native_gdpa(VkDevice device, const char *symbol) {
     if (d->create_swapchain) HOOK(CreateSwapchainKHR);
     if (d->destroy_swapchain) HOOK(DestroySwapchainKHR);
     if (d->present) HOOK(QueuePresentKHR);
+    if (d->acquire) HOOK(AcquireNextImageKHR);
+    if (d->acquire2) HOOK(AcquireNextImage2KHR);
     return d->gdpa(device, symbol);
 }
 
@@ -349,6 +422,18 @@ native_gipa(VkInstance instance, const char *symbol) {
     HOOK(DestroyInstance);
     HOOK(CreateDevice);
     if (!instance) return NULL;
+    // Instance-level lookup of device commands must not bypass our layer.
+    // Many Vulkan frameworks resolve WSI commands via vkGetInstanceProcAddr.
+    if (!strcmp(symbol, "vkCreateSwapchainKHR"))
+        return (PFN_vkVoidFunction)native_CreateSwapchainKHR;
+    if (!strcmp(symbol, "vkDestroySwapchainKHR"))
+        return (PFN_vkVoidFunction)native_DestroySwapchainKHR;
+    if (!strcmp(symbol, "vkQueuePresentKHR"))
+        return (PFN_vkVoidFunction)native_QueuePresentKHR;
+    if (!strcmp(symbol, "vkAcquireNextImageKHR"))
+        return (PFN_vkVoidFunction)native_AcquireNextImageKHR;
+    if (!strcmp(symbol, "vkAcquireNextImage2KHR"))
+        return (PFN_vkVoidFunction)native_AcquireNextImage2KHR;
     native_instance *i = find_instance(dispatch_key(instance));
     return i ? i->gipa(instance, symbol) : NULL;
 }

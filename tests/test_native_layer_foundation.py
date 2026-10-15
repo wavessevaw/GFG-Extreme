@@ -25,6 +25,10 @@ class NativeLayerTests(unittest.TestCase):
         self.assertIn("output=real-only", code)
         self.assertIn("VK_IMAGE_USAGE_TRANSFER_SRC_BIT", code)
         self.assertIn("VK_IMAGE_USAGE_TRANSFER_DST_BIT", code)
+        self.assertIn("native_AcquireNextImageKHR", code)
+        self.assertIn("native_AcquireNextImage2KHR", code)
+        self.assertIn("native_acquired(", code)
+        self.assertIn("if (!strcmp(symbol, \"vkQueuePresentKHR\"))", code)
 
 if __name__ == "__main__":
     unittest.main()
