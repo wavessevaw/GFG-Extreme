@@ -78,9 +78,11 @@ static te_context* make_ctx(te_device* dev, uint32_t outputs, int adaptive, int 
     return ctx;
 }
 
+static int g_lmc_tier;   /* LMC cost tier of every submit (te_submit.lmc_tier) */
+
 static int run_pair(te_context* ctx, uint32_t slot, const uint8_t* frame, uint32_t count, const float* ts) {
     if (te_upload_rgb(ctx, slot, frame) != VK_SUCCESS) return 0;
-    te_submit s = {.slot = slot, .count = count, .download = 1};
+    te_submit s = {.slot = slot, .count = count, .download = 1, .lmc_tier = g_lmc_tier};
     for (uint32_t i = 0; i < count; ++i) s.timestamps[i] = ts[i];
     return te_submit_frame(ctx, &s) == VK_SUCCESS && te_wait_idle(ctx) == VK_SUCCESS;
 }
@@ -263,11 +265,15 @@ static void test_lifetime(te_device* dev) {
     free(f);
 }
 
-static void test_timeline_protocol(te_device* dev) {
+static te_context* make_lmc(te_device* dev, uint32_t outputs);
+
+static void test_timeline_protocol(te_device* dev, int lmc) {
     /* MAKO protocol: the producer signals idx when a real frame is ready;
      * output i signals idx + 1 + i; the next real frame is idx + N + 1.  The
-     * first frame has no pair, so its outputs hold the new frame. */
-    te_context* ctx = make_ctx(dev, 2, 1, 2);
+     * first frame has no pair, so its outputs hold the new frame.  LMC: the
+     * analysis is two submissions around the CPU motion fit, the protocol is
+     * the same. */
+    te_context* ctx = lmc ? make_lmc(dev, 2) : make_ctx(dev, 2, 1, 2);
     EXPECT(ctx, "context");
     if (!ctx) return;
     EXPECT(te_context_memory_bytes(ctx) > (uint64_t)W * H * 4 * 4, "context memory accounted (%llu bytes)",
@@ -306,6 +312,14 @@ static void test_timeline_protocol(te_device* dev) {
     te_download_rgb(ctx, 0, o);
     EXPECT(st.held && memcmp(o, a, W * H * 3) == 0, "discontinuity holds the new frame");
     EXPECT(te_timeline_value(ctx) == 8, "discontinuity output signalled");
+    if (lmc) {
+        /* a generated pair still in flight when the context goes: destroy waits for it (the fit
+           worker releases the second half) instead of hanging */
+        te_upload_rgb(ctx, 0, b);
+        te_timeline_signal(ctx, 9);
+        te_submit s3 = {.slot = 0, .count = 2, .timestamps = {1.0f / 3, 2.0f / 3}, .wait_value = 9, .signal_first = 10};
+        EXPECT(te_submit_frame(ctx, &s3) == VK_SUCCESS, "LMC pair submitted before destroy");
+    }
     free(a);
     free(b);
     free(o);
@@ -536,9 +550,11 @@ static void test_lmc_static(te_device* dev) {
     te_context_destroy(ctx);
 }
 
-static void test_lmc_pan(te_device* dev) {
+static void test_lmc_pan(te_device* dev, int tier) {
     /* a camera pan: (6, 2) per real frame; after a few pairs the plane, the
-     * palette and the temporal predictor are all in play */
+     * palette and the temporal predictor are all in play.  Tier 1 takes the A
+     * grid from the B grid, tier 2 also runs one propagation sweep. */
+    g_lmc_tier = tier;
     te_context* ctx = make_lmc(dev, 2);
     EXPECT(ctx, "LMC context");
     if (!ctx) return;
@@ -563,7 +579,10 @@ static void test_lmc_pan(te_device* dev) {
         }
         te_last_stats(ctx, &st);
     }
-    EXPECT(worst > 32.0 && worst > rep + 8.0, "LMC pan reconstruction worst %.2f dB (repeat best %.2f dB)", worst, rep);
+    EXPECT(worst > 32.0 && worst > rep + 8.0, "LMC pan (tier %d) reconstruction worst %.2f dB (repeat best %.2f dB)",
+           tier, worst, rep);
+    EXPECT(st.lmc_tier == tier, "LMC pan: pair recorded at tier %d (%d)", tier, st.lmc_tier);
+    g_lmc_tier = 0;
     /* RANSAC samples must lie 120 px apart: planes are a full-resolution
      * feature (bench/parity.py checks them at 1280x800); here only the bound */
     EXPECT(st.tiles[0][0] <= 3, "LMC pan: at most three motion planes (%u)", st.tiles[0][0]);
@@ -639,9 +658,10 @@ int main(void) {
     test_hysteresis(dev);
     test_invalid_inputs(dev);
     test_lifetime(dev);
-    test_timeline_protocol(dev);
+    test_timeline_protocol(dev, 0);
+    test_timeline_protocol(dev, 1);
     test_lmc_static(dev);
-    test_lmc_pan(dev);
+    for (int tier = 0; tier < TE_LMC_TIERS; ++tier) test_lmc_pan(dev, tier);
     test_lmc_hud(dev);
     test_lmc_hold(dev);
     uint32_t verr = te_device_validation_errors(dev);

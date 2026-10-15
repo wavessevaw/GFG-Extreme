@@ -269,6 +269,9 @@ def temporal_engine_log_summary(text: str) -> Dict[str, Any]:
             "reasons": dict(Counter(r.get("reason", "?") for r in rows)),
             "holding_share": round(sum(r.get("holding") == "1" for r in rows) / len(rows), 2),
             "cost_holds": max((int(r["cost_holds"]) for r in rows if r.get("cost_holds", "").isdigit()), default=0),
+            # te.7 (LMC): cost tiers the generator ran at, and how often it changed tier
+            "tiers": dict(Counter(r["tier"] for r in rows if "tier" in r)),
+            "tier_steps": max((int(r["tier_steps"]) for r in rows if r.get("tier_steps", "").isdigit()), default=0),
             "fixed_ms_median": med("fixed_ms"), "frame_ms_median": med("frame_ms"),
             "pair_p95_ms_median": med("pair_p95_ms"), "cap_ms": med("cap_ms"),
             "interval_ms_median": med("interval_ms"),
@@ -569,7 +572,8 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
         tlog = temporal.get("renderer_log") or {}
         if tlog.get("available"):
             text += (f" Renderer log ({tlog['lines']} lines): levels {tlog['levels']}, holding "
-                     f"{int(tlog['holding_share'] * 100)}% of the time ({tlog['cost_holds']} cost holds), "
+                     f"{int(tlog['holding_share'] * 100)}% of the time ({tlog['cost_holds']} cost holds, "
+                     f"tiers {tlog.get('tiers') or {}}, {tlog.get('tier_steps', 0)} tier changes), "
                      f"fixed {tlog['fixed_ms_median']} ms + {tlog['frame_ms_median']} ms per generated frame "
                      f"(cap {tlog['cap_ms']} ms), shares reuse/light/full {tlog['shares_median']}.")
         if temporal.get("fallback_reasons"):

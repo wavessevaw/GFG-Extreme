@@ -275,6 +275,70 @@ def fit_layers(vb, cb, hud, yb, seed, prev=()):
     return layers, shares
 
 
+# Engine variants, switched by the environment so bench.py can score them:
+#   LMC_FIT_SUB=2  the planes fitted on every 2nd block in each direction (the engine's CPU fit)
+#   LMC_SINGLE=1   the A grid carried from the B grid (engine cost tiers 1 and 2)
+#   LMC_LAG=1      the previous pair's model (a CPU fit that overlaps the next pair; measured
+#                  worse on the specular scene, so the engine waits for the fit of the pair instead)
+import os as _os
+LAG = _os.environ.get("LMC_LAG", "0") == "1"
+FIT_SUB = int(_os.environ.get("LMC_FIT_SUB", "1"))
+SINGLE = _os.environ.get("LMC_SINGLE", "0") == "1"
+
+
+def estimate_a_from_b(pyr_a, pyr_b, vb, H):
+    """A-grid block vectors without a second pyramid search: every B block's
+    vector is carried to where its content was in A (forward splat, lowest
+    cost wins), holes take their neighbours' median, then one level-1 pass
+    tries the splat, the camera planes and zero and refines by +-1 and +-0.5."""
+    lv = L.Level(pyr_a[1], pyr_b[1], 2)
+    bh, bw = lv.bh, lv.bw
+    v1 = vb / 2.0                                  # full-res px -> level-1 px
+    cb = lv.cost(v1, "b")
+    cy, cx = np.meshgrid(np.arange(bh), np.arange(bw), indexing="ij")
+    ty = np.clip(np.round(cy - v1[..., 1] / L.BLK).astype(int), 0, bh - 1)
+    tx = np.clip(np.round(cx - v1[..., 0] / L.BLK).astype(int), 0, bw - 1)
+    splat = np.full((bh, bw, 2), np.nan, np.float32)
+    best = np.full((bh, bw), np.inf, np.float32)
+    order = np.argsort(-cb.ravel())                # the cheapest write last, so it wins
+    for k in order:
+        i, j = divmod(int(k), bw)
+        splat[ty[i, j], tx[i, j]] = v1[i, j]
+        best[ty[i, j], tx[i, j]] = cb[i, j]
+    hole = np.isnan(splat[..., 0])
+    filled = np.where(hole[..., None], 0.0, splat)
+    med = L.vector_median(np.where(hole[..., None], v1, splat))
+    filled = np.where(hole[..., None], med, filled)
+    cands, pens = [filled], [0.0]
+    for Hk in ([] if H is None else (H if isinstance(H, list) else [H])):
+        cands.append(L.camera_field(Hk, lv, "a"))
+        pens.append(0.0)
+    cands.append(np.zeros((bh, bw, 2), np.float32))
+    pens.append(L.PEN_UPDATE)
+    v, c = L.best_of(lv, cands, pens, "a")
+    for st in (1.0, 0.5):
+        cands, pens = [v], [0.0]
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dx or dy:
+                    cands.append(v + np.array([dx, dy], np.float32) * st)
+                    pens.append(L.PEN_UPDATE * st)
+        v, c = L.best_of(lv, cands, pens, "a")
+    v = L.vector_median(v)
+    c = lv.cost(v, "a")
+    return v * 2.0, c
+
+
+def fit_layers_sub(vb, cb, hud, yb, seed, prev, sub):
+    """fit_layers on a block grid thinned by sub in each direction (the GPU field
+    still evaluates every pixel against the fitted planes)."""
+    bh, bw = vb.shape[:2]
+    keep = np.zeros((bh, bw), bool)
+    keep[::sub, ::sub] = True
+    cb2 = np.where(keep, cb, 1e9)   # thinned-out blocks fail the cb < 0.05 usability test
+    return fit_layers(vb, cb2, hud, yb, seed, prev)
+
+
 @register("lmc2")
 class LMC2:
     def __init__(self, w, h):
@@ -306,14 +370,27 @@ class LMC2:
         hudh = half(hud.astype(np.float32)) > 0.5
         # one search per grid; the camera candidate is the previous pair's fit
         vb, cb = L.estimate(pyr_a, pyr_b, "b", self.layers or None, self.temporal)
-        va, ca = L.estimate(pyr_a, pyr_b, "a", self.layers or None, vb)
+        if SINGLE:
+            va, ca = estimate_a_from_b(pyr_a, pyr_b, vb, self.layers or None)
+        else:
+            va, ca = L.estimate(pyr_a, pyr_b, "a", self.layers or None, vb)
         self.pairs += 1
-        layers, shares = fit_layers(vb, cb, hud, yb, self.pairs, self.layers)
+        sub = FIT_SUB
+        if sub > 1:
+            # CPU fit on every sub-th block in each direction (cells 8*sub px apart)
+            layers, shares = fit_layers_sub(vb, cb, hud, yb, self.pairs, self.layers, sub)
+        else:
+            layers, shares = fit_layers(vb, cb, hud, yb, self.pairs, self.layers)
         bhb, bwb = vb.shape[:2]
         hudb = hud[: bhb * 8, : bwb * 8].reshape(bhb, 8, bwb, 8).mean(axis=(1, 3)) > 0.2
         pal = motion_palette(vb, (~hudb).astype(np.float32))
+        prev_layers, prev_pal = self.layers, self.palette
         self.palette = pal
         self.layers = layers
+        if LAG:
+            # the model of the previous pair (fitted on the CPU while this pair ran on the GPU)
+            layers, pal = prev_layers, prev_pal
+        self.pal_used = pal   # the select pass's palette candidates are the field's
         H = layers if layers else None
         inl = shares
         self.temporal, self.H = vb, (layers[0] if layers else None)
@@ -352,7 +429,7 @@ class LMC2:
                 cands.append(vb[np.clip(bi + dy, 0, vb.shape[0] - 1), np.clip(bj + dx, 0, vb.shape[1] - 1)] * 0.5)
         for Hk in (H or []):
             cands.append(camera_vec(Hk, px, py, "b", 2.0))
-        for pv in self.palette:
+        for pv in self.pal_used:
             cands.append(np.broadcast_to(pv * 0.5, (h, w, 2)).astype(np.float32))
         cands.append(np.zeros((h, w, 2), np.float32))
         best_s = np.full((h, w), -np.inf, np.float32)

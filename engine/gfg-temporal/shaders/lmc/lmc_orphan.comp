@@ -4,8 +4,8 @@
 // (reference: gen_lmc.orphan_search).  Only residual pixels take part on both
 // sides: an object is matched to the object, not to the background around it.
 //
-// PC.pass_: 0 = count the residual pixels of every 8x8 block (one thread per
-//               block; result cleared, count kept in w) and histogram the
+// PC.pass_: 0 = count the residual pixels of every 8x8 block (one workgroup
+//               per block; result cleared, count kept in w) and histogram the
 //               candidates (share above ORPHAN_SHARE)
 //           1 = per grid, the count threshold that keeps at most
 //               P.orphan_cap candidates, strongest first (ties at the limit
@@ -61,17 +61,20 @@ void main() {
     int cmin = int(floor(P.orphan_share * 64.0));
 
     if (PC.pass_ == 0) {
-        int id = int(gl_GlobalInvocationID.x);
-        if (id >= nb.x * nb.y) return;
+        // one workgroup per block, one thread per pixel (coalesced reads)
+        uint lid = gl_LocalInvocationIndex;
+        int id = int(gl_WorkGroupID.x);
+        if (id >= nb.x * nb.y) return;   // uniform
         ivec2 bb = ivec2(id % nb.x, id / nb.x);
-        int cnt = 0;
-        for (int hy = 0; hy < 4; ++hy)
-            for (int hx = 0; hx < 4; ++hx) {
-                ivec2 p0 = bb * 8 + ivec2(hx, hy) * 2;
-                if (field_cost(own, min(p0 / 2, P.size.zw - 1)) <= P.orphan_resid) continue;
-                for (int k = 0; k < 4; ++k)
-                    if (!hud_at(p0 + ivec2(k & 1, k >> 1))) ++cnt;
-            }
+        ivec2 p = bb * 8 + ivec2(int(lid % 8u), int(lid / 8u));
+        s_i[lid] = resid(own, p) > 0.0 ? 1 : 0;
+        barrier();
+        for (uint s = 32u; s > 0u; s >>= 1u) {
+            if (lid < s) s_i[lid] += s_i[lid + s];
+            barrier();
+        }
+        if (lid != 0u) return;
+        int cnt = s_i[0];
         store_o(grid, id, vec4(0.0, 0.0, 0.0, float(cnt)));
         if (float(cnt) / 64.0 > P.orphan_share) atomicAdd(G.ohist[grid * 65 + cnt], 1u);
         return;

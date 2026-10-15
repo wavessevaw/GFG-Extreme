@@ -18,8 +18,10 @@ from typing import Any, Dict, Iterable, List, Optional
 MODES = ("off", "observe", "shadow", "experimental")
 MARKER_NAME = "temporal-engine.mode"
 STATUS_DIRNAME = "temporal"
-# LMC analysis passes in GPU order (te_engine.h TE_LMC_*; MAKO status lmc.passes_ms)
-LMC_PASSES = ("search_b", "search_a", "layers", "palette", "field", "masked", "orphan", "field2")
+# LMC analysis passes in GPU order (te_engine.h TE_LMC_*; MAKO status lmc.passes_ms).  te.7 renamed
+# "palette" (fitted on the CPU since) to "fit_wait": the engine queue's wait for that CPU fit.
+LMC_PASSES = ("search_b", "search_a", "layers", "fit_wait", "field", "masked", "orphan", "field2")
+LMC_PASSES_TE5 = ("search_b", "search_a", "layers", "palette", "field", "masked", "orphan", "field2")
 MAX_FILES = 32
 _ROLES = ("engine", "observer", "fallback")
 
@@ -93,6 +95,9 @@ def normalize_status(raw: object) -> Dict[str, Any]:
     out["counters"]["presented"] = None
     out["counters"]["cost_holds"] = _int(counters.get("cost_holds", 0), "cost_holds")
     out["counters"]["holding"] = _int(counters.get("holding", 0), "holding")
+    # te.7 (LMC): cost tier (0 full, 1 single grid, 2 lightest) and tier changes
+    out["counters"]["lmc_tier"] = _int(counters.get("lmc_tier", 0), "lmc_tier")
+    out["counters"]["tier_steps"] = _int(counters.get("tier_steps", 0), "tier_steps")
     if out["counters"]["outputs_gpu_completed"] > out["counters"]["outputs_dispatched"]:
         raise ValueError("more outputs completed than dispatched")
     out["gpu_ms"] = {k: _num(gpu.get(k), "gpu_ms." + k) for k in (
@@ -124,9 +129,11 @@ def normalize_status(raw: object) -> Dict[str, Any]:
             out["lmc"]["budget"] = _num(lmc.get("budget"), "lmc.budget")
         passes = lmc.get("passes_ms")
         if passes is not None:
-            if not isinstance(passes, dict) or set(passes) != set(LMC_PASSES):
+            names = next((n for n in (LMC_PASSES, LMC_PASSES_TE5) if isinstance(passes, dict) and set(passes) == set(n)),
+                         None)
+            if names is None:
                 raise ValueError("lmc.passes_ms must name every LMC pass")
-            out["lmc_passes_ms"] = {k: _num(passes.get(k), "lmc.passes_ms." + k) for k in LMC_PASSES}
+            out["lmc_passes_ms"] = {k: _num(passes.get(k), "lmc.passes_ms." + k) for k in names}
     recommendation = sched.get("recommendation")
     if recommendation not in ("keep", "fewer-outputs", "fallback", "hold"):
         raise ValueError("invalid recommendation")
@@ -246,6 +253,7 @@ def summarize(requested_mode: str, contexts: List[Dict[str, Any]]) -> Dict[str, 
             outputs_gpu_completed=c["outputs_gpu_completed"], dropped=c["dropped"],
             scene_cuts=c["scene_cuts"], promoted_tiles=c["promoted_tiles"],
             cost_holds=c["cost_holds"], holding=bool(c["holding"]),
+            lmc_tier=c["lmc_tier"], tier_steps=c["tier_steps"],
             gpu_ms={k: round(v, 4) if isinstance(v, float) else v for k, v in e["gpu_ms"].items()},
             shares={k: round(v, 4) for k, v in e["shares"].items()},
             confidence=round(e["confidence"], 4), scheduler=dict(e["scheduler"]),

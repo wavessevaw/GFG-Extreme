@@ -9,17 +9,27 @@
 // candidates in one loop with one cost site, so the code stays small enough
 // for the instruction cache.
 //
-// PC.pass_: 0 = candidates + refinement (writes the grid buffer, z = cost)
-//           1 = one propagation sweep (grid buffer -> scratch, z = cost)
-//           2 = vector median (grid buffer -> scratch)
-//           3 = scratch -> grid buffer, with the cost
-//           4 = scratch -> grid buffer as it is (after pass 1)
+// PC.pass_: 0 = candidates + refinement (z = cost)
+//           1 = one propagation sweep (z = cost)
+//           2 = vector median, with its cost
+//           3 = A grid from B (level 1, one thread per B block): carry the B
+//               vector to where its content was in A; the cheapest wins
+//           4 = A grid from B: the carried vector, or a hole marked in w
+//               (holes take the neighbours' median in pass 0)
 // PC.flags: bit 0 = temporal predictor valid
+//           bit 1 = read the scratch buffer (else the grid buffer)
+//           bit 2 = write the scratch buffer (else the grid buffer)
+//           bit 3 = pass 0 from the carried B vectors (single-grid tier;
+//               reference: gen_lmc2.estimate_a_from_b) instead of the parents
+// The passes of a level ping-pong between the grid buffer and the scratch
+// buffer (no copy passes); the last one of a level writes the grid buffer.
 //
 // A candidate equal to an earlier one with no smaller penalty can never win
 // (strict <), so such repeats are skipped; in coherent motion most are.
 #include "lmc_common.glsl"
 layout(local_size_x = 64) in;
+// the scratch buffer as words, for the carry's atomics (key = cost << 16 | block)
+layout(std430, set = 0, binding = 24) buffer ScratchU { uint scratch_u[]; };
 layout(constant_id = 0) const int SPEC_LEVEL = 1;
 layout(constant_id = 1) const int SPEC_GRID = 0;   // 0 = B grid, 1 = A grid
 
@@ -32,12 +42,15 @@ vec4 load_v(ivec2 b) {
     ivec2 n = lblocks(L_);
     b = clamp(b, ivec2(0), n - 1);
     int i = blk_offset(L_) + b.y * n.x + b.x;
+    if ((PC.flags & 2) != 0) return scratch[i];
     return GRID == 0 ? vb[i] : va[i];
 }
 
 void store_v(ivec2 b, vec4 v) {
     int i = blk_offset(L_) + b.y * lblocks(L_).x + b.x;
-    if (GRID == 0) vb[i] = v; else va[i] = v;
+    if ((PC.flags & 4) != 0) scratch[i] = v;
+    else if (GRID == 0) vb[i] = v;
+    else va[i] = v;
 }
 
 // the block's own pixels, fetched on the first cost (constant indices only: registers)
@@ -120,9 +133,20 @@ void main() {
     int id = int(gl_GlobalInvocationID.x);
     if (id >= n.x * n.y) return;
     g_b = ivec2(id % n.x, id / n.x);
-    int idx = blk_offset(L_) + id;
+
+    if (PC.pass_ == 3) {
+        // B block id: its content sits at (block - v / BLK) in A (np.round: half to even)
+        vec4 b = vb[blk_offset(1) + id];
+        ivec2 t = clamp(ivec2(roundEven(vec2(g_b) - b.xy / float(LMC_BLK))), ivec2(0), n - 1);
+        uint key = (uint(clamp(b.z, 0.0, 1.0) * 65535.0) << 16) | uint(id);
+        atomicMin(scratch_u[4 * (blk_offset(1) + t.y * n.x + t.x)], key);
+        return;
+    }
     if (PC.pass_ == 4) {
-        store_v(g_b, scratch[idx]);
+        uint key = scratch_u[4 * (blk_offset(1) + id)];
+        bool hole = key == 0xffffffffu;
+        int j = hole ? id : int(key & 0xffffu);
+        store_v(g_b, vec4(vb[blk_offset(1) + j].xy, 0.0, hole ? 1.0 : 0.0));
         return;
     }
 
@@ -131,7 +155,13 @@ void main() {
         vec2 best_v = vec2(0.0);
         // parents (x2) of the coarser level: centre, up, down, left, right
         vec2 p0 = vec2(1e30), p1 = p0, p2 = p0, p3 = p0, p4 = p0;
-        if (L_ < LMC_LEVELS) {
+        bool from_b = (PC.flags & 8) != 0;
+        if (from_b) {
+            // the carried vector; a hole takes the median of the carried field
+            vec4 own = load_v(g_b);
+            p0 = own.w > 0.5 ? median3(g_b) : own.xy;
+            p1 = p0; p2 = p0; p3 = p0; p4 = p0;
+        } else if (L_ < LMC_LEVELS) {
             int pl = L_ + 1;
             ivec2 pn = lblocks(pl);
             ivec2 pi = clamp(g_b / 2, ivec2(0), pn - 1);
@@ -145,7 +175,7 @@ void main() {
             p0 = pv[0]; p1 = pv[1]; p2 = pv[2]; p3 = pv[3]; p4 = pv[4];
         }
         int r = P.coarse_r, side = 2 * r + 1;
-        int nbase = L_ == LMC_LEVELS ? side * side : 5;
+        int nbase = from_b ? 1 : L_ == LMC_LEVELS ? side * side : 5;
         int nl = int(LY.layer_count);
         int steps = L_ == 1 ? 2 : 1;
         int k_t = nbase, k_l = k_t + 1, k_z = k_l + nl, k_r = k_z + 1;
@@ -157,7 +187,9 @@ void main() {
             float pen = 0.0;
             bool skip = false;
             if (k < nbase) {
-                if (L_ == LMC_LEVELS) {
+                if (from_b) {
+                    v = p0;
+                } else if (L_ == LMC_LEVELS) {
                     int dy = k / side - r, dx = k % side - r;
                     v = vec2(dx, dy);
                     pen = P.pen_update * 0.25 * float(abs(dx) + abs(dy));
@@ -167,7 +199,7 @@ void main() {
                 }
             } else {
                 if (k == k_t) {
-                    skip = (PC.flags & 1) == 0;
+                    skip = (PC.flags & 1) == 0 || from_b;
                     v = skip ? vec2(0.0) : temporal_cand();
                 } else if (k < k_z) {
                     v = camera_cand(k - k_l);
@@ -187,7 +219,7 @@ void main() {
                     pen = P.pen_update * st;
                 }
                 // penalty-0 candidates and the zero vector repeat the parents at no smaller penalty
-                if (k < k_r && L_ < LMC_LEVELS)
+                if (k < k_r && (L_ < LMC_LEVELS || from_b))
                     skip = skip || v == p0 || v == p1 || v == p2 || v == p3 || v == p4;
             }
             if (skip) continue;
@@ -216,12 +248,10 @@ void main() {
             float c = p + P.smooth_ * (abs(v.x - med.x) + abs(v.y - med.y));
             if (c < bc) { bc = c; bv = v; bp = p; }
         }
-        scratch[idx] = vec4(bv, bp, 0.0);  // pass 4 stores it
-    } else if (PC.pass_ == 2) {
-        scratch[idx] = vec4(median3(g_b), 0.0, 0.0);
+        store_v(g_b, vec4(bv, bp, 0.0));
     } else {
-        vec2 v = scratch[idx].xy;
         vec4 cur = load_v(g_b);
+        vec2 v = median3(g_b);
         store_v(g_b, vec4(v, v == cur.xy ? cur.z : cost(v), 0.0));  // the median is mostly the vector itself
     }
 }

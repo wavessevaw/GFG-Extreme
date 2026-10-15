@@ -31,10 +31,12 @@ namespace mako::backend::gfg_temporal {
 namespace {
     using Clock = std::chrono::steady_clock;
     constexpr uint64_t previousWorkTimeoutNs = 250'000'000ULL; // same bound as the LSFG context
-    constexpr uint32_t lmcOverPairs = 30;   // LMC pairs over budget in a row before a cost hold
+    constexpr uint32_t lmcOverPairs = 30;   // LMC pairs over budget in a row before a cheaper tier or a cost hold
+    constexpr uint32_t tierDownPairs = 600;   // pairs well under budget before trying the better tier
+    constexpr uint32_t tierRetryPairs = 3600; // ... even when it was over budget last time
 
     const char* lmcPassName(int k) noexcept {
-        static const char* const names[TE_LMC_PROF_COUNT] = {"search_b", "search_a", "layers", "palette",
+        static const char* const names[TE_LMC_PROF_COUNT] = {"search_b", "search_a", "layers", "fit_wait",
                                                              "field", "masked", "orphan", "field2"};
         return k >= 0 && k < TE_LMC_PROF_COUNT ? names[k] : "?";
     }
@@ -179,8 +181,15 @@ namespace {
                 for (int k = 0; k < TE_LMC_PROF_COUNT; ++k)
                     if (st.lmc_ms[k] >= 0.0) this->lmcMs[k] = this->ema(this->lmcMs[k], st.lmc_ms[k]);
                 // cost guard: a pair over its share of the real interval counts against the generator
-                if (this->intervalMs > 0.0 && pair > this->runtime->lmcBudget() * this->intervalMs) this->lmcOver++;
-                else this->lmcOver = 0;
+                if (this->intervalMs > 0.0) {
+                    const double share = pair / this->intervalMs, budget = this->runtime->lmcBudget();
+                    const int t = std::clamp(st.lmc_tier, 0, TE_LMC_TIERS - 1);
+                    this->tierShare[t] = this->tierShare[t] < 0.0 ? share : this->ema(this->tierShare[t], share);
+                    if (share > budget) this->lmcOver++;
+                    else this->lmcOver = 0;
+                    if (share < 0.7 * budget) this->underPairs++;
+                    else this->underPairs = 0;
+                }
                 return;
             }
             te_sched_observation o{};
@@ -263,11 +272,30 @@ namespace {
             te_sched_input in{.real_interval_ms = this->intervalMs, .gpu_busy = -1.0,
                               .requested = static_cast<uint32_t>(timestamps.size())};
             if (!timestamps.empty() && this->lmc && this->lmcOver >= lmcOverPairs && this->holdPairs == 0) {
-                // LMC over its GPU budget for a run of pairs: hold (copy the real frame, no
-                // analysis) so the game keeps its GPU time, then measure again
-                this->holdPairs = 120;
-                this->costHolds++;
+                // LMC over its GPU budget for a run of pairs: a cheaper tier first (single
+                // grid, then one propagation sweep); only at the cheapest, hold (copy the real
+                // frame, no analysis) so the game keeps its GPU time, then measure again
+                if (this->tier < TE_LMC_TIERS - 1) {
+                    this->tier++;
+                    this->tierSteps++;
+                } else {
+                    this->holdPairs = 120;
+                    this->costHolds++;
+                }
                 this->lmcOver = 0;
+                this->underPairs = 0;
+            }
+            if (this->lmc && this->tier > 0 && this->underPairs >= tierDownPairs) {
+                // well under budget for a while: back to the better tier when its last measured
+                // share fits (or was never measured), and in any case after a long calm run, as
+                // the game's own load changes
+                const double prev = this->tierShare[this->tier - 1];
+                if (prev < 0.0 || prev < 0.9 * this->runtime->lmcBudget() || this->underPairs >= tierRetryPairs) {
+                    this->tier--;
+                    this->tierSteps++;
+                    this->underPairs = 0;
+                    this->lmcOver = 0;
+                }
             }
             if (!timestamps.empty() && !this->lmc) {
                 this->decision = te_scheduler_decide(&this->scheduler, &in);
@@ -290,6 +318,7 @@ namespace {
                 // measure afresh when the hold ends (the averages are from before it)
                 if (--this->holdPairs == 0) this->scheduler.samples = 0;
             }
+            s.lmc_tier = static_cast<int>(this->tier);
             s.profile = this->decision.profile;
             s.light_scale = this->decision.light_scale;
             s.force_full = this->decision.force_full;
@@ -340,7 +369,8 @@ namespace {
                   << ",\"dropped\":" << this->dropped
                   << ",\"scene_cuts\":" << this->sceneCuts
                   << ",\"promoted_tiles\":" << this->promoted
-                  << ",\"cost_holds\":" << this->costHolds
+                  << ",\"cost_holds\":" << this->costHolds << ",\"lmc_tier\":" << this->tier
+                  << ",\"tier_steps\":" << this->tierSteps
                   << ",\"holding\":" << (this->holdPairs > 0 ? 1 : 0)
                   << ",\"presented\":null}"
                   << ",\"gpu_ms\":{\"pyramid\":" << finite(this->stageMs[TE_STAGE_PYRAMID])
@@ -391,6 +421,7 @@ namespace {
                       << " level=" << this->decision.level
                       << " reason=" << reasonName(this->decision.reason)
                       << " holding=" << (this->holdPairs > 0 ? 1 : 0) << " cost_holds=" << this->costHolds
+                      << " tier=" << this->tier << " tier_steps=" << this->tierSteps
                       << " pairs=" << this->pairsSubmitted << " dropped=" << this->dropped
                       << " interval_ms=" << finite(this->intervalMs)
                       << " fixed_ms=" << finite(this->stageMs[TE_STAGE_PYRAMID] + this->stageMs[TE_STAGE_ANALYZE]
@@ -409,7 +440,7 @@ namespace {
                         l << " lmc_ms=";
                         for (int k = 0; k < TE_LMC_PROF_COUNT; ++k)
                             l << (k ? "/" : "") << finite(this->lmcMs[k]);
-                        l << " lmc_passes=search_b/search_a/layers/palette/field/masked/orphan/field2";
+                        l << " lmc_passes=search_b/search_a/layers/fit_wait/field/masked/orphan/field2";
                     }
                     l << '\n';
                     std::clog << l.str();
@@ -427,6 +458,10 @@ namespace {
         double lmcLayers{0.0}, lmcOrphansB{0.0}, lmcOrphansA{0.0};
         double lmcMs[TE_LMC_PROF_COUNT]{};
         uint32_t lmcOver{0};       // consecutive pairs over the LMC budget
+        uint32_t underPairs{0};    // consecutive pairs well under it
+        uint32_t tier{0};          // LMC cost tier (te_submit.lmc_tier)
+        uint32_t tierSteps{0};     // tier changes since the context started
+        double tierShare[TE_LMC_TIERS]{-1.0, -1.0, -1.0};   // measured pair share of the interval per tier
         te_scheduler scheduler{};
         te_sched_decision decision{};
         te_pair_stats stats{};

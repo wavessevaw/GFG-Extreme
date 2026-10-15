@@ -126,7 +126,7 @@ class WriterFormat(unittest.TestCase):
     def test_lmc5_record_has_passes_and_hold(self):
         out = te.normalize_status(json.loads(LMC5_RECORD))
         self.assertEqual(out["lmc"]["budget"], 0.25)
-        self.assertEqual(list(out["lmc_passes_ms"]), list(te.LMC_PASSES))
+        self.assertEqual(list(out["lmc_passes_ms"]), list(te.LMC_PASSES_TE5))   # te.5/te.6 adapters
         self.assertEqual(out["lmc_passes_ms"]["search_b"], 0.4)
         self.assertEqual(out["scheduler"]["recommendation"], "hold")
         s = te.summarize("experimental", [out])
@@ -134,6 +134,21 @@ class WriterFormat(unittest.TestCase):
         self.assertTrue(s["holding"])
         with self.assertRaises(ValueError):
             te.normalize_status(json.loads(LMC5_RECORD.replace('"field2":0.02', '"other":0.02')))
+
+    def test_lmc7_record_names_fit_wait(self):
+        rec = LMC5_RECORD.replace('"palette":0.03', '"fit_wait":2.1')
+        out = te.normalize_status(json.loads(rec))
+        self.assertEqual(list(out["lmc_passes_ms"]), list(te.LMC_PASSES))
+        self.assertEqual(out["lmc_passes_ms"]["fit_wait"], 2.1)
+        with self.assertRaises(ValueError):   # one set or the other, not a mix
+            te.normalize_status(json.loads(rec.replace('"field2":0.02', '"palette":0.02')))
+
+    def test_lmc7_record_has_tier(self):
+        out = te.normalize_status(json.loads(LMC5_RECORD))
+        self.assertEqual((out["counters"]["lmc_tier"], out["counters"]["tier_steps"]), (0, 0))   # older adapters
+        rec = LMC5_RECORD.replace('"holding":', '"lmc_tier":2,"tier_steps":3,"holding":', 1)
+        s = te.summarize("experimental", [te.normalize_status(json.loads(rec))])
+        self.assertEqual((s["lmc_tier"], s["tier_steps"]), (2, 3))
 
     def test_te2_record_reads_as_tiles(self):
         self.assertEqual(te.normalize_status(json.loads(TE2_RECORD))["algorithm"], "tiles")
@@ -146,7 +161,7 @@ class WriterFormat(unittest.TestCase):
                         'jsonString(this->lmc ? (this->holdPairs > 0 ? "hold" : "keep")',
                         '<< ",\\"budget\\":" << finite(this->runtime->lmcBudget()) << ",\\"passes_ms\\":{";',
                         'o << (k ? "," : "") << \'"\' << lmcPassName(k) << "\\":" << finite(this->lmcMs[k]);',
-                        'l << " lmc_passes=search_b/search_a/layers/palette/field/masked/orphan/field2";',
+                        'l << " lmc_passes=search_b/search_a/layers/fit_wait/field/masked/orphan/field2";',
                         '"MAKO Renderer: Temporal Engine stats algo=" << (this->lmc ? "lmc" : "tiles")',
                         '<< " layers=" << finite(this->lmcLayers) << " orphans=" << finite(this->lmcOrphansB) << \'/\''):
             self.assertIn(snippet, source)
@@ -169,6 +184,17 @@ class WriterFormat(unittest.TestCase):
         out = temporal_engine_log_summary(te5 + "\n" + te5.replace("lmc_ms=0.40", "lmc_ms=0.60"))
         self.assertEqual(out["lmc_passes_ms_median"]["search_b"], 0.5)
         self.assertEqual(out["lmc_passes_ms_median"]["field2"], 0.02)
+        self.assertEqual(out["tiers"], {})
+        te7 = te5.replace("cost_holds=0", "cost_holds=0 tier=1 tier_steps=2")
+        out = temporal_engine_log_summary(te7 + "\n" + te7.replace("tier=1 tier_steps=2", "tier=2 tier_steps=3"))
+        self.assertEqual(out["tiers"], {"1": 1, "2": 1})
+        self.assertEqual(out["tier_steps"], 3)
+
+    def test_writer_source_has_tier_fields(self):
+        source = (ROOT / "engine/gfg-temporal/mako/gfg_temporal.cpp").read_text()
+        for snippet in ('",\\"lmc_tier\\":" << this->tier', '",\\"tier_steps\\":" << this->tierSteps',
+                        '" tier=" << this->tier << " tier_steps=" << this->tierSteps', "s.lmc_tier = "):
+            self.assertIn(snippet, source)
 
     def test_lmc_pass_names_match_engine(self):
         header = (ROOT / "engine/gfg-temporal/src/te_engine.h").read_text()
@@ -176,7 +202,7 @@ class WriterFormat(unittest.TestCase):
         enum = header[header.index("enum { TE_LMC_SEARCH_B"):].split("};")[0]
         self.assertEqual([n.strip()[7:].lower() for n in enum[6:].split(",") if n.strip() != "TE_LMC_PROF_COUNT"],
                          list(te.LMC_PASSES))
-        self.assertIn('{"search_b", "search_a", "layers", "palette",\n'
+        self.assertIn('{"search_b", "search_a", "layers", "fit_wait",\n'
                       '                                                             "field", "masked", "orphan", "field2"}',
                       source)
 

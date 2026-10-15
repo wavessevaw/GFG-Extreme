@@ -80,7 +80,7 @@ layout(std430, set = 0, binding = 27) buffer Globals {
     uint pairs;           // pair counter (RANSAC seed)
     vec4 palette[LMC_PALETTE];
     uint orphans_b, orphans_a, pad_g0, pad_g1;
-    uint hist[64 * 64];   // palette coarse histogram scratch
+    uint hist[64 * 64];   // unused (the palette histogram before the CPU fit); keeps the layout
     uint ohist[2 * 65];   // per grid: orphan candidates by residual pixel count (0..64)
     uint othr[2];         // per grid: blocks with a count above this are searched
     uint olist_n[2];

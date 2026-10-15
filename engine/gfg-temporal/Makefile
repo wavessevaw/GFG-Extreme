@@ -13,13 +13,13 @@ TE_ICD ?= /usr/share/vulkan/icd.d/lvp_icd.json
 
 SHADERS := me stats classify lists reuse light full
 FMT_SHADERS := luma down
-LMC_SHADERS := prep down search layers irls palette field masked orphan select compose
+LMC_SHADERS := prep down search layers field masked orphan select compose
 SPV := $(SHADERS:%=$(BUILD)/spv/%.spv) \
        $(foreach s,$(FMT_SHADERS),$(BUILD)/spv/$(s)_r16f.spv $(BUILD)/spv/$(s)_r32f.spv) \
        $(LMC_SHADERS:%=$(BUILD)/spv/lmc_%.spv)
 HDR := $(wildcard shaders/*.glsl)
 LMC_HDR := $(wildcard shaders/lmc/*.glsl)
-ENGINE := src/te_engine.c src/te_scheduler.c
+ENGINE := src/te_engine.c src/te_scheduler.c src/te_lmc_fit.c
 ENGINE_INC := src/te_lmc.inc
 
 .PHONY: all lib test clean
@@ -30,7 +30,7 @@ lib: $(BUILD)/libgfg-temporal.a
 $(BUILD)/pic/%.o: src/%.c src/*.h $(ENGINE_INC) $(BUILD)/te_shaders.h
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -fPIC -fvisibility=hidden $(VK_CFLAGS) -I$(BUILD) -Isrc -c -o $@ $<
-$(BUILD)/libgfg-temporal.a: $(BUILD)/pic/te_engine.o $(BUILD)/pic/te_scheduler.o
+$(BUILD)/libgfg-temporal.a: $(BUILD)/pic/te_engine.o $(BUILD)/pic/te_scheduler.o $(BUILD)/pic/te_lmc_fit.o
 	$(AR) rcs $@ $^
 
 $(BUILD)/spv/%.spv: shaders/%.comp $(HDR)

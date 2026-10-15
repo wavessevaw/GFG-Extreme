@@ -38,7 +38,8 @@ def run(frames_dir, scene, pairs, te_bench):
         src, gen, js = (os.path.join(td, n) for n in ("seq.npy", "gen.npy", "stats.jsonl"))
         np.save(src, seq)
         env = dict(os.environ, VK_ICD_FILENAMES=os.environ.get("TE_ICD", "/usr/share/vulkan/icd.d/lvp_icd.json"))
-        subprocess.run([te_bench, "--frames", src, "--algo", "lmc", "--step", str(K), "--out", gen, "--json", js],
+        subprocess.run([te_bench, "--frames", src, "--algo", "lmc", "--step", str(K), "--out", gen, "--json", js,
+                        "--tier", os.environ.get("TE_TIER", "0")],
                        check=True, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         out = np.load(gen)
         stats = [json.loads(line) for line in open(js)]

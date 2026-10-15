@@ -3,6 +3,7 @@
 #define _GNU_SOURCE
 #define VK_NO_PROTOTYPES /* the loader is opened at run time, as MAKO does inside the layer */
 #include "te_engine.h"
+#include "te_lmc_fit.h"
 #include "te_params.h"
 #include "te_shaders.h"
 
@@ -13,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #define TE_RING 2
@@ -66,6 +68,7 @@ typedef struct {
 
 typedef struct {
     VkCommandBuffer analysis;
+    VkCommandBuffer analysis2;   /* LMC: the second half, after the CPU motion fit */
     VkCommandBuffer out[TE_MAX_OUTPUTS];
     VkFence fence;
     VkQueryPool queries;
@@ -79,6 +82,9 @@ typedef struct {
     int held;
     int profiled;
     int lmc_timed;             /* LMC per-pass timestamps written */
+    int lmc_tier;              /* LMC cost tier this pair was recorded at */
+    int lmc_split;             /* LMC: analysis2 recorded (a generated pair) */
+    uint64_t lmc_seq;          /* LMC: the pair's fit number k (fit_tl 2k + 1, then 2k + 2) */
 } te_slot;
 
 struct te_device {
@@ -162,7 +168,7 @@ static void lmc_record_init(te_context* ctx, VkCommandBuffer cb);
     X(vkCmdBindPipeline) X(vkCmdBindDescriptorSets) X(vkCmdPushConstants) X(vkCmdDispatch)                \
     X(vkCmdDispatchIndirect) X(vkCmdPipelineBarrier) X(vkCmdCopyBuffer) X(vkCmdCopyBufferToImage)         \
     X(vkCmdCopyImageToBuffer) X(vkCmdFillBuffer) X(vkCmdUpdateBuffer) X(vkCmdClearColorImage)            \
-    X(vkCmdResetQueryPool) X(vkCmdWriteTimestamp) X(vkGetSemaphoreCounterValue) X(vkSignalSemaphore)
+    X(vkCmdResetQueryPool) X(vkCmdWriteTimestamp) X(vkGetSemaphoreCounterValue) X(vkSignalSemaphore) X(vkWaitSemaphores)
 
 #define TE_DECLARE(name) static PFN_##name name;
 static PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr;
@@ -948,6 +954,7 @@ VkResult te_context_create(te_device* dev, const te_context_desc* desc, te_conte
                                            .commandPool = ctx->cmdpool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
                                            .commandBufferCount = 1};
         TRY(vkAllocateCommandBuffers(d, &cai, &slot->analysis));
+        TRY(vkAllocateCommandBuffers(d, &cai, &slot->analysis2));
         cai.commandBufferCount = TE_MAX_OUTPUTS;
         TRY(vkAllocateCommandBuffers(d, &cai, slot->out));
         VkFenceCreateInfo fci = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
@@ -1189,9 +1196,16 @@ static void collect(te_context* ctx, te_slot* slot) {
                               sizeof ts, ts + TE_LMC_Q0, sizeof ts[0],
                               VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) == VK_SUCCESS)
         for (int k = 0; k < TE_LMC_PROF_COUNT; ++k) st->lmc_ms[k] = DELTA(TE_LMC_Q0 + k, TE_LMC_Q0 + k + 1);
+    /* the wait for the CPU motion fit sits between stage points 2 and 3: GPU time is without it */
+    if (st->lmc_ms[TE_LMC_FIT_WAIT] > 0.0) {
+        st->stage_ms[TE_STAGE_CLASSIFY] -= st->lmc_ms[TE_LMC_FIT_WAIT];
+        if (st->stage_ms[TE_STAGE_CLASSIFY] < 0.0) st->stage_ms[TE_STAGE_CLASSIFY] = 0.0;
+    }
 #undef DELTA
     const uint8_t* rb = slot->readback.map;
     if (ctx->lmc) {
+        st->lmc_fit_ms = lmc_fit_ms(ctx);
+        st->lmc_tier = slot->lmc_tier;
         /* LMC: tiles[i] = layer count, orphan blocks (B grid, A grid) */
         for (uint32_t i = 0; i < slot->outputs; ++i) {
             const uint32_t* g = (const uint32_t*)(rb + TE_GLOBALS_HEADER * i);
@@ -1276,35 +1290,56 @@ VkResult te_submit_frame(te_context* ctx, const te_submit* s) {
         else record_output(ctx, slot, s, i, !generate);
         CHECK(vkEndCommandBuffer(slot->out[i]), "vkEndCommandBuffer(output)");
     }
-    VkSubmitInfo si[1 + TE_MAX_OUTPUTS];
-    VkTimelineSemaphoreSubmitInfo tsi[1 + TE_MAX_OUTPUTS];
+    /* analysis (LMC: + its second half after the CPU fit), then the outputs */
+    VkSubmitInfo si[2 + TE_MAX_OUTPUTS];
+    VkTimelineSemaphoreSubmitInfo tsi[2 + TE_MAX_OUTPUTS];
     uint64_t wait_values[1] = {s->wait_value};
     uint64_t signal_values[TE_MAX_OUTPUTS];
     VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-    si[0] = (VkSubmitInfo){.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1,
+    int split = ctx->lmc && slot->lmc_split;
+    uint32_t n = 0;
+    si[n] = (VkSubmitInfo){.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1,
                            .pCommandBuffers = &slot->analysis};
+    tsi[n] = (VkTimelineSemaphoreSubmitInfo){.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};
     if (s->wait_value) {
-        tsi[0] = (VkTimelineSemaphoreSubmitInfo){.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-                                                 .waitSemaphoreValueCount = 1, .pWaitSemaphoreValues = wait_values};
-        si[0].pNext = &tsi[0];
-        si[0].waitSemaphoreCount = 1;
-        si[0].pWaitSemaphores = &ctx->timeline;
-        si[0].pWaitDstStageMask = &wait_stage;
+        tsi[n].waitSemaphoreValueCount = 1;
+        tsi[n].pWaitSemaphoreValues = wait_values;
+        si[n].waitSemaphoreCount = 1;
+        si[n].pWaitSemaphores = &ctx->timeline;
+        si[n].pWaitDstStageMask = &wait_stage;
     }
-    for (uint32_t i = 0; i < outs; ++i) {
-        si[1 + i] = (VkSubmitInfo){.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1,
-                                   .pCommandBuffers = &slot->out[i]};
+    uint64_t fit_ready = split ? 2 * slot->lmc_seq + 1 : 0, fit_done = fit_ready + 1;
+    if (split) {
+        tsi[n].signalSemaphoreValueCount = 1;
+        tsi[n].pSignalSemaphoreValues = &fit_ready;
+        si[n].signalSemaphoreCount = 1;
+        si[n].pSignalSemaphores = &ctx->lmc->fit_tl;
+    }
+    if (s->wait_value || split) si[n].pNext = &tsi[n];
+    ++n;
+    if (split) {
+        tsi[n] = (VkTimelineSemaphoreSubmitInfo){.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+                                                 .waitSemaphoreValueCount = 1, .pWaitSemaphoreValues = &fit_done};
+        si[n] = (VkSubmitInfo){.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .pNext = &tsi[n], .waitSemaphoreCount = 1,
+                               .pWaitSemaphores = &ctx->lmc->fit_tl, .pWaitDstStageMask = &wait_stage,
+                               .commandBufferCount = 1, .pCommandBuffers = &slot->analysis2};
+        ++n;
+    }
+    for (uint32_t i = 0; i < outs; ++i, ++n) {
+        si[n] = (VkSubmitInfo){.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1,
+                               .pCommandBuffers = &slot->out[i]};
         if (s->signal_first) {
             signal_values[i] = s->signal_first + i;
-            tsi[1 + i] = (VkTimelineSemaphoreSubmitInfo){.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-                                                         .signalSemaphoreValueCount = 1,
-                                                         .pSignalSemaphoreValues = &signal_values[i]};
-            si[1 + i].pNext = &tsi[1 + i];
-            si[1 + i].signalSemaphoreCount = 1;
-            si[1 + i].pSignalSemaphores = &ctx->timeline;
+            tsi[n] = (VkTimelineSemaphoreSubmitInfo){.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+                                                     .signalSemaphoreValueCount = 1,
+                                                     .pSignalSemaphoreValues = &signal_values[i]};
+            si[n].pNext = &tsi[n];
+            si[n].signalSemaphoreCount = 1;
+            si[n].pSignalSemaphores = &ctx->timeline;
         }
     }
-    CHECK(vkQueueSubmit(ctx->dev->queue, 1 + outs, si, slot->fence), "vkQueueSubmit");
+    CHECK(vkQueueSubmit(ctx->dev->queue, n, si, slot->fence), "vkQueueSubmit");
+    if (split) lmc_fit_enqueue(ctx, slot);
     slot->in_flight = 1;
     slot->outputs = outs;
     slot->generated = outs > 0;

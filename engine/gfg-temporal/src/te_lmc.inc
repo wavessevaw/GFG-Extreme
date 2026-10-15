@@ -13,7 +13,7 @@
 #define LMC_BINDINGS 36
 
 enum {
-    LMC_PREP, LMC_DOWN, LMC_SEARCH, LMC_LAYERS, LMC_IRLS, LMC_PALETTE_P, LMC_FIELD, LMC_MASKED, LMC_ORPHAN, LMC_SELECT,
+    LMC_PREP, LMC_DOWN, LMC_SEARCH, LMC_LAYERS, LMC_FIELD, LMC_MASKED, LMC_ORPHAN, LMC_SELECT,
     LMC_COMPOSE, LMC_PIPES
 };
 
@@ -50,6 +50,7 @@ typedef struct {
 #define LMC_ORPHAN_CAP 256u                                  /* default; GFG_LMC_ORPHAN_CAP */
 #define LMC_G_OCLEAR (4u * (2u * 65u + 2u + 2u))              /* histogram, thresholds, list lengths */
 #define LMC_G_SIZE (LMC_G_OHIST + LMC_G_OCLEAR + 4u * 2u * LMC_ORPHAN_MAX)
+#define LMC_FIT_SUB 2   /* CPU fit on every 2nd level-1 block in each direction */
 
 struct te_lmc {
     uint32_t w2, h2, n1, nblk;
@@ -65,7 +66,151 @@ struct te_lmc {
     VkPipeline pipe[LMC_PIPES];
     VkPipeline search[LMC_LEVELS + 1][2];  /* block search specialised per level (1..4) and grid */
     int have_temporal;
+    /* motion model on the CPU (te_lmc_fit.c), fitted on this pair's vectors: the analysis is two
+       submissions.  The first (pyramid, block search, block statistics) ends with a copy of the
+       level-1 B vectors, usable flags and motion votes to fitrb and signals fit_tl = 2k + 1; the
+       worker waits for it, fits planes and palette, writes them to stage and signals 2k + 2 from
+       the host; the second submission waits for that, copies the model in and builds the fields.
+       The engine has its own device and queue: the wait holds only the engine's work. */
+    te_device* dev;
+    te_buffer fitrb[TE_RING];
+    te_buffer stage[TE_RING];   /* host-visible model for the second submission (LMC_STAGE_*) */
+    VkSemaphore fit_tl;
+    uint64_t fit_seq;           /* generated pairs submitted (k) */
+    te_lmc_fit_work* fit_work;
+    pthread_t fit_thread;
+    int fit_thread_ok;
+    pthread_mutex_t fit_lock;
+    pthread_cond_t fit_cond;
+    int fit_quit;
+    struct { int slot; uint64_t seq; uint32_t gen; } jobs[TE_RING];
+    int job_head, job_count;
+    float* job_vec;
+    unsigned char *job_usable, *job_hudb;
+    uint32_t fit_pairs;
+    uint32_t fit_gen;           /* a skip or a hold bumps it: no RANSAC hypotheses from before */
+    te_lmc_model model_prev;
+    int prev_valid;
+    double fit_ms;
 };
+
+#define LMC_FITRB_SIZE(n1) ((VkDeviceSize)(n1) * 20u + 16u)
+
+static double lmc_now_ms(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return t.tv_sec * 1e3 + t.tv_nsec / 1e6;
+}
+
+/* stage layout: what the second submission copies into the Layers and Globals buffers */
+#define LMC_STAGE_COUNT 0u      /* uint layer_count -> Layers 0 */
+#define LMC_STAGE_LAYERS 16u    /* Layer[3] (12 floats, share in [11]) -> Layers LMC_LY_LAYERS */
+#define LMC_STAGE_HEAD 256u     /* uint pal_count, moving -> Globals 0 */
+#define LMC_STAGE_PAL 272u      /* vec4[4] -> Globals 16 */
+#define LMC_STAGE_SIZE 512u
+
+/* one fit: pair seq k of ring slot rs (its first submission signals 2k + 1) */
+static void lmc_fit_job(struct te_lmc* m, int rs, uint64_t k, uint32_t gen) {
+    te_device* dev = m->dev;
+    uint64_t want = 2 * k + 1;
+    VkSemaphoreWaitInfo wi = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, .semaphoreCount = 1,
+                              .pSemaphores = &m->fit_tl, .pValues = &want};
+    VkResult wr;
+    do wr = vkWaitSemaphores(dev->device, &wi, 100000000ull);   /* 100 ms steps */
+    while (wr == VK_TIMEOUT);
+    double t0 = lmc_now_ms();
+    uint8_t* st = m->stage[rs].map;
+    memset(st, 0, LMC_STAGE_SIZE);
+    if (wr == VK_SUCCESS) {
+        const uint8_t* rb = m->fitrb[rs].map;
+        uint32_t n = m->n1;
+        const float* v4 = (const float*)rb;
+        const uint32_t* live = (const uint32_t*)(rb + (size_t)n * 16u);
+        for (uint32_t i = 0; i < n; ++i) {
+            m->job_vec[2 * i] = v4[4 * i] * 2.0f;          /* level-1 px -> full-res px */
+            m->job_vec[2 * i + 1] = v4[4 * i + 1] * 2.0f;
+            m->job_hudb[i] = v4[4 * i + 3] > 0.5f;
+            m->job_usable[i] = live[i] != 0;
+        }
+        uint32_t votes;
+        memcpy(&votes, rb + (size_t)n * 20u, 4);
+        pthread_mutex_lock(&m->fit_lock);
+        int have_prev = m->prev_valid && gen == m->fit_gen;
+        te_lmc_model prev = m->model_prev;
+        pthread_mutex_unlock(&m->fit_lock);
+        te_lmc_model md;
+        te_lmc_fit(m->fit_work, m->job_vec, m->job_usable, m->job_hudb, (int)m->bw[1], (int)m->bh[1], LMC_FIT_SUB,
+                   ++m->fit_pairs, have_prev ? &prev : NULL, &md);
+        uint32_t count = md.nlayers < LMC_MAX_LAYERS ? md.nlayers : LMC_MAX_LAYERS;
+        memcpy(st + LMC_STAGE_COUNT, &count, 4);
+        float* L = (float*)(st + LMC_STAGE_LAYERS);
+        for (uint32_t j = 0; j < count; ++j) {
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 3; ++c) L[12 * j + r * 4 + c] = md.layers[j].h[r][c];
+            L[12 * j + 11] = md.layers[j].share;
+        }
+        /* the HUD counter of the next pair advances when this pair moved */
+        uint32_t head[2] = {md.npal < LMC_PALETTE ? md.npal : LMC_PALETTE, votes * 2u > n ? 1u : 0u};
+        memcpy(st + LMC_STAGE_HEAD, head, sizeof head);
+        float* P = (float*)(st + LMC_STAGE_PAL);
+        for (uint32_t j = 0; j < head[0]; ++j) {
+            P[4 * j] = md.pal[j][0];
+            P[4 * j + 1] = md.pal[j][1];
+        }
+        pthread_mutex_lock(&m->fit_lock);
+        if (gen == m->fit_gen) {
+            m->model_prev = md;
+            m->prev_valid = 1;
+        }
+        m->fit_ms = lmc_now_ms() - t0;
+        pthread_mutex_unlock(&m->fit_lock);
+    }
+    /* always released, also after a device loss: the second submission must never wait forever */
+    VkSemaphoreSignalInfo si = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO, .semaphore = m->fit_tl,
+                                .value = 2 * k + 2};
+    vkSignalSemaphore(dev->device, &si);
+}
+
+static void* lmc_fit_main(void* arg) {
+    struct te_lmc* m = arg;
+    pthread_mutex_lock(&m->fit_lock);
+    for (;;) {
+        /* the queue is drained before quitting: a submitted second half waits for its signal */
+        while (!m->job_count && !m->fit_quit) pthread_cond_wait(&m->fit_cond, &m->fit_lock);
+        if (!m->job_count) break;
+        int rs = m->jobs[m->job_head].slot;
+        uint64_t k = m->jobs[m->job_head].seq;
+        uint32_t gen = m->jobs[m->job_head].gen;
+        m->job_head = (m->job_head + 1) % TE_RING;
+        m->job_count--;
+        pthread_mutex_unlock(&m->fit_lock);
+        lmc_fit_job(m, rs, k, gen);
+        pthread_mutex_lock(&m->fit_lock);
+    }
+    pthread_mutex_unlock(&m->fit_lock);
+    return NULL;
+}
+
+/* a generated pair was submitted: queue its fit */
+static void lmc_fit_enqueue(te_context* ctx, te_slot* slot) {
+    struct te_lmc* m = ctx->lmc;
+    pthread_mutex_lock(&m->fit_lock);
+    int t = (m->job_head + m->job_count) % TE_RING;
+    m->jobs[t].slot = (int)(slot - ctx->ring);
+    m->jobs[t].seq = slot->lmc_seq;
+    m->jobs[t].gen = m->fit_gen;
+    m->job_count++;
+    pthread_cond_signal(&m->fit_cond);
+    pthread_mutex_unlock(&m->fit_lock);
+}
+
+static double lmc_fit_ms(te_context* ctx) {
+    struct te_lmc* m = ctx->lmc;
+    pthread_mutex_lock(&m->fit_lock);
+    double v = m->fit_ms;
+    pthread_mutex_unlock(&m->fit_lock);
+    return v;
+}
 
 static void lmc_push_c(te_context* ctx, VkCommandBuffer cb, float t, int level, int grid, int pass, int flags) {
     lmc_push pc = {.t = t, .level = level, .grid = grid, .pass = pass, .parity = 0, .flags = flags};
@@ -245,11 +390,9 @@ static VkResult lmc_create(te_context* ctx) {
         [LMC_DOWN] = {te_spv_lmc_down, sizeof te_spv_lmc_down},
         [LMC_SEARCH] = {te_spv_lmc_search, sizeof te_spv_lmc_search},
         [LMC_LAYERS] = {te_spv_lmc_layers, sizeof te_spv_lmc_layers},
-        [LMC_PALETTE_P] = {te_spv_lmc_palette, sizeof te_spv_lmc_palette},
         [LMC_FIELD] = {te_spv_lmc_field, sizeof te_spv_lmc_field},
         [LMC_MASKED] = {te_spv_lmc_masked, sizeof te_spv_lmc_masked},
         [LMC_ORPHAN] = {te_spv_lmc_orphan, sizeof te_spv_lmc_orphan},
-        [LMC_IRLS] = {te_spv_lmc_irls, sizeof te_spv_lmc_irls},
         [LMC_SELECT] = {te_spv_lmc_select, sizeof te_spv_lmc_select},
         [LMC_COMPOSE] = {te_spv_lmc_compose, sizeof te_spv_lmc_compose},
     };
@@ -290,6 +433,25 @@ static VkResult lmc_create(te_context* ctx) {
         vkDestroyShaderModule(d, mod, NULL);
         if (r != VK_SUCCESS) return fail(r, "vkCreateComputePipelines(lmc search) failed (%d)", r);
     }
+    for (int k = 0; k < TE_RING; ++k) {
+        LTRY(buffer_create(dev, &m->fitrb[k], LMC_FITRB_SIZE(m->n1), VK_BUFFER_USAGE_TRANSFER_DST_BIT, 1));
+        LTRY(buffer_create(dev, &m->stage[k], LMC_STAGE_SIZE, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 1));
+    }
+    m->dev = dev;
+    VkSemaphoreTypeCreateInfo stci = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+                                      .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE, .initialValue = 0};
+    VkSemaphoreCreateInfo sci = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, .pNext = &stci};
+    LTRY(vkCreateSemaphore(d, &sci, NULL, &m->fit_tl));
+    m->fit_work = te_lmc_fit_alloc();
+    m->job_vec = malloc(sizeof(float) * 2u * m->n1);
+    m->job_usable = malloc(m->n1);
+    m->job_hudb = malloc(m->n1);
+    if (!m->fit_work || !m->job_vec || !m->job_usable || !m->job_hudb)
+        return fail(VK_ERROR_OUT_OF_HOST_MEMORY, "out of memory (lmc fit)");
+    pthread_mutex_init(&m->fit_lock, NULL);
+    pthread_cond_init(&m->fit_cond, NULL);
+    m->fit_thread_ok = pthread_create(&m->fit_thread, NULL, lmc_fit_main, m) == 0;
+    if (!m->fit_thread_ok) return fail(VK_ERROR_INITIALIZATION_FAILED, "cannot start the LMC fit thread");
 #undef LTRY
     return VK_SUCCESS;
 }
@@ -299,6 +461,27 @@ static void lmc_destroy(te_context* ctx) {
     if (!m) return;
     te_device* dev = ctx->dev;
     VkDevice d = dev->device;
+    if (m->fit_thread_ok) {
+        /* the device is idle: every queued fit has run (the worker drains its queue) */
+        pthread_mutex_lock(&m->fit_lock);
+        m->fit_quit = 1;
+        pthread_cond_signal(&m->fit_cond);
+        pthread_mutex_unlock(&m->fit_lock);
+        pthread_join(m->fit_thread, NULL);
+    }
+    if (m->fit_work) {
+        pthread_mutex_destroy(&m->fit_lock);
+        pthread_cond_destroy(&m->fit_cond);
+    }
+    if (m->fit_tl) vkDestroySemaphore(d, m->fit_tl, NULL);
+    te_lmc_fit_free(m->fit_work);
+    free(m->job_vec);
+    free(m->job_usable);
+    free(m->job_hudb);
+    for (int r = 0; r < TE_RING; ++r) {
+        buffer_destroy(dev, &m->fitrb[r]);
+        buffer_destroy(dev, &m->stage[r]);
+    }
     for (int i = 0; i < LMC_PIPES; ++i)
         if (m->pipe[i]) vkDestroyPipeline(d, m->pipe[i], NULL);
     for (int l = 0; l <= LMC_LEVELS; ++l)
@@ -366,27 +549,45 @@ static void lmc_transfer_barrier(VkCommandBuffer cb) {
             VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 }
 
-static void lmc_search_grid(te_context* ctx, VkCommandBuffer cb, int grid, int temporal_ok) {
+static void lmc_search_grid(te_context* ctx, VkCommandBuffer cb, int grid, int temporal_ok, int sweeps) {
     struct te_lmc* m = ctx->lmc;
+    /* per level: candidates, PROPAGATE sweeps, then the vector median (with its cost); the passes
+       ping-pong between the grid buffer and the scratch buffer and the median writes the grid
+       buffer, so nothing is copied.  Two sweeps: -> S, S -> G, G -> S, S -> G; one: -> G, G -> S,
+       S -> G. */
+    enum { RD_S = 2, WR_S = 4 };
+    static const int pass2[4] = {0, 1, 1, 2}, io2[4] = {WR_S, RD_S, WR_S, RD_S};
+    static const int pass1[3] = {0, 1, 2}, io1[3] = {0, WR_S, RD_S};
+    const int* pass = sweeps == 2 ? pass2 : pass1;
+    const int* io = sweeps == 2 ? io2 : io1;
+    int n = sweeps == 2 ? 4 : 3;
     for (int l = LMC_LEVELS; l >= 1; --l) {
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->search[l][grid]);
         uint32_t g = groups(m->bw[l] * m->bh[l], 64);
-        int flags = (grid == 1 || temporal_ok) ? 1 : 0;
-        lmc_push_c(ctx, cb, 0.0f, l, grid, 0, flags);
-        vkCmdDispatch(cb, g, 1, 1);
-        compute_barrier(cb);
-        for (int k = 0; k < 2; ++k) {  /* PROPAGATE sweeps: grid -> scratch -> grid */
-            lmc_push_c(ctx, cb, 0.0f, l, grid, 1, flags);
-            vkCmdDispatch(cb, g, 1, 1);
-            compute_barrier(cb);
-            lmc_push_c(ctx, cb, 0.0f, l, grid, 4, flags);
+        int t = (grid == 1 || temporal_ok) ? 1 : 0;
+        for (int k = 0; k < n; ++k) {
+            lmc_push_c(ctx, cb, 0.0f, l, grid, pass[k], t | io[k]);
             vkCmdDispatch(cb, g, 1, 1);
             compute_barrier(cb);
         }
-        lmc_push_c(ctx, cb, 0.0f, l, grid, 2, flags);  /* vector median, then the cost */
-        vkCmdDispatch(cb, g, 1, 1);
-        compute_barrier(cb);
-        lmc_push_c(ctx, cb, 0.0f, l, grid, 3, flags);
+    }
+}
+
+/* Single-grid tier: the level-1 A grid from the B grid instead of a second pyramid search
+   (reference: gen_lmc2.estimate_a_from_b).  Carry every B vector to where its content was in A
+   (the cheapest wins), fill the holes, one level-1 candidate pass, then the vector median. */
+static void lmc_a_from_b(te_context* ctx, VkCommandBuffer cb) {
+    struct te_lmc* m = ctx->lmc;
+    enum { RD_S = 2, WR_S = 4, FROM_B = 8 };
+    uint32_t g = groups(m->n1, 64);
+    barrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+    vkCmdFillBuffer(cb, m->scratch.buf, (VkDeviceSize)m->off[1] * 16u, (VkDeviceSize)m->n1 * 16u, 0xffffffffu);
+    lmc_transfer_barrier(cb);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->search[1][1]);
+    static const int pass[4] = {3, 4, 0, 2}, io[4] = {0, 0, WR_S | FROM_B, RD_S};
+    for (int k = 0; k < 4; ++k) {
+        lmc_push_c(ctx, cb, 0.0f, 1, 1, pass[k], 1 | io[k]);
         vkCmdDispatch(cb, g, 1, 1);
         compute_barrier(cb);
     }
@@ -412,9 +613,14 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
     ownership(cb, &ctx->src[par], ctx->dev->qfi, 1);
     vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, slot->queries, 0);
     slot->lmc_timed = 0;
+    slot->lmc_split = 0;
     if (!generate) {
         /* history only: no pair; a skip or a hold also restarts every predictor */
         m->have_temporal = 0;
+        pthread_mutex_lock(&m->fit_lock);
+        m->prev_valid = 0;
+        m->fit_gen++;
+        pthread_mutex_unlock(&m->fit_lock);
         lmc_fill(cb, &m->layers, 0, 4, 0);                    /* layer_count */
         lmc_fill(cb, &m->globals, 4, 4, 0);                   /* moving */
         if (ctx->frames > 0) {
@@ -451,36 +657,53 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
 #define LMC_TS(k) vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, slot->queries, TE_LMC_Q0 + (k))
     LMC_TS(0);
     /* block search: B grid (temporal = previous pair), then A grid (temporal = this B field) */
-    lmc_search_grid(ctx, cb, 0, m->have_temporal);
+    int tier = s->lmc_tier < 0 ? 0 : s->lmc_tier > TE_LMC_TIERS - 1 ? TE_LMC_TIERS - 1 : s->lmc_tier;
+    if (m->n1 > 65536u && tier > 0) tier = 0;   /* the carry's key holds a 16-bit block index */
+    slot->lmc_tier = tier;
+    lmc_search_grid(ctx, cb, 0, m->have_temporal, tier >= 2 ? 1 : 2);
     LMC_TS(1 + TE_LMC_SEARCH_B);
-    lmc_search_grid(ctx, cb, 1, 1);
+    if (tier >= 1)
+        lmc_a_from_b(ctx, cb);
+    else
+        lmc_search_grid(ctx, cb, 1, 1, 2);
     LMC_TS(1 + TE_LMC_SEARCH_A);
-    /* motion planes */
+    /* block statistics for the CPU motion model (usable blocks, HUD blocks, motion
+       votes); the planes and the palette themselves are fitted on the CPU */
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_LAYERS]);
     lmc_push_c(ctx, cb, 0.0f, 1, 0, 0, 0);
-    vkCmdDispatch(cb, groups(m->n1, 64), 1, 1);
+    vkCmdDispatch(cb, m->n1, 1, 1);   /* one workgroup per block */
     compute_barrier(cb);
-    for (int k = 0; k < LMC_MAX_LAYERS; ++k) {
-        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_IRLS]);
-        lmc_push_c(ctx, cb, 0.0f, 1, 0, 1, 0);
-        vkCmdDispatch(cb, 1, 1, 1);
-        compute_barrier(cb);
-        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_LAYERS]);
-        lmc_push_c(ctx, cb, 0.0f, 1, 0, 2, 0);
-        vkCmdDispatch(cb, LMC_HYPS + LMC_MAX_LAYERS, 1, 1);
-        compute_barrier(cb);
-        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_IRLS]);
-        lmc_push_c(ctx, cb, 0.0f, 1, 0, 3, 0);
-        vkCmdDispatch(cb, 1, 1, 1);
-        compute_barrier(cb);
-    }
     LMC_TS(1 + TE_LMC_LAYERS);
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_PALETTE_P]);
-    lmc_push_c(ctx, cb, 0.0f, 1, 0, 0, 0);
-    vkCmdDispatch(cb, 1, 1, 1);
-    compute_barrier(cb);
-    LMC_TS(1 + TE_LMC_PALETTE);
+    /* the input of the CPU motion model: vectors (+ HUD flag in w), usable flags, votes */
+    int rs = (int)(slot - ctx->ring);
+    barrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_ACCESS_TRANSFER_READ_BIT);
+    VkBufferCopy fv = {(VkDeviceSize)m->off[1] * 16, 0, (VkDeviceSize)m->n1 * 16};
+    vkCmdCopyBuffer(cb, m->vec[0].buf, m->fitrb[rs].buf, 1, &fv);
+    VkBufferCopy fl = {LMC_LY_LIVE, (VkDeviceSize)m->n1 * 16, (VkDeviceSize)m->n1 * 4};
+    vkCmdCopyBuffer(cb, m->layers.buf, m->fitrb[rs].buf, 1, &fl);
+    VkBufferCopy fvt = {8, (VkDeviceSize)m->n1 * 20, 4};
+    vkCmdCopyBuffer(cb, m->globals.buf, m->fitrb[rs].buf, 1, &fvt);
+    barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+            VK_ACCESS_HOST_READ_BIT);
     vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, slot->queries, 2);
+    /* second submission: after the CPU fit of this pair (fit_tl = 2k + 2) */
+    slot->lmc_seq = ++m->fit_seq;
+    slot->lmc_split = 1;
+    cb = slot->analysis2;
+    VkCommandBufferBeginInfo bi = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+                                   .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+    vkResetCommandBuffer(cb, 0);
+    vkBeginCommandBuffer(cb, &bi);
+    barrier(cb, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_ACCESS_TRANSFER_READ_BIT);
+    VkBufferCopy ml[2] = {{LMC_STAGE_COUNT, 0, 4}, {LMC_STAGE_LAYERS, LMC_LY_LAYERS, 48u * LMC_MAX_LAYERS}};
+    vkCmdCopyBuffer(cb, m->stage[rs].buf, m->layers.buf, 2, ml);
+    VkBufferCopy mg[2] = {{LMC_STAGE_HEAD, 0, 8}, {LMC_STAGE_PAL, 16, 16u * LMC_PALETTE}};
+    vkCmdCopyBuffer(cb, m->stage[rs].buf, m->globals.buf, 2, mg);
+    lmc_transfer_barrier(cb);
+    LMC_TS(1 + TE_LMC_FIT_WAIT);   /* end of the wait for the CPU fit (not GPU work) */
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->layout, 0, 1, &m->set0[par], 0, NULL);
     /* per-pixel fields, orphan objects, fields again next to orphans */
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_FIELD]);
     for (int g = 0; g < 2; ++g) {
@@ -492,7 +715,7 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
     LMC_TS(1 + TE_LMC_FIELD);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_MASKED]);
     lmc_push_c(ctx, cb, 0.0f, 0, 0, 0, 0);
-    vkCmdDispatch(cb, groups(W / 4, 8), groups(H / 4, 8), 1);
+    vkCmdDispatch(cb, groups(W / 4, 4), groups(H / 4, 4), 1);   /* 16x16-pixel tiles */
     compute_barrier(cb);
     LMC_TS(1 + TE_LMC_MASKED);
     /* orphans: count residual pixels per block, keep the strongest (at most ocap per grid), list them,
@@ -500,7 +723,7 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_ORPHAN]);
     for (int g = 0; g < 2; ++g) {
         lmc_push_c(ctx, cb, 0.0f, 1, g, 0, 0);
-        vkCmdDispatch(cb, groups(m->n1, 64), 1, 1);
+        vkCmdDispatch(cb, m->n1, 1, 1);   /* one workgroup per block */
     }
     compute_barrier(cb);
     lmc_push_c(ctx, cb, 0.0f, 1, 0, 1, 0);
@@ -539,6 +762,7 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
     barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, slot->queries, 3);
+    vkEndCommandBuffer(cb);
 }
 
 static void lmc_record_output(te_context* ctx, te_slot* slot, const te_submit* s, uint32_t i, int hold) {
