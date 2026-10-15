@@ -4,39 +4,52 @@
 // One thread per block; candidate order and the "first strictly smaller cost
 // wins" rule match the reference's argmin.
 //
-// PC.pass_: 0 = candidates + refinement (writes the grid buffer)
+// The level and the grid are specialization constants (one pipeline each):
+// every texture choice folds at compile time, and each pass evaluates its
+// candidates in one loop with one cost site, so the code stays small enough
+// for the instruction cache.
+//
+// PC.pass_: 0 = candidates + refinement (writes the grid buffer, z = cost)
 //           1 = one propagation sweep (grid buffer -> scratch, z = cost)
 //           2 = vector median (grid buffer -> scratch)
-//           3 = scratch -> grid buffer, recomputing the cost
+//           3 = scratch -> grid buffer, with the cost
 //           4 = scratch -> grid buffer as it is (after pass 1)
 // PC.flags: bit 0 = temporal predictor valid
+//
+// A candidate equal to an earlier one with no smaller penalty can never win
+// (strict <), so such repeats are skipped; in coherent motion most are.
 #include "lmc_common.glsl"
 layout(local_size_x = 64) in;
+layout(constant_id = 0) const int SPEC_LEVEL = 1;
+layout(constant_id = 1) const int SPEC_GRID = 0;   // 0 = B grid, 1 = A grid
 
-int g_l;
+#define L_ SPEC_LEVEL
+#define GRID SPEC_GRID
+
 ivec2 g_b;
 
 vec4 load_v(ivec2 b) {
-    ivec2 n = lblocks(g_l);
+    ivec2 n = lblocks(L_);
     b = clamp(b, ivec2(0), n - 1);
-    int i = blk_offset(g_l) + b.y * n.x + b.x;
-    return PC.grid == 0 ? vb[i] : va[i];
+    int i = blk_offset(L_) + b.y * n.x + b.x;
+    return GRID == 0 ? vb[i] : va[i];
 }
 
 void store_v(ivec2 b, vec4 v) {
-    int i = blk_offset(g_l) + b.y * lblocks(g_l).x + b.x;
-    if (PC.grid == 0) vb[i] = v; else va[i] = v;
+    int i = blk_offset(L_) + b.y * lblocks(L_).x + b.x;
+    if (GRID == 0) vb[i] = v; else va[i] = v;
 }
 
-// the block's own pixels, fetched once (constant indices only: stays in registers)
+// the block's own pixels, fetched on the first cost (constant indices only: registers)
 float g_own[LMC_BLK * LMC_BLK];
+bool g_have_own = false;
 
 // 4x4 texels with top-left t from four 2x2 gathers, in raster order
 void gather4x4(int which, ivec2 t, out float o[16]) {
     [[unroll]] for (int gy = 0; gy < 2; ++gy)
         [[unroll]] for (int gx = 0; gx < 2; ++gx) {
             ivec2 c = t + ivec2(gx, gy) * 2;
-            vec4 g = which == 0 ? gather_a(g_l, c) : gather_b(g_l, c);
+            vec4 g = which == 0 ? gather_a(L_, c) : gather_b(L_, c);
             int i = gy * 8 + gx * 2;
             o[i] = g.w;
             o[i + 1] = g.z;
@@ -45,144 +58,170 @@ void gather4x4(int which, ivec2 t, out float o[16]) {
         }
 }
 
-void load_own() { gather4x4(PC.grid == 0 ? 1 : 0, g_b * LMC_BLK, g_own); }
-
 // mean |own - other| over the 4x4 block (reference: Level.cost).  Whole-pixel
-// offsets (the full search, parents, +-1 steps) take four gathers instead of 16
-// bilinear fetches; fractional ones (temporal, layers, +-0.5) are filtered.
+// offsets take four gathers instead of 16 bilinear fetches.
 float cost(vec2 v) {
+    if (!g_have_own) {
+        gather4x4(GRID == 0 ? 1 : 0, g_b * LMC_BLK, g_own);
+        g_have_own = true;
+    }
     float acc = 0.0;
-    vec2 o = PC.grid == 0 ? -v : v;
+    vec2 o = GRID == 0 ? -v : v;
     if (o == floor(o)) {
         float t[16];
-        gather4x4(PC.grid == 0 ? 0 : 1, g_b * LMC_BLK + ivec2(o), t);
+        gather4x4(GRID == 0 ? 0 : 1, g_b * LMC_BLK + ivec2(o), t);
         [[unroll]] for (int k = 0; k < 16; ++k) acc += abs(g_own[k] - t[k]);
-        return acc / float(LMC_BLK * LMC_BLK);
-    }
-    [[unroll]] for (int oy = 0; oy < LMC_BLK; ++oy) {
-        [[unroll]] for (int ox = 0; ox < LMC_BLK; ++ox) {
-            vec2 q = vec2(g_b * LMC_BLK + ivec2(ox, oy)) + o;
-            float y = PC.grid == 0 ? luma_a(g_l, q) : luma_b(g_l, q);
-            acc += abs(g_own[oy * LMC_BLK + ox] - y);
+    } else {
+        [[unroll]] for (int k = 0; k < 16; ++k) {
+            vec2 q = vec2(g_b * LMC_BLK + ivec2(k % 4, k / 4)) + o;
+            acc += abs(g_own[k] - (GRID == 0 ? luma_a(L_, q) : luma_b(L_, q)));
         }
     }
     return acc / float(LMC_BLK * LMC_BLK);
-}
-
-vec2 g_best;
-float g_cost;
-float g_pure;   // cost of g_best without its penalty
-
-void consider(vec2 v, float pen) {
-    float p = cost(v);
-    float c = p + pen;
-    if (c < g_cost) {
-        g_cost = c;
-        g_best = v;
-        g_pure = p;
-    }
 }
 
 vec2 temporal_cand() {
     // reference resample_field: nearest block of a level-1 field (full-res px),
     // scaled to this level.  B grid: the previous pair's B field; A grid: this
     // pair's B field (reference: estimate(..., "a", layers, vb)).
-    ivec2 n = lblocks(g_l), tn = lblocks(1);
+    ivec2 n = lblocks(L_), tn = lblocks(1);
     ivec2 i = clamp((g_b * tn) / n, ivec2(0), tn - 1);
     int j = i.y * tn.x + i.x;
-    vec2 v = (PC.grid == 0 ? temporal[j].xy : vb[P.blk_off.x + j].xy) * 2.0;  // level-1 px -> full res
-    return v / float(1 << g_l);
+    vec2 v = (GRID == 0 ? temporal[j].xy : vb[P.blk_off.x + j].xy) * 2.0;  // level-1 px -> full res
+    return v / float(1 << L_);
 }
 
 vec2 camera_cand(int k) {
     Layer L = LY.layers[k];
-    float s = float(1 << g_l);
+    float s = float(1 << L_);
     vec2 c = vec2(g_b * LMC_BLK) + (float(LMC_BLK) - 1.0) * 0.5;
     vec2 f = (c + 0.5) * s - 0.5;
-    if (PC.grid == 1) return (apply_h(L, f) - f) / s;
+    if (GRID == 1) return (apply_h(L, f) - f) / s;
     return (f - apply_h(inv_h(L), f)) / s;
 }
 
 vec2 median3(ivec2 b) {
     vec2 nb[9];
-    int k = 0;
-    [[unroll]] for (int dy = -1; dy <= 1; ++dy)
-        [[unroll]] for (int dx = -1; dx <= 1; ++dx) nb[k++] = load_v(b + ivec2(dx, dy)).xy;
+    [[unroll]] for (int k = 0; k < 9; ++k) nb[k] = load_v(b + ivec2(k % 3 - 1, k / 3 - 1)).xy;
     int best = 0;
     float bd = 1e30;
-    for (int i = 0; i < 9; ++i) {
+    [[unroll]] for (int i = 0; i < 9; ++i) {
         float d = 0.0;
-        for (int j = 0; j < 9; ++j) d += abs(nb[i].x - nb[j].x) + abs(nb[i].y - nb[j].y);
+        [[unroll]] for (int j = 0; j < 9; ++j) d += abs(nb[i].x - nb[j].x) + abs(nb[i].y - nb[j].y);
         if (d < bd) { bd = d; best = i; }
     }
-    return nb[best];
+    vec2 r = nb[0];
+    [[unroll]] for (int i = 1; i < 9; ++i) if (best == i) r = nb[i];
+    return r;
 }
 
 void main() {
-    g_l = PC.level;
-    ivec2 n = lblocks(g_l);
+    ivec2 n = lblocks(L_);
     int id = int(gl_GlobalInvocationID.x);
     if (id >= n.x * n.y) return;
     g_b = ivec2(id % n.x, id / n.x);
-    int idx = blk_offset(g_l) + id;
+    int idx = blk_offset(L_) + id;
     if (PC.pass_ == 4) {
         store_v(g_b, scratch[idx]);
         return;
     }
-    if (PC.pass_ != 2) load_own();
 
     if (PC.pass_ == 0) {
-        g_cost = 1e30;
-        g_best = vec2(0.0);
-        g_pure = 1e30;
-        if (g_l == LMC_LEVELS) {
-            int r = P.coarse_r;
-            for (int dy = -r; dy <= r; ++dy)
-                for (int dx = -r; dx <= r; ++dx)
-                    consider(vec2(dx, dy), P.pen_update * 0.25 * float(abs(dx) + abs(dy)));
-        } else {
-            // parents (x2) of the coarser level: centre, up, down, left, right
-            int pl = g_l + 1;
+        float best_c = 1e30, best_p = 1e30;
+        vec2 best_v = vec2(0.0);
+        // parents (x2) of the coarser level: centre, up, down, left, right
+        vec2 p0 = vec2(1e30), p1 = p0, p2 = p0, p3 = p0, p4 = p0;
+        if (L_ < LMC_LEVELS) {
+            int pl = L_ + 1;
             ivec2 pn = lblocks(pl);
             ivec2 pi = clamp(g_b / 2, ivec2(0), pn - 1);
             const ivec2 O[5] = ivec2[5](ivec2(0, 0), ivec2(0, -1), ivec2(0, 1), ivec2(-1, 0), ivec2(1, 0));
-            for (int k = 0; k < 5; ++k) {
+            vec2 pv[5];
+            [[unroll]] for (int k = 0; k < 5; ++k) {
                 ivec2 q = clamp(pi + O[k], ivec2(0), pn - 1);
                 int j = blk_offset(pl) + q.y * pn.x + q.x;
-                consider(2.0 * (PC.grid == 0 ? vb[j].xy : va[j].xy), 0.0);
+                pv[k] = 2.0 * (GRID == 0 ? vb[j].xy : va[j].xy);
+            }
+            p0 = pv[0]; p1 = pv[1]; p2 = pv[2]; p3 = pv[3]; p4 = pv[4];
+        }
+        int r = P.coarse_r, side = 2 * r + 1;
+        int nbase = L_ == LMC_LEVELS ? side * side : 5;
+        int nl = int(LY.layer_count);
+        int steps = L_ == 1 ? 2 : 1;
+        int k_t = nbase, k_l = k_t + 1, k_z = k_l + nl, k_r = k_z + 1;
+        int total = k_r + 8 * steps;
+        vec2 c0 = vec2(0.0);
+        float st = 1.0;
+        for (int k = 0; k < total; ++k) {
+            vec2 v;
+            float pen = 0.0;
+            bool skip = false;
+            if (k < nbase) {
+                if (L_ == LMC_LEVELS) {
+                    int dy = k / side - r, dx = k % side - r;
+                    v = vec2(dx, dy);
+                    pen = P.pen_update * 0.25 * float(abs(dx) + abs(dy));
+                } else {
+                    v = k == 0 ? p0 : k == 1 ? p1 : k == 2 ? p2 : k == 3 ? p3 : p4;
+                    skip = (k > 0 && v == p0) || (k > 1 && v == p1) || (k > 2 && v == p2) || (k > 3 && v == p3);
+                }
+            } else {
+                if (k == k_t) {
+                    skip = (PC.flags & 1) == 0;
+                    v = skip ? vec2(0.0) : temporal_cand();
+                } else if (k < k_z) {
+                    v = camera_cand(k - k_l);
+                } else if (k == k_z) {
+                    v = vec2(0.0);
+                    pen = P.pen_update;
+                } else {
+                    // refinement: +-1 level pixel, then +-0.5 at level 1, around the best so far
+                    int j = (k - k_r) % 8, s = (k - k_r) / 8;
+                    if (j == 0) {
+                        c0 = best_v;
+                        best_c = best_p;  // the refinement restarts from the cost without the penalty
+                        st = s == 0 ? 1.0 : 0.5;
+                    }
+                    int jj = j < 4 ? j : j + 1;
+                    v = c0 + vec2(jj % 3 - 1, jj / 3 - 1) * st;
+                    pen = P.pen_update * st;
+                }
+                // penalty-0 candidates and the zero vector repeat the parents at no smaller penalty
+                if (k < k_r && L_ < LMC_LEVELS)
+                    skip = skip || v == p0 || v == p1 || v == p2 || v == p3 || v == p4;
+            }
+            if (skip) continue;
+            float p = cost(v);
+            float c = p + pen;
+            if (c < best_c) {
+                best_c = c;
+                best_v = v;
+                best_p = p;
             }
         }
-        if ((PC.flags & 1) != 0) consider(temporal_cand(), 0.0);
-        for (int k = 0; k < int(LY.layer_count); ++k) consider(camera_cand(k), 0.0);
-        consider(vec2(0.0), P.pen_update);
-        // refinement: +-1 level pixel, and +-0.5 at level 1
-        int steps = g_l == 1 ? 2 : 1;
-        for (int s = 0; s < steps; ++s) {
-            float st = s == 0 ? 1.0 : 0.5;
-            vec2 c0 = g_best;
-            g_cost = g_pure;  // == cost(c0): the refinement restarts without the penalty
-            for (int dy = -1; dy <= 1; ++dy)
-                for (int dx = -1; dx <= 1; ++dx)
-                    if (dx != 0 || dy != 0) consider(c0 + vec2(dx, dy) * st, P.pen_update * st);
-        }
-        store_v(g_b, vec4(g_best, g_cost, 0.0));
+        store_v(g_b, vec4(best_v, best_p, 0.0));  // z = cost of the vector (no penalty)
     } else if (PC.pass_ == 1) {
-        vec2 v = load_v(g_b).xy;
+        vec4 own = load_v(g_b);  // z is this vector's cost
         vec2 med = median3(g_b);
-        vec2 cands[6] = vec2[6](v, med, load_v(g_b + ivec2(0, -1)).xy, load_v(g_b + ivec2(0, 1)).xy,
-                                load_v(g_b + ivec2(-1, 0)).xy, load_v(g_b + ivec2(1, 0)).xy);
+        vec2 c1 = load_v(g_b + ivec2(0, -1)).xy, c2 = load_v(g_b + ivec2(0, 1)).xy;
+        vec2 c3 = load_v(g_b + ivec2(-1, 0)).xy, c4 = load_v(g_b + ivec2(1, 0)).xy;
         float bc = 1e30, bp = 0.0;
-        vec2 bv = v;
+        vec2 bv = own.xy;
         for (int k = 0; k < 6; ++k) {
-            float p = cost(cands[k]);
-            float c = p + P.smooth_ * (abs(cands[k].x - med.x) + abs(cands[k].y - med.y));
-            if (c < bc) { bc = c; bv = cands[k]; bp = p; }
+            vec2 v = k == 0 ? own.xy : k == 1 ? med : k == 2 ? c1 : k == 3 ? c2 : k == 4 ? c3 : c4;
+            bool rep = (k > 0 && v == own.xy) || (k > 1 && v == med) || (k > 2 && v == c1) ||
+                       (k > 3 && v == c2) || (k > 4 && v == c3);
+            if (rep) continue;
+            float p = k == 0 ? own.z : cost(v);
+            float c = p + P.smooth_ * (abs(v.x - med.x) + abs(v.y - med.y));
+            if (c < bc) { bc = c; bv = v; bp = p; }
         }
-        scratch[idx] = vec4(bv, bp, 0.0);  // pass 4 stores it: the same as pass 3 recomputing it
+        scratch[idx] = vec4(bv, bp, 0.0);  // pass 4 stores it
     } else if (PC.pass_ == 2) {
         scratch[idx] = vec4(median3(g_b), 0.0, 0.0);
     } else {
         vec2 v = scratch[idx].xy;
-        store_v(g_b, vec4(v, cost(v), 0.0));
+        vec4 cur = load_v(g_b);
+        store_v(g_b, vec4(v, v == cur.xy ? cur.z : cost(v), 0.0));  // the median is mostly the vector itself
     }
 }

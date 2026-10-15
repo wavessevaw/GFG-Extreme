@@ -63,6 +63,7 @@ struct te_lmc {
     VkDescriptorPool pool;
     VkDescriptorSet set0[2], set1[TE_MAX_OUTPUTS];
     VkPipeline pipe[LMC_PIPES];
+    VkPipeline search[LMC_LEVELS + 1][2];  /* block search specialised per level (1..4) and grid */
     int have_temporal;
 };
 
@@ -253,6 +254,7 @@ static VkResult lmc_create(te_context* ctx) {
         [LMC_COMPOSE] = {te_spv_lmc_compose, sizeof te_spv_lmc_compose},
     };
     for (int i = 0; i < LMC_PIPES; ++i) {
+        if (i == LMC_SEARCH) continue;  /* specialised per level and grid below */
         VkShaderModuleCreateInfo smci = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
                                          .codeSize = src[i].size, .pCode = src[i].code};
         VkShaderModule mod;
@@ -266,6 +268,28 @@ static VkResult lmc_create(te_context* ctx) {
         vkDestroyShaderModule(d, mod, NULL);
         if (r != VK_SUCCESS) return fail(r, "vkCreateComputePipelines(lmc %d) failed (%d)", i, r);
     }
+    /* block search: level and grid are specialization constants (lmc_search.comp) */
+    {
+        VkShaderModuleCreateInfo smci = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+                                         .codeSize = sizeof te_spv_lmc_search, .pCode = te_spv_lmc_search};
+        VkShaderModule mod;
+        CHECK(vkCreateShaderModule(d, &smci, NULL, &mod), "vkCreateShaderModule(lmc search)");
+        for (int l = 1; l <= LMC_LEVELS && r == VK_SUCCESS; ++l)
+            for (int g = 0; g < 2 && r == VK_SUCCESS; ++g) {
+                int32_t spec[2] = {l, g};
+                VkSpecializationMapEntry e[2] = {{0, 0, 4}, {1, 4, 4}};
+                VkSpecializationInfo si = {.mapEntryCount = 2, .pMapEntries = e, .dataSize = sizeof spec, .pData = spec};
+                VkComputePipelineCreateInfo cpci = {
+                    .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+                    .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                              .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = mod, .pName = "main",
+                              .pSpecializationInfo = &si},
+                    .layout = m->layout};
+                r = vkCreateComputePipelines(d, VK_NULL_HANDLE, 1, &cpci, NULL, &m->search[l][g]);
+            }
+        vkDestroyShaderModule(d, mod, NULL);
+        if (r != VK_SUCCESS) return fail(r, "vkCreateComputePipelines(lmc search) failed (%d)", r);
+    }
 #undef LTRY
     return VK_SUCCESS;
 }
@@ -277,6 +301,9 @@ static void lmc_destroy(te_context* ctx) {
     VkDevice d = dev->device;
     for (int i = 0; i < LMC_PIPES; ++i)
         if (m->pipe[i]) vkDestroyPipeline(d, m->pipe[i], NULL);
+    for (int l = 0; l <= LMC_LEVELS; ++l)
+        for (int g = 0; g < 2; ++g)
+            if (m->search[l][g]) vkDestroyPipeline(d, m->search[l][g], NULL);
     if (m->pool) vkDestroyDescriptorPool(d, m->pool, NULL);
     if (m->layout) vkDestroyPipelineLayout(d, m->layout, NULL);
     if (m->dsl) vkDestroyDescriptorSetLayout(d, m->dsl, NULL);
@@ -341,8 +368,8 @@ static void lmc_transfer_barrier(VkCommandBuffer cb) {
 
 static void lmc_search_grid(te_context* ctx, VkCommandBuffer cb, int grid, int temporal_ok) {
     struct te_lmc* m = ctx->lmc;
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_SEARCH]);
     for (int l = LMC_LEVELS; l >= 1; --l) {
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->search[l][grid]);
         uint32_t g = groups(m->bw[l] * m->bh[l], 64);
         int flags = (grid == 1 || temporal_ok) ? 1 : 0;
         lmc_push_c(ctx, cb, 0.0f, l, grid, 0, flags);
