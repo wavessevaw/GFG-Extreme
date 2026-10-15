@@ -177,7 +177,7 @@ const budgetRule = (b) => {
 // Plain-language state for the hero card. Returns {head, body, tone}
 function describe(s) {
   const cap = (s.capability && s.capability.reason) || "";
-  if (!s.enabled) return { head: "Ready", body: "Press Run — GFG will pick the target for this screen and manage the engine.", tone: "idle" };
+  if (!s.enabled) return { head: "Ready", body: "Press Start — GFG picks the target for this screen and manages the engine.", tone: "idle" };
   if (cap === "relaunch-required-for-governor-overlay" || s.reason === "relaunch-required-for-governor-overlay") return { head: "Restart the game once", body: "This game was started without the GFG launch command, or before this GFG version. Relaunch it once; after that GFG can be turned on while the game runs.", tone: "warn" };
   if (s.state === "PAUSED" && s.reason === "steam-menu-open") return { head: "Steam menu open", body: PAUSED_TEXT[s.reason], tone: "idle" };
   if (s.state === "PAUSED") return { head: "Paused", body: PAUSED_TEXT[s.reason] || "Waiting (" + (s.reason || "unknown") + "). Your saved profile is untouched.", tone: "warn" };
@@ -454,13 +454,13 @@ function FrameTimingControls({ profile, settings, refresh, autopilot = false }) 
   };
   return h("div", null,
     h("div", { className: "list" },
-      h(Toggle, { on: features.latency, title: "Frame timing", sub: "Control frame-start timing in Act; active after native confirmation",
+      h(Toggle, { on: features.latency, title: "Frame timing", sub: "Even frame starts, once the engine confirms",
                   onChange: (v) => change("latency", v) }),
-      h(Toggle, { on: features.shield, title: "Stall shield", sub: "Avoid extra waiting after a late frame; does not remove loading or shader stalls",
+      h(Toggle, { on: features.shield, title: "Stall shield", sub: "No extra wait after a late frame",
                   onChange: (v) => change("shield", v) }),
-      autopilot ? h(Toggle, { on: features.boost, title: "Short Boost", sub: "Briefly raises real-frame cadence, then returns to calm. Maximum 1.5 seconds; funded within your power limit.", onChange: (v) => change("boost", v) }) : null,
-      autopilot ? h(Toggle, { on: features.continuous_boost, title: "Continuous Boost", sub: "Keeps higher real-frame cadence without the 1.5-second limit. Uses more power; pauses in menus and for thermal, delivery or power-search guards. Overrides short pulses. Off by default.", onChange: (v) => change("continuous_boost", v) }) : null,
-      autopilot ? h(Toggle, { on: features.touch_boost, title: "Stick touch Boost", sub: "Starts a short pulse on right-stick contact. Motion may extend it up to 1.5 seconds. Autopilot only.",
+      autopilot ? h(Toggle, { on: features.boost, title: "Short Boost", sub: "Up to 1.5 s more real frames on a heavy scene, within your power limit", onChange: (v) => change("boost", v) }) : null,
+      autopilot ? h(Toggle, { on: features.continuous_boost, title: "Continuous Boost", sub: "Keeps the boost on; uses more power. Pauses in menus and when hot", onChange: (v) => change("continuous_boost", v) }) : null,
+      autopilot ? h(Toggle, { on: features.touch_boost, title: "Stick touch Boost", sub: "A short pulse when the right stick moves",
                   onChange: (v) => change("touch_boost", v) }) : null),
     error ? h(Note, null, error) : null);
 }
@@ -512,6 +512,61 @@ function ExtremeOffer({ o, onTry, onHide }) {
       h("div", { className: "xbtns" }, h(Focusable, { className: "xbtn on", onClick: onTry }, "Try Extreme"), h(Focusable, { className: "xbtn", onClick: onHide }, "Not now"))));
 }
 
+// 2.1.2 home (tiles): the FPS ring with the wolf, three small rings (real frames, power against the
+// limit, battery), the state, four mode tiles, Start/Stop, Fusion and Boost (Auto), the filter strip and
+// four doors. Expert switches are on Fine-tune, explanations and history on Details.
+const TI = {
+  batt: "M2 7h17v10H2zM22 11v2M6 11v2", scale: "M12 3v18M5 7h14M2 14l3-7 3 7a3 2 0 0 1-6 0zM16 14l3-7 3 7a3 2 0 0 1-6 0z",
+  gem: "M6 3h12l4 6-10 12L2 9zM2 9h20", auto: "M12 2l2.4 5.6L20 10l-5.6 2.4L12 18l-2.4-5.6L4 10l5.6-2.4z",
+  tune: "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6", info: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 16v-4M12 8h.01",
+  tv: "M2 4h20v13H2zM8 21h8M12 17v4", cog: "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1",
+  check: "M20 6L9 17l-5-5", play: "M7 4l14 8-14 8z", warn: "M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z",
+  layers: "M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5", bolt: "M13 2L4 14h7l-1 8 9-12h-7z", shade: "M3 3h18v18H3zM3 12h18M12 3v18",
+  clock: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 6v6l4 2", shield: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
+  stick: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z",
+  infin: "M18 8a4 4 0 1 1 0 8c-3 0-5-4-6-4s-3 4-6 4a4 4 0 1 1 0-8c3 0 5 4 6 4s3-4 6-4z",
+};
+const TIcon = ({ d, size = 16 }) => h("svg", { viewBox: "0 0 24 24", width: size, height: size, fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, h("path", { d }));
+function MiniRingTile({ frac, color, icon, value, label }) {
+  const r = 17, c = 2 * Math.PI * r, f = Math.max(0, Math.min(1, frac || 0));
+  return h("div", { className: "tl mr" },
+    h("div", { className: "mring" },
+      h("svg", { viewBox: "0 0 42 42", width: 42, height: 42 },
+        h("circle", { cx: 21, cy: 21, r, fill: "none", stroke: "#24242b", strokeWidth: 5 }),
+        h("circle", { cx: 21, cy: 21, r, fill: "none", stroke: color, strokeWidth: 5, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } })),
+      h("i", { style: { color } }, h(TIcon, { d: icon, size: 14 }))),
+    h("div", null, h("b", null, value), h("span", null, label)));
+}
+function SwitchTile({ on, icon, title, sub, onChange, wide }) {
+  return h(Focusable, { className: "row tl btg" + (on ? " on" : "") + (wide ? " wide" : ""), onClick: () => onChange(!on) },
+    h("div", { className: "bh" }, h("div", { className: "bic" }, h(TIcon, { d: icon, size: 15 })), h("div", { className: "tog" + (on ? " on" : "") }, h("i"))),
+    h("div", { className: "btx" }, h("b", null, title), sub ? h("span", null, sub) : null));
+}
+function QuickTiles({ s, profile, refresh }) {
+  const fusion = s.frame_fusion || {};
+  const fusionOn = fusion.setting_enabled !== undefined ? fusion.setting_enabled === true : fusion.enabled !== false;
+  const fs = (s.frame_os || {}).feature_settings || {};
+  const boostOn = fs.boost !== false;
+  const busy = useRef(false);
+  const run = async (fn) => { if (busy.current) return; busy.current = true; try { await fn(); } catch (e) {} busy.current = false; refresh(); };
+  return h("div", { className: "bg2" },
+    h(SwitchTile, { on: fusionOn, icon: TI.layers, title: "Frame Fusion", sub: "Smoother generated frames", onChange: (v) => run(() => rpc.setFrameFusion(v)) }),
+    h(SwitchTile, { on: boostOn, icon: TI.bolt, title: "Boost", sub: "Extra real frames on heavy scenes", onChange: (v) => run(() => rpc.setFrameOsFeature(profile, "boost", v)) }));
+}
+function FilterStrip({ profile, cfg, patch, go }) {
+  const insp = useFilterInspector(profile, cfg);
+  if (!cfg) return null;
+  const st = filterState(cfg, insp, true), active = presetOf(cfg), disabled = st.tone === "warn" && !filtersOn(cfg);
+  const shown = FILTER_PRESETS.slice(0, 5);
+  return h("div", null,
+    h("div", { className: "tl fstrip2" },
+      h("div", { className: "bk" }, "FILTER", st.pill ? h("span", { className: "pill " + (st.pill === "LIVE" ? "live" : "would") }, st.pill) : null),
+      ...shown.map((p) => h(Focusable, { key: p.id, className: "fsq" + (active === p.id ? " on" : "") + (disabled ? " dis" : ""), onClick: disabled ? undefined : () => applyPreset(cfg, patch, p) },
+        h("div", { className: "sw", style: { background: p.sw } }, p.id === "off" ? h("i", { className: "slash" }) : null), h("div", { className: "fl" }, p.name))),
+      h(Focusable, { className: "fchev", onClick: () => go("filters") }, "›")),
+    st.tone === "warn" ? h("div", { className: "fnote warn" }, st.text) : null);
+}
+
 function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch }) {
   const [busy, setBusy] = useState(false);
   const missing = inst && inst.installed === false;
@@ -519,7 +574,6 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
   const x = s.extreme || {};
   const d = describeExtreme(s, describe(s));
   const [asking, setAsking] = useState(false);
-  const [offerHidden, setOfferHidden] = useState(false);
   const setMode = async (v) => {
     if (v === "extreme" && x.act_consent == null && !asking) { setAsking(true); return; }
     setAsking(false);
@@ -544,91 +598,130 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
     try { if (missing) { await rpc.install(); await reloadInst(); } else { await rpc.setGovernor(profile, !s.enabled); } } catch (e) {}
     await refresh(); setBusy(false);
   };
-  const showLive = s.enabled && out != null;
-  const [heroLayout, nextHero] = useHeroLayout();
+  const live = s.enabled && out != null;
   const tdp = pw.observed_tdp_w != null ? pw.observed_tdp_w : pw.current_tdp_w;
-  const eff = s.effort && s.effort.level;
-  const effWhy = eff && s.effort.reason;
+  const limit = (xt && x.ceiling && x.ceiling.ceiling_w) || pw.initial_tdp_w || pw.maximum_tdp_w || 15;
   const mins = s.battery && s.battery.minutes_left;
+  const pct = s.battery && s.battery.percent;
   const cap0 = (s.capability && s.capability.reason) || "";
   const needsLaunch = s.enabled && (cap0 === "relaunch-required-for-governor-overlay" || s.reason === "relaunch-required-for-governor-overlay" || s.reason === "game-not-running" || s.reason === "diagnostics-active-no-events");
   const [problems, setProblems] = useState([]);
-  const troubledNow = s.state === "PAUSED" || (s.enabled && s.reason === "target-not-proven-viable");
-  const troubled = troubledNow;
+  const troubled = s.state === "PAUSED" || (s.enabled && s.reason === "target-not-proven-viable");
   // Trouble: look for a concrete cause once (not on every poll) and say what to do about it.
   useEffect(() => {
-    if (!troubledNow) { setProblems([]); return; }
+    if (!troubled) { setProblems([]); return; }
     let alive = true;
     rpc.setupCheck(profile || "").then((r) => { if (alive && r && r.checks) setProblems(r.checks.filter((c) => !c.ok && c.advice).slice(0, 2)); }).catch(() => {});
     return () => { alive = false; };
-  }, [troubledNow, s.reason]);
-  const dg = s.diagnosis || {}, sn = s.sensors || {};
-  const health = s.enabled ? [dg.bottleneck && dg.bottleneck !== "unknown" && dg.bottleneck !== "none" ? { gpu: "GPU-bound", cpu: "CPU-bound", power: "Power-limited" }[dg.bottleneck] : null,
-    sn.temp_c != null ? Math.round(sn.temp_c) + " °C" + (dg.thermal === "hot" ? " · hot" : dg.thermal === "heating" ? " · heating up" : "") : null,
-    dg.smoothness === "stuttering" ? "stutter detected" : dg.smoothness === "smooth" ? "smooth" : null].filter(Boolean).join(" · ") : "";
-  const left = mins != null ? (mins >= 60 ? Math.floor(mins / 60) + "h" + String(mins % 60).padStart(2, "0") : mins + "m") : "";
-  return h("div", null,
-    h("div", { className: "top" }, h("div", { className: "brand" }, h("img", { src: LOGO, width: 30, height: 30, style: { marginRight: 8, verticalAlign: "middle" } }), "GFG", h("b", null, "·"), "EXTREME"),
+  }, [troubled, s.reason]);
+  const left = mins != null ? Math.floor(mins / 60) + ":" + String(mins % 60).padStart(2, "0") : null;
+  const saved = !xt && pw.owned && pw.initial_tdp_w && tdp != null && pw.initial_tdp_w - tdp >= 1 ? num(pw.initial_tdp_w - tdp, 0) + " W under your limit" : "";
+  const apMsg = s.mode === "autopilot" && s.autopilot && s.autopilot.message;
+  const onTarget = live && out >= target * 0.92;
+  const badge = !s.enabled ? ["idle", "● READY"] : !live ? ["busy", "● MEASURING"] : onTarget ? ["ok", "✓ ON TARGET"] : ["busy", "● ADJUSTING"];
+  const tone = troubled ? "warn" : !s.enabled ? "idle" : s.state === "LOCKED" || (s.autopilot && s.autopilot.state === "HOLD") ? "ok" : "busy";
+  const R = 58, C = 2 * Math.PI * R, f = live ? Math.max(0, Math.min(1, out / target)) : 0;
+  const modes = [["budget", "Battery", TI.batt], ["balanced", "Balanced", TI.scale], ["quality", "Quality", TI.gem], ["autopilot", "Auto", TI.auto]];
+  const curMode = s.mode === "extreme" ? "autopilot" : (s.mode || "budget");
+  const runBtn = h(Focusable, { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? undefined : toggle },
+    h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 16 }), busy ? "WORKING…" : missing ? "INSTALL ENGINE" : s.enabled ? "STOP" : "START");
+  return h("div", { className: "home2" },
+    h("div", { className: "top" }, h("div", { className: "brand" }, h("img", { src: LOGO, width: 28, height: 28, style: { marginRight: 8, verticalAlign: "middle" } }), "GFG", h("b", null, "·"), "EXTREME"),
       h("div", { className: "chip" + (s.enabled ? " on" : "") }, h("i"), MODE_NAME[dev.mode] || "Display")),
-    h("div", { className: "card hero" + (xt ? " xt" : "") },
-      h(HeroTop, { layout: heroLayout, onTap: nextHero, value: showLive ? out : 0, max: target, label: showLive ? num(out, 0) : String(target), sub: showLive ? "FPS OUTPUT" : "TARGET FPS", d, wolf: xt }),
-      showLive ? h("div", { className: "flow" },
-        h("div", { className: "stat" }, h("div", { className: "v" }, num(real, 0)), h("div", { className: "l" }, "REAL")), h("div", { className: "a" }, "→"),
-        h("div", { className: "stat hot" }, h("div", { className: "v" }, mult ? fmtMult(mult) : POINT_LABEL(s.active_point)), h("div", { className: "l" }, "GFG")), h("div", { className: "a" }, "→"),
-        h("div", { className: "stat" }, h("div", { className: "v" }, num(out, 0)), h("div", { className: "l" }, "OUTPUT"))) : null,
-      xt && s.enabled ? h("div", { className: "gain" }, h("span", { className: "gl" }, extremeLine(x)),
-        h("span", null, "Gain vs Balanced: not measured yet — shown only after a same-scene A-B-A check")) : null,
-      s.enabled ? h("div", { className: "effort" }, h("span", null, "GFG EFFORT"),
-        h("b", { className: eff ? "lv " + eff : "lv" }, eff ? eff.toUpperCase() : "ASSESSING…", effWhy ? h("span", { className: "why" }, " · " + effWhy) : null)) : null,
-      tdp != null ? h("div", { className: "power" }, h("div", { className: "r" }, h("span", null, "TDP NOW"), h("span", null, num(tdp, 0) + " W" + (left ? "  ·  " + left + " left" : ""))),
-        !xt && pw.owned && pw.initial_tdp_w && pw.initial_tdp_w - tdp >= 1 ? h("div", { className: "r" }, h("span", null, "SAVING"), h("span", null, num(pw.initial_tdp_w - tdp, 0) + " W under your " + num(pw.initial_tdp_w, 0) + " W limit")) : null,
-        h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, (tdp / ((xt && x.ceiling && x.ceiling.ceiling_w) || pw.initial_tdp_w || pw.maximum_tdp_w || 15)) * 100) + "%" } }))) : null),
+    h("div", { className: "card hero hero2" + (live ? " live" : "") + (xt ? " xt" : "") },
+      h("div", { className: "ring2" },
+        h("svg", { viewBox: "0 0 132 132", width: 132, height: 132 },
+          h("circle", { cx: 66, cy: 66, r: R, fill: "none", stroke: "#24242b", strokeWidth: 10 }),
+          h("circle", { cx: 66, cy: 66, r: R, fill: "none", stroke: "#ff2a1a", strokeWidth: 10, strokeLinecap: "round", strokeDasharray: C, strokeDashoffset: C * (1 - f), className: "arc2" })),
+        h("div", { className: "num wolf" }, h("img", { className: "wolfimg", src: LOGO, width: 30, height: 30 }),
+          h("div", { className: "big" }, live ? num(out, 0) : String(target)), h("div", { className: "sub" }, live ? "FPS" : "TARGET FPS"))),
+      h("div", { className: "hside" },
+        live ? h("div", { className: "lab" }, "REAL × GFG") : h("div", { className: "lab" }, "THIS SCREEN"),
+        live ? h("div", { className: "hbig" }, num(real, 0), " ", h("span", { className: "x" }, mult ? fmtMult(mult) : POINT_LABEL(s.active_point)))
+          : h("div", { className: "hbig small" }, (MODE_NAME[dev.mode] || "Display").replace("Steam Deck ", "") + " · " + (dev.refresh_hz || target) + " Hz"),
+        h("div", { className: "lab" }, live ? "GOAL " + target + " · ±8 %" : "YOUR LIMIT " + num(limit, 0) + " W"),
+        h("div", { className: "badge " + badge[0] }, badge[1]))),
+    xt && s.enabled ? h("div", { className: "gain" }, h("span", { className: "gl" }, extremeLine(x)),
+      h("span", null, "Gain vs Balanced: not measured yet — shown only after a same-scene A-B-A check")) : null,
+    h("div", { className: "bg3" },
+      h(MiniRingTile, { frac: live && real ? real / target : 0, color: "#ff5242", icon: TI.layers, value: live ? num(real, 0) : "—", label: "REAL" }),
+      h(MiniRingTile, { frac: tdp != null ? tdp / limit : 0, color: "#ff8a3d", icon: TI.bolt, value: tdp != null ? num(tdp, 0) + " W" : num(limit, 0) + " W", label: tdp != null ? "POWER" : "LIMIT" }),
+      h(MiniRingTile, { frac: pct != null ? pct / 100 : 0, color: "#2fd27a", icon: TI.batt, value: left && s.enabled ? left : pct != null ? Math.round(pct) + " %" : "—", label: left && s.enabled ? "LEFT" : "BATTERY" })),
+    h("div", { className: "tl bstate " + tone },
+      h("div", { className: "sic" }, h(TIcon, { d: tone === "warn" ? TI.warn : tone === "idle" ? TI.play : TI.check, size: 14 })),
+      h("div", null, h("b", null, d.head, xt && s.enabled ? h("span", { className: "xbadge" }, "▲ ON") : null),
+        h("span", null, [s.enabled ? (apMsg || d.body) : d.body, saved].filter(Boolean).join(" · ")))),
     xt && s.enabled ? h(ExtremeCard, { x, profile, refresh }) : null,
-    !xt && s.mode !== "autopilot" && s.enabled && s.extreme_offer && !offerHidden ? null : null,
-    s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os, power: s.power, battery: s.battery && s.battery.percent }) : null,
-    h(Focusable, { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? undefined : toggle },
-      h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 18 }), busy ? "WORKING…" : missing ? "INSTALL ENGINE" : s.enabled ? "STOP" : "RUN"),
-    h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : missing ? "The GFG engine is not installed yet. One tap installs it." : "Target " + target + " FPS · " + (dev.reason || "picked automatically for this screen")),
-    h("div", { className: "sec" }, "MODE"),
-    h(Seg, { cls: "four", value: s.mode === "extreme" ? "autopilot" : (s.mode || "budget"), options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"], ["autopilot", "Autopilot"]], onChange: setMode }),
+    h("div", { className: "bmodes" }, ...modes.map(([v, label, icon]) =>
+      h(Focusable, { key: v, className: "tl bmode" + (curMode === v ? " on" : ""), onClick: () => setMode(v) }, h(TIcon, { d: icon, size: 17 }), h("b", null, label)))),
     asking ? h(ActConsent, { onAnswer: answerAct }) : null,
-    h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
-    s.mode === "autopilot" ? h("div", { className: "card" },
-      h("div", { className: "sec" }, "AUTOPILOT"),
-      h("div", { className: "kv" },
-        h("span", null, "State"), h("b", null, (s.autopilot && s.autopilot.state) || "OBSERVE"),
-        h("span", null, "Real"), h("b", null, s.autopilot && s.autopilot.real_fps != null ? num(s.autopilot.real_fps, 0) : "–"),
-        h("span", null, "Output"), h("b", null, s.autopilot && s.autopilot.output_fps != null ? num(s.autopilot.output_fps, 0) : "–"),
-        h("span", null, "GPU clock"), h("b", null, s.autopilot && s.autopilot.gpu_clock && s.autopilot.gpu_clock.available ? ((s.autopilot.gpu_clock.limit_mhz || s.autopilot.gpu_clock.current_limit_mhz) + " MHz") : "Unavailable")),
-      h(Note, { quiet: true }, (s.autopilot && s.autopilot.message) || "Waiting for measured frames."),
-      h(Seg, { value: (s.autopilot && s.autopilot.preference) || "auto", options: [["auto", "Auto"], ["battery", "Battery"], ["smoothness", "Smoothness"]], onChange: async (v) => { try { await rpc.setAutopilotPreference(profile, v); } catch (e) {} refresh(); } }),
-      h(Toggle, { on: !!s.autopilot_shading_allowed, title: "Try Half Rate Shading",
-        sub: "Optional 2×2 shading experiment when GPU-limited. May blur text and game details. GFG measures FPS and restores it on failure or Stop.",
-        onChange: async (v) => { try { await rpc.setAutopilotShading(profile, v); } catch (e) {} refresh(); } }),
-      s.autopilot_shading_allowed ? h(Note, { quiet: true }, "Shading: " + ((s.autopilot_shading || {}).mode || "unavailable") + " · Steam RADV dynamic VRS (physical Deck energy gain requires comparison).") : null,
-      h(FrameTimingControls, { profile, settings: (s.frame_os || {}).feature_settings, refresh, autopilot: true }),
-      h(FrameFusionPanel, { s, refresh })) : null,
-    s.frame_fusion && s.frame_fusion.scope_update_required ? h(Note, null, "Install the updated engine and restart the game. This running engine cannot enforce Autopilot-only Fusion.") : null,
-    health ? h("div", { className: "hint" }, health) : null,
-    h("div", { style: { height: 12 } }),
-    h(FiltersCard, { profile, cfg, patch, go }),
-    !s.session && s.last_session ? h("div", { className: "card" }, h("div", { className: "sec" }, "LAST SESSION"),
-      h(SessionRings, { ls: s.last_session, target, battery: s.battery && s.battery.percent }),
-      h("div", { className: "kv", style: { marginTop: 12 } },
-        h("span", null, "Played"), h("b", null, num(s.last_session.minutes, 0) + " min"),
-        s.last_session.mode === "mixed" ? h("span", null, "Modes") : null, s.last_session.mode === "mixed" ? h("b", null, sessionModes(s.last_session)) : null,
-        s.last_session.frame_os ? h("span", null, "Frame OS") : null, s.last_session.frame_os ? h("b", null, frameOsMinutes(s.last_session.frame_os)) : null,
-        s.last_session.reference_w ? h("span", null, "Your limit") : null, s.last_session.reference_w ? h("b", null, num(s.last_session.reference_w, 0) + " W") : null,
-        s.last_session.saved_w > 0 ? h("span", null, "Saved") : null, s.last_session.saved_w > 0 ? h("b", null, "~" + num(s.last_session.saved_w, 1) + " W under your limit on average") : null,
-        s.last_session.saved_wh > 0 ? h("span", null, "Energy saved") : null, s.last_session.saved_wh > 0 ? h("b", null, "~" + num(s.last_session.saved_wh, 1) + " Wh measured" + (s.last_session.battery_minutes_gained > 0 ? " · ~" + s.last_session.battery_minutes_gained + " min more battery" : "")) : null,
-        s.last_session.max_temp_c ? h("span", null, "Hottest") : null, s.last_session.max_temp_c ? h("b", null, num(s.last_session.max_temp_c, 0) + " °C" + (s.last_session.hot_pct ? " · warm " + s.last_session.hot_pct + "% of the time" : "")) : null,
-        s.last_session.stutter_pct ? h("span", null, "Stutter") : null, s.last_session.stutter_pct ? h("b", null, s.last_session.stutter_pct + "% of the time") : null)) : null,
+    !s.enabled ? runBtn : null,
+    missing ? h("div", { className: "hint" }, "The GFG engine is not installed yet. One tap installs it.") : null,
     needsLaunch ? h("div", null, h("div", { className: "sec" }, "START THE GAME WITH THIS LAUNCH OPTION"), h(LaunchCopy, { launch })) : null,
     troubled && problems.length ? h("div", { className: "card" }, h("div", { className: "sec" }, "LIKELY CAUSE"), ...problems.map((c, i) => h("div", { key: i, className: "hint", style: { textAlign: "left" } }, "• " + c.advice))) : null,
     troubled ? h("div", { className: "list" }, h(Row, { icon: "play", title: problems.length ? "Check setup" : "Something wrong? Record a log", sub: "Settings → Diagnostics", onClick: () => go(problems.length ? "setup" : "advanced") })) : null,
-    h("div", { className: "list" },
-      h(Row, { icon: "bolt", title: "Details", sub: "What GFG does and why", onClick: () => go("governor") }),
-      h(Row, { icon: "cog", title: "Settings", sub: "Overlay, profile, diagnostics", onClick: () => go("settings") })));
+    s.frame_fusion && s.frame_fusion.scope_update_required ? h(Note, null, "Install the updated engine and restart the game. This running engine cannot enforce Autopilot-only Fusion.") : null,
+    s.mode === "autopilot" ? h(QuickTiles, { s, profile, refresh }) : null,
+    h(FilterStrip, { profile, cfg, patch, go }),
+    h("div", { className: "bnav" },
+      h(Focusable, { className: "tl bnv", onClick: () => go("finetune") }, h(TIcon, { d: TI.tune, size: 18 }), h("b", null, "Fine-tune")),
+      h(Focusable, { className: "tl bnv", onClick: () => go("governor") }, h(TIcon, { d: TI.info, size: 18 }), h("b", null, "Details")),
+      h(Focusable, { className: "tl bnv", onClick: () => go("shell") }, h(TIcon, { d: TI.tv, size: 18 }), h("b", null, "Shell")),
+      h(Focusable, { className: "tl bnv", onClick: () => go("settings") }, h(TIcon, { d: TI.cog, size: 18 }), h("b", null, "Settings"))),
+    s.enabled ? runBtn : null);
+}
+
+// Fine-tune: every expert switch, grouped, one line each.
+function FineTunePage({ back, s, profile, refresh }) {
+  const ap = s.autopilot || {};
+  const wanted = (s.frame_os || {}).feature_settings || {};
+  const norm = (w) => ({ latency: w.latency !== false, shield: w.shield !== false, touch_boost: w.touch_boost !== false, boost: w.boost !== false, continuous_boost: w.continuous_boost === true });
+  const [features, setFeatures] = useState(norm(wanted));
+  const [error, setError] = useState("");
+  const busy = useRef(false);
+  useEffect(() => { setFeatures(norm(wanted)); setError(""); }, [profile, wanted.latency, wanted.shield, wanted.touch_boost, wanted.boost, wanted.continuous_boost]);
+  const change = async (feature, enabled) => {
+    if (busy.current) return;
+    busy.current = true; setError("");
+    try {
+      const r = await rpc.setFrameOsFeature(profile, feature, enabled);
+      if (!r || !r.success) throw new Error((r && r.error) || "Could not save frame timing");
+      setFeatures(r.features || { ...features, [feature]: enabled });
+      refresh();
+    } catch (e) { setError(String(e.message || e)); }
+    finally { busy.current = false; }
+  };
+  const fusion = s.frame_fusion || {};
+  const [fusionOn, setFusionOn] = useState(fusion.setting_enabled !== undefined ? fusion.setting_enabled === true : fusion.enabled !== false);
+  useEffect(() => { setFusionOn(fusion.setting_enabled !== undefined ? fusion.setting_enabled === true : fusion.enabled !== false); }, [fusion.setting_enabled, fusion.enabled]);
+  const [fusionErr, setFusionErr] = useState("");
+  const setFusion = async (v) => {
+    setFusionErr("");
+    try { const r = await rpc.setFrameFusion(v); if (r && r.success) { setFusionOn(r.enabled === true); refresh(); } else setFusionErr((r && r.error) || "Could not save Frame Fusion"); }
+    catch (e) { setFusionErr("Could not save Frame Fusion"); }
+  };
+  return h(Page, { title: "Fine-tune", onBack: back },
+    h("div", { className: "sec" }, "AUTO MODE PREFERS"),
+    h(Seg, { value: ap.preference || "auto", options: [["auto", "Balance"], ["battery", "Battery"], ["smoothness", "Smoothness"]], onChange: async (v) => { try { await rpc.setAutopilotPreference(profile, v); } catch (e) {} refresh(); } }),
+    s.mode === "autopilot" ? h("div", { className: "bg2", style: { marginTop: 8 } },
+      h("div", { className: "tl binfo" }, h("div", { className: "bk" }, "STATE"), h("div", { className: "bv" }, ap.state === "HOLD" ? "Holding" : (ap.state || "Observing")),
+        h("div", { className: "bs" }, (ap.real_fps != null ? num(ap.real_fps, 0) : "–") + " real · " + (ap.output_fps != null ? num(ap.output_fps, 0) : "–") + " out")),
+      h("div", { className: "tl binfo" }, h("div", { className: "bk" }, "GPU CLOCK"), h("div", { className: "bv" }, ap.gpu_clock && ap.gpu_clock.available ? ((ap.gpu_clock.limit_mhz || ap.gpu_clock.current_limit_mhz) + " MHz") : "Auto"),
+        h("div", { className: "bs" }, "set by Autopilot"))) : h(Note, { quiet: true }, "These apply in Auto mode."),
+    h("div", { className: "sec" }, "BOOST"),
+    h("div", { className: "bg2" },
+      h(SwitchTile, { on: features.boost, icon: TI.bolt, title: "Short Boost", sub: "Up to 1.5 s on a heavy scene", onChange: (v) => change("boost", v) }),
+      h(SwitchTile, { on: features.touch_boost, icon: TI.stick, title: "Stick touch Boost", sub: "A pulse when the stick moves", onChange: (v) => change("touch_boost", v) }),
+      h(SwitchTile, { on: features.continuous_boost, icon: TI.infin, title: "Continuous Boost", sub: "Always on · more power", onChange: (v) => change("continuous_boost", v) }),
+      h(SwitchTile, { on: !!s.autopilot_shading_allowed, icon: TI.shade, title: "Half Rate Shading", sub: "Saves power · may blur text", onChange: async (v) => { try { await rpc.setAutopilotShading(profile, v); } catch (e) {} refresh(); } })),
+    h("div", { className: "sec" }, "FRAMES"),
+    h("div", { className: "bg2" },
+      h(SwitchTile, { on: features.latency, icon: TI.clock, title: "Frame timing", sub: "Even frame starts", onChange: (v) => change("latency", v) }),
+      h(SwitchTile, { on: features.shield, icon: TI.shield, title: "Stall shield", sub: "No wait after a late frame", onChange: (v) => change("shield", v) }),
+      h(SwitchTile, { on: fusionOn, icon: TI.layers, title: "Frame Fusion", sub: "Applies from the next game start", onChange: setFusion, wide: true })),
+    error ? h(Note, null, error) : null,
+    fusionErr ? h(Note, null, fusionErr) : null,
+    h(Note, { quiet: true }, "Defaults are right for most games. Each switch is explained in Details."));
 }
 
 // Smart power split (1.5): the CPU clock cap that gives a GPU-bound game's watts to the GPU.
@@ -783,7 +876,23 @@ function FiltersPage({ back, profile, cfg, patch }) {
 function GovernorPage({ s, back, profile, refresh }) {
   const dev = s.device || {}, req = s.request, pt = s.active_point, lad = s.ladder || {}, b = s.budget;
   const mode = s.mode || "budget";
+  const effort = s.enabled ? (s.effort || {}) : null;
   return h(Page, { title: "Details", onBack: back },
+    h(Note, { quiet: true }, MODE_TEXT[mode] || MODE_TEXT.budget),
+    effort ? h("div", { className: "effort card" }, h("span", null, "GFG EFFORT"),
+      h("b", { className: effort.level ? "lv " + effort.level : "lv" }, effort.level ? effort.level.toUpperCase() : "ASSESSING…", effort.reason ? h("span", { className: "why" }, " · " + effort.reason) : null)) : null,
+    s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os, power: s.power, battery: s.battery && s.battery.percent }) : null,
+    !s.session && s.last_session ? h("div", { className: "card" }, h("div", { className: "sec" }, "LAST SESSION"),
+      h(SessionRings, { ls: s.last_session, target: s.target_output_fps || (s.device || {}).target || 60, battery: s.battery && s.battery.percent }),
+      h("div", { className: "kv", style: { marginTop: 12 } },
+        h("span", null, "Played"), h("b", null, num(s.last_session.minutes, 0) + " min"),
+        s.last_session.mode === "mixed" ? h("span", null, "Modes") : null, s.last_session.mode === "mixed" ? h("b", null, sessionModes(s.last_session)) : null,
+        s.last_session.frame_os ? h("span", null, "Frame OS") : null, s.last_session.frame_os ? h("b", null, frameOsMinutes(s.last_session.frame_os)) : null,
+        s.last_session.reference_w ? h("span", null, "Your limit") : null, s.last_session.reference_w ? h("b", null, num(s.last_session.reference_w, 0) + " W") : null,
+        s.last_session.saved_w > 0 ? h("span", null, "Saved") : null, s.last_session.saved_w > 0 ? h("b", null, "~" + num(s.last_session.saved_w, 1) + " W under your limit on average") : null,
+        s.last_session.saved_wh > 0 ? h("span", null, "Energy saved") : null, s.last_session.saved_wh > 0 ? h("b", null, "~" + num(s.last_session.saved_wh, 1) + " Wh measured" + (s.last_session.battery_minutes_gained > 0 ? " · ~" + s.last_session.battery_minutes_gained + " min more battery" : "")) : null,
+        s.last_session.max_temp_c ? h("span", null, "Hottest") : null, s.last_session.max_temp_c ? h("b", null, num(s.last_session.max_temp_c, 0) + " °C" + (s.last_session.hot_pct ? " · warm " + s.last_session.hot_pct + "% of the time" : "")) : null,
+        s.last_session.stutter_pct ? h("span", null, "Stutter") : null, s.last_session.stutter_pct ? h("b", null, s.last_session.stutter_pct + "% of the time") : null)) : null,
     mode === "extreme" && s.extreme && s.extreme.enabled ? h("div", { className: "sec" }, "EXTREME") : null,
     mode === "extreme" && s.extreme && s.extreme.enabled ? h("div", { className: "card" }, h("div", { className: "kv" },
       h("span", null, "State"), h("b", null, X_STATE[s.extreme.state] || s.extreme.state),
@@ -1152,7 +1261,7 @@ function FrameFusionPanel({ s, refresh }) {
   return h("div", null,
     h("div", { className: "sec" }, "FRAME FUSION"),
     h("div", { className: "list" }, h(Toggle, { title: "Frame Fusion", on: enabled,
-      sub: "Optimizes compatible native and scaled frames in Autopilot. Start the game with the updated engine.", onChange: change })),
+      sub: "Smoother generated frames in Auto mode; applies from the next game start", onChange: change })),
     error ? h(Note, null, error) : null,
     fusion.state && fusion.state !== "off" ? h(Note, { quiet: true }, messages[fusion.state] || "Waiting for native evidence.") : null);
 }
@@ -1394,6 +1503,7 @@ function Content() {
   let body;
   if (!s) body = h("div", { className: "hint" }, "Loading…");
   else if (screen === "governor") body = h(GovernorPage, { s, back, profile, refresh });
+  else if (screen === "finetune") body = h(FineTunePage, { s, back, profile, refresh });
   else if (screen === "fg") body = h(FgPage, { back: () => setScreen("settings"), cfg, patch });
   else if (screen === "scaling") body = h(ScalingPage, { s, back: () => setScreen("settings"), profile, refresh });
   else if (screen === "hud") body = h(HudPage, { back: () => setScreen("settings"), s, profile, refresh });
