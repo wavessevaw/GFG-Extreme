@@ -1059,6 +1059,19 @@ class BudgetRuntimeTests(RuntimeBase):
         self.assertEqual(self.svc.power.ceiling, 9.0)
         self.assertEqual(self.svc._budget.tdp, 9.0)
 
+    def test_an_autopilot_trial_freezes_frame_os_watts_too(self):
+        self.feed(20, 45, 90)
+        self.step()
+        if self.svc._budget is None or not self.svc._budget.tdp_control:
+            self.skipTest("no budget controller in this fixture")
+        self.svc._applied_tdp = 10.0
+        writes = len(self.svc.power.writes)
+        with patch.object(type(self.svc._autopilot_arbiter), "freeze_tdp", property(lambda _self: True)), \
+                patch.object(type(self.svc.frame_os), "tdp_offset_w", property(lambda _self: 4.0)):
+            asyncio.run(self.svc._apply_budget_tdp("game"))
+        self.assertEqual(len(self.svc.power.writes), writes, "no TDP write during a frozen trial")
+        self.assertEqual(self.svc._applied_tdp, 10.0)
+
     def request_scaled(self, key="54x1.67@80"):
         budget = self.svc._budget
         budget._move("test-upgrade", idx=next(i for i, p in enumerate(budget.points) if p.render_scale_pct == 80))

@@ -4017,6 +4017,10 @@ class GovernorService:
         budget = self._budget
         if budget is None or not budget.tdp_control or budget.tdp is None or not self.power.state.owned:
             return True
+        # An Autopilot trial measures against constant watts: nothing moves them until it ends,
+        # Frame OS boost / rest offsets included (they bypassed the freeze before).
+        if self._autopilot_arbiter.freeze_tdp and self._applied_tdp is not None:
+            return True
         # Frame OS (act mode) adds the watts of a funded boost / removes them in rest.
         offset = self.frame_os.tdp_offset_w if self._mode(profile) == "autopilot" and self._profile_enabled(profile) else 0.0
         # Without an offset the controller's own value goes out as is (emergency watts included).
