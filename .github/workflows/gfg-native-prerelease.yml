@@ -1,13 +1,10 @@
-name: GFG Native FG hardware-trial pre-release
+name: GFG Native FG artifact validation (no releases)
 
 on:
-  push:
-    branches: [feat/gfg-native-independent-backend]
-    paths: [.github/beta/native-fg.json]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: gfg-native-hardware-trial
@@ -21,7 +18,6 @@ jobs:
       CXX: g++-12
       CC: gcc-12
       VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,9 +33,6 @@ jobs:
             echo "::error::Native test version must be 2.1.2-native.N"; exit 1;
           }
           tag="v$version"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "::error::Release $tag already exists"; exit 1
-          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
@@ -150,13 +143,7 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      - name: Publish explicit opt-in hardware-trial pre-release
-        shell: bash
+      - name: Finish without publishing a GitHub Release
         run: |
-          set -euo pipefail
-          gh release create "${{ steps.version.outputs.tag }}" \
-            out-native/*.zip out-native/SHA256SUMS.txt \
-            --target "$GITHUB_SHA" \
-            --prerelease --latest=false \
-            --title "GFG Native FG ${{ steps.version.outputs.version }} (Steam Deck hardware trial)" \
-            --notes-file .github/beta/native-fg.md
+          echo "This workflow only keeps downloadable CI build artifacts."
+          echo "Deck hotfixes are delivered as separate patches; no releases are created."
