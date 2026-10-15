@@ -155,6 +155,11 @@ class TargetPolicy:
         self.display_goal = None
         self._fallback_time = 0.0
 
+    @staticmethod
+    def lower_goal(hz: int) -> int:
+        """The reduced goal on a fixed-refresh panel: half the refresh, so frames stay even."""
+        return hz // 2
+
     def update(self, display_hz, real_fps, output_fps, preference, fresh,
                *, sample_seq=None, first_sample_seq=None, span_s=None, now=None) -> int:
         # now/seq are passed by Governor in production; the optional arguments
@@ -195,7 +200,10 @@ class TargetPolicy:
 
         if self.target == hz:
             struggling = real < 28 or output < hz * 0.85
-            want = (60 if hz == 90 and struggling
+            # The lower goal must divide the panel's refresh: the Governor never changes the
+            # refresh rate, and 60 FPS on a fixed 90 Hz panel holds frames for 1, 2, 1, 2 scanouts
+            # (11 / 22 ms judder).  45 FPS holds every frame for exactly two.
+            want = (self.lower_goal(hz) if hz == 90 and struggling
                     and ((preference == "battery") or (preference == "auto" and real < 28))
                     else hz)
         else:

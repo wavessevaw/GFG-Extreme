@@ -724,6 +724,11 @@ def budget_points(target_output_fps: int, real_floor: Optional[int] = None) -> t
         if base < real_floor or base in seen:
             continue
         seen.add(base)
+        if m == int(m) and base * m != target:
+            # The ratio is taken from the target, like the emergency point below: a fixed x2 over
+            # 22 real is 44 FPS, which does not land on a 45 FPS goal (half of a 90 Hz panel).
+            # A fractional ratio runs adaptively with the output pinned to the target.
+            m = round(target / base, 3)
         mult = int(m) if m == int(m) else m
         normal.append(OperatingPoint(_point_key(target, base, m), target, base, mult, 100))
     # Last resort: as deep as x4 and the renderer minimum allow; the
@@ -733,6 +738,8 @@ def budget_points(target_output_fps: int, real_floor: Optional[int] = None) -> t
     mult4 = round(target / base4, 3)
     mult4 = int(mult4) if mult4 == int(mult4) else mult4
     emergency = OperatingPoint(_point_key(target, base4, mult4), target, base4, mult4, 100, degraded=True)
+    # At a 45 FPS goal x4 and x3.75 meet at the same 12 real: the point stays the emergency one
+    normal = [p for p in normal if p.base_target_fps != base4]
     return (emergency,) + tuple(normal)
 
 

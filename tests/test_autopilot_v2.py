@@ -137,19 +137,24 @@ class HoldAndTargetTests(unittest.TestCase):
         self.assertEqual(observe(20, 40, 11, 20, 11), 90)
         self.assertEqual(observe(20, 40, 12, 21, 12), 90)
         self.assertEqual(observe(20, 40, 22, 30, 20), 90)
-        self.assertEqual(observe(20, 40, 31, 40, 30), 60)
-        # A game delivering a steady 60 under its new cap cannot prove 90 FPS
+        self.assertEqual(observe(20, 40, 31, 40, 30), 45)  # half the 90 Hz panel: even frame times
+        # A game delivering a steady 45 under its new cap cannot prove 90 FPS
         # without a guarded retry. Wait 90 s, then require fresh healthy windows.
-        self.assertEqual(observe(30, 60, 41, 50, 110), 60)
-        self.assertEqual(observe(30, 60, 51, 60, 120), 60)
-        self.assertEqual(observe(30, 60, 61, 70, 130), 60)
-        self.assertEqual(observe(30, 60, 71, 80, 140), 90)
+        self.assertEqual(observe(22, 45, 41, 50, 110), 45)
+        self.assertEqual(observe(22, 45, 51, 60, 120), 45)
+        self.assertEqual(observe(22, 45, 61, 70, 130), 45)
+        self.assertEqual(observe(22, 45, 71, 80, 140), 90)
         # A failed retry backs off; it must not immediately bounce to 90 again.
         observe(20, 40, 81, 90, 150)
         observe(20, 40, 91, 100, 160)
-        self.assertEqual(observe(20, 40, 101, 110, 170), 60)
-        self.assertEqual(observe(30, 60, 111, 120, 210), 60)
+        self.assertEqual(observe(20, 40, 101, 110, 170), 45)
+        self.assertEqual(observe(22, 45, 111, 120, 210), 45)
 
+
+    def test_the_lower_goal_divides_the_panel_refresh(self):
+        # The Governor never changes the refresh rate: 60 FPS on a 90 Hz panel would judder.
+        self.assertEqual(TargetPolicy.lower_goal(90), 45)
+        self.assertEqual(90 % TargetPolicy.lower_goal(90), 0)
 
 class HudTests(unittest.TestCase):
     def test_autopilot_uses_one_palette_and_does_not_duplicate_fps(self):
@@ -346,17 +351,17 @@ class GoalAndPauseTests(unittest.TestCase):
             self.assertEqual(evidence(45, 90, 1, 10, 0), 90)
             self.assertEqual(evidence(20, 40, 11, 20, 10), 90)
             self.assertEqual(evidence(20, 40, 21, 30, 20), 90)
-            self.assertEqual(evidence(20, 40, 31, 40, 30), 60)
-            self.assertEqual(evidence(20, 40, 31, 40, 31), 60)
+            self.assertEqual(evidence(20, 40, 31, 40, 30), 45)
+            self.assertEqual(evidence(20, 40, 31, 40, 31), 45)
             # The chosen goal is forwarded by _iteration_core into _budget_step
             # and must replace any BudgetController made for the previous goal.
             target = evidence(20, 40, 31, 40, 32)
             self.assertNotEqual(svc._budget.target_output_fps, target)
             svc._budget = BudgetController(target_output_fps=target, now=32)
-            self.assertEqual(svc._budget.target_output_fps, 60)
-            self.assertEqual(evidence(30, 60, 41, 50, 130), 60)
-            self.assertEqual(evidence(30, 60, 51, 60, 140), 60)
-            self.assertEqual(evidence(30, 60, 61, 70, 150), 90)
+            self.assertEqual(svc._budget.target_output_fps, 45)
+            self.assertEqual(evidence(22, 45, 41, 50, 130), 45)
+            self.assertEqual(evidence(22, 45, 51, 60, 140), 45)
+            self.assertEqual(evidence(22, 45, 61, 70, 150), 90)
         finally:
             fixture.tearDown()
 
