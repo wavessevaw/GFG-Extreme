@@ -78,7 +78,9 @@ struct gfg_cpu_fg {
     VkCommandBuffer command;
     VkFence fence;
     VkSemaphore acquire_sem;
-    VkSemaphore ready_sem;
+    VkSemaphore *ready_per_image; /* WSI ownership: one present wait per image */
+    unsigned max_frame_ms;
+    uint64_t bypasses;
     te_device *engine;
     te_context *context;
     uint8_t *rgb_real;
@@ -98,6 +100,22 @@ static void fail(const char *event, VkResult value) {
     fprintf(stderr,"[gfg-native] %s vkresult=%d\n",event,value);
 }
 static bool ok(VkResult r) { return r==VK_SUCCESS; }
+static double elapsed_ms_since(struct timespec start) {
+    struct timespec now = {0};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return 1000.0 * (double)(now.tv_sec - start.tv_sec)
+         + (double)(now.tv_nsec - start.tv_nsec) / 1000000.0;
+}
+static void disable_slow_bridge(gfg_cpu_fg *fg, const char *stage,
+                                double duration_ms) {
+    if (fg->permanently_disabled) return;
+    fg->permanently_disabled = 1;
+    ++fg->bypasses;
+    fprintf(stderr,
+        "[gfg-native] watchdog disabled generator stage=%s elapsed_ms=%.2f"
+        " budget_ms=%u: forwarding real frames only\n",
+        stage, duration_ms, fg->max_frame_ms);
+}
 static bool coherent_flush(gfg_cpu_fg *fg, VkBool32 invalidate) {
     if(fg->coherent) return true;
     VkMappedMemoryRange range={.sType=VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
@@ -259,16 +277,22 @@ static bool present_generated(gfg_cpu_fg *fg, PFN_vkQueuePresentKHR next) {
         ++fg->skipped;
         return false;
     }
+    const VkSemaphore present_ready = fg->ready_per_image[idx];
+    /* Khronos swapchain semaphore reuse: associate the present-wait semaphore
+     * with the acquired image, not with a CPU frame. Our queue submission
+     * waits on acquire_sem, and its fence ensures that wait completed before
+     * present_ready can be signaled again for the same image.
+     * Do not wait for the entire WSI queue after presenting a synthetic. */
     rgb_to_rgba(fg);
     if(!coherent_flush(fg,VK_FALSE) ||
        !record_image_copy(fg,fg->images[idx],1) ||
-       !submit_wait(fg,1,&fg->acquire_sem,fg->ready_sem)) {
+       !submit_wait(fg,1,&fg->acquire_sem,present_ready)) {
         ++fg->errors;
         fg->permanently_disabled=1;
         return false;
     }
     VkPresentInfoKHR output={.sType=VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-        .waitSemaphoreCount=1,.pWaitSemaphores=&fg->ready_sem,
+        .waitSemaphoreCount=1,.pWaitSemaphores=&present_ready,
         .swapchainCount=1,.pSwapchains=&fg->swapchain,.pImageIndices=&idx};
     r=next(fg->queue,&output);
     if(r!=VK_SUCCESS && r!=VK_SUBOPTIMAL_KHR) {
@@ -276,10 +300,6 @@ static bool present_generated(gfg_cpu_fg *fg, PFN_vkQueuePresentKHR next) {
         fg->permanently_disabled=1;
         return false;
     }
-    /* Ensure the WSI consumed the ready semaphore before reusing it, and
-     * preserve FIFO order ahead of the application's real frame. */
-    r=fg->QueueWaitIdle(fg->queue);
-    if(r!=VK_SUCCESS){fg->permanently_disabled=1;return false;}
     fg->synthetic_frames++;
     if(fg->log && fg->synthetic_frames%30==1)
         fprintf(stderr,"[gfg-native] generated=%llu real=%llu skipped=%llu errors=%llu\n",
@@ -304,6 +324,14 @@ gfg_cpu_fg *gfg_cpu_fg_create(VkInstance instance,
     fg->device=device;fg->physical=physical;fg->queue=queue;
     fg->gdpa=gdpa;fg->swapchain=swapchain;fg->extent=extent;fg->format=format;
     fg->family=family;fg->log=getenv("GFG_NATIVE_TRACE")!=NULL;
+    fg->max_frame_ms=100; /* watchdog guards pathological WSI stalls */
+    const char *guard=getenv("GFG_NATIVE_MAX_FRAME_MS");
+    if(guard && *guard) {
+        char *end=NULL;
+        unsigned long v=strtoul(guard,&end,10);
+        if(end && *end=='\0' && v>=20 && v<=2000)
+            fg->max_frame_ms=(unsigned)v;
+    }
 #define RESOLVE(name) fg->name=LOAD(fg,name); if(!fg->name) goto fail
     RESOLVE(CreateBuffer);
     RESOLVE(GetBufferMemoryRequirements);
@@ -347,6 +375,8 @@ gfg_cpu_fg *gfg_cpu_fg_create(VkInstance instance,
     if(!fg->images||fg->GetSwapchainImagesKHR(device,swapchain,&n,fg->images)!=VK_SUCCESS)
         goto fail;
     fg->image_count=n;
+    fg->ready_per_image=calloc(n,sizeof(*fg->ready_per_image));
+    if(!fg->ready_per_image)goto fail;
     const size_t pixels=(size_t)extent.width*extent.height;
     if(pixels>SIZE_MAX/4u)goto fail;
     const VkDeviceSize bytes=(VkDeviceSize)pixels*COLOR_BPP;
@@ -380,8 +410,10 @@ gfg_cpu_fg *gfg_cpu_fg_create(VkInstance instance,
     VkFenceCreateInfo fci={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
     if(!ok(fg->CreateFence(device,&fci,NULL,&fg->fence)))goto fail;
     VkSemaphoreCreateInfo sci={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-    if(!ok(fg->CreateSemaphore(device,&sci,NULL,&fg->acquire_sem))||
-       !ok(fg->CreateSemaphore(device,&sci,NULL,&fg->ready_sem)))goto fail;
+    if(!ok(fg->CreateSemaphore(device,&sci,NULL,&fg->acquire_sem)))goto fail;
+    for(uint32_t i=0;i<fg->image_count;i++)
+        if(!ok(fg->CreateSemaphore(device,&sci,NULL,&fg->ready_per_image[i])))
+            goto fail;
 
     VkPhysicalDeviceIDProperties id={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
     VkPhysicalDeviceProperties2 properties={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
@@ -413,6 +445,8 @@ VkResult gfg_cpu_fg_present(gfg_cpu_fg *fg, const VkPresentInfoKHR *original,
                             PFN_vkQueuePresentKHR next) {
     if(!fg || !original || !next)return VK_ERROR_INITIALIZATION_FAILED;
     if(fg->permanently_disabled)return next(fg->queue,original);
+    struct timespec start={0};
+    clock_gettime(CLOCK_MONOTONIC,&start);
     const uint32_t index=original->pImageIndices[0];
     if(index>=fg->image_count)return next(fg->queue,original);
     if(!record_image_copy(fg,fg->images[index],0))
@@ -427,7 +461,11 @@ VkResult gfg_cpu_fg_present(gfg_cpu_fg *fg, const VkPresentInfoKHR *original,
     VkPresentInfoKHR real=*original;
     real.waitSemaphoreCount=0;
     real.pWaitSemaphores=NULL;
-    if(!coherent_flush(fg,VK_TRUE)) { fg->permanently_disabled=1; }
+    const double capture_ms=elapsed_ms_since(start);
+    if(capture_ms > (double)fg->max_frame_ms)
+        disable_slow_bridge(fg,"capture-fence",capture_ms);
+    if(!fg->permanently_disabled && !coherent_flush(fg,VK_TRUE))
+        fg->permanently_disabled=1;
     if(!fg->permanently_disabled) {
         rgba_to_rgb(fg);
         const bool completed=run_te(fg);
@@ -446,7 +484,14 @@ VkResult gfg_cpu_fg_present(gfg_cpu_fg *fg, const VkPresentInfoKHR *original,
                 "[gfg-native] candidate distinct=%d delta_old=%llu delta_new=%llu\n",
                 distinct,(unsigned long long)delta_old,
                 (unsigned long long)delta_new);
-            if(present_generated(fg,next) && distinct) ++fg->distinct_frames;
+            const double before_present_ms=elapsed_ms_since(start);
+            if(before_present_ms > (double)fg->max_frame_ms) {
+                disable_slow_bridge(fg,"capture-plus-te8",before_present_ms);
+            } else if (distinct) {
+                if(present_generated(fg,next)) ++fg->distinct_frames;
+            } else {
+                ++fg->skipped; /* never queue a duplicate synthetic frame */
+            }
         }
         if(!completed && fg->context && !te_context_idle(fg->context,0)) {
             /* Avoid overwriting source slot while old compute work persists.
@@ -459,22 +504,39 @@ VkResult gfg_cpu_fg_present(gfg_cpu_fg *fg, const VkPresentInfoKHR *original,
         fg->source_slot ^= 1u;
     }
     fg->real_frames++;
-    return next(fg->queue,&real);
+    const double before_real_ms=elapsed_ms_since(start);
+    if(before_real_ms > (double)fg->max_frame_ms)
+        disable_slow_bridge(fg,"synthetic-present",before_real_ms);
+    const VkResult presented=next(fg->queue,&real);
+    const double total_ms=elapsed_ms_since(start);
+    if(total_ms > (double)fg->max_frame_ms)
+        disable_slow_bridge(fg,"real-present",total_ms);
+    if(fg->log && (total_ms > 30.0 || fg->real_frames%60==0))
+        fprintf(stderr,
+            "[gfg-native] timing capture_ms=%.2f pre_real_ms=%.2f"
+            " total_ms=%.2f generated=%llu bypassed=%d\n",
+            capture_ms,before_real_ms,total_ms,
+            (unsigned long long)fg->synthetic_frames,
+            fg->permanently_disabled);
+    return presented;
 }
 void gfg_cpu_fg_destroy(gfg_cpu_fg *fg) {
     if(!fg)return;
     if(fg->log)fprintf(stderr,
-        "[gfg-native] CPU bridge retired real=%llu generated=%llu distinct=%llu missed=%llu errors=%llu\n",
+        "[gfg-native] CPU bridge retired real=%llu generated=%llu distinct=%llu missed=%llu errors=%llu bypasses=%llu\n",
         (unsigned long long)fg->real_frames,
         (unsigned long long)fg->synthetic_frames,
         (unsigned long long)fg->distinct_frames,
         (unsigned long long)fg->skipped,
-        (unsigned long long)fg->errors);
+        (unsigned long long)fg->errors,
+        (unsigned long long)fg->bypasses);
     if(fg->context)te_context_destroy(fg->context);
     if(fg->engine)te_device_destroy(fg->engine);
     if(fg->device && fg->QueueWaitIdle)(void)fg->QueueWaitIdle(fg->queue);
     if(fg->device && fg->DestroySemaphore) {
-        if(fg->ready_sem)fg->DestroySemaphore(fg->device,fg->ready_sem,NULL);
+        if(fg->ready_per_image)for(uint32_t i=0;i<fg->image_count;i++)
+            if(fg->ready_per_image[i])
+                fg->DestroySemaphore(fg->device,fg->ready_per_image[i],NULL);
         if(fg->acquire_sem)fg->DestroySemaphore(fg->device,fg->acquire_sem,NULL);
     }
     if(fg->device && fg->DestroyFence && fg->fence)
@@ -487,6 +549,7 @@ void gfg_cpu_fg_destroy(gfg_cpu_fg *fg) {
         fg->DestroyBuffer(fg->device,fg->stage,NULL);
     if(fg->device && fg->FreeMemory && fg->memory)
         fg->FreeMemory(fg->device,fg->memory,NULL);
+    free(fg->ready_per_image);
     free(fg->images);
     free(fg->rgb_real);
     free(fg->rgb_generated);

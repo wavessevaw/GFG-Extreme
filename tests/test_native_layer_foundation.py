@@ -50,5 +50,18 @@ class NativeLayerTests(unittest.TestCase):
         self.assertIn("VK_FORMAT_B8G8R8A8_SRGB", bridge)
         self.assertIn("VK_FORMAT_R8G8B8A8_SRGB", bridge)
 
+    def test_wsi_present_semaphores_are_per_swapchain_image(self):
+        bridge = (ENGINE / "src/cpu_bridge.c").read_text()
+        self.assertIn("VkSemaphore *ready_per_image", bridge)
+        self.assertIn("fg->ready_per_image[idx]", bridge)
+        self.assertIn("submit_wait(fg,1,&fg->acquire_sem,present_ready)", bridge)
+        present = bridge.split("static bool present_generated(", 1)[1].split(
+            "gfg_cpu_fg *gfg_cpu_fg_create(", 1)[0]
+        self.assertNotIn("QueueWaitIdle", present)
+        self.assertIn("if (distinct)", bridge)
+        self.assertIn("watchdog disabled generator", bridge)
+        self.assertIn("GFG_NATIVE_MAX_FRAME_MS", bridge)
+        self.assertIn("capture_ms=", bridge)
+
 if __name__ == "__main__":
     unittest.main()
