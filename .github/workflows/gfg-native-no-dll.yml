@@ -120,7 +120,9 @@ jobs:
           baseline="$RUNNER_TEMP/native-baseline-3"
           target="$baseline/.local/share/gfg-native/libVkLayer_gfg_native.so"
           mkdir -p "$(dirname "$target")"
-          cp out-patch-02/libVkLayer_gfg_native.so "$target"
+          # The older released native.2 binary is NOT bit-identical to this commit.
+          # Test patch application against a real previous installed version.
+          cp "$RUNNER_TEMP/original-2.so" "$target"
           chmod 755 "$target"
           cp "$target" "$RUNNER_TEMP/pre-patch-03.so"
           (cd out-patch-03 && HOME="$baseline" XDG_DATA_HOME= bash ./apply.sh)
