@@ -124,9 +124,15 @@ int main(void) {
     VkSurfaceFormatKHR *formats=calloc(nformats,sizeof(*formats)); REQUIRE(formats);
     TRY(vkGetPhysicalDeviceSurfaceFormatsKHR(physical,surface,&nformats,formats));
     VkSurfaceFormatKHR color=formats[0];
-    for(uint32_t i=0;i<nformats;i++)if(formats[i].format==VK_FORMAT_B8G8R8A8_UNORM)
-        {color=formats[i];break;}
+    const char *want_srgb=getenv("GFG_NATIVE_TEST_SRGB");
+    const int srgb=want_srgb && !strcmp(want_srgb,"1");
+    const VkFormat wanted=srgb?VK_FORMAT_B8G8R8A8_SRGB:VK_FORMAT_B8G8R8A8_UNORM;
+    int found=0;
+    for(uint32_t i=0;i<nformats;i++)if(formats[i].format==wanted)
+        {color=formats[i];found=1;break;}
     free(formats);
+    if(srgb) REQUIRE(found);
+    if(srgb)fprintf(stderr,"GFG native: WSI SRGB format=%d selected\n",(int)color.format);
     uint32_t minimum=caps.minImageCount<2?2:caps.minImageCount;
     if(caps.maxImageCount && minimum>caps.maxImageCount) minimum=caps.maxImageCount;
     VkSwapchainCreateInfoKHR swci={.sType=VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,

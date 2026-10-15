@@ -25,6 +25,10 @@ class NativeLayerTests(unittest.TestCase):
         self.assertIn("output=real-only", code)
         self.assertIn("VK_IMAGE_USAGE_TRANSFER_SRC_BIT", code)
         self.assertIn("VK_IMAGE_USAGE_TRANSFER_DST_BIT", code)
+        self.assertIn("VK_FORMAT_B8G8R8A8_SRGB", code)
+        self.assertIn("VK_FORMAT_R8G8B8A8_SRGB", code)
+        self.assertIn('reason ? reason : "accepted"', code)
+        self.assertIn('"missing-transfer-src-or-dst-support"', code)
         self.assertIn("GFG_NATIVE_CPU_BRIDGE", code)
         self.assertIn("gfg_cpu_fg_present", code)
         self.assertIn("native_GetDeviceQueue", code)
@@ -42,6 +46,9 @@ class NativeLayerTests(unittest.TestCase):
         self.assertIn("te_download_rgb(", bridge)
         self.assertIn("vkQueuePresentKHR", (ENGINE / "src/layer.c").read_text())
         self.assertIn("VK_IMAGE_LAYOUT_PRESENT_SRC_KHR", bridge)
+        self.assertIn("is_bgra_format", bridge)
+        self.assertIn("VK_FORMAT_B8G8R8A8_SRGB", bridge)
+        self.assertIn("VK_FORMAT_R8G8B8A8_SRGB", bridge)
 
 if __name__ == "__main__":
     unittest.main()

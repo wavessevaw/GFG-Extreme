@@ -91,6 +91,12 @@ jobs:
           grep -Eq '\[gfg-native\] generated=[1-9]' native-wsi-evidence.log
           grep -q '\[gfg-native\] candidate distinct=1' native-wsi-evidence.log
           grep -q 'GFG native: 4 real WSI acquire/submit/present cycles PASS' native-wsi-evidence.log
+          GFG_NATIVE_TEST_SRGB=1 xvfb-run -a make -C engine/gfg-native wsi-smoke-te \
+            VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" 2>&1 | tee native-srgb-evidence.log
+          grep -q 'GFG native: WSI SRGB format=' native-srgb-evidence.log
+          grep -q 'candidate=1 output=real-only reason=accepted' native-srgb-evidence.log
+          grep -q '\[gfg-native\] candidate distinct=1' native-srgb-evidence.log
+          grep -Eq '\[gfg-native\] generated=[1-9]' native-srgb-evidence.log
 
       - name: Produce installable native-only archive with GPL source
         run: |
@@ -128,6 +134,7 @@ jobs:
             out-native/*.zip
             out-native/SHA256SUMS.txt
             native-wsi-evidence.log
+            native-srgb-evidence.log
             native-installed-evidence.log
             dependencies.txt
           retention-days: 30

@@ -52,6 +52,12 @@ jobs:
           grep -Eq '\[gfg-native\] generated=[1-9]' native-fg-wsi.log
           grep -Eq '\[gfg-native\] candidate distinct=1' native-fg-wsi.log
           grep -q 'GFG native: 4 real WSI acquire/submit/present cycles PASS' native-fg-wsi.log
+          GFG_NATIVE_TEST_SRGB=1 xvfb-run -a make -C engine/gfg-native wsi-smoke-te \
+            VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" 2>&1 | tee native-fg-wsi-srgb.log
+          grep -q 'GFG native: WSI SRGB format=' native-fg-wsi-srgb.log
+          grep -q 'candidate=1 output=real-only reason=accepted' native-fg-wsi-srgb.log
+          grep -Eq '\[gfg-native\] candidate distinct=1' native-fg-wsi-srgb.log
+          grep -Eq '\[gfg-native\] generated=[1-9]' native-fg-wsi-srgb.log
       - name: Package independent Steam Deck test build and verify installation
         run: |
           python3 scripts/package_native_fg.py \

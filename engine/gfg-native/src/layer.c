@@ -264,13 +264,23 @@ native_DestroyDevice(VkDevice device, const VkAllocationCallbacks *alloc) {
     free(found);
 }
 
-static int eligible_shape(const VkSwapchainCreateInfoKHR *ci) {
-    if (ci->flags || ci->imageArrayLayers != 1 ||
-        ci->imageSharingMode != VK_SHARING_MODE_EXCLUSIVE ||
-        !ci->imageExtent.width || !ci->imageExtent.height)
-        return 0;
-    return ci->imageFormat == VK_FORMAT_R8G8B8A8_UNORM ||
-           ci->imageFormat == VK_FORMAT_B8G8R8A8_UNORM;
+static int native_supported_sdr8_format(VkFormat format) {
+    /* CPU transport handles byte-valued SDR images. SRGB is a transfer
+       function, not a different channel count or per-pixel memory layout. */
+    return format == VK_FORMAT_R8G8B8A8_UNORM ||
+           format == VK_FORMAT_B8G8R8A8_UNORM ||
+           format == VK_FORMAT_R8G8B8A8_SRGB ||
+           format == VK_FORMAT_B8G8R8A8_SRGB;
+}
+
+static const char *native_ineligible_reason(const VkSwapchainCreateInfoKHR *ci) {
+    if (ci->flags) return "unsupported-swapchain-flags";
+    if (ci->imageArrayLayers != 1) return "array-layers";
+    if (ci->imageSharingMode != VK_SHARING_MODE_EXCLUSIVE) return "sharing-mode";
+    if (!ci->imageExtent.width || !ci->imageExtent.height) return "zero-extent";
+    if (!native_supported_sdr8_format(ci->imageFormat))
+        return "unsupported-format";
+    return NULL;
 }
 
 static void native_record_queue(native_device *d, VkQueue queue, uint32_t family) {
@@ -315,14 +325,28 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
     if (!d || !d->create_swapchain || !ci || !out)
         return VK_ERROR_INITIALIZATION_FAILED;
     int candidate = 0;
+    const char *reason = NULL;
+    VkImageUsageFlags supported_usage = 0;
+    VkResult caps_result = VK_SUCCESS;
+    VkResult extended_result = VK_SUCCESS;
     VkSwapchainCreateInfoKHR extended = *ci;
-    if (d->instance && d->instance->enabled && eligible_shape(ci) &&
-        d->instance->surface_caps) {
+    if (!d->instance || !d->instance->enabled) {
+        reason = "layer-not-enabled";
+    } else if ((reason = native_ineligible_reason(ci)) != NULL) {
+        /* Keep the original WSI path untouched on unsupported shapes. */
+    } else if (!d->instance->surface_caps) {
+        reason = "surface-capabilities-entrypoint-missing";
+    } else {
         VkSurfaceCapabilitiesKHR caps = {0};
-        VkResult cr = d->instance->surface_caps(d->physical, ci->surface, &caps);
+        caps_result = d->instance->surface_caps(d->physical, ci->surface, &caps);
+        supported_usage = caps.supportedUsageFlags;
         const VkImageUsageFlags wanted =
             VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-        if (cr == VK_SUCCESS && (caps.supportedUsageFlags & wanted) == wanted) {
+        if (caps_result != VK_SUCCESS) {
+            reason = "surface-capabilities-query-failed";
+        } else if ((caps.supportedUsageFlags & wanted) != wanted) {
+            reason = "missing-transfer-src-or-dst-support";
+        } else {
             extended.imageUsage |= wanted;
             candidate = 1;
         }
@@ -330,7 +354,9 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
     VkResult result = d->create_swapchain(device, candidate ? &extended : ci,
                                            alloc, out);
     if (result != VK_SUCCESS && candidate) {
-        // Negotiation must never stop a game from creating its original surface.
+        // Never prevent a game from creating its original swapchain.
+        extended_result = result;
+        reason = "extended-create-failed";
         candidate = 0;
         *out = VK_NULL_HANDLE;
         result = d->create_swapchain(device, ci, alloc, out);
@@ -359,8 +385,17 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
     d->swapchains = sc;
     pthread_mutex_unlock(&d->lock);
     if (tracing())
-        fprintf(stderr, "[gfg-native] swapchain %ux%u candidate=%d output=real-only\n",
-            sc->extent.width, sc->extent.height, sc->copy_eligible);
+        fprintf(stderr,
+            "[gfg-native] swapchain %ux%u candidate=%d output=real-only"
+            " reason=%s format=%d flags=0x%x layers=%u sharing=%d"
+            " requested_usage=0x%x supported_usage=0x%x caps_result=%d"
+            " extended_result=%d\n",
+            sc->extent.width, sc->extent.height, sc->copy_eligible,
+            reason ? reason : "accepted", (int)ci->imageFormat,
+            (unsigned)ci->flags, ci->imageArrayLayers,
+            (int)ci->imageSharingMode, (unsigned)ci->imageUsage,
+            (unsigned)supported_usage, (int)caps_result,
+            (int)extended_result);
     return VK_SUCCESS;
 }
 

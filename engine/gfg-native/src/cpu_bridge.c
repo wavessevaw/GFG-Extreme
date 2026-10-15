@@ -178,8 +178,18 @@ static bool submit_wait(gfg_cpu_fg *fg, uint32_t sem_count,
     if(!ok(result)){fail("queue-wait",result);return false;}
     return true;
 }
+static int is_bgra_format(VkFormat fmt) {
+    return fmt == VK_FORMAT_B8G8R8A8_UNORM ||
+           fmt == VK_FORMAT_B8G8R8A8_SRGB;
+}
+static int supported_sdr8_format(VkFormat fmt) {
+    return fmt == VK_FORMAT_R8G8B8A8_UNORM ||
+           fmt == VK_FORMAT_B8G8R8A8_UNORM ||
+           fmt == VK_FORMAT_R8G8B8A8_SRGB ||
+           fmt == VK_FORMAT_B8G8R8A8_SRGB;
+}
 static uint32_t sample_color(const uint8_t *p, VkFormat fmt, uint32_t c) {
-    return p[fmt==VK_FORMAT_B8G8R8A8_UNORM ? 2u-c:c];
+    return p[is_bgra_format(fmt) ? 2u-c:c];
 }
 static void rgba_to_rgb(gfg_cpu_fg *fg) {
     const uint8_t *p=fg->mapped;
@@ -192,7 +202,7 @@ static void rgb_to_rgba(gfg_cpu_fg *fg) {
     const size_t pixels=(size_t)fg->extent.width*fg->extent.height;
     for(size_t k=0;k<pixels;k++){
         for(uint32_t c=0;c<3;c++){
-            const uint32_t target=fg->format==VK_FORMAT_B8G8R8A8_UNORM?2-c:c;
+            const uint32_t target=is_bgra_format(fg->format)?2-c:c;
             p[k*4+target]=fg->rgb_generated[k*3+c];
         }
         p[k*4+3]=255;
@@ -287,7 +297,7 @@ gfg_cpu_fg *gfg_cpu_fg_create(VkInstance instance,
         VkQueue queue, uint32_t family) {
     if(!physical || !device || !queue || !instance || !gipa || !gdpa ||
        !extent.width || !extent.height || extent.width>3840 || extent.height>2160 ||
-       (format!=VK_FORMAT_B8G8R8A8_UNORM && format!=VK_FORMAT_R8G8B8A8_UNORM))
+       !supported_sdr8_format(format))
         return NULL;
     gfg_cpu_fg *fg=calloc(1,sizeof(*fg));
     if(!fg)return NULL;
