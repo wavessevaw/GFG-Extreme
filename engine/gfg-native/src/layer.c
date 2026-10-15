@@ -274,13 +274,27 @@ static int native_supported_sdr8_format(VkFormat format) {
 }
 
 static const char *native_ineligible_reason(const VkSwapchainCreateInfoKHR *ci) {
-    if (ci->flags) return "unsupported-swapchain-flags";
+    /* These two flags select the game's presentation-ID and wait protocol.
+     * They do NOT request protected memory or a different image layout.
+     * Preserve them, and all original pNext structures, unchanged.
+     * Never open the gate for protected or other unverified flag bits. */
+    const VkSwapchainCreateFlagsKHR present_protocol =
+        VK_SWAPCHAIN_CREATE_PRESENT_ID_2_BIT_KHR |
+        VK_SWAPCHAIN_CREATE_PRESENT_WAIT_2_BIT_KHR;
+    if (ci->flags & ~present_protocol)
+        return "unsupported-swapchain-flags";
     if (ci->imageArrayLayers != 1) return "array-layers";
     if (ci->imageSharingMode != VK_SHARING_MODE_EXCLUSIVE) return "sharing-mode";
     if (!ci->imageExtent.width || !ci->imageExtent.height) return "zero-extent";
     if (!native_supported_sdr8_format(ci->imageFormat))
         return "unsupported-format";
     return NULL;
+}
+
+static int native_copy_usage_ready(VkImageUsageFlags usage) {
+    const VkImageUsageFlags wanted =
+        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    return (usage & wanted) == wanted;
 }
 
 static void native_record_queue(native_device *d, VkQueue queue, uint32_t family) {
@@ -327,6 +341,7 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
     int candidate = 0;
     const char *reason = NULL;
     VkImageUsageFlags supported_usage = 0;
+    int caps_queried = 0;
     VkResult caps_result = VK_SUCCESS;
     VkResult extended_result = VK_SUCCESS;
     VkSwapchainCreateInfoKHR extended = *ci;
@@ -334,10 +349,17 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
         reason = "layer-not-enabled";
     } else if ((reason = native_ineligible_reason(ci)) != NULL) {
         /* Keep the original WSI path untouched on unsupported shapes. */
+    } else if (native_copy_usage_ready(ci->imageUsage)) {
+        /* The game already requested both copy operations. Use its exact
+         * original swapchain create info: flags, pNext, usage, everything.
+         * No reason to alter a working Gamescope WSI contract. */
+        candidate = 1;
+        reason = "existing-usage-ready";
     } else if (!d->instance->surface_caps) {
         reason = "surface-capabilities-entrypoint-missing";
     } else {
         VkSurfaceCapabilitiesKHR caps = {0};
+        caps_queried = 1;
         caps_result = d->instance->surface_caps(d->physical, ci->surface, &caps);
         supported_usage = caps.supportedUsageFlags;
         const VkImageUsageFlags wanted =
@@ -349,6 +371,7 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
         } else {
             extended.imageUsage |= wanted;
             candidate = 1;
+            reason = "extended-usage-ready";
         }
     }
     VkResult result = d->create_swapchain(device, candidate ? &extended : ci,
@@ -388,14 +411,14 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
         fprintf(stderr,
             "[gfg-native] swapchain %ux%u candidate=%d output=real-only"
             " reason=%s format=%d flags=0x%x layers=%u sharing=%d"
-            " requested_usage=0x%x supported_usage=0x%x caps_result=%d"
-            " extended_result=%d\n",
+            " requested_usage=0x%x supported_usage=0x%x caps_queried=%d"
+            " caps_result=%d extended_result=%d\n",
             sc->extent.width, sc->extent.height, sc->copy_eligible,
             reason ? reason : "accepted", (int)ci->imageFormat,
             (unsigned)ci->flags, ci->imageArrayLayers,
             (int)ci->imageSharingMode, (unsigned)ci->imageUsage,
-            (unsigned)supported_usage, (int)caps_result,
-            (int)extended_result);
+            (unsigned)supported_usage, caps_queried,
+            (int)caps_result, (int)extended_result);
     return VK_SUCCESS;
 }
 

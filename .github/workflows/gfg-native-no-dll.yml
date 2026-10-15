@@ -31,6 +31,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y g++-12 cmake libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers libx11-dev libxcb1-dev xvfb glslang-tools spirv-tools p7zip-full
           git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
+      - name: Test real Steam Deck swapchain flags 0xc0 and existing transfer usage
+        run: |
+          make -C engine/gfg-native swapchain-policy VULKAN_HEADERS="$RUNNER_TEMP/vkh/include"
       - name: Compile standalone GFG Native WSI layer (no MAKO linkage)
         run: |
           make -C engine/gfg-native layer VULKAN_HEADERS="$RUNNER_TEMP/vkh/include"
@@ -55,7 +58,7 @@ jobs:
           GFG_NATIVE_TEST_SRGB=1 xvfb-run -a make -C engine/gfg-native wsi-smoke-te \
             VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" 2>&1 | tee native-fg-wsi-srgb.log
           grep -q 'GFG native: WSI SRGB format=' native-fg-wsi-srgb.log
-          grep -q 'candidate=1 output=real-only reason=accepted' native-fg-wsi-srgb.log
+          grep -Eq 'candidate=1 output=real-only reason=(existing-usage-ready|extended-usage-ready)' native-fg-wsi-srgb.log
           grep -Eq '\[gfg-native\] candidate distinct=1' native-fg-wsi-srgb.log
           grep -Eq '\[gfg-native\] generated=[1-9]' native-fg-wsi-srgb.log
       - name: Package independent Steam Deck test build and verify installation
@@ -78,6 +81,34 @@ jobs:
             HOME="$RUNNER_TEMP/native-home" bash ./uninstall.sh
             test ! -e "$RUNNER_TEMP/native-home/.local/bin/gfg-native"
           )
+      - name: Create and verify Steam Deck Patch 02 (not a release)
+        run: |
+          set -euo pipefail
+          mkdir -p out-patch-02
+          cp engine/gfg-native/build-te/libVkLayer_gfg_native.so out-patch-02/
+          cp patches/native-02/apply.sh patches/native-02/rollback.sh patches/native-02/README.md out-patch-02/
+          (cd out-patch-02 && sha256sum libVkLayer_gfg_native.so > SHA256SUMS.txt && sha256sum --check SHA256SUMS.txt)
+          for base in 1 2; do
+            archive="GFG-Native-FG-v2_1_2-native_${base}.zip"
+            curl --retry 3 -fsSL "https://github.com/wavessevaw/GFG-Extreme/releases/download/v2.1.2-native.${base}/${archive}" -o "$RUNNER_TEMP/${archive}"
+            mkdir -p "$RUNNER_TEMP/native-baseline-${base}/.local/share/gfg-native"
+            target="$RUNNER_TEMP/native-baseline-${base}/.local/share/gfg-native/libVkLayer_gfg_native.so"
+            unzip -p "$RUNNER_TEMP/${archive}" GFG-Native-FG/libVkLayer_gfg_native.so > "$target"
+            chmod 755 "$target"
+            cp "$target" "$RUNNER_TEMP/original-${base}.so"
+            ( cd out-patch-02 && HOME="$RUNNER_TEMP/native-baseline-${base}" XDG_DATA_HOME= bash ./apply.sh )
+            cmp "$target" out-patch-02/libVkLayer_gfg_native.so
+            test -s "${target}.before-patch-02"
+            ( cd out-patch-02 && HOME="$RUNNER_TEMP/native-baseline-${base}" XDG_DATA_HOME= bash ./rollback.sh )
+            cmp "$target" "$RUNNER_TEMP/original-${base}.so"
+          done
+      - name: Upload standalone replacement-library patch only
+        uses: actions/upload-artifact@v4
+        with:
+          name: GFG-Native-FG-Patch-02-Deck-0xc0
+          path: out-patch-02/*
+          retention-days: 30
+          if-no-files-found: error
       - name: Compile DLL-free Temporal Engine bootstrap using pinned production renderer
         run: |
           python3 scripts/build_frame_fusion.py --native-no-dll \

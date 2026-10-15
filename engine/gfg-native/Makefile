@@ -18,7 +18,7 @@ NATIVE_LDLIBS :=
 NATIVE_DEPS :=
 endif
 
-.PHONY: layer abi smoke wsi-smoke clean
+.PHONY: layer abi smoke wsi-smoke swapchain-policy clean
 layer: $(BUILD)/libVkLayer_gfg_native.so $(BUILD)/VkLayer_gfg_native.json
 
 $(BUILD)/libVkLayer_gfg_native.so: $(NATIVE_SOURCES) $(NATIVE_HEADERS) $(NATIVE_DEPS)
@@ -38,6 +38,13 @@ $(BUILD)/loader-smoke: tests/loader_smoke.c
 smoke: layer $(BUILD)/loader-smoke
 	VK_INSTANCE_LAYERS=VK_LAYER_GFG_native GFG_NATIVE_FG=1 GFG_NATIVE_TRACE=1 \
 	VK_LAYER_PATH="$(abspath $(BUILD))" $(BUILD)/loader-smoke
+
+$(BUILD)/swapchain-policy: tests/swapchain_policy.c src/layer.c
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Wno-unused-function -I$(VULKAN_HEADERS) -o $@ tests/swapchain_policy.c -lpthread
+
+swapchain-policy: $(BUILD)/swapchain-policy
+	$(BUILD)/swapchain-policy
 
 $(BUILD)/wsi-smoke: tests/wsi_smoke.c
 	@test -f $(VULKAN_HEADERS)/vulkan/vulkan_xcb.h || { echo "Vulkan XCB headers required"; exit 1; }
