@@ -138,6 +138,9 @@ uint64_t te_context_memory_bytes(const te_context* ctx);
 /* Shared timeline (internal or imported): current value and host signal. */
 uint64_t te_timeline_value(te_context* ctx);
 VkResult te_timeline_signal(te_context* ctx, uint64_t value);
+/* Host wait until the shared timeline reaches value (VK_SUCCESS) or timeout_ns elapses (VK_TIMEOUT).
+ * For producers whose device cannot import the timeline (no VK_KHR_external_semaphore_fd). */
+VkResult te_timeline_wait(te_context* ctx, uint64_t value, uint64_t timeout_ns);
 uint32_t te_context_outputs(const te_context* ctx);
 VkResult te_last_stats(te_context* ctx, te_pair_stats* stats);
 VkResult te_download_rgb(te_context* ctx, uint32_t output, uint8_t* rgb);

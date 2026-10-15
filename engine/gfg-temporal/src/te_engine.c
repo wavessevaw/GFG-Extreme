@@ -1474,6 +1474,12 @@ VkResult te_timeline_signal(te_context* ctx, uint64_t value) {
     return vkSignalSemaphore(ctx->dev->device, &info);
 }
 
+VkResult te_timeline_wait(te_context* ctx, uint64_t value, uint64_t timeout_ns) {
+    VkSemaphoreWaitInfo info = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, .semaphoreCount = 1,
+                                .pSemaphores = &ctx->timeline, .pValues = &value};
+    return vkWaitSemaphores(ctx->dev->device, &info, timeout_ns);
+}
+
 uint32_t te_context_outputs(const te_context* ctx) { return ctx->desc.outputs; }
 
 VkResult te_last_stats(te_context* ctx, te_pair_stats* stats) {
