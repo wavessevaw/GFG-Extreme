@@ -238,7 +238,9 @@ int main(int argc, char** argv) {
                 fprintf(json, ", \"lmc_ms\": {");
                 for (int k = 0; k < TE_LMC_PROF_COUNT; ++k)
                     fprintf(json, "%s\"%s\": %.4f", k ? ", " : "", names[k], ps.lmc_ms[k]);
-                fprintf(json, "}, \"lmc_counts\": [%u, %u, %u]", ps.tiles[0][0], ps.tiles[0][1], ps.tiles[0][2]);
+                fprintf(json, "}, \"cpu_fit_ms\": %.4f, \"first_ready_ms\": %.4f, \"pair_ready_ms\": %.4f, "
+                              "\"lmc_counts\": [%u, %u, %u]", ps.lmc_fit_ms, ps.ready_ms[0],
+                        ps.ready_ms[ps.outputs - 1], ps.tiles[0][0], ps.tiles[0][1], ps.tiles[0][2]);
             }
             fprintf(json, ", \"frames\": [");
             for (uint32_t i = 0; i < ps.outputs; ++i)

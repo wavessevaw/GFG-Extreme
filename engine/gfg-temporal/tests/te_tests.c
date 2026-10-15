@@ -6,9 +6,11 @@
 
 #include <fcntl.h>
 #include <math.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 static int g_failures, g_checks;
@@ -520,6 +522,56 @@ static te_context* make_lmc(te_device* dev, uint32_t outputs) {
     return ctx;
 }
 
+typedef struct { te_context* ctx; uint64_t value; } delayed_signal;
+
+static void* signal_later(void* raw) {
+    delayed_signal* s = raw;
+    usleep(150000);
+    te_timeline_signal(s->ctx, s->value);
+    return NULL;
+}
+
+static double monotonic_ms(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return t.tv_sec * 1000.0 + t.tv_nsec / 1e6;
+}
+
+static void test_lmc_readiness_deadline(te_device* dev) {
+    te_context* ctx = make_lmc(dev, 2);
+    EXPECT(ctx, "LMC bounded-wait context");
+    if (!ctx) return;
+    uint8_t* f = malloc(W * H * 3);
+    pattern(f, 0, 0, 11);
+    const float ts[2] = {1.0f / 3, 2.0f / 3};
+    EXPECT(run_pair(ctx, 0, f, 0, ts), "LMC deadline history");
+    te_upload_rgb(ctx, 1, f);
+    te_submit s = {.slot = 1, .count = 2, .timestamps = {1.0f / 3, 2.0f / 3},
+                   .wait_value = 2, .signal_first = 3};
+    EXPECT(te_submit_frame(ctx, &s) == VK_SUCCESS, "analysis waiting for an unavailable source");
+    delayed_signal signal = {ctx, 2};
+    pthread_t thread;
+    int threaded = pthread_create(&thread, NULL, signal_later, &signal) == 0;
+    EXPECT(threaded, "deadline release thread");
+    if (!threaded) te_timeline_signal(ctx, 2);
+    double begin = monotonic_ms();
+    int idle = te_context_idle(ctx, 5000000ull);
+    double elapsed = monotonic_ms() - begin;
+    if (threaded) {
+        EXPECT(!idle && elapsed < 100.0, "5 ms readiness deadline returned in %.2f ms, idle=%d", elapsed, idle);
+        te_submit next = {.slot = 0, .nonblocking = 1};
+        begin = monotonic_ms();
+        VkResult rc = te_submit_frame(ctx, &next);
+        EXPECT(rc == VK_NOT_READY && monotonic_ms() - begin < 100.0,
+               "nonblocking submit must not drain the fit worker (%d)", rc);
+        pthread_join(thread, NULL);
+    }
+    EXPECT(te_context_idle(ctx, 5000000000ull), "same pair finishes after its source arrives");
+    EXPECT(te_timeline_value(ctx) == 4, "outputs signal only after real work completes");
+    free(f);
+    te_context_destroy(ctx);
+}
+
 /* static overlay ("HUD") drawn over a frame */
 static void overlay(uint8_t* rgb) {
     for (int y = 8; y < 28; ++y)
@@ -587,10 +639,50 @@ static void test_lmc_pan(te_device* dev, int tier) {
      * feature (bench/parity.py checks them at 1280x800); here only the bound */
     EXPECT(st.tiles[0][0] <= 3, "LMC pan: at most three motion planes (%u)", st.tiles[0][0]);
     EXPECT(st.timed, "LMC timestamps available");
+    EXPECT(st.ready_ms[0] > 0 && st.ready_ms[1] >= st.ready_ms[0],
+           "LMC cumulative output-ready timestamps %.3f / %.3f ms", st.ready_ms[0], st.ready_ms[1]);
+    EXPECT(st.ready_ms[1] >= st.stage_ms[TE_STAGE_PYRAMID] + st.stage_ms[TE_STAGE_ANALYZE],
+           "full pair time includes analysis and fit, not only composition");
     free(f);
     free(prev);
     free(mid);
     free(o);
+    te_context_destroy(ctx);
+}
+
+static void colour_alias_pattern(uint8_t* rgb, double ox, double oy) {
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x) {
+            double u = x - ox, v = y - oy;
+            uint8_t* p = rgb + 3 * (y * W + x);
+            p[0] = clamp8(255 * (0.5 + 0.22 * sin(u * .17) * cos(v * .13)));
+            p[1] = clamp8(255 * (0.5 + 0.21 * sin(v * .19 + u * .07)));
+            p[2] = clamp8(255 * (0.5 + 0.24 * cos(u * .11 - v * .15)));
+        }
+}
+
+static void test_lmc_chroma_alias(te_device* dev) {
+    // Repeated colour textures have competing coarse luma matches. A small
+    // fractional pan must not turn into unrelated long vectors and tearing.
+    te_context* ctx = make_lmc(dev, 2);
+    EXPECT(ctx, "chroma-alias context");
+    if (!ctx) return;
+    uint8_t *f = malloc(W * H * 3), *truth = malloc(W * H * 3), *o = malloc(W * H * 3);
+    const float ts[2] = {1.0f / 3, 2.0f / 3};
+    double worst = 99;
+    for (int k = 0; k < 5; ++k) {
+        colour_alias_pattern(f, 6 * k, 1.5 * k);
+        EXPECT(run_pair(ctx, (uint32_t)(k % 2), f, k ? 2 : 0, ts), "chroma-alias pair %d", k);
+        if (!k) continue;
+        for (uint32_t i = 0; i < 2; ++i) {
+            colour_alias_pattern(truth, 6 * (k - 1 + ts[i]), 1.5 * (k - 1 + ts[i]));
+            te_download_rgb(ctx, i, o);
+            double q = psnr_rect(o, truth, 16, 16, W - 16, H - 16);
+            if (q < worst) worst = q;
+        }
+    }
+    EXPECT(worst > 30.0, "coloured texture pan reconstructs instead of luma-alias tearing: %.2f dB", worst);
+    free(f); free(truth); free(o);
     te_context_destroy(ctx);
 }
 
@@ -659,9 +751,13 @@ int main(void) {
     test_invalid_inputs(dev);
     test_lifetime(dev);
     test_timeline_protocol(dev, 0);
-    test_timeline_protocol(dev, 1);
+    // Warm the software driver's lazy LMC shader compilation before testing
+    // bounded protocol waits; compilation time is not a semaphore deadline.
     test_lmc_static(dev);
+    test_timeline_protocol(dev, 1);
+    test_lmc_readiness_deadline(dev);
     for (int tier = 0; tier < TE_LMC_TIERS; ++tier) test_lmc_pan(dev, tier);
+    test_lmc_chroma_alias(dev);
     test_lmc_hud(dev);
     test_lmc_hold(dev);
     uint32_t verr = te_device_validation_errors(dev);

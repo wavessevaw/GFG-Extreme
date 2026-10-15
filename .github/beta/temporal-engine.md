@@ -1,34 +1,33 @@
-# GFG Extreme 2.1.2-te.7 — Temporal Engine beta with GFG Shell (pre-release)
+# GFG Extreme 2.1.2-te.8 — generator correctness and frame cost
 
-**Experimental build for hardware trials.** Everything else is GFG Extreme 2.1.1.
+Experimental pre-release based on te.7. This release fixes generation failures and cost accounting; it does not claim measured 90 FPS or battery improvements on a Steam Deck.
 
-te.7 reworks the parts of the LMC frame generator that were slow on the Steam Deck's GPU, and replaces the generator's pauses with cheaper quality tiers.
+## What changed
 
-**The motion model is fitted on the CPU.** The camera planes and the motion palette were fitted on the GPU by passes that ran on a single workgroup, the slowest part of the analysis on a GPU shared with the game. They are now fitted on the CPU, on a worker thread (about 2 ms on a desktop CPU; the Deck's time is in the renderer log). The analysis is two submissions: the first finds the block vectors, the CPU fits the model of that same pair, then the second builds the per-pixel fields. The engine has its own Vulkan queue, so only the engine waits for the fit, never the game. The renderer log reports the wait as `fit_wait` and leaves it out of the GPU time.
+- **Bounded waits actually stay bounded.** Readiness uses one deadline across the CPU fit worker and GPU fences. Nonblocking submission no longer secretly drains the worker. A delayed-source regression test verifies timely return and later correct completion.
+- **No fake completed frames after a submission failure.** The worker propagates its error instead of treating a cleanup fence as finished generation.
+- **Cost includes the missing waits.** Diagnostics now show CPU fit, analysis-to-first-output and analysis-to-last-output spans, missed pair intervals and the actual LMC GPU-share budget. The unrelated tile cap of 2 ms is no longer presented as LMC's cap.
+- **Overload no longer means 120 repeated pairs.** LMC checks GPU cost and full-pair readiness, reacts in milliseconds rather than frame counts, tries cheaper tiers first and limits its final repeat fallback to one pair before measuring again. The submitted hold is correctly recorded.
+- **Fewer false motion vectors on coloured repeated textures.** Four coarse chroma probes reject gross colour aliases; a deadband preserves small reflection/lighting changes. Finest search stays unchanged. Full-resolution composition also checks its own source bounds.
+- **Less unnecessary work.** CPU fitting prunes hypotheses that cannot win and skips zero matrix products. Field search stops where the remaining candidates cannot beat the current match. These changes do not lower the fitting thresholds.
+- **The requested goal remains visible.** Experimental Autopilot keeps the supported display target (90 on a 90 Hz OLED configuration) instead of silently lowering it to 45. An unmet target remains an unmet target; power, thermal and display limits still apply.
 
-**Coalesced passes.** The block statistics, the quarter-resolution masked luma and the orphan count looped over a block's pixels in one thread, so neighbouring threads read memory far apart. They now use one thread per pixel and a reduction in workgroup memory (8–32 registers, no spills on RDNA2).
+GFG Shell remains the same 0.3.0 bundle as te.7.
 
-**Fewer dispatches in the block search.** Each pyramid level ran 7 dispatches, each followed by a barrier; it now runs 4, which ping-pong between two buffers instead of copying.
+## Evidence versus te.7
 
-**Cheaper tiers instead of pauses.** When the generator stayed over its GPU budget, it stopped generating for 120 frame pairs and repeated real frames, which you see as stutter. Now it first moves to cheaper tiers:
-- Tier 1 carries the second motion grid from the first instead of searching it again.
-- Tier 2 also runs one propagation sweep instead of two.
+Local backend: **1258 tests, one skipped**. Native engine: **168 checks, zero failures**. Renderer: **50 CTest tests**, plus image/integration checks. Frontend: **117 screens**. CPU fitting produced **96 bit-identical model comparisons**; coherent camera/plane cases took roughly **25–31% less host CPU time**, while the noise-only case was about 6% slower.
 
-It pauses only when tier 2 is still over budget, and moves back up when the cost allows. The renderer log reports `tier=` and `tier_steps=`.
+Three counterbalanced runs on the existing 1280×800 Godot sword/walk/specular scenes showed approximately **8–13% lower GPU-stage timestamp spans** and **28–41% lower field-pass spans** on software Vulkan. Image error on those short segments stayed close to te.7 (mean FLIP changes −0.31%, −0.23%, +0.22%). These are CPU Vulkan results, **not Deck GPU measurements**.
 
-**Picture.** On the seven rendered bench scenes the full tier matches te.6 (FLIP within 0.5 % on every scene). Tier 1 has the same mean and up to 6 % worse worst frames (the specular scene). Tier 2 is up to 1 % worse on average and up to 16 % worse in its worst frames. Both are far better than repeated frames.
+Special colour-alias fixtures improved substantially, but the analytic thin-post case regressed by about **3%**. Every result, including regressions and timing outliers, is retained in [the comparison report](https://github.com/wavessevaw/GFG-Extreme/blob/v2.1.2-te.8/docs/TEMPORAL_ENGINE_TE8.md). This is a hardware-trial build, not a claim that every game now looks better or reaches 90 FPS.
 
-**GPU cost on the Deck.** Not measured yet, so this build gives no estimate. Every 10 seconds the renderer log records the GPU time of each analysis pass, the CPU fit wait and the tier; one trial log is enough to measure it.
+![Synthetic colour-alias regression fixture](https://raw.githubusercontent.com/wavessevaw/GFG-Extreme/v2.1.2-te.8/docs/img/te8-colour-alias.png)
 
-**GFG Shell 0.3.0 is included.** The alternative Gaming Mode shell (Godot; Steam stays the game client) has a new look:
-- Portrait game capsules.
-- The selected game's art behind the page, with a slow drift and a cross-fade.
-- Focus lift with a glow.
-- Sliding menus with shadows.
-- A Store page with direct links to the store, specials, wishlist and key activation.
+## Install and compare
 
-Install and launch it from the plugin: **GFG Extreme → GFG Shell → Install**, then **Launch**.
+Install **GFG-Extreme-v2_1_2-te_8.zip** through Decky, then **Settings → System → Update engine** and restart the game through `/home/deck/.local/bin/gfg %command%`. The bundled renderer identifies as `4.0.0-gfg.fusion.4-te.8` and TE as `0.2.4-exp`.
 
-How to test: install **GFG-Extreme-v2_1_2-te_7.zip** through Decky, **Settings → System → Update engine**, restart the game through `/home/deck/.local/bin/gfg %command%`, keep **Temporal Engine · Experimental**, record a log of 2–3 minutes of play with camera movement, then the same with Temporal Engine **Off**.
+Use the same scene and settings for **Off → Experimental → Off** (at least three minutes each after warmup). Keep the FPS target, mode, power settings, scaling and camera route fixed. Record a log and inspect real/output FPS, frame-time tails, new ready/CPU metrics, tier changes and holds. Off uses the regular generator. The full external-semaphore import path and physical display delivery still require device validation.
 
 SHA-256: `<sha256>` — also see **SHA256SUMS.txt**.

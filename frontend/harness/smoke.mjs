@@ -4,6 +4,7 @@ const cases = [
   ["fusion-prepared", ["Settings", "Diagnostics"], ["FRAME FUSION", "Waiting for a compatible frame"]],
   ["temporal-shadow", ["Settings", "Diagnostics"], ["TEMPORAL ENGINE · EXPERIMENTAL", "Measuring in the background", "30% / 30% / 40%", "200 / 198", "Still running in shadow until the game restarts", "2 ms per frame · level 1"]],
   ["temporal-fallback", ["Settings", "Diagnostics"], ["regular frame generation kept the work", "no-external-semaphore-fd"]],
+  ["temporal-lmc", ["Settings", "Diagnostics"], ["LMC quality tier", "Tier 1", "CPU motion fit", "3.50 ms", "14.20 / 16.00 ms", "25% of real-frame interval", "Pairs exceeding real-frame interval"]],
   ["fusion-observed", ["Settings", "Diagnostics"], ["direct processing path has been used", "Power benefit is not measured yet"]],
   ["fusion-restart", ["Settings", "Diagnostics"], ["Restart the game to apply your choice"]],
   ["fusion-unsupported", ["Settings", "Diagnostics"], ["current engine has no Fusion support", "native 64-bit games only"]],

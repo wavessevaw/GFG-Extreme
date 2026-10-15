@@ -118,6 +118,18 @@ class GpuClockTests(unittest.TestCase):
 
 
 class HoldAndTargetTests(unittest.TestCase):
+    def test_fixed_display_goal_survives_low_fps_stale_windows_and_old_fallback(self):
+        policy = TargetPolicy()
+        for _ in range(4):
+            policy.update(90, 15, 45, "auto", True)
+        self.assertEqual(policy.target, 45)
+        for preference in ("auto", "battery", "smoothness"):
+            for fresh in (False, True):
+                for _ in range(5):
+                    self.assertEqual(policy.update(90, 15, 45, preference, fresh,
+                                                  allow_reduction=False), 90)
+        self.assertEqual(policy.update(60, 15, 30, "auto", True, allow_reduction=False), 60)
+
     def test_hold_keeps_a_healthy_budget_from_probing(self):
         from gfg_plugin.governor_core import BudgetController, WindowVerdict
         ctl = BudgetController(target_output_fps=90, now=0.0)

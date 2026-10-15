@@ -6,7 +6,7 @@ name: Temporal Engine beta
 # The zip is also kept as a workflow artifact, so a refused publish loses nothing.
 on:
   push:
-    branches: [claude/busy-bardeen-rmv05o]
+    branches: [claude/busy-bardeen-rmv05o, codex/temporal-90-te8]
     paths: [.github/beta/temporal-engine.json]
   workflow_dispatch:
 
@@ -53,8 +53,12 @@ jobs:
           python3 scripts/check_generated_config.py
           python3 -m unittest discover -s tests -p 'test_*.py'
 
+      - name: CPU motion fit parity and relative cost versus te.7
+        run: python3 tools/benchmark_lmc_fit.py --out fit-benchmark.json
+
       - name: Frame OS and HUD native tests
         run: |
+          export TMPDIR="$RUNNER_TEMP"
           VULKAN_DEPS="$RUNNER_TEMP/vk" engine/gfg-pacer/tests/setup_vulkan_deps.sh
           make -C engine/gfg-pacer VULKAN_DEPS="$RUNNER_TEMP/vk" test layer abi integration ordering
           make -C engine/gfg-hud VULKAN_DEPS="$RUNNER_TEMP/vk" test layer abi integration
@@ -138,7 +142,9 @@ jobs:
           python3 scripts/bump_version.py "${{ steps.version.outputs.version }}"
           # build_release.sh packages HEAD (git archive): record the beta version in a
           # local commit inside this job only; nothing is pushed
-          git -c user.name=gfg-beta -c user.email=gfg-beta@localhost commit -qam "beta ${{ steps.version.outputs.version }}"
+          if ! git diff --quiet; then
+            git -c user.name=gfg-beta -c user.email=gfg-beta@localhost commit -qam "beta ${{ steps.version.outputs.version }}"
+          fi
           git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
           FRAME_FUSION_BUILD="$RUNNER_TEMP/fusion/build" VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" scripts/build_release.sh "${{ steps.version.outputs.version }}" payloads out
 

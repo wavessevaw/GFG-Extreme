@@ -1983,7 +1983,8 @@ function TemporalEnginePanel({ s }) {
     }
     save(v, false);
   };
-  const sh = te.shares || {}, g = te.gpu_ms || {};
+  const sh = te.shares || {}, g = te.gpu_ms || {}, lc = te.lmc || {};
+  const isLmc = te.algorithm === "lmc";
   const pct = (v) => v == null ? "\u2013" : Math.round(v * 100) + "%";
   return h(
     "div",
@@ -2003,16 +2004,22 @@ function TemporalEnginePanel({ s }) {
     te.state === "shadow-measuring" || te.state === "generating" ? h(
       "div",
       { className: "kv" },
-      h("span", null, "Tiles reuse / light / full"),
-      h("b", null, pct(sh.reuse) + " / " + pct(sh.light) + " / " + pct(sh.full)),
+      h("span", null, isLmc ? "LMC quality tier" : "Tiles reuse / light / full"),
+      h("b", null, isLmc ? te.lmc_tier == null ? "\u2013" : "Tier " + te.lmc_tier : pct(sh.reuse) + " / " + pct(sh.light) + " / " + pct(sh.full)),
       h("span", null, "GPU per frame pair"),
       h("b", null, g.pair_p50 != null ? num(g.pair_p50, 2) + " ms (p95 " + num(g.pair_p95, 2) + ")" : "\u2013"),
+      isLmc ? h("span", null, "CPU motion fit") : null,
+      isLmc ? h("b", null, lc.cpu_fit_ms == null ? "\u2013" : num(lc.cpu_fit_ms, 2) + " ms") : null,
+      isLmc ? h("span", null, "First / all outputs ready") : null,
+      isLmc ? h("b", null, lc.first_ready_ms == null || lc.pair_with_fit_ms == null ? "\u2013" : num(lc.first_ready_ms, 2) + " / " + num(lc.pair_with_fit_ms, 2) + " ms") : null,
+      isLmc ? h("span", null, "Pairs exceeding real-frame interval") : null,
+      isLmc ? h("b", null, lc.deadline_misses == null ? "\u2013" : String(lc.deadline_misses)) : null,
       h("span", null, "Dispatched / GPU-completed"),
       h("b", null, (te.outputs_dispatched || 0) + " / " + (te.outputs_gpu_completed || 0)),
       h("span", null, "Dropped pairs"),
       h("b", null, String(te.dropped || 0)),
-      h("span", null, "Cost cap"),
-      h("b", null, te.scheduler && te.scheduler.cap_ms ? num(te.scheduler.cap_ms, 1) + " ms per frame" + (te.scheduler.force_light ? " \xB7 light only" : " \xB7 level " + te.scheduler.level) : "\u2013")
+      h("span", null, isLmc ? "GPU share budget" : "Cost cap"),
+      h("b", null, isLmc ? lc.budget == null ? "\u2013" : pct(lc.budget) + " of real-frame interval" : te.scheduler && te.scheduler.cap_ms ? num(te.scheduler.cap_ms, 1) + " ms per frame" + (te.scheduler.force_light ? " \xB7 light only" : " \xB7 level " + te.scheduler.level) : "\u2013")
     ) : null,
     msg ? h(Note, { quiet: true }, msg) : null
   );

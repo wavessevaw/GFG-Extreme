@@ -18,7 +18,7 @@
 extern "C" {
 #endif
 
-#define TE_VERSION "0.2.3-exp"
+#define TE_VERSION "0.2.4-exp"
 #define TE_MAX_OUTPUTS 4
 #define TE_MAX_LEVELS 3
 
@@ -84,7 +84,8 @@ typedef struct {
     uint64_t outputs_completed_total;    /* all outputs of this context whose GPU work finished */
     double stage_ms[TE_STAGE_COUNT];     /* once per pair */
     double lmc_ms[TE_LMC_PROF_COUNT];    /* LMC: per analysis pass (-1 when not timed) */
-    double lmc_fit_ms;                   /* LMC: CPU time of the newest motion-model fit */
+    double lmc_fit_ms;                   /* LMC: CPU time of this pair's motion-model fit */
+    double ready_ms[TE_MAX_OUTPUTS];     /* analysis start to each output ready, includes fit/queue gaps */
     int lmc_tier;                        /* LMC: cost tier of the pair */
     double frame_ms[TE_MAX_OUTPUTS][TE_FRAME_COUNT];
     uint32_t tiles[TE_MAX_OUTPUTS][3];   /* reuse, light, full tile counts per output */

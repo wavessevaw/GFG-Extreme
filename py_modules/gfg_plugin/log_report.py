@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from .governor_telemetry import TelemetryObserver
 
-CURRENT_VERSION = "2.1.1"  # kept in step by scripts/bump_version.py
+CURRENT_VERSION = "2.1.2-te.8"  # kept in step by scripts/bump_version.py
 
 
 def _percentile(values: List[float], pct: float) -> Optional[float]:
@@ -274,6 +274,8 @@ def temporal_engine_log_summary(text: str) -> Dict[str, Any]:
             "tier_steps": max((int(r["tier_steps"]) for r in rows if r.get("tier_steps", "").isdigit()), default=0),
             "fixed_ms_median": med("fixed_ms"), "frame_ms_median": med("frame_ms"),
             "pair_p95_ms_median": med("pair_p95_ms"), "cap_ms": med("cap_ms"),
+            "cpu_fit_ms_median": med("cpu_fit_ms"),
+            "pair_with_fit_ms_median": med("pair_with_fit_ms"),
             "interval_ms_median": med("interval_ms"),
             "shares_median": [round(statistics.median(s[i] for s in shares), 3) for i in range(3)] if shares else None,
             # te.4 (LMC): which generator, the GPU split and what the motion model found
@@ -571,11 +573,20 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
                      f"dropped {last.get('dropped')}, recommendation {last.get('recommendation')}.")
         tlog = temporal.get("renderer_log") or {}
         if tlog.get("available"):
+            is_lmc = bool((tlog.get("algorithms") or {}).get("lmc"))
+            budget_text = ("LMC uses its real-interval share budget; the tile cap is not active"
+                           if is_lmc else f"cap {tlog['cap_ms']} ms")
             text += (f" Renderer log ({tlog['lines']} lines): levels {tlog['levels']}, holding "
                      f"{int(tlog['holding_share'] * 100)}% of the time ({tlog['cost_holds']} cost holds, "
                      f"tiers {tlog.get('tiers') or {}}, {tlog.get('tier_steps', 0)} tier changes), "
                      f"fixed {tlog['fixed_ms_median']} ms + {tlog['frame_ms_median']} ms per generated frame "
-                     f"(cap {tlog['cap_ms']} ms), shares reuse/light/full {tlog['shares_median']}.")
+                     f"({budget_text})")
+            if not is_lmc:
+                text += f", shares reuse/light/full {tlog['shares_median']}"
+            text += "."
+            if tlog.get("cpu_fit_ms_median") is not None:
+                text += (f" CPU fit {tlog['cpu_fit_ms_median']} ms; all-output ready span "
+                         f"{tlog['pair_with_fit_ms_median']} ms (not display latency).")
         if temporal.get("fallback_reasons"):
             text += " LSFG kept frame generation: " + ", ".join(temporal["fallback_reasons"]) + "."
         out.append(text + " Presentation is not observed by the engine; no FPS, latency or energy gain is implied.")

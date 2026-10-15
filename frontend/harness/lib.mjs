@@ -101,6 +101,7 @@ export const STATES = {
   "fusion-prepared": { ...base, mode: "autopilot", frame_fusion: { enabled: true, state: "prepared", path_observed: false } },
   "temporal-shadow": { ...base, temporal_engine: { requested_mode: "off", running_mode: "shadow", restart_required: true, scheduler: { cap_ms: 2, level: 1, force_light: 0 }, state: "shadow-measuring", applied: true, shares: { reuse: 0.3, light: 0.3, full: 0.4 }, gpu_ms: { pair_p50: 2.4, pair_p95: 3.1 }, outputs_dispatched: 200, outputs_gpu_completed: 198, dropped: 4 } },
   "temporal-fallback": { ...base, temporal_engine: { requested_mode: "experimental", state: "fallback", applied: false, fallback_reasons: ["no-external-semaphore-fd"] } },
+  "temporal-lmc": { ...base, temporal_engine: { requested_mode: "experimental", state: "generating", algorithm: "lmc", lmc_tier: 1, lmc: { budget: 0.25, cpu_fit_ms: 3.5, first_ready_ms: 14.2, pair_with_fit_ms: 16, deadline_misses: 8 }, gpu_ms: { pair_p50: 8, pair_p95: 11 }, scheduler: { cap_ms: 2 }, outputs_dispatched: 100, outputs_gpu_completed: 98 } },
   "fusion-observed": { ...base, mode: "autopilot", frame_fusion: { enabled: true, state: "observed", path_observed: true, gain_measured: false } },
   "fusion-restart": { ...base, mode: "autopilot", frame_fusion: { enabled: false, state: "restart-required", path_observed: true } },
   "fusion-unsupported": { ...base, mode: "autopilot", frame_fusion: { enabled: true, state: "renderer-unsupported", path_observed: false } },

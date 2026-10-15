@@ -42,6 +42,13 @@ void main() {
             vec2 v = s.xy * 2.0;
             int m = int(s.z + 0.5);
             vec2 a = pf - t * v, b = pf + (1.0 - t) * v;
+            // A half-resolution cell may be valid while this full-resolution
+            // pixel crosses the image boundary. Do not turn clamped edge
+            // texels into an invented second surface (a stretched/ghost edge).
+            bool valid_a = inside(a, P.size.xy), valid_b = inside(b, P.size.xy);
+            if (m == 3 && !valid_a) m = valid_b ? 2 : 0;
+            if (m == 3 && !valid_b) m = valid_a ? 1 : 0;
+            if ((m == 1 && !valid_a) || (m == 2 && !valid_b)) m = 0;
             // only the two-sided error needs both fetches; one-sided modes fetch their side
             vec3 ca = (m == 3 || m == 1) ? full_rgb(0, a) : vec3(0.0);
             vec3 cb = (m == 3 || m == 2) ? full_rgb(1, b) : vec3(0.0);

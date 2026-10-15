@@ -369,11 +369,11 @@ class LMC2:
         hud = self.still >= L.HUD_PAIRS
         hudh = half(hud.astype(np.float32)) > 0.5
         # one search per grid; the camera candidate is the previous pair's fit
-        vb, cb = L.estimate(pyr_a, pyr_b, "b", self.layers or None, self.temporal)
+        vb, cb = L.estimate(pyr_a, pyr_b, "b", self.layers or None, self.temporal, ah, bh_)
         if SINGLE:
             va, ca = estimate_a_from_b(pyr_a, pyr_b, vb, self.layers or None)
         else:
-            va, ca = L.estimate(pyr_a, pyr_b, "a", self.layers or None, vb)
+            va, ca = L.estimate(pyr_a, pyr_b, "a", self.layers or None, vb, ah, bh_)
         self.pairs += 1
         sub = FIT_SUB
         if sub > 1:
@@ -471,6 +471,10 @@ class LMC2:
                 m = hm[yy, xx]
                 ax, ay = px - t * v[..., 0], py - t * v[..., 1]
                 bx, by = px + (1 - t) * v[..., 0], py + (1 - t) * v[..., 1]
+                valid_a, valid_b = L.inside(ax, ay, w, h), L.inside(bx, by, w, h)
+                m = np.where((m == 3) & ~valid_a, np.where(valid_b, 2, 0), m)
+                m = np.where((m == 3) & ~valid_b, np.where(valid_a, 1, 0), m)
+                m = np.where(((m == 1) & ~valid_a) | ((m == 2) & ~valid_b), 0, m)
                 ca, cbb = L.bilinear(a, ax, ay), L.bilinear(b, bx, by)
                 e = np.abs(ca - cbb).sum(-1)
                 # one-sided cells are judged by mode, not by a two-sided error

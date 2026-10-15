@@ -30,6 +30,7 @@ shared int s_ord[4][NS];    // kept slots in order
 shared int s_n[4];
 shared vec3 s_own[100];     // 10x10 apron of the own frame (clamped)
 shared vec3 s_oth[4][36];   // 6x6 apron of the other frame per block
+shared uint s_unresolved;
 
 vec4 block_vec(int grid, int i) { return grid == 0 ? vb[P.blk_off.x + i] : va[P.blk_off.x + i]; }
 
@@ -133,9 +134,16 @@ void main() {
         best_v = f.xy;
     }
     ivec2 lo = me - org;  // own pixel in the 10x10 apron
+    if (lid == 0u) s_unresolved = 0u;
+    barrier();
 
     for (int e = 0; e < nmax; ++e) {
-        bool act = blk_ok && e < s_n[j];
+        // Every candidate after the own block carries P.margin. If the
+        // entire workgroup is already at or below that lower bound, none can
+        // win the strict comparison. This skips texture fetches and barriers
+        // on coherent motion without approximating or weakening the search.
+        if (e > 0 && s_unresolved == 0u) break;
+        bool act = blk_ok && e < s_n[j] && (e == 0 || (s_unresolved & (1u << uint(j))) != 0u);
         int slot = act ? s_ord[j][e] : 0;
         vec2 v = act ? s_c[j][slot] : vec2(0.0);
         for (int i = t; i < 36; i += 16) {
@@ -155,8 +163,13 @@ void main() {
             if (c < best_c) { best_c = c; best_v = v; }
         }
         barrier();
+        if (e == 0) {
+            if (blk_ok && all(lessThan(me, hs)) && best_c > P.margin)
+                atomicOr(s_unresolved, 1u << uint(j));
+            barrier();
+        }
     }
-    if (PC.pass_ == 0 && blk_ok) {
+    if (PC.pass_ == 0 && blk_ok && best_c > P.margin) {
         for (int L = 0; L < nl; ++L) {
             if (s_lpp[j][L] == 0) continue;  // block-constant: done above
             vec2 v = camera_vec(LY.layers[L], s_inv[L], vec2(me), 2.0, grid);

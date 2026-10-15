@@ -55,6 +55,7 @@ void store_v(ivec2 b, vec4 v) {
 
 // the block's own pixels, fetched on the first cost (constant indices only: registers)
 float g_own[LMC_BLK * LMC_BLK];
+vec2 g_chroma[4];
 bool g_have_own = false;
 
 // 4x4 texels with top-left t from four 2x2 gathers, in raster order
@@ -73,9 +74,20 @@ void gather4x4(int which, ivec2 t, out float o[16]) {
 
 // mean |own - other| over the 4x4 block (reference: Level.cost).  Whole-pixel
 // offsets take four gathers instead of 16 bilinear fetches.
-float cost(vec2 v) {
+float cost(vec2 v, float upper, float penalty) {
     if (!g_have_own) {
         gather4x4(GRID == 0 ? 1 : 0, g_b * LMC_BLK, g_own);
+        if (L_ > 1) {
+            // Luma alone aliases coloured/repeating textures into unrelated
+            // motions. Four chroma probes keep the candidate tied to the actual
+            // surface without tripling every pyramid/search texture fetch.
+            [[unroll]] for (int k = 0; k < 4; ++k) {
+                vec2 q = vec2(g_b * LMC_BLK + ivec2(k & 1, k >> 1) * 3);
+                q = (q + 0.5) * float(1 << L_) * 0.5 - 0.5;
+                vec3 c = half_rgb(GRID == 0 ? 1 : 0, q);
+                g_chroma[k] = vec2(c.r - c.g, c.b - c.g);
+            }
+        }
         g_have_own = true;
     }
     float acc = 0.0;
@@ -90,8 +102,27 @@ float cost(vec2 v) {
             acc += abs(g_own[k] - (GRID == 0 ? luma_a(L_, q) : luma_b(L_, q)));
         }
     }
-    return acc / float(LMC_BLK * LMC_BLK);
+    float luma_cost = acc / float(LMC_BLK * LMC_BLK);
+    // Chroma is a non-negative penalty. A luma candidate that already loses
+    // cannot win after adding it; avoid the four colour probes in that case.
+    if (luma_cost + penalty >= upper) return luma_cost;
+    float chroma = 0.0;
+    if (L_ > 1) {
+        [[unroll]] for (int k = 0; k < 4; ++k) {
+            vec2 q = vec2(g_b * LMC_BLK + ivec2(k & 1, k >> 1) * 3) + o;
+            q = (q + 0.5) * float(1 << L_) * 0.5 - 0.5;
+            vec3 c = half_rgb(GRID == 0 ? 0 : 1, q);
+            vec2 d = abs(g_chroma[k] - vec2(c.r - c.g, c.b - c.g));
+            chroma += d.x + d.y;
+        }
+    }
+    // Small colour changes are illumination/specular variation, not evidence
+    // of a different surface. Penalise only gross chroma disagreement; the
+    // luma search keeps control on ordinary textured and reflective scenes.
+    return luma_cost + 0.25 * max(chroma / 8.0 - 0.08, 0.0);
 }
+
+float cost(vec2 v) { return cost(v, 1e30, 0.0); }
 
 vec2 temporal_cand() {
     // reference resample_field: nearest block of a level-1 field (full-res px),
@@ -223,7 +254,7 @@ void main() {
                     skip = skip || v == p0 || v == p1 || v == p2 || v == p3 || v == p4;
             }
             if (skip) continue;
-            float p = cost(v);
+            float p = cost(v, best_c, pen);
             float c = p + pen;
             if (c < best_c) {
                 best_c = c;
@@ -244,8 +275,9 @@ void main() {
             bool rep = (k > 0 && v == own.xy) || (k > 1 && v == med) || (k > 2 && v == c1) ||
                        (k > 3 && v == c2) || (k > 4 && v == c3);
             if (rep) continue;
-            float p = k == 0 ? own.z : cost(v);
-            float c = p + P.smooth_ * (abs(v.x - med.x) + abs(v.y - med.y));
+            float penalty = P.smooth_ * (abs(v.x - med.x) + abs(v.y - med.y));
+            float p = k == 0 ? own.z : cost(v, bc, penalty);
+            float c = p + penalty;
             if (c < bc) { bc = c; bv = v; bp = p; }
         }
         store_v(g_b, vec4(bv, bp, 0.0));

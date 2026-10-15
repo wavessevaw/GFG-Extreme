@@ -161,7 +161,8 @@ class TargetPolicy:
         return hz // 2
 
     def update(self, display_hz, real_fps, output_fps, preference, fresh,
-               *, sample_seq=None, first_sample_seq=None, span_s=None, now=None) -> int:
+               *, sample_seq=None, first_sample_seq=None, span_s=None, now=None,
+               allow_reduction=True) -> int:
         # now/seq are passed by Governor in production; the optional arguments
         # keep this pure policy usable from independent unit tests.
         if now is None:
@@ -176,6 +177,13 @@ class TargetPolicy:
             self.next_recovery_at = 0.0
             self.recovery_attempted = False
             self.last_seq = 0
+        if not allow_reduction:
+            # A fixed-target experiment must not improve its apparent success
+            # by silently moving the goalposts, including on stale telemetry.
+            self.target = hz
+            self.pending = None
+            self.pending_n = 0
+            return hz
         if not fresh:
             self.pending = None
             self.pending_n = 0

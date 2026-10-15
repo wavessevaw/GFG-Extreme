@@ -150,6 +150,16 @@ class WriterFormat(unittest.TestCase):
         s = te.summarize("experimental", [te.normalize_status(json.loads(rec))])
         self.assertEqual((s["lmc_tier"], s["tier_steps"]), (2, 3))
 
+    def test_lmc8_preserves_cpu_wait_cost_and_tiers_in_recording(self):
+        raw = json.loads(LMC5_RECORD)
+        raw["lmc"].update(cpu_fit_ms=3.5, pair_with_fit_ms=16.0, first_ready_ms=14.2)
+        raw["counters"].update(lmc_tier=1, tier_steps=2, holding=0, cost_holds=1)
+        full = te.summarize("experimental", [te.normalize_status(raw)])
+        compact = te.compact(full)
+        self.assertEqual(compact["lmc"]["cpu_fit_ms"], 3.5)
+        self.assertEqual(compact["lmc"]["first_ready_ms"], 14.2)
+        self.assertEqual((compact["lmc_tier"], compact["tier_steps"], compact["cost_holds"]), (1, 2, 1))
+
     def test_te2_record_reads_as_tiles(self):
         self.assertEqual(te.normalize_status(json.loads(TE2_RECORD))["algorithm"], "tiles")
 
@@ -158,7 +168,7 @@ class WriterFormat(unittest.TestCase):
         for snippet in ('<< ",\\"active\\":true,\\"algorithm\\":" << (this->lmc ? "\\"lmc\\"" : "\\"tiles\\"")',
                         '<< ",\\"lmc\\":{\\"layers\\":" << finite(this->lmcLayers) << ",\\"orphans_b\\":"',
                         '<< ",\\"orphans_a\\":" << finite(this->lmcOrphansA) << ",\\"select_ms\\":"',
-                        'jsonString(this->lmc ? (this->holdPairs > 0 ? "hold" : "keep")',
+                        'jsonString(this->lmc ? (this->holdingCurrent ? "hold" : "keep")',
                         '<< ",\\"budget\\":" << finite(this->runtime->lmcBudget()) << ",\\"passes_ms\\":{";',
                         'o << (k ? "," : "") << \'"\' << lmcPassName(k) << "\\":" << finite(this->lmcMs[k]);',
                         'l << " lmc_passes=search_b/search_a/layers/fit_wait/field/masked/orphan/field2";',
@@ -320,6 +330,17 @@ class Setting(unittest.TestCase):
     def test_off_by_default(self):
         self.assertEqual(self.svc.temporal_engine_mode(), "off")
         self.assertEqual(self.svc.get_status()["temporal_engine"]["state"], "off")
+
+    def test_experimental_chases_90_without_claiming_45_is_the_goal(self):
+        self.svc._mode = lambda profile: "autopilot"
+        self.svc._profile_enabled = lambda profile: True
+        self.svc._settings["temporal_engine"] = {"mode": "experimental", "experimental_consent": True}
+        self.svc._autopilot_targets.target = 45
+        low = {"samples": 8, "real": {"median": 15}, "output": {"median": 45}}
+        for snapshot in (None, {"sample_age_ms": 99999}, {"sample_age_ms": 0}):
+            self.assertEqual(self.svc._governor_target("mako", 90, low, snapshot=snapshot), 90)
+        self.assertEqual(self.svc._governor_target("mako", 60, low), 60)
+
 
     def test_experimental_requires_consent(self):
         result = self.svc.set_temporal_engine("experimental", False)

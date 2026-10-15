@@ -91,6 +91,8 @@ typedef struct {
     uint32_t lnsub;
     int lmc_pending;           /* LMC: the worker has not submitted lsub (nor the fence) yet */
     uint64_t lmc_seq;          /* LMC: the pair's fit number k (fit_tl 2k + 1, then 2k + 2) */
+    double lmc_fit_ms;
+    VkResult async_result;    /* the fit worker's second submission result */
 } te_slot;
 
 struct te_device {
@@ -1203,6 +1205,7 @@ static void collect(te_context* ctx, te_slot* slot) {
         st->stage_ms[TE_STAGE_CLASSIFY] = DELTA(2, 3);
         for (uint32_t i = 0; i < slot->outputs; ++i) {
             uint32_t q = 4 + i * 6;
+            st->ready_ms[i] = DELTA(0, q + 5);
             st->frame_ms[i][TE_FRAME_LISTS] = DELTA(q, q + 1);
             if (slot->profiled) {
                 st->frame_ms[i][TE_FRAME_REUSE] = DELTA(q + 1, q + 2);
@@ -1228,7 +1231,7 @@ static void collect(te_context* ctx, te_slot* slot) {
 #undef DELTA
     const uint8_t* rb = slot->readback.map;
     if (ctx->lmc) {
-        st->lmc_fit_ms = lmc_fit_ms(ctx);
+        st->lmc_fit_ms = slot->lmc_fit_ms;
         st->lmc_tier = slot->lmc_tier;
         /* LMC: tiles[i] = layer count, orphan blocks (B grid, A grid) */
         for (uint32_t i = 0; i < slot->outputs; ++i) {
@@ -1262,6 +1265,13 @@ static VkResult wait_slot(te_context* ctx, te_slot* slot, int nonblocking) {
     VkResult r = nonblocking ? vkGetFenceStatus(d, slot->fence) : vkWaitForFences(d, 1, &slot->fence, VK_TRUE, UINT64_MAX);
     if (r == VK_NOT_READY || r == VK_TIMEOUT) return VK_NOT_READY;
     if (r != VK_SUCCESS) return fail(r, "fence wait failed (%d)", r);
+    if (slot->async_result != VK_SUCCESS) {
+        VkResult failed = slot->async_result;
+        slot->generated = 0;
+        slot->in_flight = 0;
+        vkResetFences(d, 1, &slot->fence);
+        return fail(failed, "LMC output submission failed (%d)", failed);
+    }
     collect(ctx, slot);
     vkResetFences(d, 1, &slot->fence);
     slot->in_flight = 0;
@@ -1298,13 +1308,22 @@ VkResult te_submit_frame(te_context* ctx, const te_submit* s) {
             return fail(VK_ERROR_INITIALIZATION_FAILED, "timestamps must increase strictly inside (0, 1)");
     }
     /* LMC: the previous pair's second half is submitted (by the fit worker) before anything else */
-    if (ctx->lmc) lmc_drain(ctx);
+    if (ctx->lmc) {
+        if (s->nonblocking) {
+            pthread_mutex_lock(&ctx->lmc->fit_lock);
+            int busy = ctx->lmc->job_count || ctx->lmc->fit_busy;
+            pthread_mutex_unlock(&ctx->lmc->fit_lock);
+            if (busy) return VK_NOT_READY;
+        } else lmc_drain(ctx);
+    }
     /* No previous frame (first frame, or a skipped one): outputs hold the new frame */
     int generate = ctx->frames > 0 && s->count > 0 && !repeat && !s->discontinuity && !s->hold;
     uint32_t r_index = ctx->ring_next;
     te_slot* slot = &ctx->ring[r_index];
     VkResult r = wait_slot(ctx, slot, s->nonblocking);
     if (r != VK_SUCCESS) return r;
+    slot->lmc_fit_ms = 0.0;
+    slot->async_result = VK_SUCCESS;
     VkCommandBufferBeginInfo bi = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
                                    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     vkResetCommandBuffer(slot->analysis, 0);
@@ -1406,14 +1425,28 @@ VkResult te_wait_idle(te_context* ctx) {
 
 int te_context_idle(te_context* ctx, uint64_t timeout_ns) {
     VkDevice d = ctx->dev->device;
+    struct timespec started;
+    clock_gettime(CLOCK_MONOTONIC, &started);
     for (uint32_t k = 0; k < TE_RING; ++k) {
         te_slot* slot = &ctx->ring[(ctx->ring_next + k) % TE_RING];
         if (!slot->in_flight) continue;
-        if (ctx->lmc && lmc_slot_pending(ctx, slot)) {
-            if (!timeout_ns) return 0;
-            lmc_drain(ctx);   /* the CPU fit: milliseconds */
+        uint64_t remaining = timeout_ns;
+        if (timeout_ns != UINT64_MAX) {
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            uint64_t elapsed = (uint64_t)(now.tv_sec - started.tv_sec) * 1000000000ull
+                + (uint64_t)(now.tv_nsec - started.tv_nsec);
+            remaining = elapsed < timeout_ns ? timeout_ns - elapsed : 0;
         }
-        VkResult r = vkWaitForFences(d, 1, &slot->fence, VK_TRUE, timeout_ns);
+        if (ctx->lmc && !lmc_wait_pending(ctx, slot, remaining)) return 0;
+        if (timeout_ns != UINT64_MAX) {
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            uint64_t elapsed = (uint64_t)(now.tv_sec - started.tv_sec) * 1000000000ull
+                + (uint64_t)(now.tv_nsec - started.tv_nsec);
+            remaining = elapsed < timeout_ns ? timeout_ns - elapsed : 0;
+        }
+        VkResult r = vkWaitForFences(d, 1, &slot->fence, VK_TRUE, remaining);
         if (r != VK_SUCCESS) return 0;
         if (wait_slot(ctx, slot, 0) != VK_SUCCESS) return 0;
     }

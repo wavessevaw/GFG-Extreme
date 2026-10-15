@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 2.1.1).
+"""Live orchestration service for GFG Governor (GFG Extreme 2.1.2-te.8).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -77,7 +77,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, confirmation_evidence, matches,
 )
 
-VERSION = "2.1.1"
+VERSION = "2.1.2-te.8"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -3208,6 +3208,13 @@ class GovernorService:
         """The FPS goal Governor will actually chase. Autopilot may choose a lower one."""
         if self._mode(profile) != "autopilot" or not self._profile_enabled(profile):
             return int(display_target)
+        if self.temporal_engine_mode() == "experimental":
+            # TE.8 evaluates delivery at the display goal (90 on OLED), never
+            # a successful-looking 45 FPS fallback. Preserve display/power/
+            # thermal limits; a target is not a claim of achieved throughput.
+            return min(int(display_target), self._autopilot_targets.update(
+                display_target, None, None, self._autopilot_preference(profile),
+                False, now=self._clock(), allow_reduction=False))
         if self._autopilot_arbiter.freeze_tdp:
             return int(self._autopilot_targets.target or display_target)
         real = (summary.get("real") or {}).get("median")

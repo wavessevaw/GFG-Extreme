@@ -92,7 +92,6 @@ struct te_lmc {
     uint32_t fit_gen;           /* a skip or a hold bumps it: no RANSAC hypotheses from before */
     te_lmc_model model_prev;
     int prev_valid;
-    double fit_ms;
 };
 
 #define LMC_FITRB_SIZE(n1) ((VkDeviceSize)(n1) * 20u + 16u)
@@ -163,13 +162,16 @@ static void lmc_fit_job(struct te_lmc* m, te_slot* slot, int rs, uint64_t k, uin
             m->model_prev = md;
             m->prev_valid = 1;
         }
-        m->fit_ms = lmc_now_ms() - t0;
+        slot->lmc_fit_ms = lmc_now_ms() - t0;
         pthread_mutex_unlock(&m->fit_lock);
     }
-    /* the second half and the outputs; on a failure the fence alone, so that nobody waits forever */
-    if (queue_submit(dev, slot->lnsub, slot->lsub, slot->fence) != VK_SUCCESS)
+    /* A cleanup fence is not proof of completed outputs. Preserve the error
+       for wait_slot; never collect unwritten queries or count fake work. */
+    VkResult submitted = queue_submit(dev, slot->lnsub, slot->lsub, slot->fence);
+    if (submitted != VK_SUCCESS)
         queue_submit(dev, 0, NULL, slot->fence);
     pthread_mutex_lock(&m->fit_lock);
+    slot->async_result = submitted;
     slot->lmc_pending = 0;
     pthread_mutex_unlock(&m->fit_lock);
 }
@@ -230,12 +232,27 @@ static void lmc_drain(te_context* ctx) {
     pthread_mutex_unlock(&m->fit_lock);
 }
 
-static double lmc_fit_ms(te_context* ctx) {
+/* Unlike teardown's drain, a readiness probe must honour the caller's
+ * deadline even if the GPU has not signalled the first analysis submission. */
+static int lmc_wait_pending(te_context* ctx, te_slot* slot, uint64_t timeout_ns) {
     struct te_lmc* m = ctx->lmc;
+    struct timespec until;
+    clock_gettime(CLOCK_MONOTONIC, &until);
+    if (timeout_ns != UINT64_MAX) {
+        until.tv_sec += (time_t)(timeout_ns / 1000000000ull);
+        until.tv_nsec += (long)(timeout_ns % 1000000000ull);
+        if (until.tv_nsec >= 1000000000l) { until.tv_sec++; until.tv_nsec -= 1000000000l; }
+    }
     pthread_mutex_lock(&m->fit_lock);
-    double v = m->fit_ms;
+    int ok = 1;
+    while (slot->lmc_pending) {
+        if (!timeout_ns) { ok = 0; break; }
+        int rc = timeout_ns == UINT64_MAX ? pthread_cond_wait(&m->fit_done, &m->fit_lock)
+            : pthread_cond_timedwait(&m->fit_done, &m->fit_lock, &until);
+        if (rc) { ok = 0; break; }
+    }
     pthread_mutex_unlock(&m->fit_lock);
-    return v;
+    return ok;
 }
 
 static void lmc_push_c(te_context* ctx, VkCommandBuffer cb, float t, int level, int grid, int pass, int flags) {
@@ -476,7 +493,11 @@ static VkResult lmc_create(te_context* ctx) {
         return fail(VK_ERROR_OUT_OF_HOST_MEMORY, "out of memory (lmc fit)");
     pthread_mutex_init(&m->fit_lock, NULL);
     pthread_cond_init(&m->fit_cond, NULL);
-    pthread_cond_init(&m->fit_done, NULL);
+    pthread_condattr_t attr;
+    pthread_condattr_init(&attr);
+    pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+    pthread_cond_init(&m->fit_done, &attr);
+    pthread_condattr_destroy(&attr);
     m->fit_thread_ok = pthread_create(&m->fit_thread, NULL, lmc_fit_main, m) == 0;
     if (!m->fit_thread_ok) return fail(VK_ERROR_INITIALIZATION_FAILED, "cannot start the LMC fit thread");
 #undef LTRY

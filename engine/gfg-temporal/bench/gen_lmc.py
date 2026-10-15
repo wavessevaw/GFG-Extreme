@@ -145,7 +145,7 @@ def robust_camera(xs, ys, vx, vy, w0, iters=6):
 # ----------------------------------------------------------------- block search
 
 class Level:
-    def __init__(self, ya, yb, scale):
+    def __init__(self, ya, yb, scale, color_a=None, color_b=None):
         self.ya, self.yb, self.s = ya, yb, scale
         self.h, self.w = ya.shape
         self.bh, self.bw = self.h // BLK, self.w // BLK
@@ -155,6 +155,7 @@ class Level:
         self.px = (bx[..., None, None] * BLK + ox).astype(np.float32)
         self.cy = by * BLK + (BLK - 1) / 2.0
         self.cx = bx * BLK + (BLK - 1) / 2.0
+        self.color_a, self.color_b = color_a, color_b
 
     def cost(self, v, grid):
         """Mean |own - other| per block for vectors v (bh, bw, 2) in level pixels.
@@ -166,7 +167,24 @@ class Level:
         else:
             own = self.ya[self.py.astype(int), self.px.astype(int)]
             oth = bilinear(self.yb, self.px + vx, self.py + vy)
-        return np.abs(own - oth).mean(axis=(2, 3))
+        error = np.abs(own - oth).mean(axis=(2, 3))
+        if self.s > 2 and self.color_a is not None:
+            # Four chroma probes disambiguate coarse luma aliases. Finest
+            # search stays unchanged to preserve thin-detail precision/cost.
+            own_rgb, other_rgb = ((self.color_b, self.color_a) if grid == "b"
+                                  else (self.color_a, self.color_b))
+            sign = -1 if grid == "b" else 1
+            chroma = np.zeros(error.shape, np.float32)
+            for dy, dx in ((0, 0), (0, 3), (3, 0), (3, 3)):
+                x = (self.px[..., dy, dx] + 0.5) * self.s * 0.5 - 0.5
+                y = (self.py[..., dy, dx] + 0.5) * self.s * 0.5 - 0.5
+                ca = bilinear(own_rgb, x, y)
+                cb = bilinear(other_rgb, x + sign * v[..., 0] * self.s * 0.5,
+                              y + sign * v[..., 1] * self.s * 0.5)
+                chroma += np.abs((ca[..., 0] - ca[..., 1]) - (cb[..., 0] - cb[..., 1]))
+                chroma += np.abs((ca[..., 2] - ca[..., 1]) - (cb[..., 2] - cb[..., 1]))
+            error += 0.25 * np.maximum(chroma / 8 - 0.08, 0)
+        return error
 
 
 def best_of(level, cands, pens, grid):
@@ -215,11 +233,11 @@ def camera_field(H, level, grid):
     return np.stack([(cx - ax) / s, (cy - ay) / s], -1).astype(np.float32)
 
 
-def estimate(pyr_a, pyr_b, grid, H, temporal):
+def estimate(pyr_a, pyr_b, grid, H, temporal, color_a=None, color_b=None):
     """Block vectors at 1/2 resolution (full-res pixels), coarse to fine."""
     v = None
     for l in range(LEVELS, 0, -1):
-        lv = Level(pyr_a[l], pyr_b[l], 2 ** l)
+        lv = Level(pyr_a[l], pyr_b[l], 2 ** l, color_a, color_b)
         cands, pens = [], []
         if v is None:
             r = COARSE_R

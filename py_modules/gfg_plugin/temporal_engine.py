@@ -124,6 +124,11 @@ def normalize_status(raw: object) -> Dict[str, Any]:
         if not isinstance(lmc, dict):
             raise ValueError("lmc must be an object")
         out["lmc"] = {k: _num(lmc.get(k), "lmc." + k) for k in ("layers", "orphans_b", "orphans_a", "select_ms")}
+        for key in ("cpu_fit_ms", "pair_with_fit_ms", "first_ready_ms"):
+            if key in lmc:
+                out["lmc"][key] = _num(lmc[key], "lmc." + key)
+        if "deadline_misses" in lmc:
+            out["lmc"]["deadline_misses"] = _int(lmc["deadline_misses"], "lmc.deadline_misses")
         # te.5+: the cost guard's share of the real interval and the GPU time of every analysis pass
         if "budget" in lmc:
             out["lmc"]["budget"] = _num(lmc.get("budget"), "lmc.budget")
@@ -271,7 +276,8 @@ def summarize(requested_mode: str, contexts: List[Dict[str, Any]]) -> Dict[str, 
 def compact(summary: Dict[str, Any]) -> Dict[str, Any]:
     """Few fields per timeline sample of the session recorder."""
     keys = ("requested_mode", "state", "applied", "engine_contexts", "fallback_reasons", "real_fps",
-            "outputs_dispatched", "outputs_gpu_completed", "dropped", "shares", "confidence", "algorithm")
+            "outputs_dispatched", "outputs_gpu_completed", "dropped", "shares", "confidence", "algorithm",
+            "lmc_tier", "tier_steps", "cost_holds", "holding")
     out = {k: summary.get(k) for k in keys if k in summary}
     gpu = summary.get("gpu_ms") or {}
     if gpu:
@@ -280,6 +286,10 @@ def compact(summary: Dict[str, Any]) -> Dict[str, Any]:
     if sched:
         out["level"] = sched.get("level")
         out["recommendation"] = sched.get("recommendation")
+    lmc = summary.get("lmc") or {}
+    if lmc:
+        out["lmc"] = {k: lmc[k] for k in ("cpu_fit_ms", "pair_with_fit_ms", "first_ready_ms",
+                                         "deadline_misses", "budget") if k in lmc}
     return out
 
 

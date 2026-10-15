@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* LMC motion model on the CPU: camera planes (RANSAC + Tukey IRLS homographies)
- * and the motion palette, fitted on the previous pair's block vectors while the
- * GPU runs the current pair.  Reference: bench/gen_lmc2.py fit_layers,
- * ransac_plane, irls_h, fit_h_ls, hist_median, motion_palette (LMC_LAG=1).
+ * and the motion palette, fitted on this pair's block vectors between the two
+ * GPU submissions. Reference: bench/gen_lmc2.py fit_layers, ransac_plane,
+ * irls_h, fit_h_ls, hist_median, motion_palette.
  *
  * The GPU did this in single-workgroup passes that needed a whole compute unit
  * free; with a game on the GPU such a unit rarely is, and the passes waited for
@@ -88,7 +88,21 @@ static int fit_h_ls_idx(int n, const int* ix, const double* sx, const double* sy
         double u = (dx[i] - cdx) * sd, v = (dy[i] - cdy) * sd;
         double r0[8] = {x, y, 1, 0, 0, 0, -u * x, -u * y};
         double r1[8] = {0, 0, 0, x, y, 1, -v * x, -v * y};
-        for (int a = 0; a < 8; ++a) {
+        /* The x and y equations have disjoint affine columns. Skip their
+         * structurally zero products, retaining the original expression and
+         * accumulation order wherever both equations contribute. This matters
+         * in the six IRLS solves on every pair, not only in RANSAC. */
+        for (int a = 0; a < 3; ++a) {
+            for (int b = a; b < 3; ++b) M[a][b] += w[i] * (r0[a] * r0[b]);
+            for (int b = 6; b < 8; ++b) M[a][b] += w[i] * (r0[a] * r0[b]);
+            M[a][8] += w[i] * (r0[a] * u);
+        }
+        for (int a = 3; a < 6; ++a) {
+            for (int b = a; b < 6; ++b) M[a][b] += w[i] * (r1[a] * r1[b]);
+            for (int b = 6; b < 8; ++b) M[a][b] += w[i] * (r1[a] * r1[b]);
+            M[a][8] += w[i] * (r1[a] * v);
+        }
+        for (int a = 6; a < 8; ++a) {
             for (int b = a; b < 8; ++b) M[a][b] += w[i] * (r0[a] * r0[b] + r1[a] * r1[b]);
             M[a][8] += w[i] * (r0[a] * u + r1[a] * v);
         }
@@ -184,47 +198,61 @@ static int ransac_plane(fit_work* f, uint32_t seed, const double (*seeds)[3][3],
     for (int i = 0; i < f->n; ++i)
         if (f->w0[i] > 0) f->idx[m++] = i;
     if (m < 12) return 0;
-    double hyps[TE_LMC_FIT_ITERS + TE_LMC_FIT_LAYERS][3][3];
-    int nh = 0;
-    for (int k = 0; k < nseeds; ++k) memcpy(hyps[nh++], seeds[k], sizeof hyps[0]);
-    for (int it = 0; it < TE_LMC_FIT_ITERS; ++it) {
-        uint32_t st = seed * 9781u + (uint32_t)it * 6271u + 1u;
-        int pick[4];
-        for (int k = 0; k < 4; ++k) pick[k] = f->idx[pcg(&st) % (uint32_t)m];
-        int ok = 1;
-        for (int a = 0; a < 4 && ok; ++a)
-            for (int b = a + 1; b < 4; ++b)
-                if (dist2d(f->sx[pick[a]] - f->sx[pick[b]], f->sy[pick[a]] - f->sy[pick[b]]) < 120.0) { ok = 0; break; }
-        if (!ok) continue;
-        double sx[4], sy[4], dx[4], dy[4], w[4] = {1, 1, 1, 1};
-        for (int k = 0; k < 4; ++k) {
-            sx[k] = f->sx[pick[k]]; sy[k] = f->sy[pick[k]];
-            dx[k] = f->dx[pick[k]]; dy[k] = f->dy[pick[k]];
-        }
-        if (fit_h_ls(4, sx, sy, dx, dy, w, hyps[nh])) nh++;
-    }
-    /* hypotheses are ranked on an evenly strided subset of the usable blocks
-       (at most TE_LMC_FIT_SCORE): the ranking needs hundreds of points, not thousands */
+    /* Rank in the original order, but construct hypotheses only when needed.
+     * A hypothesis cannot beat best_n after its misses exhaust that margin.
+     * This is an exact upper bound, not an approximate early acceptance: ties
+     * still keep the first model, and IRLS/inlier classification are unchanged.
+     * Smooth pans often have a perfect previous-model seed, in which case no
+     * random solves are needed at all. */
     int stride = (m + TE_LMC_FIT_SCORE - 1) / TE_LMC_FIT_SCORE;
-    int best_n = 0, best = -1;
-    for (int k = 0; k < nh; ++k) {
-        if (!finite_h(hyps[k])) continue;
-        int cnt = 0;
+    int scored = (m + stride - 1) / stride;
+    int best_n = 0, have_best = 0;
+    double best_h[3][3] = {{0}};
+    for (int candidate = 0; candidate < nseeds + TE_LMC_FIT_ITERS; ++candidate) {
+        double hyp[3][3];
+        if (best_n == scored) break;
+        if (candidate < nseeds) {
+            memcpy(hyp, seeds[candidate], sizeof hyp);
+        } else {
+            int it = candidate - nseeds;
+            uint32_t st = seed * 9781u + (uint32_t)it * 6271u + 1u;
+            int pick[4];
+            for (int k = 0; k < 4; ++k) pick[k] = f->idx[pcg(&st) % (uint32_t)m];
+            int ok = 1;
+            for (int a = 0; a < 4 && ok; ++a)
+                for (int b = a + 1; b < 4; ++b)
+                    if (dist2d(f->sx[pick[a]] - f->sx[pick[b]], f->sy[pick[a]] - f->sy[pick[b]]) < 120.0) { ok = 0; break; }
+            if (!ok) continue;
+            double sx[4], sy[4], dx[4], dy[4], w[4] = {1, 1, 1, 1};
+            for (int k = 0; k < 4; ++k) {
+                sx[k] = f->sx[pick[k]]; sy[k] = f->sy[pick[k]];
+                dx[k] = f->dx[pick[k]]; dy[k] = f->dy[pick[k]];
+            }
+            if (!fit_h_ls(4, sx, sy, dx, dy, w, hyp)) continue;
+        }
+        if (!finite_h(hyp)) continue;
+        int cnt = 0, remaining = scored;
         for (int j = 0; j < m; j += stride) {
             int i = f->idx[j];
             double px, py;
-            apply_h(hyps[k], f->sx[i], f->sy[i], &px, &py);
+            apply_h(hyp, f->sx[i], f->sy[i], &px, &py);
             double ex = px - f->dx[i], ey = py - f->dy[i];
             if (ex * ex + ey * ey < f->tol[i] * f->tol[i]) cnt++;
+            --remaining;
+            if (cnt + remaining <= best_n) break;
         }
-        if (cnt > best_n) { best_n = cnt; best = k; }
+        if (cnt > best_n) {
+            best_n = cnt;
+            have_best = 1;
+            memcpy(best_h, hyp, sizeof best_h);
+        }
     }
-    if (best < 0 || best_n * stride < 8) return 0;
+    if (!have_best || best_n * stride < 8) return 0;
     for (int i = 0; i < f->n; ++i) {
         f->wref[i] = 0;
         if (f->w0[i] <= 0) continue;
         double px, py;
-        apply_h(hyps[best], f->sx[i], f->sy[i], &px, &py);
+        apply_h(best_h, f->sx[i], f->sy[i], &px, &py);
         if (dist2d(px - f->dx[i], py - f->dy[i]) < f->tol[i]) f->wref[i] = 1.0;
     }
     if (!irls(f, H) || !finite_h(H)) return 0;
