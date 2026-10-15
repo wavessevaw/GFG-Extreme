@@ -110,9 +110,9 @@ class FieldLogControlTests(unittest.TestCase):
         for _ in range(45):
             self.fixture.feed(1, 26, 78, dt=1)
             asyncio.run(svc._iteration())
-            if svc._status.get("target_output_fps") == 60:
+            if svc._status.get("target_output_fps") == 45:
                 break
-        self.assertEqual(svc._status["target_output_fps"], 60)
+        self.assertEqual(svc._status["target_output_fps"], 45)  # half the 90 Hz panel
         self.assertIsNone(svc._budget, "the old 90 FPS controller was released")
 
     def test_an_unchanged_overlay_does_not_restart_baseline_collection(self):
@@ -137,7 +137,7 @@ class FieldLogControlTests(unittest.TestCase):
             row = {"samples": 10, "sample_span_s": 9, "first_sample_seq": first,
                    "last_sample_seq": first + 9, "real": {"median": 26}, "output": {"median": 78}}
             target = svc._governor_target("game", 90, row, snapshot=snapshot)
-            self.assertEqual(target, 60 if first == 21 else 90)
+            self.assertEqual(target, 45 if first == 21 else 90)
             waiting = svc._governor_target("game", 90, {"samples": 0}, snapshot=snapshot)
             self.assertEqual(waiting, target)
 

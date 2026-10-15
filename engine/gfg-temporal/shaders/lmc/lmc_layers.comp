@@ -1,0 +1,54 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Block statistics for the CPU motion model (te_lmc_fit.c; reference:
+// gen_lmc2.fit_layers): per level-1 block of the B grid, whether it is usable
+// for the plane fit (textured, not HUD, well matched), whether it is a HUD
+// block (left out of the palette), and the scene-motion vote for the HUD
+// counter.  One workgroup per 8x8-pixel block, one thread per pixel, so that
+// neighbouring threads read neighbouring pixels (a thread looping over its
+// block's pixels made every fetch touch a different cache line).
+
+#include "lmc_common.glsl"
+#include "lmc_store.glsl"
+layout(local_size_x = 64) in;
+
+#define NB (P.counts.y)
+#define TOTAL LY.live[2 * NB + 1]
+
+shared float s_tex[64];
+shared uint s_hud[64];
+
+void main() {
+    uint lid = gl_LocalInvocationIndex;
+    int i = int(gl_WorkGroupID.x);
+    int n = NB;
+    if (i >= n) return;   // uniform: one block per workgroup
+    if (i == 0 && lid == 0u) G.pairs += 1u;
+    int w = lblocks(1).x;
+    ivec2 bb = ivec2(i % w, i / w);
+    // texture: |dx| + |dy| of B's luma (np.diff, prepend), HUD count
+    ivec2 p = bb * 8 + ivec2(int(lid % 8u), int(lid / 8u));
+    float c = texelFetch(lumaB0, p, 0).r;
+    float l = p.x > 0 ? texelFetch(lumaB0, p - ivec2(1, 0), 0).r : c;
+    float u = p.y > 0 ? texelFetch(lumaB0, p - ivec2(0, 1), 0).r : c;
+    s_tex[lid] = abs(c - l) + abs(c - u);
+    s_hud[lid] = imageLoad(hudCount, p).r >= uint(P.hud_pairs) ? 1u : 0u;
+    barrier();
+    for (uint s = 32u; s > 0u; s >>= 1u) {
+        if (lid < s) {
+            s_tex[lid] += s_tex[lid + s];
+            s_hud[lid] += s_hud[lid + s];
+        }
+        barrier();
+    }
+    if (lid != 0u) return;
+    float tex = s_tex[0] / 64.0;
+    uint hud = s_hud[0];
+    // reference: (tex > 0.01) & ~hudb & (cb < 0.05), hudb = HUD share > 0.2
+    uint usable = (tex > 0.01 && float(hud) <= 0.2 * 64.0 && vb[P.blk_off.x + i].z < 0.05) ? 1u : 0u;
+    LY.live[i] = usable;
+    vb[P.blk_off.x + i].w = float(hud) > 0.2 * 64.0 ? 1.0 : 0.0;  // hudb, left out of the palette
+    if (usable != 0u) atomicAdd(TOTAL, 1u);
+    vec2 v = vb[P.blk_off.x + i].xy * 2.0;
+    if (max(abs(v.x), abs(v.y)) > 1.0) atomicAdd(G.moving_votes, 1u);
+}

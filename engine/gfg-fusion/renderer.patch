@@ -55,11 +55,59 @@ index a4bd08b..76f2243 100644
 +## Experimental GFG Frame Fusion patch
 +
 +The GFG fork opts in with `GFG_FRAME_FUSION=1` before launch. The SDR8 MAKO path prebinds compatible sampled inputs and skips their source-sized blit. Before FG, supported linear UNORM swapchains negotiate sampled usage at creation and borrow image views; a clamped UV mapping samples only the logical source rectangle of the larger physical image. After FG, matching private generated images are sampled directly. The reconstruction weights, output copy and WSI ordering remain owned by their existing components. Native Resolution, LS1, HDR, nonlinear sRGB, unknown images, unsupported usage and failed bindings use the original path. Runtime status distinguishes prepared inputs from submitted work; counters are not GPU-time or power evidence.
+diff --git a/engine/mako-backend/CMakeLists.txt b/engine/mako-backend/CMakeLists.txt
+index 5a2360a..91b296b 100644
+--- a/engine/mako-backend/CMakeLists.txt
++++ b/engine/mako-backend/CMakeLists.txt
+@@ -23,19 +23,42 @@ set(BACKEND_SOURCES
+     "src/shaderchains/mipmaps.cpp"
+     "src/mako.cpp")
+ 
++# GFG Temporal Engine: the adapter and the engine library come from the GFG
++# repository (engine/gfg-temporal), built by scripts/build_frame_fusion.py.
++# The engine stays off at run time unless GFG_TEMPORAL_ENGINE selects it.
++set(GFG_TEMPORAL_SOURCE_DIR "" CACHE PATH "GFG engine/gfg-temporal directory")
++set(GFG_TEMPORAL_LIBRARY "" CACHE FILEPATH "position-independent libgfg-temporal.a")
++if(NOT GFG_TEMPORAL_SOURCE_DIR OR NOT GFG_TEMPORAL_LIBRARY)
++    message(FATAL_ERROR "GFG_TEMPORAL_SOURCE_DIR and GFG_TEMPORAL_LIBRARY are required")
++endif()
++list(APPEND BACKEND_SOURCES "${GFG_TEMPORAL_SOURCE_DIR}/mako/gfg_temporal.cpp")
++find_package(Threads REQUIRED)
++
+ add_library(mako-backend STATIC ${BACKEND_SOURCES})
++target_include_directories(mako-backend PRIVATE
++    "${GFG_TEMPORAL_SOURCE_DIR}/mako" "${GFG_TEMPORAL_SOURCE_DIR}/src")
+ 
+ target_include_directories(mako-backend
+     PUBLIC include)
+ 
+ target_link_libraries(mako-backend
+     PUBLIC mako-common
+-    PRIVATE ${CMAKE_DL_LIBS})
++    PRIVATE "${GFG_TEMPORAL_LIBRARY}" Threads::Threads ${CMAKE_DL_LIBS})
+ 
+ set_target_properties(mako-backend PROPERTIES
+     CXX_VISIBILITY_PRESET hidden)
+ 
+ if(BUILD_TESTING)
++    # GFG Temporal Engine adapter: mode, timeline mapping and LSFG fallback
++    find_package(Vulkan REQUIRED)
++    add_executable(gfg-temporal-adapter-tests
++        "${GFG_TEMPORAL_SOURCE_DIR}/mako/adapter_tests.cpp")
++    target_include_directories(gfg-temporal-adapter-tests PRIVATE
++        include "${GFG_TEMPORAL_SOURCE_DIR}/mako" "${GFG_TEMPORAL_SOURCE_DIR}/src")
++    target_link_libraries(gfg-temporal-adapter-tests PRIVATE
++        mako-backend Vulkan::Vulkan)
++    add_test(NAME gfg-temporal-adapter COMMAND gfg-temporal-adapter-tests)
++
+     add_executable(mako-backend-hot-path-tests
+         "tests/hot_path_tests.cpp")
+     target_include_directories(mako-backend-hot-path-tests
 diff --git a/engine/mako-backend/include/mako-backend/mako.hpp b/engine/mako-backend/include/mako-backend/mako.hpp
-index 1984d5e..766cbcc 100644
+index 1984d5e..6493d28 100644
 --- a/engine/mako-backend/include/mako-backend/mako.hpp
 +++ b/engine/mako-backend/include/mako-backend/mako.hpp
-@@ -24,6 +24,9 @@ namespace mako::backend {
+@@ -24,10 +24,35 @@ namespace mako::backend {
          Hdr10PqPacked,
      };
  
@@ -68,8 +116,35 @@ index 1984d5e..766cbcc 100644
 +
      class [[gnu::visibility("default")]] ContextImpl;
      class [[gnu::visibility("default")]] InstanceImpl;
++    namespace gfg_temporal { class Runtime; }
++
++    ///
++    /// Frame-generation context.  Either the LSFG model context or, when GFG
++    /// asks for it, the GFG Temporal Engine; callers only pass it back to the
++    /// Instance that opened it.
++    ///
++    class [[gnu::visibility("default")]] ContextBase {
++    public:
++        virtual ~ContextBase();
++        ContextBase(const ContextBase&) = delete;
++        ContextBase& operator=(const ContextBase&) = delete;
++        ContextBase(ContextBase&&) = delete;
++        ContextBase& operator=(ContextBase&&) = delete;
++
++        /// An empty span generates one frame per destination image at even spacing.
++        virtual void scheduleFrames(std::span<const float> timestamps) = 0;
++        virtual void scheduleFrameHistory() = 0;
++        [[nodiscard]] virtual bool waitForIdle(uint64_t timeoutNs) const = 0;
++    protected:
++        ContextBase() = default;
++    };
  
-@@ -122,6 +125,16 @@ namespace mako::backend {
+-    using Context = ContextImpl;
++    using Context = ContextBase;
+ 
+     ///
+     /// Primitive exception class that deliveres a detailed error message
+@@ -122,6 +147,16 @@ namespace mako::backend {
              FrameEncoding encoding, float flow, bool perf
          );
  
@@ -86,6 +161,14 @@ index 1984d5e..766cbcc 100644
          /// Return whether the backend device can import and write the packed
          /// RGB10A2 images used by the low-bandwidth HDR10 transport path.
          [[nodiscard]] bool supportsPackedHdr10Transport() const;
+@@ -180,6 +215,7 @@ namespace mako::backend {
+         void collectRetiredContexts();
+ 
+         std::unique_ptr<InstanceImpl> m_impl;
++        std::shared_ptr<gfg_temporal::Runtime> m_temporal;
+ 
+         std::vector<std::unique_ptr<Context>> m_contexts;
+         std::vector<std::unique_ptr<Context>> m_retiredContexts;
 diff --git a/engine/mako-backend/include/mako-backend/source_image_layout.hpp b/engine/mako-backend/include/mako-backend/source_image_layout.hpp
 new file mode 100644
 index 0000000..76f6b1b
@@ -117,18 +200,27 @@ index 0000000..76f6b1b
 +    }
 +}
 diff --git a/engine/mako-backend/src/mako.cpp b/engine/mako-backend/src/mako.cpp
-index ea2cec2..211c264 100644
+index ea2cec2..b047fa1 100644
 --- a/engine/mako-backend/src/mako.cpp
 +++ b/engine/mako-backend/src/mako.cpp
-@@ -2,6 +2,7 @@
+@@ -1,7 +1,9 @@
+ /* SPDX-License-Identifier: GPL-3.0-or-later */
  
  #include "helpers/temporal_phases.hpp"
++#include "gfg_temporal.hpp"
  #include "mako-backend/mako.hpp"
 +#include "mako-backend/source_image_layout.hpp"
  #include "extraction/dll_reader.hpp"
  #include "extraction/shader_registry.hpp"
  #include "helpers/limits.hpp"
-@@ -106,7 +107,8 @@ namespace mako::backend {
+@@ -100,13 +102,14 @@ namespace mako::backend {
+     };
+ 
+     /// context class
+-    class ContextImpl {
++    class ContextImpl final : public ContextBase {
+     public:
+         /// create a context
          /// (see mako documentation)
          ContextImpl(const InstanceImpl& instance,
              ls::FileDescriptorScope& sourceFds, ls::FileDescriptorScope& destFds,
@@ -138,7 +230,42 @@ index ea2cec2..211c264 100644
  
          // Borrowed scratch and cached descriptors require stable context owners.
          ContextImpl(const ContextImpl&) = delete;
-@@ -238,6 +240,19 @@ bool Instance::supportsPackedHdr10Transport() const {
+@@ -119,14 +122,14 @@ namespace mako::backend {
+         void scheduleFrames();
+ 
+         /// schedule a variable number of frames at explicit timestamps
+-        void scheduleFrames(std::span<const float> timestamps);
++        void scheduleFrames(std::span<const float> timestamps) override;
+ 
+         /// update temporal history without generating output frames
+         /// (see mako documentation)
+-        void scheduleFrameHistory();
++        void scheduleFrameHistory() override;
+ 
+         /// wait for this context's most recently submitted work only
+-        [[nodiscard]] bool waitForIdle(uint64_t timeoutNs) const;
++        [[nodiscard]] bool waitForIdle(uint64_t timeoutNs) const override;
+     private:
+         std::pair<vk::Image, vk::Image> sourceImages;
+         std::vector<vk::Image> destImages;
+@@ -223,8 +226,16 @@ Instance::Instance(
+     this->m_impl = std::make_unique<InstanceImpl>(
+         selectFunc, shaderDllPath, allowLowPrecision
+     );
++    // GFG Temporal Engine: its own device on the same GPU, created here so the
++    // caller's layer-disabling environment also covers it.  Off unless asked.
++    const auto& backendVulkan = this->m_impl->getVulkan();
++    this->m_temporal = gfg_temporal::Runtime::create(
++        gfg_temporal::parseMode(std::getenv("GFG_TEMPORAL_ENGINE")),
++        backendVulkan.physdev(), backendVulkan.fi().GetPhysicalDeviceProperties2);
+ }
+ 
++ContextBase::~ContextBase() = default;
++
+ bool Instance::supportsPackedHdr10Transport() const {
+     const auto& vk = this->m_impl->getVulkan();
+     constexpr VkImageUsageFlags usage =
+@@ -238,6 +249,19 @@ bool Instance::supportsPackedHdr10Transport() const {
          );
  }
  
@@ -158,7 +285,7 @@ index ea2cec2..211c264 100644
  namespace {
      constexpr auto previousWorkFenceTimeout = std::chrono::milliseconds(250);
      constexpr uint64_t previousWorkFenceTimeoutNs = static_cast<uint64_t>(
-@@ -355,6 +370,13 @@ InstanceImpl::InstanceImpl(vk::PhysicalDeviceSelector selectPhysicalDevice,
+@@ -355,6 +379,13 @@ InstanceImpl::InstanceImpl(vk::PhysicalDeviceSelector selectPhysicalDevice,
  Context& Instance::openContext(std::pair<int, int> sourceFds, const std::vector<int>& destFds,
          int syncFd, uint32_t width, uint32_t height,
          const FrameEncoding encoding, float flow, bool perf) {
@@ -172,7 +299,23 @@ index ea2cec2..211c264 100644
      // Take the complete batch before any operation that can fail. Individual
      // import wrappers consume their descriptor even on failure; unattempted
      // descriptors remain here until construction succeeds or unwinds.
-@@ -373,7 +395,7 @@ Context& Instance::openContext(std::pair<int, int> sourceFds, const std::vector<
+@@ -369,17 +400,29 @@ Context& Instance::openContext(std::pair<int, int> sourceFds, const std::vector<
+         );
+     }
+     const VkExtent2D extent{ width, height };
++    gfg_temporal::Prepared temporal(this->m_temporal, sourceFds, destFds, syncFd,
++        extent, encoding, sourceLayout);
++    if (temporal.wantsExperimental()) {
++        if (auto engine = temporal.openExperimental()) {
++            // the engine holds duplicates; the scopes close the originals
++            auto* result = this->m_contexts.emplace_back(std::move(engine)).get();
++            std::clog << "MAKO Renderer: frame-generation context uses the GFG Temporal Engine"
++                << " width=" << width << " height=" << height
++                << " outputs=" << destFds.size() << '\n';
++            return *result;
++        }
++    }
+     const auto& vulkan = this->m_impl->getVulkan();
      const auto before = vulkan.deviceMemorySnapshot();
      auto context = std::make_unique<ContextImpl>(*this->m_impl,
          sourceScope, destinationScope, syncScope,
@@ -181,7 +324,14 @@ index ea2cec2..211c264 100644
      );
      const auto after = vulkan.deviceMemorySnapshot();
      const auto contextInternal = memoryDelta(after.internal, before.internal);
-@@ -405,16 +427,16 @@ namespace {
+     const auto contextImported = memoryDelta(after.imported, before.imported);
+     const auto contextExported = memoryDelta(after.exported, before.exported);
+-    auto* result = this->m_contexts.emplace_back(std::move(context)).get();
++    auto* result = this->m_contexts.emplace_back(temporal.attach(std::move(context))).get();
+     std::clog << "MAKO Renderer: backend-memory operation=context-open"
+         << " width=" << width
+         << " height=" << height
+@@ -405,16 +448,16 @@ namespace {
      /// import source images
      std::pair<vk::Image, vk::Image> importSourceImages(const vk::Vulkan& vk,
              ls::FileDescriptorScope& sourceFds,
@@ -202,7 +352,7 @@ index ea2cec2..211c264 100644
          }
      }
      /// import destination images
-@@ -477,6 +499,21 @@ namespace {
+@@ -477,6 +520,21 @@ namespace {
          return VK_FORMAT_R16G16B16A16_SFLOAT;
      }
  
@@ -224,7 +374,7 @@ index ea2cec2..211c264 100644
      bool usesHdrModel(const FrameEncoding encoding) {
          return encoding == FrameEncoding::ScRgbLinear ||
              encoding == FrameEncoding::Hdr10Pq ||
-@@ -601,9 +638,10 @@ namespace {
+@@ -601,9 +659,10 @@ namespace {
  
  ContextImpl::ContextImpl(const InstanceImpl& instance,
              ls::FileDescriptorScope& sourceFds, ls::FileDescriptorScope& destFds,
@@ -237,6 +387,87 @@ index ea2cec2..211c264 100644
          destImages(importDestinationImages(instance.getVulkan(), destFds,
              extent, transportFormat(encoding))),
          workingSourceImages(createWorkingSourceImages(
+@@ -808,7 +867,7 @@ void Instance::scheduleFrames(Context& context) { // NOLINT (static)
+     }
+ #endif
+     try {
+-        context.scheduleFrames();
++        context.scheduleFrames({});
+     } catch (const std::exception& e) {
+         throw backend::error("Unable to schedule frames", e);
+     }
+@@ -856,7 +915,7 @@ bool Instance::contextReady(const Context& context) const {
+     return context.waitForIdle(0);
+ }
+ 
+-void Context::prepareWork() {
++void ContextImpl::prepareWork() {
+     if (this->workScheduled && !this->cmdbufFence.wait(
+             this->ctx.vk, previousWorkFenceTimeoutNs)) {
+         std::cerr << "MAKO Renderer: backend work fence timed out after "
+@@ -866,7 +925,7 @@ void Context::prepareWork() {
+     }
+ }
+ 
+-void Context::schedulePrepass(const VkFence completionFence) {
++void ContextImpl::schedulePrepass(const VkFence completionFence) {
+     auto& recorded = this->cmdbufs.at(0).at(this->fidx % commandPhaseCount);
+     if (!recorded) {
+         vk::CommandBuffer cmdbuf(ctx.vk);
+@@ -900,11 +959,11 @@ void Context::schedulePrepass(const VkFence completionFence) {
+     this->idx++;
+ }
+ 
+-void Context::scheduleFrames() {
++void ContextImpl::scheduleFrames() {
+     this->scheduleFrames({});
+ }
+ 
+-void Context::scheduleFrames(std::span<const float> timestamps) {
++void ContextImpl::scheduleFrames(std::span<const float> timestamps) {
+     const bool explicitTimestamps = !timestamps.empty();
+     const size_t generatedFrameCount = explicitTimestamps
+         ? timestamps.size()
+@@ -987,19 +1046,19 @@ void Context::scheduleFrames(std::span<const float> timestamps) {
+     this->fidx++;
+ }
+ 
+-void Context::scheduleFrameHistory() {
++void ContextImpl::scheduleFrameHistory() {
+     this->prepareWork();
+     this->schedulePrepass(this->cmdbufFence.handle());
+     this->fidx++;
+ }
+ 
+-bool Context::waitForIdle(const uint64_t timeoutNs) const {
++bool ContextImpl::waitForIdle(const uint64_t timeoutNs) const {
+     return !this->workScheduled || this->cmdbufFence.wait(this->ctx.vk, timeoutNs);
+ }
+ 
+ void Instance::collectRetiredContexts() {
+     std::erase_if(this->m_retiredContexts,
+-        [](const std::unique_ptr<ContextImpl>& context) {
++        [](const std::unique_ptr<ContextBase>& context) {
+             try {
+                 return context->waitForIdle(0);
+             } catch (const std::exception& e) {
+@@ -1013,7 +1072,7 @@ void Instance::collectRetiredContexts() {
+ void Instance::closeContext(const Context& context) {
+     this->collectRetiredContexts();
+     auto it = std::ranges::find_if(this->m_contexts,
+-        [context = &context](const std::unique_ptr<ContextImpl>& ctx) {
++        [context = &context](const std::unique_ptr<ContextBase>& ctx) {
+             return ctx.get() == context;
+         });
+     if (it == this->m_contexts.end())
+@@ -1062,3 +1121,7 @@ InstanceImpl::~InstanceImpl() {
+ void backend::makeLeaking() {
+     leaking = true;
+ }
++
++bool backend::leakingEnabled() noexcept {
++    return leaking;
++}
 diff --git a/engine/mako-backend/tests/dll_inspection_tests.cpp b/engine/mako-backend/tests/dll_inspection_tests.cpp
 index 0df99c0..9b525fc 100644
 --- a/engine/mako-backend/tests/dll_inspection_tests.cpp

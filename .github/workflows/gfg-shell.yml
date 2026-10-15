@@ -1,0 +1,88 @@
+name: GFG Shell
+
+on:
+  push:
+    paths:
+      - "shell/**"
+      - "py_modules/gfg_plugin/shell_bridge.py"
+      - "tests/test_shell_bridge.py"
+      - "py_modules/gfg_plugin/shell_installer.py"
+      - "tests/test_shell_installer.py"
+      - ".github/workflows/gfg-shell.yml"
+  pull_request:
+    paths:
+      - "shell/**"
+      - "py_modules/gfg_plugin/shell_bridge.py"
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash -eo pipefail {0}
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Godot runtime (pinned, sha256-checked)
+        run: |
+          . shell/tools/godot.env
+          mkdir -p "$RUNNER_TEMP/godot"
+          curl -fsSL -o "$RUNNER_TEMP/godot/godot.zip" "$GODOT_URL"
+          echo "$GODOT_SHA256  $RUNNER_TEMP/godot/godot.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/godot/godot.zip" -d "$RUNNER_TEMP/godot"
+          echo "GODOT=$RUNNER_TEMP/godot/$GODOT_BIN" >> "$GITHUB_ENV"
+      - name: Bridge unit tests (Python)
+        run: python3 -m unittest tests.test_shell_bridge tests.test_shell_installer -v
+      - name: Import project (fails on script errors)
+        run: |
+          "$GODOT" --headless --path shell --import 2>&1 | tee "$RUNNER_TEMP/import.log"
+          if grep -E "SCRIPT ERROR|Parse Error|Compile Error" "$RUNNER_TEMP/import.log"; then exit 1; fi
+      - name: Shell tests (library, VDF, launch lifecycle)
+        run: |
+          pip install pillow
+          python3 shell/tools/make_fake_steam.py "$RUNNER_TEMP/fake" --art
+          GFG_SHELL_LOG_DIR="$RUNNER_TEMP/logs" "$GODOT" --headless --path shell -s res://tests/run_tests.gd -- --fixture="$RUNNER_TEMP/fake" 2>&1 | tee "$RUNNER_TEMP/tests.log"
+          if grep -q "SCRIPT ERROR" "$RUNNER_TEMP/tests.log"; then exit 1; fi
+      - name: Controller navigation on the real main scene
+        run: |
+          GFG_SHELL_DRY_POWER=1 GFG_SHELL_LOG_DIR="$RUNNER_TEMP/logs" GFG_SHELL_STEAM_ROOT="$RUNNER_TEMP/fake/Steam" HOME="$RUNNER_TEMP/navhome" \
+            "$GODOT" --headless --path shell -s res://tests/ui_nav.gd 2>&1 | tee "$RUNNER_TEMP/nav.log"
+          if grep -q "SCRIPT ERROR" "$RUNNER_TEMP/nav.log"; then exit 1; fi
+      - name: Godot <-> Python bridge end to end
+        run: |
+          mkdir -p "$RUNNER_TEMP/e2e"
+          python3 shell/tools/fake_bridge.py "$RUNNER_TEMP/e2e" --seconds 60 &
+          sleep 2
+          GFG_SHELL_LOG_DIR="$RUNNER_TEMP/logs" GFG_SHELL_BRIDGE_FILE="$RUNNER_TEMP/e2e/.local/state/gfg-extreme/shell-bridge.json" \
+            "$GODOT" --headless --path shell -s res://tests/bridge_e2e.gd
+      - name: Start-up and clean exit with a full library
+        run: |
+          GFG_SHELL_LOG_DIR="$RUNNER_TEMP/logs" GFG_SHELL_STEAM_ROOT="$RUNNER_TEMP/fake/Steam" HOME="$RUNNER_TEMP/home" \
+            "$GODOT" --headless --path shell --quit-after 120
+      - name: Screenshots (software GL under Xvfb)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb libgl1-mesa-dri >/dev/null
+          mkdir -p "$RUNNER_TEMP/shots" "$RUNNER_TEMP/home"
+          python3 shell/tools/fake_bridge.py "$RUNNER_TEMP/home" --seconds 600 &
+          sleep 2
+          for p in home library game:4100020 search settings downloads gfg store quick menu power launch; do
+            GFG_SHELL_LOG_DIR="$RUNNER_TEMP/logs" GFG_SHELL_STEAM_ROOT="$RUNNER_TEMP/fake/Steam" HOME="$RUNNER_TEMP/home" \
+              xvfb-run -a -s "-screen 0 1280x800x24" "$GODOT" --path shell --resolution 1280x800 --rendering-driver opengl3 --audio-driver Dummy \
+              -- --gfg-page=$p --gfg-screenshot="$RUNNER_TEMP/shots/$(echo $p | tr : _).png"
+          done
+          ls -la "$RUNNER_TEMP/shots"
+      - name: Plugin bundle and standalone package
+        run: |
+          shell/tools/build_bundle.sh "$GODOT" "$RUNNER_TEMP/out/bundle"
+          shell/tools/package.sh "$RUNNER_TEMP/out" "$RUNNER_TEMP/godot"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gfg-shell
+          path: |
+            ${{ runner.temp }}/out/*
+            ${{ runner.temp }}/shots/*.png
+            ${{ runner.temp }}/logs/*

@@ -66,6 +66,14 @@ def _read_range(path: Path, start: int, limit: int, identity: Optional[tuple] = 
         return b""
 
 
+def compact_temporal(value: Any) -> Optional[Dict[str, Any]]:
+    """Temporal Engine facts per sample: requested and applied stay separate."""
+    if not isinstance(value, dict):
+        return None
+    from .temporal_engine import compact
+    return compact(value)
+
+
 def compact_status(status: Dict[str, Any]) -> Dict[str, Any]:
     """Small, flat 1 Hz record that keeps every field needed to explain a decision."""
     tel = status.get("telemetry") or {}
@@ -106,6 +114,7 @@ def compact_status(status: Dict[str, Any]) -> Dict[str, Any]:
             "known_failures", "warm_started", "floor_w", "heat_limited")} if status.get("budget") else None,
         "frame_os": compact_frame_os(status.get("frame_os")),
         "frame_fusion": status.get("frame_fusion") if isinstance(status.get("frame_fusion"), dict) else None,
+        "temporal_engine": compact_temporal(status.get("temporal_engine")),
         "power_split": {k: (status.get("power_split") or {}).get(k) for k in (
             "phase", "reason", "level", "cap_khz", "ab", "pairs", "gain_pct")} if status.get("power_split") else None,
         "extreme": compact_extreme(status.get("extreme")),
@@ -545,7 +554,7 @@ class SessionRecorder:
                                  "driver": read(str(p / "scaling_driver"))}
                         for p in sorted(Path("/sys/devices/system/cpu/cpufreq").glob("policy[0-9]*"))[:16]},
             "game_overlay_env_hint": "see timeline.jsonl 'capability' and 'snapshot' fields",
-            "plugin_version": "GFG Extreme 2.1.1 (renderer identity: see diagnostics)",
+            "plugin_version": "GFG Extreme 2.1.2 (renderer identity: see diagnostics)",
         }
 
     def _write_bundle(self) -> Path:

@@ -13,12 +13,13 @@ class BatteryObjectiveTests(unittest.TestCase):
         return BudgetController(target_output_fps=90, now=0, min_tdp_w=3,
                                 max_tdp_w=15, minimize_tdp=True, **kwargs)
 
-    def test_lower_cadence_finds_less_power_than_the_comfort_point(self):
+    def test_saving_watts_never_trades_into_ratios_above_x3(self):
+        """2.1.2 policy: x3.25 .. x3.75 are a last resort for the goal, not an economy trial."""
         c = self.controller()
         _, trace = run(c, Game(4.5), 0, 30)
-        self.assertEqual(c.tdp, 6)
-        self.assertGreaterEqual(c.point.base_target_fps, 24)
-        self.assertIn(("24x3.75", 6, "search_down"), trace)
+        self.assertEqual(c.tdp, 7)
+        self.assertEqual(c.point.key, "30x3")
+        self.assertFalse(any(key in ("28x3.25", "26x3.5", "24x3.75") for key, _, _ in trace))
         self.assertEqual(c.phase, "locked")
 
     def test_light_game_reaches_reported_device_minimum(self):
@@ -38,8 +39,12 @@ class BatteryObjectiveTests(unittest.TestCase):
         c = BudgetController(target_output_fps=90, now=0, minimize_tdp=True)
         self.assertEqual(c.min_w, 6)
 
+    def at_45x2(self, c):
+        c.idx = next(i for i, p in enumerate(c.points) if p.key == "45x2")
+        return c
+
     def test_failed_economy_trial_restores_known_good_point_and_watts(self):
-        c = self.controller()
+        c = self.at_45x2(self.controller())
         c.tdp = 7
         c.phase = "upgrade"
         c.last_good = (c.idx, c.tdp)
@@ -48,7 +53,7 @@ class BatteryObjectiveTests(unittest.TestCase):
         self.assertEqual(c.probe, "economy")
         self.assertEqual(c.observe(30, WindowVerdict(False, True, "delivery-misses"), 20, 60), "move")
         self.assertEqual((c.idx, c.tdp), saved)
-        self.assertGreater(c.rejected.get("24x3.75", 0), 0)
+        self.assertGreater(c.rejected.get("30x3", 0), 0, "the cheapest cadence up to x3")
 
     def test_ignored_cap_never_claims_an_economy_trial(self):
         c = self.controller()
@@ -56,7 +61,7 @@ class BatteryObjectiveTests(unittest.TestCase):
         self.assertIsNone(c._economy_candidate(10))
 
     def test_bad_economy_trial_fast_rolls_back_instead_of_buying_watts(self):
-        c = self.controller()
+        c = self.at_45x2(self.controller())
         c.tdp = 7
         c.phase = "upgrade"
         c.last_good = (c.idx, c.tdp)

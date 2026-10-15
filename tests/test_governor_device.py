@@ -35,8 +35,11 @@ class DeviceTargetTests(unittest.TestCase):
         self.assertEqual(target_for("unknown", external=False)["target"], 60)
 
     def test_target_capped_at_the_panels_actual_refresh_rate(self):
-        self.assertEqual(target_for("oled", external=False, current_hz=60),
-                         {"target": 60, "mode": "oled", "reason": "panel-running-60hz"})
+        # 60 FPS is an LCD / dock target only: the OLED keeps 90 whatever refresh it reports
+        self.assertEqual(target_for("oled", external=False, current_hz=60)["target"], 90)
+        self.assertEqual(target_for("unknown", external=False, valid_rates=[60, 90], current_hz=60)["target"], 90)
+        self.assertEqual(target_for("lcd", external=False, current_hz=40),
+                         {"target": 40, "mode": "lcd", "reason": "panel-running-40hz"})
         self.assertEqual(target_for("oled", external=False, current_hz=90)["target"], 90)
         self.assertEqual(target_for("oled", external=False, current_hz=None)["target"], 90, "unreadable: unchanged")
         self.assertEqual(target_for("oled", external=False, current_hz=0)["target"], 90)

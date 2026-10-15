@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 2.1.1).
+"""Live orchestration service for GFG Governor (GFG Extreme 2.1.2).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -51,6 +51,7 @@ from .package_paths import PLUGIN_ROOT
 from .managed_files import write_managed_text_atomically
 from .host_sensors import HostSensors, diagnose
 from . import extreme as extreme_policy
+from . import temporal_engine
 from .autopilot.arbiter import Arbiter
 from .autopilot.gpu_clock import GpuClock
 from .autopilot.half_rate import HalfRateShading
@@ -76,7 +77,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, confirmation_evidence, matches,
 )
 
-VERSION = "2.1.1"
+VERSION = "2.1.2"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -1178,6 +1179,60 @@ class GovernorService:
             return {"success": False, "error": str(error)}
         return {"success": True, "enabled": enabled, "relaunch_required": True}
 
+    # ------------------------------------------------- Temporal Engine (exp.)
+    def temporal_engine_mode(self) -> str:
+        """Launch mode of the experimental engine. Off unless the player chose one;
+        experimental additionally needs the stored, explicit consent."""
+        raw = self._settings.get("temporal_engine")
+        raw = raw if isinstance(raw, dict) else {}
+        mode = temporal_engine.normalize_mode(raw.get("mode"))
+        if mode == "experimental" and raw.get("experimental_consent") is not True:
+            return "off"
+        return mode
+
+    def _sync_temporal_engine_marker(self) -> None:
+        marker = self.configuration.runtime_state_dir / temporal_engine.MARKER_NAME
+        mode = self.temporal_engine_mode()
+        if mode == "off":
+            marker.unlink(missing_ok=True)
+        else:
+            write_managed_text_atomically(marker, mode + "\n", 0o600, self.log)
+
+    def set_temporal_engine(self, mode: str, consent: bool = False) -> Dict[str, Any]:
+        if mode not in temporal_engine.MODES or type(consent) is not bool:
+            return {"success": False, "error": "A Temporal Engine mode and a boolean consent are required"}
+        if mode == "experimental" and consent is not True:
+            return {"success": False, "error": "consent-required"}
+        previous = self._settings.get("temporal_engine")
+        self._settings["temporal_engine"] = {"mode": mode, "experimental_consent": mode == "experimental"}
+        try:
+            self._save_settings()
+            self._sync_temporal_engine_marker()
+        except OSError as error:
+            if previous is None:
+                self._settings.pop("temporal_engine", None)
+            else:
+                self._settings["temporal_engine"] = previous
+            try:
+                self._save_settings()
+                self._sync_temporal_engine_marker()
+            except OSError:
+                self.log.warning("Temporal Engine settings restoration pending")
+            return {"success": False, "error": str(error)}
+        self._event("temporal-engine-mode", mode, relaunch_required=True)
+        self._poke()
+        return {"success": True, "mode": mode, "relaunch_required": True}
+
+    def temporal_engine_status(self) -> Dict[str, Any]:
+        folders = (self.configuration.runtime_state_dir / temporal_engine.STATUS_DIRNAME,
+                   self.configuration.config_dir / OVERLAY_DIRNAME / self.configuration.runtime_state_dir.name
+                   / temporal_engine.STATUS_DIRNAME)
+        try:
+            contexts = temporal_engine.read_contexts(folders)
+        except OSError:
+            contexts = []
+        return temporal_engine.summarize(self.temporal_engine_mode(), contexts)
+
     def set_auto_flow(self, enabled: bool) -> Dict[str, Any]:
         self._settings["auto_flow"] = bool(enabled)
         self._save_settings()
@@ -1900,6 +1955,10 @@ class GovernorService:
             await asyncio.to_thread(self._sync_frame_fusion_marker)
         except OSError as error:
             self.log.warning("Frame Fusion marker not written: %s", error)
+        try:
+            await asyncio.to_thread(self._sync_temporal_engine_marker)
+        except OSError as error:
+            self.log.warning("Temporal Engine marker not written: %s", error)
         self.frame_os.start()
         self._wake = asyncio.Event()
         self._wake_loop = asyncio.get_running_loop()
@@ -1966,6 +2025,7 @@ class GovernorService:
             value["enabled"] = self._profile_enabled(profile)
         value["scale_ready"] = self._scale_ready(profile or value.get("profile", ""))
         value["hud"] = self.hud_settings(profile or value.get("profile", ""))
+        value["autopilot_preference"] = self._autopilot_preference(profile or value.get("profile", ""))
         value["effort"] = self._effort.status()
         value["session"] = self.session_stats.summary()
         value["last_session"] = self._settings.get("last_session")
@@ -1988,6 +2048,7 @@ class GovernorService:
                               "quality": "motion-image-quality", "extreme": "real-frames-and-headroom",
                               "autopilot": "orchestrate"}.get(self._mode(profile or value.get("profile", "")))
         value["extreme"] = self._status.get("extreme") or {"enabled": False, "state": "OFF"}
+        value["temporal_engine"] = self.temporal_engine_status()
         value["scale_blocked"] = (("game-ignores-render-scale" if self._scale_blocked == extreme_policy.GAME_IGNORES_SCALE
                                    else self._scale_blocked)
                                   or (self._game_ignores_scale(profile) if profile else None))
@@ -2513,6 +2574,7 @@ class GovernorService:
                         and self._request is None and self._rollback_deltas is None
                         and not saved.get("ultra_performance") and not saved.get("performance_mode")
                         and self._injection is None and self._frame_os_mode(profile) != "act"
+                        and not temporal_engine.blocks_experiments(self.temporal_engine_status())
                         and (not self.cpu.owned or flow.phase == "held")
                         and not getattr(self.cpu, "restore_pending", False)
                         and not self._menu_covering() and self._trusted_game_focus() is not False
@@ -2823,6 +2885,8 @@ class GovernorService:
                     self._status.update({"state": "APPLY", "reason": "awaiting-render-scale-acknowledgement"})
                     return
                 if gate == "failed":
+                    if await self._keep_cadence_at_full_scale(profile, req):
+                        return
                     await self._fail_request(profile, "render-scale-not-acknowledged")
                     return
                 # Budget mode judges the point on its own windows after confirmation.
@@ -3004,6 +3068,45 @@ class GovernorService:
             return
 
     # ------------------------------------------------------------ budget mode
+    async def _keep_cadence_at_full_scale(self, profile: str, req: Request) -> bool:
+        """The cadence was confirmed but the render scale was refused (or never acknowledged).
+
+        Keep the point at 100 % render scale instead of rolling the whole point back: the
+        renderer is already delivering the requested real cap and ratio at full resolution.  The
+        scaled rung is rejected in the controller and, for a refusal, the scale stays blocked for
+        this game session (``_block_scale``), so it is not retried every cycle.
+        """
+        budget = self._budget
+        if budget is None or int(req.point.render_scale_pct) >= 100:
+            return False
+        twin_idx = budget.full_scale_twin(self._clock())
+        saved = await asyncio.to_thread(self._saved_profile_config, profile) if twin_idx is not None else None
+        if twin_idx is None or saved is None:
+            return False
+        twin = budget.points[twin_idx]
+        try:
+            deltas = point_deltas(twin.to_dict(), saved, scale_capable=False,
+                                  scale_ready=self._scale_ready(profile))
+            full = {**self._base_for(profile, saved), **deltas}
+        except PointNotApplicable:
+            return False
+        mark = self.observer.event_seq
+        try:
+            record = await asyncio.to_thread(self._write_overlay_sync, profile, full, twin.key)
+        except (OSError, ValueError) as error:
+            self._event("overlay-write-failed", "keep-full-scale", profile=profile, point=twin.key,
+                        error=str(error))
+            return False
+        self._record = record
+        scaled = req.point.key
+        budget.keep_full_scale(self._clock(), self._scale_blocked or "render-scale-not-acknowledged")
+        self._extreme_ack = {"pct": 100, "sharpness": None, "mark": mark, "evidence": None}
+        self._event("render-scale-dropped-cadence-kept", self._scale_blocked or "not-acknowledged",
+                    profile=profile, point=scaled, kept=twin.key, revision=record.revision)
+        await self._accept_request(profile, replace(req, point=twin, deltas=full, revision=record.revision),
+                                   "cadence-confirmed-render-scale-kept-at-100")
+        return True
+
     async def _accept_request(self, profile: str, req: Request, reason: str) -> None:
         self._point = req.point.to_dict()
         self._point_mode = "applied"
@@ -3301,6 +3404,9 @@ class GovernorService:
         """
         if self._menu_since is not None or self._menu_covering():
             return False, "steam-menu-open"
+        if temporal_engine.blocks_experiments(self.temporal_engine_status()):
+            # one experiment at a time: engine costs would mix with the trial's effect
+            return False, "temporal-engine-measuring"
         if (self._flow.busy or self.cpu.owned or getattr(self.cpu, "restore_pending", False)
                 or self._injection is not None and (self.frame_os.last.get("decision") or {}).get("level") == "boost"):
             return False, "resource-controller-busy"
@@ -3342,6 +3448,8 @@ class GovernorService:
         fresh = samples >= 5 and real is not None and output is not None
         frame = summary.get("frametime") or {}
         mult = (summary.get("multiplier") or {}).get("median")
+        age = (self.observer.snapshot() or {}).get("sample_age_ms") if not fresh else None
+        settling = bool(not fresh and isinstance(age, (int, float)) and 0 <= age <= self.MAX_SAMPLE_AGE_MS)
         view = View(
             real_fps=real, output_fps=output,
             frametime_p95_ms=frame.get("p95_ms") or summary.get("real_interval_p95_ms"),
@@ -3363,6 +3471,7 @@ class GovernorService:
             shading_consent=(bool(self._profile_settings(profile).get("autopilot_shading", True))
                              and not self._autopilot_shading_yielded),
             shading_enabled=bool(shading.get("enabled")),
+            settling=settling,
         )
         decision = autopilot_decide(view)
         arbiter = self._autopilot_arbiter
@@ -3382,6 +3491,19 @@ class GovernorService:
                            and (clock.get("level") == "auto" or self._autopilot_gpu.owned))
         if not clock_ready and decision.action == "OPTIMIZE_GPU_CLOCK":
             decision = autopilot_decide(View(**{**view.__dict__, "gpu_clock_available": False}))
+        # A tool in its cooldown / rejection back-off is not a proposal at all.  Planning it
+        # anyway logged "autopilot-*-skipped" and showed "The requested experiment was skipped"
+        # on every tick of a 30 s cooldown and a 120 s back-off (field log 2.1.1); plan without it.
+        planned, backed_off = view, False
+        for _ in range(2):
+            if (decision.action not in ("OPTIMIZE_GPU_CLOCK", "OPTIMIZE_SHADING")
+                    or arbiter.admit(decision.action, now) not in ("cooldown", "rejected")):
+                break
+            planned = replace(planned, **({"gpu_clock_available": False}
+                                          if decision.action == "OPTIMIZE_GPU_CLOCK"
+                                          else {"shading_available": False}))
+            decision = autopilot_decide(planned)
+            backed_off = True
         if arbiter.state == "RESTORE_PENDING":
             self._publish_autopilot(profile, view, decision, clock)
             self._autopilot_plan = "pause"
@@ -3503,6 +3625,10 @@ class GovernorService:
             self._publish_autopilot(profile, view, decision, clock, deferred_reason=skip)
             return False
         holding = decision.action in ("HOLD", "PAUSE") or now < arbiter.cooldown_until
+        if backed_off and (decision.action == "OPTIMIZE_POWER"
+                           or decision.reason in ("already-efficient", "bottleneck-unknown")):
+            # As before the back-off filter: a resting actuator leaves the ordinary budget running.
+            holding = False
         self._autopilot_plan = "pause" if decision.action == "PAUSE" else ("hold" if holding else "run")
         if self._budget is not None:
             self._budget.hold_planned = self._autopilot_plan in ("pause", "hold")
@@ -3539,6 +3665,8 @@ class GovernorService:
             if deferred_reason in ("point-not-confirmed", "baseline-too-short",
                                    "baseline-overlaps-transition", "renderer-not-stable",
                                    "renderer-evidence-unavailable", "point-target-changed") else
+            "Another measurement is running. No GPU or shading change was applied."
+            if deferred_reason in ("temporal-engine-measuring", "resource-controller-busy") else
             "The requested experiment was skipped. Hardware settings were not changed."
         ) if deferred else decision.message
         self._status["autopilot"] = {
@@ -3952,6 +4080,10 @@ class GovernorService:
     async def _apply_budget_tdp(self, profile: str) -> bool:
         budget = self._budget
         if budget is None or not budget.tdp_control or budget.tdp is None or not self.power.state.owned:
+            return True
+        # An Autopilot trial measures against constant watts: nothing moves them until it ends,
+        # Frame OS boost / rest offsets included (they bypassed the freeze before).
+        if self._autopilot_arbiter.freeze_tdp and self._applied_tdp is not None:
             return True
         # Frame OS (act mode) adds the watts of a funded boost / removes them in rest.
         offset = self.frame_os.tdp_offset_w if self._mode(profile) == "autopilot" and self._profile_enabled(profile) else 0.0

@@ -99,6 +99,8 @@ export const STATES = {
   "home-effort-reason": { ...base, enabled: true, state: "LOCKED", mode: "quality", device: dev("oled", 90), target_output_fps: 90, telemetry: tel(30, 90, 3), active_point: { multiplier: 3, render_scale_pct: 100 }, effort: { level: "hard", reason: "x3 required" } },
   "frame-os-refused": { ...base, device: dev("oled", 90), target_output_fps: 90, frame_os: { mode: "off" }, __frameOsFail: true },
   "fusion-prepared": { ...base, mode: "autopilot", frame_fusion: { enabled: true, state: "prepared", path_observed: false } },
+  "temporal-shadow": { ...base, temporal_engine: { requested_mode: "off", running_mode: "shadow", restart_required: true, scheduler: { cap_ms: 2, level: 1, force_light: 0 }, state: "shadow-measuring", applied: true, shares: { reuse: 0.3, light: 0.3, full: 0.4 }, gpu_ms: { pair_p50: 2.4, pair_p95: 3.1 }, outputs_dispatched: 200, outputs_gpu_completed: 198, dropped: 4 } },
+  "temporal-fallback": { ...base, temporal_engine: { requested_mode: "experimental", state: "fallback", applied: false, fallback_reasons: ["no-external-semaphore-fd"] } },
   "fusion-observed": { ...base, mode: "autopilot", frame_fusion: { enabled: true, state: "observed", path_observed: true, gain_measured: false } },
   "fusion-restart": { ...base, mode: "autopilot", frame_fusion: { enabled: false, state: "restart-required", path_observed: true } },
   "fusion-unsupported": { ...base, mode: "autopilot", frame_fusion: { enabled: true, state: "renderer-unsupported", path_observed: false } },
@@ -119,15 +121,17 @@ export const STATES = {
 const mockSrc = (state, extra) => `
 window.SP_REACT = React; window.DFL = { staticClasses: { Title: "t" }, Focusable: null, TextField: (p) => React.createElement("input", { ...p, "data-tf": "1" }) };
 window.__patches = [];
-window.appStore = { GetAppOverviewByAppID: (id) => (id === 292030 ? { display_name: "Sample Game" } : null) };
+window.SteamClient = { Apps: { AddShortcut: async (n, exe, dir, opts) => { window.__addShortcut = [n, exe, dir, opts]; window.__adds = (window.__adds || 0) + 1; window.__addedShortcut = 3000000001; return 3000000001; }, SetShortcutName() {}, SetShortcutExe() {}, SetShortcutStartDir() {},
+  RunGame: (id, a, b, c) => { (window.__runGame = window.__runGame || []).push(id); }, RemoveShortcut: (id) => { window.__removed = id; } } };
+window.appStore = { GetAppOverviewByAppID: (id) => (id === 292030 ? { display_name: "Sample Game" } : id && id === window.__addedShortcut ? { display_name: "GFG Shell", m_gameid: ((BigInt(id) << 32n) | 0x02000000n).toString() } : null) };
 window.__state = ${JSON.stringify(state)};
 window.__cfg = ${JSON.stringify(extra.cfg || { fg_backend: "gfg", multiplier: 2, })};
 var callable = (n) => async (...a) => ({ get_governor_status: () => window.__state, get_profiles: () => ({ profiles: ["Default", "Sample Game", "Another Game"], current_profile: "Sample Game" }),
   get_profile_config: () => ({ config: window.__cfg }), get_pipeline_inspector: () => ({ saved: { fg_backend: "gfg", multiplier: 2, scaling: "off" }, effective: { fg_backend: "gfg", multiplier: 2, scaling: "off" }, actual: { renderer: "loaded", multiplier: 2, ...(window.__state.__actual || {}) } }),
-  get_theme_status: () => ({ success: true, installed: !!window.__themeInstalled, current: !!window.__themeInstalled, path: "/home/deck/homebrew/themes/GFG Extreme" }),
-  install_gfg_theme: () => { window.__themeCalls = (window.__themeCalls || 0) + 1;
-    if (window.__state.__themeFail) return { success: false, error: "Theme folder is read-only" };
-    window.__themeInstalled = true; return { success: true, message: "Installed. In CSS Loader, reload themes and enable GFG Extreme." }; },
+  get_shell_status: () => ({ success: true, packaged: true, packaged_version: "0.1.0", installed: !!window.__shellInstalled, installed_version: window.__shellInstalled ? "0.1.0" : "", update_available: false, path: "/home/deck/.local/share/gfg-shell/app/gfg-shell.sh", start_dir: "/home/deck/.local/share/gfg-shell/app", shortcut_appid: window.__shellShortcut || null, progress: { busy: false } }),
+  install_gfg_shell: () => { window.__shellInstalls = (window.__shellInstalls || 0) + 1; if (window.__state.__shellFail) return { success: false, error: "Godot download failed its SHA-256 check" }; window.__shellInstalled = true; return { success: true, version: "0.1.0" }; },
+  set_shell_shortcut: (id) => { window.__shellShortcut = id; return { success: true }; },
+  uninstall_gfg_shell: () => { window.__shellInstalled = false; return { success: true }; },
   check_mako_installed: () => ({ installed: true, installed_engine_version: '4.0.1', expected_engine_version: '4.0.1', engine_update_required: false, host_architecture_supported: true }), check_flatpak_extension_status: () => ({ success: true, installed_23_08: false, installed_24_08: true, installed_25_08: true }), get_flatpak_apps: () => ({ success: true, total_apps: 2, apps: [{ app_id: 'org.example.A', app_name: 'Heroic', has_filesystem_override: true, has_wrapper_override: true, has_required_env_override: true }, { app_id: 'org.example.B', app_name: 'Lutris', has_filesystem_override: false, has_wrapper_override: false }] }),
   get_config_schema: () => ({ field_names: ['scaling_enabled','scaling_factor','multiplier','dll','allow_fp16'], field_types: { scaling_enabled: 'boolean', scaling_factor: 'float', multiplier: 'integer', dll: 'string', allow_fp16: 'boolean' }, defaults: { scaling_enabled: false, scaling_factor: 1.5, multiplier: 2, dll: '', allow_fp16: true }, descriptions: { scaling_enabled: 'restart-bound scaling engine switch', scaling_factor: 'output scaling factor from 1.0x to 2.0x', multiplier: 'fixed multiplier', dll: 'optional full path to Lossless.dll', allow_fp16: 'allow FP16 acceleration' } }),
   run_setup_check: () => window.__state.__setup || ({ success: true, total: 3, failed: 0, checks: [{ check: 'launch wrapper installed', ok: true }, { check: 'overlay config published (active.conf)', ok: true }, { check: 'TDP control: fastPPT/slowPPT cap writable', ok: true }] }),
@@ -148,6 +152,7 @@ var callable = (n) => async (...a) => ({ get_governor_status: () => window.__sta
     return { success: true, features };
   },
   set_governor_frame_os_ab: (enabled) => { (window.__abSets = window.__abSets || []).push(enabled); return { success: true, ab: !!enabled }; },
+  set_governor_temporal_engine: (mode, consent) => { (window.__teSets = window.__teSets || []).push([mode, consent]); return mode === "experimental" && !consent ? { success: false, error: "consent-required" } : { success: true, mode, relaunch_required: true }; },
   set_governor_frame_fusion: (enabled) => { (window.__fusionSets = window.__fusionSets || []).push(enabled); return window.__state.__fusionFail ? { success: false, error: "Could not save Frame Fusion" } : { success: true, enabled }; },
   set_governor_frame_os_act_unlock: (enabled) => { (window.__actUnlocks = window.__actUnlocks || []).push(enabled); return { success: true, act_unlocked: !!enabled }; },
   set_governor_frame_os: (p, m) => (window.__state.__frameOsFail ? { success: false, error: "marker: read-only" } : { success: true, mode: m }),

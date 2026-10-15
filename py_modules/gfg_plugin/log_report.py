@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from .governor_telemetry import TelemetryObserver
 
-CURRENT_VERSION = "2.1.1"  # kept in step by scripts/bump_version.py
+CURRENT_VERSION = "2.1.2"  # kept in step by scripts/bump_version.py
 
 
 def _percentile(values: List[float], pct: float) -> Optional[float]:
@@ -206,8 +206,83 @@ def analyze(bundle: zipfile.ZipFile) -> Dict[str, Any]:
         a.get("kind") == "set_governor_frame_fusion" and isinstance(a.get("args"), dict)
         and a["args"].get("enabled") is True
         for a in actions)
+    report["temporal_engine"] = temporal_engine_summary(samples)
+    report["temporal_engine"]["renderer_log"] = temporal_engine_log_summary(diag_text)
     report["findings"] = findings(report, names)
     return report
+
+
+def temporal_engine_summary(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Experimental engine across the recording. GPU times are the engine's own
+    timestamp queries; presentation is not observable there and stays unknown."""
+    rows = [r["temporal_engine"] for r in samples if isinstance(r.get("temporal_engine"), dict)]
+    active = [r for r in rows if r.get("state") in ("generating", "shadow-measuring")]
+    last = active[-1] if active else (rows[-1] if rows else None)
+    reasons = sorted({x for r in rows for x in (r.get("fallback_reasons") or []) if isinstance(x, str)})
+    return {"available": bool(rows), "samples": len(rows),
+            "requested_modes": dict(Counter(str(r.get("requested_mode", "off")) for r in rows)),
+            "states": dict(Counter(str(r.get("state", "unknown")) for r in rows)),
+            "active_samples": len(active), "fallback_reasons": reasons[:8],
+            "last_active": last, "presented": None, "verified_on_hardware": False}
+
+
+def temporal_engine_log_summary(text: str) -> Dict[str, Any]:
+    """The engine's own 10 s stats lines in the renderer log (te.3+)."""
+    rows = []
+    for line in (text or "").splitlines():
+        if "Temporal Engine stats " not in line:
+            continue
+        fields = dict(part.split("=", 1) for part in line.split("Temporal Engine stats ", 1)[1].split() if "=" in part)
+        rows.append(fields)
+    if not rows:
+        return {"available": False}
+
+    def nums(key):
+        out = []
+        for r in rows:
+            try:
+                out.append(float(r[key]))
+            except (KeyError, ValueError):
+                pass
+        return out
+
+    def med(key):
+        values = nums(key)
+        return round(statistics.median(values), 2) if values else None
+
+    orphans = [r.get("orphans", "").split("/") for r in rows]
+    orphans = [[float(x) for x in o] for o in orphans if len(o) == 2 and all(x.replace(".", "", 1).isdigit() for x in o)]
+    # te.5 (LMC): GPU time of every analysis pass, "a/b/.../h" in lmc_passes order
+    passes = []
+    for r in rows:
+        names, values = r.get("lmc_passes", "").split("/"), r.get("lmc_ms", "").split("/")
+        try:
+            if len(names) == len(values) > 1:
+                passes.append(dict(zip(names, (float(v) for v in values))))
+        except ValueError:
+            pass
+    pass_names = list(passes[0]) if passes else []
+    shares = [r.get("shares", "") .split("/") for r in rows]
+    shares = [[float(x) for x in s] for s in shares if len(s) == 3 and all(x.replace(".", "", 1).isdigit() for x in s)]
+    return {"available": True, "lines": len(rows),
+            "levels": dict(Counter(r.get("level", "?") for r in rows)),
+            "reasons": dict(Counter(r.get("reason", "?") for r in rows)),
+            "holding_share": round(sum(r.get("holding") == "1" for r in rows) / len(rows), 2),
+            "cost_holds": max((int(r["cost_holds"]) for r in rows if r.get("cost_holds", "").isdigit()), default=0),
+            # te.7 (LMC): cost tiers the generator ran at, and how often it changed tier
+            "tiers": dict(Counter(r["tier"] for r in rows if "tier" in r)),
+            "tier_steps": max((int(r["tier_steps"]) for r in rows if r.get("tier_steps", "").isdigit()), default=0),
+            "fixed_ms_median": med("fixed_ms"), "frame_ms_median": med("frame_ms"),
+            "pair_p95_ms_median": med("pair_p95_ms"), "cap_ms": med("cap_ms"),
+            "interval_ms_median": med("interval_ms"),
+            "shares_median": [round(statistics.median(s[i] for s in shares), 3) for i in range(3)] if shares else None,
+            # te.4 (LMC): which generator, the GPU split and what the motion model found
+            "algorithms": dict(Counter(r.get("algo", "tiles") for r in rows)),
+            "pyramid_ms_median": med("pyramid_ms"), "analyze_ms_median": med("analyze_ms"),
+            "fields_ms_median": med("fields_ms"), "layers_median": med("layers"),
+            "orphans_median": [round(statistics.median(o[i] for o in orphans), 1) for i in range(2)] if orphans else None,
+            "lmc_passes_ms_median": {k: round(statistics.median(p[k] for p in passes if k in p), 3)
+                                     for k in pass_names} if passes else None}
 
 
 def stick_touch_boost_summary(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -485,6 +560,25 @@ def findings(report: Dict[str, Any], names: Iterable[str]) -> List[str]:
                    f"a setting (rejections by reason: {report.get('rejections_by_reason')}).")
     if report.get("mode_switches"):
         out.append(f"The mode was switched {report['mode_switches']} times during the recording; each switch starts a new search.")
+    temporal = report.get("temporal_engine") or {}
+    if temporal.get("available") and set(temporal.get("requested_modes") or {}) - {"off"}:
+        last = temporal.get("last_active") or {}
+        text = (f"Temporal Engine (experimental): states {temporal['states']}; active in "
+                f"{temporal['active_samples']} of {temporal['samples']} samples.")
+        if last.get("state") in ("generating", "shadow-measuring"):
+            text += (f" Last: shares {last.get('shares')}, GPU ms {last.get('gpu_ms')}, dispatched "
+                     f"{last.get('outputs_dispatched')} / GPU-completed {last.get('outputs_gpu_completed')}, "
+                     f"dropped {last.get('dropped')}, recommendation {last.get('recommendation')}.")
+        tlog = temporal.get("renderer_log") or {}
+        if tlog.get("available"):
+            text += (f" Renderer log ({tlog['lines']} lines): levels {tlog['levels']}, holding "
+                     f"{int(tlog['holding_share'] * 100)}% of the time ({tlog['cost_holds']} cost holds, "
+                     f"tiers {tlog.get('tiers') or {}}, {tlog.get('tier_steps', 0)} tier changes), "
+                     f"fixed {tlog['fixed_ms_median']} ms + {tlog['frame_ms_median']} ms per generated frame "
+                     f"(cap {tlog['cap_ms']} ms), shares reuse/light/full {tlog['shares_median']}.")
+        if temporal.get("fallback_reasons"):
+            text += " LSFG kept frame generation: " + ", ".join(temporal["fallback_reasons"]) + "."
+        out.append(text + " Presentation is not observed by the engine; no FPS, latency or energy gain is implied.")
     fusion = report.get("frame_fusion") or {}
     if fusion.get("available"):
         out.append(f"Frame Fusion: states {fusion['states']}; native direct path observed in "

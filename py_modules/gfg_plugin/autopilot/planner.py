@@ -38,6 +38,8 @@ class View:
     shading_available: bool = False
     shading_consent: bool = False
     shading_enabled: bool = False
+    # Telemetry is live, but the window after the last settings change is still too short.
+    settling: bool = False
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,12 @@ def decide(view: View) -> Decision:
         return Decision(action, reason, tool, effect, confidence, message, real, output)
 
     if not view.fresh or real is None or output is None or view.samples < 5:
+        if view.settling:
+            # Every TDP / overlay / CPU-cap write restarts the baseline window. Those first
+            # seconds are not lost telemetry (field log 2.1.1 showed the PAUSE message after
+            # nearly every change): hold and measure.
+            return done("HOLD", "measuring-after-change", "none", "hold",
+                        "Measuring the new setting.")
         return done("PAUSE", "telemetry-not-fresh", "none", "none",
                     "Lost reliable telemetry. Optimization is paused.")
     temp = _num(view.temp_c)
@@ -155,6 +163,11 @@ class TargetPolicy:
         self.display_goal = None
         self._fallback_time = 0.0
 
+    @staticmethod
+    def lower_goal(hz: int) -> int:
+        """The reduced goal on a fixed-refresh panel: half the refresh, so frames stay even."""
+        return hz // 2
+
     def update(self, display_hz, real_fps, output_fps, preference, fresh,
                *, sample_seq=None, first_sample_seq=None, span_s=None, now=None) -> int:
         # now/seq are passed by Governor in production; the optional arguments
@@ -195,7 +208,10 @@ class TargetPolicy:
 
         if self.target == hz:
             struggling = real < 28 or output < hz * 0.85
-            want = (60 if hz == 90 and struggling
+            # The lower goal must divide the panel's refresh: the Governor never changes the
+            # refresh rate, and 60 FPS on a fixed 90 Hz panel holds frames for 1, 2, 1, 2 scanouts
+            # (11 / 22 ms judder).  45 FPS holds every frame for exactly two.
+            want = (self.lower_goal(hz) if hz == 90 and struggling
                     and ((preference == "battery") or (preference == "auto" and real < 28))
                     else hz)
         else:

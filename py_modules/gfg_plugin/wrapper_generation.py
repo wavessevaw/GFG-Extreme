@@ -882,6 +882,14 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         '    export GFG_FRAME_FUSION=0',
         'fi',
         'unset gfg_fusion_marker gfg_fusion_source',
+        # Experimental GFG Temporal Engine: off unless GFG wrote a mode marker
+        f'gfg_temporal_marker={shlex.quote(str(context.runtime_state_dir / "temporal-engine.mode"))}',
+        'unset GFG_TEMPORAL_ENGINE',
+        "if [ \"$mako_flatpak_runtime\" != 1 ] && [ -f \"$gfg_temporal_marker\" ]; then",
+        '    gfg_temporal_mode="$(head -c 16 "$gfg_temporal_marker" 2>/dev/null | tr -d \'\\n\')"',
+        '    case "$gfg_temporal_mode" in observe|shadow|experimental) export GFG_TEMPORAL_ENGINE="$gfg_temporal_mode" ;; esac',
+        'fi',
+        'unset gfg_temporal_marker gfg_temporal_mode',
         # Flatpak preparation stages the host's own WSI binary beside its
         # guarded manifest, so Heroic and EmuDeck use this same chain without
         # exposing or searching the host's global Vulkan layer directory.

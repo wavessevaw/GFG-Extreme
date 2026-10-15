@@ -15,7 +15,6 @@ from pathlib import Path
 
 import decky
 
-from .theme_installer import ThemeInstaller
 from .installation import InstallationService
 from .dll_detection import DllDetectionService
 from .configuration import ConfigurationService
@@ -62,8 +61,8 @@ class Plugin:
 
     def __init__(self):
         """Initialize the plugin with all necessary services"""
-        self.theme_installer = ThemeInstaller(Path(decky.DECKY_USER_HOME))
-        self._theme_install_lock = asyncio.Lock()
+        from .shell_installer import ShellInstaller
+        self.shell_installer = ShellInstaller(Path(decky.DECKY_USER_HOME))
         self.installation_service = InstallationService()
         self.dll_detection_service = DllDetectionService()
         self.configuration_service = ConfigurationService()
@@ -852,6 +851,10 @@ class Plugin:
         """Opt-in Fusion Core; the generated launcher reads it at the next start."""
         return await asyncio.to_thread(self.governor_service.set_frame_fusion, enabled)
 
+    async def set_governor_temporal_engine(self, mode: str = "off", consent: bool = False) -> Dict[str, Any]:
+        """Experimental GFG Temporal Engine launch mode (off/observe/shadow/experimental)."""
+        return await asyncio.to_thread(self.governor_service.set_temporal_engine, mode, consent)
+
     async def set_governor_power_split(self, enabled: bool = True) -> Dict[str, Any]:
         """Smart power split: CPU clock cap in GPU-bound games (persisted; on by default)."""
         return await asyncio.to_thread(self.governor_service.set_power_split, bool(enabled))
@@ -1534,7 +1537,20 @@ class Plugin:
             )
 
         await self.governor_service.start()
-        decky.logger.info("GFG Extreme 2.1.0 started")
+        await self._start_shell_bridge()
+        decky.logger.info("GFG Extreme 2.1.2 started")
+
+    async def _start_shell_bridge(self) -> None:
+        """GFG Shell's local link (read status + allow-listed Governor settings)."""
+        from .shell_bridge import ShellBridge
+        try:
+            home = self.configuration_service.user_home
+            info = home.stat()
+            self._shell_bridge = ShellBridge(self, home, decky.logger, uid=info.st_uid, gid=info.st_gid)
+            await self._shell_bridge.start()
+        except Exception as error:  # the plugin must keep working without the shell link
+            decky.logger.warning("GFG Bridge not started: %s", error)
+            self._shell_bridge = None
 
     async def _unload(self):
         """Stop background work, then restore the pre-Dock profile safely."""
@@ -1544,6 +1560,13 @@ class Plugin:
                 await self.session_recorder.stop()
         except Exception as error:
             decky.logger.warning("Log recording could not be saved on unload: %s", error)
+        bridge = getattr(self, "_shell_bridge", None)
+        if bridge is not None:
+            try:
+                await bridge.stop()
+            except Exception as error:
+                decky.logger.warning("GFG Bridge stop failed: %s", error)
+            self._shell_bridge = None
         # Governor owns a separate runtime TDP overlay. Stop it first so an
         # owned PPT cap is restored before Dock/profile shutdown proceeds.
         await self.governor_service.stop()
@@ -1621,13 +1644,23 @@ class Plugin:
     async def set_governor_auto_flow(self, enabled: bool) -> Dict[str, Any]:
         return self.governor_service.set_auto_flow(enabled)
 
-    async def get_theme_status(self) -> Dict[str, Any]:
-        async with self._theme_install_lock:
-            return await asyncio.to_thread(self.theme_installer.status)
+    async def get_shell_status(self) -> Dict[str, Any]:
+        """GFG Shell: packaged/installed versions, launcher path, remembered Steam shortcut."""
+        status = await asyncio.to_thread(self.shell_installer.status)
+        bridge = getattr(self, "_shell_bridge", None)
+        status["bridge_running"] = bridge is not None and bridge.port > 0
+        return status
 
-    async def install_gfg_theme(self) -> Dict[str, Any]:
-        async with self._theme_install_lock:
-            return await asyncio.to_thread(self.theme_installer.install)
+    async def install_gfg_shell(self) -> Dict[str, Any]:
+        """Install or update GFG Shell into the user's home (downloads the pinned Godot runtime once)."""
+        return await asyncio.to_thread(self.shell_installer.install)
+
+    async def uninstall_gfg_shell(self) -> Dict[str, Any]:
+        return await asyncio.to_thread(self.shell_installer.uninstall)
+
+    async def set_shell_shortcut(self, appid: Any = None) -> Dict[str, Any]:
+        """Remember the Steam shortcut the frontend created for GFG Shell (None forgets it)."""
+        return await asyncio.to_thread(self.shell_installer.set_shortcut, appid)
 
     async def _uninstall(self):
         """
