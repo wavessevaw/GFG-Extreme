@@ -1,0 +1,42 @@
+name: GFG Native TE no-DLL bootstrap
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  source-checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native bootstrap contract tests
+        run: python3 -m unittest discover -s tests -p test_native_no_dll_bootstrap.py -v
+
+  native-bootstrap:
+    runs-on: ubuntu-22.04
+    env:
+      CXX: g++-12
+      CC: gcc-12
+      VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-12 cmake libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers libx11-dev libxcb1-dev glslang-tools spirv-tools p7zip-full
+          git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
+      - name: Compile DLL-free Temporal Engine bootstrap using pinned production renderer
+        run: |
+          python3 scripts/build_frame_fusion.py --native-no-dll \
+            --work "$RUNNER_TEMP/gfg-native-bridge" \
+            --headers "$RUNNER_TEMP/vkh/include"
+          python3 scripts/check_native_independence.py \
+            --source "$RUNNER_TEMP/gfg-native-bridge/source"
+      - name: Provenance, no release
+        run: |
+          echo 'This validates a no-DLL TE bootstrap within the transitional GPL MAKO WSI.'
+          echo 'It does NOT validate an independent WSI or physical Steam Deck presentation.'

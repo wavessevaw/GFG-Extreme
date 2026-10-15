@@ -17,7 +17,7 @@ def run(*args, cwd=None):
     subprocess.run([str(x) for x in args], cwd=cwd, check=True)
 
 
-def build(work: Path, headers: Path, sanitize=False):
+def build(work: Path, headers: Path, sanitize=False, native_no_dll=False):
     metadata = json.loads((FUSION / "source.json").read_text())
     patch = FUSION / "renderer.patch"
     if hashlib.sha256(patch.read_bytes()).hexdigest() != metadata["patch_sha256"]:
@@ -33,11 +33,18 @@ def build(work: Path, headers: Path, sanitize=False):
     head = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
     if head != metadata["commit"]:
         raise ValueError("Frame Fusion renderer source has the wrong commit")
-    reverse = subprocess.run(["git", "-C", str(source), "apply", "--reverse", "--check", str(patch)],
+    native_marker = source / ".gfg-native-bridge"
+    if native_marker.exists() and not native_no_dll:
+        raise ValueError("This build tree has native no-DLL modifications; use a fresh work directory")
+    if not (native_no_dll and native_marker.exists()):
+        reverse = subprocess.run(["git", "-C", str(source), "apply", "--reverse", "--check", str(patch)],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if reverse.returncode:
-        run("git", "-C", source, "apply", "--check", patch)
-        run("git", "-C", source, "apply", patch)
+        if reverse.returncode:
+            run("git", "-C", source, "apply", "--check", patch)
+            run("git", "-C", source, "apply", patch)
+        if native_no_dll:
+            run(sys.executable, ROOT / "engine/gfg-native/bootstrap.py", "--source", source)
+            native_marker.write_text("gfg-native-dll-free-te-bootstrap-v1\n")
     if not (headers / "vulkan/vulkan_core.h").is_file():
         raise ValueError("Pinned Vulkan-Headers are required")
     # Generated payloads always come from the upstream owning generator.
@@ -73,5 +80,7 @@ if __name__ == "__main__":
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--headers", type=Path, required=True)
     parser.add_argument("--sanitized", action="store_true")
+    parser.add_argument("--native-no-dll", action="store_true",
+                        help="Experimental GFG Temporal Engine: bypass MAKO LSFG DLL bootstrap")
     args = parser.parse_args()
-    build(args.work.resolve(), args.headers.resolve(), args.sanitized)
+    build(args.work.resolve(), args.headers.resolve(), args.sanitized, args.native_no_dll)
