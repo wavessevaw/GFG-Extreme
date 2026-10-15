@@ -40,7 +40,7 @@ From the repository:
 ```sh
 python3 -m unittest discover -s tests -p test_native_no_dll_bootstrap.py
 python3 -m unittest discover -s tests -p test_native_layer_foundation.py
-make -C engine/gfg-native layer VULKAN_HEADERS=/path/to/Vulkan-Headers/include
+make -C engine/gfg-native smoke VULKAN_HEADERS=/path/to/Vulkan-Headers/include
 python3 scripts/build_frame_fusion.py --native-no-dll \
     --work /tmp/gfg-native-bridge --headers /path/to/Vulkan-Headers/include
 python3 scripts/check_native_independence.py \
@@ -72,3 +72,6 @@ No independent binary or installable release is claimed.
    SteamOS startup, both LCD/OLED where available.
 
 Failure to satisfy any item must NOT be reported as full native independence.
+
+The Vulkan loader smoke exercises instance/device creation, selection and
+queue dispatch on a real Vulkan ICD. It does not test swapchain presentation.

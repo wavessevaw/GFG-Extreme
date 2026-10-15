@@ -35,6 +35,9 @@ jobs:
         run: |
           make -C engine/gfg-native layer VULKAN_HEADERS="$RUNNER_TEMP/vkh/include"
           test -s engine/gfg-native/build/libVkLayer_gfg_native.so
+          make -C engine/gfg-native smoke VULKAN_HEADERS="$RUNNER_TEMP/vkh/include"             VK_ICD_FILENAMES="$VK_ICD_FILENAMES" 2>&1 | tee native-loader-smoke.log
+          grep -q 'GFG native: Vulkan loader/instance/device dispatch smoke PASS' native-loader-smoke.log
+          grep -q '\[gfg-native\] instance initialized enabled=1' native-loader-smoke.log
       - name: Compile DLL-free Temporal Engine bootstrap using pinned production renderer
         run: |
           python3 scripts/build_frame_fusion.py --native-no-dll \
