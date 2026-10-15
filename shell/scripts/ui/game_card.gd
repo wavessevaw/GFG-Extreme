@@ -12,6 +12,7 @@ signal focused(game: Dictionary)
 const RADIUS := 12
 const LIFT := 1.07
 const BLUR := preload("res://assets/shaders/blur.gdshader")
+const SHINE := preload("res://assets/shaders/shine.gdshader")
 
 var game: Dictionary
 var art_slot := "grid"
@@ -22,6 +23,8 @@ var _cover: Control
 var _ring: Panel
 var _glow: Panel
 var _shine: TextureRect
+var _sweep: ColorRect
+var _sweep_tween: Tween
 
 
 static func make(g: Dictionary, size_px: Vector2, slot: String = "grid") -> GameCard:
@@ -82,6 +85,14 @@ func _ready() -> void:
 	_shine.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_shine.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_holder.add_child(_shine)
+	# a band of light that crosses the tile once when it takes the focus
+	_sweep = ColorRect.new()
+	_sweep.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_sweep.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sm := ShaderMaterial.new()
+	sm.shader = SHINE
+	_sweep.material = sm
+	_holder.add_child(_sweep)
 	if not game.get("installed", true):
 		var badge := UI.keycap("НЕ УСТАНОВЛЕНА")
 		badge.modulate = Color(1, 1, 1, 0.92)
@@ -139,6 +150,13 @@ func _on_focus() -> void:
 	FX.scale_to(self, LIFT, FX.MED)
 	FX.to(_ring, "modulate:a", 1.0, FX.FAST)
 	FX.to(_glow, "modulate:a", 1.0, FX.MED)
+	var sm := _sweep.material as ShaderMaterial
+	sm.set_shader_parameter("progress", -0.25)
+	if _sweep_tween != null and _sweep_tween.is_valid():
+		_sweep_tween.kill()
+	_sweep_tween = create_tween()
+	_sweep_tween.tween_property(sm, "shader_parameter/progress", 1.25, 0.7).set_delay(0.08) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	focused.emit(game)
 
 

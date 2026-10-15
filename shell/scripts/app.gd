@@ -217,6 +217,7 @@ func set_backdrop(path: String, strength: float = 1.0) -> void:
 		if gen != _backdrop_gen:
 			return
 		_backdrop_path = path
+		_set_accent(UI.accent_of(t))
 		var cur: TextureRect = backdrop.get_node("Drift/Art")
 		var nxt: TextureRect = backdrop.get_node("Drift/ArtNext")
 		if _backdrop_tween != null:
@@ -234,6 +235,31 @@ func set_backdrop(path: String, strength: float = 1.0) -> void:
 			_backdrop_tween.chain().tween_callback(func():
 				cur.texture = nxt.texture
 				nxt.modulate.a = 0.0))
+
+
+## The ambient light and the dust take the art's colour, cross-faded.
+func _set_accent(c: Color) -> void:
+	var glow: TextureRect = backdrop.get_node("Glow")
+	var bloom: TextureRect = backdrop.get_node("Bloom")
+	var gg: Gradient = (glow.texture as GradientTexture2D).gradient
+	var bg: Gradient = (bloom.texture as GradientTexture2D).gradient
+	var g0: Color = gg.get_color(0)
+	var b0: Color = bg.get_color(0)
+	var dust: CPUParticles2D = backdrop.get_node("Dust")
+	var d0: Color = dust.color
+	var t := create_tween()
+	t.tween_method(func(k: float):
+		gg.set_color(0, g0.lerp(Color(c, 0.30), k))
+		bg.set_color(0, b0.lerp(Color(c.lerp(UI.RED, 0.5), 0.24), k))
+		dust.color = d0.lerp(c.lerp(Color.WHITE, 0.6), k), 0.0, 1.0, 0.6).set_trans(Tween.TRANS_SINE)
+
+
+## Parallax: the art shifts a little with the focus (x in -1..1 across a row).
+func parallax(x: float) -> void:
+	var drift: Control = backdrop.get_node("Drift")
+	var base := Vector2(-UI.PARALLAX_PX, -UI.PARALLAX_PX)
+	FX.to(drift, "position", base + Vector2(-clampf(x, -1.0, 1.0) * UI.PARALLAX_PX * 0.7, 0), 0.9,
+		Tween.TRANS_SINE, Tween.EASE_OUT)
 
 
 ## Ken Burns: a slow, endless zoom of the art (6 % over 24 s, there and back).
@@ -504,6 +530,15 @@ func _handle_cmdline() -> void:
 			push(page)
 	if shot != "":
 		await get_tree().create_timer(3.0).timeout
+		if OS.get_cmdline_user_args().has("--gfg-motion"):
+			# motion check: move the focus right, then a frame every 0.1 s (<shot>-<n>.png)
+			var ev := InputEventAction.new()
+			ev.action = "ui_right"
+			ev.pressed = true
+			Input.parse_input_event(ev)
+			for n in 8:
+				await get_tree().create_timer(0.1).timeout
+				get_viewport().get_texture().get_image().save_png(shot.replace(".png", "-%d.png" % n))
 		var img := get_viewport().get_texture().get_image()
 		img.save_png(shot)
 		Log.info("app", "screenshot " + shot)

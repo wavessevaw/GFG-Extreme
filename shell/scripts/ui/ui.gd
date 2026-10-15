@@ -142,7 +142,11 @@ static func button(text: String, primary: bool = false, min_w: int = 0, h: int =
 		b.add_theme_stylebox_override("normal", box(RED))
 		b.add_theme_stylebox_override("hover", box(RED.lightened(0.08)))
 		b.add_theme_stylebox_override("pressed", box(RED.darkened(0.15)))
-		b.add_theme_stylebox_override("focus", focus_box(TEXT))
+		var fb := focus_box(TEXT)
+		fb.shadow_color = Color(RED, 0.5)
+		fb.shadow_size = 12
+		b.add_theme_stylebox_override("focus", fb)
+		_breathe(b, fb)
 	if icon != "":
 		var row := hbox(12)
 		row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -158,6 +162,22 @@ static func button(text: String, primary: bool = false, min_w: int = 0, h: int =
 	else:
 		b.text = text
 	return b
+
+
+## The primary button's glow breathes while it has the focus.
+static func _breathe(b: Button, fb: StyleBoxFlat) -> void:
+	var t: Array = [null]
+	b.focus_entered.connect(func():
+		if t[0] != null and (t[0] as Tween).is_valid():
+			(t[0] as Tween).kill()
+		var tw := b.create_tween().set_loops()
+		tw.tween_property(fb, "shadow_size", 24, 1.1).set_trans(Tween.TRANS_SINE)
+		tw.tween_property(fb, "shadow_size", 10, 1.1).set_trans(Tween.TRANS_SINE)
+		t[0] = tw)
+	b.focus_exited.connect(func():
+		if t[0] != null and (t[0] as Tween).is_valid():
+			(t[0] as Tween).kill()
+		fb.shadow_size = 12)
 
 
 static func icon_button(icon: String, h: int = 52) -> Button:
@@ -324,6 +344,11 @@ static func hero_backdrop() -> Control:
 	var drift := Control.new()
 	drift.name = "Drift"
 	drift.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# a margin around the screen: the parallax shift never shows an edge
+	for side in ["left", "top"]:
+		drift.set("offset_" + side, -PARALLAX_PX)
+	for side in ["right", "bottom"]:
+		drift.set("offset_" + side, PARALLAX_PX)
 	drift.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(drift)
 	for n in ["Art", "ArtNext"]:
@@ -347,7 +372,75 @@ static func hero_backdrop() -> Control:
 	(bloom.texture as GradientTexture2D).fill = GradientTexture2D.FILL_RADIAL
 	bloom.name = "Bloom"
 	root.add_child(bloom)
+	# ambient light in the art's own colour, top right (set by the app from the art)
+	var glow := _gradient_layer(Vector2(0.92, 0.12), Vector2(0.35, 0.85), Color(RED, 0.0), Color(RED, 0.0), 1.0)
+	(glow.texture as GradientTexture2D).fill = GradientTexture2D.FILL_RADIAL
+	glow.name = "Glow"
+	root.add_child(glow)
+	root.add_child(_dust())
 	return root
+
+
+const PARALLAX_PX := 32.0
+
+
+## Slow bokeh dust over the art: a few dozen soft dots drifting upwards.
+static func _dust() -> CPUParticles2D:
+	var p := CPUParticles2D.new()
+	p.name = "Dust"
+	p.amount = 34
+	p.lifetime = 16.0
+	p.preprocess = 16.0
+	p.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
+	p.emission_rect_extents = Vector2(700, 460)
+	p.position = Vector2(640, 420)
+	p.direction = Vector2(0.15, -1)
+	p.spread = 25.0
+	p.gravity = Vector2.ZERO
+	p.initial_velocity_min = 6.0
+	p.initial_velocity_max = 16.0
+	p.scale_amount_min = 0.25
+	p.scale_amount_max = 1.0
+	var gt := GradientTexture2D.new()
+	gt.width = 48
+	gt.height = 48
+	gt.fill = GradientTexture2D.FILL_RADIAL
+	gt.fill_from = Vector2(0.5, 0.5)
+	gt.fill_to = Vector2(1.0, 0.5)
+	gt.gradient = Gradient.new()
+	gt.gradient.set_color(0, Color(1, 1, 1, 0.9))
+	gt.gradient.set_color(1, Color(1, 1, 1, 0.0))
+	p.texture = gt
+	var ramp := Gradient.new()   # fade in and out over a particle's life
+	ramp.set_color(0, Color(1, 1, 1, 0.0))
+	ramp.add_point(0.3, Color(1, 1, 1, 0.16))
+	ramp.add_point(0.7, Color(1, 1, 1, 0.12))
+	ramp.set_color(ramp.get_point_count() - 1, Color(1, 1, 1, 0.0))
+	p.color_ramp = ramp
+	return p
+
+
+## The art's ambient colour: a saturated average of its bright pixels (for glows).
+static func accent_of(t: Texture2D) -> Color:
+	if t == null:
+		return RED
+	var img := t.get_image()
+	if img == null or img.is_empty():
+		return RED
+	if img.is_compressed():
+		img.decompress()
+	img.resize(12, 12, Image.INTERPOLATE_BILINEAR)
+	var acc := Vector3.ZERO
+	var wsum := 0.0
+	for y in 12:
+		for x in 12:
+			var c := img.get_pixel(x, y)
+			var w := c.s * c.v + 0.02
+			acc += Vector3(c.r, c.g, c.b) * w
+			wsum += w
+	var a := acc / maxf(wsum, 1e-4)
+	var col := Color(a.x, a.y, a.z)
+	return Color.from_hsv(col.h, clampf(col.s * 1.3, 0.45, 0.9), 0.95)
 
 
 static func _gradient_layer(from: Vector2, to: Vector2, c0: Color, c1: Color, end: float) -> TextureRect:
