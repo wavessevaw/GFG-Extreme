@@ -329,7 +329,7 @@ gfg_cpu_fg *gfg_cpu_fg_create(VkInstance instance,
     if(guard && *guard) {
         char *end=NULL;
         unsigned long v=strtoul(guard,&end,10);
-        if(end && *end=='\0' && v>=20 && v<=2000)
+        if(end && *end=='\0' && v>=20 && v<=10000)
             fg->max_frame_ms=(unsigned)v;
     }
 #define RESOLVE(name) fg->name=LOAD(fg,name); if(!fg->name) goto fail
