@@ -69,6 +69,18 @@ class NativeLayerTests(unittest.TestCase):
         self.assertIn("CPU convert frame=", bridge)
         self.assertIn("process breaker: skip CPU bridge", bridge)
         self.assertIn("process_cpu_bridge_slow", bridge)
+
+    def test_host_cached_vulkan_readback_and_bulk_mapped_transfer(self):
+        bridge = (ENGINE / "src/cpu_bridge.c").read_text()
+        policy = (ENGINE / "src/memory_policy.h").read_text()
+        self.assertIn("VK_MEMORY_PROPERTY_HOST_CACHED_BIT", policy)
+        self.assertIn("gfg_native_readback_memory_type", bridge)
+        self.assertIn("memcpy(fg->rgba_cached,fg->mapped,pixels*COLOR_BPP)", bridge)
+        self.assertIn("memcpy(fg->mapped,fg->rgba_cached,pixels*COLOR_BPP)", bridge)
+        self.assertIn("memcpy_from_gpu_ms=", bridge)
+        self.assertIn("swizzle_ms=", bridge)
+        self.assertIn("staging memory type=", bridge)
+        self.assertIn("free(fg->rgba_cached)", bridge)
         self.assertIn('disable_slow_bridge(fg,"before-real-present"', bridge)
 
 if __name__ == "__main__":

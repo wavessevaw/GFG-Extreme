@@ -34,6 +34,9 @@ jobs:
       - name: Test real Steam Deck swapchain flags 0xc0 and existing transfer usage
         run: |
           make -C engine/gfg-native swapchain-policy VULKAN_HEADERS="$RUNNER_TEMP/vkh/include"
+      - name: Test cached readback memory-type selection
+        run: |
+          make -C engine/gfg-native memory-policy VULKAN_HEADERS="$RUNNER_TEMP/vkh/include"
       - name: Compile standalone GFG Native WSI layer (no MAKO linkage)
         run: |
           make -C engine/gfg-native layer VULKAN_HEADERS="$RUNNER_TEMP/vkh/include"
@@ -168,6 +171,34 @@ jobs:
         with:
           name: GFG-Native-FG-Patch-04-TE-Profiler
           path: out-patch-04/*
+          retention-days: 30
+          if-no-files-found: error
+      - name: Produce and verify Patch 05 cached readback
+        run: |
+          set -euo pipefail
+          mkdir -p out-patch-05
+          cp engine/gfg-native/build-te/libVkLayer_gfg_native.so out-patch-05/
+          cp patches/native-05/apply.sh patches/native-05/rollback.sh patches/native-05/README.md out-patch-05/
+          (cd out-patch-05 && sha256sum libVkLayer_gfg_native.so > SHA256SUMS.txt && sha256sum --check SHA256SUMS.txt)
+          baseline="$RUNNER_TEMP/native-baseline-5"
+          target="$baseline/.local/share/gfg-native/libVkLayer_gfg_native.so"
+          mkdir -p "$(dirname "$target")"
+          cp "$RUNNER_TEMP/original-2.so" "$target"
+          chmod 755 "$target"
+          cp "$target" "$RUNNER_TEMP/pre-patch-05.so"
+          (cd out-patch-05 && HOME="$baseline" XDG_DATA_HOME= bash ./apply.sh)
+          cmp "$target" out-patch-05/libVkLayer_gfg_native.so
+          test -s "${target}.before-patch-05"
+          (cd out-patch-05 && HOME="$baseline" XDG_DATA_HOME= bash ./rollback.sh)
+          cmp "$target" "$RUNNER_TEMP/pre-patch-05.so"
+          test ! -e "${target}.before-patch-05"
+          readelf -d out-patch-05/libVkLayer_gfg_native.so | tee out-patch-05/dependencies.txt
+          ! grep -Ei 'NEEDED.*(mako|lsfg|lossless)' out-patch-05/dependencies.txt
+      - name: Upload Patch 05 replacement library (no release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: GFG-Native-FG-Patch-05-HostCached
+          path: out-patch-05/*
           retention-days: 30
           if-no-files-found: error
       - name: Compile DLL-free Temporal Engine bootstrap using pinned production renderer

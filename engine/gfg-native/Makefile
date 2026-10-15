@@ -6,7 +6,7 @@ ENABLE_TE ?= 0
 TE_LIB ?= ../gfg-temporal/build/libgfg-temporal.a
 ifeq ($(ENABLE_TE),1)
 NATIVE_SOURCES := src/layer.c src/cpu_bridge.c
-NATIVE_HEADERS := src/cpu_bridge.h
+NATIVE_HEADERS := src/cpu_bridge.h src/memory_policy.h
 NATIVE_CPPFLAGS := -DGFG_NATIVE_WITH_TE -I../gfg-temporal/src
 NATIVE_LDLIBS := $(TE_LIB) -ldl -lm
 NATIVE_DEPS := $(TE_LIB)
@@ -18,7 +18,7 @@ NATIVE_LDLIBS :=
 NATIVE_DEPS :=
 endif
 
-.PHONY: layer abi smoke wsi-smoke swapchain-policy clean
+.PHONY: layer abi smoke wsi-smoke swapchain-policy memory-policy clean
 layer: $(BUILD)/libVkLayer_gfg_native.so $(BUILD)/VkLayer_gfg_native.json
 
 $(BUILD)/libVkLayer_gfg_native.so: $(NATIVE_SOURCES) $(NATIVE_HEADERS) $(NATIVE_DEPS)
@@ -38,6 +38,13 @@ $(BUILD)/loader-smoke: tests/loader_smoke.c
 smoke: layer $(BUILD)/loader-smoke
 	VK_INSTANCE_LAYERS=VK_LAYER_GFG_native GFG_NATIVE_FG=1 GFG_NATIVE_TRACE=1 \
 	VK_LAYER_PATH="$(abspath $(BUILD))" $(BUILD)/loader-smoke
+
+$(BUILD)/memory-policy: tests/memory_policy.c src/memory_policy.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I$(VULKAN_HEADERS) -o $@ tests/memory_policy.c
+
+memory-policy: $(BUILD)/memory-policy
+	$(BUILD)/memory-policy
 
 $(BUILD)/swapchain-policy: tests/swapchain_policy.c src/layer.c
 	mkdir -p $(BUILD)

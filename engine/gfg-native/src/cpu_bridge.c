@@ -16,6 +16,7 @@
  */
 #include "cpu_bridge.h"
 #include "te_engine.h"
+#include "memory_policy.h"
 #include <limits.h>
 #include <stdbool.h>
 #include <stdatomic.h>
@@ -89,6 +90,14 @@ struct gfg_cpu_fg {
     uint64_t bypasses;
     te_device *engine;
     te_context *context;
+    uint8_t *rgba_cached; /* CPU-cached scratch, never byte-sample mapped VRAM */
+    double readback_copy_ms;
+    double readback_swizzle_ms;
+    double upload_pack_ms;
+    double upload_copy_ms;
+    int host_cached;
+    uint32_t memory_index;
+    VkMemoryPropertyFlags memory_flags;
     uint8_t *rgb_real;
     uint8_t *rgb_generated;
     uint8_t *rgb_previous;
@@ -131,16 +140,6 @@ static bool coherent_flush(gfg_cpu_fg *fg, VkBool32 invalidate) {
         ? fg->InvalidateMappedMemoryRanges(fg->device,1,&range)
         : fg->FlushMappedMemoryRanges(fg->device,1,&range);
     return ok(result);
-}
-static bool memory_type(VkPhysicalDeviceMemoryProperties *props,
-        uint32_t mask, uint32_t *index, int *coherent) {
-    for(int pass=0;pass<2;pass++)for(uint32_t i=0;i<props->memoryTypeCount;i++) {
-        const VkMemoryPropertyFlags flags=props->memoryTypes[i].propertyFlags;
-        if(!(mask&(1u<<i)) || !(flags&VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) continue;
-        if(pass==0 && !(flags&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) continue;
-        *index=i;*coherent=!!(flags&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);return true;
-    }
-    return false;
 }
 static bool record_image_copy(gfg_cpu_fg *fg, VkImage image,
         uint32_t direction) {
@@ -213,25 +212,56 @@ static int supported_sdr8_format(VkFormat fmt) {
            fmt == VK_FORMAT_R8G8B8A8_SRGB ||
            fmt == VK_FORMAT_B8G8R8A8_SRGB;
 }
-static uint32_t sample_color(const uint8_t *p, VkFormat fmt, uint32_t c) {
-    return p[is_bgra_format(fmt) ? 2u-c:c];
-}
 static void rgba_to_rgb(gfg_cpu_fg *fg) {
-    const uint8_t *p=fg->mapped;
     const size_t pixels=(size_t)fg->extent.width*fg->extent.height;
-    for(size_t k=0;k<pixels;k++)for(uint32_t c=0;c<3;c++)
-        fg->rgb_real[k*3+c]=(uint8_t)sample_color(p+k*4,fg->format,c);
+    struct timespec started={0};
+    clock_gettime(CLOCK_MONOTONIC,&started);
+    /* A bulk memcpy allows native optimized wider reads. Do not perform
+     * three million uncached MMIO/BAR byte reads on the Deck APU. */
+    memcpy(fg->rgba_cached,fg->mapped,pixels*COLOR_BPP);
+    fg->readback_copy_ms=elapsed_ms_since(started);
+    const uint8_t *p=fg->rgba_cached;
+    uint8_t *out=fg->rgb_real;
+    if(is_bgra_format(fg->format)) {
+        for(size_t k=0;k<pixels;k++) {
+            out[3*k+0]=p[4*k+2];
+            out[3*k+1]=p[4*k+1];
+            out[3*k+2]=p[4*k+0];
+        }
+    } else {
+        for(size_t k=0;k<pixels;k++) {
+            out[3*k+0]=p[4*k+0];
+            out[3*k+1]=p[4*k+1];
+            out[3*k+2]=p[4*k+2];
+        }
+    }
+    fg->readback_swizzle_ms=elapsed_ms_since(started)-fg->readback_copy_ms;
 }
 static void rgb_to_rgba(gfg_cpu_fg *fg) {
-    uint8_t *p=fg->mapped;
     const size_t pixels=(size_t)fg->extent.width*fg->extent.height;
-    for(size_t k=0;k<pixels;k++){
-        for(uint32_t c=0;c<3;c++){
-            const uint32_t target=is_bgra_format(fg->format)?2-c:c;
-            p[k*4+target]=fg->rgb_generated[k*3+c];
+    struct timespec started={0};
+    clock_gettime(CLOCK_MONOTONIC,&started);
+    uint8_t *p=fg->rgba_cached;
+    const uint8_t *in=fg->rgb_generated;
+    if(is_bgra_format(fg->format)) {
+        for(size_t k=0;k<pixels;k++) {
+            p[4*k+0]=in[3*k+2];
+            p[4*k+1]=in[3*k+1];
+            p[4*k+2]=in[3*k+0];
+            p[4*k+3]=255;
         }
-        p[k*4+3]=255;
+    } else {
+        for(size_t k=0;k<pixels;k++) {
+            p[4*k+0]=in[3*k+0];
+            p[4*k+1]=in[3*k+1];
+            p[4*k+2]=in[3*k+2];
+            p[4*k+3]=255;
+        }
     }
+    fg->upload_pack_ms=elapsed_ms_since(started);
+    /* Host-to-device upload remains a bulk write, not 4m byte stores. */
+    memcpy(fg->mapped,fg->rgba_cached,pixels*COLOR_BPP);
+    fg->upload_copy_ms=elapsed_ms_since(started)-fg->upload_pack_ms;
 }
 static bool run_te(gfg_cpu_fg *fg) {
     uint32_t slot=fg->source_slot;
@@ -304,6 +334,11 @@ static bool present_generated(gfg_cpu_fg *fg, PFN_vkQueuePresentKHR next) {
      * present_ready can be signaled again for the same image.
      * Do not wait for the entire WSI queue after presenting a synthetic. */
     rgb_to_rgba(fg);
+    if(fg->log && (fg->synthetic_frames<5 || fg->upload_copy_ms>15.0))
+        fprintf(stderr,
+            "[gfg-native] CPU output pack_ms=%.2f memcpy_to_gpu_ms=%.2f"
+            " cached=%d\n",
+            fg->upload_pack_ms,fg->upload_copy_ms,fg->host_cached);
     if(!coherent_flush(fg,VK_FALSE) ||
        !record_image_copy(fg,fg->images[idx],1) ||
        !submit_wait(fg,1,&fg->acquire_sem,present_ready)) {
@@ -407,10 +442,12 @@ gfg_cpu_fg *gfg_cpu_fg_create(VkInstance instance,
     const size_t pixels=(size_t)extent.width*extent.height;
     if(pixels>SIZE_MAX/4u)goto fail;
     const VkDeviceSize bytes=(VkDeviceSize)pixels*COLOR_BPP;
+    fg->rgba_cached=malloc(pixels*COLOR_BPP);
     fg->rgb_real=malloc(pixels*3u);
     fg->rgb_generated=malloc(pixels*3u);
     fg->rgb_previous=malloc(pixels*3u);
-    if(!fg->rgb_real||!fg->rgb_generated||!fg->rgb_previous)goto fail;
+    if(!fg->rgba_cached||!fg->rgb_real||!fg->rgb_generated||!fg->rgb_previous)
+        goto fail;
     VkBufferCreateInfo bi={.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size=bytes,.usage=VK_BUFFER_USAGE_TRANSFER_SRC_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         .sharingMode=VK_SHARING_MODE_EXCLUSIVE};
@@ -420,7 +457,17 @@ gfg_cpu_fg *gfg_cpu_fg_create(VkInstance instance,
     VkPhysicalDeviceMemoryProperties types;
     mp(physical,&types);
     uint32_t index=0;
-    if(!memory_type(&types,mr.memoryTypeBits,&index,&fg->coherent))goto fail;
+    if(!gfg_native_readback_memory_type(&types,mr.memoryTypeBits,&index,
+                                       &fg->coherent,&fg->host_cached))
+        goto fail;
+    fg->memory_index=index;
+    fg->memory_flags=types.memoryTypes[index].propertyFlags;
+    if(fg->log)
+        fprintf(stderr,
+            "[gfg-native] staging memory type=%u flags=0x%x"
+            " host_cached=%d coherent=%d allocation_bytes=%llu\n",
+            index,(unsigned)fg->memory_flags,fg->host_cached,fg->coherent,
+            (unsigned long long)mr.size);
     VkMemoryAllocateInfo ai={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .allocationSize=mr.size,.memoryTypeIndex=index};
     if(!ok(fg->AllocateMemory(device,&ai,NULL,&fg->memory)))goto fail;
@@ -505,9 +552,11 @@ VkResult gfg_cpu_fg_present(gfg_cpu_fg *fg, const VkPresentInfoKHR *original,
         if(fg->log && fg->real_frames<5)
             fprintf(stderr,
                 "[gfg-native] CPU convert frame=%llu invalidate_ms=%.2f"
-                " rgba_to_rgb_ms=%.2f\n",
+                " rgba_to_rgb_ms=%.2f memcpy_from_gpu_ms=%.2f"
+                " swizzle_ms=%.2f host_cached=%d\n",
                 (unsigned long long)fg->real_frames,
-                convert_start_ms-capture_ms,converted_ms-convert_start_ms);
+                convert_start_ms-capture_ms,converted_ms-convert_start_ms,
+                fg->readback_copy_ms,fg->readback_swizzle_ms,fg->host_cached);
         const bool completed=run_te(fg);
         if(completed && fg->real_frames) {
             const size_t count=(size_t)fg->extent.width*fg->extent.height*3u;
@@ -591,6 +640,7 @@ void gfg_cpu_fg_destroy(gfg_cpu_fg *fg) {
         fg->FreeMemory(fg->device,fg->memory,NULL);
     free(fg->ready_per_image);
     free(fg->images);
+    free(fg->rgba_cached);
     free(fg->rgb_real);
     free(fg->rgb_generated);
     free(fg->rgb_previous);
