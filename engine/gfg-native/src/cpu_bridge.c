@@ -205,6 +205,9 @@ static bool run_te(gfg_cpu_fg *fg) {
     s.count=fg->real_frames?1:0;
     s.timestamps[0]=0.5f;
     s.download=1;
+    const char *tier=getenv("GFG_NATIVE_LMC_TIER");
+    if(tier && tier[0]>='0' && tier[0]<='2' && tier[1]=='\0')
+        s.lmc_tier=tier[0]-'0';
     VkResult v=te_submit_frame(fg->context,&s);
     if(v!=VK_SUCCESS){fail("te-submit",v);return false;}
     /* This is a correctness-first CPU bridge: a bounded wait lets the game
@@ -217,7 +220,15 @@ static bool run_te(gfg_cpu_fg *fg) {
         if(end && !*end && raw>=10 && raw<=5000)
             budget=(uint64_t)raw*1000000ULL;
     }
-    if(!te_context_idle(fg->context,budget)){
+    struct timespec since={0}, until={0};
+    clock_gettime(CLOCK_MONOTONIC,&since);
+    const int ready=te_context_idle(fg->context,budget);
+    clock_gettime(CLOCK_MONOTONIC,&until);
+    if(fg->log) fprintf(stderr,
+        "[gfg-native] TE pair slot=%u frame=%llu tier=%d ready=%d waited_ms=%.1f\n",
+        slot,(unsigned long long)fg->real_frames,s.lmc_tier,ready,
+        (until.tv_sec-since.tv_sec)*1000.0+(until.tv_nsec-since.tv_nsec)/1000000.0);
+    if(!ready){
         ++fg->skipped;
         return false;
     }

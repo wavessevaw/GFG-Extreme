@@ -51,6 +51,26 @@ jobs:
           grep -q '\[gfg-native\] OWN LMC CPU bridge active' native-fg-wsi.log
           grep -Eq '\[gfg-native\] generated=[1-9]' native-fg-wsi.log
           grep -q 'GFG native: 4 real WSI acquire/submit/present cycles PASS' native-fg-wsi.log
+      - name: Package independent Steam Deck test build and verify installation
+        run: |
+          python3 scripts/package_native_fg.py \
+            --binary engine/gfg-native/build-te/libVkLayer_gfg_native.so \
+            --outdir out-native --version 2.1.2-native.1
+          ( cd out-native && sha256sum --check SHA256SUMS.txt )
+          archive="$(find out-native -maxdepth 1 -name '*.zip' -print -quit)"
+          test -s "$archive"
+          unzip -tq "$archive"
+          mkdir -p "$RUNNER_TEMP/native-stage" "$RUNNER_TEMP/native-home"
+          unzip -q "$archive" -d "$RUNNER_TEMP/native-stage"
+          (
+            cd "$RUNNER_TEMP/native-stage/GFG-Native-FG"
+            sha256sum --check SHA256SUMS.txt
+            HOME="$RUNNER_TEMP/native-home" bash ./install.sh
+            test -s "$RUNNER_TEMP/native-home/.local/share/gfg-native/libVkLayer_gfg_native.so"
+            HOME="$RUNNER_TEMP/native-home" "$RUNNER_TEMP/native-home/.local/bin/gfg-native" /bin/true
+            HOME="$RUNNER_TEMP/native-home" bash ./uninstall.sh
+            test ! -e "$RUNNER_TEMP/native-home/.local/bin/gfg-native"
+          )
       - name: Compile DLL-free Temporal Engine bootstrap using pinned production renderer
         run: |
           python3 scripts/build_frame_fusion.py --native-no-dll \
@@ -62,3 +82,13 @@ jobs:
         run: |
           echo 'This validates a no-DLL TE bootstrap within the transitional GPL MAKO WSI.'
           echo 'It does NOT validate an independent WSI or physical Steam Deck presentation.'
+
+      - name: Preserve independent device-trial archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: GFG-Native-FG-2.1.2-native.1
+          path: |
+            out-native/*.zip
+            out-native/SHA256SUMS.txt
+          retention-days: 30
+          if-no-files-found: error
