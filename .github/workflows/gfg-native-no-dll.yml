@@ -11,7 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Native bootstrap contract tests
-        run: python3 -m unittest discover -s tests -p test_native_no_dll_bootstrap.py -v
+        run: |
+          python3 -m unittest discover -s tests -p test_native_no_dll_bootstrap.py -v
+          python3 -m unittest discover -s tests -p test_native_layer_foundation.py -v
 
   native-bootstrap:
     runs-on: ubuntu-22.04
@@ -29,6 +31,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y g++-12 cmake libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers libx11-dev libxcb1-dev glslang-tools spirv-tools p7zip-full
           git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
+      - name: Compile standalone GFG Native WSI layer (no MAKO linkage)
+        run: |
+          make -C engine/gfg-native layer VULKAN_HEADERS="$RUNNER_TEMP/vkh/include"
+          test -s engine/gfg-native/build/libVkLayer_gfg_native.so
       - name: Compile DLL-free Temporal Engine bootstrap using pinned production renderer
         run: |
           python3 scripts/build_frame_fusion.py --native-no-dll \

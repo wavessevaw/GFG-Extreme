@@ -2,6 +2,14 @@
 
 Status: **experimental bridge, NOT a standalone finished Vulkan layer**.
 
+There are now two separate tracks:
+- `src/layer.c` is a **new, standalone GFG Vulkan loader/WSI layer**. It
+  negotiates possible transfer-capable swapchains and forwards the game's real
+  presentations unchanged. **It does NOT capture or generate frames yet.**
+  No MAKO/DLL code is linked into this layer. Its manifest is off by default.
+- `bootstrap.py` is the *transitional* no-DLL path for the already working
+  Temporal Engine while the independent WSI path is developed.
+
 This first implementation step makes GFG Temporal Engine (TE8) start without
 opening or finding the licensed Lossless.dll *when the exclusive Experimental
 mode is selected*. The existing public GPL MAKO WSI/presentation code is still
@@ -30,12 +38,21 @@ evidence shows presentation correctness.
 From the repository:
 
 ```sh
-python3 -m unittest tests/test_native_no_dll_bootstrap.py
+python3 -m unittest discover -s tests -p test_native_no_dll_bootstrap.py
+python3 -m unittest discover -s tests -p test_native_layer_foundation.py
+make -C engine/gfg-native layer VULKAN_HEADERS=/path/to/Vulkan-Headers/include
 python3 scripts/build_frame_fusion.py --native-no-dll \
     --work /tmp/gfg-native-bridge --headers /path/to/Vulkan-Headers/include
 python3 scripts/check_native_independence.py \
     --source /tmp/gfg-native-bridge/source
 ```
+
+The independent layer can be exercised only as a WSI **pass-through**:
+`GFG_NATIVE_FG=1` enables swapchain eligibility negotiation and
+`GFG_NATIVE_TRACE=1` reports it. Do not deploy the layer alongside the
+normal generator yet; it does not own image-history or presentation.
+Its `VkLayer_gfg_native.json` must be installed next to the built .so
+in a controlled Vulkan loader path before using it.
 
 The normal Frame Fusion build remains unchanged unless
 `--native-no-dll` is provided. Release packaging is **not** updated here.
