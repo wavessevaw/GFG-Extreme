@@ -72,22 +72,14 @@ def check(path, version):
             if PurePosixPath(manifest["layer"]["library_path"]).name != library:
                 raise ValueError(f"wrong library in {layer} manifest")
 
-        # Both installed modules and the complete manifest-referenced theme must ship.
-        if tuple(map(int, version.split("-")[0].split("."))) >= (1, 6, 7):
-            for module in ("governor_flow.py", "theme_installer.py"):
-                if not read("py_modules/gfg_plugin/" + module):
-                    raise ValueError("empty bundled module: " + module)
-            theme = "themes/css-loader/GFG Extreme/"
-            manifest = json.loads(read(theme + "theme.json"))
-            if manifest.get("name") != "GFG Extreme":
-                raise ValueError("invalid bundled theme")
-            css = set(manifest.get("inject", {}))
-            for patch in manifest.get("patches", {}).values():
-                for variant in patch.get("values", {}).values():
-                    css.update(variant)
-            for file in css:
-                if PurePosixPath(file).name != file or not read(theme + file):
-                    raise ValueError("invalid bundled theme file: " + file)
+        release = tuple(map(int, version.split("-")[0].split(".")))
+        if release >= (1, 6, 7) and not read("py_modules/gfg_plugin/governor_flow.py"):
+            raise ValueError("empty bundled module: governor_flow.py")
+        # GFG Theme (CSS Loader) was retired in 2.1.2 and must not ship again.
+        if release >= (2, 1, 2) and any(
+                name.startswith(ROOT + "themes/css-loader/")
+                or name == ROOT + "py_modules/gfg_plugin/theme_installer.py" for name in names):
+            raise ValueError("retired GFG Theme shipped in release")
         if any("/gfg-open/" in name for name in names):
             raise ValueError("retired generator shipped in release")
         if not read("dist/index.js") or not read("main.py"):

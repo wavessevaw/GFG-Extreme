@@ -15,7 +15,6 @@ from pathlib import Path
 
 import decky
 
-from .theme_installer import ThemeInstaller
 from .installation import InstallationService
 from .dll_detection import DllDetectionService
 from .configuration import ConfigurationService
@@ -62,10 +61,8 @@ class Plugin:
 
     def __init__(self):
         """Initialize the plugin with all necessary services"""
-        self.theme_installer = ThemeInstaller(Path(decky.DECKY_USER_HOME))
         from .shell_installer import ShellInstaller
         self.shell_installer = ShellInstaller(Path(decky.DECKY_USER_HOME))
-        self._theme_install_lock = asyncio.Lock()
         self.installation_service = InstallationService()
         self.dll_detection_service = DllDetectionService()
         self.configuration_service = ConfigurationService()
@@ -1646,14 +1643,6 @@ class Plugin:
 
     async def set_governor_auto_flow(self, enabled: bool) -> Dict[str, Any]:
         return self.governor_service.set_auto_flow(enabled)
-
-    async def get_theme_status(self) -> Dict[str, Any]:
-        async with self._theme_install_lock:
-            return await asyncio.to_thread(self.theme_installer.status)
-
-    async def install_gfg_theme(self) -> Dict[str, Any]:
-        async with self._theme_install_lock:
-            return await asyncio.to_thread(self.theme_installer.install)
 
     async def get_shell_status(self) -> Dict[str, Any]:
         """GFG Shell: packaged/installed versions, launcher path, remembered Steam shortcut."""

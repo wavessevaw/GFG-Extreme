@@ -295,19 +295,16 @@ for (const [state, nav, expected] of cases) {
   }
   cases.push(["energy-battery-colour-and-unknown-limits"]);
 }
-// Installation succeeds or fails visibly; copying is distinct from enabling CSS Loader.
-for (const fail of [false, true]) {
-  const page = await openPage(browser, { ...STATES["home-extreme"], __themeFail: fail }, ["Settings", "GFG theme"]);
-  await page.getByText("Install theme", { exact: true }).click();
-  await page.waitForTimeout(150);
-  const text = fail ? "Theme folder is read-only" : "Installed and up to date";
-  if (!(await page.getByText(text, { exact: true }).count()) ||
-      await page.evaluate(() => window.__themeCalls) !== 1) {
-    failed++; console.error("FAIL theme installer " + text);
+// GFG Theme (CSS Loader) was retired in 2.1.2: Settings must not offer it any more.
+{
+  const page = await openPage(browser, STATES["home-extreme"], ["Settings"]);
+  if (!(await page.getByText("GFG Shell", { exact: true }).count()) ||
+      await page.getByText("GFG theme", { exact: true }).count()) {
+    failed++; console.error("FAIL retired GFG theme still offered in Settings");
   }
-  for (const error of page.__errors) { failed++; console.error("FAIL theme: " + error); }
+  for (const error of page.__errors) { failed++; console.error("FAIL settings: " + error); }
   await page.close();
-  cases.push(["theme-installer-" + (fail ? "error" : "success")]);
+  cases.push(["theme-retired"]);
 }
 // GFG Shell: install from the plugin, then launch through a Steam shortcut created once.
 for (const fail of [false, true]) {
