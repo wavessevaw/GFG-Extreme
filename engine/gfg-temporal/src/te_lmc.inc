@@ -13,7 +13,7 @@
 #define LMC_BINDINGS 36
 
 enum {
-    LMC_PREP, LMC_DOWN, LMC_SEARCH, LMC_LAYERS, LMC_PALETTE_P, LMC_FIELD, LMC_MASKED, LMC_ORPHAN, LMC_SELECT,
+    LMC_PREP, LMC_DOWN, LMC_SEARCH, LMC_LAYERS, LMC_IRLS, LMC_PALETTE_P, LMC_FIELD, LMC_MASKED, LMC_ORPHAN, LMC_SELECT,
     LMC_COMPOSE, LMC_PIPES
 };
 
@@ -26,7 +26,7 @@ typedef struct {
     float still, orphan_resid, orphan_share, orphan_max_cost;
     int32_t coarse_r, propagate, hud_pairs, orphan_r;
     float min_layer_share;
-    int32_t ransac_iters, pad0, pad1;
+    int32_t ransac_iters, orphan_cap, pad1;
 } lmc_ubo;
 _Static_assert(offsetof(lmc_ubo, blk_off) == 96, "std140 layout of LmcParams");
 _Static_assert(offsetof(lmc_ubo, pen_update) == 128, "std140 layout of LmcParams");
@@ -45,10 +45,15 @@ typedef struct {
 #define LMC_LY_LIVE (LMC_LY_INLIERS + 4u * (LMC_HYPS + LMC_MAX_LAYERS))
 /* Globals buffer */
 #define LMC_G_ORPHANS 80u
-#define LMC_G_SIZE (96u + 4u * 64u * 64u)
+#define LMC_G_OHIST (96u + 4u * 64u * 64u)
+#define LMC_ORPHAN_MAX 1024u
+#define LMC_ORPHAN_CAP 256u                                  /* default; GFG_LMC_ORPHAN_CAP */
+#define LMC_G_OCLEAR (4u * (2u * 65u + 2u + 2u))              /* histogram, thresholds, list lengths */
+#define LMC_G_SIZE (LMC_G_OHIST + LMC_G_OCLEAR + 4u * 2u * LMC_ORPHAN_MAX)
 
 struct te_lmc {
     uint32_t w2, h2, n1, nblk;
+    uint32_t ocap;              /* orphan blocks searched per grid */
     uint32_t lw[LMC_LEVELS + 1], lh[LMC_LEVELS + 1], bw[LMC_LEVELS + 1], bh[LMC_LEVELS + 1];
     uint32_t off[LMC_LEVELS + 1];
     te_image luma[2][LMC_LEVELS + 1], half[2], hud, field[2];
@@ -132,6 +137,13 @@ static VkResult lmc_create(te_context* ctx) {
     u.still = 2.0f / 255.0f; u.orphan_resid = 0.15f; u.orphan_share = 0.08f; u.orphan_max_cost = 0.08f;
     u.coarse_r = 10; u.propagate = 2; u.hud_pairs = 6; u.orphan_r = 112;
     u.min_layer_share = 0.10f; u.ransac_iters = LMC_HYPS;
+    m->ocap = LMC_ORPHAN_CAP;
+    const char* cap = getenv("GFG_LMC_ORPHAN_CAP");
+    if (cap && *cap) {
+        long v = strtol(cap, NULL, 10);
+        m->ocap = v < 0 ? 0u : v > (long)LMC_ORPHAN_MAX ? LMC_ORPHAN_MAX : (uint32_t)v;
+    }
+    u.orphan_cap = (int32_t)m->ocap;
     memcpy(m->params.map, &u, sizeof u);
 
     /* descriptor layout: see lmc_common.glsl / lmc_store.glsl */
@@ -235,6 +247,7 @@ static VkResult lmc_create(te_context* ctx) {
         [LMC_FIELD] = {te_spv_lmc_field, sizeof te_spv_lmc_field},
         [LMC_MASKED] = {te_spv_lmc_masked, sizeof te_spv_lmc_masked},
         [LMC_ORPHAN] = {te_spv_lmc_orphan, sizeof te_spv_lmc_orphan},
+        [LMC_IRLS] = {te_spv_lmc_irls, sizeof te_spv_lmc_irls},
         [LMC_SELECT] = {te_spv_lmc_select, sizeof te_spv_lmc_select},
         [LMC_COMPOSE] = {te_spv_lmc_compose, sizeof te_spv_lmc_compose},
     };
@@ -338,7 +351,7 @@ static void lmc_search_grid(te_context* ctx, VkCommandBuffer cb, int grid, int t
             lmc_push_c(ctx, cb, 0.0f, l, grid, 1, flags);
             vkCmdDispatch(cb, g, 1, 1);
             compute_barrier(cb);
-            lmc_push_c(ctx, cb, 0.0f, l, grid, 3, flags);
+            lmc_push_c(ctx, cb, 0.0f, l, grid, 4, flags);
             vkCmdDispatch(cb, g, 1, 1);
             compute_barrier(cb);
         }
@@ -370,6 +383,7 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
     }
     ownership(cb, &ctx->src[par], ctx->dev->qfi, 1);
     vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, slot->queries, 0);
+    slot->lmc_timed = 0;
     if (!generate) {
         /* history only: no pair; a skip or a hold also restarts every predictor */
         m->have_temporal = 0;
@@ -385,6 +399,7 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
         lmc_fill(cb, &m->layers, LMC_LY_LIVE + 4u * 2u * m->n1, 12, 0);  /* list length, total, stop */
         lmc_fill(cb, &m->globals, 8, 4, 0);                                /* moving votes */
         lmc_fill(cb, &m->globals, LMC_G_ORPHANS, 8, 0);                    /* orphan counts */
+        lmc_fill(cb, &m->globals, LMC_G_OHIST, LMC_G_OCLEAR, 0);           /* orphan selection */
         lmc_transfer_barrier(cb);
     }
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->layout, 0, 1, &m->set0[par], 0, NULL);
@@ -404,55 +419,87 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
         vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, slot->queries, 3);
         return;
     }
+    slot->lmc_timed = 1;
+#define LMC_TS(k) vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, slot->queries, TE_LMC_Q0 + (k))
+    LMC_TS(0);
     /* block search: B grid (temporal = previous pair), then A grid (temporal = this B field) */
     lmc_search_grid(ctx, cb, 0, m->have_temporal);
+    LMC_TS(1 + TE_LMC_SEARCH_B);
     lmc_search_grid(ctx, cb, 1, 1);
+    LMC_TS(1 + TE_LMC_SEARCH_A);
     /* motion planes */
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_LAYERS]);
     lmc_push_c(ctx, cb, 0.0f, 1, 0, 0, 0);
     vkCmdDispatch(cb, groups(m->n1, 64), 1, 1);
     compute_barrier(cb);
     for (int k = 0; k < LMC_MAX_LAYERS; ++k) {
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_IRLS]);
         lmc_push_c(ctx, cb, 0.0f, 1, 0, 1, 0);
         vkCmdDispatch(cb, 1, 1, 1);
         compute_barrier(cb);
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_LAYERS]);
         lmc_push_c(ctx, cb, 0.0f, 1, 0, 2, 0);
         vkCmdDispatch(cb, LMC_HYPS + LMC_MAX_LAYERS, 1, 1);
         compute_barrier(cb);
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_IRLS]);
         lmc_push_c(ctx, cb, 0.0f, 1, 0, 3, 0);
         vkCmdDispatch(cb, 1, 1, 1);
         compute_barrier(cb);
     }
+    LMC_TS(1 + TE_LMC_LAYERS);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_PALETTE_P]);
     lmc_push_c(ctx, cb, 0.0f, 1, 0, 0, 0);
     vkCmdDispatch(cb, 1, 1, 1);
     compute_barrier(cb);
+    LMC_TS(1 + TE_LMC_PALETTE);
     vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, slot->queries, 2);
     /* per-pixel fields, orphan objects, fields again next to orphans */
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_FIELD]);
     for (int g = 0; g < 2; ++g) {
         lmc_push_c(ctx, cb, 0.0f, 1, g, 0, 0);
-        vkCmdDispatch(cb, m->n1, 1, 1);
+        vkCmdDispatch(cb, groups(m->bw[1], 2), groups(m->bh[1], 2), 1);
     }
     compute_barrier(cb);
+    LMC_TS(1 + TE_LMC_FIELD);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_MASKED]);
     lmc_push_c(ctx, cb, 0.0f, 0, 0, 0, 0);
     vkCmdDispatch(cb, groups(W / 4, 8), groups(H / 4, 8), 1);
     compute_barrier(cb);
+    LMC_TS(1 + TE_LMC_MASKED);
+    /* orphans: count residual pixels per block, keep the strongest (at most ocap per grid), list them,
+       then one workgroup per listed block */
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_ORPHAN]);
     for (int g = 0; g < 2; ++g) {
         lmc_push_c(ctx, cb, 0.0f, 1, g, 0, 0);
         vkCmdDispatch(cb, groups(m->n1, 64), 1, 1);
     }
     compute_barrier(cb);
+    lmc_push_c(ctx, cb, 0.0f, 1, 0, 1, 0);
+    vkCmdDispatch(cb, 1, 1, 1);
+    compute_barrier(cb);
+    for (int g = 0; g < 2; ++g) {
+        lmc_push_c(ctx, cb, 0.0f, 1, g, 2, 0);
+        vkCmdDispatch(cb, groups(m->n1, 64), 1, 1);
+    }
+    compute_barrier(cb);
+    if (m->ocap) {
+        for (int g = 0; g < 2; ++g) {
+            lmc_push_c(ctx, cb, 0.0f, 1, g, 3, 0);
+            vkCmdDispatch(cb, m->ocap, 1, 1);
+        }
+        compute_barrier(cb);
+    }
+    LMC_TS(1 + TE_LMC_ORPHAN);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_FIELD]);
     for (int g = 0; g < 2; ++g) {
         lmc_push_c(ctx, cb, 0.0f, 1, g, 1, 0);
-        vkCmdDispatch(cb, m->n1, 1, 1);
+        vkCmdDispatch(cb, groups(m->bw[1], 2), groups(m->bh[1], 2), 1);
     }
     barrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
             VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+    LMC_TS(1 + TE_LMC_FIELD2);
+#undef LMC_TS
     /* the B field of this pair is the next pair's temporal predictor */
     VkBufferCopy copy = {(VkDeviceSize)m->off[1] * 16, 0, (VkDeviceSize)m->n1 * 16};
     vkCmdCopyBuffer(cb, m->vec[0].buf, m->temporal.buf, 1, &copy);

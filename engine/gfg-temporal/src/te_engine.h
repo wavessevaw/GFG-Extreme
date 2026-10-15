@@ -67,6 +67,9 @@ typedef struct {
 void te_context_desc_default(te_context_desc* desc, uint32_t width, uint32_t height, uint32_t outputs);
 
 enum { TE_STAGE_PYRAMID, TE_STAGE_ANALYZE, TE_STAGE_CLASSIFY, TE_STAGE_COUNT };
+/* LMC analysis passes, timed once per generated pair (lmc_ms) */
+enum { TE_LMC_SEARCH_B, TE_LMC_SEARCH_A, TE_LMC_LAYERS, TE_LMC_PALETTE, TE_LMC_FIELD, TE_LMC_MASKED,
+       TE_LMC_ORPHAN, TE_LMC_FIELD2, TE_LMC_PROF_COUNT };
 enum { TE_FRAME_LISTS, TE_FRAME_REUSE, TE_FRAME_LIGHT, TE_FRAME_FULL, TE_FRAME_TOTAL, TE_FRAME_COUNT };
 
 typedef struct {
@@ -78,6 +81,7 @@ typedef struct {
     uint64_t sequence;                   /* submission number of this pair (1 = first submit) */
     uint64_t outputs_completed_total;    /* all outputs of this context whose GPU work finished */
     double stage_ms[TE_STAGE_COUNT];     /* once per pair */
+    double lmc_ms[TE_LMC_PROF_COUNT];    /* LMC: per analysis pass (-1 when not timed) */
     double frame_ms[TE_MAX_OUTPUTS][TE_FRAME_COUNT];
     uint32_t tiles[TE_MAX_OUTPUTS][3];   /* reuse, light, full tile counts per output */
     uint32_t tile_total;

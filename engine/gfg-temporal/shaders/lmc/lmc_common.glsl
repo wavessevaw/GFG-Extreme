@@ -14,6 +14,7 @@
 #define LMC_MAX_LAYERS 3
 #define LMC_PALETTE 4
 #define LMC_HYPS 128      // RANSAC hypotheses (one workgroup each)
+#define LMC_ORPHAN_MAX 1024  // orphan list capacity per grid (P.orphan_cap <= this)
 
 layout(std140, set = 0, binding = 0) uniform LmcParams {
     ivec4 size;           // x, y full res; z, w half res
@@ -34,7 +35,8 @@ layout(std140, set = 0, binding = 0) uniform LmcParams {
     int orphan_r;         // full-res radius of the orphan search
     float min_layer_share;
     int ransac_iters;     // == LMC_HYPS
-    int pad0, pad1;
+    int orphan_cap;       // orphan blocks searched per grid, strongest first
+    int pad1;
 } P;
 
 layout(set = 0, binding = 1) uniform sampler2D srcA;
@@ -79,6 +81,10 @@ layout(std430, set = 0, binding = 27) buffer Globals {
     vec4 palette[LMC_PALETTE];
     uint orphans_b, orphans_a, pad_g0, pad_g1;
     uint hist[64 * 64];   // palette coarse histogram scratch
+    uint ohist[2 * 65];   // per grid: orphan candidates by residual pixel count (0..64)
+    uint othr[2];         // per grid: blocks with a count above this are searched
+    uint olist_n[2];
+    uint olist[2 * LMC_ORPHAN_MAX];
 } G;
 
 // Half-res per-pixel fields (rgba16f): xy = vector (half px), z = cost.

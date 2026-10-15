@@ -29,6 +29,8 @@ a point at x in A is at x + v in B.
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 from scipy.ndimage import uniform_filter
 
@@ -48,6 +50,7 @@ PIX_MARGIN = 0.25
 RESID = 0.12        # per-pixel 3x3 cost above which a pixel is "unexplained"
 ORPHAN_SHARE = 0.08 # share of unexplained pixels that makes an 8x8 block an orphan
 ORPHAN_R = 112      # orphan search radius, full-res pixels
+ORPHAN_CAP = int(os.environ.get("GFG_LMC_ORPHAN_CAP", "256"))  # orphan blocks searched per grid (GPU: same env)
 ORPHAN_MAX_COST = 0.08   # 3x3 RGB SAD a pixel's other candidates must beat its own block by  # 3DRS-style penalty for update candidates (per level pixel of change)
 
 
@@ -336,7 +339,18 @@ def orphan_search(y_own, m_own, y_oth, m_oth, sign, blocks):
     yt, mt = masked_down(y_oth, m_oth, f)
     # orphan blocks: 8x8 full-res blocks with residual pixels
     share = m_own[: bh * 8, : bw * 8].reshape(bh, 8, bw, 8).mean(axis=(1, 3))
-    oi, oj = np.nonzero(share > ORPHAN_SHARE)
+    cand = share > ORPHAN_SHARE
+    # at most ORPHAN_CAP blocks, strongest (most residual pixels) first; ties at
+    # the limit are all left out (GPU: lmc_orphan pass 1)
+    cnt = np.rint(share * 64).astype(int)
+    hist = np.bincount(cnt[cand], minlength=65)
+    acc, thr = 0, 64
+    for c in range(64, int(np.floor(ORPHAN_SHARE * 64)), -1):
+        if acc + hist[c] > ORPHAN_CAP:
+            break
+        acc += hist[c]
+        thr = c - 1
+    oi, oj = np.nonzero(cand & (cnt > thr))
     out = np.zeros((bh, bw, 2), np.float32)
     ok = np.zeros((bh, bw), bool)
     if oi.size == 0:

@@ -9,12 +9,12 @@
 layout(local_size_x = 8, local_size_y = 8) in;
 
 ivec2 g_p;
+vec2 g_pvb, g_pva;
 float g_t;
 float best_s;
 vec2 best_v;
 int best_m;
-vec2 seen[40];
-int nseen;
+vec2 last;   // the previous candidate: a repeat can never score higher, so it is skipped
 
 vec2 field_at(int grid, vec2 q) {
     vec2 s = vec2(P.size.zw);
@@ -23,8 +23,12 @@ vec2 field_at(int grid, vec2 q) {
 }
 
 void consider(vec2 v, float pen) {
-    for (int i = 0; i < nseen; ++i) if (seen[i] == v) return;  // a repeat can never score higher
-    if (nseen < 40) seen[nseen++] = v;
+    // Candidates come in priority order and a later one never has a smaller
+    // penalty, so an exact repeat never wins (score > best_s is strict): skipping
+    // repeats changes nothing.  Only the cheap cases are tested (no list in
+    // registers: a dynamically indexed array would go to scratch memory).
+    if (v == last || v == g_pvb || v == g_pva) return;
+    last = v;
     ivec2 hs = P.size.zw;
     vec2 p = vec2(g_p);
     vec2 a = p - g_t * v, b = p + (1.0 - g_t) * v;
@@ -42,21 +46,30 @@ void consider(vec2 v, float pen) {
     }
 }
 
+shared Layer s_inv[LMC_MAX_LAYERS];
+
 void main() {
     g_p = ivec2(gl_GlobalInvocationID.xy);
     ivec2 hs = P.size.zw;
+    int nl = int(LY.layer_count);
+    uint lid = gl_LocalInvocationIndex;
+    if (lid < uint(nl)) s_inv[lid] = inv_h(LY.layers[lid]);
+    barrier();
     if (any(greaterThanEqual(g_p, hs))) return;
     g_t = PC.t;
     best_s = -1e30;
     best_v = vec2(0.0);
     best_m = 0;
-    nseen = 0;
+    last = vec2(1e30);
     ivec2 nb = lblocks(1);
     ivec2 bb = clamp(g_p / 4, ivec2(0), nb - 1);
     vec2 pvb = texelFetch(fieldB, g_p, 0).xy;
     vec2 pva = texelFetch(fieldA, g_p, 0).xy;
+    g_pvb = g_pva = vec2(1e30);
     consider(pvb, 0.0);
+    g_pvb = pvb;
     consider(pva, 0.0);
+    g_pva = pva;
     const int O[3] = int[3](0, -1, 1);
     for (int grid = 0; grid < 2; ++grid) {
         uint cnt = grid == 0 ? G.orphans_b : G.orphans_a;
@@ -65,18 +78,22 @@ void main() {
             for (int c = 0; c < 3; ++c) {
                 ivec2 q = clamp(bb + ivec2(O[c], O[a]), ivec2(0), nb - 1);
                 vec4 o = orphan_at(grid, q.y * nb.x + q.x);
-                consider(o.z > 0.5 ? o.xy * 0.5 : pvb, 0.01);
+                if (o.z > 0.5) consider(o.xy * 0.5, 0.01);  // else pvb again, a repeat
             }
     }
-    for (int dy = -1; dy <= 1; ++dy)
-        for (int dx = -1; dx <= 1; ++dx) {
-            ivec2 q = clamp(bb + ivec2(dx, dy), ivec2(0), nb - 1);
-            consider(vb[P.blk_off.x + q.y * nb.x + q.x].xy, 0.01);  // level-1 px == half px
-        }
-    for (int L = 0; L < int(LY.layer_count); ++L) {
-        Layer Lr = LY.layers[L];
-        consider(camera_vec(Lr, inv_h(Lr), vec2(g_p), 2.0, 0), 0.01);
+    // the 9 block vectors (level-1 px == half px), repeats among them skipped
+    // (unrolled: constant indices, the list stays in registers)
+    vec2 nv[9];
+    [[unroll]] for (int k = 0; k < 9; ++k) {
+        ivec2 q = clamp(bb + ivec2(k % 3 - 1, k / 3 - 1), ivec2(0), nb - 1);
+        nv[k] = vb[P.blk_off.x + q.y * nb.x + q.x].xy;
     }
+    [[unroll]] for (int k = 0; k < 9; ++k) {
+        bool rep = false;
+        [[unroll]] for (int u = 0; u < k; ++u) rep = rep || nv[u] == nv[k];
+        if (!rep) consider(nv[k], 0.01);
+    }
+    for (int L = 0; L < nl; ++L) consider(camera_vec(LY.layers[L], s_inv[L], vec2(g_p), 2.0, 0), 0.01);
     for (int q = 0; q < int(G.pal_count); ++q) consider(G.palette[q].xy * 0.5, 0.01);
     consider(vec2(0.0), 0.01);
     if (best_s < 0.5) best_m = 0;

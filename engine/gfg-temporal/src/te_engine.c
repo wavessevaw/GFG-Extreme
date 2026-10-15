@@ -16,7 +16,8 @@
 #include <unistd.h>
 
 #define TE_RING 2
-#define TE_QUERIES (4 + TE_MAX_OUTPUTS * 6)
+#define TE_LMC_Q0 (4 + TE_MAX_OUTPUTS * 6)              /* LMC per-pass points */
+#define TE_QUERIES (TE_LMC_Q0 + TE_LMC_PROF_COUNT + 1)
 #define TE_GLOBALS_HEADER 96u
 #define TE_LUMA_IMAGES (TE_MAX_LEVELS + 1)
 
@@ -77,6 +78,7 @@ typedef struct {
     int generated;
     int held;
     int profiled;
+    int lmc_timed;             /* LMC per-pass timestamps written */
 } te_slot;
 
 struct te_device {
@@ -1181,6 +1183,12 @@ static void collect(te_context* ctx, te_slot* slot) {
             st->frame_ms[i][TE_FRAME_TOTAL] = DELTA(q, q + 5);
         }
     }
+    for (int k = 0; k < TE_LMC_PROF_COUNT; ++k) st->lmc_ms[k] = -1.0;
+    if (st->timed && slot->lmc_timed &&
+        vkGetQueryPoolResults(ctx->dev->device, slot->queries, TE_LMC_Q0, TE_LMC_PROF_COUNT + 1,
+                              sizeof ts, ts + TE_LMC_Q0, sizeof ts[0],
+                              VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) == VK_SUCCESS)
+        for (int k = 0; k < TE_LMC_PROF_COUNT; ++k) st->lmc_ms[k] = DELTA(TE_LMC_Q0 + k, TE_LMC_Q0 + k + 1);
 #undef DELTA
     const uint8_t* rb = slot->readback.map;
     if (ctx->lmc) {

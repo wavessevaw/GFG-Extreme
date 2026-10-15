@@ -5,9 +5,10 @@
 // wins" rule match the reference's argmin.
 //
 // PC.pass_: 0 = candidates + refinement (writes the grid buffer)
-//           1 = one propagation sweep (grid buffer -> scratch)
+//           1 = one propagation sweep (grid buffer -> scratch, z = cost)
 //           2 = vector median (grid buffer -> scratch)
 //           3 = scratch -> grid buffer, recomputing the cost
+//           4 = scratch -> grid buffer as it is (after pass 1)
 // PC.flags: bit 0 = temporal predictor valid
 #include "lmc_common.glsl"
 layout(local_size_x = 64) in;
@@ -27,14 +28,26 @@ void store_v(ivec2 b, vec4 v) {
     if (PC.grid == 0) vb[i] = v; else va[i] = v;
 }
 
+// the block's own pixels, fetched once (constant indices only: stays in registers)
+float g_own[LMC_BLK * LMC_BLK];
+
+void load_own() {
+    [[unroll]] for (int oy = 0; oy < LMC_BLK; ++oy)
+        [[unroll]] for (int ox = 0; ox < LMC_BLK; ++ox) {
+            vec2 q = vec2(g_b * LMC_BLK + ivec2(ox, oy));
+            g_own[oy * LMC_BLK + ox] = PC.grid == 0 ? luma_b(g_l, q) : luma_a(g_l, q);
+        }
+}
+
 // mean |own - other| over the 4x4 block (reference: Level.cost)
 float cost(vec2 v) {
     float acc = 0.0;
+    vec2 o = PC.grid == 0 ? -v : v;
     [[unroll]] for (int oy = 0; oy < LMC_BLK; ++oy) {
         [[unroll]] for (int ox = 0; ox < LMC_BLK; ++ox) {
-            vec2 q = vec2(g_b * LMC_BLK + ivec2(ox, oy));
-            if (PC.grid == 0) acc += abs(luma_b(g_l, q) - luma_a(g_l, q - v));
-            else acc += abs(luma_a(g_l, q) - luma_b(g_l, q + v));
+            vec2 q = vec2(g_b * LMC_BLK + ivec2(ox, oy)) + o;
+            float y = PC.grid == 0 ? luma_a(g_l, q) : luma_b(g_l, q);
+            acc += abs(g_own[oy * LMC_BLK + ox] - y);
         }
     }
     return acc / float(LMC_BLK * LMC_BLK);
@@ -42,12 +55,15 @@ float cost(vec2 v) {
 
 vec2 g_best;
 float g_cost;
+float g_pure;   // cost of g_best without its penalty
 
 void consider(vec2 v, float pen) {
-    float c = cost(v) + pen;
+    float p = cost(v);
+    float c = p + pen;
     if (c < g_cost) {
         g_cost = c;
         g_best = v;
+        g_pure = p;
     }
 }
 
@@ -93,10 +109,16 @@ void main() {
     if (id >= n.x * n.y) return;
     g_b = ivec2(id % n.x, id / n.x);
     int idx = blk_offset(g_l) + id;
+    if (PC.pass_ == 4) {
+        store_v(g_b, scratch[idx]);
+        return;
+    }
+    if (PC.pass_ != 2) load_own();
 
     if (PC.pass_ == 0) {
         g_cost = 1e30;
         g_best = vec2(0.0);
+        g_pure = 1e30;
         if (g_l == LMC_LEVELS) {
             int r = P.coarse_r;
             for (int dy = -r; dy <= r; ++dy)
@@ -122,8 +144,7 @@ void main() {
         for (int s = 0; s < steps; ++s) {
             float st = s == 0 ? 1.0 : 0.5;
             vec2 c0 = g_best;
-            g_cost = cost(c0);
-            g_best = c0;
+            g_cost = g_pure;  // == cost(c0): the refinement restarts without the penalty
             for (int dy = -1; dy <= 1; ++dy)
                 for (int dx = -1; dx <= 1; ++dx)
                     if (dx != 0 || dy != 0) consider(c0 + vec2(dx, dy) * st, P.pen_update * st);
@@ -134,13 +155,14 @@ void main() {
         vec2 med = median3(g_b);
         vec2 cands[6] = vec2[6](v, med, load_v(g_b + ivec2(0, -1)).xy, load_v(g_b + ivec2(0, 1)).xy,
                                 load_v(g_b + ivec2(-1, 0)).xy, load_v(g_b + ivec2(1, 0)).xy);
-        float bc = 1e30;
+        float bc = 1e30, bp = 0.0;
         vec2 bv = v;
         for (int k = 0; k < 6; ++k) {
-            float c = cost(cands[k]) + P.smooth_ * (abs(cands[k].x - med.x) + abs(cands[k].y - med.y));
-            if (c < bc) { bc = c; bv = cands[k]; }
+            float p = cost(cands[k]);
+            float c = p + P.smooth_ * (abs(cands[k].x - med.x) + abs(cands[k].y - med.y));
+            if (c < bc) { bc = c; bv = cands[k]; bp = p; }
         }
-        scratch[idx] = vec4(bv, bc, 0.0);
+        scratch[idx] = vec4(bv, bp, 0.0);  // pass 4 stores it: the same as pass 3 recomputing it
     } else if (PC.pass_ == 2) {
         scratch[idx] = vec4(median3(g_b), 0.0, 0.0);
     } else {

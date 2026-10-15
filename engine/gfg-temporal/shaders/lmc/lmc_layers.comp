@@ -6,12 +6,10 @@
 // PC.pass_: 0 = block statistics (one thread per level-1 block): usable
 //               weight w0, scene-motion votes; keeps the previous layers as
 //               hypotheses and starts a new fit
-//           1 = ordered list of the blocks still unexplained (one workgroup)
 //           2 = RANSAC: one workgroup per hypothesis (previous layers first,
 //               then PCG32 samples of 4 blocks at least 120 px apart)
-//           3 = best hypothesis, Tukey IRLS on its inliers, accept the layer
-//               when it explains MIN_LAYER_SHARE of the usable blocks
-// Passes 1-3 run once per layer; a rejected layer stops the rest.
+// lmc_irls.comp has pass 1 (the list of unexplained blocks) and pass 3 (the
+// fit).  Passes 1-3 run once per layer; a rejected layer stops the rest.
 #include "lmc_common.glsl"
 #include "lmc_store.glsl"
 layout(local_size_x = 64) in;
@@ -26,67 +24,7 @@ layout(local_size_x = 64) in;
 #define TOTAL LY.live[2 * NB + 1]
 #define STOP LY.live[2 * NB + 2]
 
-vec2 blk_centre(int i) {
-    int w = lblocks(1).x;
-    return vec2(float(i % w) * 8.0 + 3.5, float(i / w) * 8.0 + 3.5);
-}
-
-// full-res vector of a level-1 B-grid block
-vec2 blk_vec(int i) { return vb[P.blk_off.x + i].xy * 2.0; }
-
-float tol_of(vec2 v) { return 1.5 + 0.03 * length(v); }
-
-// --------------------------------------------------------------- 8x8 solve
-
-void solve8(inout float M[8][8], inout float b[8], out float h[8]) {
-    for (int c = 0; c < 8; ++c) {
-        int piv = c;
-        for (int r = c + 1; r < 8; ++r)
-            if (abs(M[r][c]) > abs(M[piv][c])) piv = r;
-        if (piv != c) {
-            for (int k = 0; k < 8; ++k) { float t = M[c][k]; M[c][k] = M[piv][k]; M[piv][k] = t; }
-            float t = b[c]; b[c] = b[piv]; b[piv] = t;
-        }
-        float d = M[c][c];
-        if (abs(d) < 1e-20) d = 1e-20;
-        for (int r = c + 1; r < 8; ++r) {
-            float f = M[r][c] / d;
-            for (int k = c; k < 8; ++k) M[r][k] -= f * M[c][k];
-            b[r] -= f * b[c];
-        }
-    }
-    for (int r = 7; r >= 0; --r) {
-        float s = b[r];
-        for (int k = r + 1; k < 8; ++k) s -= M[r][k] * h[k];
-        float d = M[r][r];
-        h[r] = s / (abs(d) < 1e-20 ? 1e-20 : d);
-    }
-}
-
-// normalisation T = [[s, 0, -s cx], [0, s, -s cy], [0, 0, 1]] -> H = Td^-1 Hn Ts
-Layer denorm(float h[8], vec3 ns, vec3 nd) {
-    mat3 Hn = transpose(mat3(h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1.0));
-    mat3 Ts = transpose(mat3(ns.z, 0.0, -ns.z * ns.x, 0.0, ns.z, -ns.z * ns.y, 0.0, 0.0, 1.0));
-    mat3 Td = transpose(mat3(nd.z, 0.0, -nd.z * nd.x, 0.0, nd.z, -nd.z * nd.y, 0.0, 0.0, 1.0));
-    mat3 H = inverse(Td) * Hn * Ts;
-    H /= H[2][2];
-    mat3 R = transpose(H);
-    Layer L;
-    L.h0 = vec4(R[0], 0.0);
-    L.h1 = vec4(R[1], 0.0);
-    L.h2 = vec4(R[2], 0.0);
-    return L;
-}
-
-// accumulate one correspondence into the normal equations (normalised coords)
-void accum(inout float M[8][8], inout float b[8], vec2 x, vec2 u, float w) {
-    float r0[8] = float[8](x.x, x.y, 1.0, 0.0, 0.0, 0.0, -u.x * x.x, -u.x * x.y);
-    float r1[8] = float[8](0.0, 0.0, 0.0, x.x, x.y, 1.0, -u.y * x.x, -u.y * x.y);
-    for (int i = 0; i < 8; ++i) {
-        for (int j = 0; j < 8; ++j) M[i][j] += w * (r0[i] * r0[j] + r1[i] * r1[j]);
-        b[i] += w * (r0[i] * u.x + r1[i] * u.y);
-    }
-}
+#include "lmc_plane.glsl"
 
 // --------------------------------------------------------------- PCG32
 
@@ -101,7 +39,6 @@ uint pcg(inout uint state) {
 shared float s_red[64][4];
 shared Layer s_h;
 shared uint s_flag;
-shared uint s_hist[256];
 
 float wg_sum(float v) {
     // subgroup sum, then across subgroups through LDS (64 threads)
@@ -151,24 +88,6 @@ void main() {
         if (usable != 0u) atomicAdd(TOTAL, 1u);
         vec2 v = blk_vec(i);
         if (max(abs(v.x), abs(v.y)) > 1.0) atomicAdd(G.moving_votes, 1u);
-        return;
-    }
-
-    if (PC.pass_ == 1) {
-        if (STOP != 0u) return;
-        // ordered compaction by one workgroup: contiguous chunks + exclusive scan
-        int chunk = (n + 63) / 64;
-        int lo = int(lid) * chunk, hi = min(n, lo + chunk);
-        uint cnt = 0u;
-        for (int i = lo; i < hi; ++i) cnt += LY.live[i];
-        s_red[lid][1] = float(cnt);
-        barrier();
-        uint off = 0u;
-        for (uint k = 0; k < lid; ++k) off += uint(s_red[k][1]);
-        for (int i = lo; i < hi; ++i)
-            if (LY.live[i] != 0u) LIST(int(off++)) = uint(i);
-        barrier();
-        if (lid == 63u) NLIVE = off;
         return;
     }
 
@@ -233,132 +152,5 @@ void main() {
         float tot = wg_sum(cnt);
         if (lid == 0u) LY.hyp_inliers[wgi] = uint(tot + 0.5);
         return;
-    }
-
-    // pass 3: one workgroup
-    if (STOP != 0u) return;
-    if (lid == 0u) {
-        uint best = 0u, bn = 0u;
-        uint nh = uint(LMC_HYPS) + LY.prev_count;
-        for (uint k = 0; k < nh; ++k)
-            if (LY.hyp_inliers[k] > bn) { bn = LY.hyp_inliers[k]; best = k; }
-        s_flag = bn >= 8u ? 1u : 0u;
-        if (s_flag != 0u) s_h = LY.hyps[best];
-    }
-    barrier();
-    if (s_flag == 0u) {
-        if (lid == 0u) STOP = 1u;
-        return;
-    }
-    // wref = inliers of the best hypothesis; IRLS weights live in scratch[].w
-    Layer H = s_h;
-    for (int i = int(lid); i < n; i += 64) {
-        float wr = 0.0;
-        if (LY.live[i] != 0u) {
-            vec2 d = blk_centre(i);
-            if (distance(apply_h(H, d - blk_vec(i)), d) < tol_of(blk_vec(i))) wr = 1.0;
-        }
-        scratch[P.blk_off.x + i].zw = vec2(wr, wr);  // z = wref, w = IRLS weight
-    }
-    barrier();
-    memoryBarrierBuffer();
-    float cw = 0.0;
-    for (int i = int(lid); i < n; i += 64) cw += scratch[P.blk_off.x + i].z;
-    if (wg_sum(cw) < 8.0) {
-        if (lid == 0u) STOP = 1u;
-        return;
-    }
-    for (int iter = 0; iter < 6; ++iter) {
-        // weighted normalisation of both point sets
-        vec4 acc = vec4(0.0);
-        float ws = 0.0;
-        for (int i = int(lid); i < n; i += 64) {
-            float w = scratch[P.blk_off.x + i].w;
-            vec2 d = blk_centre(i);
-            acc += w * vec4(d - blk_vec(i), d);
-            ws += w;
-        }
-        float W = max(wg_sum(ws), 1e-9);
-        vec4 c = vec4(wg_sum(acc.x), wg_sum(acc.y), wg_sum(acc.z), wg_sum(acc.w)) / W;
-        float dsv = 0.0, ddv = 0.0;
-        for (int i = int(lid); i < n; i += 64) {
-            float w = scratch[P.blk_off.x + i].w;
-            vec2 d = blk_centre(i);
-            dsv += w * distance(d - blk_vec(i), c.xy);
-            ddv += w * distance(d, c.zw);
-        }
-        vec3 ns = vec3(c.xy, sqrt(2.0) / max(wg_sum(dsv) / W, 1e-6));
-        vec3 nd = vec3(c.zw, sqrt(2.0) / max(wg_sum(ddv) / W, 1e-6));
-        float M[8][8], b[8], h[8];
-        for (int r = 0; r < 8; ++r) { b[r] = 0.0; for (int q = 0; q < 8; ++q) M[r][q] = 0.0; }
-        for (int i = int(lid); i < n; i += 64) {
-            float w = scratch[P.blk_off.x + i].w;
-            if (w <= 0.0) continue;
-            vec2 d = blk_centre(i);
-            accum(M, b, (d - blk_vec(i) - ns.xy) * ns.z, (d - nd.xy) * nd.z, w);
-        }
-        for (int r = 0; r < 8; ++r) {
-            b[r] = wg_sum(b[r]);
-            for (int q = 0; q < 8; ++q) M[r][q] = wg_sum(M[r][q]) + (r == q ? 1e-9 : 0.0);
-        }
-        solve8(M, b, h);
-        H = denorm(h, ns, nd);
-        // residual median of the wref blocks by a 0.25 px histogram, Tukey weights
-        for (uint k = lid; k < 256u; k += 64u) s_hist[k] = 0u;
-        barrier();
-        float nin = 0.0;
-        for (int i = int(lid); i < n; i += 64) {
-            if (scratch[P.blk_off.x + i].z <= 0.0) continue;
-            vec2 d = blk_centre(i);
-            float r = distance(apply_h(H, d - blk_vec(i)), d);
-            atomicAdd(s_hist[uint(clamp(r / 0.25, 0.0, 255.0))], 1u);
-            nin += 1.0;
-        }
-        float tot = wg_sum(nin);
-        barrier();
-        if (lid == 0u) {
-            uint half_ = (uint(tot + 0.5) + 1u) / 2u;
-            float cum = 0.0;
-            uint k = 0u;
-            for (; k < 255u; ++k) { cum += float(s_hist[k]); if (cum >= float(half_)) break; }
-            s_red[0][2] = (float(k) + 0.5) * 0.25;
-        }
-        barrier();
-        float cth = max(2.0, 2.5 * s_red[0][2]);
-        for (int i = int(lid); i < n; i += 64) {
-            vec2 d = blk_centre(i);
-            float r = distance(apply_h(H, d - blk_vec(i)), d);
-            float wr = scratch[P.blk_off.x + i].z;
-            float u = r / cth;
-            scratch[P.blk_off.x + i].w = wr * (r < cth ? (1.0 - u * u) * (1.0 - u * u) : 0.0);
-        }
-        barrier();
-        memoryBarrierBuffer();
-    }
-    // explained share against the usable total, then accept or stop
-    float ex = 0.0;
-    for (int i = int(lid); i < n; i += 64) {
-        if (LY.live[i] == 0u) continue;
-        vec2 d = blk_centre(i);
-        if (distance(apply_h(H, d - blk_vec(i)), d) < tol_of(blk_vec(i))) ex += 1.0;
-    }
-    float exs = wg_sum(ex);
-    float share = exs / max(float(TOTAL), 1.0);
-    bool fin = !any(isnan(H.h0)) && !any(isnan(H.h1)) && !any(isnan(H.h2));
-    if (!fin || share < P.min_layer_share) {
-        if (lid == 0u) STOP = 1u;
-        return;
-    }
-    barrier();
-    for (int i = int(lid); i < n; i += 64) {
-        if (LY.live[i] == 0u) continue;
-        vec2 d = blk_centre(i);
-        if (distance(apply_h(H, d - blk_vec(i)), d) < tol_of(blk_vec(i))) LY.live[i] = 0u;
-    }
-    if (lid == 0u) {
-        H.h2.w = share;
-        LY.layers[LY.layer_count] = H;
-        LY.layer_count += 1u;
-        if (LY.layer_count >= uint(LMC_MAX_LAYERS)) STOP = 1u;
     }
 }
