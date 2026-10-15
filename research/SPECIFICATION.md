@@ -1,12 +1,12 @@
 # ТЕХНИЧЕСКОЕ ЗАДАНИЕ
 # GFG EXTREME — NATIVE FRAME GENERATION ENGINE
 
-**Проект:** GFG Extreme  
-**Направление:** Reverse Engineering / GPU Compute / Vulkan / Frame Generation  
-**Приоритет:** P0 — критический  
-**Исполнитель:** AI Engineering Agent  
-**Репозиторий:** `wavessevaw/GFG-Extreme`  
-**Целевая платформа:** Steam Deck OLED / LCD, SteamOS, AMD RDNA 2  
+**Проект:** GFG Extreme
+**Направление:** Reverse Engineering / GPU Compute / Vulkan / Frame Generation
+**Приоритет:** P0 — критический
+**Исполнитель:** AI Engineering Agent
+**Репозиторий:** `wavessevaw/GFG-Extreme`
+**Целевая платформа:** Steam Deck OLED / LCD, SteamOS, AMD RDNA 2
 **Статус:** исследование и разработка независимого генератора кадров
 
 ---
