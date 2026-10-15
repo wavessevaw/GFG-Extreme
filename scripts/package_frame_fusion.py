@@ -61,7 +61,7 @@ def package(plugin: Path, build: Path):
     data = output.getvalue()
     temporary = archive.with_suffix(archive.suffix + ".fusion.tmp")
     temporary.write_bytes(data); temporary.replace(archive)
-    bundle["version"] = "4.0.0-gfg.fusion.3-te.4"  # Temporal Engine beta renderer
+    bundle["version"] = "4.0.0-gfg.fusion.3-te.5"  # Temporal Engine beta renderer
     bundle["sha256hash"] = digest(data)
     bundle["frame_fusion"] = {"source": source, "base_archive_sha256": digest(original)}
     # The generated archive is a local fork, not the upstream asset at that URL.

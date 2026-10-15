@@ -18,7 +18,7 @@
 extern "C" {
 #endif
 
-#define TE_VERSION "0.2.0-exp"
+#define TE_VERSION "0.2.1-exp"
 #define TE_MAX_OUTPUTS 4
 #define TE_MAX_LEVELS 3
 
