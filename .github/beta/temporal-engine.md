@@ -1,13 +1,19 @@
-# GFG Extreme 2.1.2-te.3 — Temporal Engine beta (pre-release)
+# GFG Extreme 2.1.2-te.4 — Temporal Engine beta (private test build)
 
-**Experimental build for hardware trials. Not verified on a Steam Deck.** Everything else is GFG Extreme 2.1.1.
+**Experimental build for hardware trials. Not yet verified on a Steam Deck.** Everything else is GFG Extreme 2.1.1.
 
-te.3 is a **diagnostic** build: te.2 ran on the Deck, but its measurements never reached the plugin, so the logs could not show why motion did not feel smooth or where the artifacts came from.
+te.4 replaces the frame generator. The tile engine of te.1–te.3 is still there (`GFG_TEMPORAL_ALGO=tiles`), but the default is now **LMC, layered motion compensation**:
 
-- **Telemetry fixed.** The engine wrote one status field as `1` instead of `true`, and the plugin rejected the whole record — every te.2 log showed "waiting-for-game". The plugin now accepts both forms (so even the te.2 engine reports), and the te.3 engine writes `true`/`false`.
-- **Engine stats in the renderer log** every 10 seconds: quality level, whether it is holding (showing the newest real frame instead of generated ones because it is over the cost cap), GPU time per pair and per generated frame, and the REUSE/LIGHT/FULL shares. The log summary reports them.
-- No change to how frames are generated: this build is for measuring what te.2 does on the Deck.
+- **The HUD is not warped.** Pixels that stay still for several pairs while the scene moves are copied from the newest real frame.
+- **Camera motion is one model per surface.** Up to three robust homographies (RANSAC + IRLS) give every background pixel an exact, sub-pixel vector with no tile grid and no range limit.
+- **Objects get their own vectors.** A predictive block search (3-D recursive search style, spatial propagation, vector median), a motion palette (the most frequent vectors, so a still object over a moving scene keeps no halo) and a wide search for blocks nothing else explains.
+- **Edges pick the right frame.** Each output pixel tests candidate trajectories: valid in both frames → blend; only in the previous one → it is being covered, take it from there; only in the newest → it is being uncovered. The tile engine chose the side by time, which is wrong on half of every moving edge.
+- **No cost hold.** The tile engine repeated the real frame for 120 pairs whenever it went over its cost cap; LMC never does.
 
-How to test: install **GFG-Extreme-v2_1_2-te_3.zip** through Decky, **Settings → System → Update engine**, restart the game through `/home/deck/.local/bin/gfg %command%`, keep **Temporal Engine · Experimental**, record a log (2–3 minutes in the scene with the shiny surface and the sword), then the same with Temporal Engine **Off**.
+On the offline bench (rendered 90 FPS scenes, every third frame kept, the two between generated and compared with what was really rendered; NVIDIA FLIP, lower is better) LMC beats the tile engine and an FSR 3 frame-interpolation port without game vectors in camera pans, orbits, walks through thin posts, glossy surfaces and HUD, and ties on particles. A fast rotating thin blade is still hard for every generator.
+
+The renderer log now has the engine's real GPU time per stage every 10 seconds (`Temporal Engine stats algo=lmc … pyramid_ms analyze_ms fields_ms frame_ms pair_p95_ms layers orphans`), and the log summary reports it: one recording answers whether it fits the Deck's budget.
+
+How to test: install **GFG-Extreme-v2_1_2-te_4.zip** through Decky, **Settings → System → Update engine**, restart the game through `/home/deck/.local/bin/gfg %command%`, keep **Temporal Engine · Experimental**, record a log of 2–3 minutes of play with camera movement, then the same with Temporal Engine **Off**.
 
 SHA-256: `<sha256>` — also see **SHA256SUMS.txt**.

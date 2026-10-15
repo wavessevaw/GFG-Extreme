@@ -1,13 +1,19 @@
 name: Temporal Engine beta
 
-# Pre-release of the experimental GFG Temporal Engine from its feature branch.
-# Publishes only when .github/beta/temporal-engine.json changes (or on manual
-# dispatch) and only as a GitHub pre-release; never "latest", never main.
+# Test build of the experimental GFG Temporal Engine from its feature branch.
+# Builds when .github/beta/temporal-engine.json changes (or on manual dispatch)
+# and keeps the zip as a workflow artifact.  Public pre-releases are closed:
+# a GitHub pre-release is created only on a manual dispatch with publish=true.
 on:
   push:
     branches: [claude/busy-bardeen-rmv05o]
     paths: [.github/beta/temporal-engine.json]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Also create a GitHub pre-release"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -140,7 +146,18 @@ jobs:
           engine/gfg-temporal/build/te-tests
           python3 -m unittest discover -s engine/gfg-temporal/tests -p 'test_*.py'
 
+      - name: Keep the test build as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GFG-Extreme-${{ steps.version.outputs.version }}
+          path: |
+            out/*.zip
+            out/SHA256SUMS.txt
+          retention-days: 30
+          if-no-files-found: error
+
       - name: Publish pre-release
+        if: github.event_name == 'workflow_dispatch' && inputs.publish
         run: |
           sha="$(cut -d' ' -f1 out/SHA256SUMS.txt)"
           sed "s/\`<sha256>\`/\`$sha\`/" .github/beta/temporal-engine.md > notes.md
