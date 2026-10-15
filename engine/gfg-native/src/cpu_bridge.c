@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 /* SPDX-License-Identifier: GPL-3.0-or-later
  *
  * GFG Native CPU transport for the TE8 LMC generator.
