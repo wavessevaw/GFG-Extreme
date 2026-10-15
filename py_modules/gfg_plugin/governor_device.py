@@ -6,9 +6,10 @@ Targets (output FPS):
 * Steam Deck LCD  (DMI ``Jupiter``), handheld ........ 60 (panel is 60 Hz max)
 * Any device docked to an external display ........... 60
 
-Unknown hardware falls back to the internal panel's highest valid refresh rate.  On the internal
-panel the target never exceeds the refresh rate it actually runs at, when that is readable (an
-OLED set to 60 Hz cannot show 90 FPS).
+Unknown hardware falls back to the internal panel's highest valid refresh rate.  60 FPS is a
+target only on the LCD and in the dock: on a 90 Hz panel (OLED) the target stays 90 even when
+the panel reports a lower refresh, and Autopilot's reduced goal is 45 (half the panel, even
+frame times), never 60.  On the LCD the target still follows a lower running refresh.
 """
 from __future__ import annotations
 
@@ -41,7 +42,8 @@ def target_for(
 ) -> Dict[str, Any]:
     """Pick the output-FPS target and say why (shown verbatim in the UI)."""
     policy = _device_target(model, external=external, valid_rates=valid_rates)
-    if (not external and isinstance(current_hz, (int, float)) and not isinstance(current_hz, bool)
+    if (not external and policy["target"] < TARGET_OLED
+            and isinstance(current_hz, (int, float)) and not isinstance(current_hz, bool)
             and 20 <= current_hz < policy["target"]):
         hz = int(round(current_hz))
         return {"target": hz, "mode": policy["mode"], "reason": f"panel-running-{hz}hz"}

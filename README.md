@@ -58,7 +58,7 @@ Smart Power Split, Flow Scale, Frame OS Act and compatible shading trials defaul
 
 Imagine a Steam Deck OLED set to 90 Hz. The game consistently renders **30 real FPS**, while generation produces approximately **90 output FPS** at **×3**. Autopilot does not automatically increase TDP just because the GPU is 99% busy. If that operating point is confirmed and useful, it can keep the current settings and consider an efficiency check later.
 
-In a tougher scene, real-frame delivery begins to fall. Governor can alter its generation operating point or the power limit. Under the right policy and after several independent windows, Autopilot may choose a **60 output FPS** goal rather than repeatedly missing 90, then attempt recovery later. This is a **software target change**, not a guarantee of evenly paced 60 FPS on a physical 90 Hz panel. Display cadence still needs device testing.
+In a tougher scene, real-frame delivery begins to fall. Governor can alter its generation operating point or the power limit. Under the right policy and after several independent windows, Autopilot may choose a **45 output FPS** goal (half the 90 Hz panel, so every frame is held for the same time) rather than repeatedly missing 90, then attempt recovery later. A 60 FPS goal is used only on the Deck LCD and on an external display. Display cadence still needs device testing.
 
 If the GPU appears shader-limited, Autopilot can consider Half Rate Shading, when **Try Half Rate Shading** is enabled. When evidence does not identify a helpful action, it waits.
 
