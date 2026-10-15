@@ -252,6 +252,16 @@ def temporal_engine_log_summary(text: str) -> Dict[str, Any]:
 
     orphans = [r.get("orphans", "").split("/") for r in rows]
     orphans = [[float(x) for x in o] for o in orphans if len(o) == 2 and all(x.replace(".", "", 1).isdigit() for x in o)]
+    # te.5 (LMC): GPU time of every analysis pass, "a/b/.../h" in lmc_passes order
+    passes = []
+    for r in rows:
+        names, values = r.get("lmc_passes", "").split("/"), r.get("lmc_ms", "").split("/")
+        try:
+            if len(names) == len(values) > 1:
+                passes.append(dict(zip(names, (float(v) for v in values))))
+        except ValueError:
+            pass
+    pass_names = list(passes[0]) if passes else []
     shares = [r.get("shares", "") .split("/") for r in rows]
     shares = [[float(x) for x in s] for s in shares if len(s) == 3 and all(x.replace(".", "", 1).isdigit() for x in s)]
     return {"available": True, "lines": len(rows),
@@ -267,7 +277,9 @@ def temporal_engine_log_summary(text: str) -> Dict[str, Any]:
             "algorithms": dict(Counter(r.get("algo", "tiles") for r in rows)),
             "pyramid_ms_median": med("pyramid_ms"), "analyze_ms_median": med("analyze_ms"),
             "fields_ms_median": med("fields_ms"), "layers_median": med("layers"),
-            "orphans_median": [round(statistics.median(o[i] for o in orphans), 1) for i in range(2)] if orphans else None}
+            "orphans_median": [round(statistics.median(o[i] for o in orphans), 1) for i in range(2)] if orphans else None,
+            "lmc_passes_ms_median": {k: round(statistics.median(p[k] for p in passes if k in p), 3)
+                                     for k in pass_names} if passes else None}
 
 
 def stick_touch_boost_summary(samples: List[Dict[str, Any]]) -> Dict[str, Any]:

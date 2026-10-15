@@ -18,6 +18,8 @@ from typing import Any, Dict, Iterable, List, Optional
 MODES = ("off", "observe", "shadow", "experimental")
 MARKER_NAME = "temporal-engine.mode"
 STATUS_DIRNAME = "temporal"
+# LMC analysis passes in GPU order (te_engine.h TE_LMC_*; MAKO status lmc.passes_ms)
+LMC_PASSES = ("search_b", "search_a", "layers", "palette", "field", "masked", "orphan", "field2")
 MAX_FILES = 32
 _ROLES = ("engine", "observer", "fallback")
 
@@ -117,8 +119,16 @@ def normalize_status(raw: object) -> Dict[str, Any]:
         if not isinstance(lmc, dict):
             raise ValueError("lmc must be an object")
         out["lmc"] = {k: _num(lmc.get(k), "lmc." + k) for k in ("layers", "orphans_b", "orphans_a", "select_ms")}
+        # te.5+: the cost guard's share of the real interval and the GPU time of every analysis pass
+        if "budget" in lmc:
+            out["lmc"]["budget"] = _num(lmc.get("budget"), "lmc.budget")
+        passes = lmc.get("passes_ms")
+        if passes is not None:
+            if not isinstance(passes, dict) or set(passes) != set(LMC_PASSES):
+                raise ValueError("lmc.passes_ms must name every LMC pass")
+            out["lmc_passes_ms"] = {k: _num(passes.get(k), "lmc.passes_ms." + k) for k in LMC_PASSES}
     recommendation = sched.get("recommendation")
-    if recommendation not in ("keep", "fewer-outputs", "fallback"):
+    if recommendation not in ("keep", "fewer-outputs", "fallback", "hold"):
         raise ValueError("invalid recommendation")
     out["scheduler"] = {
         "level": _int(sched.get("level"), "level"),
@@ -241,6 +251,7 @@ def summarize(requested_mode: str, contexts: List[Dict[str, Any]]) -> Dict[str, 
             confidence=round(e["confidence"], 4), scheduler=dict(e["scheduler"]),
             algorithm=e["algorithm"],
             lmc={k: round(v, 3) for k, v in e["lmc"].items()} if "lmc" in e else None,
+            lmc_passes_ms={k: round(v, 4) for k, v in e["lmc_passes_ms"].items()} if "lmc_passes_ms" in e else None,
             vram_mb=round(e["vram_bytes"] / (1024 * 1024), 1), last_error=e["last_error"])
         dispatched = c["outputs_dispatched"]
         out["completion_ratio"] = round(c["outputs_gpu_completed"] / dispatched, 4) if dispatched else None

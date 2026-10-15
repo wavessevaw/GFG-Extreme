@@ -457,6 +457,7 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
     /* per-pixel fields, orphan objects, fields again next to orphans */
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_FIELD]);
     for (int g = 0; g < 2; ++g) {
+        if (g) compute_barrier(cb);  /* the shader names both fields (pass 1 samples them): see below */
         lmc_push_c(ctx, cb, 0.0f, 1, g, 0, 0);
         vkCmdDispatch(cb, groups(m->bw[1], 2), groups(m->bh[1], 2), 1);
     }
@@ -493,6 +494,9 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
     LMC_TS(1 + TE_LMC_ORPHAN);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_FIELD]);
     for (int g = 0; g < 2; ++g) {
+        /* pass 1 reads the pass-0 field through the sampler: the shader names both grids' fields, so
+           the second grid waits for the first one's writes too */
+        if (g) compute_barrier(cb);
         lmc_push_c(ctx, cb, 0.0f, 1, g, 1, 0);
         vkCmdDispatch(cb, groups(m->bw[1], 2), groups(m->bh[1], 2), 1);
     }

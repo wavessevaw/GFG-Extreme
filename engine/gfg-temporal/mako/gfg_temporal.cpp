@@ -31,6 +31,14 @@ namespace mako::backend::gfg_temporal {
 namespace {
     using Clock = std::chrono::steady_clock;
     constexpr uint64_t previousWorkTimeoutNs = 250'000'000ULL; // same bound as the LSFG context
+    constexpr uint32_t lmcOverPairs = 30;   // LMC pairs over budget in a row before a cost hold
+
+    const char* lmcPassName(int k) noexcept {
+        static const char* const names[TE_LMC_PROF_COUNT] = {"search_b", "search_a", "layers", "palette",
+                                                             "field", "masked", "orphan", "field2"};
+        return k >= 0 && k < TE_LMC_PROF_COUNT ? names[k] : "?";
+    }
+
     constexpr auto publishInterval = std::chrono::milliseconds(1000);
 
     uint64_t processStartTicks() {
@@ -168,6 +176,11 @@ namespace {
                 this->lmcLayers = this->ema(this->lmcLayers, st.tiles[0][0]);
                 this->lmcOrphansB = this->ema(this->lmcOrphansB, st.tiles[0][1]);
                 this->lmcOrphansA = this->ema(this->lmcOrphansA, st.tiles[0][2]);
+                for (int k = 0; k < TE_LMC_PROF_COUNT; ++k)
+                    if (st.lmc_ms[k] >= 0.0) this->lmcMs[k] = this->ema(this->lmcMs[k], st.lmc_ms[k]);
+                // cost guard: a pair over its share of the real interval counts against the generator
+                if (this->intervalMs > 0.0 && pair > this->runtime->lmcBudget() * this->intervalMs) this->lmcOver++;
+                else this->lmcOver = 0;
                 return;
             }
             te_sched_observation o{};
@@ -249,6 +262,13 @@ namespace {
             this->collect();
             te_sched_input in{.real_interval_ms = this->intervalMs, .gpu_busy = -1.0,
                               .requested = static_cast<uint32_t>(timestamps.size())};
+            if (!timestamps.empty() && this->lmc && this->lmcOver >= lmcOverPairs && this->holdPairs == 0) {
+                // LMC over its GPU budget for a run of pairs: hold (copy the real frame, no
+                // analysis) so the game keeps its GPU time, then measure again
+                this->holdPairs = 120;
+                this->costHolds++;
+                this->lmcOver = 0;
+            }
             if (!timestamps.empty() && !this->lmc) {
                 this->decision = te_scheduler_decide(&this->scheduler, &in);
                 // over the cost cap even at LIGHT-only: hold (copy the real frame,
@@ -265,7 +285,7 @@ namespace {
             s.wait_value = step.wait;
             s.signal_first = this->shadow ? 0 : step.firstSignal;
             s.discontinuity = this->skipped ? 1 : 0;
-            if (!this->lmc && this->holdPairs > 0 && s.count) {
+            if (this->holdPairs > 0 && s.count) {
                 s.hold = 1;
                 // measure afresh when the hold ends (the averages are from before it)
                 if (--this->holdPairs == 0) this->scheduler.samples = 0;
@@ -337,7 +357,11 @@ namespace {
                   << ",\"full\":" << finite(this->share[2]) << '}'
                   << ",\"confidence\":" << finite(this->confidence)
                   << ",\"lmc\":{\"layers\":" << finite(this->lmcLayers) << ",\"orphans_b\":" << finite(this->lmcOrphansB)
-                  << ",\"orphans_a\":" << finite(this->lmcOrphansA) << ",\"select_ms\":" << finite(this->listsMs) << '}'
+                  << ",\"orphans_a\":" << finite(this->lmcOrphansA) << ",\"select_ms\":" << finite(this->listsMs)
+                  << ",\"budget\":" << finite(this->runtime->lmcBudget()) << ",\"passes_ms\":{";
+                for (int k = 0; k < TE_LMC_PROF_COUNT; ++k)
+                    o << (k ? "," : "") << '"' << lmcPassName(k) << "\":" << finite(this->lmcMs[k]);
+                o << "}}"
                   << ",\"scheduler\":{\"level\":" << this->decision.level
                   << ",\"light_scale\":" << finite(this->decision.light_scale)
                   << ",\"force_full\":" << this->decision.force_full
@@ -346,7 +370,7 @@ namespace {
                   << ",\"budget_ms\":" << finite(this->decision.budget_ms)
                   << ",\"predicted_ms\":" << finite(this->decision.predicted_ms)
                   << ",\"recommended_outputs\":" << this->decision.outputs
-                  << ",\"recommendation\":" << jsonString(this->lmc ? "keep"
+                  << ",\"recommendation\":" << jsonString(this->lmc ? (this->holdPairs > 0 ? "hold" : "keep")
                         : this->decision.action == TE_SCHED_FALLBACK ? "fallback"
                         : (this->decision.outputs < this->stats.outputs ? "fewer-outputs" : "keep"))
                   << ",\"reason\":" << jsonString(reasonName(this->decision.reason))
@@ -380,7 +404,14 @@ namespace {
                       << " analyze_ms=" << finite(this->stageMs[TE_STAGE_ANALYZE])
                       << " fields_ms=" << finite(this->stageMs[TE_STAGE_CLASSIFY])
                       << " layers=" << finite(this->lmcLayers) << " orphans=" << finite(this->lmcOrphansB) << '/'
-                      << finite(this->lmcOrphansA) << '\n';
+                      << finite(this->lmcOrphansA);
+                    if (this->lmc) {
+                        l << " lmc_ms=";
+                        for (int k = 0; k < TE_LMC_PROF_COUNT; ++k)
+                            l << (k ? "/" : "") << finite(this->lmcMs[k]);
+                        l << " lmc_passes=search_b/search_a/layers/palette/field/masked/orphan/field2";
+                    }
+                    l << '\n';
                     std::clog << l.str();
                 }
             } catch (...) {
@@ -392,8 +423,10 @@ namespace {
         bool shadow;
         VkExtent2D extent;
         StatusFile status;
-        bool lmc;                  // layered motion path: no tile scheduler, no cost hold
+        bool lmc;                  // layered motion path: no tile scheduler; its own cost guard
         double lmcLayers{0.0}, lmcOrphansB{0.0}, lmcOrphansA{0.0};
+        double lmcMs[TE_LMC_PROF_COUNT]{};
+        uint32_t lmcOver{0};       // consecutive pairs over the LMC budget
         te_scheduler scheduler{};
         te_sched_decision decision{};
         te_pair_stats stats{};
@@ -514,6 +547,10 @@ std::shared_ptr<Runtime> Runtime::create(Mode mode, VkPhysicalDevice physical,
         }
         if (const char* algo = std::getenv("GFG_TEMPORAL_ALGO"))
             rt->m_algorithm = std::string_view(algo) == "tiles" ? TE_ALGO_TILES : TE_ALGO_LMC;
+        if (const char* budget = std::getenv("GFG_TEMPORAL_LMC_BUDGET")) {
+            const double value = std::strtod(budget, nullptr);
+            if (value >= 0.05 && value <= 1.0) rt->m_lmcBudget = value;
+        }
     } catch (...) {
         return nullptr;
     }
