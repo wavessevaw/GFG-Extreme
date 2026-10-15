@@ -35,6 +35,11 @@ layout(std140, set = 0, binding = 0) uniform Params {
     vec4 level_size[4];    // xy = level width, height
 } P;
 
+// Encode channel order on the GPU. A raw compatible-format image copy into
+// a BGRA/sRGB WSI image preserves encoded colour bytes without a CPU swizzle
+// or an additional sRGB transfer-function conversion.
+vec4 output_color(vec4 value) { return P.pad_a != 0 ? value.bgra : value; }
+
 layout(set = 0, binding = 1) uniform sampler2D srcA;
 layout(set = 0, binding = 2) uniform sampler2D srcB;
 layout(set = 0, binding = 3) uniform sampler2D lumaA0;

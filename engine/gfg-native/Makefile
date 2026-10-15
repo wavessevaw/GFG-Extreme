@@ -3,11 +3,17 @@ CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Werror -fPIC
 BUILD ?= build
 VULKAN_HEADERS ?= /usr/include
 ENABLE_TE ?= 0
+ENABLE_CPU_BRIDGE ?= 0
 TE_LIB ?= ../gfg-temporal/build/libgfg-temporal.a
 ifeq ($(ENABLE_TE),1)
-NATIVE_SOURCES := src/layer.c src/cpu_bridge.c
-NATIVE_HEADERS := src/cpu_bridge.h src/memory_policy.h
+NATIVE_SOURCES := src/layer.c src/gpu_bridge.c
+NATIVE_HEADERS := src/gpu_bridge.h
 NATIVE_CPPFLAGS := -DGFG_NATIVE_WITH_TE -I../gfg-temporal/src
+ifeq ($(ENABLE_CPU_BRIDGE),1)
+NATIVE_SOURCES += src/cpu_bridge.c
+NATIVE_HEADERS += src/cpu_bridge.h src/memory_policy.h
+NATIVE_CPPFLAGS += -DGFG_NATIVE_WITH_CPU_BRIDGE
+endif
 NATIVE_LDLIBS := $(TE_LIB) -ldl -lm
 NATIVE_DEPS := $(TE_LIB)
 else
@@ -46,6 +52,33 @@ $(BUILD)/memory-policy: tests/memory_policy.c src/memory_policy.h
 memory-policy: $(BUILD)/memory-policy
 	$(BUILD)/memory-policy
 
+$(BUILD)/borrowed-device: tests/borrowed_device.c $(TE_LIB)
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I$(VULKAN_HEADERS) -I../gfg-temporal/src -o $@ $< $(TE_LIB) -lvulkan -ldl -lpthread -lm
+
+borrowed-device: $(BUILD)/borrowed-device
+	$(BUILD)/borrowed-device
+
+$(BUILD)/gpu-wsi-observer: tests/wsi_smoke.c tests/gpu_observer.h src/gpu_bridge.c src/gpu_bridge.h $(TE_LIB)
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DVK_USE_PLATFORM_XCB_KHR -DGFG_NATIVE_TEST_SMALL -DGFG_NATIVE_TEST_GPU_OBSERVER -I$(VULKAN_HEADERS) -Isrc -I../gfg-temporal/src -o $@ tests/wsi_smoke.c src/gpu_bridge.c $(TE_LIB) -lvulkan -lxcb -ldl -lpthread -lm
+
+$(BUILD)/gpu-wsi-observer-800: tests/wsi_smoke.c tests/gpu_observer.h src/gpu_bridge.c src/gpu_bridge.h $(TE_LIB)
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DVK_USE_PLATFORM_XCB_KHR -DGFG_NATIVE_TEST_WIDTH=1280 -DGFG_NATIVE_TEST_HEIGHT=800 -DGFG_NATIVE_TEST_GPU_OBSERVER -I$(VULKAN_HEADERS) -Isrc -I../gfg-temporal/src -o $@ tests/wsi_smoke.c src/gpu_bridge.c $(TE_LIB) -lvulkan -lxcb -ldl -lpthread -lm
+
+$(BUILD)/gpu-wsi-stress: tests/wsi_smoke.c
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DVK_USE_PLATFORM_XCB_KHR -DGFG_NATIVE_TEST_SMALL -DGFG_NATIVE_TEST_ASYNC -I$(VULKAN_HEADERS) -o $@ $< -lvulkan -lxcb
+
+$(BUILD)/gpu-wsi-resume: tests/wsi_smoke.c
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DVK_USE_PLATFORM_XCB_KHR -DGFG_NATIVE_TEST_SMALL -DGFG_NATIVE_TEST_RESUME -I$(VULKAN_HEADERS) -o $@ $< -lvulkan -lxcb
+
+$(BUILD)/gpu-wsi-recreate: tests/wsi_smoke.c
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DVK_USE_PLATFORM_XCB_KHR -DGFG_NATIVE_TEST_SMALL -DGFG_NATIVE_TEST_RECREATE -I$(VULKAN_HEADERS) -o $@ $< -lvulkan -lxcb
+
 $(BUILD)/swapchain-policy: tests/swapchain_policy.c src/layer.c
 	mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -Wno-unused-function -I$(VULKAN_HEADERS) -o $@ tests/swapchain_policy.c -lpthread
@@ -62,10 +95,12 @@ wsi-smoke: layer $(BUILD)/wsi-smoke
 	GFG_NATIVE_FG=1 GFG_NATIVE_TRACE=1 VK_INSTANCE_LAYERS=VK_LAYER_GFG_native \
 	VK_LAYER_PATH="$(abspath $(BUILD))" $(BUILD)/wsi-smoke
 
-wsi-smoke-te:
+wsi-smoke-te: wsi-smoke-gpu
+
+wsi-smoke-gpu:
 	$(MAKE) ENABLE_TE=1 BUILD=build-te layer
 	$(MAKE) ENABLE_TE=1 BUILD=build-te WSI_EXTRA_CFLAGS=-DGFG_NATIVE_TEST_SMALL build-te/wsi-smoke
-	GFG_NATIVE_FG=1 GFG_NATIVE_CPU_BRIDGE=1 GFG_NATIVE_BUDGET_MS=5000 GFG_NATIVE_MAX_FRAME_MS=10000 GFG_NATIVE_ALGO=tiles GFG_NATIVE_LMC_TIER=2 GFG_LMC_ORPHAN_CAP=0 GFG_NATIVE_TRACE=1 \
+	GFG_NATIVE_FG=1 GFG_NATIVE_GPU=1 GFG_NATIVE_TRACE=1 \
 	VK_INSTANCE_LAYERS=VK_LAYER_GFG_native VK_LAYER_PATH="$(abspath build-te)" \
 	build-te/wsi-smoke
 

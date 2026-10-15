@@ -3,15 +3,23 @@
  * Exercises Vulkan acquire / barriers / submit / queue-present / retirement.
  * This does not claim TE generation or actual OLED scanout.
  */
+#define _POSIX_C_SOURCE 200809L
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_xcb.h>
 #include <xcb/xcb.h>
+#ifdef GFG_NATIVE_TEST_GPU_OBSERVER
+#include "gpu_observer.h"
+#endif
 
-#ifdef GFG_NATIVE_TEST_SMALL
+#ifdef GFG_NATIVE_TEST_WIDTH
+#define TEST_WIDTH GFG_NATIVE_TEST_WIDTH
+#define TEST_HEIGHT GFG_NATIVE_TEST_HEIGHT
+#elif defined(GFG_NATIVE_TEST_SMALL)
 #define TEST_WIDTH 96u
 #define TEST_HEIGHT 64u
 #else
@@ -138,15 +146,40 @@ int main(void) {
     VkSwapchainCreateInfoKHR swci={.sType=VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .surface=surface,.minImageCount=minimum,.imageFormat=color.format,
         .imageColorSpace=color.colorSpace,.imageExtent=ext,.imageArrayLayers=1,
-        .imageUsage=VK_IMAGE_USAGE_TRANSFER_DST_BIT,.imageSharingMode=VK_SHARING_MODE_EXCLUSIVE,
+        .imageUsage=VK_IMAGE_USAGE_TRANSFER_DST_BIT
+#ifdef GFG_NATIVE_TEST_GPU_OBSERVER
+            | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+#endif
+        ,.imageSharingMode=VK_SHARING_MODE_EXCLUSIVE,
         .preTransform=caps.currentTransform,.compositeAlpha=VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
         .presentMode=VK_PRESENT_MODE_FIFO_KHR,.clipped=VK_TRUE};
     if (!(caps.supportedCompositeAlpha&VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)) {
         for(uint32_t bit=1;bit<=8;bit*=2) if(caps.supportedCompositeAlpha&bit)
             {swci.compositeAlpha=(VkCompositeAlphaFlagBitsKHR)bit;break;}
     }
+    uint32_t total_frames=0;
+    VkSwapchainKHR previous_swapchain=VK_NULL_HANDLE;
+#ifdef GFG_NATIVE_TEST_RECREATE
+    const uint32_t cycles=3;
+#else
+    const uint32_t cycles=1;
+#endif
+    for(uint32_t cycle=0;cycle<cycles;++cycle){
+        if(cycle){
+            uint32_t dimensions[]={TEST_WIDTH+16*cycle,TEST_HEIGHT+8*cycle};
+            xcb_configure_window(xc,window,XCB_CONFIG_WINDOW_WIDTH|XCB_CONFIG_WINDOW_HEIGHT,dimensions);
+            xcb_flush(xc);
+            xcb_get_geometry_reply_t *geometry=xcb_get_geometry_reply(xc,xcb_get_geometry(xc,window),NULL);
+            REQUIRE(geometry);free(geometry);
+            TRY(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical,surface,&caps));
+            ext=caps.currentExtent;
+            if(ext.width==UINT32_MAX) ext=(VkExtent2D){dimensions[0],dimensions[1]};
+            swci.imageExtent=ext;
+        }
+        swci.oldSwapchain=previous_swapchain;
     VkSwapchainKHR swapchain=VK_NULL_HANDLE;
     TRY(vkCreateSwapchainKHR(device,&swci,NULL,&swapchain));
+    if(previous_swapchain) vkDestroySwapchainKHR(device,previous_swapchain,NULL);
 
     uint32_t image_count=0;
     TRY(vkGetSwapchainImagesKHR(device,swapchain,&image_count,NULL));
@@ -171,7 +204,24 @@ int main(void) {
     PFN_vkQueuePresentKHR present_gdpa=(PFN_vkQueuePresentKHR)
         vkGetDeviceProcAddr(device,"vkQueuePresentKHR");
     REQUIRE(present_gipa && present_gdpa);
-    for(uint32_t frame=0;frame<4;frame++) {
+#ifdef GFG_NATIVE_TEST_ASYNC
+    VkFenceCreateInfo render_fci={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,.flags=VK_FENCE_CREATE_SIGNALED_BIT};
+    VkFence render_fence;TRY(vkCreateFence(device,&render_fci,NULL,&render_fence));
+    struct timespec deadline;clock_gettime(CLOCK_MONOTONIC,&deadline);
+    const char *count_env=getenv("GFG_NATIVE_TEST_FRAMES");
+    uint32_t frame_count=count_env?(uint32_t)strtoul(count_env,NULL,10):300;
+    REQUIRE(frame_count>0 && frame_count<=100000);
+#else
+    uint32_t frame_count=4;
+#endif
+#ifdef GFG_NATIVE_TEST_GPU_OBSERVER
+    REQUIRE(observer_start(instance,physical,device,queue,swapchain,ext,color.format,
+        images,image_count,family,present_gdpa));
+#endif
+    for(uint32_t frame=0;frame<frame_count;frame++) {
+#ifdef GFG_NATIVE_TEST_ASYNC
+        TRY(vkWaitForFences(device,1,&render_fence,VK_TRUE,UINT64_MAX));
+#endif
         uint32_t index=UINT32_MAX;
         TRY(vkAcquireNextImageKHR(device,swapchain,UINT64_MAX,acquired,VK_NULL_HANDLE,&index));
         REQUIRE(index<image_count);
@@ -187,7 +237,7 @@ int main(void) {
             .subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1}};
         vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
             VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&pre);
-        VkClearColorValue clear={.float32={0.20f+0.05f*frame,0.2f,0.80f-0.05f*frame,1}};
+        VkClearColorValue clear={.float32={0.20f+0.05f*(frame%4),0.2f,0.80f-0.05f*(frame%4),1}};
         VkImageSubresourceRange range={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
         vkCmdClearColorImage(cmd,images[index],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&clear,1,&range);
         VkImageMemoryBarrier post=pre;
@@ -203,25 +253,55 @@ int main(void) {
             .waitSemaphoreCount=1,.pWaitSemaphores=&acquired,.pWaitDstStageMask=&stage,
             .commandBufferCount=1,.pCommandBuffers=&cmd,
             .signalSemaphoreCount=1,.pSignalSemaphores=&ready};
+#ifdef GFG_NATIVE_TEST_ASYNC
+        TRY(vkResetFences(device,1,&render_fence));
+        TRY(vkQueueSubmit(queue,1,&si,render_fence));
+#else
         TRY(vkQueueSubmit(queue,1,&si,VK_NULL_HANDLE));
+#endif
         VkPresentInfoKHR pi={.sType=VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
             .waitSemaphoreCount=1,.pWaitSemaphores=&ready,
             .swapchainCount=1,.pSwapchains=&swapchain,.pImageIndices=&index};
+#ifdef GFG_NATIVE_TEST_RESUME
+        if(frame==1) REQUIRE(setenv("GFG_NATIVE_GPU","0",1)==0);
+        if(frame==2) REQUIRE(setenv("GFG_NATIVE_GPU","1",1)==0);
+#endif
+#ifdef GFG_NATIVE_TEST_GPU_OBSERVER
+        observer.frame=frame;observer.interval_calls=0;
+        TRY(gfg_gpu_fg_present(observer.fg,queue,&pi,observer_present));
+#else
         if(frame%2==0) TRY(present_gipa(queue,&pi));
         else TRY(present_gdpa(queue,&pi));
+#endif
+#ifdef GFG_NATIVE_TEST_ASYNC
+        deadline.tv_nsec+=33333333;
+        if(deadline.tv_nsec>=1000000000){++deadline.tv_sec;deadline.tv_nsec-=1000000000;}
+        clock_nanosleep(CLOCK_MONOTONIC,TIMER_ABSTIME,&deadline,NULL);
+#else
         TRY(vkQueueWaitIdle(queue));
+#endif
         seen[index]=1;
     }
     free(seen);
+#ifdef GFG_NATIVE_TEST_ASYNC
+    TRY(vkQueueWaitIdle(queue)); /* teardown only */
+    vkDestroyFence(device,render_fence,NULL);
+#endif
+#ifdef GFG_NATIVE_TEST_GPU_OBSERVER
+    REQUIRE(observer_finish());
+#endif
     vkDestroySemaphore(device,ready,NULL);
     vkDestroySemaphore(device,acquired,NULL);
     vkDestroyCommandPool(device,pool,NULL);
     free(images);
-    vkDestroySwapchainKHR(device,swapchain,NULL);
+    previous_swapchain=swapchain;
+    total_frames+=frame_count;
+    }
+    vkDestroySwapchainKHR(device,previous_swapchain,NULL);
     vkDestroyDevice(device,NULL);
     vkDestroySurfaceKHR(instance,surface,NULL);
     vkDestroyInstance(instance,NULL);
     xcb_destroy_window(xc,window);xcb_disconnect(xc);
-    puts("GFG native: 4 real WSI acquire/submit/present cycles PASS");
+    printf("GFG native: %u real WSI acquire/submit/present cycles PASS\n",total_frames);
     return 0;
 }

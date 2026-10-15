@@ -1,53 +1,11 @@
-# GFG Native Frame Generation. Прототип для тестового пререлиза
+# GFG FG3 — внутренняя GPU-сборка
 
-Самостоятельный Vulkan layer с собственным Temporal Engine TE8.
-В тестовом пакете выбран более простой собственный алгоритм TILES.
-Для LMC добавьте `GFG_NATIVE_ALGO=lmc` перед командой запуска;
-LMC пока не проходит программный тест полной пары и требует аппаратной проверки.
-**Не требует MAKO Renderer, Lossless Scaling, Lossless.dll и закрытых моделей.**
-Никакие файлы существующей установки GFG Extreme не заменяются.
+**НЕ ЗАВЕРШЕНА. Не пользовательский релиз и не release candidate.** Аппаратные испытания Steam Deck OLED A–F не пройдены. 90 реально показанных FPS, игровое качество, энергия и input-to-display latency не подтверждены.
 
-## Установка на Steam Deck
+Внутренний пакет содержит самостоятельный Vulkan layer, открытый GPU interpolation core, исходники и SHA-256. Нет обязательных MAKO, Lossless Scaling или закрытых моделей. Путь: GPU copy → GPU analysis → synthesis 1/3, 2/3 → GPU copy → WSI. Полноразмерного CPU transport нет.
 
-1. Распаковать пакет в Desktop Mode.
-2. В Konsole из распакованной папки выполнить `bash install.sh`.
-3. Для выбранной игры открыть Steam → Свойства → Параметры запуска:
-   `~/.local/bin/gfg-native %command%`
-4. Для диагностики можно добавить `GFG_NATIVE_TRACE=1` перед запуском.
+Для изолированного внутреннего стенда: `bash install.sh`; запуск `~/.local/bin/gfg-native <command>`. Нужны Vulkan 1.2, 64-bit SDR8, FIFO, одна очередь с compute и один swapchain. Unsupported/busy path сохраняет real presentation и сообщает bypass; он не обозначается успешным 3×.
 
-Удаление: `bash uninstall.sh`.
+Откат предыдущей установки: `bash rollback.sh`. Удаление: `bash uninstall.sh`. Основная установка GFG Extreme не заменяется. Все изменения этого пакета относятся только к пользовательскому `gfg-native` и его launcher.
 
-## Текущий режим
-
-- Только 64-битные Vulkan-игры, SDR8 RGBA/BGRA (UNORM и SRGB) и один swapchain.
-- Генерация x2 через TE8 (TILES по умолчанию, LMC экспериментально). Синтетический кадр вставляется перед новым настоящим.
-- Путь передачи: GPU → CPU → TE8 → CPU → GPU. Это первый самостоятельный
-  рабочий транспорт, без обещаний низкой задержки или экономии энергии.
-- При неподдерживаемом формате, отсутствии ресурса или ошибке инициализации
-  остаётся вывод настоящих кадров. Для ошибки устройства работа может
-  завершиться Vulkan-ошибкой, а не скрытой подменой результата.
-- HDR, VRR-специфика, 32-битные игры, сложные pNext/present extensions,
-  смена swapchain, suspend/resume и device loss требуют отдельной проверки.
-- Время GPU и delivered FPS не следует путать с физически показанными
-  кадрами. Подтверждение на Steam Deck пока требуется.
-
-## Что искать в логе
-
-`[gfg-native] OWN TE8 CPU bridge active` — TE создал контекст.
-`[gfg-native] generated=...` — синтетический кадр передан в Vulkan WSI.
-`[gfg-native] CPU bridge retired real=... generated=...` — итог контекста.
-
-Нулевая генерация в конкретной игре означает отсутствие подтверждённого x2.
-
-## Открытые исходники
-
-Код независимого layer: `engine/gfg-native`.
-Алгоритм TE8: `engine/gfg-temporal`.
-Лицензия GPL-3.0-or-later. Исходники включены в ZIP.
-
-Результат CI на Mesa lavapipe подтверждает только программную реализацию
-Vulkan; не является аппаратной проверкой Steam Deck.
-
-Диагностика отклонённого swapchain теперь включает `reason=...`, `format=...`,
-`sharing=...`, `requested_usage=...` и `supported_usage=...`. Нельзя
-принудительно включать генерацию при отсутствии необходимых transfer usage.
+Логи различают `submitted_outputs`, `gpu_completed`, `present_handoffs` и `physical_display=unobserved`. Две последующие цифры не являются доказательством сканирования OLED. Запрещено интерпретировать software Vulkan measurements как Steam Deck performance.

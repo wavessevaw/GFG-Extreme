@@ -63,6 +63,7 @@ typedef struct {
     int profile;               /* serialise executors so each one is timed on its own */
     int host_io;               /* create staging buffers for te_upload_rgb/te_download_rgb */
     int source_bgra;           /* source images are B8G8R8A8 (sampling keeps RGBA semantics) */
+    int output_bgra;           /* tile outputs store BGRA bytes for GPU copy into a BGRA swapchain */
 } te_context_desc;
 
 void te_context_desc_default(te_context_desc* desc, uint32_t width, uint32_t height, uint32_t outputs);
@@ -122,6 +123,21 @@ int te_device_supports_fd_import(const te_device* dev, int* memory, int* semapho
 uint32_t te_device_validation_errors(const te_device* dev);
 
 VkResult te_context_create(te_device* dev, const te_context_desc* desc, te_context** out);
+/* Borrow a compute-capable application device/queue. No ownership transfer,
+ * new device, timeline feature requirement or external-memory import. The
+ * caller externally synchronizes ALL use of this queue. Tile algorithm only.
+ * Instance/device dispatch must refer to the SAME layer chain. Supply the
+ * loader data callback when allocating below the loader, NULL at top level. */
+typedef VkResult (VKAPI_PTR *te_set_device_loader_data)(VkDevice device, void* object);
+VkResult te_device_borrow(VkInstance instance, PFN_vkGetInstanceProcAddr instance_dispatch, VkPhysicalDevice physical,
+    VkDevice device, PFN_vkGetDeviceProcAddr device_dispatch, te_set_device_loader_data set_loader_data,
+    VkQueue queue, uint32_t queue_family, te_device** out);
+/* Borrowed contexts expose internal images in GENERAL layout for GPU copies.
+ * Caller must order copies on the same queue and retain the context until
+ * those copies finish. These functions never map or copy pixels to the CPU. */
+VkImage te_source_image(te_context* ctx, uint32_t slot);
+VkImage te_output_image(te_context* ctx, uint32_t output);
+void te_device_timestamp_info(const te_device* dev, uint32_t* valid_bits, float* period_ns);
 void te_context_destroy(te_context* ctx);
 
 /* Upload a tightly packed RGB8 frame into a source slot (host_io contexts).

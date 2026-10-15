@@ -1,0 +1,4 @@
+[gfg-native-gpu] initialized 96x64 multiplier=3 device=application source_bgra=1 cpu_pixel_bytes=0 algorithm=gpu-tiles
+[gfg-native-gpu] real_calls=4 submitted_outputs=6 gpu_completed=6 present_handoffs=6 bypasses=0 physical_display=unobserved cpu_pixel_bytes=0 capture_gpu_ms_mean=0.1620 copy_gpu_ms_mean=0.1082 capture_samples=4 copy_samples=6 pair_sequence=4 analysis_gpu_ms_last=2.0990 synth_1_gpu_ms_last=0.5790 synth_2_gpu_ms_last=1.4697 scene_cut_last=0 held_last=0
+GPU WSI observer: real=4 synthetic=6 content=PASS handoff_order=PASS physical_scanout=unobserved
+GFG native: 4 real WSI acquire/submit/present cycles PASS

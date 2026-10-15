@@ -1,90 +1,47 @@
-# GFG Native FG: independent engine migration
+# GFG Native FG 3× — GPU implementation
 
-Status: **experimental bridge, NOT a standalone finished Vulkan layer**.
+**Статус: НЕ ЗАВЕРШЕНА. Внутренняя разработка, не RC.** Приёмка A–F на Steam Deck OLED, физические 90 Гц, игровое качество и input-to-display latency не подтверждены. Ни CI, ни приведённые ниже проверки не являются сдачей продукта. Публичные промежуточные релизы запрещены.
 
-There are now two separate tracks:
-- `src/layer.c` is a **new, standalone GFG Vulkan loader/WSI layer**. It
-  negotiates possible transfer-capable swapchains and forwards the game's real
-  presentations unchanged. **It does NOT capture or generate frames yet.**
-  No MAKO/DLL code is linked into this layer. Its manifest is off by default.
-- `bootstrap.py` is the *transitional* no-DLL path for the already working
-  Temporal Engine while the independent WSI path is developed.
+## Реальный путь изображений
 
-This first implementation step makes GFG Temporal Engine (TE8) start without
-opening or finding the licensed Lossless.dll *when the exclusive Experimental
-mode is selected*. The existing public GPL MAKO WSI/presentation code is still
-used as a transitional transport; it is not renamed, hidden or claimed as our
-own. Off/Observe/Shadow retain the original behaviour and DLL requirement.
+`application swapchain → GPU copy → two private source images → shared GPU analysis → synthesis(1/3), synthesis(2/3) → GPU copies → WSI present handoff`
 
-## What changed
+`src/gpu_bridge.c` использует существующий application VkDevice и ту же compute-capable очередь. Нет полноразмерного readback/staging, `rgba_to_rgb`, CPU motion fitting, второго VkDevice, FD transport, MAKO или Lossless.dll. CPU-версия остаётся историческим кодом и **не компилируется в GPU-сборку по умолчанию**. `ENABLE_CPU_BRIDGE=1` — отдельная legacy-сборка, запрещённая GPU-packager.
 
-- The native Experimental backend initializes a temporary Vulkan instance
-  solely to select the game's physical GPU, then creates GFG TE's own Vulkan
-  compute device. It **does not construct** DLL-backed InstanceImpl.
-- Context rejection can never instantiate LSFG as fallback. The renderer must
-  preserve the real-game presentation when native initialization fails.
-- Optional licensed spatial-scaling discovery is suppressed in exclusive
-  native mode; it uses SDR8/default source layout first.
-- Backend capability reports are null-safe where the DLL backend does not exist.
+Borrowed API Temporal Engine не требует, чтобы игра включала timeline semaphore или другие optional features. Внутренний путь использует R32F luma и порядок команд одной очереди. Источники чередуются, outputs имеют отдельные GPU command/fence lifetimes. BGRA packing выполняют шейдеры; copy сохраняет encoded bytes также для sRGB swapchain, без повторной gamma-конверсии. Instance/device dispatch принадлежат одному уровню цепочки Vulkan layers; созданные layer command buffers получают loader dispatch data. Это проверяется при обоих порядках native/validation. Выбор device dispatch локален потоку, включая worker standalone-движка.
 
-This is intentionally a *transitional step*, not fulfilment of the final
-no-MAKO requirement. MAKO's open WSI acquisition, image copy, sync, generated
-image presentation, swapchain retirement, and pacing still need replacement.
-Do not remove the existing renderer until GFG owns those boundaries and device
-evidence shows presentation correctness.
+Основной цикл не вызывает QueueWaitIdle/DeviceWaitIdle. Временные GPU-ресурсы не пересоздаются на каждом кадре. Ring ограничен тремя slots; занятой slot не блокирует игру, а приводит к явному real-frame bypass и сбросу истории. При недоступном WSI image нет ожидания бесконечного acquire: zero-timeout refusal отражается отдельно. Такой bypass не является достижением 3×. QueueWaitIdle используется при retirement, не в горячем пути.
 
-## Build and smoke test
+Счётчики различают submitted outputs, GPU completed и present handoffs. Физический показ всегда `unobserved` без независимого наблюдения. GPU timestamps отдельно покрывают capture, output copies, анализ пары и каждый synthesis; они не обозначаются полной задержкой/энергией.
 
-From the repository:
+## Внутренние проверки
+
+- Native core: 168 checks, 0 failures на lavapipe.
+- Borrowed device без optional features: пиксели t=1/3 и 2/3, BGRA, запрет LMC/timeline paths, сохранение application device после удаления backend. Для текстурированной трансляции PSNR 37.125/35.835 dB против endpoint 20.801/20.813 dB; статичный кадр побитно точен. Это синтетический тест, не оценка игрового качества.
+- WSI/validation: RGBA/BGRA SDR8 UNORM и sRGB; native loader path.
+- Независимый observer: 4 real и 6 synthetic handoffs; проверка цветов всех пикселей, отличие промежуточных от endpoints и порядок; 96×64 и 1280×800. Только этот тест читает pixels на CPU.
+- Async reuse: 300 real calls, 598 GPU completed/handoffs, 0 bypasses при 96×64 на software Vulkan; приложение не дренирует очередь между кадрами. Это не 30-минутный Deck game test и не доказательство 90 FPS.
+
+- Lifecycle: три последовательно пересозданных swapchain 96×64 → 112×72 → 128×80 с oldSwapchain, оба порядка layers. Отключение/включение GPU mode сбрасывает историю и повторяет warmup; смена очереди сохраняет real presentation. Смена очереди пока проверена только анализом кода.
+- 19 portable/installer checks: повреждённый пакет не меняет установку, точный rollback, выключенный режим, аргументы запуска и совместимость Steam launch option после удаления.
+- Внутренний архив: проверка SHA-256, запуск установленного GPU payload и пересборка соответствующих исходников из архива.
+
+Сырые логи: [results/fg3-gpu-20261015](results/fg3-gpu-20261015/README.md).
+
+## Сборка и воспроизведение
 
 ```sh
-python3 -m unittest discover -s tests -p test_native_no_dll_bootstrap.py
-python3 -m unittest discover -s tests -p test_native_layer_foundation.py
-make -C engine/gfg-native smoke VULKAN_HEADERS=/path/to/Vulkan-Headers/include
-python3 scripts/build_frame_fusion.py --native-no-dll \
-    --work /tmp/gfg-native-bridge --headers /path/to/Vulkan-Headers/include
-python3 scripts/check_native_independence.py \
-    --source /tmp/gfg-native-bridge/source
+make -C engine/gfg-temporal all lib
+make -C engine/gfg-native ENABLE_TE=1 BUILD=build-gpu VULKAN_HEADERS=/path/to/Vulkan-Headers/include layer build-gpu/borrowed-device build-gpu/gpu-wsi-observer build-gpu/gpu-wsi-stress
+VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation engine/gfg-native/build-gpu/borrowed-device
+VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation xvfb-run -a engine/gfg-native/build-gpu/gpu-wsi-observer
+GFG_NATIVE_FG=1 GFG_NATIVE_GPU=1 VK_INSTANCE_LAYERS=VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation VK_LAYER_PATH=$PWD/engine/gfg-native/build-gpu:/usr/share/vulkan/explicit_layer.d xvfb-run -a engine/gfg-native/build-gpu/gpu-wsi-stress
 ```
 
-The independent layer can be exercised only as a WSI **pass-through**:
-`GFG_NATIVE_FG=1` enables swapchain eligibility negotiation and
-`GFG_NATIVE_TRACE=1` reports it. Do not deploy the layer alongside the
-normal generator yet; it does not own image-history or presentation.
-Its `VkLayer_gfg_native.json` must be installed next to the built .so
-in a controlled Vulkan loader path before using it.
+## Непройденные границы
 
-The normal Frame Fusion build remains unchanged unless
-`--native-no-dll` is provided. Release packaging is **not** updated here.
-No independent binary or installable release is claimed.
+Текущий GPU backend допускает один SDR8 swapchain, exclusive sharing, FIFO и compute-capable presentation queue. Нет собственной виртуализации swapchain/асинхронного presentation worker, измеренной cadence 90 Гц, законченной Decky-интеграции выбора 3×, аппаратной оценки качества/мощности/latency и испытаний A–F. HDR, Proton/gamescope extensions, смена fullscreen/resolution и suspend/resume требуют дальнейшей проверки. Resize проверен только в XCB/lavapipe, не в Proton/Gamescope. Сценарий 300 кадров не закрывает эти требования.
 
-## Acceptance still outstanding
+FidelityFX SDK изучен на SHA 60f4ea81909200d8542eca14dccb2628b763a9a3: frame interpolation API принимает depth, dilated motion vectors и reconstructed previous depth; эти данные не поступают автоматически из QueuePresent-only слоя. Их нельзя объявить доступными или заменить фиктивными нулями с заявлением равноценного качества. Открытый optical-flow компонент остаётся кандидатом следующего измеряемого сравнения; его код пока не заимствован.
 
-1. Run a controlled native Experimental game with **no** Lossless.dll on the
-   filesystem; trace file opens and verify no DLL/model access. Also verify
-   library dependencies and build provenance.
-2. 30 real to 60 actual delivered frames on a Deck; Vulkan validation clean.
-3. Failure injection (import refusal, device lost, swapchain recreation)
-   preserves original frames and does not reopen LSFG.
-4. Implement and build a separate `VK_LAYER_GFG_native` with GFG-owned
-   image lifetime, presentation, synchronization, admission, and pacing.
-5. Remove the transitional MAKO renderer dependency entirely; test clean
-   SteamOS startup, both LCD/OLED where available.
-
-Failure to satisfy any item must NOT be reported as full native independence.
-
-The Vulkan loader smoke exercises instance/device creation, selection and
-queue dispatch on a real Vulkan ICD. It does not test swapchain presentation.
-
-## Independent CPU-generation path (now implemented)
-
-The opt-in `GFG_NATIVE_CPU_BRIDGE=1` path (built with `ENABLE_TE=1`)
-performs application image capture, TE8 host-I/O synthesis and a distinct
-WSI acquire/present for every generated image. It is the first **fully
-MAKO-free runtime**; the older `bootstrap.py` path remains a separate
-transitional reference. TE8 `tiles` is the default for device-trial
-reliability, while `GFG_NATIVE_ALGO=lmc` explicitly opts in to LMC.
-The CPU transfer path is not cost-optimised and requires Deck testing.
-
-An installable standalone native trial archive can be generated with
-`scripts/package_native_fg.py` once WSI synthesis tests pass.
+До аппаратной приёмки packager допускает только `0.0.0-fg3-internal.N`, фиксирует `hardware_acceptance=false` и не публикует сборки. Старый prerelease workflow в этой ветке удалён. Стабильный main не изменён.

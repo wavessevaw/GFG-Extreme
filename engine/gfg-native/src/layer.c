@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * GFG Native WSI: independent Vulkan-loader layer foundation.
  *
- * This stage ONLY negotiates capabilities and forwards real presentation.
- * It intentionally does NOT claim to generate or deliver synthetic frames.
+ * The default build forwards real presentation. Optional GPU transport creates
+ * two intermediate images; API handoff counters do not prove physical scanout.
  * No MAKO, LSFG, Lossless.dll, or extracted model is linked or loaded.
  * All functionality is opt-in via GFG_NATIVE_FG=1.
  */
@@ -16,6 +16,9 @@
 #include <vulkan/vulkan.h>
 #include <vulkan/vk_layer.h>
 #ifdef GFG_NATIVE_WITH_TE
+#include "gpu_bridge.h"
+#endif
+#ifdef GFG_NATIVE_WITH_CPU_BRIDGE
 #include "cpu_bridge.h"
 #endif
 
@@ -42,6 +45,7 @@ typedef struct native_swapchain {
     VkSwapchainKHR handle;
     VkFormat format;
     VkExtent2D extent;
+    VkPresentModeKHR present_mode;
     uint64_t presents;
     uint64_t acquired;
     uint64_t acquire_misses;
@@ -49,6 +53,10 @@ typedef struct native_swapchain {
     uint32_t image_count;
     unsigned char *owned; /* only exact acquired image indices, never fabricated */
 #ifdef GFG_NATIVE_WITH_TE
+    gfg_gpu_fg *gpu;
+    int gpu_attempted;
+#endif
+#ifdef GFG_NATIVE_WITH_CPU_BRIDGE
     gfg_cpu_fg *bridge;
     int bridge_attempted;
 #endif
@@ -61,6 +69,7 @@ typedef struct native_device {
     VkDevice handle;
     VkPhysicalDevice physical;
     PFN_vkGetDeviceProcAddr gdpa;
+    PFN_vkSetDeviceLoaderData set_loader_data;
     PFN_vkGetDeviceQueue get_queue;
     PFN_vkGetDeviceQueue2 get_queue2;
     PFN_vkDestroyDevice destroy;
@@ -206,6 +215,11 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     d->key = dispatch_key(*out);
     d->physical = phys;
     d->gdpa = gdpa;
+    for (const VkLayerDeviceCreateInfo *node=(const VkLayerDeviceCreateInfo *)ci->pNext;
+         node;node=(const VkLayerDeviceCreateInfo *)node->pNext)
+        if(node->sType==VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO &&
+           node->function==VK_LOADER_DATA_CALLBACK)
+            d->set_loader_data=node->u.pfnSetDeviceLoaderData;
     d->destroy = destroy;
     d->get_queue = (PFN_vkGetDeviceQueue)gdpa(*out, "vkGetDeviceQueue");
     d->get_queue2 = (PFN_vkGetDeviceQueue2)gdpa(*out, "vkGetDeviceQueue2");
@@ -247,6 +261,9 @@ native_DestroyDevice(VkDevice device, const VkAllocationCallbacks *alloc) {
     while (sc) {
         native_swapchain *next = sc->next;
 #ifdef GFG_NATIVE_WITH_TE
+        if (sc->gpu) gfg_gpu_fg_destroy(sc->gpu);
+#endif
+#ifdef GFG_NATIVE_WITH_CPU_BRIDGE
         if (sc->bridge) gfg_cpu_fg_destroy(sc->bridge);
 #endif
         free(sc->owned);
@@ -394,6 +411,7 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
     sc->handle = *out;
     sc->format = ci->imageFormat;
     sc->extent = ci->imageExtent;
+    sc->present_mode = ci->presentMode;
     sc->copy_eligible = candidate;
     if (d->get_images) {
         uint32_t image_count = 0;
@@ -433,6 +451,9 @@ native_DestroySwapchainKHR(VkDevice device, VkSwapchainKHR sc,
             native_swapchain *old = *p;
             *p = old->next;
 #ifdef GFG_NATIVE_WITH_TE
+            if (old->gpu) gfg_gpu_fg_destroy(old->gpu);
+#endif
+#ifdef GFG_NATIVE_WITH_CPU_BRIDGE
             if (old->bridge) gfg_cpu_fg_destroy(old->bridge);
 #endif
             free(old->owned);
@@ -500,10 +521,44 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
         }
         pthread_mutex_unlock(&d->lock);
     }
-    // Exactly one forward: no synthetic present or extra swapchain acquisition
-    // until the independent image/queue/timeline ownership contract is proven.
+    // GPU generation is opt-in and restricted to a supported single swapchain.
+    // Every bypass still forwards the original real-frame presentation.
     VkResult result;
 #ifdef GFG_NATIVE_WITH_TE
+    const char *gpu_flag = getenv("GFG_NATIVE_GPU");
+    if (gpu_flag && !strcmp(gpu_flag,"1") && d->instance && d->instance->enabled &&
+        info && info->swapchainCount==1 && info->pSwapchains && info->pImageIndices) {
+        gfg_gpu_fg *gpu = NULL;
+        pthread_mutex_lock(&d->lock);
+        for (native_swapchain *sc=d->swapchains;sc;sc=sc->next) {
+            if(sc->handle!=info->pSwapchains[0]) continue;
+            if(sc->copy_eligible && sc->present_mode==VK_PRESENT_MODE_FIFO_KHR && !sc->gpu_attempted){
+                sc->gpu_attempted=1;
+                for(native_queue *q=d->queues;q;q=q->next){
+                    if(q->handle!=queue) continue;
+                    sc->gpu=gfg_gpu_fg_create(d->instance->handle,d->instance->gipa,d->physical,d->handle,
+                        d->gdpa,sc->handle,sc->extent,sc->format,queue,q->family,d->set_loader_data);
+                    break;
+                }
+                if(!sc->gpu) fprintf(stderr,"[gfg-native-gpu] inactive; retaining real presentation\n");
+            }
+            gpu=sc->gpu;break;
+        }
+        pthread_mutex_unlock(&d->lock);
+        result=gpu?gfg_gpu_fg_present(gpu,queue,info,d->present):d->present(queue,info);
+        goto presented;
+    }
+    /* A skipped capture (disabled mode, multi-swapchain call) breaks adjacency.
+     * Do not interpolate from stale history when GPU mode next resumes. */
+    if(info && info->pSwapchains){
+        pthread_mutex_lock(&d->lock);
+        for(uint32_t n=0;n<info->swapchainCount;++n)
+            for(native_swapchain *sc=d->swapchains;sc;sc=sc->next)
+                if(sc->handle==info->pSwapchains[n]) gfg_gpu_fg_reset(sc->gpu);
+        pthread_mutex_unlock(&d->lock);
+    }
+#endif
+#ifdef GFG_NATIVE_WITH_CPU_BRIDGE
     gfg_cpu_fg *bridge = NULL;
     const char *flag = getenv("GFG_NATIVE_CPU_BRIDGE");
     if (info && info->swapchainCount == 1 && info->pSwapchains &&
@@ -534,6 +589,9 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
                       d->present(queue, info);
 #else
     result = d->present(queue, info);
+#endif
+#ifdef GFG_NATIVE_WITH_TE
+presented:
 #endif
     if ((result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) && info) {
         pthread_mutex_lock(&d->lock);

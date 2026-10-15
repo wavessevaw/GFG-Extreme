@@ -112,6 +112,7 @@ static double lmc_now_ms(void) {
 /* one fit: pair seq k of ring slot rs (its first submission signals 2k + 1) */
 static void lmc_fit_job(struct te_lmc* m, te_slot* slot, int rs, uint64_t k, uint32_t gen) {
     te_device* dev = m->dev;
+    select_device(dev);
     uint64_t want = 2 * k + 1;
     VkSemaphoreWaitInfo wi = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, .semaphoreCount = 1,
                               .pSemaphores = &m->fit_tl, .pValues = &want};

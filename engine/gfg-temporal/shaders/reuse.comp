@@ -13,7 +13,7 @@ void main() {
             ivec2 p = tc * P.tile + ivec2(bx, by) + ivec2(gl_LocalInvocationID.xy);
             if (any(greaterThanEqual(p, P.size))) continue;
             vec3 c = PC.t < 0.5 ? texelFetch(srcA, p, 0).rgb : texelFetch(srcB, p, 0).rgb;
-            imageStore(dst, p, vec4(c, 1.0));
+            imageStore(dst, p, output_color(vec4(c, 1.0)));
         }
     }
 }

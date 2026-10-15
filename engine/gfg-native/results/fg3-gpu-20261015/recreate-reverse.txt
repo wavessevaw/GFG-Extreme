@@ -1,0 +1,7 @@
+[gfg-native-gpu] initialized 96x64 multiplier=3 device=application source_bgra=1 cpu_pixel_bytes=0 algorithm=gpu-tiles
+[gfg-native-gpu] real_calls=4 submitted_outputs=6 gpu_completed=6 present_handoffs=6 bypasses=0 physical_display=unobserved cpu_pixel_bytes=0 capture_gpu_ms_mean=0.1158 copy_gpu_ms_mean=0.1030 capture_samples=4 copy_samples=6 pair_sequence=4 analysis_gpu_ms_last=2.0362 synth_1_gpu_ms_last=0.6638 synth_2_gpu_ms_last=1.1638 scene_cut_last=0 held_last=0
+[gfg-native-gpu] initialized 112x72 multiplier=3 device=application source_bgra=1 cpu_pixel_bytes=0 algorithm=gpu-tiles
+[gfg-native-gpu] real_calls=4 submitted_outputs=6 gpu_completed=6 present_handoffs=6 bypasses=0 physical_display=unobserved cpu_pixel_bytes=0 capture_gpu_ms_mean=0.1216 copy_gpu_ms_mean=0.1124 capture_samples=4 copy_samples=6 pair_sequence=4 analysis_gpu_ms_last=2.7344 synth_1_gpu_ms_last=0.7986 synth_2_gpu_ms_last=1.2433 scene_cut_last=0 held_last=0
+[gfg-native-gpu] initialized 128x80 multiplier=3 device=application source_bgra=1 cpu_pixel_bytes=0 algorithm=gpu-tiles
+[gfg-native-gpu] real_calls=4 submitted_outputs=6 gpu_completed=6 present_handoffs=6 bypasses=0 physical_display=unobserved cpu_pixel_bytes=0 capture_gpu_ms_mean=0.1486 copy_gpu_ms_mean=0.1191 capture_samples=4 copy_samples=6 pair_sequence=4 analysis_gpu_ms_last=3.3820 synth_1_gpu_ms_last=0.8283 synth_2_gpu_ms_last=2.0027 scene_cut_last=0 held_last=0
+GFG native: 12 real WSI acquire/submit/present cycles PASS
