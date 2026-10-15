@@ -30,7 +30,7 @@ void shade(ivec2 p, vec2 v, float t) {
     float w = smoothstep(P.occ_lo, P.occ_hi, d);
     vec3 blend = a * (1.0 - t) + b * t;
     vec3 near = t < 0.5 ? a : b;
-    imageStore(dst, p, vec4(blend + (near - blend) * w, 1.0));
+    imageStore(dst, p, output_color(vec4(blend + (near - blend) * w, 1.0)));
 }
 
 vec2 candidate(int k, ivec2 ct, vec2 vs) { return k < 9 ? tile_vector(0, ct + NB[k]) : vs; }

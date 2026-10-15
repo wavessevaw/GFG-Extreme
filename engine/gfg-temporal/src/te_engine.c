@@ -96,6 +96,9 @@ typedef struct {
 } te_slot;
 
 struct te_device {
+    int borrowed;
+    struct te_dispatch* dispatch;
+    te_set_device_loader_data set_loader_data;
     VkInstance instance;
     VkPhysicalDevice phys;
     VkDevice device;
@@ -186,7 +189,39 @@ static void lmc_record_init(te_context* ctx, VkCommandBuffer cb);
 static PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr;
 TE_GLOBAL_FUNCS(TE_DECLARE)
 TE_INSTANCE_FUNCS(TE_DECLARE)
-TE_DEVICE_FUNCS(TE_DECLARE)
+#define TE_DECLARE_DEVICE(name) static __thread PFN_##name name;
+TE_DEVICE_FUNCS(TE_DECLARE_DEVICE)
+#define TE_DISPATCH_FIELD(name) PFN_##name name;
+typedef struct te_dispatch { TE_DEVICE_FUNCS(TE_DISPATCH_FIELD) } te_dispatch;
+static te_dispatch g_loader_device_dispatch;
+static __thread te_device* g_active_device;
+
+static VkResult VKAPI_CALL borrowed_allocate_commands(VkDevice device,
+        const VkCommandBufferAllocateInfo* info, VkCommandBuffer* buffers) {
+    te_device* dev = g_active_device;
+    VkResult r = dev->dispatch->vkAllocateCommandBuffers(device, info, buffers);
+    if (r == VK_SUCCESS && dev->set_loader_data) {
+        for (uint32_t i = 0; i < info->commandBufferCount; ++i) {
+            r = dev->set_loader_data(device, buffers[i]);
+            if (r != VK_SUCCESS) {
+                dev->dispatch->vkFreeCommandBuffers(device, info->commandPool, info->commandBufferCount, buffers);
+                return r;
+            }
+        }
+    }
+    return r;
+}
+
+/* Each application device can sit at a different point in the layer chain.
+ * Select its dispatch on every API entry, including worker threads. */
+static void select_device(te_device* dev) {
+    const te_dispatch* dispatch = dev && dev->dispatch ? dev->dispatch : &g_loader_device_dispatch;
+#define TE_SELECT_DEVICE(name) name = dispatch->name;
+    TE_DEVICE_FUNCS(TE_SELECT_DEVICE)
+    g_active_device = dev;
+    if (dev && dev->dispatch && dev->set_loader_data)
+        vkAllocateCommandBuffers = borrowed_allocate_commands;
+}
 
 static pthread_once_t g_global_once = PTHREAD_ONCE_INIT;
 static pthread_mutex_t g_instance_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -204,19 +239,21 @@ static void load_global(void) {
     g_global_ok = ok;
 }
 
-/* Device-level entry points come from the instance, so they are the loader's
- * dispatching trampolines and stay valid for every te_device. */
+/* Standalone devices use loader trampolines. Borrowed devices select the
+ * caller's next-layer device dispatch, keeping wrapped handles consistent. */
 static int load_instance(VkInstance instance) {
     pthread_mutex_lock(&g_instance_lock);
     if (!g_instance_ok) {
         int ok = 1;
 #define TE_LOAD_INSTANCE(name) ok &= (name = (PFN_##name)vkGetInstanceProcAddr(instance, #name)) != NULL;
         TE_INSTANCE_FUNCS(TE_LOAD_INSTANCE)
-        TE_DEVICE_FUNCS(TE_LOAD_INSTANCE)
+#define TE_LOAD_DEVICE(name) ok &= (g_loader_device_dispatch.name = (PFN_##name)vkGetInstanceProcAddr(instance, #name)) != NULL;
+        TE_DEVICE_FUNCS(TE_LOAD_DEVICE)
         g_instance_ok = ok;
     }
     int ok = g_instance_ok;
     pthread_mutex_unlock(&g_instance_lock);
+    select_device(NULL);
     return ok;
 }
 
@@ -236,6 +273,7 @@ static VkResult fail(VkResult res, const char* fmt, ...) {
 
 /* every submission of the engine's queue (the submitting thread and the LMC fit worker) */
 static VkResult queue_submit(te_device* dev, uint32_t n, const VkSubmitInfo* si, VkFence fence) {
+    select_device(dev);
     pthread_mutex_lock(&dev->queue_lock);
     VkResult r = vkQueueSubmit(dev->queue, n, si, fence);
     pthread_mutex_unlock(&dev->queue_lock);
@@ -446,18 +484,85 @@ VkResult te_device_create(const te_device_desc* desc, te_device** out) {
 
 void te_device_destroy(te_device* dev) {
     if (!dev) return;
-    if (dev->device) vkDestroyDevice(dev->device, NULL);
+    select_device(dev);
+    if (dev->device && !dev->borrowed) vkDestroyDevice(dev->device, NULL);
     if (dev->messenger) {
         PFN_vkDestroyDebugUtilsMessengerEXT destroy = (PFN_vkDestroyDebugUtilsMessengerEXT)
             vkGetInstanceProcAddr(dev->instance, "vkDestroyDebugUtilsMessengerEXT");
         if (destroy) destroy(dev->instance, dev->messenger, NULL);
     }
-    if (dev->instance) vkDestroyInstance(dev->instance, NULL);
+    if (dev->instance && !dev->borrowed) vkDestroyInstance(dev->instance, NULL);
     if (dev->queue_lock_ok) pthread_mutex_destroy(&dev->queue_lock);
+    free(dev->dispatch);
     free(dev);
+    select_device(NULL);
 }
 
 const char* te_device_name(const te_device* dev) { return dev->props.deviceName; }
+
+VkResult te_device_borrow(VkInstance instance, PFN_vkGetInstanceProcAddr instance_dispatch, VkPhysicalDevice physical,
+        VkDevice device, PFN_vkGetDeviceProcAddr device_dispatch, te_set_device_loader_data set_loader_data,
+        VkQueue queue, uint32_t family, te_device** out) {
+    if (!out) return VK_ERROR_INITIALIZATION_FAILED;
+    *out = NULL;
+    if (!instance || !instance_dispatch || !physical || !device || !device_dispatch || !queue) return VK_ERROR_INITIALIZATION_FAILED;
+    pthread_once(&g_global_once, load_global);
+    if (!g_global_ok || !load_instance(instance))
+        return fail(VK_ERROR_INITIALIZATION_FAILED, "application Vulkan 1.2 dispatch unavailable");
+    /* Layer callbacks receive a physical handle owned by the next dispatch
+     * chain. Never pass it to the loader's top-level physical trampolines. */
+    PFN_vkGetPhysicalDeviceQueueFamilyProperties families = (PFN_vkGetPhysicalDeviceQueueFamilyProperties)
+        instance_dispatch(instance,"vkGetPhysicalDeviceQueueFamilyProperties");
+    PFN_vkGetPhysicalDeviceFormatProperties formats = (PFN_vkGetPhysicalDeviceFormatProperties)
+        instance_dispatch(instance,"vkGetPhysicalDeviceFormatProperties");
+    PFN_vkGetPhysicalDeviceProperties properties = (PFN_vkGetPhysicalDeviceProperties)
+        instance_dispatch(instance,"vkGetPhysicalDeviceProperties");
+    PFN_vkGetPhysicalDeviceMemoryProperties memory = (PFN_vkGetPhysicalDeviceMemoryProperties)
+        instance_dispatch(instance,"vkGetPhysicalDeviceMemoryProperties");
+    if(!families || !formats || !properties || !memory) return VK_ERROR_INITIALIZATION_FAILED;
+    uint32_t count = 0;
+    families(physical, &count, NULL);
+    if (family >= count) return fail(VK_ERROR_INITIALIZATION_FAILED, "invalid application queue family");
+    VkQueueFamilyProperties* qp = calloc(count, sizeof(*qp));
+    if (!qp) return VK_ERROR_OUT_OF_HOST_MEMORY;
+    families(physical, &count, qp);
+    VkQueueFamilyProperties selected = qp[family];
+    free(qp);
+    if (!(selected.queueFlags & VK_QUEUE_COMPUTE_BIT))
+        return fail(VK_ERROR_FEATURE_NOT_PRESENT, "presentation queue cannot execute compute");
+    if (!selected.timestampValidBits)
+        return fail(VK_ERROR_FEATURE_NOT_PRESENT, "compute timestamps unavailable on application queue");
+    VkFormatFeatureFlags required = VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT |
+        VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+    VkFormatProperties fp0,fp1;
+    formats(physical,VK_FORMAT_R32_SFLOAT,&fp0);
+    formats(physical,VK_FORMAT_R8G8B8A8_UNORM,&fp1);
+    if ((fp0.optimalTilingFeatures & required)!=required ||
+        (fp1.optimalTilingFeatures & required)!=required)
+        return fail(VK_ERROR_FORMAT_NOT_SUPPORTED, "application GPU lacks required storage formats");
+    te_device* dev = calloc(1, sizeof(*dev));
+    if (!dev) return VK_ERROR_OUT_OF_HOST_MEMORY;
+    dev->dispatch = calloc(1, sizeof(*dev->dispatch));
+    if (!dev->dispatch) { free(dev); return VK_ERROR_OUT_OF_HOST_MEMORY; }
+#define TE_BORROW_DEVICE(name) dev->dispatch->name = (PFN_##name)device_dispatch(device, #name);
+    TE_DEVICE_FUNCS(TE_BORROW_DEVICE)
+    dev->set_loader_data = set_loader_data;
+    dev->borrowed = 1;
+    dev->instance = instance;
+    dev->phys = physical;
+    dev->device = device;
+    dev->queue = queue;
+    dev->qfi = family;
+    dev->ts_bits = selected.timestampValidBits;
+    /* R32F needs no shaderStorageImageExtendedFormats application feature. */
+    dev->luma_format = VK_FORMAT_R32_SFLOAT;
+    properties(physical, &dev->props);
+    memory(physical, &dev->mem);
+    if (pthread_mutex_init(&dev->queue_lock, NULL) != 0) { free(dev->dispatch); free(dev); return VK_ERROR_INITIALIZATION_FAILED; }
+    dev->queue_lock_ok = 1;
+    *out = dev;
+    return VK_SUCCESS;
+}
 
 int te_device_supports_fd_import(const te_device* dev, int* memory, int* semaphore) {
     if (memory) *memory = dev->ext_mem_fd;
@@ -722,6 +827,7 @@ static void write_sets(te_context* ctx) {
 /* ------------------------------------------------------------------ context */
 
 static VkResult one_time(te_context* ctx, void (*record)(te_context*, VkCommandBuffer, void*), void* user) {
+    select_device(ctx->dev);
     VkDevice d = ctx->dev->device;
     VkCommandBufferAllocateInfo cai = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
                                        .commandPool = ctx->cmdpool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
@@ -821,6 +927,16 @@ static void close_fds(const te_context_desc* d) {
 
 static VkResult validate_desc(te_device* dev, const te_context_desc* d) {
     const te_params* p = &d->params;
+    if (d->application_timeline && !dev->borrowed)
+        return fail(VK_ERROR_FEATURE_NOT_PRESENT, "application timeline requires borrowed device");
+    if (dev->borrowed && (p->algorithm != TE_ALGO_TILES || d->export_fds || d->sync_fd >= 0 ||
+            d->source_fds[0] >= 0 || d->source_fds[1] >= 0))
+        return fail(VK_ERROR_FEATURE_NOT_PRESENT, "borrowed device requires GPU tile path without external descriptors");
+    if (dev->borrowed)
+        for (uint32_t i = 0; i < TE_MAX_OUTPUTS; ++i)
+            if (d->dest_fds[i] >= 0) return VK_ERROR_FEATURE_NOT_PRESENT;
+    if (d->output_bgra && p->algorithm != TE_ALGO_TILES)
+        return fail(VK_ERROR_FEATURE_NOT_PRESENT, "BGRA output packing requires tile algorithm");
     if (p->tile != 8 && p->tile != 16 && p->tile != 32) return fail(VK_ERROR_INITIALIZATION_FAILED, "tile must be 8, 16 or 32");
     if (p->levels < 1 || p->levels > TE_MAX_LEVELS) return fail(VK_ERROR_INITIALIZATION_FAILED, "levels must be 1..3");
     if (p->probe < 1 || p->probe > 8) return fail(VK_ERROR_INITIALIZATION_FAILED, "probe must be 1..8");
@@ -839,6 +955,7 @@ static VkResult validate_desc(te_device* dev, const te_context_desc* d) {
 }
 
 VkResult te_context_create(te_device* dev, const te_context_desc* desc, te_context** out) {
+    select_device(dev);
     *out = NULL;
     VkResult r = validate_desc(dev, desc);
     if (r != VK_SUCCESS) {
@@ -899,7 +1016,8 @@ VkResult te_context_create(te_device* dev, const te_context_desc* desc, te_conte
     {
         int fd = desc->sync_fd;
         ctx->desc.sync_fd = -1;
-        TRY(import_timeline(ctx, fd));
+        if (!dev->borrowed) TRY(import_timeline(ctx, fd));
+        else ctx->timeline = desc->application_timeline;
     }
     VkSamplerCreateInfo sci = {.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, .magFilter = VK_FILTER_LINEAR,
                                .minFilter = VK_FILTER_LINEAR, .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
@@ -954,6 +1072,7 @@ VkResult te_context_create(te_device* dev, const te_context_desc* desc, te_conte
     ubo.tile = (int32_t)T;
     ubo.probe = (int32_t)p->probe;
     ubo.full_density = (int32_t)p->full_density;
+    ubo.pad[0] = desc->output_bgra;
     for (int l = 0; l < TE_LUMA_IMAGES; ++l) {
         ubo.level_size[l][0] = (float)ctx->lw[l];
         ubo.level_size[l][1] = (float)ctx->lh[l];
@@ -1010,12 +1129,20 @@ error:
 
 void te_context_destroy(te_context* ctx) {
     if (!ctx) return;
+    select_device(ctx->dev);
     te_device* dev = ctx->dev;
     VkDevice d = dev->device;
     if (ctx->lmc) lmc_drain(ctx);   /* the worker's pending submissions first */
-    pthread_mutex_lock(&dev->queue_lock);
-    vkDeviceWaitIdle(d);
-    pthread_mutex_unlock(&dev->queue_lock);
+    if (dev->borrowed) {
+        /* Only our fences: never stop the application's other queues. */
+        for (int i = 0; i < TE_RING; ++i)
+            if (ctx->ring[i].in_flight)
+                vkWaitForFences(d, 1, &ctx->ring[i].fence, VK_TRUE, UINT64_MAX);
+    } else {
+        pthread_mutex_lock(&dev->queue_lock);
+        vkDeviceWaitIdle(d);
+        pthread_mutex_unlock(&dev->queue_lock);
+    }
     lmc_destroy(ctx);
     for (int s = 0; s < TE_RING; ++s) {
         te_slot* slot = &ctx->ring[s];
@@ -1030,7 +1157,7 @@ void te_context_destroy(te_context* ctx) {
     if (ctx->dsl0) vkDestroyDescriptorSetLayout(d, ctx->dsl0, NULL);
     if (ctx->dsl1) vkDestroyDescriptorSetLayout(d, ctx->dsl1, NULL);
     if (ctx->sampler) vkDestroySampler(d, ctx->sampler, NULL);
-    if (ctx->timeline) vkDestroySemaphore(d, ctx->timeline, NULL);
+    if (ctx->timeline && !ctx->desc.application_timeline) vkDestroySemaphore(d, ctx->timeline, NULL);
     buffer_destroy(dev, &ctx->params);
     for (int s = 0; s < 2; ++s) {
         buffer_destroy(dev, &ctx->vectors[s]);
@@ -1138,8 +1265,8 @@ static void record_output(te_context* ctx, te_slot* slot, const te_submit* s, ui
     uint32_t q = 4 + i * 6;
     int profile = ctx->desc.profile || s->profile;
     ownership(cb, &ctx->dst[i], ctx->dev->qfi, 1);
-    barrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
-            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
+    barrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT,
             VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
     const uint32_t args[12] = {0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0};
     vkCmdUpdateBuffer(cb, ctx->globals.buf, 48, sizeof args, args);
@@ -1195,7 +1322,7 @@ static void collect(te_context* ctx, te_slot* slot) {
     uint32_t used = 4 + slot->outputs * 6;
     st->timed = ctx->dev->ts_bits > 0 &&
                 vkGetQueryPoolResults(ctx->dev->device, slot->queries, 0, used, sizeof ts, ts, sizeof ts[0],
-                                      VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) == VK_SUCCESS;
+                                      VK_QUERY_RESULT_64_BIT) == VK_SUCCESS;
     double period = ctx->dev->props.limits.timestampPeriod * 1e-6;
     uint64_t mask = ctx->dev->ts_bits >= 64 ? ~0ull : ((1ull << ctx->dev->ts_bits) - 1);
 #define DELTA(a, b) ((double)((ts[b] - ts[a]) & mask) * period)
@@ -1256,6 +1383,7 @@ static void collect(te_context* ctx, te_slot* slot) {
 }
 
 static VkResult wait_slot(te_context* ctx, te_slot* slot, int nonblocking) {
+    select_device(ctx->dev);
     if (!slot->in_flight) return VK_SUCCESS;
     if (ctx->lmc && lmc_slot_pending(ctx, slot)) {   /* the fence is the worker's until it submits */
         if (nonblocking) return VK_NOT_READY;
@@ -1297,6 +1425,9 @@ VkResult te_upload_rgb(te_context* ctx, uint32_t slot, const uint8_t* rgb) {
 }
 
 VkResult te_submit_frame(te_context* ctx, const te_submit* s) {
+    select_device(ctx->dev);
+    if (ctx->dev->borrowed && !ctx->timeline && (s->wait_value || s->signal_first))
+        return fail(VK_ERROR_FEATURE_NOT_PRESENT, "borrowed queue uses submission order, not timeline values");
     if (s->slot > 1) return fail(VK_ERROR_INITIALIZATION_FAILED, "slot must be 0 or 1");
     int repeat = ctx->frames > 0 && s->slot == ctx->last_slot;
     if (repeat && !s->discontinuity)
@@ -1424,6 +1555,7 @@ VkResult te_wait_idle(te_context* ctx) {
 }
 
 int te_context_idle(te_context* ctx, uint64_t timeout_ns) {
+    select_device(ctx->dev);
     VkDevice d = ctx->dev->device;
     struct timespec started;
     clock_gettime(CLOCK_MONOTONIC, &started);
@@ -1463,24 +1595,41 @@ void te_poll(te_context* ctx) {
 uint64_t te_context_memory_bytes(const te_context* ctx) { return ctx->memory_bytes; }
 
 uint64_t te_timeline_value(te_context* ctx) {
+    select_device(ctx->dev);
+    if (!ctx->timeline) return UINT64_MAX;
     uint64_t v = 0;
     if (vkGetSemaphoreCounterValue(ctx->dev->device, ctx->timeline, &v) != VK_SUCCESS) return UINT64_MAX;
     return v;
 }
 
 VkResult te_timeline_signal(te_context* ctx, uint64_t value) {
+    select_device(ctx->dev);
+    if (!ctx->timeline) return VK_ERROR_FEATURE_NOT_PRESENT;
     VkSemaphoreSignalInfo info = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO, .semaphore = ctx->timeline,
                                   .value = value};
     return vkSignalSemaphore(ctx->dev->device, &info);
 }
 
 VkResult te_timeline_wait(te_context* ctx, uint64_t value, uint64_t timeout_ns) {
-    VkSemaphoreWaitInfo info = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, .semaphoreCount = 1,
-                                .pSemaphores = &ctx->timeline, .pValues = &value};
-    return vkWaitSemaphores(ctx->dev->device, &info, timeout_ns);
+    select_device(ctx->dev);
+    if (!ctx->timeline) return VK_ERROR_FEATURE_NOT_PRESENT;
+    VkSemaphoreWaitInfo info = {.sType=VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+        .semaphoreCount=1,.pSemaphores=&ctx->timeline,.pValues=&value};
+    return vkWaitSemaphores(ctx->dev->device,&info,timeout_ns);
 }
 
 uint32_t te_context_outputs(const te_context* ctx) { return ctx->desc.outputs; }
+
+VkImage te_source_image(te_context* ctx, uint32_t slot) {
+    return ctx && ctx->dev->borrowed && slot < 2 ? ctx->src[slot].img : VK_NULL_HANDLE;
+}
+VkImage te_output_image(te_context* ctx, uint32_t output) {
+    return ctx && ctx->dev->borrowed && output < ctx->desc.outputs ? ctx->dst[output].img : VK_NULL_HANDLE;
+}
+void te_device_timestamp_info(const te_device* dev, uint32_t* valid_bits, float* period_ns) {
+    if(valid_bits) *valid_bits=dev->ts_bits;
+    if(period_ns) *period_ns=dev->props.limits.timestampPeriod;
+}
 
 VkResult te_last_stats(te_context* ctx, te_pair_stats* stats) {
     if (!ctx->have_last) return VK_NOT_READY;
@@ -1494,9 +1643,9 @@ VkResult te_download_rgb(te_context* ctx, uint32_t output, uint8_t* rgb) {
     const uint8_t* src = ctx->download[output].map;
     size_t n = (size_t)ctx->desc.width * ctx->desc.height;
     for (size_t i = 0; i < n; ++i) {
-        rgb[3 * i + 0] = src[4 * i + 0];
+        rgb[3 * i + 0] = src[4 * i + (ctx->desc.output_bgra ? 2 : 0)];
         rgb[3 * i + 1] = src[4 * i + 1];
-        rgb[3 * i + 2] = src[4 * i + 2];
+        rgb[3 * i + 2] = src[4 * i + (ctx->desc.output_bgra ? 0 : 2)];
     }
     return VK_SUCCESS;
 }

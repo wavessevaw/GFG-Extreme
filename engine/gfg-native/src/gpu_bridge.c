@@ -3,6 +3,10 @@
  *
  * GFG Native GPU-resident transport for the TE8 generator (GFG_NATIVE_GPU_BRIDGE=1).
  *
+ * Default: application-device TE context, same queue, GPU-only pixel flow.
+ * All timeline signals are submitted before dependent WSI present calls.
+ * Explicit shared/relay modes below preserve the research fd implementation;
+ * relay is NOT validated as a conformant WSI path (VUID 03268).
  * No CPU pixel access and no CPU wait on the present path in steady state.
  * TE8 runs on its own VkDevice (same physical GPU, matched by deviceUUID); its
  * two source images and two destination images are exported as OPAQUE_FD
@@ -116,6 +120,7 @@ struct gfg_gpu_fg {
 
     VkSemaphore timeline;        /* app device: shared with TE or relayed */
     int shared_sync;
+    int same_device; /* TE records on the application device and present queue */
     relay_state relay;
 
     VkCommandPool pool;
@@ -293,6 +298,10 @@ static VkImageMemoryBarrier image_barrier(VkImage image, VkAccessFlags sa, VkAcc
 }
 static void cmd_barrier(gfg_gpu_fg *fg, VkCommandBuffer cb, VkPipelineStageFlags src,
                         VkPipelineStageFlags dst, uint32_t n, const VkImageMemoryBarrier *b) {
+    if(fg->same_device){
+        if(src == VK_PIPELINE_STAGE_TRANSFER_BIT) src=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        if(dst == VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT) dst=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    }
     fg->CmdPipelineBarrier(cb, src, dst, 0, 0, NULL, 0, NULL, n, b);
 }
 /* TE's contract (te_engine.c ownership()): images are in GENERAL; TE acquires
@@ -300,10 +309,18 @@ static void cmd_barrier(gfg_gpu_fg *fg, VkCommandBuffer cb, VkPipelineStageFlags
  * and releases destinations to EXTERNAL the same way.  We mirror that and use
  * GENERAL for our own copies so release/acquire layouts always match. */
 static VkImageMemoryBarrier acquire_external(gfg_gpu_fg *fg, VkImage image, VkAccessFlags da) {
+    if(fg->same_device)
+        return image_barrier(image,VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT|
+            VK_ACCESS_TRANSFER_READ_BIT|VK_ACCESS_TRANSFER_WRITE_BIT,da,
+            VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL,VK_QUEUE_FAMILY_IGNORED,VK_QUEUE_FAMILY_IGNORED);
     return image_barrier(image, 0, da, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
                          VK_QUEUE_FAMILY_EXTERNAL, fg->family);
 }
 static VkImageMemoryBarrier release_external(gfg_gpu_fg *fg, VkImage image, VkAccessFlags sa) {
+    if(fg->same_device)
+        return image_barrier(image,sa|VK_ACCESS_TRANSFER_READ_BIT,
+            VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT,
+            VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL,VK_QUEUE_FAMILY_IGNORED,VK_QUEUE_FAMILY_IGNORED);
     return image_barrier(image, sa, 0, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
                          fg->family, VK_QUEUE_FAMILY_EXTERNAL);
 }
@@ -530,8 +547,8 @@ static void verify_submit(gfg_gpu_fg *fg, uint64_t v, uint32_t cur_slot) {
      * previous verification's write (WAW; the host already consumed it) */
     VkMemoryBarrier waw = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
         .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT};
-    fg->CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
-                           1, &waw, 0, NULL, 4, acq);
+    fg->CmdPipelineBarrier(cb, fg->same_device?VK_PIPELINE_STAGE_ALL_COMMANDS_BIT:VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &waw, 0, NULL, 4, acq);
     const VkDeviceSize one = (VkDeviceSize)fg->extent.width * fg->extent.height * 4u;
     for (int i = 0; i < 4; ++i) {
         VkBufferImageCopy region = {.bufferOffset = one * (VkDeviceSize)i,
@@ -588,9 +605,10 @@ static void verify_collect(gfg_gpu_fg *fg, int final) {
     const size_t px = (size_t)fg->extent.width * fg->extent.height;
     const uint8_t *g1 = map, *g2 = g1 + px * 4, *rp = g2 + px * 4, *rn = rp + px * 4;
     const int sb = fg->src_bgra;
-    uint64_t d12 = rgb_delta(g1, 0, g2, 0, px);
-    uint64_t d1p = rgb_delta(g1, 0, rp, sb, px), d1n = rgb_delta(g1, 0, rn, sb, px);
-    uint64_t d2p = rgb_delta(g2, 0, rp, sb, px), d2n = rgb_delta(g2, 0, rn, sb, px);
+    const int gb = fg->same_device && fg->src_bgra;
+    uint64_t d12 = rgb_delta(g1, gb, g2, gb, px);
+    uint64_t d1p = rgb_delta(g1, gb, rp, sb, px), d1n = rgb_delta(g1, gb, rn, sb, px);
+    uint64_t d2p = rgb_delta(g2, gb, rp, sb, px), d2n = rgb_delta(g2, gb, rn, sb, px);
     uint64_t dpn = rgb_delta(rp, sb, rn, sb, px);
     int distinct = d12 && d1p && d1n && d2p && d2n;
     /* interpolation sanity: G1 nearer R(n-1), G2 nearer R(n) */
@@ -642,6 +660,8 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     fg->set_loader_data = info->set_loader_data;
     fg->log = getenv("GFG_NATIVE_TRACE") != NULL;
     fg->src_bgra = is_bgra(info->format);
+    const char *force_relay = getenv("GFG_NATIVE_GPU_SYNC");
+    fg->same_device = !force_relay || !strcmp(force_relay,"same-device");
     pthread_mutex_init(&fg->relay.lock, NULL);
     pthread_cond_init(&fg->relay.cond, NULL);
     const char *why = "entrypoints";
@@ -662,7 +682,7 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     mp(info->physical, &fg->memory_props);
 
     why = "output-format";
-    if (!fg->src_bgra) {
+    if (!fg->src_bgra || fg->same_device) {
         fg->out_mode = OUT_COPY;
     } else {
         VkFormatProperties rgba, bgra;
@@ -688,6 +708,7 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     for (uint32_t i = 0; i < n; ++i)
         if (!ok(fg->CreateSemaphore(fg->device, &bsci, NULL, &fg->ready[i]))) goto fail;
 
+    /* External-device mode remains explicit for independent fd-path validation. */
     /* TE on its own device, same GPU */
     why = "te-device";
     VkPhysicalDeviceIDProperties id = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
@@ -696,29 +717,34 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     props2(info->physical, &p2);
     te_device_desc dd = {.match_uuid = 1, .validation = env_flag("GFG_NATIVE_TE_VALIDATION")};
     memcpy(dd.device_uuid, id.deviceUUID, VK_UUID_SIZE);
-    if (te_device_create(&dd, &fg->engine) != VK_SUCCESS) {
+    if(fg->same_device){
+        if(te_device_borrow(info->instance,info->gipa,info->physical,info->device,
+            info->gdpa,info->set_loader_data,info->queue,info->family,&fg->engine)!=VK_SUCCESS){
+            fprintf(stderr,"[gfg-native] same-device TE unavailable: %s\n",te_last_error());
+            goto fail;
+        }
+    } else     if (te_device_create(&dd, &fg->engine) != VK_SUCCESS) {
         fprintf(stderr, "[gfg-native] gpu-bridge TE device: %s\n", te_last_error());
         goto fail;
     }
     int te_mem = 0, te_sem = 0;
     te_device_supports_fd_import(fg->engine, &te_mem, &te_sem);
     why = "te-memory-fd";
-    if (!te_mem) goto fail;
-    const char *force_relay = getenv("GFG_NATIVE_GPU_SYNC");
-    fg->shared_sync = info->semaphore_fd && te_sem && fg->GetSemaphoreFdKHR &&
-                      !(force_relay && !strcmp(force_relay, "relay"));
+    if (!fg->same_device && !te_mem) goto fail;
+    fg->shared_sync = fg->same_device || (info->semaphore_fd && te_sem && fg->GetSemaphoreFdKHR &&
+                      !(force_relay && !strcmp(force_relay, "relay")));
 
     /* timeline on the app device: exportable in shared mode */
     why = "timeline";
     VkExportSemaphoreCreateInfo esci = {.sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
         .handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT};
     VkSemaphoreTypeCreateInfo stci = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
-        .pNext = fg->shared_sync ? &esci : NULL,
+        .pNext = fg->shared_sync && !fg->same_device ? &esci : NULL,
         .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE, .initialValue = 0};
     VkSemaphoreCreateInfo tsci = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, .pNext = &stci};
     if (!ok(fg->CreateSemaphore(fg->device, &tsci, NULL, &fg->timeline))) goto fail;
     int sync_fd = -1;
-    if (fg->shared_sync) {
+    if (fg->shared_sync && !fg->same_device) {
         VkSemaphoreGetFdInfoKHR gi = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR,
             .semaphore = fg->timeline, .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT};
         if (!ok(fg->GetSemaphoreFdKHR(fg->device, &gi, &sync_fd)) || sync_fd < 0) goto fail;
@@ -729,9 +755,11 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     te_context_desc_default(&cd, fg->extent.width, fg->extent.height, 2);
     const char *algorithm = getenv("GFG_NATIVE_ALGO");
     cd.params.algorithm = (!algorithm || strcmp(algorithm, "lmc")) ? TE_ALGO_TILES : TE_ALGO_LMC;
-    cd.export_fds = 1;
+    cd.export_fds = !fg->same_device;
+    cd.application_timeline = fg->same_device ? fg->timeline : VK_NULL_HANDLE;
     cd.host_io = 0;
     cd.source_bgra = fg->src_bgra;
+    cd.output_bgra = fg->same_device && fg->src_bgra;
     cd.sync_fd = sync_fd; /* ownership passes to TE (closed on failure too) */
     if (te_context_create(fg->engine, &cd, &fg->context) != VK_SUCCESS) {
         fprintf(stderr, "[gfg-native] gpu-bridge TE context: %s\n", te_last_error());
@@ -742,6 +770,10 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
 
     why = "import";
     const VkFormat src_format = fg->src_bgra ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
+    if(fg->same_device){
+        for(uint32_t s=0;s<2;++s) fg->src[s].image=te_source_image(fg->context,s);
+        for(uint32_t o=0;o<2;++o) fg->dst[o].image=te_output_image(fg->context,o);
+    } else {
     for (uint32_t s = 0; s < 2; ++s)
         if (!import_image(fg, &fg->src[s], src_format,
                 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
@@ -754,6 +786,7 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
                 VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                 te_export_dest_fd(fg->context, o)))
             goto fail;
+    }
     if (fg->out_mode == OUT_BLIT_COPY &&
         !local_image(fg, &fg->scratch, &fg->scratch_memory, VK_FORMAT_B8G8R8A8_UNORM,
                      VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT))
@@ -791,7 +824,7 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
         VkImage shared[4] = {fg->src[0].image, fg->src[1].image, fg->dst[0].image, fg->dst[1].image};
         VkImageMemoryBarrier tr[7], rel[4];
         uint32_t nt = 0;
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; !fg->same_device && i < 4; ++i) {
             tr[nt++] = image_barrier(shared[i], 0, 0, VK_IMAGE_LAYOUT_UNDEFINED,
                 VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
             rel[i] = release_external(fg, shared[i], 0);
@@ -808,7 +841,7 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
         cmd_barrier(fg, fg->init_cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                     VK_PIPELINE_STAGE_TRANSFER_BIT, nt, tr);
         cmd_barrier(fg, fg->init_cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                    VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 4, rel);
+                    VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, fg->same_device?0u:4u, rel);
     }
     if (!ok(fg->EndCommandBuffer(fg->init_cb))) goto fail;
     VkSubmitInfo isi = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1,
@@ -825,13 +858,13 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     fg->timing_total_us = calloc(TIMING_CAP, sizeof(double));
     fg->timing_own_us = calloc(TIMING_CAP, sizeof(double));
     STAT_ADD(bridges_created, 1);
-    STAT_SET(sync_mode, fg->shared_sync ? 1 : 2);
+    STAT_SET(sync_mode, fg->same_device ? 3 : fg->shared_sync ? 1 : 2);
     fprintf(stderr,
         "[gfg-native] GPU bridge active: %ux%u format=%d out=%s sync=%s images=%u"
         " present_mode=%d inflight=%u algo=%s verify=%d startup_ms=%.2f\n",
         fg->extent.width, fg->extent.height, (int)fg->format,
         fg->out_mode == OUT_COPY ? "copy" : fg->out_mode == OUT_BLIT ? "blit" : "blit+copy",
-        fg->shared_sync ? "shared-timeline-fd" : "host-relay", fg->image_count,
+        fg->same_device ? "same-device" : fg->shared_sync ? "shared-timeline-fd" : "host-relay", fg->image_count,
         (int)fg->present_mode, fg->ring_size,
         cd.params.algorithm == TE_ALGO_LMC ? "lmc" : "tiles", fg->verify,
         (now_us() - t0) / 1000.0);
@@ -948,7 +981,7 @@ void gfg_gpu_fg_destroy(gfg_gpu_fg *fg) {
     if (fg->device && fg->DestroyCommandPool && fg->pool)
         fg->DestroyCommandPool(fg->device, fg->pool, NULL);
     if (fg->device && fg->DestroyImage && fg->FreeMemory) {
-        for (int i = 0; i < 2; ++i) {
+        for (int i = 0; !fg->same_device && i < 2; ++i) {
             if (fg->src[i].image) fg->DestroyImage(fg->device, fg->src[i].image, NULL);
             if (fg->src[i].memory) fg->FreeMemory(fg->device, fg->src[i].memory, NULL);
             if (fg->dst[i].image) fg->DestroyImage(fg->device, fg->dst[i].image, NULL);

@@ -46,6 +46,14 @@ $(BUILD)/memory-policy: tests/memory_policy.c src/memory_policy.h
 memory-policy: $(BUILD)/memory-policy
 	$(BUILD)/memory-policy
 
+$(BUILD)/gpu-wsi-observer: tests/wsi_gpu_observer.c tests/gpu_observer.h src/gpu_bridge.c src/gpu_bridge.h $(TE_LIB)
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DVK_USE_PLATFORM_XCB_KHR -DGFG_NATIVE_TEST_SMALL -DGFG_NATIVE_TEST_GPU_OBSERVER -I$(VULKAN_HEADERS) -Isrc -I../gfg-temporal/src -o $@ tests/wsi_gpu_observer.c src/gpu_bridge.c $(TE_LIB) -lvulkan -lxcb -ldl -lpthread -lm
+
+$(BUILD)/borrowed-device: tests/borrowed_device.c $(TE_LIB)
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I$(VULKAN_HEADERS) -I../gfg-temporal/src -o $@ $< $(TE_LIB) -lvulkan -ldl -lpthread -lm
+
 $(BUILD)/present-ids: tests/present_ids.c src/present_ids.h
 	mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/present_ids.c

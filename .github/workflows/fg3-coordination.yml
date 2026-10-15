@@ -28,3 +28,16 @@ jobs:
             } else {
               await github.rest.issues.createComment({owner, repo, issue_number, body});
             }
+            const head = `${owner}:codex/fg3-integration`;
+            const base = 'claude/native-gpu-bridge';
+            const prs = await github.rest.pulls.list({owner, repo, head, base, state: 'open'});
+            if (!prs.data.length && fs.existsSync('docs/fg3/INTEGRATION_PR.md')) {
+              try {
+                const pr = await github.rest.pulls.create({owner, repo, head: 'codex/fg3-integration', base,
+                  title: 'Native FG3: resolve relay WSI dependency with application-device TE',
+                  body: fs.readFileSync('docs/fg3/INTEGRATION_PR.md', 'utf8'), draft: true});
+                core.notice(`Integration review: ${pr.data.html_url}`);
+              } catch (error) {
+                core.warning(`Draft PR creation unavailable: ${error.status}; source and coordination comment remain published. Compare https://github.com/${owner}/${repo}/compare/${base}...codex/fg3-integration`);
+              }
+            }

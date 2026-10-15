@@ -31,7 +31,7 @@ typedef struct {
 typedef struct {
     uint64_t version;                 /* = 1 */
     uint64_t bridges_created;
-    uint64_t sync_mode;               /* 1: shared timeline fd, 2: host relay (no semaphore fd) */
+    uint64_t sync_mode;               /* 1: shared timeline fd, 2: host relay, 3: application device */
     uint64_t real_presents;           /* real presents that went through a bridge */
     uint64_t synthetic_presents;      /* synthetic presents accepted by the WSI (SUCCESS/SUBOPTIMAL) */
     uint64_t skipped_synthetic;       /* synthetic slots not presented after the first frame */

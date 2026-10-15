@@ -24,7 +24,7 @@ void main() {
             vec2 v = smooth_vector(pf, t);
             vec3 a = rgb_a(pf - t * v);
             vec3 b = rgb_b(pf + (1.0 - t) * v);
-            imageStore(dst, p, vec4(a * (1.0 - t) + b * t, 1.0));
+            imageStore(dst, p, output_color(vec4(a * (1.0 - t) + b * t, 1.0)));
             vec3 d = abs(a - b);
             sum += (d.r + d.g + d.b) / 3.0;
             cnt += 1u;

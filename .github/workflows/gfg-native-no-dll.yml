@@ -1,245 +1,49 @@
-name: GFG Native TE no-DLL bootstrap
+name: Native FG3 GPU validation (software only)
 on:
   pull_request:
   workflow_dispatch:
 permissions:
   contents: read
-
 jobs:
-  source-checks:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - name: Native bootstrap contract tests
-        run: |
-          python3 -m unittest discover -s tests -p test_native_no_dll_bootstrap.py -v
-          python3 -m unittest discover -s tests -p test_native_layer_foundation.py -v
-
-  native-bootstrap:
+  gpu-validation:
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     env:
-      CXX: g++-12
-      CC: gcc-12
       VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+      VK_LAYER_PATH: /usr/share/vulkan/explicit_layer.d
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Build prerequisites
+      - name: Prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++-12 cmake libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers libx11-dev libxcb1-dev xvfb glslang-tools spirv-tools p7zip-full
-          git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
-      - name: Test real Steam Deck swapchain flags 0xc0 and existing transfer usage
-        run: |
-          make -C engine/gfg-native swapchain-policy VULKAN_HEADERS="$RUNNER_TEMP/vkh/include"
-      - name: Test cached readback memory-type selection
-        run: |
-          make -C engine/gfg-native memory-policy VULKAN_HEADERS="$RUNNER_TEMP/vkh/include"
-          make -C engine/gfg-native present-ids
-      - name: Compile standalone GFG Native WSI layer (no MAKO linkage)
-        run: |
-          make -C engine/gfg-native layer VULKAN_HEADERS="$RUNNER_TEMP/vkh/include"
-          test -s engine/gfg-native/build/libVkLayer_gfg_native.so
-          make -C engine/gfg-native smoke VULKAN_HEADERS="$RUNNER_TEMP/vkh/include"             VK_ICD_FILENAMES="$VK_ICD_FILENAMES" 2>&1 | tee native-loader-smoke.log
-          grep -q 'GFG native: Vulkan loader/instance/device dispatch smoke PASS' native-loader-smoke.log
-          grep -q '\[gfg-native\] instance initialized enabled=1' native-loader-smoke.log
-          xvfb-run -a make -C engine/gfg-native wsi-smoke \
-            VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" 2>&1 | tee native-wsi-smoke.log
-          grep -q 'GFG native: 4 real WSI acquire/submit/present cycles PASS' native-wsi-smoke.log
-      - name: Build and exercise OWN TE8 frame generation with no DLL or MAKO
-        env:
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-        run: |
-          make -C engine/gfg-temporal lib
-          xvfb-run -a make -C engine/gfg-native wsi-smoke-te \
-            VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" 2>&1 | tee native-fg-wsi.log
-          grep -q '\[gfg-native\] OWN TE8 CPU bridge active' native-fg-wsi.log
-          grep -Eq '\[gfg-native\] generated=[1-9]' native-fg-wsi.log
-          grep -Eq '\[gfg-native\] candidate distinct=1' native-fg-wsi.log
-          grep -q 'GFG native: 4 real WSI acquire/submit/present cycles PASS' native-fg-wsi.log
-          GFG_NATIVE_TEST_SRGB=1 xvfb-run -a make -C engine/gfg-native wsi-smoke-te \
-            VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" 2>&1 | tee native-fg-wsi-srgb.log
-          grep -q 'GFG native: WSI SRGB format=' native-fg-wsi-srgb.log
-          grep -Eq 'candidate=1 output=real-only reason=(existing-usage-ready|extended-usage-ready)' native-fg-wsi-srgb.log
-          grep -Eq '\[gfg-native\] candidate distinct=1' native-fg-wsi-srgb.log
-          grep -Eq '\[gfg-native\] generated=[1-9]' native-fg-wsi-srgb.log
-      - name: GPU-resident TE8 bridge on a real XCB swapchain (lavapipe, SIMULATED)
-        env:
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-        run: |
-          xvfb-run -a make -C engine/gfg-native wsi-smoke-gpu \
-            VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" 2>&1 | tee native-gpu-wsi.log
-          grep -q '\[gfg-native\] GPU bridge active' native-gpu-wsi.log
-          grep -q 'wsi-smoke-gpu: run 1 with VK_LAYER_KHRONOS_validation' native-gpu-wsi.log
-          grep -q 'GFG native: validation errors=0' native-gpu-wsi.log
-          grep -Eq '\[gfg-native\] gpu-verify frame=[0-9]+ distinct=1' native-gpu-wsi.log
-          ! grep -Eq '\[gfg-native\] gpu-verify frame=[0-9]+ distinct=0' native-gpu-wsi.log
-          grep -Eq 'skipped=0 .*present_path_host_pixel_reads=0 present_path_cpu_waits=0' native-gpu-wsi.log
-          ! grep -q 'GPU bridge WSI smoke FAIL' native-gpu-wsi.log
-          ! grep -Eq 'validation errors=[1-9]' native-gpu-wsi.log
-          test "$(grep -c 'real frames GPU bridge WSI smoke PASS' native-gpu-wsi.log)" -eq 3
-          GFG_NATIVE_TEST_SRGB=1 xvfb-run -a make -C engine/gfg-native wsi-smoke-gpu \
-            VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" 2>&1 | tee native-gpu-wsi-srgb.log
-          grep -q 'out=blit+copy' native-gpu-wsi-srgb.log
-          ! grep -q 'GPU bridge WSI smoke FAIL' native-gpu-wsi-srgb.log
-          test "$(grep -c 'real frames GPU bridge WSI smoke PASS' native-gpu-wsi-srgb.log)" -eq 3
-      - name: Package independent Steam Deck test build and verify installation
-        run: |
-          python3 scripts/package_native_fg.py \
-            --binary engine/gfg-native/build-te/libVkLayer_gfg_native.so \
-            --outdir out-native --version 2.1.2-native.1
-          ( cd out-native && sha256sum --check SHA256SUMS.txt )
-          archive="$(find out-native -maxdepth 1 -name '*.zip' -print -quit)"
-          test -s "$archive"
-          unzip -tq "$archive"
-          mkdir -p "$RUNNER_TEMP/native-stage" "$RUNNER_TEMP/native-home"
-          unzip -q "$archive" -d "$RUNNER_TEMP/native-stage"
-          (
-            cd "$RUNNER_TEMP/native-stage/GFG-Native-FG"
-            sha256sum --check SHA256SUMS.txt
-            HOME="$RUNNER_TEMP/native-home" bash ./install.sh
-            test -s "$RUNNER_TEMP/native-home/.local/share/gfg-native/libVkLayer_gfg_native.so"
-            HOME="$RUNNER_TEMP/native-home" "$RUNNER_TEMP/native-home/.local/bin/gfg-native" /bin/true
-            HOME="$RUNNER_TEMP/native-home" bash ./uninstall.sh
-            test ! -e "$RUNNER_TEMP/native-home/.local/bin/gfg-native"
-          )
-      - name: Create and verify Steam Deck Patch 02 (not a release)
+          sudo apt-get install -y gcc make libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers libxcb1-dev xvfb glslang-tools spirv-tools
+          git clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
+      - name: Core and native contracts
         run: |
           set -euo pipefail
-          mkdir -p out-patch-02
-          cp engine/gfg-native/build-te/libVkLayer_gfg_native.so out-patch-02/
-          cp patches/native-02/apply.sh patches/native-02/rollback.sh patches/native-02/README.md out-patch-02/
-          (cd out-patch-02 && sha256sum libVkLayer_gfg_native.so > SHA256SUMS.txt && sha256sum --check SHA256SUMS.txt)
-          for base in 1 2; do
-            archive="GFG-Native-FG-v2_1_2-native_${base}.zip"
-            curl --retry 3 -fsSL "https://github.com/wavessevaw/GFG-Extreme/releases/download/v2.1.2-native.${base}/${archive}" -o "$RUNNER_TEMP/${archive}"
-            mkdir -p "$RUNNER_TEMP/native-baseline-${base}/.local/share/gfg-native"
-            target="$RUNNER_TEMP/native-baseline-${base}/.local/share/gfg-native/libVkLayer_gfg_native.so"
-            unzip -p "$RUNNER_TEMP/${archive}" GFG-Native-FG/libVkLayer_gfg_native.so > "$target"
-            chmod 755 "$target"
-            cp "$target" "$RUNNER_TEMP/original-${base}.so"
-            ( cd out-patch-02 && HOME="$RUNNER_TEMP/native-baseline-${base}" XDG_DATA_HOME= bash ./apply.sh )
-            cmp "$target" out-patch-02/libVkLayer_gfg_native.so
-            test -s "${target}.before-patch-02"
-            ( cd out-patch-02 && HOME="$RUNNER_TEMP/native-baseline-${base}" XDG_DATA_HOME= bash ./rollback.sh )
-            cmp "$target" "$RUNNER_TEMP/original-${base}.so"
+          python3 -m unittest discover -s tests -p 'test_native*.py' -v
+          make -C engine/gfg-temporal all lib
+          engine/gfg-temporal/build/te-tests 2>&1 | tee core.log
+          make -C engine/gfg-native ENABLE_TE=1 BUILD=build-te VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" layer build-te/wsi-gpu-smoke build-te/borrowed-device build-te/gpu-wsi-observer swapchain-policy memory-policy present-ids
+      - name: Borrowed device, actual WSI image contents and sync validation
+        env:
+          VK_INSTANCE_LAYERS: VK_LAYER_KHRONOS_validation
+        run: |
+          set -euo pipefail
+          engine/gfg-native/build-te/borrowed-device 2>&1 | tee borrowed.log
+          xvfb-run -a engine/gfg-native/build-te/gpu-wsi-observer 2>&1 | tee observer.log
+          GFG_NATIVE_TEST_SRGB=1 xvfb-run -a engine/gfg-native/build-te/gpu-wsi-observer 2>&1 | tee observer-srgb.log
+          grep -q 'synthetic=6 content=PASS handoff_order=PASS' observer.log
+          grep -q 'synthetic=6 content=PASS handoff_order=PASS' observer-srgb.log
+          for order in VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation VK_LAYER_KHRONOS_validation:VK_LAYER_GFG_native; do
+            GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=120 GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=4 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "gpu-$order.log"
+            grep -q 'validation errors=0' "gpu-$order.log"
+            grep -q 'real=120 synthetic=238 skipped=0' "gpu-$order.log"
+            GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=30 GFG_NATIVE_GPU_BRIDGE_INJECT_SKIP=5 GFG_TEST_ALLOW_SKIPS=1 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "skip-$order.log"
+            grep -q 'validation errors=0' "skip-$order.log"
           done
-      - name: Upload standalone replacement-library patch only
-        uses: actions/upload-artifact@v4
-        with:
-          name: GFG-Native-FG-Patch-02-Deck-0xc0
-          path: out-patch-02/*
-          retention-days: 30
-          if-no-files-found: error
-      - name: Produce and verify standalone Deck performance Patch 03
-        run: |
-          set -euo pipefail
-          mkdir -p out-patch-03
-          cp engine/gfg-native/build-te/libVkLayer_gfg_native.so out-patch-03/
-          cp patches/native-03/apply.sh patches/native-03/rollback.sh patches/native-03/README.md out-patch-03/
-          (cd out-patch-03 && sha256sum libVkLayer_gfg_native.so > SHA256SUMS.txt && sha256sum --check SHA256SUMS.txt)
-          # Check compatibility with the observed Deck baseline (Patch 02).
-          baseline="$RUNNER_TEMP/native-baseline-3"
-          target="$baseline/.local/share/gfg-native/libVkLayer_gfg_native.so"
-          mkdir -p "$(dirname "$target")"
-          # The older released native.2 binary is NOT bit-identical to this commit.
-          # Test patch application against a real previous installed version.
-          cp "$RUNNER_TEMP/original-2.so" "$target"
-          chmod 755 "$target"
-          cp "$target" "$RUNNER_TEMP/pre-patch-03.so"
-          (cd out-patch-03 && HOME="$baseline" XDG_DATA_HOME= bash ./apply.sh)
-          cmp "$target" out-patch-03/libVkLayer_gfg_native.so
-          test -s "${target}.before-patch-03"
-          (cd out-patch-03 && HOME="$baseline" XDG_DATA_HOME= bash ./rollback.sh)
-          cmp "$target" "$RUNNER_TEMP/pre-patch-03.so"
-          # Check launch-time semantics are still independent of MAKO/DLL.
-          readelf -d out-patch-03/libVkLayer_gfg_native.so | tee out-patch-03/dependencies.txt
-          ! grep -Ei 'NEEDED.*(mako|lsfg|lossless)' out-patch-03/dependencies.txt
-      - name: Upload Patch 03 binary and reversible installer (no release)
-        uses: actions/upload-artifact@v4
-        with:
-          name: GFG-Native-FG-Patch-03-Deck-WSI-Latency
-          path: out-patch-03/*
-          retention-days: 30
-          if-no-files-found: error
-      - name: Produce and verify Deck diagnostic/anti-stall Patch 04
-        run: |
-          set -euo pipefail
-          mkdir -p out-patch-04
-          cp engine/gfg-native/build-te/libVkLayer_gfg_native.so out-patch-04/
-          cp patches/native-04/apply.sh patches/native-04/rollback.sh patches/native-04/README.md out-patch-04/
-          (cd out-patch-04 && sha256sum libVkLayer_gfg_native.so > SHA256SUMS.txt && sha256sum --check SHA256SUMS.txt)
-          baseline="$RUNNER_TEMP/native-baseline-4"
-          target="$baseline/.local/share/gfg-native/libVkLayer_gfg_native.so"
-          mkdir -p "$(dirname "$target")"
-          # Use the real installed native.2 binary as a compatibility baseline.
-          # The same installer supports installed Patch 03 libraries.
-          cp "$RUNNER_TEMP/original-2.so" "$target"
-          chmod 755 "$target"
-          cp "$target" "$RUNNER_TEMP/pre-patch-04.so"
-          (cd out-patch-04 && HOME="$baseline" XDG_DATA_HOME= bash ./apply.sh)
-          cmp "$target" out-patch-04/libVkLayer_gfg_native.so
-          test -s "${target}.before-patch-04"
-          (cd out-patch-04 && HOME="$baseline" XDG_DATA_HOME= bash ./rollback.sh)
-          cmp "$target" "$RUNNER_TEMP/pre-patch-04.so"
-          test ! -e "${target}.before-patch-04"
-          readelf -d out-patch-04/libVkLayer_gfg_native.so | tee out-patch-04/dependencies.txt
-          ! grep -Ei 'NEEDED.*(mako|lsfg|lossless)' out-patch-04/dependencies.txt
-      - name: Upload Patch 04 replacement library (no release)
-        uses: actions/upload-artifact@v4
-        with:
-          name: GFG-Native-FG-Patch-04-TE-Profiler
-          path: out-patch-04/*
-          retention-days: 30
-          if-no-files-found: error
-      - name: Produce and verify Patch 05 cached readback
-        run: |
-          set -euo pipefail
-          mkdir -p out-patch-05
-          cp engine/gfg-native/build-te/libVkLayer_gfg_native.so out-patch-05/
-          cp patches/native-05/apply.sh patches/native-05/rollback.sh patches/native-05/README.md out-patch-05/
-          (cd out-patch-05 && sha256sum libVkLayer_gfg_native.so > SHA256SUMS.txt && sha256sum --check SHA256SUMS.txt)
-          baseline="$RUNNER_TEMP/native-baseline-5"
-          target="$baseline/.local/share/gfg-native/libVkLayer_gfg_native.so"
-          mkdir -p "$(dirname "$target")"
-          cp "$RUNNER_TEMP/original-2.so" "$target"
-          chmod 755 "$target"
-          cp "$target" "$RUNNER_TEMP/pre-patch-05.so"
-          (cd out-patch-05 && HOME="$baseline" XDG_DATA_HOME= bash ./apply.sh)
-          cmp "$target" out-patch-05/libVkLayer_gfg_native.so
-          test -s "${target}.before-patch-05"
-          (cd out-patch-05 && HOME="$baseline" XDG_DATA_HOME= bash ./rollback.sh)
-          cmp "$target" "$RUNNER_TEMP/pre-patch-05.so"
-          test ! -e "${target}.before-patch-05"
-          readelf -d out-patch-05/libVkLayer_gfg_native.so | tee out-patch-05/dependencies.txt
-          ! grep -Ei 'NEEDED.*(mako|lsfg|lossless)' out-patch-05/dependencies.txt
-      - name: Upload Patch 05 replacement library (no release)
-        uses: actions/upload-artifact@v4
-        with:
-          name: GFG-Native-FG-Patch-05-HostCached
-          path: out-patch-05/*
-          retention-days: 30
-          if-no-files-found: error
-      - name: Compile DLL-free Temporal Engine bootstrap using pinned production renderer
-        run: |
-          python3 scripts/build_frame_fusion.py --native-no-dll \
-            --work "$RUNNER_TEMP/gfg-native-bridge" \
-            --headers "$RUNNER_TEMP/vkh/include"
-          python3 scripts/check_native_independence.py \
-            --source "$RUNNER_TEMP/gfg-native-bridge/source"
-      - name: Provenance, no release
-        run: |
-          echo 'This validates a no-DLL TE bootstrap within the transitional GPL MAKO WSI.'
-          echo 'It does NOT validate an independent WSI or physical Steam Deck presentation.'
-
-      - name: Preserve independent device-trial archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: GFG-Native-FG-2.1.2-native.1
-          path: |
-            out-native/*.zip
-            out-native/SHA256SUMS.txt
-          retention-days: 30
-          if-no-files-found: error
+          if grep -E 'VALIDATION ERROR|Validation Error|VUID-' borrowed.log observer*.log gpu-*.log skip-*.log; then exit 1; fi
+      # Intentionally no patch/ZIP artifact upload, prerelease, or hardware claim.
