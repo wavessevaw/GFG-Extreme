@@ -88,24 +88,24 @@ async function card(name, cols) {
 
 // Overview: real frontend UI, example 30 real → 90 output cadence, Autopilot and Details.
 await card("card-overview", [
-  { png: await screen(st("readme-home"), { until: "MODE" }), label: "Battery · example session" },
-  { png: await screen(st("home-autopilot"), { until: "FILTERS", maxH: 1160 }), label: "<b>Autopilot</b> · measured decisions" },
-  { png: await screen(st("home-autopilot"), { nav: ["Details"], until: "HEALTH" }), label: "Details · operating point" },
+  { png: await screen(st("readme-home"), { maxH: 1100 }), label: "Battery · example session" },
+  { png: await screen(st("home-autopilot"), { maxH: 1100 }), label: "<b>Autopilot</b> · measured decisions" },
+  { png: await screen(st("home-autopilot"), { nav: ["Details"], maxH: 1100 }), label: "Details · operating point" },
 ]);
 
 // Four modes offered by stable 2.1.0.
 await card("card-modes", [
-  { png: await region(st("readme-home"), { from: ".hero", to: ".hero" }), label: "Battery" },
-  { png: await region(st("home-balanced"), { from: ".hero", to: ".hero" }), label: "Balanced" },
-  { png: await region(st("home-quality-oled"), { from: ".hero", to: ".hero" }), label: "Quality" },
-  { png: await region(st("home-autopilot"), { from: ".hero", to: ".hero" }), label: "<b>Autopilot</b>" },
+  { png: await region(st("readme-home"), { from: ".hero2", to: ".hero2" }), label: "Battery" },
+  { png: await region(st("home-balanced"), { from: ".hero2", to: ".hero2" }), label: "Balanced" },
+  { png: await region(st("home-quality-oled"), { from: ".hero2", to: ".hero2" }), label: "Quality" },
+  { png: await region(st("home-autopilot"), { from: ".hero2", to: ".hero2" }), label: "<b>Autopilot</b>" },
 ]);
 
 // The same genuine Autopilot card in confirmed/awaiting-measurement states.
 // These are explicitly sample values, not a performance benchmark.
 await card("card-autopilot", [
-  { png: await region(st("home-autopilot"), { from: "^AUTOPILOT", to: "^AUTOPILOT" }), label: "Confirmed · no unneeded changes" },
-  { png: await region(st("home-autopilot-wait"), { from: "^AUTOPILOT", to: "^AUTOPILOT" }), label: "Trial deferred · unchanged hardware" },
+  { png: await region(st("home-autopilot"), { from: ".bstate", to: ".bstate" }), label: "Confirmed · no unneeded changes" },
+  { png: await region(st("home-autopilot-wait"), { from: ".bstate", to: ".bstate" }), label: "Trial deferred · unchanged hardware" },
 ]);
 
 await card("card-profile", [
