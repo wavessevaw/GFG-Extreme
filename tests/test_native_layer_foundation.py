@@ -25,10 +25,23 @@ class NativeLayerTests(unittest.TestCase):
         self.assertIn("output=real-only", code)
         self.assertIn("VK_IMAGE_USAGE_TRANSFER_SRC_BIT", code)
         self.assertIn("VK_IMAGE_USAGE_TRANSFER_DST_BIT", code)
+        self.assertIn("GFG_NATIVE_CPU_BRIDGE", code)
+        self.assertIn("gfg_cpu_fg_present", code)
+        self.assertIn("native_GetDeviceQueue", code)
         self.assertIn("native_AcquireNextImageKHR", code)
         self.assertIn("native_AcquireNextImage2KHR", code)
         self.assertIn("native_acquired(", code)
         self.assertIn("if (!strcmp(symbol, \"vkQueuePresentKHR\"))", code)
+
+
+    def test_native_cpu_path_uses_only_internal_temporal_engine(self):
+        bridge = (ENGINE / "src/cpu_bridge.c").read_text()
+        for forbidden in ("mako::", "lsfg_", "libmako", "dlopen("):
+            self.assertNotIn(forbidden, bridge)
+        self.assertIn("te_submit_frame(", bridge)
+        self.assertIn("te_download_rgb(", bridge)
+        self.assertIn("vkQueuePresentKHR", (ENGINE / "src/layer.c").read_text())
+        self.assertIn("VK_IMAGE_LAYOUT_PRESENT_SRC_KHR", bridge)
 
 if __name__ == "__main__":
     unittest.main()

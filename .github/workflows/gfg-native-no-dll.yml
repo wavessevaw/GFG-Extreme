@@ -41,6 +41,16 @@ jobs:
           xvfb-run -a make -C engine/gfg-native wsi-smoke \
             VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" 2>&1 | tee native-wsi-smoke.log
           grep -q 'GFG native: 4 real WSI acquire/submit/present cycles PASS' native-wsi-smoke.log
+      - name: Build and exercise OWN TE8 frame generation with no DLL or MAKO
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+        run: |
+          make -C engine/gfg-temporal lib
+          xvfb-run -a make -C engine/gfg-native wsi-smoke-te \
+            VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" 2>&1 | tee native-fg-wsi.log
+          grep -q '\[gfg-native\] OWN LMC CPU bridge active' native-fg-wsi.log
+          grep -Eq '\[gfg-native\] generated=[1-9]' native-fg-wsi.log
+          grep -q 'GFG native: 4 real WSI acquire/submit/present cycles PASS' native-fg-wsi.log
       - name: Compile DLL-free Temporal Engine bootstrap using pinned production renderer
         run: |
           python3 scripts/build_frame_fusion.py --native-no-dll \

@@ -15,6 +15,9 @@
 
 #include <vulkan/vulkan.h>
 #include <vulkan/vk_layer.h>
+#ifdef GFG_NATIVE_WITH_TE
+#include "cpu_bridge.h"
+#endif
 
 #define EXPORT __attribute__((visibility("default")))
 
@@ -28,6 +31,12 @@ typedef struct native_instance {
     int enabled;
 } native_instance;
 
+typedef struct native_queue {
+    struct native_queue *next;
+    VkQueue handle;
+    uint32_t family;
+} native_queue;
+
 typedef struct native_swapchain {
     struct native_swapchain *next;
     VkSwapchainKHR handle;
@@ -39,6 +48,10 @@ typedef struct native_swapchain {
     uint64_t present_misses;
     uint32_t image_count;
     unsigned char *owned; /* only exact acquired image indices, never fabricated */
+#ifdef GFG_NATIVE_WITH_TE
+    gfg_cpu_fg *bridge;
+    int bridge_attempted;
+#endif
     int copy_eligible; /* enabled transfer usage only; never means captured */
 } native_swapchain;
 
@@ -48,6 +61,8 @@ typedef struct native_device {
     VkDevice handle;
     VkPhysicalDevice physical;
     PFN_vkGetDeviceProcAddr gdpa;
+    PFN_vkGetDeviceQueue get_queue;
+    PFN_vkGetDeviceQueue2 get_queue2;
     PFN_vkDestroyDevice destroy;
     PFN_vkCreateSwapchainKHR create_swapchain;
     PFN_vkDestroySwapchainKHR destroy_swapchain;
@@ -58,6 +73,7 @@ typedef struct native_device {
     native_instance *instance;
     pthread_mutex_t lock;
     native_swapchain *swapchains;
+    native_queue *queues;
 } native_device;
 
 static pthread_mutex_t map_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -191,6 +207,8 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     d->physical = phys;
     d->gdpa = gdpa;
     d->destroy = destroy;
+    d->get_queue = (PFN_vkGetDeviceQueue)gdpa(*out, "vkGetDeviceQueue");
+    d->get_queue2 = (PFN_vkGetDeviceQueue2)gdpa(*out, "vkGetDeviceQueue2");
     d->create_swapchain = (PFN_vkCreateSwapchainKHR)
         gdpa(*out, "vkCreateSwapchainKHR");
     d->destroy_swapchain = (PFN_vkDestroySwapchainKHR)
@@ -228,9 +246,18 @@ native_DestroyDevice(VkDevice device, const VkAllocationCallbacks *alloc) {
     native_swapchain *sc = found->swapchains;
     while (sc) {
         native_swapchain *next = sc->next;
+#ifdef GFG_NATIVE_WITH_TE
+        if (sc->bridge) gfg_cpu_fg_destroy(sc->bridge);
+#endif
         free(sc->owned);
         free(sc);
         sc = next;
+    }
+    native_queue *queue = found->queues;
+    while (queue) {
+        native_queue *next = queue->next;
+        free(queue);
+        queue = next;
     }
     found->destroy(device, alloc);
     pthread_mutex_destroy(&found->lock);
@@ -244,6 +271,41 @@ static int eligible_shape(const VkSwapchainCreateInfoKHR *ci) {
         return 0;
     return ci->imageFormat == VK_FORMAT_R8G8B8A8_UNORM ||
            ci->imageFormat == VK_FORMAT_B8G8R8A8_UNORM;
+}
+
+static void native_record_queue(native_device *d, VkQueue queue, uint32_t family) {
+    if (!queue) return;
+    pthread_mutex_lock(&d->lock);
+    for (native_queue *node = d->queues; node; node = node->next)
+        if (node->handle == queue) {
+            node->family = family;
+            pthread_mutex_unlock(&d->lock);
+            return;
+        }
+    native_queue *node = calloc(1, sizeof(*node));
+    if (node) {
+        node->handle = queue;
+        node->family = family;
+        node->next = d->queues;
+        d->queues = node;
+    }
+    pthread_mutex_unlock(&d->lock);
+}
+static VKAPI_ATTR void VKAPI_CALL
+native_GetDeviceQueue(VkDevice device, uint32_t family, uint32_t index,
+        VkQueue *queue) {
+    native_device *d = find_device(dispatch_key(device));
+    if (!d || !d->get_queue) return;
+    d->get_queue(device, family, index, queue);
+    if (queue) native_record_queue(d, *queue, family);
+}
+static VKAPI_ATTR void VKAPI_CALL
+native_GetDeviceQueue2(VkDevice device, const VkDeviceQueueInfo2 *info,
+        VkQueue *queue) {
+    native_device *d = find_device(dispatch_key(device));
+    if (!d || !d->get_queue2) return;
+    d->get_queue2(device, info, queue);
+    if (queue && info) native_record_queue(d, *queue, info->queueFamilyIndex);
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL
@@ -312,6 +374,9 @@ native_DestroySwapchainKHR(VkDevice device, VkSwapchainKHR sc,
         if ((*p)->handle == sc) {
             native_swapchain *old = *p;
             *p = old->next;
+#ifdef GFG_NATIVE_WITH_TE
+            if (old->bridge) gfg_cpu_fg_destroy(old->bridge);
+#endif
             free(old->owned);
             free(old);
             break;
@@ -379,7 +444,39 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
     }
     // Exactly one forward: no synthetic present or extra swapchain acquisition
     // until the independent image/queue/timeline ownership contract is proven.
-    VkResult result = d->present(queue, info);
+    VkResult result;
+#ifdef GFG_NATIVE_WITH_TE
+    gfg_cpu_fg *bridge = NULL;
+    const char *flag = getenv("GFG_NATIVE_CPU_BRIDGE");
+    if (info && info->swapchainCount == 1 && info->pSwapchains &&
+        info->pImageIndices && flag && !strcmp(flag, "1") &&
+        d->instance && d->instance->enabled) {
+        pthread_mutex_lock(&d->lock);
+        for (native_swapchain *sc = d->swapchains; sc; sc = sc->next) {
+            if (sc->handle != info->pSwapchains[0]) continue;
+            if (sc->copy_eligible && !sc->bridge_attempted) {
+                sc->bridge_attempted = 1;
+                for (native_queue *q = d->queues; q; q = q->next) {
+                    if (q->handle != queue) continue;
+                    sc->bridge = gfg_cpu_fg_create(d->instance->handle,
+                        d->instance->gipa, d->physical, d->handle,
+                        d->gdpa, sc->handle, sc->extent, sc->format,
+                        queue, q->family);
+                    break;
+                }
+                if (!sc->bridge)
+                    fprintf(stderr,"[gfg-native] CPU bridge not available; real-frame pass-through\n");
+            }
+            bridge = sc->bridge;
+            break;
+        }
+        pthread_mutex_unlock(&d->lock);
+    }
+    result = bridge ? gfg_cpu_fg_present(bridge, info, d->present) :
+                      d->present(queue, info);
+#else
+    result = d->present(queue, info);
+#endif
     if ((result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) && info) {
         pthread_mutex_lock(&d->lock);
         for (uint32_t n = 0; n < info->swapchainCount; ++n)
@@ -403,6 +500,8 @@ native_gdpa(VkDevice device, const char *symbol) {
     if (!device) return NULL;
     native_device *d = find_device(dispatch_key(device));
     if (!d) return NULL;
+    if (d->get_queue) HOOK(GetDeviceQueue);
+    if (d->get_queue2) HOOK(GetDeviceQueue2);
     if (d->create_swapchain) HOOK(CreateSwapchainKHR);
     if (d->destroy_swapchain) HOOK(DestroySwapchainKHR);
     if (d->present) HOOK(QueuePresentKHR);
@@ -424,6 +523,10 @@ native_gipa(VkInstance instance, const char *symbol) {
     if (!instance) return NULL;
     // Instance-level lookup of device commands must not bypass our layer.
     // Many Vulkan frameworks resolve WSI commands via vkGetInstanceProcAddr.
+    if (!strcmp(symbol, "vkGetDeviceQueue"))
+        return (PFN_vkVoidFunction)native_GetDeviceQueue;
+    if (!strcmp(symbol, "vkGetDeviceQueue2"))
+        return (PFN_vkVoidFunction)native_GetDeviceQueue2;
     if (!strcmp(symbol, "vkCreateSwapchainKHR"))
         return (PFN_vkVoidFunction)native_CreateSwapchainKHR;
     if (!strcmp(symbol, "vkDestroySwapchainKHR"))
