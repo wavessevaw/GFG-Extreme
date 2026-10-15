@@ -42,7 +42,7 @@ smoke: layer $(BUILD)/loader-smoke
 $(BUILD)/wsi-smoke: tests/wsi_smoke.c
 	@test -f $(VULKAN_HEADERS)/vulkan/vulkan_xcb.h || { echo "Vulkan XCB headers required"; exit 1; }
 	mkdir -p $(BUILD)
-	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -DVK_USE_PLATFORM_XCB_KHR -I$(VULKAN_HEADERS) -o $@ $< -lvulkan -lxcb
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -DVK_USE_PLATFORM_XCB_KHR $(WSI_EXTRA_CFLAGS) -I$(VULKAN_HEADERS) -o $@ $< -lvulkan -lxcb
 
 wsi-smoke: layer $(BUILD)/wsi-smoke
 	GFG_NATIVE_FG=1 GFG_NATIVE_TRACE=1 VK_INSTANCE_LAYERS=VK_LAYER_GFG_native \
@@ -50,7 +50,7 @@ wsi-smoke: layer $(BUILD)/wsi-smoke
 
 wsi-smoke-te:
 	$(MAKE) ENABLE_TE=1 BUILD=build-te layer
-	$(MAKE) ENABLE_TE=1 BUILD=build-te build-te/wsi-smoke
+	$(MAKE) ENABLE_TE=1 BUILD=build-te WSI_EXTRA_CFLAGS=-DGFG_NATIVE_TEST_SMALL build-te/wsi-smoke
 	GFG_NATIVE_FG=1 GFG_NATIVE_CPU_BRIDGE=1 GFG_NATIVE_BUDGET_MS=5000 GFG_NATIVE_TRACE=1 \
 	VK_INSTANCE_LAYERS=VK_LAYER_GFG_native VK_LAYER_PATH="$(abspath build-te)" \
 	build-te/wsi-smoke

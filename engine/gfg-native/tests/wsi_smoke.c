@@ -11,6 +11,14 @@
 #include <vulkan/vulkan_xcb.h>
 #include <xcb/xcb.h>
 
+#ifdef GFG_NATIVE_TEST_SMALL
+#define TEST_WIDTH 96u
+#define TEST_HEIGHT 64u
+#else
+#define TEST_WIDTH 640u
+#define TEST_HEIGHT 360u
+#endif
+
 #define TRY(x) do { VkResult r_ = (x); if (r_ != VK_SUCCESS && r_ != VK_SUBOPTIMAL_KHR) { \
   fprintf(stderr, "Vulkan failure %s => %d at %d\n", #x, r_, __LINE__); return 1; \
 } } while (0)
@@ -43,7 +51,7 @@ int main(void) {
     xcb_screen_t *screen=it.data;
     xcb_window_t window=xcb_generate_id(xc);
     const uint32_t opts[]={screen->black_pixel,XCB_EVENT_MASK_EXPOSURE};
-    xcb_create_window(xc,XCB_COPY_FROM_PARENT,window,screen->root,0,0,640,360,0,
+    xcb_create_window(xc,XCB_COPY_FROM_PARENT,window,screen->root,0,0,TEST_WIDTH,TEST_HEIGHT,0,
         XCB_WINDOW_CLASS_INPUT_OUTPUT,screen->root_visual,
         XCB_CW_BACK_PIXEL|XCB_CW_EVENT_MASK,opts);
     xcb_map_window(xc,window);
@@ -107,8 +115,8 @@ int main(void) {
     REQUIRE(caps.supportedUsageFlags&VK_IMAGE_USAGE_TRANSFER_DST_BIT);
     VkExtent2D ext=caps.currentExtent;
     if(ext.width==UINT32_MAX) {
-        ext.width=between(640,caps.minImageExtent.width,caps.maxImageExtent.width);
-        ext.height=between(360,caps.minImageExtent.height,caps.maxImageExtent.height);
+        ext.width=between(TEST_WIDTH,caps.minImageExtent.width,caps.maxImageExtent.width);
+        ext.height=between(TEST_HEIGHT,caps.minImageExtent.height,caps.maxImageExtent.height);
     }
     uint32_t nformats=0;
     TRY(vkGetPhysicalDeviceSurfaceFormatsKHR(physical,surface,&nformats,NULL));
