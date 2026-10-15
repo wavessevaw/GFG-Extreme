@@ -493,6 +493,136 @@ static void test_scheduler(void) {
     EXPECT(d.level == 1, "calm pairs improve quality one level (%u)", d.level);
 }
 
+
+/* ------------------------------------------------------------------ LMC path */
+
+static te_context* make_lmc(te_device* dev, uint32_t outputs) {
+    te_context_desc d;
+    te_context_desc_default(&d, W, H, outputs);
+    d.host_io = 1;
+    d.params.algorithm = TE_ALGO_LMC;
+    te_context* ctx = NULL;
+    if (te_context_create(dev, &d, &ctx) != VK_SUCCESS) return NULL;
+    return ctx;
+}
+
+/* static overlay ("HUD") drawn over a frame */
+static void overlay(uint8_t* rgb) {
+    for (int y = 8; y < 28; ++y)
+        for (int x = 8; x < 72; ++x) {
+            uint8_t* p = rgb + 3 * (y * W + x);
+            p[0] = (uint8_t)(x * 3);
+            p[1] = 230;
+            p[2] = (uint8_t)(y * 7);
+        }
+}
+
+static void test_lmc_static(te_device* dev) {
+    te_context* ctx = make_lmc(dev, 2);
+    EXPECT(ctx, "LMC context");
+    if (!ctx) return;
+    uint8_t *a = malloc(W * H * 3), *o = malloc(W * H * 3);
+    pattern(a, 0, 0, 11);
+    const float ts[2] = {1.0f / 3, 2.0f / 3};
+    EXPECT(run_pair(ctx, 0, a, 0, ts), "LMC first frame");
+    EXPECT(run_pair(ctx, 1, a, 2, ts), "LMC static pair");
+    for (uint32_t i = 0; i < 2; ++i) {
+        te_download_rgb(ctx, i, o);
+        double q = psnr_rect(o, a, 0, 0, W, H);
+        EXPECT(q > 50.0, "LMC static scene output %u PSNR %.2f dB", i, q);
+    }
+    free(a);
+    free(o);
+    te_context_destroy(ctx);
+}
+
+static void test_lmc_pan(te_device* dev) {
+    /* a camera pan: (6, 2) per real frame; after a few pairs the plane, the
+     * palette and the temporal predictor are all in play */
+    te_context* ctx = make_lmc(dev, 2);
+    EXPECT(ctx, "LMC context");
+    if (!ctx) return;
+    uint8_t *f = malloc(W * H * 3), *prev = malloc(W * H * 3), *mid = malloc(W * H * 3), *o = malloc(W * H * 3);
+    const float ts[2] = {1.0f / 3, 2.0f / 3};
+    double worst = 99.0, rep = 0.0;
+    te_pair_stats st;
+    memset(&st, 0, sizeof st);
+    for (int k = 0; k < 5; ++k) {
+        memcpy(prev, f, W * H * 3);
+        pattern(f, 6.0 * k, 2.0 * k, 12);
+        EXPECT(run_pair(ctx, (uint32_t)(k % 2), f, k ? 2 : 0, ts), "LMC pan pair %d", k);
+        if (k < 3) continue;
+        for (uint32_t i = 0; i < 2; ++i) {
+            double t = ts[i];
+            pattern(mid, 6.0 * (k - 1 + t), 2.0 * (k - 1 + t), 12);
+            te_download_rgb(ctx, i, o);
+            double q = psnr_rect(o, mid, 16, 16, W - 16, H - 16);
+            double r = psnr_rect(t < 0.5 ? prev : f, mid, 16, 16, W - 16, H - 16);
+            if (q < worst) worst = q;
+            if (r > rep) rep = r;
+        }
+        te_last_stats(ctx, &st);
+    }
+    EXPECT(worst > 32.0 && worst > rep + 8.0, "LMC pan reconstruction worst %.2f dB (repeat best %.2f dB)", worst, rep);
+    /* RANSAC samples must lie 120 px apart: planes are a full-resolution
+     * feature (bench/parity.py checks them at 1280x800); here only the bound */
+    EXPECT(st.tiles[0][0] <= 3, "LMC pan: at most three motion planes (%u)", st.tiles[0][0]);
+    EXPECT(st.timed, "LMC timestamps available");
+    free(f);
+    free(prev);
+    free(mid);
+    free(o);
+    te_context_destroy(ctx);
+}
+
+static void test_lmc_hud(te_device* dev) {
+    /* an overlay that stays still while the scene pans must come out exact
+     * once the still counter has seen it for HUD_PAIRS pairs */
+    te_context* ctx = make_lmc(dev, 2);
+    EXPECT(ctx, "LMC context");
+    if (!ctx) return;
+    uint8_t *f = malloc(W * H * 3), *o = malloc(W * H * 3);
+    const float ts[2] = {1.0f / 3, 2.0f / 3};
+    for (int k = 0; k < 10; ++k) {
+        pattern(f, 5.0 * k, 0.0, 13);
+        overlay(f);
+        EXPECT(run_pair(ctx, (uint32_t)(k % 2), f, k ? 2 : 0, ts), "LMC HUD pair %d", k);
+    }
+    int exact = 1;
+    for (uint32_t i = 0; i < 2; ++i) {
+        te_download_rgb(ctx, i, o);
+        for (int y = 10; y < 26; ++y)
+            for (int x = 10; x < 70; ++x)
+                for (int c = 0; c < 3; ++c)
+                    if (o[3 * (y * W + x) + c] != f[3 * (y * W + x) + c]) exact = 0;
+    }
+    EXPECT(exact, "LMC keeps a still overlay exact over a moving scene");
+    free(f);
+    free(o);
+    te_context_destroy(ctx);
+}
+
+static void test_lmc_hold(te_device* dev) {
+    te_context* ctx = make_lmc(dev, 1);
+    EXPECT(ctx, "LMC context");
+    if (!ctx) return;
+    uint8_t *a = malloc(W * H * 3), *b = malloc(W * H * 3), *o = malloc(W * H * 3);
+    pattern(a, 0, 0, 14);
+    pattern(b, 9, 3, 14);
+    const float ts[1] = {0.5f};
+    EXPECT(run_pair(ctx, 0, a, 0, ts), "LMC first frame");
+    EXPECT(te_upload_rgb(ctx, 1, b) == VK_SUCCESS, "upload");
+    te_submit s = {.slot = 1, .count = 1, .download = 1, .hold = 1};
+    s.timestamps[0] = 0.5f;
+    EXPECT(te_submit_frame(ctx, &s) == VK_SUCCESS && te_wait_idle(ctx) == VK_SUCCESS, "LMC hold submit");
+    te_download_rgb(ctx, 0, o);
+    EXPECT(memcmp(o, b, W * H * 3) == 0, "LMC hold shows the newest real frame bit for bit");
+    free(a);
+    free(b);
+    free(o);
+    te_context_destroy(ctx);
+}
+
 int main(void) {
     test_scheduler();
     te_device_desc dd = {.validation = 1};
@@ -510,6 +640,10 @@ int main(void) {
     test_invalid_inputs(dev);
     test_lifetime(dev);
     test_timeline_protocol(dev);
+    test_lmc_static(dev);
+    test_lmc_pan(dev);
+    test_lmc_hud(dev);
+    test_lmc_hold(dev);
     uint32_t verr = te_device_validation_errors(dev);
     te_device_destroy(dev);
     EXPECT(verr == 0, "validation errors: %u", verr);

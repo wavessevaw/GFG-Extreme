@@ -95,7 +95,8 @@ namespace {
         TemporalContext(std::shared_ptr<Runtime> runtime, te_context* context, bool shadow,
                 VkExtent2D extent) :
             runtime(std::move(runtime)), ctx(context), shadow(shadow), extent(extent),
-            status(this->runtime->statusDirectory(), this->runtime->nextContextId()) {
+            status(this->runtime->statusDirectory(), this->runtime->nextContextId()),
+            lmc(this->runtime->algorithm() == TE_ALGO_LMC) {
             te_scheduler_init(&this->scheduler);
             this->scheduler.cap_ms = this->runtime->capMs();
             this->opened = Clock::now();
@@ -151,6 +152,24 @@ namespace {
             this->stats = st;
             this->haveStats = true;
             if (st.held || !st.timed || st.outputs == 0) return;
+            if (this->lmc) {
+                // LMC: tiles[0] = layer count, orphan blocks of the B and A grids
+                double pair = st.stage_ms[TE_STAGE_PYRAMID] + st.stage_ms[TE_STAGE_ANALYZE] + st.stage_ms[TE_STAGE_CLASSIFY];
+                double frame = 0.0, select = 0.0;
+                for (uint32_t i = 0; i < st.outputs && i < TE_MAX_OUTPUTS; ++i) {
+                    pair += st.frame_ms[i][TE_FRAME_TOTAL];
+                    frame += st.frame_ms[i][TE_FRAME_TOTAL];
+                    select += st.frame_ms[i][TE_FRAME_LISTS];
+                }
+                this->recordPairTime(pair);
+                for (int k = 0; k < TE_STAGE_COUNT; ++k) this->stageMs[k] = this->ema(this->stageMs[k], st.stage_ms[k]);
+                this->frameMs = this->ema(this->frameMs, frame / st.outputs);
+                this->listsMs = this->ema(this->listsMs, select / st.outputs);
+                this->lmcLayers = this->ema(this->lmcLayers, st.tiles[0][0]);
+                this->lmcOrphansB = this->ema(this->lmcOrphansB, st.tiles[0][1]);
+                this->lmcOrphansA = this->ema(this->lmcOrphansA, st.tiles[0][2]);
+                return;
+            }
             te_sched_observation o{};
             o.timed = st.timed;
             o.profiled = st.profiled;
@@ -230,7 +249,7 @@ namespace {
             this->collect();
             te_sched_input in{.real_interval_ms = this->intervalMs, .gpu_busy = -1.0,
                               .requested = static_cast<uint32_t>(timestamps.size())};
-            if (!timestamps.empty()) {
+            if (!timestamps.empty() && !this->lmc) {
                 this->decision = te_scheduler_decide(&this->scheduler, &in);
                 // over the cost cap even at LIGHT-only: hold (copy the real frame,
                 // no analysis) for a while, then measure again
@@ -246,7 +265,7 @@ namespace {
             s.wait_value = step.wait;
             s.signal_first = this->shadow ? 0 : step.firstSignal;
             s.discontinuity = this->skipped ? 1 : 0;
-            if (this->holdPairs > 0 && s.count) {
+            if (!this->lmc && this->holdPairs > 0 && s.count) {
                 s.hold = 1;
                 // measure afresh when the hold ends (the averages are from before it)
                 if (--this->holdPairs == 0) this->scheduler.samples = 0;
@@ -288,7 +307,8 @@ namespace {
                 std::ostringstream o;
                 o.imbue(std::locale::classic());
                 o << statusPrefix(this->status.contextId(), this->shadow ? "shadow" : "experimental", "engine")
-                  << ",\"active\":true,\"device\":" << jsonString(this->runtime->deviceName())
+                  << ",\"active\":true,\"algorithm\":" << (this->lmc ? "\"lmc\"" : "\"tiles\"")
+                  << ",\"device\":" << jsonString(this->runtime->deviceName())
                   << ",\"width\":" << this->extent.width << ",\"height\":" << this->extent.height
                   << ",\"outputs_capacity\":" << te_context_outputs(this->ctx)
                   << ",\"vram_bytes\":" << te_context_memory_bytes(this->ctx)
@@ -316,6 +336,8 @@ namespace {
                   << ",\"shares\":{\"reuse\":" << finite(this->share[0]) << ",\"light\":" << finite(this->share[1])
                   << ",\"full\":" << finite(this->share[2]) << '}'
                   << ",\"confidence\":" << finite(this->confidence)
+                  << ",\"lmc\":{\"layers\":" << finite(this->lmcLayers) << ",\"orphans_b\":" << finite(this->lmcOrphansB)
+                  << ",\"orphans_a\":" << finite(this->lmcOrphansA) << ",\"select_ms\":" << finite(this->listsMs) << '}'
                   << ",\"scheduler\":{\"level\":" << this->decision.level
                   << ",\"light_scale\":" << finite(this->decision.light_scale)
                   << ",\"force_full\":" << this->decision.force_full
@@ -324,7 +346,8 @@ namespace {
                   << ",\"budget_ms\":" << finite(this->decision.budget_ms)
                   << ",\"predicted_ms\":" << finite(this->decision.predicted_ms)
                   << ",\"recommended_outputs\":" << this->decision.outputs
-                  << ",\"recommendation\":" << jsonString(this->decision.action == TE_SCHED_FALLBACK ? "fallback"
+                  << ",\"recommendation\":" << jsonString(this->lmc ? "keep"
+                        : this->decision.action == TE_SCHED_FALLBACK ? "fallback"
                         : (this->decision.outputs < this->stats.outputs ? "fewer-outputs" : "keep"))
                   << ",\"reason\":" << jsonString(reasonName(this->decision.reason))
                   << ",\"misses\":" << this->scheduler.total_misses
@@ -340,7 +363,8 @@ namespace {
                     l.imbue(std::locale::classic());
                     l.setf(std::ios::fixed);
                     l.precision(2);
-                    l << "MAKO Renderer: Temporal Engine stats level=" << this->decision.level
+                    l << "MAKO Renderer: Temporal Engine stats algo=" << (this->lmc ? "lmc" : "tiles")
+                      << " level=" << this->decision.level
                       << " reason=" << reasonName(this->decision.reason)
                       << " holding=" << (this->holdPairs > 0 ? 1 : 0) << " cost_holds=" << this->costHolds
                       << " pairs=" << this->pairsSubmitted << " dropped=" << this->dropped
@@ -352,7 +376,11 @@ namespace {
                       << " predicted_ms=" << finite(this->decision.predicted_ms)
                       << " shares=" << finite(this->share[0]) << '/' << finite(this->share[1]) << '/'
                       << finite(this->share[2]) << " confidence=" << finite(this->confidence)
-                      << " scene_cuts=" << this->sceneCuts << '\n';
+                      << " scene_cuts=" << this->sceneCuts << " pyramid_ms=" << finite(this->stageMs[TE_STAGE_PYRAMID])
+                      << " analyze_ms=" << finite(this->stageMs[TE_STAGE_ANALYZE])
+                      << " fields_ms=" << finite(this->stageMs[TE_STAGE_CLASSIFY])
+                      << " layers=" << finite(this->lmcLayers) << " orphans=" << finite(this->lmcOrphansB) << '/'
+                      << finite(this->lmcOrphansA) << '\n';
                     std::clog << l.str();
                 }
             } catch (...) {
@@ -364,6 +392,8 @@ namespace {
         bool shadow;
         VkExtent2D extent;
         StatusFile status;
+        bool lmc;                  // layered motion path: no tile scheduler, no cost hold
+        double lmcLayers{0.0}, lmcOrphansB{0.0}, lmcOrphansA{0.0};
         te_scheduler scheduler{};
         te_sched_decision decision{};
         te_pair_stats stats{};
@@ -482,6 +512,8 @@ std::shared_ptr<Runtime> Runtime::create(Mode mode, VkPhysicalDevice physical,
             const double value = std::strtod(cap, nullptr);
             if (value >= 0.0 && value <= 50.0) rt->m_capMs = value;
         }
+        if (const char* algo = std::getenv("GFG_TEMPORAL_ALGO"))
+            rt->m_algorithm = std::string_view(algo) == "tiles" ? TE_ALGO_TILES : TE_ALGO_LMC;
     } catch (...) {
         return nullptr;
     }
@@ -619,6 +651,7 @@ std::unique_ptr<ContextBase> Prepared::openExperimental() noexcept {
         for (size_t i = 0; i < this->destinations.size(); ++i) desc.dest_fds[i] = this->destinations[i];
         desc.sync_fd = this->sync;
         desc.source_bgra = this->layout == SourceImageLayout::Bgra8;
+        desc.params.algorithm = this->runtime->algorithm();
         // te_context_create owns every descriptor from here, success or not
         this->sources.clear();
         this->destinations.clear();
@@ -650,6 +683,7 @@ std::unique_ptr<ContextBase> Prepared::attach(std::unique_ptr<ContextBase> prima
                 desc.sync_fd = this->sync;
                 desc.source_bgra = this->layout == SourceImageLayout::Bgra8;
                 desc.outputs = this->destCount; // private images; the shadow never touches the game's
+                desc.params.algorithm = this->runtime->algorithm();
                 this->sources.clear();
                 this->sync = -1;
                 te_context* ctx = nullptr;

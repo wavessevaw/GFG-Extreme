@@ -107,6 +107,16 @@ def normalize_status(raw: object) -> Dict[str, Any]:
     if any(v > 1.0001 for v in out["shares"].values()):
         raise ValueError("shares must be fractions")
     out["confidence"] = _num(raw.get("confidence"), "confidence")
+    # te.4+: which generator runs; older records are the tile engine
+    algorithm = raw.get("algorithm", "tiles")
+    if algorithm not in ("tiles", "lmc"):
+        raise ValueError("invalid algorithm")
+    out["algorithm"] = algorithm
+    lmc = raw.get("lmc")
+    if lmc is not None:
+        if not isinstance(lmc, dict):
+            raise ValueError("lmc must be an object")
+        out["lmc"] = {k: _num(lmc.get(k), "lmc." + k) for k in ("layers", "orphans_b", "orphans_a", "select_ms")}
     recommendation = sched.get("recommendation")
     if recommendation not in ("keep", "fewer-outputs", "fallback"):
         raise ValueError("invalid recommendation")
@@ -229,6 +239,8 @@ def summarize(requested_mode: str, contexts: List[Dict[str, Any]]) -> Dict[str, 
             gpu_ms={k: round(v, 4) if isinstance(v, float) else v for k, v in e["gpu_ms"].items()},
             shares={k: round(v, 4) for k, v in e["shares"].items()},
             confidence=round(e["confidence"], 4), scheduler=dict(e["scheduler"]),
+            algorithm=e["algorithm"],
+            lmc={k: round(v, 3) for k, v in e["lmc"].items()} if "lmc" in e else None,
             vram_mb=round(e["vram_bytes"] / (1024 * 1024), 1), last_error=e["last_error"])
         dispatched = c["outputs_dispatched"]
         out["completion_ratio"] = round(c["outputs_gpu_completed"] / dispatched, 4) if dispatched else None
@@ -240,7 +252,7 @@ def summarize(requested_mode: str, contexts: List[Dict[str, Any]]) -> Dict[str, 
 def compact(summary: Dict[str, Any]) -> Dict[str, Any]:
     """Few fields per timeline sample of the session recorder."""
     keys = ("requested_mode", "state", "applied", "engine_contexts", "fallback_reasons", "real_fps",
-            "outputs_dispatched", "outputs_gpu_completed", "dropped", "shares", "confidence")
+            "outputs_dispatched", "outputs_gpu_completed", "dropped", "shares", "confidence", "algorithm")
     out = {k: summary.get(k) for k in keys if k in summary}
     gpu = summary.get("gpu_ms") or {}
     if gpu:

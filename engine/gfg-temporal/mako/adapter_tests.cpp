@@ -6,6 +6,10 @@
 // why, and neither leaks nor steals the caller's descriptors.
 #include "gfg_temporal.hpp"
 
+extern "C" {
+#include "te_engine.h"
+}
+
 #include <cstdlib>
 #include <dirent.h>
 #include <fcntl.h>
@@ -90,6 +94,18 @@ int main() {
     vkEnumeratePhysicalDevices(instance, &count, &physical);
 
     expect(Runtime::create(Mode::Off, physical, vkGetPhysicalDeviceProperties2) == nullptr, "off creates nothing");
+    {
+        unsetenv("GFG_TEMPORAL_ALGO");
+        auto lmc = Runtime::create(Mode::Observe, physical, vkGetPhysicalDeviceProperties2);
+        expect(lmc && lmc->algorithm() == TE_ALGO_LMC, "layered motion is the default algorithm");
+        setenv("GFG_TEMPORAL_ALGO", "tiles", 1);
+        auto tiles = Runtime::create(Mode::Observe, physical, vkGetPhysicalDeviceProperties2);
+        expect(tiles && tiles->algorithm() == TE_ALGO_TILES, "GFG_TEMPORAL_ALGO=tiles selects te.2");
+        setenv("GFG_TEMPORAL_ALGO", "something", 1);
+        auto other = Runtime::create(Mode::Observe, physical, vkGetPhysicalDeviceProperties2);
+        expect(other && other->algorithm() == TE_ALGO_LMC, "unknown GFG_TEMPORAL_ALGO keeps the default");
+        unsetenv("GFG_TEMPORAL_ALGO");
+    }
     {
         Prepared none(nullptr, {-1, -1}, {}, -1, {64, 64}, FrameEncoding::Sdr8, SourceImageLayout::Default);
         auto fake = std::make_unique<FakeContext>();

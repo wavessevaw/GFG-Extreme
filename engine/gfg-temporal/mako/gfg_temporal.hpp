@@ -66,6 +66,8 @@ namespace mako::backend::gfg_temporal {
         [[nodiscard]] uint32_t shadowDutyPercent() const noexcept { return this->m_shadowDuty; }
         /// GPU ms per generated frame the engine may use (GFG_TEMPORAL_CAP_MS, 0 = no cap)
         [[nodiscard]] double capMs() const noexcept { return this->m_capMs; }
+        /// TE_ALGO_LMC (default) or TE_ALGO_TILES (te.2), from GFG_TEMPORAL_ALGO=lmc|tiles
+        [[nodiscard]] uint32_t algorithm() const noexcept { return this->m_algorithm; }
         [[nodiscard]] const std::filesystem::path& statusDirectory() const noexcept { return this->m_statusDir; }
     private:
         explicit Runtime(Mode mode) noexcept;
@@ -76,6 +78,7 @@ namespace mako::backend::gfg_temporal {
         uint64_t m_contexts{0};
         uint32_t m_shadowDuty{25};
         double m_capMs{TE_SCHED_DEFAULT_CAP_MS_VALUE};
+        uint32_t m_algorithm{1};
         std::filesystem::path m_statusDir;
     };
 

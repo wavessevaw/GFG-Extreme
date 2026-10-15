@@ -250,6 +250,8 @@ def temporal_engine_log_summary(text: str) -> Dict[str, Any]:
         values = nums(key)
         return round(statistics.median(values), 2) if values else None
 
+    orphans = [r.get("orphans", "").split("/") for r in rows]
+    orphans = [[float(x) for x in o] for o in orphans if len(o) == 2 and all(x.replace(".", "", 1).isdigit() for x in o)]
     shares = [r.get("shares", "") .split("/") for r in rows]
     shares = [[float(x) for x in s] for s in shares if len(s) == 3 and all(x.replace(".", "", 1).isdigit() for x in s)]
     return {"available": True, "lines": len(rows),
@@ -260,7 +262,12 @@ def temporal_engine_log_summary(text: str) -> Dict[str, Any]:
             "fixed_ms_median": med("fixed_ms"), "frame_ms_median": med("frame_ms"),
             "pair_p95_ms_median": med("pair_p95_ms"), "cap_ms": med("cap_ms"),
             "interval_ms_median": med("interval_ms"),
-            "shares_median": [round(statistics.median(s[i] for s in shares), 3) for i in range(3)] if shares else None}
+            "shares_median": [round(statistics.median(s[i] for s in shares), 3) for i in range(3)] if shares else None,
+            # te.4 (LMC): which generator, the GPU split and what the motion model found
+            "algorithms": dict(Counter(r.get("algo", "tiles") for r in rows)),
+            "pyramid_ms_median": med("pyramid_ms"), "analyze_ms_median": med("analyze_ms"),
+            "fields_ms_median": med("fields_ms"), "layers_median": med("layers"),
+            "orphans_median": [round(statistics.median(o[i] for o in orphans), 1) for i in range(2)] if orphans else None}
 
 
 def stick_touch_boost_summary(samples: List[Dict[str, Any]]) -> Dict[str, Any]:

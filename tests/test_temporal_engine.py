@@ -90,7 +90,56 @@ TE2_RECORD = (
     '"gpu_busy_known":false},"last_error":null}\n')
 
 
+# The te.4 (LMC) adapter's record, written the same way: algorithm after
+# "active", the lmc block after "confidence", "keep" since LMC has no tile
+# scheduler.  test_writer_source_has_lmc_fields pins these spellings in the C++.
+LMC_RECORD = (TE2_RECORD
+              .replace('"active":true,', '"active":true,"algorithm":"lmc",')
+              .replace('"cost_holds":2,"holding":1', '"cost_holds":0,"holding":0')
+              .replace('"confidence":0.6,',
+                       '"confidence":0,"lmc":{"layers":1,"orphans_b":912.5,"orphans_a":880,"select_ms":0.21},')
+              .replace('"recommendation":"fallback"', '"recommendation":"keep"'))
+
+
 class WriterFormat(unittest.TestCase):
+    def test_lmc_record_is_accepted(self):
+        out = te.normalize_status(json.loads(LMC_RECORD))
+        self.assertEqual(out["algorithm"], "lmc")
+        self.assertEqual(out["lmc"], {"layers": 1.0, "orphans_b": 912.5, "orphans_a": 880.0, "select_ms": 0.21})
+        self.assertEqual(out["counters"]["holding"], 0)
+        s = te.summarize("experimental", [out])
+        self.assertEqual(s["algorithm"], "lmc")
+        self.assertEqual(s["lmc"]["orphans_b"], 912.5)
+        self.assertEqual(te.compact(s)["algorithm"], "lmc")
+        with self.assertRaises(ValueError):
+            te.normalize_status(json.loads(LMC_RECORD.replace('"algorithm":"lmc"', '"algorithm":"dlss"')))
+
+    def test_te2_record_reads_as_tiles(self):
+        self.assertEqual(te.normalize_status(json.loads(TE2_RECORD))["algorithm"], "tiles")
+
+    def test_writer_source_has_lmc_fields(self):
+        source = (ROOT / "engine/gfg-temporal/mako/gfg_temporal.cpp").read_text()
+        for snippet in ('<< ",\\"active\\":true,\\"algorithm\\":" << (this->lmc ? "\\"lmc\\"" : "\\"tiles\\"")',
+                        '<< ",\\"lmc\\":{\\"layers\\":" << finite(this->lmcLayers) << ",\\"orphans_b\\":"',
+                        '<< ",\\"orphans_a\\":" << finite(this->lmcOrphansA) << ",\\"select_ms\\":"',
+                        'jsonString(this->lmc ? "keep"',
+                        '"MAKO Renderer: Temporal Engine stats algo=" << (this->lmc ? "lmc" : "tiles")',
+                        '<< " layers=" << finite(this->lmcLayers) << " orphans=" << finite(this->lmcOrphansB) << \'/\''):
+            self.assertIn(snippet, source)
+
+    def test_renderer_log_lmc_stats_summary(self):
+        from gfg_plugin.log_report import temporal_engine_log_summary
+        line = ("MAKO Renderer: Temporal Engine stats algo=lmc level=0 reason=none holding=0 cost_holds=0 pairs=300 "
+                "dropped=0 interval_ms=33.30 fixed_ms=1.10 frame_ms=0.60 pair_p95_ms=2.70 cap_ms=2.00 "
+                "predicted_ms=0.00 shares=0.00/0.00/0.00 confidence=0.00 scene_cuts=0 pyramid_ms=0.08 "
+                "analyze_ms=0.70 fields_ms=0.32 layers=1.00 orphans=900.00/850.00")
+        out = temporal_engine_log_summary(line + "\n" + line.replace("layers=1.00", "layers=2.00"))
+        self.assertEqual(out["algorithms"], {"lmc": 2})
+        self.assertEqual(out["analyze_ms_median"], 0.7)
+        self.assertEqual(out["fields_ms_median"], 0.32)
+        self.assertEqual(out["layers_median"], 1.5)
+        self.assertEqual(out["orphans_median"], [900.0, 850.0])
+
     def test_te2_record_is_accepted(self):
         out = te.normalize_status(json.loads(TE2_RECORD))
         self.assertIs(out["gpu_ms"]["timed"], True)
