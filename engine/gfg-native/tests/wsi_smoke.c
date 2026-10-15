@@ -181,7 +181,7 @@ int main(void) {
             .subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1}};
         vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
             VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&pre);
-        VkClearColorValue clear={.float32={frame&1?0.1f:0.9f,0.2f,frame&1?0.9f:0.1f,1}};
+        VkClearColorValue clear={.float32={0.20f+0.05f*frame,0.2f,0.80f-0.05f*frame,1}};
         VkImageSubresourceRange range={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
         vkCmdClearColorImage(cmd,images[index],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&clear,1,&range);
         VkImageMemoryBarrier post=pre;

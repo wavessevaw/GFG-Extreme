@@ -83,6 +83,8 @@ struct gfg_cpu_fg {
     te_context *context;
     uint8_t *rgb_real;
     uint8_t *rgb_generated;
+    uint8_t *rgb_previous;
+    uint64_t distinct_frames;
     uint32_t source_slot;
     uint64_t real_frames;
     uint64_t synthetic_frames;
@@ -340,7 +342,8 @@ gfg_cpu_fg *gfg_cpu_fg_create(VkInstance instance,
     const VkDeviceSize bytes=(VkDeviceSize)pixels*COLOR_BPP;
     fg->rgb_real=malloc(pixels*3u);
     fg->rgb_generated=malloc(pixels*3u);
-    if(!fg->rgb_real||!fg->rgb_generated)goto fail;
+    fg->rgb_previous=malloc(pixels*3u);
+    if(!fg->rgb_real||!fg->rgb_generated||!fg->rgb_previous)goto fail;
     VkBufferCreateInfo bi={.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size=bytes,.usage=VK_BUFFER_USAGE_TRANSFER_SRC_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT,
         .sharingMode=VK_SHARING_MODE_EXCLUSIVE};
@@ -418,13 +421,31 @@ VkResult gfg_cpu_fg_present(gfg_cpu_fg *fg, const VkPresentInfoKHR *original,
     if(!fg->permanently_disabled) {
         rgba_to_rgb(fg);
         const bool completed=run_te(fg);
-        if(completed && fg->real_frames) (void)present_generated(fg,next);
+        if(completed && fg->real_frames) {
+            const size_t count=(size_t)fg->extent.width*fg->extent.height*3u;
+            uint64_t delta_old=0,delta_new=0;
+            for(size_t i=0;i<count;i++){
+                const int a=fg->rgb_generated[i];
+                const int b=fg->rgb_previous[i];
+                const int c=fg->rgb_real[i];
+                delta_old+=(uint64_t)abs(a-b);
+                delta_new+=(uint64_t)abs(a-c);
+            }
+            const int distinct=delta_old>0 && delta_new>0;
+            if(fg->log)fprintf(stderr,
+                "[gfg-native] candidate distinct=%d delta_old=%llu delta_new=%llu\n",
+                distinct,(unsigned long long)delta_old,
+                (unsigned long long)delta_new);
+            if(present_generated(fg,next) && distinct) ++fg->distinct_frames;
+        }
         if(!completed && fg->context && !te_context_idle(fg->context,0)) {
             /* Avoid overwriting source slot while old compute work persists.
              * New pairs resume only after a context reset in a later version.
              * Real frames remain unaffected after this disable. */
             fg->permanently_disabled=1;
         }
+        memcpy(fg->rgb_previous,fg->rgb_real,
+            (size_t)fg->extent.width*fg->extent.height*3u);
         fg->source_slot ^= 1u;
     }
     fg->real_frames++;
@@ -433,9 +454,10 @@ VkResult gfg_cpu_fg_present(gfg_cpu_fg *fg, const VkPresentInfoKHR *original,
 void gfg_cpu_fg_destroy(gfg_cpu_fg *fg) {
     if(!fg)return;
     if(fg->log)fprintf(stderr,
-        "[gfg-native] CPU bridge retired real=%llu generated=%llu missed=%llu errors=%llu\n",
+        "[gfg-native] CPU bridge retired real=%llu generated=%llu distinct=%llu missed=%llu errors=%llu\n",
         (unsigned long long)fg->real_frames,
         (unsigned long long)fg->synthetic_frames,
+        (unsigned long long)fg->distinct_frames,
         (unsigned long long)fg->skipped,
         (unsigned long long)fg->errors);
     if(fg->context)te_context_destroy(fg->context);
@@ -458,6 +480,7 @@ void gfg_cpu_fg_destroy(gfg_cpu_fg *fg) {
     free(fg->images);
     free(fg->rgb_real);
     free(fg->rgb_generated);
+    free(fg->rgb_previous);
     free(fg);
 }
 uint64_t gfg_cpu_fg_generated(const gfg_cpu_fg *fg) {
