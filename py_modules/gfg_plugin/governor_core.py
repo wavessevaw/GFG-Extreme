@@ -811,7 +811,13 @@ class WindowVerdict:
 
 # One definition of "the point holds", used for every decision in budget mode.
 HOLD_REAL_RATIO = 0.95       # real p5 vs the real-frame cap
-HOLD_OUTPUT_RATIO = 0.94     # output median vs the display target
+# Product policy (2.1.2): within 8 % of the FPS goal is "on target" (82.8 on a 90 goal).  The
+# Governor no longer spends watts or experiments chasing the last few frames per second.
+ON_TARGET_RATIO = 0.92
+HOLD_OUTPUT_RATIO = ON_TARGET_RATIO   # output median vs the display target
+# Ratios above x3 cost latency and artefacts: only a last resort when no point up to x3 reaches
+# ON_TARGET_RATIO of the goal (x3.25 .. x3.75 and the emergency point stay available for that).
+PREFERRED_MAX_MULTIPLIER = 3.0
 SEVERE_REAL_RATIO = 0.85
 STALL_REAL_RATIO = 0.5       # below half the cap looks like a loading screen, not a power level
 MAX_WINDOW_MISSES = 1
@@ -826,11 +832,15 @@ def window_verdict(summary: Dict[str, Any], point: OperatingPoint) -> WindowVerd
     hard = int(summary.get("hard_pressure") or 0)
     misses = int(summary.get("misses") or 0)
     base = float(point.base_target_fps)
-    short = float(real_p5) < base * HOLD_REAL_RATIO
     severe = float(real_p5) < base * SEVERE_REAL_RATIO or hard >= 3
     real_median = (summary.get("real") or {}).get("median")
     reference = float(real_median) if isinstance(real_median, (int, float)) and math.isfinite(
         float(real_median)) else float(real_p5)
+    # A real stream a little under its cap that still delivers the goal within ON_TARGET_RATIO
+    # (30x3 at 28 real = 84 on a 90 goal) holds: no watts or deeper ratios for the last few FPS.
+    tolerated = (not severe and reference >= base * ON_TARGET_RATIO
+                 and float(output_median) >= point.target_output_fps * ON_TARGET_RATIO)
+    short = float(real_p5) < base * HOLD_REAL_RATIO and not tolerated
     stall = reference < base * STALL_REAL_RATIO
     flags = {"short": short, "stall": stall}
     if hard > 0:
@@ -1246,7 +1256,8 @@ class BudgetController:
             self.starved_checks = 0
             return "hold"
         base = float(self.point.base_target_fps)
-        short = float(real_median) < base * HOLD_REAL_RATIO
+        # Within ON_TARGET_RATIO of the cap the goal is met (window_verdict): no watts for that.
+        short = float(real_median) < base * ON_TARGET_RATIO
         if not short or not self._binding(draw_w) or self.probe == "up":
             # A fewer-generated-frames probe asks for more real frames on purpose;
             # its own window decides whether the point stays, not extra watts.
@@ -1500,8 +1511,9 @@ class BudgetController:
         if (not self.minimize_tdp or not self.tdp_control or self.cap_ignored
                 or self.tdp is None or self.tdp - 1 < self.min_w - 1e-6):
             return None
+        # Saving watts is never the last resort that justifies a ratio above x3.
         return next((i for i in range(1, self.idx)
-                     if self._upgrade_allowed(i, now)
+                     if not self._deep(i) and self._upgrade_allowed(i, now)
                      and not self._floor_blocked(self.tdp - 1, now, idx=i)), None)
 
     def _upgrade(self, now: float) -> str:
@@ -1603,7 +1615,21 @@ class BudgetController:
             return "hold"
         return self._escalate(now, verdict, real_median, output_median)
 
-    def _measured_deeper(self, now: float, floor: int, real_median: Optional[float]) -> Optional[int]:
+    def _deep(self, i: int) -> bool:
+        """A ratio above x3 (x3.25 .. x3.75, and the emergency point): a last resort only."""
+        return float(self.points[i].multiplier) > PREFERRED_MAX_MULTIPLIER + 1e-6
+
+    def _shallow_reaching_goal(self, candidates: Any, real_median: Optional[float]) -> Optional[int]:
+        """The best point up to x3 whose cap the measured real stream holds within ON_TARGET_RATIO
+        (so the output reaches ON_TARGET_RATIO of the goal), or None."""
+        if not isinstance(real_median, (int, float)) or not math.isfinite(float(real_median)):
+            return None
+        fits = [i for i in candidates if not self._deep(i)
+                and self.points[i].base_target_fps * ON_TARGET_RATIO <= float(real_median)]
+        return max(fits) if fits else None
+
+    def _measured_deeper(self, now: float, floor: int, real_median: Optional[float],
+                         allow_deep: bool = True) -> Optional[int]:
         """The deeper point the measured real frames can hold, not just the next one down.
 
         Field log 1.6.0: with ~26 real frames at 45x2 the guard tried 40x2.25, 36x2.5 and 33x2.75
@@ -1612,24 +1638,29 @@ class BudgetController:
         real stream is clearly below the current cap, go straight to the highest point whose cap
         the measured real frames reach, or to the deepest usable point when none does.
         """
-        nearest = self._deeper(now, floor)
+        nearest = self._deeper(now, floor, allow_deep)
         if (nearest is None or not isinstance(real_median, (int, float)) or not math.isfinite(float(real_median))
                 or float(real_median) >= HOLD_REAL_RATIO * self.point.base_target_fps):
             return nearest
-        usable = [i for i in range(max(floor, 0), self.idx) if self._usable(i, now)]
+        usable = [i for i in range(max(floor, 0), self.idx)
+                  if self._usable(i, now) and (allow_deep or not self._deep(i))]
         fits = [i for i in usable if self.points[i].base_target_fps * HOLD_REAL_RATIO <= float(real_median)]
-        if fits:
-            return max(fits)
-        return min(usable) if usable else nearest
+        choice = max(fits) if fits else (min(usable) if usable else nearest)
+        if choice is not None and self._deep(choice):
+            # Above x3 only when no point up to x3 can reach the goal within ON_TARGET_RATIO.
+            shallow = self._shallow_reaching_goal(usable, real_median)
+            if shallow is not None:
+                return shallow
+        return choice
 
-    def _deeper(self, now: float, floor: int = 1) -> Optional[int]:
+    def _deeper(self, now: float, floor: int = 1, allow_deep: bool = True) -> Optional[int]:
         """Nearest usable deeper point (>= ``floor``), skipping rejected ones.
 
         Field log: one rejected neighbour (40x2.25) used to block every deeper point,
         so Balanced sat at 15 W and 80 FPS while 30x3 held 90 FPS at 10 W.
         """
         for i in range(self.idx - 1, floor - 1, -1):
-            if self._usable(i, now):
+            if self._usable(i, now) and (allow_deep or not self._deep(i)):
                 return i
         return None
 
@@ -1662,12 +1693,14 @@ class BudgetController:
                 and isinstance(real_median, (int, float)) and math.isfinite(float(real_median))
                 and isinstance(output_median, (int, float)) and math.isfinite(float(output_median))
                 and float(output_median) < self.target_output_fps * HOLD_OUTPUT_RATIO):
+            full = [i for i in range(self.idx - 1, 0, -1)
+                    if self._usable(i, now) and self.points[i].render_scale_pct == 100]
             feasible = next(
-                (i for i in range(self.idx - 1, 0, -1)
-                 if self._usable(i, now) and self.points[i].render_scale_pct == 100
-                 and self.points[i].base_target_fps * HOLD_REAL_RATIO <= float(real_median)),
+                (i for i in full if self.points[i].base_target_fps * HOLD_REAL_RATIO <= float(real_median)),
                 None,
             )
+            if feasible is not None and self._deep(feasible):
+                feasible = self._shallow_reaching_goal(full, real_median) or feasible
             if feasible is not None:
                 self.quality_debt = max(self.quality_debt or 0, self.idx)
                 return self._move(f"guard-output-recovery:not-power-bound:{verdict.reason}", idx=feasible)
@@ -1681,12 +1714,16 @@ class BudgetController:
         # Inside the ideal 9-11 W a watt is cheaper than real FPS below 30.
         if self.tdp_control and self.tdp is not None and self.tdp < self.ideal_max_w - 1e-6:
             return self._move(f"guard-more-power:{verdict.reason}", tdp=min(self.ideal_max_w, self.tdp + step))
-        # Defending the 15 W budget: x3.25 .. x3.75 (real 28 .. 24) before more watts.
-        deeper = self._measured_deeper(now, 1, real_median) if self.idx > 1 else None
+        # Defending the 15 W budget: cheaper points up to x3 (render-scale rungs) before more watts.
+        deeper = self._measured_deeper(now, 1, real_median, allow_deep=False) if self.idx > 1 else None
         if deeper is not None:
             return self._move(f"guard-deeper-multiplier:{verdict.reason}", idx=deeper)
         if self.tdp_control and self.tdp is not None and self.tdp < self.normal_max_w - 1e-6:
             return self._move(f"guard-more-power:{verdict.reason}", tdp=min(self.normal_max_w, self.tdp + step))
+        # x3.25 .. x3.75 (real 28 .. 24) only once no point up to x3 holds the goal at the budget.
+        deeper = self._measured_deeper(now, 1, real_median) if self.idx > 1 else None
+        if deeper is not None:
+            return self._move(f"guard-deeper-multiplier-above-x3:{verdict.reason}", idx=deeper)
         if self.idx > 0 and self._usable(0, now) and self.flavor in ("battery", "extreme"):
             return self._move(f"guard-emergency-x4:{verdict.reason}", idx=0)
         # Above the normal budget only while the real stream keeps missing the
@@ -1749,14 +1786,48 @@ class BudgetController:
         else:
             # Nothing applied yet: try the next usable point, cheapest-first from here.
             options = [i for i in range(len(self.points)) if i >= 1 and self._usable(i, now)]
-            if options:  # ties go to the deeper (safer) point
-                self.idx = min(options, key=lambda i: (abs(i - self.idx), i))
+            if options:  # up to x3 first, then the nearest; ties go to the deeper (safer) point
+                self.idx = min(options, key=lambda i: (self._deep(i), abs(i - self.idx), i))
         if self.request_failures >= self.MAX_REQUEST_FAILURES:
             self.exhausted = True
         if self.verifying is not None and self.points[self.idx].key != self.verifying:
             self.verifying = None
         self.phase = "guard" if self.phase in ("locked", "probe", "guard") else self.phase
         self.last_reason = f"request-failed:{reason}"
+
+    def full_scale_twin(self, now: float) -> Optional[int]:
+        """The current scaled rung's full-resolution twin (same real cap and ratio), if usable."""
+        point = self.point
+        if point.render_scale_pct >= 100:
+            return None
+        twin = next((i for i, p in enumerate(self.points)
+                     if i > 0 and p.render_scale_pct == 100 and p.base_target_fps == point.base_target_fps
+                     and abs(float(p.multiplier) - float(point.multiplier)) < 1e-6), None)
+        if twin is None or self.current_max_multiplier is not None and \
+                float(self.points[twin].multiplier) > self.current_max_multiplier + 1e-6:
+            return None
+        return twin
+
+    def keep_full_scale(self, now: float, reason: str) -> Optional[OperatingPoint]:
+        """The renderer took the cadence but not the render scale: keep the cadence at 100 %.
+
+        Field log 2.1.1: 30x3@80 delivered 30 real x3 = 90, yet the whole point was rolled back
+        because the game refused the scale change.  The scaled rung is rejected (no retry every
+        cycle) and the controller continues on its full-resolution twin; the cadence the renderer
+        just confirmed is the twin's cadence, so its windows judge it like any applied point.
+        """
+        twin = self.full_scale_twin(now)
+        if twin is None:
+            return None
+        self.rejected[self.point.key] = now
+        self.scale_capable = False
+        self.idx = twin
+        if self.verifying is not None and self.points[twin].key != self.verifying:
+            self.verifying = None
+        self.good = self.bad = 0
+        self.settled_since = None
+        self.last_reason = f"kept-full-render-scale:{reason}"
+        return self.points[twin]
 
     def _delivered_point(self, observed: Optional[Dict[str, float]], failed: OperatingPoint,
                          now: float) -> Optional[int]:
@@ -1765,11 +1836,14 @@ class BudgetController:
         real, out = observed.get("real"), observed.get("output")
         if not (isinstance(real, (int, float)) and isinstance(out, (int, float)) and real > 0):
             return None
-        if out < 0.94 * self.target_output_fps or real >= 0.95 * failed.base_target_fps:
+        if out < ON_TARGET_RATIO * self.target_output_fps or real >= HOLD_REAL_RATIO * failed.base_target_fps:
             return None  # target not delivered, or the cap was reached: a real renderer failure
-        options = [i for i in range(1, len(self.points))
-                   if self._usable(i, now) and self.points[i].base_target_fps <= real * 1.03]
-        return max(options) if options else None
+        usable = [i for i in range(1, len(self.points)) if self._usable(i, now)]
+        options = [i for i in usable if self.points[i].base_target_fps <= real * 1.03]
+        choice = max(options) if options else None
+        if choice is not None and self._deep(choice):
+            choice = self._shallow_reaching_goal(usable, real) or choice
+        return choice
 
     def status(self) -> Dict[str, Any]:
         return {

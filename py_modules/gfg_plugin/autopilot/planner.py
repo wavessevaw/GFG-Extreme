@@ -38,6 +38,8 @@ class View:
     shading_available: bool = False
     shading_consent: bool = False
     shading_enabled: bool = False
+    # Telemetry is live, but the window after the last settings change is still too short.
+    settling: bool = False
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,12 @@ def decide(view: View) -> Decision:
         return Decision(action, reason, tool, effect, confidence, message, real, output)
 
     if not view.fresh or real is None or output is None or view.samples < 5:
+        if view.settling:
+            # Every TDP / overlay / CPU-cap write restarts the baseline window. Those first
+            # seconds are not lost telemetry (field log 2.1.1 showed the PAUSE message after
+            # nearly every change): hold and measure.
+            return done("HOLD", "measuring-after-change", "none", "hold",
+                        "Measuring the new setting.")
         return done("PAUSE", "telemetry-not-fresh", "none", "none",
                     "Lost reliable telemetry. Optimization is paused.")
     temp = _num(view.temp_c)

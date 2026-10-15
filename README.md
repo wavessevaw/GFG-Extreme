@@ -34,7 +34,7 @@ The existing Governor handles a *rendering operating point*: the required real-f
 | Resource / tool | Purpose | What actually changes |
 | --- | --- | --- |
 | **Target FPS** | Choose an achievable output goal rather than endlessly chasing unreachable 90 FPS | On a 90 Hz display, may provisionally lower the software output target to 60 using fresh, non-overlapping evidence windows, then cautiously retry 90 |
-| **Frame generation** | Balance the share of real and generated frames | Via Governor, selects operating points and multipliers typically from ×1 to ×3.75, with ×4 reserved for emergency fallback |
+| **Frame generation** | Balance the share of real and generated frames | Via Governor, selects operating points and multipliers from ×1 to ×3; ×3.25–×3.75 only when needed, ×4 reserved for emergency fallback. Within 8 % of the FPS target counts as on target |
 | **APU power / TDP** | Preserve cadence at lower energy or help a heavier scene | Governor searches, confirms and rolls back power limits. Repeated failing lower-power steps can be blocked for up to 30 minutes |
 | **Steam GPU Clock** | Test whether the GPU ceiling is unhelpful when the CPU appears to be the bottleneck | Attempts one downward GPU clock-ceiling step via SteamOSManager, confirms read-back and checks fresh performance data |
 | **CPU/GPU power split** | Reallocate shared APU headroom toward a busy GPU | The separate Smart Power Split module may trial a CPU maximum-frequency cap with measured rollback; Autopilot coordinates pauses to prevent conflicting resource trials |
@@ -94,8 +94,8 @@ On **Stop**, game exit or a mode change, GFG attempts to restore only the contro
 
 | Mode | Priority | How it works |
 | --- | --- | --- |
-| **Battery** | Efficiency | Searches lower TDP first; normal ratios up to ×3.75 (24 real at 90 Hz, 16 at 60 Hz) |
-| **Balanced** | Consistency | Starts near 12 W; opens ratios through ×3.75 when needed to preserve output |
+| **Battery** | Efficiency | Searches lower TDP first; ratios up to ×3; ×3.25–×3.75 only when needed |
+| **Balanced** | Consistency | Starts near 12 W; ratios up to ×3; ×3.25–×3.75 only when needed to preserve output |
 | **Quality** | Real-frame quality | Prefers fewer generated frames, considers quarter steps through ×3.75, then looks for watt savings |
 | **Autopilot** | Whole-system orchestration | Coordinates output targets, frame generation, power, GPU Clock, compatible rendering trials and independent CPU/Flow modules |
 

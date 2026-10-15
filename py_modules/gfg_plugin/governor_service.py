@@ -2885,6 +2885,8 @@ class GovernorService:
                     self._status.update({"state": "APPLY", "reason": "awaiting-render-scale-acknowledgement"})
                     return
                 if gate == "failed":
+                    if await self._keep_cadence_at_full_scale(profile, req):
+                        return
                     await self._fail_request(profile, "render-scale-not-acknowledged")
                     return
                 # Budget mode judges the point on its own windows after confirmation.
@@ -3066,6 +3068,45 @@ class GovernorService:
             return
 
     # ------------------------------------------------------------ budget mode
+    async def _keep_cadence_at_full_scale(self, profile: str, req: Request) -> bool:
+        """The cadence was confirmed but the render scale was refused (or never acknowledged).
+
+        Keep the point at 100 % render scale instead of rolling the whole point back: the
+        renderer is already delivering the requested real cap and ratio at full resolution.  The
+        scaled rung is rejected in the controller and, for a refusal, the scale stays blocked for
+        this game session (``_block_scale``), so it is not retried every cycle.
+        """
+        budget = self._budget
+        if budget is None or int(req.point.render_scale_pct) >= 100:
+            return False
+        twin_idx = budget.full_scale_twin(self._clock())
+        saved = await asyncio.to_thread(self._saved_profile_config, profile) if twin_idx is not None else None
+        if twin_idx is None or saved is None:
+            return False
+        twin = budget.points[twin_idx]
+        try:
+            deltas = point_deltas(twin.to_dict(), saved, scale_capable=False,
+                                  scale_ready=self._scale_ready(profile))
+            full = {**self._base_for(profile, saved), **deltas}
+        except PointNotApplicable:
+            return False
+        mark = self.observer.event_seq
+        try:
+            record = await asyncio.to_thread(self._write_overlay_sync, profile, full, twin.key)
+        except (OSError, ValueError) as error:
+            self._event("overlay-write-failed", "keep-full-scale", profile=profile, point=twin.key,
+                        error=str(error))
+            return False
+        self._record = record
+        scaled = req.point.key
+        budget.keep_full_scale(self._clock(), self._scale_blocked or "render-scale-not-acknowledged")
+        self._extreme_ack = {"pct": 100, "sharpness": None, "mark": mark, "evidence": None}
+        self._event("render-scale-dropped-cadence-kept", self._scale_blocked or "not-acknowledged",
+                    profile=profile, point=scaled, kept=twin.key, revision=record.revision)
+        await self._accept_request(profile, replace(req, point=twin, deltas=full, revision=record.revision),
+                                   "cadence-confirmed-render-scale-kept-at-100")
+        return True
+
     async def _accept_request(self, profile: str, req: Request, reason: str) -> None:
         self._point = req.point.to_dict()
         self._point_mode = "applied"
@@ -3407,6 +3448,8 @@ class GovernorService:
         fresh = samples >= 5 and real is not None and output is not None
         frame = summary.get("frametime") or {}
         mult = (summary.get("multiplier") or {}).get("median")
+        age = (self.observer.snapshot() or {}).get("sample_age_ms") if not fresh else None
+        settling = bool(not fresh and isinstance(age, (int, float)) and 0 <= age <= self.MAX_SAMPLE_AGE_MS)
         view = View(
             real_fps=real, output_fps=output,
             frametime_p95_ms=frame.get("p95_ms") or summary.get("real_interval_p95_ms"),
@@ -3428,6 +3471,7 @@ class GovernorService:
             shading_consent=(bool(self._profile_settings(profile).get("autopilot_shading", True))
                              and not self._autopilot_shading_yielded),
             shading_enabled=bool(shading.get("enabled")),
+            settling=settling,
         )
         decision = autopilot_decide(view)
         arbiter = self._autopilot_arbiter
@@ -3447,6 +3491,19 @@ class GovernorService:
                            and (clock.get("level") == "auto" or self._autopilot_gpu.owned))
         if not clock_ready and decision.action == "OPTIMIZE_GPU_CLOCK":
             decision = autopilot_decide(View(**{**view.__dict__, "gpu_clock_available": False}))
+        # A tool in its cooldown / rejection back-off is not a proposal at all.  Planning it
+        # anyway logged "autopilot-*-skipped" and showed "The requested experiment was skipped"
+        # on every tick of a 30 s cooldown and a 120 s back-off (field log 2.1.1); plan without it.
+        planned, backed_off = view, False
+        for _ in range(2):
+            if (decision.action not in ("OPTIMIZE_GPU_CLOCK", "OPTIMIZE_SHADING")
+                    or arbiter.admit(decision.action, now) not in ("cooldown", "rejected")):
+                break
+            planned = replace(planned, **({"gpu_clock_available": False}
+                                          if decision.action == "OPTIMIZE_GPU_CLOCK"
+                                          else {"shading_available": False}))
+            decision = autopilot_decide(planned)
+            backed_off = True
         if arbiter.state == "RESTORE_PENDING":
             self._publish_autopilot(profile, view, decision, clock)
             self._autopilot_plan = "pause"
@@ -3568,6 +3625,10 @@ class GovernorService:
             self._publish_autopilot(profile, view, decision, clock, deferred_reason=skip)
             return False
         holding = decision.action in ("HOLD", "PAUSE") or now < arbiter.cooldown_until
+        if backed_off and (decision.action == "OPTIMIZE_POWER"
+                           or decision.reason in ("already-efficient", "bottleneck-unknown")):
+            # As before the back-off filter: a resting actuator leaves the ordinary budget running.
+            holding = False
         self._autopilot_plan = "pause" if decision.action == "PAUSE" else ("hold" if holding else "run")
         if self._budget is not None:
             self._budget.hold_planned = self._autopilot_plan in ("pause", "hold")
@@ -3604,6 +3665,8 @@ class GovernorService:
             if deferred_reason in ("point-not-confirmed", "baseline-too-short",
                                    "baseline-overlaps-transition", "renderer-not-stable",
                                    "renderer-evidence-unavailable", "point-target-changed") else
+            "Another measurement is running. No GPU or shading change was applied."
+            if deferred_reason in ("temporal-engine-measuring", "resource-controller-busy") else
             "The requested experiment was skipped. Hardware settings were not changed."
         ) if deferred else decision.message
         self._status["autopilot"] = {

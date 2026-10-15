@@ -48,6 +48,21 @@ class Request:
         }
 
 
+def delivered_samples(samples: List[Any]) -> List[Any]:
+    """Judge a request on what the renderer delivered, never on its instantaneous plan.
+
+    An ``adaptive-plan`` line without interval/output fields becomes an ``instant_plan`` sample
+    whose output is ``base x (generated + 1)``: always an integer ratio.  A fractional point
+    (27x2.25) plans 1 or 2 generated frames per real frame, so those samples read x2 or x3 and
+    broke every run of "consistent" samples although the delivered cadence was x2.222 at 60
+    output (field log 2.1.1: confirmation-timeout).  The rejection evidence and the telemetry
+    summary already exclude them; confirmation now uses the same basis.  A stream that has
+    nothing but plan samples keeps the old behaviour.
+    """
+    delivered = [sample for sample in samples if getattr(sample, "output_source", None) != "instant_plan"]
+    return delivered if delivered else list(samples)
+
+
 def _at_ratio(req: Request, sample: Any, want: float, tol: float) -> bool:
     return abs(sample.effective_multiplier - want) <= tol or (
         req.point.multiplier == 1 and sample.effective_multiplier <= 1.12
@@ -67,7 +82,8 @@ def evaluate_confirmation(
     if any(event.operation in FAILED_OPERATIONS for event in events):
         return "failed", "renderer-transition-failed"
     applied = [event for event in events if event.operation in APPLIED_OPERATIONS]
-    samples = observer.samples_after_event(applied[-1].event_seq if applied else req.event_mark)
+    samples = delivered_samples(
+        observer.samples_after_event(applied[-1].event_seq if applied else req.event_mark))
     want = float(req.point.multiplier)
     tol = multiplier_tolerance(want)
     tail = samples[-min_samples:]

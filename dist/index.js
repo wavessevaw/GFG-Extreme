@@ -328,8 +328,8 @@ var TIER_TEXT = {
 };
 var PHASE_TEXT = { settle: "Starting at 10 W", search_down: "Lowering TDP", upgrade: "Fewer generated frames", probe: "Re-checking", locked: "Watching", guard: "Protecting" };
 var MODE_TEXT = {
-  balanced: "Balanced: starts at about 45 real FPS on OLED or 30 on LCD and 12 W. Uses ratios up to \xD73.75 when needed to keep output steady, within your Deck's normal power range.",
-  budget: "Battery: the lowest TDP that holds steady frames, down to this Deck's measured minimum. Tests cheaper frame ratios before keeping extra watts. Normal ratios reach \xD73.75: 24 real FPS at 90 Hz or 16 at 60 Hz. Deeper only as a last resort.",
+  balanced: "Balanced: starts at about 45 real FPS on OLED or 30 on LCD and 12 W. Uses ratios up to \xD73; \xD73.25\u2013\xD73.75 only when needed to keep output steady, within your Deck's normal power range.",
+  budget: "Battery: the lowest TDP that holds steady frames, down to this Deck's measured minimum. Tests cheaper frame ratios before keeping extra watts. Ratios up to \xD73; \xD73.25\u2013\xD73.75 (down to 24 real FPS at 90 Hz) only when needed. Deeper only as a last resort.",
   quality: "Quality: keeps your render resolution and uses the fewest generated frames that hold. Then lowers TDP; rechecks finer frame ratios after stable play. Uses more battery.",
   extreme: "Extreme \u2014 BETA / EXPERIMENTAL. In development; not recommended for regular play. Uses your Deck's stock limit \u2014 15 W, or your own lower limit, never more, no overclock. Lowers render resolution to 90% / 80% with matched sharpening only when the engine confirms it. Uses more battery than Balanced.",
   autopilot: "Autopilot chooses the steady frame rate and the lowest power that holds it. It uses Governor for TDP. A GPU clock change is one step, then checked. If the frames get worse, the previous setting comes back."
@@ -1514,7 +1514,7 @@ function GovernorPage({ s, back, profile, refresh }) {
       "div",
       { className: "kv" },
       h("span", null, "Multipliers"),
-      h("b", null, "\xD71 to \xD73.75, steps of 0.25"),
+      h("b", null, "\xD71 to \xD73, steps of 0.25; up to \xD73.75 only when needed"),
       h("span", null, "Saved profile"),
       h("b", null, "never modified"),
       h("span", null, "TDP"),
@@ -1549,7 +1549,7 @@ function FgPage({ back, cfg, patch }) {
       null,
       h("div", { className: "sec" }, "SAVED MULTIPLIER"),
       h(Seg, { value: String(mult), options: [["2", "\xD72"], ["3", "\xD73"]], onChange: (v) => patch({ multiplier: Number(v) }) }),
-      h(Note, { quiet: true }, "Used when the Governor is off. With the Governor on, it picks \xD71 to \xD73.75 itself (\xD74 only as a last resort) and never changes this value.")
+      h(Note, { quiet: true }, "Used when the Governor is off. With the Governor on, it picks \xD71 to \xD73 itself (up to \xD73.75 only when needed, \xD74 as a last resort) and never changes this value.")
     ) : h(Note, { quiet: true }, "External backend: GFG observes only and does not change it.")
   );
 }
