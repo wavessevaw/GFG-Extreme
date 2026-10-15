@@ -2025,6 +2025,7 @@ class GovernorService:
             value["enabled"] = self._profile_enabled(profile)
         value["scale_ready"] = self._scale_ready(profile or value.get("profile", ""))
         value["hud"] = self.hud_settings(profile or value.get("profile", ""))
+        value["autopilot_preference"] = self._autopilot_preference(profile or value.get("profile", ""))
         value["effort"] = self._effort.status()
         value["session"] = self.session_stats.summary()
         value["last_session"] = self._settings.get("last_session")

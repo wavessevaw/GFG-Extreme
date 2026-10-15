@@ -43,6 +43,18 @@ class FakePlugin:
         self.calls.append(("feature", profile, feature, enabled))
         return {"success": True}
 
+    async def set_governor_enabled(self, profile, enabled):
+        self.calls.append(("enabled", profile, enabled))
+        return {"success": True}
+
+    async def set_governor_autopilot_preference(self, profile, preference):
+        self.calls.append(("preference", profile, preference))
+        return {"success": True}
+
+    async def set_governor_hud(self, profile, enabled=None, preset=None, position=None, style=None):
+        self.calls.append(("hud", profile, enabled))
+        return {"success": True}
+
 
 class BridgeTests(unittest.TestCase):
     def setUp(self):
@@ -102,6 +114,27 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(self.call({"id": 1, "method": "set_feature", "params": {"feature": "boost", "enabled": False}}, True)["ok"])
         self.assertIn(("feature", "p1", "boost", False), self.plugin.calls)
         self.assertIn(("fusion", True), self.plugin.calls)
+
+    def test_enabled_preference_and_hud(self):
+        c = compact_status({"autopilot_preference": "battery", "hud": {"enabled": True},
+                            "frame_os": {"feature_settings": {"touch_boost": False}}})
+        self.assertEqual(c["preference"], "battery")
+        self.assertTrue(c["hud"])
+        self.assertFalse(c["touch_boost"])
+        self.assertTrue(c["latency"])
+        self.assertEqual(compact_status({})["preference"], "auto")
+        self.assertFalse(compact_status({})["hud"])
+        ok = lambda m, p: self.call({"id": 1, "method": m, "params": p}, True)["ok"]
+        self.assertTrue(ok("set_enabled", {"enabled": False}))
+        self.assertFalse(ok("set_enabled", {"enabled": "no"}))
+        self.assertTrue(ok("set_preference", {"preference": "smoothness"}))
+        self.assertFalse(ok("set_preference", {"preference": "extreme"}))
+        self.assertTrue(ok("set_hud", {"enabled": True}))
+        self.assertTrue(ok("set_feature", {"feature": "touch_boost", "enabled": False}))
+        self.assertTrue(ok("set_feature", {"feature": "latency", "enabled": True}))
+        for call in [("enabled", "p1", False), ("preference", "p1", "smoothness"), ("hud", "p1", True),
+                     ("feature", "p1", "touch_boost", False), ("feature", "p1", "latency", True)]:
+            self.assertIn(call, self.plugin.calls)
 
     def test_end_to_end_socket_and_discovery_file(self):
         async def scenario():

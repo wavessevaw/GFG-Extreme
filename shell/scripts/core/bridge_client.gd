@@ -164,6 +164,26 @@ func set_frame_fusion(enabled: bool, cb: Callable = Callable()) -> void:
 	call_method("set_frame_fusion", {"enabled": enabled}, cb)
 
 
+func set_feature(feature: String, enabled: bool, cb: Callable = Callable()) -> void:
+	Log.info("bridge", "set_feature %s %s" % [feature, enabled])
+	call_method("set_feature", {"feature": feature, "enabled": enabled}, cb)
+
+
+func set_enabled(enabled: bool, cb: Callable = Callable()) -> void:
+	Log.info("bridge", "set_enabled %s" % enabled)
+	call_method("set_enabled", {"enabled": enabled}, cb)
+
+
+func set_preference(preference: String, cb: Callable = Callable()) -> void:
+	Log.info("bridge", "set_preference " + preference)
+	call_method("set_preference", {"preference": preference}, cb)
+
+
+func set_hud(enabled: bool, cb: Callable = Callable()) -> void:
+	Log.info("bridge", "set_hud %s" % enabled)
+	call_method("set_hud", {"enabled": enabled}, cb)
+
+
 func set_boost(enabled: bool, cb: Callable = Callable()) -> void:
 	Log.info("bridge", "set_feature boost %s" % enabled)
 	call_method("set_feature", {"feature": "boost", "enabled": enabled}, cb)

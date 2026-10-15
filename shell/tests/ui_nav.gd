@@ -8,6 +8,7 @@ var fails := 0
 var checks := 0
 var step := 0
 var wait := 0
+var _quick_tab := ""
 
 
 func check(c: bool, what: String) -> void:
@@ -83,6 +84,11 @@ func _process(_d: float) -> bool:
 			pad(JOY_BUTTON_START)
 		9:
 			check(app._quick.visible and app._quick.is_ancestor_of(focus()), "☰ Menu opens Quick settings with focus")
+			_quick_tab = app._quick.tab
+			pad(JOY_BUTTON_RIGHT_SHOULDER)
+			check(app._quick.tab != _quick_tab and app._quick.visible and app.current_page() == "library",
+				"R1 in Quick settings switches its tab, not the page behind")
+			check(app._quick.is_ancestor_of(focus()), "focus stays in Quick settings after a tab switch")
 			pad(JOY_BUTTON_START)
 		10:
 			check(not app._quick.visible, "☰ Menu closes Quick settings")

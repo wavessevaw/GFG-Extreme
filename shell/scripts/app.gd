@@ -433,8 +433,10 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		elif ov.navigate(event):
 			get_viewport().set_input_as_handled()
-		elif event.is_action_pressed("shell_tab_next") or event.is_action_pressed("shell_tab_prev") \
-				or event.is_action_pressed("shell_search") or event.is_action_pressed("shell_option"):
+		elif event.is_action_pressed("shell_tab_next") or event.is_action_pressed("shell_tab_prev"):
+			ov.on_tab(1 if event.is_action_pressed("shell_tab_next") else -1)
+			get_viewport().set_input_as_handled()
+		elif event.is_action_pressed("shell_search") or event.is_action_pressed("shell_option"):
 			get_viewport().set_input_as_handled()   # nothing behind the overlay reacts
 		return
 	if event.is_action_pressed("shell_quick"):
@@ -524,7 +526,7 @@ func _notification(what: int) -> void:
 			toast("С возвращением в GFG Shell")
 
 
-## Test/CI hooks: --gfg-page=<page|game:ID|quick|menu|power|launch> and --gfg-screenshot=<png>.
+## Test/CI hooks: --gfg-page=<page|game:ID|quick[:gfg|sys]|menu|power|launch> and --gfg-screenshot=<png>.
 func _handle_cmdline() -> void:
 	var page := ""
 	var shot := ""
@@ -536,7 +538,9 @@ func _handle_cmdline() -> void:
 	if page != "":
 		if page.begins_with("game:"):
 			open_game(Shell.library_game_by_appid(int(page.substr(5))))
-		elif page == "quick":
+		elif page == "quick" or page.begins_with("quick:"):
+			if page.begins_with("quick:"):
+				_quick.tab = page.substr(6)
 			_quick.open()
 		elif page == "menu":
 			_menu.open()
