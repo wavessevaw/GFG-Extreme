@@ -1338,8 +1338,18 @@ VkResult te_submit_frame(te_context* ctx, const te_submit* s) {
             si[n].pSignalSemaphores = &ctx->timeline;
         }
     }
-    CHECK(vkQueueSubmit(ctx->dev->queue, n, si, slot->fence), "vkQueueSubmit");
-    if (split) lmc_fit_enqueue(ctx, slot);
+    /* LMC: the first half is a submission of its own (a driver may gather the waits of every batch in
+       one vkQueueSubmit before running any of them), and the fit is queued before the second half */
+    VkResult sr = VK_SUCCESS;
+    uint32_t first = 0;
+    if (split) {
+        sr = vkQueueSubmit(ctx->dev->queue, 1, si, VK_NULL_HANDLE);
+        if (sr != VK_SUCCESS) return fail(sr, "vkQueueSubmit(analysis) failed (%d)", sr);
+        lmc_fit_enqueue(ctx, slot);
+        first = 1;
+    }
+    sr = vkQueueSubmit(ctx->dev->queue, n - first, si + first, slot->fence);
+    if (sr != VK_SUCCESS) return fail(sr, "vkQueueSubmit failed (%d)", sr);   /* the worker still signals */
     slot->in_flight = 1;
     slot->outputs = outs;
     slot->generated = outs > 0;
