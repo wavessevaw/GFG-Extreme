@@ -112,8 +112,8 @@ class FieldLogControlTests(unittest.TestCase):
             asyncio.run(svc._iteration())
             if svc._status.get("target_output_fps") == 45:
                 break
-        self.assertEqual(svc._status["target_output_fps"], 45)  # half the 90 Hz panel
-        self.assertIsNone(svc._budget, "the old 90 FPS controller was released")
+        self.assertEqual(svc._status["target_output_fps"], 90)  # Auto retains 90 Hz goal
+        self.assertIsNotNone(svc._budget, "Auto retains the 90 FPS controller")
 
     def test_an_unchanged_overlay_does_not_restart_baseline_collection(self):
         self.confirmed()
@@ -137,7 +137,7 @@ class FieldLogControlTests(unittest.TestCase):
             row = {"samples": 10, "sample_span_s": 9, "first_sample_seq": first,
                    "last_sample_seq": first + 9, "real": {"median": 26}, "output": {"median": 78}}
             target = svc._governor_target("game", 90, row, snapshot=snapshot)
-            self.assertEqual(target, 45 if first == 21 else 90)
+            self.assertEqual(target, 90)
             waiting = svc._governor_target("game", 90, {"samples": 0}, snapshot=snapshot)
             self.assertEqual(waiting, target)
 
@@ -147,7 +147,7 @@ class FieldLogControlTests(unittest.TestCase):
         svc = self.svc
         fresh = {"sample_age_ms": 0, "session_generation": None}
         self.assertEqual(svc._governor_target("game", 90, row, snapshot=fresh), 90)
-        self.assertEqual(svc._autopilot_targets.pending_n, 1)
+        self.assertEqual(svc._autopilot_targets.pending_n, 0)
         svc._governor_target("game", 90, {"samples": 0}, snapshot={**fresh, "sample_age_ms": 3000})
         self.assertEqual(svc._autopilot_targets.pending_n, 0)
         svc._menu_covering = lambda: True
