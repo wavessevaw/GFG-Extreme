@@ -181,7 +181,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--outdir", type=Path, required=True)
-    parser.add_argument("--version", default="0.0.0-fg3-internal.2")
+    parser.add_argument("--version", default="0.0.0-fg3-internal.3")
     parser.add_argument("--build-environment", help="Actual build environment; otherwise inferred from GitHub Actions or marked unattested")
     args = parser.parse_args()
     package(args.binary.resolve(), args.outdir.resolve(), args.version, args.build_environment)

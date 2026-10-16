@@ -33,6 +33,34 @@ class DiagnosticReportTests(unittest.TestCase):
         self.assertIn("real presents: 8", text)
         self.assertIn("synthetic presents: 14", text)
 
+    def test_recreated_swapchains_use_last_cumulative_snapshot_and_last_timings(self):
+        text = report.render({"app.stderr.log":
+            "[gfg-native] GPU bridge active: 1280x800 algo=lmc-gpu\n"
+            "[gfg-native] GPU bridge retired real=1 synthetic=0 skipped=0 errors=0 "
+            "present_path_host_pixel_reads=0 present_path_cpu_waits=0\n"
+            "[gfg-native] gpu-bridge present_cpu frames=3 total_median_us=25.3 total_p95_us=25.3 "
+            "layer_own_median_us=0.5 layer_own_p95_us=0.5\n"
+            "[gfg-native] GPU bridge retired real=3503 synthetic=0 skipped=6996 errors=0 "
+            "present_path_host_pixel_reads=0 present_path_cpu_waits=0\n"
+            "[gfg-native] gpu-bridge present_cpu frames=3493 total_median_us=26.1 total_p95_us=48.0 "
+            "layer_own_median_us=0.6 layer_own_p95_us=1.3\n"})
+        self.assertIn("real presents: 3503", text)
+        self.assertIn("skipped outputs: 6996", text)
+        self.assertIn("Samples: 3493", text)
+        self.assertIn("26.1 / 48.0", text)
+        self.assertIn("no — zero generated outputs", text)
+        self.assertIn("CPU passthrough timings do not measure generation cost", text)
+
+    def test_initialization_and_monitor_start_do_not_prove_generation_or_completion(self):
+        text = report.render({"app.stderr.log":
+            "[gfg-native] GPU bridge active: 1280x800 algo=lmc-gpu\n"
+            "[gfg-native] present-ids mode=2 monitor=1\n"
+            "[gfg-native] fg_bypass reason=unsupported-present-metadata pid=1 pnext_types=[1000000000]\n"})
+        self.assertIn("initialized in captured log: **yes**", text)
+        self.assertIn("unsupported-present-metadata", text)
+        self.assertIn("a monitor may have started without receiving IDs", text)
+        self.assertNotIn("Synthetic WSI handoffs observed: **yes**", text)
+
 
 if __name__ == "__main__":
     unittest.main()

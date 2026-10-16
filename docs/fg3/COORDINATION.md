@@ -10,6 +10,41 @@ integrity and provenance, a tested exact rollback/uninstall path, full CI, and
 one-command local diagnostics. It explicitly rejects public release status or
 software-only evidence as hardware acceptance.
 
+## New actual-device failure — 2026-10-16 02:36 UTC
+
+The owner supplied a SteamOS 3.8.28 / RADV Witcher 3 diagnostic capture whose
+installed ELF SHA-256 matches the delivered `9ec5d5b` local package. Its final
+process snapshot is **3503 real API presents, 0 synthetic, 6996 skipped**, with
+no TE-busy, ring-busy, acquire-not-ready or hold events. Five bridge
+initializations occurred; the first took 2733.04 ms. These are initialization
+and passthrough observations, not successful Deck FG or generation cost.
+
+The present-path guard accepted only an empty pNext or a singleton ID node.
+The published DXVK presenter (research snapshot
+`e8c80a8d1cdaa0ad21516bf64d9cb073cb57eec3`, not asserted to be the installed
+Proton version) builds multi-node fence/mode/ID/damage chains. The capture did
+not record node types, so their exact installed combination is unknown.
+The corrected path copies known real metadata, retains app fences for real
+only, expands damage, preserves the bridge's FIFO contract and diagnoses
+unsupported chains with their numeric structure types. App-owned present IDs
+and waits now remain in the application's namespace; synthetic calls omit
+optional IDs. Layer-owned ID tracing is used only when the app has no ID
+namespace. Unknown metadata can therefore pass through with correct app waits.
+
+The report previously selected the first retirement (real=1) and first timing
+sample instead of the latest snapshots. It now reports real=3503 / synthetic=0
+for this capture and distinguishes initialization from observed generation.
+The uploaded raw capture stays outside Git; only these technical findings and
+non-identifying test fixtures are published.
+
+Local software validation of the new maintenance1 + damage path passed both
+layer orders with 8 real / 14 synthetic / 0 skipped, all 8 app present fences
+completed, and zero synchronization-validation errors. Record/submit/index
+fault tests with app fences and independent WSI pixel observers also passed.
+The read-only metadata tests cover both ID versions and tail-ID handling.
+CI will explicitly report a maintenance1 fence-path skip on older ICDs while
+still testing incremental present. This is **not yet a successful Deck rerun**.
+
 ## Published package and CI checkpoint — 2026-10-16
 
 The first package-upload attempt failed because generated Vulkan validation
@@ -34,7 +69,8 @@ The same-device Vulkan path is the default; the known host-relay path that
 triggered `VUID-vkQueuePresentKHR-pWaitSemaphores-03268` is removed. Shared-fd
 remains opt-in with capability checks and a bidirectional timeline startup
 self-test. Unsupported paths preserve the game's real present. Application
-feature and present-ID chains are copied before modification. The optional
+feature chains are copied before modification. Application present-ID/wait
+namespaces are preserved; optional layer-owned ID tracing is separate. The optional
 present-wait monitor now performs zero-timeout polling, sharing a per-swapchain
 host mutex with acquire, QueuePresent and application waits; the previous 100 ms
 parallel wait violated Vulkan's swapchain external-synchronization contract

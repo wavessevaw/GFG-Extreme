@@ -33,11 +33,15 @@ def render(files: dict[str, str]) -> str:
     start = files.get("system-start.txt", "")
     status = files.get("process-status.txt", "unknown")
     active = "yes" if "GPU bridge active:" in stderr else "no / not observed"
-    algo_match = re.search(r"GPU bridge active:.*?\balgo=([^\s]+)", stderr)
-    retired = re.search(
+    def last(pattern: str, text: str):
+        matches = list(re.finditer(pattern, text))
+        return matches[-1] if matches else None
+
+    algo_match = last(r"GPU bridge active:.*?\balgo=([^\s]+)", stderr)
+    retired = last(
         r"(?:GPU bridge|gpu-bridge) retired real=(\d+) synthetic=(\d+) skipped=(\d+).*?errors=(\d+).*?"
         r"present_path_host_pixel_reads=(\d+) present_path_cpu_waits=(\d+)", stderr)
-    stats = re.search(
+    stats = last(
         r"gpu stats bridges=(\d+).*?real=(\d+) synthetic=(\d+) skipped=(\d+).*?errors=(\d+)",
         stderr + "\n" + files.get("app.stdout.log", ""))
     count = retired or stats
@@ -47,7 +51,7 @@ def render(files: dict[str, str]) -> str:
         a, b = int(previous[2]), int(current[2])
         if b > a:
             intervals_us.append((b - a) / 1000.0)
-    timings = re.search(
+    timings = last(
         r"present_cpu frames=(\d+).*?total_median_us=([0-9.]+).*?total_p95_us=([0-9.]+).*?"
         r"layer_own_median_us=([0-9.]+).*?layer_own_p95_us=([0-9.]+)", stderr)
 
@@ -56,7 +60,7 @@ def render(files: dict[str, str]) -> str:
         "",
         "This report summarizes application/WSI instrumentation only. It does not prove physical OLED scanout.",
         "",
-        f"- Generator bridge active in captured log: **{active}**",
+        f"- Generator bridge initialized in captured log: **{active}**",
         f"- Algorithm: **{algo_match.group(1) if algo_match else 'not observed'}**",
         f"- Game process exit code: **{status.strip()}**",
         "- Physical display / KMS scanout: **unobserved**",
@@ -70,8 +74,17 @@ def render(files: dict[str, str]) -> str:
         else:
             names = ("bridges", "real presents", "synthetic presents", "skipped outputs", "errors")
             values = stats.groups()
-        lines.extend(["", "## Captured counters", ""])
+        synthetic = int(retired.group(2) if retired else stats.group(3))
+        lines.append(f"- Synthetic WSI handoffs observed: **{'yes' if synthetic else 'no — zero generated outputs'}**")
+        lines.extend(["", "## Latest captured cumulative counters", "",
+                      "Latest process snapshot across swapchain recreations; earlier snapshots are not added again.", ""])
         lines.extend(f"- {name}: {value}" for name, value in zip(names, values))
+        if synthetic == 0:
+            lines.extend(["", "Bridge initialization succeeded, but generation was not observed. CPU passthrough timings do not measure generation cost."])
+    bypass = list(dict.fromkeys(re.findall(r"fg_bypass reason=([^\s]+)", stderr)))
+    if bypass:
+        lines.extend(["", "## Captured bypass reasons", ""])
+        lines.extend(f"- {reason}" for reason in bypass)
     if timings:
         lines.extend([
             "", "## CPU time inside layer", "",
@@ -91,7 +104,7 @@ def render(files: dict[str, str]) -> str:
         ])
     else:
         lines.extend(["", "## Optional Vulkan present-wait observations", "",
-                      "- No `present_done` records were captured; the optional present-wait monitor was unavailable or disabled."])
+                      "- No `present_done` records were captured; completed monitored presents are not established (a monitor may have started without receiving IDs)."])
     lines.extend(["", "## Device snapshot", "", "```text", start.rstrip(), "```", ""])
     return "\n".join(lines)
 

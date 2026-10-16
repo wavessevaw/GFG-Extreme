@@ -32,7 +32,7 @@ jobs:
           make -C engine/gfg-temporal all lib 2>&1 | tee build-core.log
           engine/gfg-temporal/build/te-tests 2>&1 | tee core.log
           GFG_TEST_GPU_LMC=1 engine/gfg-temporal/build/te-tests 2>&1 | tee core-gpu-lmc.log
-          make -C engine/gfg-native ENABLE_TE=1 BUILD=build-te VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" layer build-te/wsi-gpu-smoke build-te/borrowed-device build-te/gpu-wsi-observer swapchain-policy memory-policy present-ids 2>&1 | tee build-native.log
+          make -C engine/gfg-native ENABLE_TE=1 BUILD=build-te VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" layer build-te/wsi-gpu-smoke build-te/borrowed-device build-te/gpu-wsi-observer swapchain-policy memory-policy present-ids present-chain 2>&1 | tee build-native.log
       - name: Loader, real-frame fallback and legacy CPU regression
         run: |
           set -euo pipefail
@@ -62,6 +62,10 @@ jobs:
             GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_CHAIN_VK12=1 GFG_TEST_READONLY_FEATURES=1 GFG_TEST_FRAMES=120 GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=4 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "gpu-$stem.log"
             grep -q 'validation errors=0' "gpu-$stem.log"
             grep -q 'real=120 synthetic=238 skipped=0' "gpu-$stem.log"
+            GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=lmc-gpu GFG_NATIVE_TRACE=1 GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_PROTON_CHAIN=1 GFG_TEST_FRAMES=8 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "proton-$stem.log"
+            grep -q 'real=8 synthetic=14 skipped=0' "proton-$stem.log"
+            grep -q 'original_metadata_unchanged=PASS' "proton-$stem.log"
+            grep -q 'validation errors=0' "proton-$stem.log"
             GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=30 GFG_NATIVE_GPU_BRIDGE_INJECT_SKIP=5 GFG_TEST_ALLOW_SKIPS=1 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "skip-$stem.log"
             grep -q 'validation errors=0' "skip-$stem.log"
             for fault in record submit index; do
@@ -72,7 +76,7 @@ jobs:
           done
           GFG_NATIVE_GPU_FAULT=record xvfb-run -a engine/gfg-native/build-te/gpu-wsi-observer 2>&1 | tee recovery.log
           grep -q 'synthetic=0 recovery_duplicate=1 content=PASS real_handoffs=PASS' recovery.log
-          if grep -E 'VALIDATION ERROR|Validation Error|VUID-' borrowed*.log observer*.log gpu-*.log skip-*.log fault-*.log recovery.log; then exit 1; fi
+          if grep -E 'VALIDATION ERROR|Validation Error|VUID-' borrowed*.log observer*.log gpu-*.log proton-*.log skip-*.log fault-*.log recovery.log; then exit 1; fi
       - name: Immutable feature chains and FIFO fail-closed behavior
         env:
           VK_LAYER_PATH: /usr/share/vulkan/explicit_layer.d
@@ -219,7 +223,7 @@ jobs:
           cp "$RUNNER_TEMP/fg3-private/installed.log" "$logs/"
           rm "$RUNNER_TEMP/fg3-private/installed.log"
           cp "$RUNNER_TEMP/native-compatibility.log" "$logs/"
-          cp gpu-*.log skip-*.log fault-*.log disabled-timeline-*.log mailbox-*.log \
+          cp gpu-*.log proton-*.log skip-*.log fault-*.log disabled-timeline-*.log mailbox-*.log \
             shared-fd.log relay-rejected.log "$logs/"
           {
             printf 'source_commit=%s\n' "$(git rev-parse HEAD)"

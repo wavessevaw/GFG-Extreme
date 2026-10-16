@@ -44,6 +44,7 @@
  * (vkGetFenceStatus); a busy slot passes the real present through unmodified.
  */
 #include "gpu_bridge.h"
+#include "present_chain.h"
 #include "te_engine.h"
 #include <stdatomic.h>
 #include <stddef.h>
@@ -150,6 +151,9 @@ struct gfg_gpu_fg {
     int fault_used;
     int log;
     int in_present;
+    unsigned bypass_logged;
+    int mode_override_logged;
+    int generation_logged;
     double *timing_total_us, *timing_own_us;
     /* per-phase CPU time sums (GFG_NATIVE_TIMING): record+submit real copy,
      * te_submit_frame, acquire, synthetic record+submit, fence submit */
@@ -890,14 +894,15 @@ void gfg_gpu_fg_destroy(gfg_gpu_fg *fg) {
             "[gfg-native] GPU bridge retired real=%llu synthetic=%llu skipped=%llu te_busy=%llu"
             " ring_busy=%llu acquire_not_ready=%llu holds=%llu errors=%llu"
             " present_path_host_pixel_reads=%llu present_path_cpu_waits=%llu"
-            " verify_checks=%llu verify_distinct=%llu\n",
+            " verify_checks=%llu verify_distinct=%llu pid=%ld bridge_frames=%llu\n",
             (unsigned long long)st.real_presents, (unsigned long long)st.synthetic_presents,
             (unsigned long long)st.skipped_synthetic, (unsigned long long)st.te_busy,
             (unsigned long long)st.ring_busy, (unsigned long long)st.acquire_not_ready,
             (unsigned long long)st.holds, (unsigned long long)st.errors,
             (unsigned long long)st.present_path_host_pixel_reads,
             (unsigned long long)st.present_path_cpu_waits,
-            (unsigned long long)st.verify_checks, (unsigned long long)st.verify_distinct);
+            (unsigned long long)st.verify_checks, (unsigned long long)st.verify_distinct,
+            (long)getpid(), (unsigned long long)fg->frame);
         if (fg->timing_total_us && fg->timing_count > 2) {
             /* first two frames carry one-time work (TE warm-up); excluded */
             uint32_t n = fg->timing_count - 2;
@@ -998,31 +1003,29 @@ static VkResult submit_real(gfg_gpu_fg *fg, ring_slot *rs, const VkPresentInfoKH
     return fg->QueueSubmit(fg->queue, 1, &si, VK_NULL_HANDLE);
 }
 
-/* The bridge's synthetic presents cannot safely reproduce arbitrary app
- * VkPresentInfoKHR pNext payloads (present fences, device-group masks, damage
- * regions, etc.). Preserve the app call and bypass generation unless the
- * chain is empty or is exactly one present-ID node owned by the layer trace. */
-static int present_chain_supported(const VkPresentInfoKHR *app,
-                                   const gfg_present_id_hooks *ids) {
-    if (!app->pNext) return 1;
-    if (!ids || !ids->mode || !ids->assign || app->swapchainCount != 1)
-        return 0;
-    const VkBaseInStructure *node = app->pNext;
-    if (node->pNext) return 0;
-    if (ids->mode == 1 && node->sType == VK_STRUCTURE_TYPE_PRESENT_ID_KHR) {
-        const VkPresentIdKHR *present_id = (const VkPresentIdKHR *)node;
-        return present_id->swapchainCount == 1 && present_id->pPresentIds;
+/* Keep caller-owned real-present metadata out of synthetic calls. Known
+ * chains are copied synchronously; unknown metadata preserves the entire app
+ * present and is diagnosed once rather than silently reporting FG active. */
+static void bypass_log(gfg_gpu_fg *fg, unsigned bit, const char *reason,
+                       const VkPresentInfoKHR *app, int id_mode) {
+    if (fg->bypass_logged & bit) return;
+    fg->bypass_logged |= bit;
+    char types[256] = {0};
+    size_t used = 0;
+    unsigned walked = 0;
+    for (const VkBaseInStructure *n = app->pNext; n && walked < GFG_PRESENT_CHAIN_MAX;
+         n = n->pNext, ++walked) {
+        const int wrote = snprintf(types + used, sizeof(types) - used,
+                                   "%s%d", walked ? "," : "", (int)n->sType);
+        if (wrote < 0 || (size_t)wrote >= sizeof(types) - used) break;
+        used += (size_t)wrote;
     }
-    if (ids->mode == 2 && node->sType == VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR) {
-        const VkPresentId2KHR *present_id = (const VkPresentId2KHR *)node;
-        return present_id->swapchainCount == 1 && present_id->pPresentIds;
-    }
-    return 0;
+    fprintf(stderr, "[gfg-native] fg_bypass reason=%s pid=%ld frame=%llu"
+            " swapchains=%u wait_semaphores=%u id_mode=%d pnext_types=[%s]\n",
+            reason, (long)getpid(), (unsigned long long)fg->frame,
+            app->swapchainCount, app->waitSemaphoreCount, id_mode, types);
 }
 
-/* Forward the app's present (optionally with our wait semaphore), replacing
- * its ID in a private stack copy. The caller's structure and ID array remain
- * immutable throughout vkQueuePresentKHR. */
 static VkResult forward_real(VkQueue queue, const VkPresentInfoKHR *app, const VkSemaphore *wait,
                              PFN_vkQueuePresentKHR next, const gfg_present_id_hooks *ids,
                              double *next_us) {
@@ -1031,56 +1034,11 @@ static VkResult forward_real(VkQueue queue, const VkPresentInfoKHR *app, const V
         real.waitSemaphoreCount = 1;
         real.pWaitSemaphores = wait;
     }
-    const VkBaseInStructure *app_id_node = NULL;
-    const uint64_t *app_present_ids = NULL;
-    uint64_t layer_id = 0;
-    union {
-        VkPresentIdKHR v1;
-        VkPresentId2KHR v2;
-    } owned_id = {0};
-    if (ids && ids->mode && ids->assign && app->swapchainCount == 1) {
-        for (const VkBaseInStructure *n = app->pNext; n;
-             n = (const VkBaseInStructure *)n->pNext)
-            if (n->sType == VK_STRUCTURE_TYPE_PRESENT_ID_KHR ||
-                n->sType == VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR) {
-                app_id_node = n;
-                break;
-            }
-        uint64_t app_id = 0;
-        if (app_id_node && app_id_node->sType == VK_STRUCTURE_TYPE_PRESENT_ID_KHR) {
-            const VkPresentIdKHR *app_ids = (const VkPresentIdKHR *)app_id_node;
-            if (app_ids->swapchainCount == 1) app_present_ids = app_ids->pPresentIds;
-        } else if (app_id_node && app_id_node->sType == VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR) {
-            const VkPresentId2KHR *app_ids = (const VkPresentId2KHR *)app_id_node;
-            if (app_ids->swapchainCount == 1) app_present_ids = app_ids->pPresentIds;
-        }
-        if (app_present_ids) app_id = app_present_ids[0];
-        layer_id = ids->assign(ids->user, 0, app_id);
-        if (app_present_ids && app_id_node == (const VkBaseInStructure *)app->pNext) {
-            if (app_id_node->sType == VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR) {
-                owned_id.v2 = *(const VkPresentId2KHR *)app_id_node;
-                owned_id.v2.pPresentIds = &layer_id;
-                real.pNext = &owned_id.v2;
-            } else {
-                owned_id.v1 = *(const VkPresentIdKHR *)app_id_node;
-                owned_id.v1.pPresentIds = &layer_id;
-                real.pNext = &owned_id.v1;
-            }
-        } else if (!app_id_node && layer_id) {
-            if (ids->mode == 2) {
-                owned_id.v2.sType = VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR;
-                owned_id.v2.pNext = app->pNext;
-                owned_id.v2.swapchainCount = 1;
-                owned_id.v2.pPresentIds = &layer_id;
-                real.pNext = &owned_id.v2;
-            } else {
-                owned_id.v1.sType = VK_STRUCTURE_TYPE_PRESENT_ID_KHR;
-                owned_id.v1.pNext = app->pNext;
-                owned_id.v1.swapchainCount = 1;
-                owned_id.v1.pPresentIds = &layer_id;
-                real.pNext = &owned_id.v1;
-            }
-        }
+    gfg_present_chain chain;
+    const int mode = ids && ids->assign ? ids->mode : 0;
+    if (!gfg_pc_prepare(&chain, app, mode)) {
+        if (mode) gfg_pc_set_id(&chain, mode, ids->assign(ids->user, 0, chain.app_id));
+        real.pNext = gfg_pc_head(&chain);
     }
     const double t = now_us();
     VkResult r = next(queue, &real);
@@ -1177,6 +1135,11 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v, u
         return -1;
     }
     STAT_ADD(synthetic_presents, 1);
+    if (!fg->generation_logged) {
+        fg->generation_logged = 1;
+        fprintf(stderr, "[gfg-native] generation_started pid=%ld real_frame=%llu\n",
+                (long)getpid(), (unsigned long long)fg->frame);
+    }
     return 1;
 }
 
@@ -1189,7 +1152,11 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     const uint64_t frame = fg->frame++;
     const uint32_t idx = app->pImageIndices[0];
     VkResult result;
-    if (app->swapchainCount != 1 || !present_chain_supported(app, ids)) {
+    gfg_present_chain app_chain;
+    const int id_mode = ids && ids->assign ? ids->mode : 0;
+    const char *chain_reason = gfg_pc_prepare(&app_chain, app, id_mode);
+    if (chain_reason) {
+        bypass_log(fg, 1u, chain_reason, app, id_mode);
         fg->te_gap = 1;
         if (frame) STAT_ADD(skipped_synthetic, 2);
         result = forward_real(queue, app, NULL, next, NULL, &next_us);
@@ -1197,10 +1164,19 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     }
     if (fg->disabled || queue != fg->queue || idx >= fg->image_count ||
         app->waitSemaphoreCount > 16) {
+        const char *reason = fg->disabled ? "bridge-disabled" : queue != fg->queue ?
+            "different-present-queue" : idx >= fg->image_count ? "invalid-image-index" : "too-many-wait-semaphores";
+        bypass_log(fg, 2u, reason, app, id_mode);
         fg->te_gap = 1;
         if (frame) STAT_ADD(skipped_synthetic, 2);
         result = forward_real(queue, app, NULL, next, ids, &next_us);
         goto timing;
+    }
+    if (app_chain.dynamic_mode && app_chain.requested_mode != VK_PRESENT_MODE_FIFO_KHR &&
+        !fg->mode_override_logged) {
+        fg->mode_override_logged = 1;
+        fprintf(stderr, "[gfg-native] present-mode override requested=%d effective=%d reason=fg-fifo-contract\n",
+                (int)app_chain.requested_mode, (int)VK_PRESENT_MODE_FIFO_KHR);
     }
     fg->in_present = 1;
     if (fg->verify) verify_collect(fg, 0);
@@ -1299,7 +1275,8 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     fg->phase_us[4] += now_us() - tp;
     fg->phase_n++;
     fg->in_present = 0;
-    /* App pNext is either empty or the supported layer-owned present-ID node. */
+    /* Real-only fences/timing and immutable copied metadata stay on the app's
+     * real present; synthetic calls never borrow those completion objects. */
     result = forward_real(queue, app, &fg->ready[idx], next, ids, &next_us);
     if(fg->recreate_required && (result==VK_SUCCESS || result==VK_SUBOPTIMAL_KHR)){
         result=VK_ERROR_OUT_OF_DATE_KHR;

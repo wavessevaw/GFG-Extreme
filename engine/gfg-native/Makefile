@@ -7,7 +7,7 @@ ENABLE_CPU_BRIDGE ?= 0
 TE_LIB ?= ../gfg-temporal/build/libgfg-temporal.a
 ifeq ($(ENABLE_TE),1)
 NATIVE_SOURCES := src/layer.c src/gpu_bridge.c
-NATIVE_HEADERS := src/cpu_bridge.h src/gpu_bridge.h src/present_ids.h src/memory_policy.h
+NATIVE_HEADERS := src/cpu_bridge.h src/gpu_bridge.h src/present_ids.h src/present_chain.h src/memory_policy.h
 NATIVE_CPPFLAGS := -DGFG_NATIVE_WITH_TE -I../gfg-temporal/src
 ifeq ($(ENABLE_CPU_BRIDGE),1)
 NATIVE_SOURCES += src/cpu_bridge.c
@@ -23,7 +23,7 @@ NATIVE_LDLIBS :=
 NATIVE_DEPS :=
 endif
 
-.PHONY: layer abi smoke wsi-smoke wsi-smoke-te wsi-smoke-gpu swapchain-policy memory-policy present-ids clean
+.PHONY: layer abi smoke wsi-smoke wsi-smoke-te wsi-smoke-gpu swapchain-policy memory-policy present-ids present-chain clean
 layer: $(BUILD)/libVkLayer_gfg_native.so $(BUILD)/VkLayer_gfg_native.json
 
 $(BUILD)/libVkLayer_gfg_native.so: $(NATIVE_SOURCES) $(NATIVE_HEADERS) $(NATIVE_DEPS)
@@ -51,7 +51,7 @@ $(BUILD)/memory-policy: tests/memory_policy.c src/memory_policy.h
 memory-policy: $(BUILD)/memory-policy
 	$(BUILD)/memory-policy
 
-$(BUILD)/gpu-wsi-observer: tests/wsi_gpu_observer.c tests/gpu_observer.h src/gpu_bridge.c src/gpu_bridge.h $(TE_LIB)
+$(BUILD)/gpu-wsi-observer: tests/wsi_gpu_observer.c tests/gpu_observer.h src/gpu_bridge.c src/gpu_bridge.h src/present_chain.h $(TE_LIB)
 	mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -DVK_USE_PLATFORM_XCB_KHR -DGFG_NATIVE_TEST_SMALL -DGFG_NATIVE_TEST_GPU_OBSERVER -I$(VULKAN_HEADERS) -Isrc -I../gfg-temporal/src -o $@ tests/wsi_gpu_observer.c src/gpu_bridge.c $(TE_LIB) -lvulkan -lxcb -ldl -lpthread -lm
 
@@ -65,6 +65,13 @@ $(BUILD)/present-ids: tests/present_ids.c src/present_ids.h
 
 present-ids: $(BUILD)/present-ids
 	$(BUILD)/present-ids
+
+$(BUILD)/present-chain: tests/present_chain.c src/present_chain.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I$(VULKAN_HEADERS) -o $@ tests/present_chain.c
+
+present-chain: $(BUILD)/present-chain
+	$(BUILD)/present-chain
 
 $(BUILD)/swapchain-policy: tests/swapchain_policy.c src/layer.c
 	mkdir -p $(BUILD)

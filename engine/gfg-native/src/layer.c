@@ -88,6 +88,7 @@ typedef struct native_device {
     int semaphore_fd; /* VK_KHR_external_semaphore_fd enabled */
     int present_caps; /* NATIVE_PRESENT_* enabled (by the app or, for tracing, by us) */
     int present_trace;
+    int app_present_ids;
     PFN_vkWaitForPresentKHR wait_present;
     PFN_vkWaitForPresent2KHR wait_present2;
     PFN_vkSetDeviceLoaderData set_loader_data; /* for layer-created command buffers */
@@ -216,6 +217,7 @@ typedef struct {
     int active;
     int semaphore_fd;
     int present_caps; /* NATIVE_PRESENT_* enabled on the created device */
+    int app_present_ids; /* the application owns its ID/wait/timing namespace */
 } native_device_patch;
 
 static int native_env_is_1(const char *name) {
@@ -316,10 +318,11 @@ static const char *native_patch_device(native_instance *inst, VkPhysicalDevice p
         native_chained_feature(ci, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_2_FEATURES_KHR,
                                offsetof(VkPhysicalDevicePresentWait2FeaturesKHR, presentWait2)))
         p->present_caps |= NATIVE_PRESENT_WAIT2;
+    p->app_present_ids = !!(p->present_caps & (NATIVE_PRESENT_ID | NATIVE_PRESENT_ID2));
     /* GFG_NATIVE_PRESENT_TRACE=1: enable v1 present id/wait ourselves when
      * supported and not already enabled (presented-frame instrumentation). */
     int add_pid = 0, add_pwait = 0;
-    if (native_env_is_1("GFG_NATIVE_PRESENT_TRACE") && has_pid && has_pwait) {
+    if (native_env_is_1("GFG_NATIVE_PRESENT_TRACE") && !p->app_present_ids && has_pid && has_pwait) {
         VkPhysicalDevicePresentIdFeaturesKHR qid = {
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR};
         VkPhysicalDevicePresentWaitFeaturesKHR qwait = {
@@ -415,6 +418,7 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     const int gpu_capable = patch.active && result == VK_SUCCESS;
     const int semaphore_fd = gpu_capable && patch.semaphore_fd;
     const int present_caps = gpu_capable ? patch.present_caps : 0;
+    const int app_present_ids = gpu_capable && patch.app_present_ids;
     const int patched = patch.active;
     native_unpatch_device(&patch);
     if (patched && result != VK_SUCCESS) {
@@ -447,6 +451,7 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     d->semaphore_fd = semaphore_fd;
     d->present_caps = present_caps;
     d->present_trace = native_env_is_1("GFG_NATIVE_PRESENT_TRACE");
+    d->app_present_ids = app_present_ids;
     d->gdpa = gdpa;
     d->destroy = destroy;
     d->get_queue = (PFN_vkGetDeviceQueue)gdpa(*out, "vkGetDeviceQueue");
@@ -478,10 +483,10 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
 
 #ifdef GFG_NATIVE_WITH_TE
 /* ---- B4: layer-owned present ids + optional presentation monitor ----
- * Active only with GFG_NATIVE_PRESENT_TRACE=1 on a GPU-bridge swapchain whose
- * device has present ids enabled. Every present the bridge issues gets a
- * fresh layer id; the app's own ids are mapped (present_ids.h) and its
- * vkWaitForPresent(2)KHR calls translated, so its semantics hold. */
+ * Active only with GFG_NATIVE_PRESENT_TRACE=1 when IDs were enabled by the
+ * layer, rather than already owned by the application. In that namespace
+ * every present gets a fresh layer ID. App-owned IDs, waits and timing query
+ * results bypass this remapping and synthetic calls omit optional IDs. */
 #define NATIVE_MONITOR_QUEUE 256u
 typedef struct native_present_ids {
     pthread_mutex_t lock;
@@ -579,7 +584,15 @@ static uint64_t native_ids_assign(void *user, int kind, uint64_t app_id) {
     return id;
 }
 static native_present_ids *native_ids_create(native_device *d, native_swapchain *sc) {
-    if (!native_env_is_1("GFG_NATIVE_PRESENT_TRACE")) return NULL;
+    /* Preserve the application's ID/wait/timing namespace. Synthetic calls
+     * omit optional IDs, and the real call keeps its app ID. This also keeps
+     * passthrough of unknown metadata and direct app waits correct. */
+    if (d->app_present_ids) {
+        if (d->present_trace)
+            fprintf(stderr, "[gfg-native] present-ids policy=application-owned synthetic_ids=omitted monitor=0\n");
+        return NULL;
+    }
+    if (!d->present_trace) return NULL;
     int mode = 0, wait_mode = 0;
     if ((sc->create_flags & VK_SWAPCHAIN_CREATE_PRESENT_ID_2_BIT_KHR) &&
         (d->present_caps & NATIVE_PRESENT_ID2)) {
@@ -620,7 +633,7 @@ static native_present_ids *native_ids_create(native_device *d, native_swapchain 
     ids->swapchain = sc->handle;
     ids->wait1 = d->wait_present;
     ids->wait2 = d->wait_present2;
-    if (wait_mode && pthread_create(&ids->thread, NULL, native_monitor_main, ids) == 0)
+    if (d->present_trace && wait_mode && pthread_create(&ids->thread, NULL, native_monitor_main, ids) == 0)
         ids->monitor_started = 1;
     fprintf(stderr, "[gfg-native] present-ids mode=%d monitor=%d (present_caps=0x%x)\n",
             mode, ids->monitor_started, d->present_caps);

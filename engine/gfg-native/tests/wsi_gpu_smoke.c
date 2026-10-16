@@ -108,6 +108,7 @@ int main(void) {
     const uint32_t want_w = env_uint("GFG_TEST_WIDTH", 96), want_h = env_uint("GFG_TEST_HEIGHT", 64);
     const int validation = env_1("GFG_TEST_VALIDATION");
     const int pace_idle = env_1("GFG_TEST_PACE_IDLE");
+    const int proton_chain = env_1("GFG_TEST_PROTON_CHAIN");
     int screen_no = 0;
     xcb_connection_t *xc = xcb_connect(NULL, &screen_no);
     REQUIRE(xc && !xcb_connection_has_error(xc));
@@ -121,8 +122,15 @@ int main(void) {
     xcb_map_window(xc, window);
     REQUIRE(xcb_flush(xc) > 0);
 
-    const char *iext[4] = {"VK_KHR_surface", "VK_KHR_xcb_surface"};
+    const char *iext[6] = {"VK_KHR_surface", "VK_KHR_xcb_surface"};
     uint32_t niext = 2;
+    const int surface_maintenance = proton_chain &&
+        instance_ext(NULL, VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME) &&
+        instance_ext(NULL, VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
+    if (surface_maintenance) {
+        iext[niext++] = VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME;
+        iext[niext++] = VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME;
+    }
     int have_vf = 0;
     if (validation) {
         REQUIRE(instance_ext(NULL, "VK_EXT_debug_utils"));
@@ -193,7 +201,24 @@ int main(void) {
     const float priority = 1.0f;
     VkDeviceQueueCreateInfo qi = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
         .queueFamilyIndex = family, .queueCount = 1, .pQueuePriorities = &priority};
-    const char *dext[] = {"VK_KHR_swapchain"};
+    const char *dext[3] = {"VK_KHR_swapchain"};
+    uint32_t dext_count = 1;
+    VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT maintenance = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT};
+    int maintenance_chain = 0;
+    if (proton_chain) {
+        REQUIRE(device_ext(physical, VK_KHR_INCREMENTAL_PRESENT_EXTENSION_NAME));
+        if (surface_maintenance && device_ext(physical, VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME)) {
+            VkPhysicalDeviceFeatures2 features = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+                .pNext = &maintenance};
+            vkGetPhysicalDeviceFeatures2(physical, &features);
+            maintenance_chain = maintenance.swapchainMaintenance1 != 0;
+        }
+        if (env_1("GFG_TEST_REQUIRE_MAINTENANCE1")) REQUIRE(maintenance_chain);
+        if (maintenance_chain) dext[dext_count++] = VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME;
+        else puts("GFG native: SKIP maintenance1-fence WSI (ICD unsupported); exercising incremental-present chain");
+        dext[dext_count++] = VK_KHR_INCREMENTAL_PRESENT_EXTENSION_NAME;
+    }
     /* An app-owned feature chain the layer must preserve exactly. */
     const int chain12 = env_1("GFG_TEST_CHAIN_VK12");
     const int chain12_disabled = env_1("GFG_TEST_CHAIN_VK12_DISABLED");
@@ -213,7 +238,11 @@ int main(void) {
     VkDeviceCreateInfo di = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .pNext = chain12 ? f12 : NULL,
         .queueCreateInfoCount = 1, .pQueueCreateInfos = &qi,
-        .enabledExtensionCount = 1, .ppEnabledExtensionNames = dext};
+        .enabledExtensionCount = dext_count, .ppEnabledExtensionNames = dext};
+    if (maintenance_chain) {
+        maintenance.pNext = (void *)di.pNext;
+        di.pNext = &maintenance;
+    }
     VkDevice device = VK_NULL_HANDLE;
     TRY(vkCreateDevice(physical, &di, NULL, &device));
     REQUIRE(f12->timelineSemaphore == (chain12 && !chain12_disabled ? VK_TRUE : VK_FALSE));
@@ -250,6 +279,11 @@ int main(void) {
         .presentMode = env_1("GFG_TEST_MAILBOX_SWAPCHAIN")
             ? VK_PRESENT_MODE_MAILBOX_KHR : VK_PRESENT_MODE_FIFO_KHR,
         .clipped = VK_TRUE};
+    const VkPresentModeKHR compatible_mode = swci.presentMode;
+    const VkSwapchainPresentModesCreateInfoEXT compatible = {
+        .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODES_CREATE_INFO_EXT,
+        .presentModeCount = 1, .pPresentModes = &compatible_mode};
+    if (maintenance_chain) swci.pNext = &compatible;
     if (!(caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR))
         for (uint32_t bit = 1; bit <= 8; bit *= 2)
             if (caps.supportedCompositeAlpha & bit) { swci.compositeAlpha = (VkCompositeAlphaFlagBitsKHR)bit; break; }
@@ -280,6 +314,13 @@ int main(void) {
         .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = INFLIGHT};
     TRY(vkAllocateCommandBuffers(device, &cai, cmd));
     VkFence fences[INFLIGHT];
+    VkFence *present_fences = maintenance_chain ? calloc(frames, sizeof(*present_fences)) : NULL;
+    if (maintenance_chain) {
+        REQUIRE(present_fences);
+        const VkFenceCreateInfo unsignaled = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        for (uint32_t i = 0; i < frames; ++i)
+            TRY(vkCreateFence(device, &unsignaled, NULL, &present_fences[i]));
+    }
     VkSemaphore acquired[INFLIGHT];
     VkSemaphoreCreateInfo semci = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     VkFenceCreateInfo fci = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = VK_FENCE_CREATE_SIGNALED_BIT};
@@ -346,13 +387,39 @@ int main(void) {
         VkPresentInfoKHR pi = {.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
             .waitSemaphoreCount = 1, .pWaitSemaphores = &rendered[index],
             .swapchainCount = 1, .pSwapchains = &swapchain, .pImageIndices = &index};
+        const VkPresentModeKHR app_mode = VK_PRESENT_MODE_FIFO_KHR;
+        const VkRectLayerKHR rect = {.extent = ext};
+        const VkPresentRegionKHR present_region = {.rectangleCount = 1, .pRectangles = &rect};
+        const VkPresentRegionsKHR regions = {.sType = VK_STRUCTURE_TYPE_PRESENT_REGIONS_KHR,
+            .swapchainCount = 1, .pRegions = &present_region};
+        const VkSwapchainPresentModeInfoEXT dynamic = {
+            .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODE_INFO_EXT,
+            .pNext = &regions, .swapchainCount = 1, .pPresentModes = &app_mode};
+        const VkSwapchainPresentFenceInfoEXT present_fence = {
+            .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT,
+            .pNext = &dynamic, .swapchainCount = 1,
+            .pFences = maintenance_chain ? &present_fences[frame] : NULL};
+        if (proton_chain) pi.pNext = maintenance_chain ? (const void *)&present_fence : &regions;
         VkResult presented=vkQueuePresentKHR(queue,&pi);
+        REQUIRE(present_fence.pNext == &dynamic && dynamic.pNext == &regions);
+        REQUIRE(app_mode == VK_PRESENT_MODE_FIFO_KHR && present_region.pRectangles == &rect);
         if(env_1("GFG_TEST_EXPECT_RECREATE") && frame+1==frames)
             REQUIRE(presented==VK_ERROR_OUT_OF_DATE_KHR);
         else TRY(presented);
         if (pace_idle) TRY(vkQueueWaitIdle(queue)); /* app-side pacing, outside the layer */
     }
     TRY(vkDeviceWaitIdle(device));
+    if (maintenance_chain) {
+        TRY(vkWaitForFences(device, frames, present_fences, VK_TRUE, 5000000000ull));
+        for (uint32_t i = 0; i < frames; ++i) {
+            TRY(vkGetFenceStatus(device, present_fences[i]));
+            vkDestroyFence(device, present_fences[i], NULL);
+        }
+        free(present_fences);
+        printf("GFG native: Proton present chain fences=%u original_metadata_unchanged=PASS\n", frames);
+    }
+    if (proton_chain && !maintenance_chain)
+        puts("GFG native: Proton present chain regions=PASS fences=SKIPPED original_metadata_unchanged=PASS");
     vkDestroySwapchainKHR(device, swapchain, NULL); /* retires the bridge (final verify) */
 
     int failed = 0;

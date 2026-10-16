@@ -54,8 +54,9 @@ test package. Session end is not task completion.
    handoff count is not proof of 90 Hz scanout. Do not add an async worker
    without serializing every host access to the app queue, retaining per-job
    images, copying all pNext payloads, bounding stale work, and proving
-   destruction/drain behavior. Present-ID rewriting uses a private node and
-   ID value; caller-owned chains remain immutable. Its optional present-wait
+   destruction/drain behavior. App-owned present IDs/waits are preserved and
+   synthetics omit optional IDs; layer-owned tracing is separate. Caller-owned
+   metadata chains remain immutable. The optional present-wait
    monitor uses zero-timeout polling and a per-swapchain mutex shared with
    application acquire/present/wait calls to honor Vulkan external
    synchronization, with 1 ms between polls. The Deck layer order
@@ -92,6 +93,13 @@ GFG_TEST_EXPECT_FAULT=1, GFG_TEST_ALLOW_SKIPS=1; submit/index also expect
 GFG_TEST_EXPECT_RECREATE=1. Actual packaged/native/core CI has no public uploads.
 
 ## Hardware facts, not performance evidence
+
+An actual Deck Witcher 3 diagnostic uploaded on 2026-10-16 02:36 UTC shows the
+delivered `9ec5d5b` package initialized but did not generate: real=3503,
+synthetic=0, skipped=6996 (last cumulative snapshot after five swapchains).
+`docs/fg3/COORDINATION.md` records the present-chain compatibility fix and
+corrected report selection. The capture does not log exact pNext node types;
+do not invent them or claim the new `internal.3` package passed on Deck.
 
 Inventory: Galileo, SteamOS 3.8.28 (20260922.1), glibc 2.41,
 Mesa 26.0.0-devel d246f60ddf / RADV VANGOGH, kernel
