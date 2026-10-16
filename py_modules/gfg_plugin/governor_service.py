@@ -289,6 +289,10 @@ class GovernorService:
         self._launch: Dict[str, Any] = {}
         self._launch_polled = -1e9
         self._saved_fp: Any = None
+        # Settings and Governor mode are not part of Saved TOML's fingerprint.
+        # Keep the live Fusion scope independently so switching the UI toggle
+        # while a point is active cannot strand the renderer on the old scope.
+        self._fusion_scope_synced: Optional[bool] = None
         self._record: Optional[OverlayRecord] = None
         self._synced_deltas: Optional[Dict[str, Any]] = None
 
@@ -924,13 +928,18 @@ class GovernorService:
         config = response.get("config") if isinstance(response, dict) else None
         return config if isinstance(config, dict) else None
 
+    def _frame_fusion_scope(self, profile: str) -> bool:
+        """Runtime consent, not Saved state and not proof of native GPU work."""
+        return (self._profile_enabled(profile) and self._mode(profile) == "autopilot"
+                and self.frame_fusion_enabled())
+
     def _base_for(self, profile: str, saved: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         if saved is None:
             return {}
         try:
             return {**base_deltas(saved, scale_ready=self._scale_ready(profile)),
                     **({"adaptive_max_multiplier": 4} if self._profile_enabled(profile) else {}),
-                    "gfg_frame_fusion": self._profile_enabled(profile) and self._mode(profile) == "autopilot" and self.frame_fusion_enabled()}
+                    "gfg_frame_fusion": self._frame_fusion_scope(profile)}
         except PointNotApplicable as error:
             self._status.setdefault("overlay", {})["scale_ready_ignored"] = error.reason
             return {}
@@ -2364,12 +2373,14 @@ class GovernorService:
         fingerprint = getattr(self.configuration, "saved_config_fingerprint", lambda: None)()
         header = self.overlay.read_header(profile)
         if self._saved_fp is None and header is not None and header.get("owner") == self.overlay.owner_pid:
-            self._saved_fp = fingerprint  # first look: overlay was projected at enable/reconcile
-            return
+            self._saved_fp = fingerprint  # still verify the runtime-only Fusion scope below
+        desired_scope = self._frame_fusion_scope(profile)
+        scope_changed = self._fusion_scope_synced is None or self._fusion_scope_synced != desired_scope
         stale = (
             header is None
             or header.get("owner") != self.overlay.owner_pid
             or fingerprint != self._saved_fp
+            or scope_changed
         )
         if not stale:
             return
@@ -2381,6 +2392,15 @@ class GovernorService:
             if record is not None:
                 self._record = record
             self._saved_fp = fingerprint
+            # A failed base projection must not count as a scope acknowledgement.
+            # Re-evaluate it on a later iteration once the launch overlay is usable.
+            if "gfg_frame_fusion" in desired:
+                self._fusion_scope_synced = bool(desired["gfg_frame_fusion"])
+                if scope_changed:
+                    self._event("frame-fusion-scope-synced", "runtime-overlay", profile=profile,
+                                requested=desired_scope, point=key, revision=record.revision if record else None)
+            else:
+                self._fusion_scope_synced = None
         except (OSError, ValueError) as error:
             self._status.setdefault("overlay", {})["sync_error"] = str(error)
 
