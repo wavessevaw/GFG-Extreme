@@ -1,32 +1,45 @@
 <!-- codex-fg3-coordination -->
 
-## P0 launch recovery on current main (2.1.5)
+## Launch recovery: published 2.1.5-gsf.7 experiment for PR #133
 
-The owner reports every game exits immediately, also with `gfg-native --off`.
-This is NOT established as a GPU failure. Removing the entire GFG Steam prefix
-is the recovery path when the executable itself is absent. No new user logs requested.
+Source: **9ddb5802e3cac33df0f5c50df6b67ff55d2d892a**.
+Upstream main **25ca625** (2.1.5, including PR #140/#141) is merged.
 
-Merged actual upstream main 516b734 (2.1.5), preserving Governor emergency-quality
-and loading-transition fixes alongside the fixed-target experiment guard. The
-previous integrated archive used 2.1.2-te.8 and is withdrawn below.
+- Integrated Decky: `docs/fg3/artifacts/GFG-Extreme-2.1.5-gsf.7.zip`
+- Component: `docs/fg3/artifacts/GFG-Native-FG-v0_0_0-fg3-internal_7.zip`
+- Checksums: `docs/fg3/artifacts/SHA256SUMS.txt`
+- Evidence: `docs/fg3/evidence/launch-recovery-2_1_5-gsf_7.json` and matching ZIP
+- Review: `docs/fg3/LAUNCH_RECOVERY_2_1_5_GSF_7.md`
 
-Implemented: native component staging at plugin startup, executable readiness,
-visible install errors/build/Steam command, initial Off marker matching the UI,
-idempotent installs preserving previous-version rollback, inherited native layer
-removal in --off, telemetry-directory failure no longer blocking games, and
-option-aware passthrough after uninstall/first rollback. A separate real defect
-in CreateDevice retry restores consumed loader LINK_INFO before real-only retry
-(34be414); this is not claimed as the user's crash cause.
+The owner reported all-game exits even with `gfg-native --off`. Exact Deck cause
+remains UNCONFIRMED; removing the whole Steam prefix is the recovery when its
+executable is absent. No further manual log series was requested. internal.6
+used stale 2.1.2-te.8 and is WITHDRAWN below.
 
-Software checks so far: full merged backend 1351 tests (1 skipped), frontend121
-screens, native device/queue/clock/metadata contracts,17 full-pipeline checks
-including actual x2/x3 pixel observation and validation in both layer orders.
-Latest readiness/rollback regressions19 pass. Final exact-archive checks and a
-2.1.5-gsf.7 experimental package follow this source checkpoint.
-Hardware remains NOT TESTED; no connected Deck endpoint or /dev/dri in this cloud.
-No 90-FPS, SteamOS runtime or all-games-fixed claim is made.
+Fixed: automatic verified component/launcher staging; executable readiness;
+visible build/command/install errors; initial Off matching UI; --off removing
+inherited native activation without optional helpers; status/diagnostic storage
+failure no longer blocking the game; option-aware passthrough after removal;
+idempotent installation preserving rollback. CreateDevice fallback now restores
+the consumed downstream loader LINK_INFO cursor (34be414). Those are reproduced
+code defects, not an assertion that the owner's crash cause is established.
 
+Software evidence: **1409 backend tests, 1 root-only skip; 123 browser screens;
+17 full-pipeline checks; 13 exact extracted-package checks**, all passing.
+The extracted backend stages the real production ELF; initial Off, x2/x3,
+read-only Vulkan12 features, Proton present metadata and recovery run through
+software WSI with zero validation errors. Five checks against old internal.6
+fail intentionally and are retained as negative controls. Production ELF needs
+GLIBC2.17, loads under actual 2.31 and rebuilds byte-identically from included
+source. The new CI installed-GSF check also passed locally. Remote CI is not
+claimed successful. Saved environment install_script/start_skill now select
+this integration checkout; refresh was executed, draft saving is not publishing.
 
+Hardware/product acceptance remains **OPEN / NOT TESTED**: no /dev/dri or
+configured authenticated Deck endpoint. No physical 30→90, SteamOS/Gamescope or
+all-games-fixed assertion. G1 copy still follows G2 compute on the app queue;
+missed renderer cut and HDR PQ quality remain explicit barriers. No stable
+release/main push or renewed algorithm/PSNR research was performed.
 
 ## Withdrawn internal.6 — do not install
 
