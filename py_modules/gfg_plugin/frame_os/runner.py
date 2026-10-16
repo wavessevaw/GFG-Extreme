@@ -56,6 +56,7 @@ class FrameOsRunner:
         self.last: Dict[str, Any] = {}
         self._task: Optional[asyncio.Task] = None
         self.draw_w: Optional[float] = None
+        self.draw_sample_at: Optional[float] = None
         # Confirmed hardware cap as observed/owned by Governor. A Frame OS
         # boost request is not a TDP change: Governor is the sole writer.
         self.applied_tdp_w: Optional[float] = None
@@ -217,7 +218,8 @@ class FrameOsRunner:
             self._proof_last_present_ns = present_ns
         proof_live = acting and self.executor_active and acknowledged and new_present
         self.proof.observe(now, eligible=proof_live,
-                           level=decision.level, telemetry=telemetry, draw_w=self.draw_w)
+                           level=decision.level, telemetry=telemetry, draw_w=self.draw_w,
+                           draw_sample_id=self.draw_sample_at)
         control = self.proof.control(now, decision.level) if proof_live else None
         self.ab_control = control
         if control == "hold-calm":
