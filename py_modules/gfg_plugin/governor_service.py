@@ -1438,9 +1438,14 @@ class GovernorService:
         mode = self._frame_os_mode(profile) if profile else "off"
         live = bool(budget is not None and self._point is not None and self._status.get("enabled"))
         if mode == "off" or not live:
+            self.frame_os.applied_tdp_w = None
             self.frame_os.configure(enabled=False, mode="observe", output_hz=0, calm_real_hz=0,
                                     max_multiplier=1, calm_w=None)
             return
+        # A Frame OS requested offset is not physical power. Since 2.1.4
+        # Governor alone owns TDP; publish only its successfully applied cap.
+        self.frame_os.applied_tdp_w = (
+            self._applied_tdp if budget.tdp_control and self.power.state.owned else None)
         point = budget.point
         # rest for as long as Steam's menu really covers the game (the event is sent only once)
         self.frame_os.focused = False if self._menu_covering() else self._trusted_game_focus()
@@ -1449,6 +1454,10 @@ class GovernorService:
             self.frame_os.draw_w = self.power.status().get("draw_w")
         except Exception:
             self.frame_os.draw_w = (self._status.get("power_feedback") or {}).get("draw_w")
+        # A 10 Hz runner sees this same ~1 Hz reading repeatedly. A/B power
+        # proof needs independent sensor refreshes, not ten copies of a cached
+        # sample masquerading as ten measurements.
+        self.frame_os.draw_sample_at = self._clock() if self.frame_os.draw_w is not None else None
         self.frame_os.configure(
             enabled=True, mode=mode, output_hz=float(point.target_output_fps),
             calm_real_hz=float(point.base_target_fps),

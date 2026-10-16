@@ -93,8 +93,12 @@ class BurstCadenceTests(unittest.TestCase):
 
 class PowerProofTests(unittest.TestCase):
     def test_long_boost_memory_cannot_disable_the_new_short_policy(self):
-        from gfg_plugin.frame_os.memory import GameMemory
-        old={'pairs':{'frames':[0]*10,'response':[10]*10},'off':{'boost':2,'shaping':2},'sessions':3}
+        from gfg_plugin.frame_os.memory import GameMemory, AB_PROOF_SCHEMA
+        # A current-schema response proof survives a boost policy change.
+        # Pre-acknowledgement records are separately invalidated at migration.
+        old={'ab_proof_schema': AB_PROOF_SCHEMA,
+             'pairs':{'frames':[0]*10,'response':[10]*10},
+             'off':{'boost':2,'shaping':2},'sessions':3}
         new=GameMemory(old,boost_policy=1)
         self.assertFalse(new.disabled()['boost'])
         self.assertTrue(new.disabled()['shaping'])
