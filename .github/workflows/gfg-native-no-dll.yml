@@ -58,15 +58,16 @@ jobs:
           grep -q 'synthetic=6 content=PASS handoff_order=PASS' observer.log
           grep -q 'synthetic=6 content=PASS handoff_order=PASS' observer-srgb.log
           for order in VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation VK_LAYER_KHRONOS_validation:VK_LAYER_GFG_native; do
-            GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_CHAIN_VK12=1 GFG_TEST_READONLY_FEATURES=1 GFG_TEST_FRAMES=120 GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=4 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "gpu-$order.log"
-            grep -q 'validation errors=0' "gpu-$order.log"
-            grep -q 'real=120 synthetic=238 skipped=0' "gpu-$order.log"
-            GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=30 GFG_NATIVE_GPU_BRIDGE_INJECT_SKIP=5 GFG_TEST_ALLOW_SKIPS=1 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "skip-$order.log"
-            grep -q 'validation errors=0' "skip-$order.log"
+            stem=${order//:/_}
+            GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_CHAIN_VK12=1 GFG_TEST_READONLY_FEATURES=1 GFG_TEST_FRAMES=120 GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=4 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "gpu-$stem.log"
+            grep -q 'validation errors=0' "gpu-$stem.log"
+            grep -q 'real=120 synthetic=238 skipped=0' "gpu-$stem.log"
+            GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=30 GFG_NATIVE_GPU_BRIDGE_INJECT_SKIP=5 GFG_TEST_ALLOW_SKIPS=1 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "skip-$stem.log"
+            grep -q 'validation errors=0' "skip-$stem.log"
             for fault in record submit index; do
               recovery=''; if [ "$fault" != record ]; then recovery='GFG_TEST_EXPECT_RECREATE=1'; fi
-              env GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=2 GFG_TEST_EXPECT_FAULT=1 GFG_TEST_ALLOW_SKIPS=1 GFG_NATIVE_GPU_FAULT="$fault" $recovery VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "fault-$fault-$order.log"
-              grep -q 'validation errors=0' "fault-$fault-$order.log"
+              env GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=2 GFG_TEST_EXPECT_FAULT=1 GFG_TEST_ALLOW_SKIPS=1 GFG_NATIVE_GPU_FAULT="$fault" $recovery VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "fault-$fault-$stem.log"
+              grep -q 'validation errors=0' "fault-$fault-$stem.log"
             done
           done
           GFG_NATIVE_GPU_FAULT=record xvfb-run -a engine/gfg-native/build-te/gpu-wsi-observer 2>&1 | tee recovery.log
