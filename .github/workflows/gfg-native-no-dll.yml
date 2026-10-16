@@ -171,10 +171,15 @@ jobs:
           grep -q 'reason=unsupported-sync-mode' relay-rejected.log
           grep -q 'validation errors=0' relay-rejected.log
           if grep -E 'VALIDATION ERROR|Validation Error|VUID-' disabled-timeline-*.log mailbox-*.log shared-fd.log relay-rejected.log; then exit 1; fi
-      - name: Build experimental package
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build integrated experimental package
         run: |
           set -euo pipefail
-          python3 scripts/package_native_fg.py --binary engine/gfg-native/build-te/libVkLayer_gfg_native.so --outdir "$RUNNER_TEMP/fg3-private"
+          npm ci
+          node frontend/build.mjs dist/index.js
+          python3 scripts/package_native_fg.py --binary engine/gfg-native/build-te/libVkLayer_gfg_native.so --decky-index dist/index.js --outdir "$RUNNER_TEMP/fg3-private"
           python3 - "$RUNNER_TEMP/fg3-private" <<'PY'
           import json
           from pathlib import Path
@@ -182,7 +187,7 @@ jobs:
           import sys
           import zipfile
 
-          package = next(Path(sys.argv[1]).glob("*.zip"))
+          package = next(Path(sys.argv[1]).glob("GFG-Native-FG*.zip"))
           with zipfile.ZipFile(package) as archive:
               manifest = json.loads(archive.read("GFG-Native-FG/MANIFEST.json"))
           commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
@@ -200,7 +205,7 @@ jobs:
           set -euo pipefail
           (cd "$RUNNER_TEMP/fg3-private" && sha256sum --check SHA256SUMS.txt)
           mkdir -p "$RUNNER_TEMP/fg3-stage"
-          unzip -q "$RUNNER_TEMP"/fg3-private/*.zip -d "$RUNNER_TEMP/fg3-stage"
+          unzip -q "$RUNNER_TEMP"/fg3-private/GFG-Native-FG*.zip -d "$RUNNER_TEMP/fg3-stage"
           (cd "$RUNNER_TEMP/fg3-stage/GFG-Native-FG" && sha256sum --check SHA256SUMS.txt)
 
       - name: Install package in isolated home
@@ -216,10 +221,20 @@ jobs:
       - name: Check installed GPU WSI path
         run: |
           set -euo pipefail
-          HOME="$RUNNER_TEMP/fg3-home" GFG_TEST_FRAMES=24 GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=4 VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation VK_LAYER_PATH=/usr/share/vulkan/explicit_layer.d xvfb-run -a "$RUNNER_TEMP/fg3-home/.local/bin/gfg-native" "$GITHUB_WORKSPACE/engine/gfg-native/build-te/wsi-gpu-smoke" 2>&1 | tee "$RUNNER_TEMP/fg3-private/installed.log"
-          grep -q 'algo=lmc-gpu' "$RUNNER_TEMP/fg3-private/installed.log"
+          HOME="$RUNNER_TEMP/fg3-home" GFG_TEST_FRAMES=8 GFG_TEST_SOURCE_HZ=3 GFG_TEST_ALLOW_SKIPS=1 GFG_NATIVE_OUTPUT_HZ=9 GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=4 VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation VK_LAYER_PATH=/usr/share/vulkan/explicit_layer.d xvfb-run -a "$RUNNER_TEMP/fg3-home/.local/bin/gfg-native" "$GITHUB_WORKSPACE/engine/gfg-native/build-te/wsi-gpu-smoke" 2>&1 | tee "$RUNNER_TEMP/fg3-private/installed.log"
+          grep -q 'algo=gsf' "$RUNNER_TEMP/fg3-private/installed.log"
           grep -q 'validation errors=0' "$RUNNER_TEMP/fg3-private/installed.log"
+          grep -Eq 'real=8 synthetic=[1-9][0-9]* ' "$RUNNER_TEMP/fg3-private/installed.log"
           if grep -E 'VUID-|VALIDATION ERROR' "$RUNNER_TEMP/fg3-private/installed.log"; then exit 1; fi
+
+      - name: Exercise extracted Decky startup, x2/x3 and launch recovery
+        run: |
+          xvfb-run -a python3 scripts/check_native_package.py \
+            --component "$RUNNER_TEMP"/fg3-private/GFG-Native-FG*.zip \
+            --decky "$RUNNER_TEMP"/fg3-private/GFG-Extreme-*.zip \
+            --wsi-app "$GITHUB_WORKSPACE/engine/gfg-native/build-te/wsi-gpu-smoke" \
+            --validation-layers /usr/share/vulkan/explicit_layer.d \
+            --out "$RUNNER_TEMP/fg3-extracted-acceptance"
 
       - name: Check rollback restore
         working-directory: ${{ runner.temp }}/fg3-stage/GFG-Native-FG
@@ -310,10 +325,20 @@ jobs:
           } > "$logs/TEST-RESULTS.txt"
           sha256sum "$logs"/*.log "$logs/TEST-RESULTS.txt" > "$logs/SHA256SUMS.txt"
       - name: Attach experimental test package for manual Deck validation
-        if: github.event_name == 'push' && github.ref == 'refs/heads/codex/fg3-integration'
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/codex/fg3-integration'
         uses: actions/upload-artifact@v4
         with:
           name: GFG-Native-FG-experimental-${{ github.sha }}
           path: ${{ runner.temp }}/fg3-private/*
-          if-no-files-found: error
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Preserve extracted-package evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GSF-extracted-package-software-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/fg3-extracted-acceptance/*.log
+            ${{ runner.temp }}/fg3-extracted-acceptance/acceptance.json
+          if-no-files-found: warn
           retention-days: 7

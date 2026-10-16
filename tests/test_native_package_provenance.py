@@ -2,7 +2,9 @@
 import importlib.util
 from pathlib import Path
 import tempfile
+import subprocess
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
@@ -13,6 +15,21 @@ spec.loader.exec_module(package_native_fg)
 
 
 class PackageSourceTests(unittest.TestCase):
+    def test_changed_corresponding_build_helper_cannot_claim_clean_commit(self):
+        with tempfile.TemporaryDirectory(prefix="gfg-package-git-") as temp:
+            root = Path(temp)
+            helper = root / "scripts/build_native_steam_abi.sh"
+            helper.parent.mkdir(); helper.write_text("original\n")
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "-c", "user.name=Package Test", "-c", "user.email=package@example.invalid",
+                            "commit", "-qm", "source"], cwd=root, check=True)
+            files = {"SOURCE/scripts/build_native_steam_abi.sh": helper.read_bytes()}
+            with patch.object(package_native_fg, 'ROOT', root):
+                self.assertFalse(package_native_fg.worktree_dirty(files))
+                helper.write_text("changed flags\n")
+                self.assertTrue(package_native_fg.worktree_dirty(files))
+
     def test_all_native_build_variants_are_excluded_from_source_bundle(self):
         with tempfile.TemporaryDirectory(prefix="gfg-package-source-") as temp:
             root = Path(temp)

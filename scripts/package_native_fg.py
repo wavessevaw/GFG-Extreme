@@ -74,16 +74,6 @@ def source_files() -> dict[str, bytes]:
 
 def worktree_dirty(packaged: dict[str, bytes]) -> bool:
     """Ignore unrelated CI logs while rejecting source changes in the package."""
-    diff = subprocess.run([
-        "git", "diff", "--quiet", "HEAD", "--",
-        "engine/gfg-native", "engine/gfg-temporal", "scripts/accept_report.py",
-        "scripts/package_native_fg.py", "LICENSE.md",
-    ], cwd=ROOT)
-    if diff.returncode == 1:
-        return True
-    if diff.returncode != 0:
-        raise subprocess.CalledProcessError(diff.returncode, diff.args)
-
     included_paths = {
         name.removeprefix("SOURCE/")
         for name in packaged
@@ -102,6 +92,11 @@ def worktree_dirty(packaged: dict[str, bytes]) -> bool:
         "scripts/package_native_fg.py",
         "LICENSE.md",
     })
+    diff = subprocess.run(["git", "diff", "--quiet", "HEAD", "--", *sorted(included_paths)], cwd=ROOT)
+    if diff.returncode == 1:
+        return True
+    if diff.returncode != 0:
+        raise subprocess.CalledProcessError(diff.returncode, diff.args)
     untracked = subprocess.check_output(
         ["git", "ls-files", "--others", "--exclude-standard", "-z"],
         cwd=ROOT,
@@ -249,6 +244,8 @@ def decky_package(native_zip: Path, index: Path, outdir: Path) -> Path:
     with zipfile.ZipFile(path) as archive:
         if archive.testzip():
             raise ValueError("Decky archive CRC failure")
+    with (outdir / "SHA256SUMS.txt").open("a") as sums:
+        sums.write(f"{digest(path.read_bytes())}  {path.name}\n")
     print(f"Integrated experimental Decky package: {path} sha256={digest(path.read_bytes())}")
     return path
 

@@ -1,44 +1,40 @@
-GFG Native FG3 experimental package build environment
-=====================================================
+GFG Native FG internal.7 / Decky 2.1.5-gsf.7 — experimental
+===========================================================
 
-Canonical downloadable artifact: the `Native FG3 GPU validation (software
-only)` GitHub Actions run for the source commit recorded in MANIFEST.json.
-The workflow runs on `ubuntu-22.04`, sets `CC=gcc-12`, and fetches
-Khronos Vulkan-Headers tag `v1.4.365`. It installs Mesa's lavapipe ICD, the
-Khronos validation layers, Xvfb, glslang-tools and spirv-tools for software
-checks. Those tools validate source/runtime contracts only; they are not the
-Steam Deck GPU or display.
+Read MANIFEST.json for the exact source commit, ELF hash and build environment.
+No physical 90-Hz/OLED, SteamOS/Proton-game, quality, power or latency acceptance
+is claimed. Software Vulkan checks do not replace Steam Deck execution.
 
-Rebuild the native layer from a fresh checkout of MANIFEST.json's
-`source_commit` with the same tagged headers:
+The locally published internal.7 ELF was built with Debian GCC14.2.0,
+glslang15.2.0 and Vulkan-Headers v1.4.365 against an explicit glibc2.31 SDK
+extracted from signed Debian bullseye APT packages. The ELF requires symbols
+only through GLIBC2.17 and was loaded using the actual glibc2.31 loader.
+No SDK libc is shipped or installed. Host Mesa/loader supply software WSI tests.
+Rebuilding the corresponding source with the same SDK/tools produces an
+identical ELF. SOURCE/docs/fg3/STEAM_ABI_BUILD.md records package hashes and
+SDK symlink relocation; SOURCE/scripts/build_native_steam_abi.sh is the helper.
 
-  git clone --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers vkh
-  make -C engine/gfg-temporal -j2 all lib
-  make -C engine/gfg-native ENABLE_TE=1 BUILD=build-te \
-    VULKAN_HEADERS="$PWD/vkh/include" layer
-  python3 scripts/package_native_fg.py \
-    --binary engine/gfg-native/build-te/libVkLayer_gfg_native.so \
-    --outdir dist
+Example after unpacking (set verified SDK and pinned tools first):
+  GFG_GLIBC_SYSROOT=/path/to/verified-glibc-2.31-sdk \
+  VULKAN_HEADERS=/path/to/Vulkan-Headers-v1.4.365/include \
+  GFG_CORE_BUILD=/tmp/gfg-core GFG_NATIVE_BUILD=/tmp/gfg-native \
+    bash SOURCE/scripts/build_native_steam_abi.sh
+  cmp libVkLayer_gfg_native.so /tmp/gfg-native/libVkLayer_gfg_native.so
 
-The CI workflow also runs the native contract suite, CPU and GPU LMC core
-checks, loader and no-DLL bootstrap tests, both Vulkan layer orders, WSI and
-pixel-observer tests, sync/fault/pass-through checks, package installation,
-rollback/uninstall and a byte-identical rebuild from the included source.
-Uploaded validation logs are separate files beside the ZIP in the CI artifact.
+The separate Native FG3 GPU validation GitHub Actions job uses ubuntu-22.04,
+gcc-12 and its host ABI. Its ZIP records its own source/build identity and must
+not be confused with the local SDK-built artifact. It runs core/native
+contracts, GSF x2/x3 pixel/order checks, Vulkan validation, isolated archive
+startup/installation/rollback and corresponding-source rebuild checks. A source
+push or a local pass does not establish a successful remote CI run.
 
-Install after extracting the ZIP: `bash install.sh`.
-Rollback to the exact prior GFG files: `bash rollback.sh`.
-Remove GFG Native and keep the transparent launch wrapper: `bash uninstall.sh`.
-Run one local diagnostic capture by setting the Steam launch option to
-`~/.local/bin/gfg-native --diagnose %command%`.
+Install component: bash install.sh. Use the absolute Steam launcher path printed
+by the installer. The Decky package stages the component automatically on plugin
+startup, initially Off. Its native panel shows readiness, build and launch path.
+An absent launcher cannot be bypassed by adding --off: remove the entire GFG
+Steam prefix to restore the unwrapped command. internal.6 is withdrawn.
 
-Status: EXPERIMENTAL / NOT ACCEPTED. The package does not prove physical 90 Hz,
-OLED scanout, game quality, power, latency or stability on Steam Deck.
-
-internal.6 local experimental artifact:
-  Debian GCC14.2.0; glslang15.2.0; Vulkan-Headers v1.4.365.
-  Explicit glibc2.31 build SDK from signed Debian bullseye APT packages.
-  Maximum required ELF symbol version: GLIBC2.17; actual glibc2.31 loader test passed.
-  See SOURCE/scripts/build_native_steam_abi.sh and source repository
-  docs/fg3/STEAM_ABI_BUILD.md for pinned package receipts and rebuild flags.
-  No SDK libc is shipped or installed by the package.
+Rollback: bash rollback.sh. Remove: bash uninstall.sh. Existing launch options,
+including --off, retain a passthrough when the component is removed.
+Diagnostics are optional and local; an unavailable capture directory must not
+block the game. No manual log collection is required by this package update.
