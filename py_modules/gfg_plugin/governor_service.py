@@ -3916,6 +3916,13 @@ class GovernorService:
         self._evaluation_after_seq = self.observer.sample_seq
         feedback = self._power_feedback(profile, budget)
         before = (budget.point.key, budget.tdp, budget.phase)
+        # Exclusivity for the short CPU clock trial/A-B-A windows. Do not
+        # inhibit emergency power restoration or real-frame safety guards.
+        # Ordinary held CPU caps do not block Governor's long-term TDP search:
+        # a fresh TDP probe preempts them, then CPU Split backs off.
+        split = self._split
+        budget.hold_cpu_split = bool(split and
+                                    (split.phase == "probe" or split.ab_phase is not None))
         reason_before, holds_before = budget.last_reason, getattr(budget, "not_power_bound_holds", 0)
         action = budget.observe(now, verdict, (fresh.get("real") or {}).get("median"),
                                 (fresh.get("output") or {}).get("median"))
