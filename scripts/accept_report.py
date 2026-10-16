@@ -35,10 +35,11 @@ def render(files: dict[str, str]) -> str:
     active = "yes" if "GPU bridge active:" in stderr else "no / not observed"
     algo_match = re.search(r"GPU bridge active:.*?\balgo=([^\s]+)", stderr)
     retired = re.search(
-        r"gpu-bridge retired real=(\d+) synthetic=(\d+) skipped=(\d+).*?errors=(\d+).*?"
+        r"(?:GPU bridge|gpu-bridge) retired real=(\d+) synthetic=(\d+) skipped=(\d+).*?errors=(\d+).*?"
         r"present_path_host_pixel_reads=(\d+) present_path_cpu_waits=(\d+)", stderr)
     stats = re.search(
-        r"gpu stats bridges=(\d+).*?real=(\d+) synthetic=(\d+) skipped=(\d+).*?errors=(\d+)", stderr)
+        r"gpu stats bridges=(\d+).*?real=(\d+) synthetic=(\d+) skipped=(\d+).*?errors=(\d+)",
+        stderr + "\n" + files.get("app.stdout.log", ""))
     count = retired or stats
     present_done = re.findall(r"present_done id=(\d+) kind=([^ ]+) t_ns=(\d+)", stderr)
     intervals_us = []

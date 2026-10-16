@@ -97,6 +97,8 @@ class NativeGpuInstallTests(unittest.TestCase):
         self.assertIn("NOT ACCEPTANCE", report)
         self.assertIn("Physical display / KMS scanout: **unobserved**", report)
         self.assertTrue((captures[0].parent / captures[0].name.removesuffix(".tar.gz") / "app.stderr.log").is_file())
+        system = (captures[0].parent / captures[0].name.removesuffix(".tar.gz") / "system-start.txt").read_text()
+        self.assertIn(hashlib.sha256((self.target / "libVkLayer_gfg_native.so").read_bytes()).hexdigest(), system)
 
     def test_first_install_rollback_and_uninstall_leave_working_launch_option(self):
         for cleanup in ("rollback.sh", "uninstall.sh"):
@@ -107,6 +109,22 @@ class NativeGpuInstallTests(unittest.TestCase):
             self.assertFalse((self.target / "diagnose.sh").exists())
             self.assertFalse((self.target / "accept_report.py").exists())
             self.assertEqual(self.launch("/usr/bin/printf", "%s", "a b"), "a b")
+
+    def test_disabled_diagnostic_runs_game_and_preserves_failure_status(self):
+        self.run_script("install.sh")
+        program = "import os,sys; print('baseline-command-ran'); print('bridge='+str(os.getenv('GFG_NATIVE_GPU_BRIDGE'))); sys.exit(7)"
+        result = subprocess.run(
+            [str(self.launcher), "--off", "--diagnose", shutil.which("python3"), "-c", program],
+            env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 7)
+        self.assertIn("baseline-command-ran", result.stdout)
+        self.assertIn("bridge=None", result.stdout)
+        captures = list((self.home / ".local/state/gfg-native/diagnostics").glob("*.tar.gz"))
+        self.assertEqual(len(captures), 1)
+        run = captures[0].parent / captures[0].name.removesuffix(".tar.gz")
+        self.assertEqual((run / "process-status.txt").read_text().strip(), "7")
+        self.assertIn("mode=passthrough", (run / "system-start.txt").read_text())
+        self.assertIn("baseline-command-ran", (run / "app.stdout.log").read_text())
 
 
 if __name__ == "__main__":

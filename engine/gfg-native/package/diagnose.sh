@@ -3,7 +3,10 @@
 # Collect one local, privacy-sensitive SteamOS/GFG diagnostic run. Nothing is uploaded.
 set -euo pipefail
 mode=passthrough
-if [[ "${1:-}" == --native ]]; then mode=native; shift; fi
+case "${1:-}" in
+  --native) mode=native; shift ;;
+  --passthrough) shift ;;
+esac
 if [[ $# -eq 0 ]]; then
   printf 'Usage: gfg-native --diagnose <game-command> [args...]\n' >&2
   exit 2
@@ -40,6 +43,10 @@ fi
       GFG_NATIVE_GPU_SYNC GFG_NATIVE_ALGO GFG_NATIVE_LMC_TIER GFG_NATIVE_TRACE \
       GFG_NATIVE_TIMING GFG_NATIVE_PRESENT_TRACE; do
     if [[ -v "$name" ]]; then printf '%s=%q\n' "$name" "${!name}"; fi
+  done
+  printf '\n--- installed GFG payload SHA-256 ---\n'
+  for name in libVkLayer_gfg_native.so VkLayer_gfg_native.json diagnose.sh accept_report.py; do
+    if [[ -f "$root/$name" ]]; then sha256sum "$root/$name"; fi
   done
   printf '\n--- memory ---\n'
   if [[ -r /proc/meminfo ]]; then grep -E '^(MemTotal|MemAvailable):' /proc/meminfo || true; fi
