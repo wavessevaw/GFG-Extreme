@@ -1,3 +1,23 @@
+# 2.1.5-gsf.8 — latest experimental package, hardware NOT TESTED
+
+Source: 43658e884d67326183d3fce749840053a0c1cebe, PR #133.
+Use **GFG-Extreme-2.1.5-gsf.8.zip** for Decky or
+**GFG-Native-FG-v0_0_0-fg3-internal_8.zip** for the standalone component.
+Both retain the launch repairs below and add linear-light GPU HDR10 PQ
+reconstruction with retained swapchain color-space metadata. Numerical x2/x3,
+1024-level duplicate precision, unchanged legacy shaders, the full GSF pipeline,
+actual extracted-package WSI/recovery and exact-source rebuild checks pass.
+See ../HDR_PQ_RECONSTRUCTION.md and ../evidence/hdr-pq-internal_8.json.
+
+HDR game quality, physical output and GPU cost on Deck remain NOT TESTED.
+The extra linear cache is15.625MiB at1280x800, only for PQ. G1/G2 queue ordering
+and the renderer-cut issue are not claimed fixed by this color correction.
+No stable release or physical30→90 acceptance is asserted. Verify SHA256SUMS.txt.
+
+---
+
+## Previous launch-recovery package (superseded by internal.8)
+
 # 2.1.5-gsf.7 experimental packages — hardware NOT TESTED
 
 Source: **9ddb5802e3cac33df0f5c50df6b67ff55d2d892a**, PR #133.

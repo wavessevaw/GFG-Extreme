@@ -1,5 +1,28 @@
 <!-- codex-fg3-coordination -->
 
+## HDR PQ correction implemented — internal.8 experiment
+
+Source **43658e884d67326183d3fce749840053a0c1cebe**.
+Artifacts: `docs/fg3/artifacts/GFG-Extreme-2.1.5-gsf.8.zip` and
+`GFG-Native-FG-v0_0_0-fg3-internal_8.zip`; checksums beside them.
+Evidence: `docs/fg3/evidence/hdr-pq-internal_8.json` and ZIP.
+
+Preserve actual swapchain color space; supported HDR10 ST2084 reconstructs in
+GPU-cached linear nits, shared by x2/x3. Unknown transfers give explicit real-only
+fallback. Hold/cut/HUD endpoints and duplicates retain original codes. No tone map
+or power change. The31 previous shaders are byte-identical; PQ alone allocates
+15.625MiB at1280x800 and uses separate shader/layout variants.
+
+Six numerical/precision scenarios pass for both host and glibc-SDK core, including
+x2/x3 and1024 levels; the old coded-space implementation fails the same luminance
+oracle. The first duplicate-roundtrip regression and its fix are preserved.
+Format58 BLIT_DST is unsupported here and skipped explicitly; format64 is tested.
+17 GSF pipeline checks,47 native Python tests, native contracts and13 exact-archive
+WSI/startup/recovery checks pass. Production ELF loads under actual2.31 and
+rebuilds byte-identically. No HDR WSI, Deck cost, game quality or physical90 claim.
+G1 transport ordering, the missed renderer cut and hardware acceptance stay open.
+
+
 ## Launch recovery: published 2.1.5-gsf.7 experiment for PR #133
 
 Source: **9ddb5802e3cac33df0f5c50df6b67ff55d2d892a**.
