@@ -58,19 +58,37 @@ class GameMemoryTests(unittest.TestCase):
         self.assertGreater(off_rate("frames", 1.0, 3.0), 0.9, "a boost with no gain is still caught")
         self.assertGreater(off_rate("response", -10.0, 4.0), 0.9, "a clear harm is still caught")
 
-    def test_records_from_1_3_0_load(self):
-        m = memory.GameMemory({"pairs": {"frames": [1.0] * 10}, "sessions": 4, "off": {}})
-        self.assertEqual(m.pair_sessions["frames"], 1)
-        self.assertFalse(m.start_session()["boost"], "one (unknown) session: wait for a second")
+    def test_unverified_legacy_ab_pairs_cannot_disable_216_effects(self):
+        m = memory.GameMemory({"pairs": {"frames": [1.0] * 10},
+                               "sessions": 4, "off": {"boost": 4, "shaping": 4}})
+        self.assertEqual(m.pairs["frames"], [])
+        self.assertFalse(m.start_session()["boost"])
+        self.assertFalse(m.disabled()["shaping"])
+        self.assertEqual(m.to_record()["ab_proof_schema"], memory.AB_PROOF_SCHEMA)
 
     def test_record_survives_bad_json_and_keeps_recent_pairs(self):
-        m = memory.GameMemory({"pairs": {"frames": list(range(100)) + ["x"]}, "sessions": "3", "off": {"bogus": 1}})
+        m = memory.GameMemory({"ab_proof_schema": memory.AB_PROOF_SCHEMA,
+                               "pairs": {"frames": list(range(100)) + ["x"]},
+                               "sessions": "3", "off": {"bogus": 1}})
         self.assertEqual(len(m.pairs["frames"]), memory.KEEP_PAIRS)
         self.assertEqual((m.sessions, m.off), (3, {}))
         self.assertEqual(memory.GameMemory("garbage").sessions, 0)
 
+    def test_nonfinite_pairs_do_not_poison_verdict_or_settings(self):
+        m = memory.GameMemory({"ab_proof_schema": memory.AB_PROOF_SCHEMA,
+                               "pairs": {"response": [20.0, float("nan"),
+                                                       float("inf"), True, 21.0]}})
+        self.assertEqual(m.pairs["response"], [20.0, 21.0])
+        m.start_session()
+        m.add_pairs({"response": [float("-inf"), False, 22.0, 1e100]})
+        self.assertEqual(m.pairs["response"], [20.0, 21.0, 22.0])
+        self.assertEqual(m.verdicts()["response"], "helps")
+        import json
+        json.dumps(m.to_record(), allow_nan=False)
+
     def test_seed_pairs_only_when_measured(self):
-        m = memory.GameMemory({"pairs": {"response": [40.0, 41.0, 42.0], "frames": [10.0]}})
+        m = memory.GameMemory({"ab_proof_schema": memory.AB_PROOF_SCHEMA,
+                               "pairs": {"response": [40.0, 41.0, 42.0], "frames": [10.0]}})
         self.assertEqual(memory.seed_pairs(m), {"response": [40.0, 41.0, 42.0]})
 
 
