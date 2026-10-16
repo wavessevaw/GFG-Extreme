@@ -3,9 +3,13 @@
 Основное решение: [Architecture Decision 1.0](ARCHITECTURE_DECISION_1_0.md).
 GSF (`te-bench --algo gsf`) использует coarse-to-fine двунаправленное движение,
 один robust affine candidate, сохранённую dominant-motion palette, dense visibility
-и bounded orphan refinement. Общий анализ пары выполняется один раз; выходы
+и bounded orphan refinement. Начиная с `26416e2`, несогласованный affine predictor
+включает полный projective fit на GPU. Общий анализ пары выполняется один раз; выходы
 `t=1/3` и `t=2/3` реконструируются отдельно. Это offscreen prototype, не prerelease.
-В native layer алгоритм не выбран и не включён в default.
+Исследовательская фаза закрыта. Начиная с `de48b0d`, выбранный backend подключён
+к native layer через `GFG_NATIVE_ALGO=gsf`; coherent opt-in профиль задаёт
+`scripts/run_gfg_gsf.sh` (GPU bridge, async, same-device, 90 Hz host clock).
+Это инженерная интеграция полного пути, не публикация готового продукта.
 
 ## Что проверяется
 
@@ -82,11 +86,12 @@ python3 tools/temporal_bench/compare_shared_flow.py \
   --sequence /tmp/gsf-corpus/target-crosscut \
   --sequence /tmp/gsf-corpus/bolt-small \
   --sequence /tmp/gsf-corpus/worker-small \
-  --algorithms lmc-gpu,gsf --pairs 12 --timing-repeats 3 \
+  --algorithms lmc-gpu,shared-flow-palette --pairs 12 --timing-repeats 3 \
   --check-sharing --work /tmp/gsf-results
-GFG_TEST_SHARED_FLOW=3 engine/gfg-temporal/build/te-tests
+GFG_TEST_SHARED_FLOW=4 engine/gfg-temporal/build/te-tests
 ```
 
+Эта команда воспроизводит закрытый variant3; текущая native система использует variant4.
 Camera revision и SHA-256 clips/license зафиксированы в preparer. Manifest сохраняет
 полные hashes и metadata каждого input; comparison — commit, code diff hash,
 binary hash, input/output hashes и raw command logs. `--reuse` использует имеющиеся
@@ -110,8 +115,71 @@ margin. Здесь измеряется вычислительная готов�
 
 ## Состояние проверки
 
-Source checkpoint `75ca946` опубликован в ветках `codex/fg3-integration` и
-`claude/native-gpu-bridge` (PR #133). Выбранный GSF: 182 native compute checks,
-0 failures с fresh VVL, включая static exactness, timeline, hold/discontinuity,
-pan/HUD и cut recovery. Расширенное сравнительное измерение сохраняется до
-решения о native integration. Порог ускорения 15% не понижается по результату.
+Все сравнения закрыты и сохранены в [архиве](evidence/gsf-research-20261016.zip).
+Читаемые summaries: [compact/dense](evidence/gsf-compact-dense-comparison.json),
+[affine](evidence/gsf-affine-comparison.json),
+[fixed model с palette](evidence/gsf-fixed-model-comparison.json).
+В последнем raw `gsf` означает variant3 на `75ca946`; текущий `gsf` — variant4
+с confidence-triggered projective path. Не смешивать результаты этих версий.
+
+Закрытое полное сравнение variant3 при 1280×800: strafe +0.154 dB / GPU span ratio
+0.806, objects −0.116 / 0.866, fastturn −0.426 / 0.953, HUD −0.101 / 0.830,
+post-cut −0.008 / 0.858. Post-cut HUD rectangle потерял 2.007 dB средней frame-PSNR;
+этот gate не пройден, даже при малой общей разнице. Crossing cut detector пропустил.
+Реальный worker clip не лучше nearest endpoint; хорошие PSNR к LMC это не скрывают.
+Компактный путь не выбран, 15% gate на всех сценах не пройден и не понижен.
+
+Последний выполненный probe до закрытия исследований: adaptive variant4 на том же
+fastturn получил 23.361 dB против 23.364 LMC; projective path включался на 9/12 пар.
+Новая серия PSNR comparisons не запускается. Архитектура принята с этими рисками;
+по P0 директиве работа продолжилась интеграцией, а не поиском идеальной метрики.
+
+## Результат реализации полного native пути
+
+Код `de48b0d`, harness/исправление тестового приложения `7108ce5`:
+capture → app-device GSF → отдельные G1/G2 → bounded worker → paced G1/G2/R → WSI.
+Реализованы GPU readiness waits в worker, deadlines и пропуски опоздавшей генерации,
+lookahead, late-source resync и stale budget, зависящий от периода источника.
+В синхронном metadata fallback pacing отключён. Исправлен расчёт percentile:
+для двух samples p95 раньше мог оказаться ниже median.
+
+Функциональная приёмка: [acceptance.json](evidence/gsf-native-acceptance.json).
+Тринадцать checks прошли: core GSF (182 assertions), borrowed-device pixels/lifetime,
+фактические G1/G2/R pixels и spacing, recreate, queue idle и unknown metadata —
+в обоих порядках GFG/validation; дополнительно cut recovery без synthetic credit
+в обоих порядках и real-only fallback без worker. Native Python regression: 31 tests passed.
+CPU/GPU LMC baseline: по 168 checks, 0 failures.
+
+Software clock установлен **9 Hz** для функциональной приёмки под fresh VVL:
+4 real + 6 distinct synthetic, content/order/spacing PASS, минимум handoff interval
+около 111 ms. Это 3× pipeline при source3/output9, не доказательство 30→90.
+Выполненные проверки с budget90 на lavapipe пропускали generation и сохранены
+как отрицательные результаты. Drop не переименовывается в successful synthetic.
+
+Первый автоматизированный двухпорядковый прогон обнаружил VUID-00067 в тестовом
+приложении: один render-finished semaphore переиспользовался для разных WSI images.
+Render fence не доказывает завершение presentation wait. Harness исправлен на
+per-image ready semaphores; ни validator, ни error matching не отключались.
+После исправления оба порядка прошли без validation errors. Это исправление
+тестового приложения не объявляется доказательством всех synchronization контрактов Deck.
+
+`1151078` устраняет отдельную runtime ошибку учёта: cut endpoint copies больше
+не считаются synthetic. Перед WSI admission worker получает GPU control header
+без чтения пикселей. Чёрно-белые scene cuts проверены end-to-end: 4 real,
+0 synthetic, 6 skipped_cut. `852b7ca` сохраняет real-only путь при отсутствии
+worker. При этом detector всё ещё пропускает сложный renderer cut, указанный выше.
+
+Воспроизведение системной проверки после сборки core/native/observer targets:
+
+```sh
+xvfb-run -a python3 scripts/check_gsf_pipeline.py \
+  --native-build engine/gfg-native/build-te \
+  --core-build engine/gfg-temporal/build \
+  --validation-layers /usr/share/vulkan/explicit_layer.d \
+  --out /tmp/gsf-pipeline-results
+```
+
+CI запускает этот функциональный этап и отдельно сохраняет его logs даже при
+падении последующих legacy checks. Успех текущего remote CI не предполагается
+из локальной проверки. Аппаратные SteamOS/Gamescope/DRM, HDR и budget остаются
+следующими инженерными этапами [принятого решения](ARCHITECTURE_DECISION_1_0.md).

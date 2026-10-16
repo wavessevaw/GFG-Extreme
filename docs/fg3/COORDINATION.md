@@ -1,86 +1,54 @@
 <!-- codex-fg3-coordination -->
-# GSF architecture decision and compute prototype — 2026-10-16
+# Architecture accepted; GSF native implementation — 2026-10-16
 
-The owner's latest synthesis directive supersedes the earlier instruction to
-stop independent FG design. Choose one architecture, build a minimum compute
-prototype, compare identical recorded/reference frames against GPU LMC, and
-revise failed simplifications before native integration. No release or merge.
+The owner's latest P0 directive closes comparative research and prioritizes a
+working full pipeline. No new PSNR experiment series. No release/merge/main change.
 
-Decision: docs/fg3/ARCHITECTURE_DECISION_1_0.md.
-Protocol and limits: docs/fg3/SHARED_FLOW_PROTOTYPE.md.
-Code checkpoint: 75ca946, published on both integration/PR branches.
+**One architecture:** GPU-resident two-source interpolation, shared hierarchical
+motion analysis, adaptive geometric refinement, separate t=1/3 and 2/3 visibility,
+bounded asynchronous output and per-output deadlines. GSF is the chosen backend;
+full projective fitting is a GPU confidence-triggered path within that backend.
+No user architecture choice, proprietary DLL or game depth/MV requirement.
 
-Selected prototype: GFG Shared Flow, hierarchical bidirectional flow + one
-robust affine candidate + retained dominant-motion palette and dense visibility.
-Rejected compact reconstruction loses small moving details. Affine without
-palette passed small scenes but failed native 1280x800; restoring palette
-recovers quality in the initial native probe. Keep these negative results.
+Accepted decision, confidence, alternatives, component ownership and exact next
+engineering barriers: docs/fg3/ARCHITECTURE_DECISION_1_0.md.
+Closed experiments, including failures: docs/fg3/SHARED_FLOW_PROTOTYPE.md and
+`docs/fg3/evidence/gsf-research-20261016.zip`.
 
-GSF compute checks: 182 checks / 0 failures with fresh VVL. Includes exact static
-pixels, timeline/hold/discontinuity, pan/HUD and cut recovery. Expanded 1280x800
-comparisons are running: separate quality+validation and no-download timing,
-identical inputs/history, one-vs-two-output bit equality, motion/edge/HUD ROI.
-No physical Deck acceptance, scanout, power or input-latency result is asserted.
-No runtime/default selection changed; main remains untouched.
+Implemented code:
+- 26416e2: poor affine agreement triggers full GPU projective fit; fast-turn
+  probe recovered from −0.426 to approximately −0.002 dB against GPU LMC.
+- de48b0d: app GPU capture → borrowed-device GSF → G1/G2 → async G1/G2/R WSI.
+  Per-output absolute deadlines, one-source lookahead, late resync, bounded
+  readiness/acquire waits, explicit deadline drops, rate-dependent stale budget.
+  Pacing waits run only in the worker; metadata fallback stays synchronous.
+  Coherent launcher: scripts/run_gfg_gsf.sh, default target 90 host clock.
+- 7108ce5: reproducible full-pipeline check script and per-image render-finished
+  semaphores in the test app, fixing VUID-00067 with validation above GFG.
 
-## Previous checkpoint and reference evidence
+- 1151078 / 852b7ca: cut/hold endpoint copies excluded from native synthetic credit;
+  real-only fallback when no output worker exists. Source 9522288 has the final harness.
 
-# P0 direction change acknowledged — 2026-10-16
+**Verified software functionality, not Deck acceptance:** thirteen full-path checks
+pass under fresh VVL, both layer orders: 182 core assertions, borrowed device,
+independent actual G1/G2/R pixel/order/spacing observation, recreate, queue idle,
+unknown metadata, cut-credit exclusion and real-only fallback without worker. 31 Python regressions and both 168-check LMC baselines pass.
+Functional output clock 9 Hz/source 3 Hz; four real+six distinct synthetic with
+~111 ms minimum host handoff spacing. 90 Hz software attempts missed deadlines and
+are archived as failures. No interpolation/scanout success is inferred from CI.
 
-Authoritative latest directive:
-https://github.com/wavessevaw/GFG-Extreme/pull/133#issuecomment-6212340968
+Evidence: docs/fg3/evidence/gsf-native-acceptance.json and gsf-native-acceptance.zip.
+Run: scripts/check_gsf_pipeline.py (native/core/validation paths required).
+The native CI now has a separate GSF functional step and preserves its logs even
+if later legacy checks fail. Latest remote CI success is not claimed.
 
-No release or merge. Uncommitted async/HDR work is preserved as a research
-checkpoint, not promoted to product status. The prepared release-publishing job
-has been removed before any push; no new tag/release was created. Main is intact.
+Remaining barriers in implementation order:
+1. Gamescope lower-MAILBOX/compositor-FIFO future-deadline contract. Current
+   native slice supports ordinary FIFO; blanket FIFO substitution is not chosen.
+2. Correct HDR linear/PQ processing, source/compute/presenter queue provisioning,
+   actual game contention/power budget, and a cut heuristic that missed renderer cut.
+3. Physical 30 real → 90 distinct OLED/SteamOS acceptance: Gamescope commits linked
+   to DRM flips and preferably optical observation. Current cloud has no /dev/dri
+   and no connected Deck endpoint. This is an explicit hardware blocker.
 
-Stop extending a novel FG pipeline without demonstrated reference advantage.
-Next work: verify concrete Steam Deck reference implementations, licenses,
-versions/install paths and actual evidence; compare capture, motion, synthesis,
-pacing, WSI, HDR/modes and display. Record a traceable behavior specification and
-minimal independent vertical slice in docs/fg3/REFERENCE_REIMPLEMENTATION.md.
-Continue the official SteamOS-image inspection obligation without substituting
-an OS essay for the generator work. No hardware success is asserted.
-
-Checkpoint evidence and limitations:
-- internal.4 074536Z: 7339 real / 4051 synthetic / 10613 skipped WSI calls.
-- 082931Z: no bridge; Witcher requests MAILBOX + packed10 HDR (format 64).
-- Bounded worker, queue host serialization, private render-wait gates, immutable
-  metadata, ordered lifecycle draining, opt-in FIFO negotiation and FP16 HDR
-  synthesis are in the checkpoint; none have new physical Deck acceptance.
-- 31 native Python checks pass. Both core modes: 168 checks, 0 failures each.
-- Both layer orders: normal/idle/recreate/unknown/forced-MAILBOX/fallback,
-  record/submit/index faults and independent G1/G2/R WSI pixel tests passed
-  locally before the final redundant same-queue wait cleanup.
-- HDR packed10/FP16 static roundtrip passes all 1024 levels for supported format
-  64, including GPU LMC after an edge-coordinate fix. Format 58 lacks BLIT_DST
-  on this software ICD and is explicitly refused, not reported supported.
-- Async internal readback verification triggers WRITE_AFTER_PRESENT in old
-  validation 1.4.309. A fresh validator (4b1aed23) did not report that hazard,
-  but found two Workgroup ArrayStride shader defects from old glslang. Padding
-  shared arrays to avoid layout-type aliasing is committed for follow-up
-  validation; neither the current full CI nor the final revalidation is claimed
-  passing. Keep this distinction visible. No ready/usable package claim.
-
-CI for this branch:
-https://github.com/wavessevaw/GFG-Extreme/actions/workflows/gfg-native-no-dll.yml
-
-## Checkpoint and reference follow-up
-
-Published checkpoint: e121fca. Native CI failed in bounded async output:
-https://github.com/wavessevaw/GFG-Extreme/actions/runs/38895664221
-The coordination post succeeded:
-https://github.com/wavessevaw/GFG-Extreme/actions/runs/38895664202
-
-Source-backed comparison is now in docs/fg3/REFERENCE_REIMPLEMENTATION.md.
-Important correction: lower MAILBOX can belong to the Gamescope WSI transport;
-a downstream FIFO override alone is not a demonstrated fix. MAKO's published
-4.5.0 source separates lower MAILBOX, compositor FIFO and per-output deadlines.
-AMD's open v1.1.4 Vulkan presenter uses distinct queues but requests one generated
-frame, so it is not a ready 3x algorithm. HDR FP16 roundtrip does not establish
-correct PQ-domain dynamic interpolation. Do not publish this checkpoint.
-
-Post-checkpoint local validation after Workgroup padding: fresh VVL cold run
-8 real / 12 synthetic / 2 skipped, zero validation errors; warm run 8/14/0,
-zero validation errors. The cold deadline drop is not hidden. These do not
-resolve the failed remote CI or physical Deck acceptance.
+Do not promote this opt-in implementation to release or claim physical 90 FPS.

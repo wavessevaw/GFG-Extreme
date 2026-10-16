@@ -1,207 +1,157 @@
 # GFG Frame Generator: Architecture Decision 1.0
 
-Дата: 16.10.2026. Решение: **GFG Shared Flow (GSF)** — иерархический
-двунаправленный optical flow, один устойчивый affine-предиктор, палитра доминирующих
-движений и плотное локальное уточнение видимости. Две реконструкции используют общий
-анализ пары. Первоначальное компактное упрощение отклонено измерениями ниже.
-LMC сохраняется как контрольная
-реализация. Новый backend сначала существует только в вычислительном benchmark;
-нативная интеграция и публикация продукта не выполняются до экспериментальных gates.
+Дата решения: 16.10.2026. Статус: **архитектура принята, реализация полного конвейера**.
+Исследовательская фаза закрыта по последней P0 директиве владельца. Старые варианты,
+провалы и raw measurements сохранены; новые сравнительные серии не запланированы.
 
-## Основания, которые уже есть
+## Единственная основная архитектура
 
-- В аппаратном архиве 074536Z старый GPU LMC при 1280×800 имел median готовности
-  первого выхода 7.171 ms, второго 8.052 ms, p95 8.863/10.005 ms. Это выборка
-  GPU timestamp intervals, включающая паузы очереди; не чистое время исполнения,
-  не полная стоимость игры/transport и не physical scanout.
-- Средние этапы той выборки: pyramid 0.494, analyze 4.072, classify 1.754 ms.
-  Внутренние LMC интервалы: search B/A 0.928/0.944, layers 0.255, model 1.945,
-  field 0.982, masked 0.245, orphan 0.337, field2 0.180 ms. Выборки/границы
-  различаются; нельзя безусловно складывать эти средние с median всей пары.
-  Неподвижный дополнительный global-model pipeline заметен в бюджете даже
-  до полезной реконструкции; пользу каждого его прохода нужно оправдывать.
-- Тот же запуск: 7339 real, 4051 synthetic, 10613 skipped WSI handoffs.
-  В последнем bridge потери ring/history/acquire: 2986/2986/4183. Это прежде
-  всего backpressure и транспорт, а не доказательство плохого optical flow.
-- Следующий архив 082931Z не инициализировал генератор: MAILBOX + packed10 HDR.
-  Число dispatch или ускорение анализа не исправляет позицию hook в Gamescope.
-- `docs/TEMPORAL_ENGINE_BENCHMARK.md`: старый adaptive tile path на lavapipe
-  был существенно дешевле full-everywhere при близкой средней метрике.
-  Но быстрые повороты оставались плохими, а сокращение цены в простых областях
-  не доказывает качество на motion boundaries. Эти числа не являются Deck times.
-- Текущий LMC **уже** анализирует пару один раз, затем отдельно выполняет
-  SELECT/COMPOSE для каждого t. Само по себе shared analysis не новая оптимизация
-  относительно него. Проверять нужно сокращение общего анализа и per-output work.
-- Предыдущие аппаратные ~520 ms `rgba_to_rgb` были CPU обработкой mapped staging.
-  GPU resident capture/compute/output сохраняются. Возвращать CPU pixel bridge нельзя.
-- MAKO подтверждает отдельные временные fractions и presentation policy, но FG
-  использует пользовательский proprietary payload. AMD даёт открытые optical-flow,
-  visibility/inpainting идеи и Vulkan presenter; полный FSR3 требует игровых
-  ресурсов, которых обычный present hook не получает. Подробнее —
-  [REFERENCE_REIMPLEMENTATION.md](REFERENCE_REIMPLEMENTATION.md).
+**GPU-resident двухкадровая интерполяция с общим иерархическим анализом пары,
+адаптивным уточнением движения и асинхронным выводом по отдельным deadlines.**
+Вычислительный backend — GFG Shared Flow (GSF): bidirectional coarse-to-fine RGB
+flow, дешёвый affine predictor и motion palette, dense visibility и ограниченный
+orphan refinement. Если текущие совпадения плохо объясняются affine-моделью,
+GPU выполняет полный projective fit. Это один адаптивный алгоритм с разной ценой
+анализа, а не выбор пользователем между несколькими генераторами.
 
-## Сравнение и выбор
+Продуктовая цель остаётся **30 настоящих → 90 отображаемых кадров на Steam Deck
+OLED, SteamOS**. Обязательны разные временные выходы 1/3 и 2/3; дубликат или
+recovery не считается выполненным ×3. Linux cloud/lavapipe используется для
+проверки контрактов, а не вместо SteamOS и аппаратной приёмки.
 
-Оценки в таблице — ожидания конструкции. Сравнительных Deck измерений нет.
+## Почему это решение
 
-| Направление | GPU cost | Задержка | Качество / главный риск | Интеграция | Решение |
-|---|---|---|---|---|---|
-| A: dense flow + тяжёлая реконструкция везде | высокая, масштабируется с пикселями и числом кандидатов | lookahead + GPU work | детали хороши при правильном flow, ошибки occlusion остаются | RGB-only возможно | Не основной путь для ограниченного APU |
-| B: дешёвый общий flow + сложные области | зависит от доли сложных блоков; нужен жёсткий предел | тот же lookahead | classifier может пропустить тонкий объект | RGB-only, явные confidence masks | Основа адаптивной стоимости |
-| C: coarse-to-fine flow | дешёвый coarse search, уточнение локально | тот же lookahead | aliasing, малые быстро движущиеся детали | хорошо сочетается с B | Основа движения |
-| D: история / предсказание | может сократить search, не гарантированно | экстраполяция уменьшает lookahead ценой ошибки | cuts, ускорение, newly visible content | история должна инвалидироваться на GPU | Только проверяемый predictor, не автономный генератор |
-| E: GSF = B+C + ограниченная D | меньше global-model work; dense visibility и palette сохранены после ablation | один реальный интервал + compute/presentation margin | границы, неизвестная глубина, шум и ошибочная уверенность | reuse Vulkan infrastructure, новый compute backend | **Выбрано, с пересмотром по прототипам** |
-| Текущий GPU LMC | измеренная аппаратная выборка выше; solver/fields обязательны | lookahead + текущая очередь | global planes могут помогать камере; их цена не всегда оправдана | уже реализован, WSI ещё не принят | Контроль, не выбрасывается |
+| Подход | Вывод из накопленных данных | Решение |
+|---|---|---|
+| Плотный тяжёлый flow/solver на всей площади | Может дать полезные гипотезы, но обязательная цена каждой пары плохо соответствует APU | Не основной режим |
+| Дешёвые блоки и компактная реконструкция | Реальный малый объект раздваивается, bolt теряет 2.207 dB | Исключён как основной reconstruct |
+| Иерархический flow + локальное уточнение | Уже рабочие GPU kernels и история; большие перемещения ищутся на уменьшенных уровнях | Основа движения |
+| История как замена анализа текущей пары | Не подтверждает движение после cut, пропуска, смены видимости | Только проверяемый predictor |
+| Общий анализ + адаптивные motion hypotheses + точная локальная видимость | Palette оказалась полезной; полный projective fit нужен при несогласованном движении | **Выбрано** |
+| Полная замена на FSR3 | Открытая математика полезна, но универсальный present hook не получает игровые depth/MV; исследованный presenter не готовый ×3 | Не заменяет текущую RGB-only систему |
+| Подключение закрытого LSFG payload | Не даёт независимого генератора | Исключено |
 
-Предыдущий LMC не объявляется ошибочным целиком. Ошибочны ожидания, что меньше
-CPU work автоматически даст 90 scanouts; что planes/orphans нужны каждой паре;
-что неподвижность одного пикселя доказывает HUD; что FP16 сохраняет правильную
-физическую HDR-интерполяцию; что software throughput переносится на RADV.
+LMC уже анализирует пару один раз. Это свойство нельзя выдавать за новое ускорение
+GSF. Выигрыш ожидается от адаптивной цены анализа и устранения лишней работы;
+доказательств универсального выигрыша на Deck пока нет. Выбранная architecture
+не требует защищать названия LMC/GSF: backend отделён от capture/presenter.
 
-## Вычислительный путь
+## Полный путь кадра
 
-```text
-R[n-1], R[n] (GPU images)
-  -> обновление luma/RGB pyramid только для нового R[n]
-  -> coarse-to-fine B->A и A->B, predictor из предыдущей пары
-  -> block confidence / HUD / cut votes
-  -> один robust affine predictor + до четырёх dominant-motion candidates
-  -> dense half-res field / residual mask / bounded orphan refinement
-  -> общие flow + confidence + cut state
-       -> visibility-aware reconstruction(t=1/3) -> G1
-       -> visibility-aware reconstruction(t=2/3) -> G2
-  -> history update; source images остаются неизменными
+```mermaid
+flowchart LR
+  A[App acquired image + render waits] --> B[GPU capture / immutable source history]
+  B --> C[Shared bidirectional motion + adaptive model + visibility]
+  C --> D[G1 at 1/3]
+  C --> E[G2 at 2/3]
+  A --> R[Original real image]
+  D --> T[GPU timeline + bounded output worker]
+  E --> T
+  R --> T
+  T --> P[Ordered deadlines G1 / G2 / R]
+  P --> W[Negotiated Gamescope presentation contract]
+  W --> S[Compositor / DRM / OLED]
 ```
 
-1. **Вход и история.** Два RGB изображения. Глубина/MV игры не выдумываются.
-   История переиспользует allocation и pyramid предыдущего кадра. Никакого
-   full-resolution GPU→CPU→GPU в runtime. Upload/download benchmark — явно
-   отдельные операции, не заявляются производственным transport.
-2. **Движение.** Пирамида до 1/16; block matching в обе стороны. Старые векторы —
-   кандидаты, которые должны выиграть по текущей фотометрии. Нельзя доверять им
-   без проверки или переносить через gap/cut/resize.
-3. **Общие motion candidates и уточнение.** Из уже найденных согласованных
-   текстурных блоков один workgroup из 64 lanes строит affine-предиктор:
-   три weighted least-squares итерации, Huber-подобный вес с порогом 2 px.
-   Это только кандидат: локальная фотометрия проверяет его наряду с соседними
-   векторами и до четырёх доминирующих движений из сохранённой LMC palette.
-   Нет обязательных 128 RANSAC hypotheses × три слоя × шесть IRLS итераций.
-   Плотный half-res field **сохраняется**: block-only вариант теряет thin detail.
-   Сохраняются residual mask, ограниченная orphan-очередь и уточнение field.
-   Кандидаты отсекаются по уже имеющимся нижним границам стоимости; orphan work
-   ограничен существующим cap. Новая compact confidence/reconstruction не выбрана.
-4. **Реконструкция.** Перенести координаты к t; проверить A/B trajectories,
-   границы и agreement обратного flow. Уверенный участок обрабатывается дёшево;
-   сложный — соседние motion hypotheses и односторонняя видимость. Не усреднять
-   произвольно движения разных поверхностей и не растягивать край за image bounds.
-   Истинно статичные области сохраняют точные пиксели. Thin detail / HUD /
-   полупрозрачность требуют отдельных локальных метрик, не только mean PSNR.
-5. **Cut/неуверенность.** Не интерполировать заведомо разные сцены. Recovery/drop
-   классифицируется отдельно; endpoint duplicate не считается выполненным 3×.
-6. **HDR.** Prototype сначала SDR. Сохранить проверенные packed10/FP16 transport
-   primitives для будущего пути; quality HDR потребует явного transfer-function
-   преобразования, а PQ-code interpolation остаётся помеченной approximation.
+1. **Capture.** Vulkan layer принимает фактический acquired image и render-finished
+   semaphores. Их waits должны быть submitted до возврата из app Present.
+   Capture копирует источник на GPU. Нет CPU pixel readback/upload в runtime.
+   Настоящий кадр сохраняется; ошибка FG не разрешает повторно потребить app waits.
+2. **History.** Два реальных изображения, pyramid предыдущего кадра, проверяемый
+   temporal predictor. Gap, resize, discontinuity и cut разрывают соответствующую
+   историю. Кадры источника неизменяемы во время анализа/реконструкции.
+3. **Shared motion.** Поиск B→A и A→B coarse-to-fine до 1/16; доверие по текущей
+   фотометрии. Один 64-lane workgroup строит affine candidate за три weighted LS
+   итерации. Сохраняется палитра до четырёх доминирующих движений.
+4. **Adaptive model.** Уже найденные текстурные совпадения проверяются относительно
+   affine predictor. Если более половины usable blocks выходят за допуск
+   `1.5 + 0.03*|v|` px, выполняется полный projective fit. Решение принимает GPU;
+   oracle targets и CPU readback не используются. Неполезные model passes имеют
+   uniform early-return. Отдельный telemetry flag фиксирует фактический fallback.
+5. **Visibility.** Сохраняются dense half-res field, residual masks, bounded orphan
+   queue и уточнение малых/независимых объектов. Их удаление провалило качество.
+   Фотометрия проверяет model candidates; глобальная модель не считается истиной.
+6. **FG3.** Анализ A общий: `cost_pair=A+S(1/3)+S(2/3)`. SELECT/COMPOSE зависят от t;
+   маска видимости одного времени не переиспользуется как маска другого. Выходы
+   имеют отдельные GPU completion values. Source кадр не перезаписывается.
+   Текущий single-queue slice ставит оба compute output до transport copies;
+   перед допуском G1 worker ждёт завершение пары и читает только control header.
+   Cut/hold endpoints не получают synthetic credit. Это ограничивает раннюю
+   доставку G1; отдельные GPU timestamps G1 не равны времени его WSI handoff.
+7. **Async delivery.** Один executing job и один queued job; backpressure ограничен,
+   бесконечной очереди нет. Worker владеет acquire/present и ожиданиями готовности.
+   App ID/fence относятся к real, metadata копируются до возврата caller.
+   Unknown metadata: drain и безопасный синхронный pass-through без pacing sleep.
+   При недоступности worker GSF пропускает только real, без генерации и CPU waits.
+8. **Deadlines.** При 90 Hz слоты идут через 11.111 ms. Clock резервирует один
+   source interval lookahead; G1/G2/R имеют разные абсолютные сроки. Просроченная
+   генерация пропускается, не отправляется догоняющей пачкой. Поздний source
+   ресинхронизирует clock. CPU scheduling не доказывает время scanout.
+9. **SteamOS output.** Нужен подтверждённый Gamescope контракт: lower MAILBOX может
+   быть внутренним transport при compositor FIFO. Глобальная принудительная
+   подмена MAILBOX на FIFO не выбрана. Текущий native vertical slice проверен на
+   обычном FIFO; Gamescope future-deadline negotiation остаётся отдельным этапом.
 
-Для 3× анализ A выполняется один раз: `cost_pair=A+S(1/3)+S(2/3)`.
-Не нужно повторять A, но нельзя переиспользовать visibility result одного t
-как универсальную маску другого t. Локальная реконструкция зависит от времени.
+Один будущий настоящий кадр означает около 33.333 ms lookahead при 30 FPS плюс
+compute/readiness/display margin. Нулевая задержка не обещается. Асинхронный CPU
+worker также не означает независимые GPU queues: текущий slice использует app
+queue; contention с игрой и provisioning дополнительных RADV queues ещё не приняты.
 
-## Что сохраняется, что заменяется
+## Сохранить, переработать, исключить
 
-Сохраняются Vulkan loader/dispatch, timeline API, timestamp queries, image/buffer
-allocation, benchmark NPY input/output, тестовые сцены, input hashes, CPU/reference
-LMC, borrowed-device tests и сохранённый native transport как отдельный workstream.
-Coarse block search и history из LMC переиспользуются без переименования авторства.
+| Компонент | Действие |
+|---|---|
+| Собственные Vulkan loader/dispatch, borrowed-device, allocations, timeline, barriers, GPU queries | Сохранены, используются в runtime |
+| LMC pyramids/search/history, palette, visibility/orphan, time-specific reconstruction | Сохранены там, где эксперименты подтвердили пользу |
+| Обязательные три model fits каждой пары | Заменены дешёвым predictor и GPU confidence-triggered projective path |
+| Native GPU capture, immutable metadata, bounded worker, lifecycle drain | Сохранены; GSF подключён к этому полному пути |
+| Pacing только через доступность swapchain image | Заменён отдельными G1/G2/R host deadlines и readiness budget |
+| CPU pixel bridge, host-signalled relay, compact-only reconstruction, закрытый DLL payload | Не входят в выбранную архитектуру |
+| MAKO 4.5.0 GPL-3.0-or-later transport/presentation policies | Выбран открытый reference для Gamescope negotiation/deadline stage; не утверждается, что его transport уже перенесён |
+| AMD MIT Vulkan presenter / optical flow source | Источник проверенных ownership/visibility контрактов; целиком не встраивается как готовый ×3 |
 
-В выбранном compute backend заменяется обязательный multi-plane global-model fit
-одним ограниченным affine-предиктором. Palette, dense fields, orphan refinement и
-time-specific SELECT/COMPOSE сохраняются: эксперименты подтвердили их пользу.
-Это собственный вычислительный путь на базе GFG, а не переименование выигрыша от
-общего анализа: LMC уже делал общий анализ. Изменение выигрывает, только если
-сэкономленный fit не теряет полезных motion hypotheses. Memory allocations у
-выбранного варианта равны GPU LMC; экономия compact buffer layout ему не приписывается.
+Точные версии, лицензии и границы открытого кода находятся в
+[REFERENCE_REIMPLEMENTATION.md](REFERENCE_REIMPLEMENTATION.md).
+Новый pipeline не требует Lossless.dll, закрытых weights или игровых depth/MV.
 
-Первый prototype может разделять descriptor ABI с LMC ради малого изменения.
-Неиспользуемые bindings получают маленькие валидные buffers/images; экономию
-памяти считать по реальным Vulkan allocations, не по сумме размеров struct.
+## Реализация и критерии этапов
 
-## Подача кадров и временной бюджет
+| Этап | Реально реализовано | Подтверждено / гипотеза | Устранённый барьер |
+|---|---|---|---|
+| 1. Shared GPU backend | GSF с двумя временными выходами и adaptive projective path | 182 core checks; fast-turn probe вернул quality delta с −0.426 до около −0.002 dB; это не game/Deck acceptance | Backend перестал быть набором непроверенных shaders |
+| 2. Native vertical slice | App GPU capture → borrowed-device GSF → G1/G2/R → lower WSI, launcher `run_gfg_gsf.sh` | Borrowed device pixels/lifetime и независимый WSI pixel observer; software only | GSF больше не существует только в offline benchmark |
+| 3. Output ownership/clock | Bounded worker, отдельные deadlines, GPU-ready budget, deadline drops, skip accounting, lifecycle drains | Functional software tests; бюджет 90 Hz на lavapipe провален, не скрыт уменьшением заявленной цели | Пачечная отправка выходов и отсутствие отдельного времени каждого output |
+| 4. SteamOS presentation | Следующий инженерный этап: интегрировать подтверждённый Gamescope timing/WSI contract | Нужны реальный compositor path и аппаратный trace | Устранить отказ нижнего MAILBOX и подтвердить compositor delivery |
+| 5. HDR и resource budget | Явный linear/PQ color path; GPU queue/power budget с игрой | FP16 static roundtrip уже есть; dynamic PQ quality и RADV contention ещё не подтверждены | Устранить неверную цветовую интерполяцию и потери настоящих FPS |
+| 6. Аппаратная приёмка | Связать R/G1/G2 с Gamescope commit и DRM flip, при возможности optical verification | Без доступа к Deck не выполнена | Доказать именно 30 real → 90 distinct displayed, cadence и latency |
 
-Compute backend и Gamescope delivery проверяются отдельно. Выбранный продуктовый
-путь — timestamped ordered output с отдельным владельцем deadlines и bounded
-source credit, по подтверждённой WSI topology. Lower MAILBOX может сочетаться с
-compositor FIFO. Простая downstream замена MAILBOX на FIFO не принята как решение.
-Нужны согласованные queue provisioning/ownership и корректные app present-ID/fences.
+Прежний экспериментальный gate «15% быстрее на каждой сцене без quality regression»
+не пройден. Его результат сохранён. Последняя P0 директива требует продолжить
+полный конвейер до идеальной производительности, поэтому он не блокирует opt-in
+инженерную интеграцию. Это не разрешение объявить release или аппаратную цель выполненной.
 
-30 FPS дают 33.333 ms между источниками; 90 Hz дают 11.111 ms между выходами.
-Двукадровая интерполяция требует будущего реального кадра. Проектный scheduler
-резервирует около одного source interval lookahead плюс GPU/readiness margin;
-это не обещание нулевой задержки. Для примера, когда R1 готов в 33.333 ms,
-его промежуточные значения могут быть показаны в 44.444 и 55.556 ms, R1 —
-в 66.667 ms при задержанной общей шкале. Это условный график, не измерение.
+## Уверенность, риски и условия пересмотра
 
-Предварительный compute gate на Deck: p95 пары ≤6 ms при 1280×800 как цель
-оптимизации, а не установленная возможность. Не жертвовать настоящими 30 FPS:
-мерить FG-off/on, queue contention, power, input-to-display и p99 отдельно.
-Даже 6 ms compute не доказывают cadence или качественные 90 FPS.
+- **Высокая уверенность** в разделении GPU backend / bounded transport / deadline
+  presenter и в общем анализе пары: эти контракты реализованы и проверяемы.
+- **Умеренная уверенность** в выбранном adaptive flow/model balance: компактные
+  упрощения отклонены, нужные fallback возвращены. Универсального превосходства
+  над LMC нет; абсолютное качество быстрых поворотов пока низкое у обоих.
+- **Низкая уверенность в численном Deck budget до испытаний.** Software spans
+  не переносимы на RADV, power, input latency или физические 90 Hz.
 
-## Эксперимент до интеграции
+Пересмотр backend потребуется, если после интеграции аппаратный p95/contended cost
+не оставляет бюджет настоящим 30 FPS или RGB-only visibility систематически даёт
+неприемлемые ошибки. Пересмотр presenter потребуется, если подтверждённый Gamescope
+contract нельзя обеспечить на app hook: тогда открытый MAKO host используется
+как transport для того же независимого backend. Это заранее определённые условия,
+не повод сейчас запускать очередное сравнение технологий.
 
-Одинаковые сохранённые RGB входы и held-out targets для `lmc-gpu` и GSF.
-Контролируемая сцена 90 FPS проверяет фактический stride 3 (30→90). Реальные
-camera clips с native 60 FPS при stride 3 проверяют 20→60; их нельзя подписывать
-как записанные 90 FPS. Нужны pan/rotation, независимые объекты, occlusion,
-тонкие детали/HUD, cuts и static exactness. Реальные game captures отсутствуют;
-это ограничение нельзя скрыть camera/synthetic corpus.
+Остаются реальные препятствия: Gamescope MAILBOX/timing topology, HDR transfer
+function, неполный cut detector, и отсутствие подключённого Deck/DRM/optical trace.
+Последний renderer cut был пропущен эвристикой; noise-cut test не скрывает этот факт.
+В cloud отсутствует `/dev/dri`, ICD — llvmpipe. Продуктовая приёмка **не выполнена**.
 
-Измерять: pair analysis GPU ms, S1 и S2 GPU ms, ready1/ready2 и суммарный span,
-CPU submission/wait отдельно, upload/readback отдельно от compute, allocation
-bytes, source/output hashes, PSNR/SSIM, temporal error, boundary/ROI errors,
-endpoint duplicates в динамике. Для timing — отдельный no-download прогон.
-Prototype сравнивается с LMC tier0, не с произвольно ухудшенным baseline.
-GPU timestamps lavapipe публикуются исключительно как software Vulkan.
-
-Promotion gates до native integration:
-- оба времени действительно различаются и уменьшают ошибку относительно endpoint;
-- static exactness; отсутствие NaN/OOB/Vulkan validation ошибок;
-- на одинаковых сценах ≥15% сокращения GPU span относительно LMC как гипотеза;
-- mean PSNR regression ≤0.3 dB, ни один motion/HUD ROI не теряет >1 dB;
-  temporal error не ухудшается >5%; отдельный просмотр артефактов;
-- cuts/recovery и partial outputs не засчитываются как 3×;
-- при провале хотя бы одного gate новый backend не становится default.
-
-Основная архитектура выбрана; её глобальная оптимальность не доказана.
-Аппаратная эффективность, динамическое качество на играх и итоговый паритет —
-открытые гипотезы. Исходники и отрицательные варианты сохранены для воспроизведения;
-в runtime/native default алгоритм не включён.
-
-## Первый отрицательный результат — прототип 0.1
-
-Компактный block-field вариант на 4 парах реальной bolt последовательности
-384×216: mean PSNR-Y 43.864 против 46.071 у GPU LMC (−2.207 dB).
-На 6 парах synthetic strafe 384×240: 31.534 против 32.722 (−1.188 dB).
-Визуализация показывает раздвоение малого движущегося объекта. Простого
-block-level confidence и соседних block vectors недостаточно вместо dense
-visibility refinement. Вариант отклонён для default/native integration.
-Следующие ablations сохранили dense visibility/orphan этапы и отдельно проверили
-необходимость global-model fit и motion palette.
-
-## Пересмотр после проверки 1280×800
-
-`shared-flow-dense` убирает fit и palette; `shared-flow-affine` добавляет один
-robust affine candidate. На коротких 384 px сценах второй вариант часто проходит
-gates, но на native 1280×800 strafe получает 30.244 dB против 31.914 у LMC.
-Разница −1.670 dB недопустима. У baseline здесь три полезных motion planes;
-ограничение RANSAC samples на расстояние 120 px делает маленький корпус
-нерепрезентативным для оценки global model. Отрицательный результат сохранён.
-
-`shared-flow-palette` (alias `gsf`) возвращает палитру, сохраняя один affine fit.
-На том же полном разрешении первый quality probe получает 32.093 dB:
-удаление palette оказалось существенной частью потери. Нельзя было приписывать
-всю регрессию отсутствию projective planes. Последующий сравнительный прогон
-разделяет quality/download и timing/no-download. Эти результаты ограничены
-входными сценами: ни superiority на всех играх, ни Deck 90 Hz не установлены.
-
-Результаты, протокол и воспроизведение: [SHARED_FLOW_PROTOTYPE.md](SHARED_FLOW_PROTOTYPE.md).
-Подтверждение сокращения cost требует измерения на RADV с игрой; software speedup
-не переносится в бюджет Deck. Gate 15% сохраняется, не понижается после эксперимента.
+Полные отрицательные результаты и протокол:
+[SHARED_FLOW_PROTOTYPE.md](SHARED_FLOW_PROTOTYPE.md),
+[архив закрытых экспериментов](evidence/gsf-research-20261016.zip).
