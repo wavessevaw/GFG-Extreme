@@ -56,6 +56,10 @@ class FrameOsRunner:
         self.last: Dict[str, Any] = {}
         self._task: Optional[asyncio.Task] = None
         self.draw_w: Optional[float] = None
+        # Confirmed hardware cap as observed/owned by Governor. A Frame OS
+        # boost request is not a TDP change: Governor is the sole writer.
+        self.applied_tdp_w: Optional[float] = None
+        self._proof_last_present_ns: Optional[int] = None
         self.focused: Optional[bool] = None   # Gamescope focus from the renderer (Governor sets it)
         # The Governor's executor (adaptive overlay) is in place: only then may Act move the real
         # cadence and the watts; otherwise act paces at the point's own cadence.
@@ -94,6 +98,7 @@ class FrameOsRunner:
             self.benefit.reset()            # the rings are per game session
             self.proof.reset()
             self.ab_control = None
+            self._proof_last_present_ns = None
             self.policy = None              # no bank/backoff from the previous session
             self.burst_cadence = BurstCadence()
             self.burst_observations = {"windows":0,"accelerated_windows":0,"seconds":0.0,"peak_real_hz":None}
@@ -191,10 +196,21 @@ class FrameOsRunner:
         cut = self.scene.tick(now, cost)
         decision = self.policy.tick(now, inp, scene_change=cut, draw_w=self.draw_w, focused=self.focused)
         acting = self.mode == "act"
-        # A/B proof: what the game did under last tick's control, then this tick's control.
-        self.proof.observe(now, eligible=acting and self.executor_active and bool(telemetry.get("live")),
+        # A/B proof must be based on the policy actually consumed by the
+        # renderer, not the latest requested policy. Otherwise an ignored
+        # no-shaping/hold-calm write could invent a full A/B improvement.
+        acknowledged = (self._published is not None and bool(telemetry.get("live"))
+                        and type(telemetry.get("applied_generation")) is int
+                        and telemetry["applied_generation"] == self.generation)
+        present_ns = telemetry.get("last_present_ns")
+        new_present = (type(present_ns) is not int or
+                       (present_ns > 0 and present_ns != self._proof_last_present_ns))
+        if type(present_ns) is int and present_ns > 0:
+            self._proof_last_present_ns = present_ns
+        proof_live = acting and self.executor_active and acknowledged and new_present
+        self.proof.observe(now, eligible=proof_live,
                            level=decision.level, telemetry=telemetry, draw_w=self.draw_w)
-        control = self.proof.control(now, decision.level) if acting and self.executor_active else None
+        control = self.proof.control(now, decision.level) if proof_live else None
         self.ab_control = control
         if control == "hold-calm":
             # The policy keeps its own level (the moment is unchanged); only the output is calm.
@@ -244,6 +260,7 @@ class FrameOsRunner:
             "latency_enabled": self.latency_enabled, "stall_shield_enabled": self.stall_shield_enabled,
             "acknowledged": self._published is not None and bool(telemetry.get("live"))
                             and telemetry.get("applied_generation") == self.generation,
+            "proof_policy_acknowledged": proof_live,
             "input_sensor": self._sensor_status(inp), "ab_control": control,
             "game_disabled": dict(self.game_disabled),
             "boost_enabled": self.boost_enabled,
@@ -284,13 +301,21 @@ class FrameOsRunner:
             "gain_measured": False}
         broker = self.policy.broker
         calm_w = broker.calm_w if broker is not None else None
+        # 2.1.4+ forbids Frame OS from writing transient TDP offsets.
+        # A hypothetical 14 W boost or 6 W rest must never be billed as
+        # *applied* power or "energy saved". The hardware cap only counts if
+        # Governor confirms the same settled base budget for this tick.
+        settled_cap = (self.applied_tdp_w if acting and calm_w is not None and
+                       self.applied_tdp_w is not None and
+                       abs(self.applied_tdp_w - calm_w) < 0.11 else None)
         self.benefit.add(now, acting=acting, level=decision.level, telemetry=telemetry,
                          output_hz=self.policy.output_hz, calm_real_hz=self.policy.calm_real_hz,
                          boost_real_hz=self.policy.boost_real_hz, calm_w=calm_w,
-                         tdp_w=(calm_w + self._offset_for(last["decision"])) if acting and calm_w else decision.tdp_w,
-                         counted=control is None)
-        proof = self.proof.summary()
-        last["proof"] = proof
+                         tdp_w=settled_cap, counted=control is None)
+        last["hardware_tdp_w"] = self.applied_tdp_w
+        last["boost_tdp_offset_applied"] = False
+        last["proof"] = self.proof.summary()
+        proof = last["proof"]
         last["benefit"] = apply_proof(self.benefit.summary(), proof)
         self.last = last
         return last
