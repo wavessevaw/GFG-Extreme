@@ -299,7 +299,10 @@ class RunnerTests(unittest.TestCase):
             r.tick(0.1)
             enabled, _t, _p, mode, hz, _m, _w, gen, _, _written = self.published_hz(tmp)
             self.assertEqual((enabled, mode, hz), (1, 0, 45.0))
-            self.assertEqual(r.tdp_offset_w, 4.0)
+            self.assertEqual(r.tdp_offset_w, 0.0, "Governor alone writes hardware TDP")
+            self.assertEqual(r.requested_tdp_offset_w, 4.0, "policy's desired boost remains diagnostic")
+            self.assertEqual(r.last["applied_tdp_offset_w"], 0.0)
+            self.assertEqual(r.last["requested_tdp_offset_w"], 4.0)
             self.assertEqual(gen, r.generation)
 
     def test_acknowledged_only_from_live_telemetry(self):
