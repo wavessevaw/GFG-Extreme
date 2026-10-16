@@ -28,6 +28,8 @@ static gfg_gpu_fg fixture(unsigned n) {
 }
 
 int main(void) {
+    double samples[2]={50,10},median,p95;percentile(samples,2,&median,&p95);
+    assert(median==30 && p95==48 && p95>=median);
     gfg_gpu_fg fg = fixture(2);
     fg.frame = 100; /* app progress does not grant a reservation */
     assert(reserve_ring(&fg) == NULL);

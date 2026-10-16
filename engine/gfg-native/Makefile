@@ -1,4 +1,5 @@
 CC ?= gcc
+.DEFAULT_GOAL := layer
 CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Werror -fPIC
 BUILD ?= build
 VULKAN_HEADERS ?= /usr/include
@@ -7,7 +8,7 @@ ENABLE_CPU_BRIDGE ?= 0
 TE_LIB ?= ../gfg-temporal/build/libgfg-temporal.a
 ifeq ($(ENABLE_TE),1)
 NATIVE_SOURCES := src/layer.c src/gpu_bridge.c src/output_worker.c
-NATIVE_HEADERS := src/cpu_bridge.h src/gpu_bridge.h src/output_worker.h src/wsi_queries.inc src/present_ids.h src/present_chain.h src/memory_policy.h src/swapchain_chain.h
+NATIVE_HEADERS := src/cpu_bridge.h src/gpu_bridge.h src/output_worker.h src/frame_clock.h src/wsi_queries.inc src/present_ids.h src/present_chain.h src/memory_policy.h src/swapchain_chain.h ../gfg-temporal/src/te_engine.h
 NATIVE_CPPFLAGS := -DGFG_NATIVE_WITH_TE -I../gfg-temporal/src
 ifeq ($(ENABLE_CPU_BRIDGE),1)
 NATIVE_SOURCES += src/cpu_bridge.c
@@ -24,6 +25,13 @@ NATIVE_DEPS :=
 endif
 
 .PHONY: layer abi smoke wsi-smoke wsi-smoke-te wsi-smoke-gpu swapchain-policy memory-policy present-ids present-chain gpu-ring output-worker clean
+$(BUILD)/frame-clock: tests/frame_clock.c src/frame_clock.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/frame_clock.c
+
+frame-clock: $(BUILD)/frame-clock
+	$(BUILD)/frame-clock
+.PHONY: frame-clock
 layer: $(BUILD)/libVkLayer_gfg_native.so $(BUILD)/VkLayer_gfg_native.json
 
 $(BUILD)/libVkLayer_gfg_native.so: $(NATIVE_SOURCES) $(NATIVE_HEADERS) $(NATIVE_DEPS)

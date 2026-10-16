@@ -33,6 +33,8 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL dispatch(VkDevice device,const c
     return NULL;
 }
 void gfg_gpu_fg_set_output_thread(gfg_gpu_fg *fg, pthread_mutex_t *wsi) { (void)fg; (void)wsi; }
+void gfg_gpu_fg_set_output_pacing(gfg_gpu_fg *fg,int active) { (void)fg;(void)active; }
+uint64_t gfg_gpu_fg_source_period_ns(gfg_gpu_fg *fg) {(void)fg;return 33333333ull;}
 void gfg_gpu_fg_restart_history(gfg_gpu_fg *fg) { (void)fg; ++history_restarts; }
 int gfg_gpu_fg_waiting_image(gfg_gpu_fg *fg) { (void)fg; return 0; }
 VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue q, const VkPresentInfoKHR *pi,

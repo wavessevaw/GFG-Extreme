@@ -89,6 +89,7 @@ int main(void) {
     te_context_desc_default(&desc,W,H,2);
     desc.host_io=1;desc.output_bgra=1;desc.params.full_density=2;
     if(getenv("GFG_TEST_GPU_LMC")) desc.params.algorithm=TE_ALGO_LMC_GPU;
+    if(getenv("GFG_TEST_GSF")){desc.params.algorithm=TE_ALGO_SHARED_FLOW;desc.shared_flow_dense=4;}
     OK(te_context_create(engine,&desc,&context));
     REQUIRE(te_timeline_fd_probe(context,1,2)==VK_ERROR_FEATURE_NOT_PRESENT);
     unsigned char *a=malloc(W*H*3),*b=malloc(W*H*3),*expected=malloc(W*H*3),*out=malloc(W*H*3);
@@ -131,6 +132,7 @@ int main(void) {
     VkSemaphore timeline;OK(vkCreateSemaphore(device,&sci,NULL,&timeline));
     te_context_desc_default(&desc,96,64,2);desc.application_timeline=timeline;
     if(getenv("GFG_TEST_GPU_LMC")) desc.params.algorithm=TE_ALGO_LMC_GPU;
+    if(getenv("GFG_TEST_GSF")){desc.params.algorithm=TE_ALGO_SHARED_FLOW;desc.shared_flow_dense=4;}
     OK(te_context_create(engine,&desc,&context));
     uint64_t source_ready=1;
     VkTimelineSemaphoreSubmitInfo ready={.sType=VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,

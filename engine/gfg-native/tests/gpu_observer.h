@@ -5,6 +5,7 @@
  */
 #include "gpu_bridge.h"
 #include <math.h>
+#include <time.h>
 #ifdef GFG_NATIVE_TEST_OBSERVE_LAYER
 #define OBS_FUNCS(X) \
     X(AllocateCommandBuffers) \
@@ -59,11 +60,14 @@ static struct {
     PFN_vkQueuePresentKHR lower;
     gfg_gpu_fg *fg;
     int failed;
+    uint64_t handoff_ns[16];
 } observer;
 static VKAPI_ATTR VkResult VKAPI_CALL observer_loader_data(VkDevice device,void *object) {
     (void)device;(void)object;return VK_SUCCESS; /* top-level loader allocated these */
 }
 static VkResult observer_present(VkQueue queue,const VkPresentInfoKHR *info) {
+    struct timespec stamp;clock_gettime(CLOCK_MONOTONIC,&stamp);
+    if(observer.total_calls<16)observer.handoff_ns[observer.total_calls]=(uint64_t)stamp.tv_sec*1000000000ull+(uint64_t)stamp.tv_nsec;
 #ifdef GFG_NATIVE_TEST_OBSERVE_LAYER
     observer.frame=(observer.total_calls+2u)/3u;
     observer.interval_calls=observer.total_calls?(observer.total_calls-1u)%3u:0;
@@ -198,6 +202,17 @@ static int observer_finish(void){
     const int recovery=fault && !strcmp(fault,"record");
     const unsigned expected_calls=recovery?5u:10u;
     int passed=!observer.failed && observer.total_calls==expected_calls && observer.generated==(recovery?0u:6u);
+    const char *algorithm=getenv("GFG_NATIVE_ALGO");
+    if(algorithm && !strcmp(algorithm,"gsf") && getenv("GFG_NATIVE_ASYNC") && !recovery) {
+        const char *rate=getenv("GFG_NATIVE_OUTPUT_HZ");double hz=rate?atof(rate):90.0,min_ms=1e9;
+        for(unsigned i=1;i<observer.total_calls && i<16;++i) {
+            double delta=(double)(observer.handoff_ns[i]-observer.handoff_ns[i-1])/1e6;
+            if(delta<min_ms)min_ms=delta;
+        }
+        int spaced=observer.total_calls==10 && min_ms>=750.0/hz;
+        if(!spaced)passed=0;
+        fprintf(stderr,"GPU WSI observer: configured_output_hz=%.3f host_handoff_min_ms=%.3f spacing=%s physical_scanout=unobserved\n",hz,min_ms,spaced?"PASS":"FAIL");
+    }
 #ifndef GFG_NATIVE_TEST_OBSERVE_LAYER
     gfg_gpu_fg_destroy(observer.fg);
 #endif

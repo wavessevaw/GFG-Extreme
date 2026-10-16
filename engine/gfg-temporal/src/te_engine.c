@@ -1405,7 +1405,8 @@ static void collect(te_context* ctx, te_slot* slot) {
             const uint32_t* g = (const uint32_t*)(rb + TE_GLOBALS_HEADER * i);
             for (int c = 0; c < 3; ++c) st->tiles[i][c] = g[c];
         }
-        if(ctx->lmc->shared_flow){st->scene_cut=((const uint32_t*)rb)[3];st->shared_flow_fallback=((const uint32_t*)rb)[4];}
+        if(ctx->lmc->shared_flow){st->scene_cut=((const uint32_t*)rb)[3];st->shared_flow_fallback=((const uint32_t*)rb)[4];
+            st->shared_flow_cut_bad_blocks=((const uint32_t*)rb)[5];}
         st->profiled = 0;
         ctx->have_last = 1;
         slot->generated = 0;

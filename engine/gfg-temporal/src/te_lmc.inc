@@ -935,9 +935,10 @@ static void lmc_record_output(te_context* ctx, te_slot* slot, const te_submit* s
     VkBufferCopy c1 = {0, (VkDeviceSize)TE_GLOBALS_HEADER * i, 4};
     vkCmdCopyBuffer(cb, m->layers.buf, slot->readback.buf, 1, &c1);
     if(m->shared_flow) {
-        VkBufferCopy state[2]={{m->compact_flow?0:88,(VkDeviceSize)TE_GLOBALS_HEADER*i+12,4},
-                              {96,(VkDeviceSize)TE_GLOBALS_HEADER*i+16,4}};
-        vkCmdCopyBuffer(cb,m->globals.buf,slot->readback.buf,2,state);
+        VkBufferCopy state[3]={{m->compact_flow?0:88,(VkDeviceSize)TE_GLOBALS_HEADER*i+12,4},
+                              {96,(VkDeviceSize)TE_GLOBALS_HEADER*i+16,4},
+                              {92,(VkDeviceSize)TE_GLOBALS_HEADER*i+20,4}};
+        vkCmdCopyBuffer(cb,m->globals.buf,slot->readback.buf,3,state);
     }
     VkBufferCopy c2 = {LMC_G_ORPHANS, (VkDeviceSize)TE_GLOBALS_HEADER * i + 4, 8};
     vkCmdCopyBuffer(cb, m->globals.buf, slot->readback.buf, 1, &c2);

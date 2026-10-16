@@ -70,6 +70,10 @@ void gfg_gpu_fg_destroy(gfg_gpu_fg *fg);
 void gfg_gpu_fg_stats(gfg_gpu_stats *out);
 /* Only called while no present job is executing. A NULL lock restores sync mode. */
 void gfg_gpu_fg_set_output_thread(gfg_gpu_fg *fg, pthread_mutex_t *wsi);
+/* Only the output worker enables this around its call; synchronous metadata
+ * fallback must never sleep on the application's Present thread. */
+void gfg_gpu_fg_set_output_pacing(gfg_gpu_fg *fg,int active);
+uint64_t gfg_gpu_fg_source_period_ns(gfg_gpu_fg *fg);
 void gfg_gpu_fg_restart_history(gfg_gpu_fg *fg); /* output thread only */
 int gfg_gpu_fg_waiting_image(gfg_gpu_fg *fg);
 #endif

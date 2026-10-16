@@ -94,6 +94,7 @@ typedef struct {
     double ready_ms[TE_MAX_OUTPUTS];     /* analysis start to each output ready, includes fit/queue gaps */
     int shared_flow;                    /* experimental pair-shared backend, not a fitted global model */
     int shared_flow_fallback;           /* current pair requested full projective model after confidence test */
+    uint32_t shared_flow_cut_bad_blocks; /* full-RGB compensated residual >0.15; dense GSF only */
     int model_gpu;                      /* LMC model/IRLS/palette execute on GPU, no fit worker */
     int lmc_tier;                        /* LMC: cost tier of the pair */
     double frame_ms[TE_MAX_OUTPUTS][TE_FRAME_COUNT];

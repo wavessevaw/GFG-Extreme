@@ -35,6 +35,7 @@ struct gfg_output {
     VkResult error;
     VkResult advisory;
     uint64_t completed_id, submitted, completed, stale, backpressure;
+    uint64_t stale_after_ns;
     gfg_gpu_fg *gpu;
     VkQueue queue;
     PFN_vkQueuePresentKHR present;
@@ -101,9 +102,11 @@ static void *output_main(void *arg) {
         pthread_mutex_unlock(&o->lock);
         /* Two real periods: preserve the real frame, but never synthesize a
          * stale pair into a growing output backlog. The mailbox cannot grow. */
-        const int stale = tick_ns() - j->queued_ns > 66666667ull;
+        const int stale = tick_ns() - j->queued_ns > o->stale_after_ns;
         if (stale) gfg_gpu_fg_restart_history(o->gpu);
+        gfg_gpu_fg_set_output_pacing(o->gpu,1);
         VkResult r = gfg_gpu_fg_present(o->gpu, o->queue, &j->pi, o->present, &o->ids);
+        gfg_gpu_fg_set_output_pacing(o->gpu,0);
         pthread_mutex_lock(&o->lock);
         if (r < 0 && o->error == VK_SUCCESS) o->error = r;
         if (r == VK_SUBOPTIMAL_KHR) o->advisory = r;
@@ -122,6 +125,7 @@ gfg_output *gfg_output_create(gfg_gpu_fg *gpu, VkQueue queue,
     gfg_output *o = calloc(1, sizeof(*o));
     if (!o) return NULL;
     o->gpu = gpu; o->queue = queue; o->present = present; o->wsi = wsi;
+    o->stale_after_ns=2*gfg_gpu_fg_source_period_ns(gpu);
     o->device=device; o->image_count=image_count;
     o->create_semaphore=(PFN_vkCreateSemaphore)gdpa(device,"vkCreateSemaphore");
     o->destroy_semaphore=(PFN_vkDestroySemaphore)gdpa(device,"vkDestroySemaphore");
@@ -146,7 +150,8 @@ gfg_output *gfg_output_create(gfg_gpu_fg *gpu, VkQueue queue,
         gfg_gpu_fg_set_output_thread(gpu, NULL);
         goto fail;
     }
-    fprintf(stderr, "[gfg-native] output-worker active queued_capacity=1 executing_capacity=1 stale_after_ms=66.667\n");
+    fprintf(stderr, "[gfg-native] output-worker active queued_capacity=1 executing_capacity=1 stale_after_ms=%.3f\n",
+        (double)o->stale_after_ns/1e6);
     return o;
 fail:
     if(o->gates) for(uint32_t i=0;i<image_count;++i)

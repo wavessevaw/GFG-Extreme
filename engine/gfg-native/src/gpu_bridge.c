@@ -45,6 +45,7 @@
  * (vkGetFenceStatus); a busy slot passes the real present through unmodified.
  */
 #include "gpu_bridge.h"
+#include "frame_clock.h"
 #include "present_chain.h"
 #include "te_engine.h"
 #include <stdatomic.h>
@@ -54,11 +55,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
 #include <unistd.h>
 
 #define RING_MAX 4
 #define TIMING_CAP 8192
-enum { DROP_RING, DROP_TE, DROP_HISTORY, DROP_ACQUIRE, DROP_BYPASS, DROP_ERROR, DROP_COUNT };
+enum { DROP_RING, DROP_TE, DROP_HISTORY, DROP_ACQUIRE, DROP_BYPASS, DROP_ERROR, DROP_DEADLINE, DROP_COUNT };
 
 #define FN(name) PFN_vk##name name
 #define DEVICE_FUNCS(X) \
@@ -177,14 +179,30 @@ struct gfg_gpu_fg {
     double *gpu_first_ms, *gpu_pair_ms;
     double gpu_stage_ms[TE_STAGE_COUNT], gpu_lmc_ms[TE_LMC_PROF_COUNT];
     uint64_t gpu_lmc_count[TE_LMC_PROF_COUNT];
+    gfg_frame_clock clock;
+    int pacing_active;
+    uint64_t pacing_waits, pacing_late;
+    int deadline_drop;
 };
 
 void gfg_gpu_fg_set_output_thread(gfg_gpu_fg *fg, pthread_mutex_t *wsi) { fg->output_wsi = wsi; }
+void gfg_gpu_fg_set_output_pacing(gfg_gpu_fg *fg,int active) { fg->pacing_active=active; }
+uint64_t gfg_gpu_fg_source_period_ns(gfg_gpu_fg *fg) {return fg->clock.period_ns?3*fg->clock.period_ns:33333333ull;}
 void gfg_gpu_fg_restart_history(gfg_gpu_fg *fg) { fg->te_gap = 1; }
 int gfg_gpu_fg_waiting_image(gfg_gpu_fg *fg) { return atomic_load(&fg->waiting_image); }
 
 static VkResult output_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKHR *pi,
-                               PFN_vkQueuePresentKHR next) {
+                               PFN_vkQueuePresentKHR next,unsigned kind) {
+    if(fg->pacing_active && fg->clock.period_ns) {
+        const uint64_t target=gfg_frame_clock_target(&fg->clock,kind);
+        struct timespec now;clock_gettime(CLOCK_MONOTONIC,&now);
+        const uint64_t ns=(uint64_t)now.tv_sec*1000000000ull+(uint64_t)now.tv_nsec;
+        if(ns<target) {
+            const struct timespec until={(time_t)(target/1000000000ull),(long)(target%1000000000ull)};
+            int rc;do{rc=clock_nanosleep(CLOCK_MONOTONIC,TIMER_ABSTIME,&until,NULL);}while(rc==EINTR);
+            ++fg->pacing_waits;
+        } else if(ns-target>fg->clock.period_ns/4)++fg->pacing_late;
+    }
     if (fg->output_wsi) pthread_mutex_lock(fg->output_wsi);
     VkResult r = next(queue, pi);
     if (fg->output_wsi) pthread_mutex_unlock(fg->output_wsi);
@@ -268,9 +286,11 @@ static void gpu_sample(gfg_gpu_fg *fg) {
         }
     if (fg->log && (i < 3 || i % 120 == 0))
         fprintf(stderr, "[gfg-native] gpu_pair sequence=%llu output1_ready_ms=%.3f"
-                " output2_ready_ms=%.3f model_gpu=%d model_ms=%.3f tier=%d\n",
+                " output2_ready_ms=%.3f model_gpu=%d model_ms=%.3f tier=%d"
+                " shared_flow=%d projective_fallback=%d cut=%u cut_bad_blocks=%u\n",
                 (unsigned long long)s.sequence, s.ready_ms[0], s.ready_ms[1],
-                s.model_gpu, s.lmc_ms[TE_LMC_FIT_WAIT], s.lmc_tier);
+                s.model_gpu, s.lmc_ms[TE_LMC_FIT_WAIT], s.lmc_tier,
+                s.shared_flow,s.shared_flow_fallback,s.scene_cut,s.shared_flow_cut_bad_blocks);
 }
 
 /* Every blocking wait goes through these so the counters prove the contract. */
@@ -865,7 +885,15 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     te_context_desc_default(&cd, fg->extent.width, fg->extent.height, 2);
     const char *algorithm = getenv("GFG_NATIVE_ALGO");
     cd.params.algorithm=algorithm && !strcmp(algorithm,"lmc-gpu")?TE_ALGO_LMC_GPU:
-        algorithm && !strcmp(algorithm,"lmc")?TE_ALGO_LMC:TE_ALGO_TILES;
+        algorithm && !strcmp(algorithm,"lmc")?TE_ALGO_LMC:
+        algorithm && !strcmp(algorithm,"gsf")?TE_ALGO_SHARED_FLOW:TE_ALGO_TILES;
+    cd.shared_flow_dense=cd.params.algorithm==TE_ALGO_SHARED_FLOW?4:0;
+    if(cd.params.algorithm==TE_ALGO_SHARED_FLOW)fg->clock.period_ns=1000000000ull/90;
+    const char *rate=getenv("GFG_NATIVE_OUTPUT_HZ");
+    if(rate && cd.params.algorithm==TE_ALGO_SHARED_FLOW) {
+        char *end=NULL;long hz=strtol(rate,&end,10);
+        if(end!=rate && !*end && hz>=1 && hz<=240)fg->clock.period_ns=1000000000ull/(uint64_t)hz;
+    }
     cd.export_fds = !fg->same_device;
     cd.application_timeline = fg->same_device ? fg->timeline : VK_NULL_HANDLE;
     cd.host_io = 0;
@@ -984,7 +1012,7 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
         fg->out_mode == OUT_COPY ? "copy" : fg->out_mode == OUT_BLIT ? "blit" : "blit+copy",
         fg->same_device ? "same-device" : "shared-timeline-fd", fg->image_count,
         (int)fg->present_mode, fg->ring_size,
-        cd.params.algorithm == TE_ALGO_LMC_GPU ? "lmc-gpu" : cd.params.algorithm == TE_ALGO_LMC ? "lmc" : "tiles", fg->verify,
+        cd.params.algorithm == TE_ALGO_SHARED_FLOW ? "gsf" : cd.params.algorithm == TE_ALGO_LMC_GPU ? "lmc-gpu" : cd.params.algorithm == TE_ALGO_LMC ? "lmc" : "tiles", fg->verify,
         (now_us() - t0) / 1000.0);
     return fg;
 fail:
@@ -999,12 +1027,18 @@ static int cmp_double(const void *a, const void *b) {
 }
 static void percentile(double *v, uint32_t n, double *median, double *p95) {
     qsort(v, n, sizeof(double), cmp_double);
-    *median = n ? v[n / 2] : 0.0;
-    *p95 = n ? v[(uint32_t)((n - 1) * 0.95)] : 0.0;
+    if(!n){*median=*p95=0;return;}
+    double mid=(double)(n-1)*.5,hi=(double)(n-1)*.95;
+    uint32_t a=(uint32_t)mid,b=(uint32_t)hi;
+    *median=v[a]+(v[a+(a+1<n)]-v[a])*(mid-a);
+    *p95=v[b]+(v[b+(b+1<n)]-v[b])*(hi-b);
 }
 
 void gfg_gpu_fg_destroy(gfg_gpu_fg *fg) {
     if (!fg) return;
+    if(fg->clock.period_ns)fprintf(stderr,"[gfg-native] output_clock hz=%.3f handoff_waits=%llu late_handoffs=%llu resyncs=%llu skipped_deadline=%llu physical_scanout=unverified\n",
+        1e9/(double)fg->clock.period_ns,(unsigned long long)fg->pacing_waits,(unsigned long long)fg->pacing_late,
+        (unsigned long long)fg->clock.resyncs,(unsigned long long)fg->drop_outputs[DROP_DEADLINE]);
     fg->in_present = 0;
     /* The stopped worker may have finished with a pass-through job. Its
      * private gate and downstream binary waits then have no transport-ring
@@ -1216,7 +1250,7 @@ static VkResult forward_real(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoK
         return VK_ERROR_OUT_OF_DATE_KHR;
     }
     const double t = now_us();
-    VkResult r = output_present(fg, queue, &real, next);
+    VkResult r = output_present(fg, queue, &real, next,2);
     if (next_us) *next_us += now_us() - t;
     return r;
 }
@@ -1228,10 +1262,24 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v, u
     uint32_t img = UINT32_MAX;
     double tp = now_us();
     VkResult r;
+    double target_us=fg->output_deadline_us;
+    if(fg->pacing_active && fg->clock.period_ns) {
+        const uint64_t target=gfg_frame_clock_target(&fg->clock,(unsigned)k);
+        uint64_t now=(uint64_t)(now_us()*1000.0),value=v+1+(uint64_t)k;
+        VkSemaphoreWaitInfo wait={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+            .semaphoreCount=1,.pSemaphores=&fg->timeline,.pValues=&value};
+        count_wait(fg);
+        r=fg->WaitSemaphores(fg->device,&wait,target>now?target-now:0);
+        if(r==VK_TIMEOUT || (r==VK_SUCCESS && (uint64_t)(now_us()*1000.0)>target)) {
+            fg->deadline_drop=1;return 0;
+        }
+        if(r!=VK_SUCCESS){fail_log(fg,"output readiness",r);return -1;}
+        target_us=(double)target/1000.0;
+    }
     /* WSI acquisition is polled with the host lock released between attempts.
      * Never block an app acquire while holding that same swapchain lock. Give
      * waiting output priority over a new app acquire; share one real-period budget. */
-    const double acquire_end = fg->output_wsi ? fg->output_deadline_us : now_us();
+    const double acquire_end = fg->output_wsi ? target_us : now_us();
     if (fg->output_wsi) atomic_store(&fg->waiting_image, 1);
     for (;;) {
         if (fg->output_wsi) pthread_mutex_lock(fg->output_wsi);
@@ -1245,7 +1293,11 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v, u
     if (fg->output_wsi) atomic_store(&fg->waiting_image, 0);
     fg->phase_us[2] += now_us() - tp;
     tp = now_us();
-    if (r == VK_NOT_READY || r == VK_TIMEOUT) { STAT_ADD(acquire_not_ready, 1); return 0; }
+    if (r == VK_NOT_READY || r == VK_TIMEOUT) {
+        if(fg->pacing_active && fg->clock.period_ns)fg->deadline_drop=1;
+        else STAT_ADD(acquire_not_ready, 1);
+        return 0;
+    }
     if ((r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) || img >= fg->image_count) {
         if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR) {
             /* impossible index: acquire semaphore is pending, never reuse it */
@@ -1328,7 +1380,7 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v, u
         .pNext = pi.pNext, .swapchainCount = 1, .pPresentModes = &fifo};
     if (dynamic_fifo) pi.pNext = &present_mode;
     const double t = now_us();
-    r = output_present(fg, fg->queue, &pi, next);
+    r = output_present(fg, fg->queue, &pi, next,(unsigned)k);
     *next_us += now_us() - t;
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) {
         fail_log(fg, "synthetic present", r);
@@ -1352,7 +1404,10 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
                             PFN_vkQueuePresentKHR next, const gfg_present_id_hooks *ids) {
     if (!fg || !app || !next) return VK_ERROR_INITIALIZATION_FAILED;
     const double t0 = now_us();
-    fg->output_deadline_us = t0 + 33333.333; /* one 30Hz real-frame period */
+    fg->deadline_drop=0;
+    if(fg->pacing_active && fg->clock.period_ns)
+        gfg_frame_clock_pair(&fg->clock,(uint64_t)(t0*1000.0));
+    fg->output_deadline_us = t0 + (double)gfg_gpu_fg_source_period_ns(fg)/1000.0;
     double next_us = 0.0;
     STAT_ADD(real_presents, 1);
     const uint64_t frame = fg->frame++;
@@ -1475,7 +1530,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
                 int g = present_synthetic(fg, rs, k, v, idx, next, ids, app_chain.dynamic_mode, &next_us);
                 if (g <= 0) {
                     if (g < 0) STAT_ADD(errors, 1);
-                    drop_reason = g < 0 ? DROP_ERROR : DROP_ACQUIRE;
+                    drop_reason = g < 0 ? DROP_ERROR : fg->deadline_drop?DROP_DEADLINE:DROP_ACQUIRE;
                     break;
                 }
                 ++presented;

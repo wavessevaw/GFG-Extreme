@@ -240,8 +240,9 @@ int main(int argc, char** argv) {
             fwrite(st8, 32, tiles, fstat);
         }
         if (json) {
-            fprintf(json,"{\"algorithm\":%u,\"shared_flow_variant\":%d,\"model_fallback\":%d,\"outputs\":%u,\"allocation_bytes\":%llu,\"cpu_submit_ms\":%.4f,\"cpu_total_ms\":%.4f,\"analysis_ms\":%.4f,",
-                params.algorithm,shared_dense,ps.shared_flow_fallback,ps.outputs,(unsigned long long)te_context_memory_bytes(ctx),submit_ms,cpu_total_ms,
+            fprintf(json,"{\"algorithm\":%u,\"shared_flow_variant\":%d,\"model_fallback\":%d,\"cut_bad_blocks\":%u,\"cut_total_blocks\":%u,\"outputs\":%u,\"allocation_bytes\":%llu,\"cpu_submit_ms\":%.4f,\"cpu_total_ms\":%.4f,\"analysis_ms\":%.4f,",
+                params.algorithm,shared_dense,ps.shared_flow_fallback,ps.shared_flow_cut_bad_blocks,
+                (unsigned)((W/8)*(H/8)),ps.outputs,(unsigned long long)te_context_memory_bytes(ctx),submit_ms,cpu_total_ms,
                 ps.stage_ms[0]+ps.stage_ms[1]+ps.stage_ms[2]);
             fprintf(json, "\"pair\": %llu, \"a\": %zu, \"b\": %zu, \"timed\": %d, \"profile\": %d, \"pyramid_ms\": %.4f, "
                           "\"analyze_ms\": %.4f, \"classify_ms\": %.4f, \"scene_cut\": %u, \"promoted\": %u, "
