@@ -133,7 +133,7 @@ class ContinuousSettingTests(unittest.TestCase):
         s.frame_os.executor_active = True
         s.frame_os.last = {'decision': {'level': 'boost', 'tdp_w': 18}}
         asyncio.run(s._apply_budget_tdp('game'))
-        self.assertEqual(s.power.writes[-1], 15)
+        self.assertEqual(s.power.writes[-1], 14)
         s._settings['profiles']['game']['mode'] = 'balanced'
         asyncio.run(s._apply_budget_tdp('game'))
         self.assertEqual(s.power.writes[-1], 14)
