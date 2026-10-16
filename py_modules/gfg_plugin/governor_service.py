@@ -4147,8 +4147,11 @@ class GovernorService:
         # Frame OS boost / rest offsets included (they bypassed the freeze before).
         if self._autopilot_arbiter.freeze_tdp and self._applied_tdp is not None:
             return True
-        # Frame OS (act mode) adds the watts of a funded boost / removes them in rest.
-        offset = self.frame_os.tdp_offset_w if self._mode(profile) == "autopilot" and self._profile_enabled(profile) else 0.0
+        # Frame OS Act must not fight the Governor's confirmed power budget.
+        # Per-second boost/rest offsets previously caused 11 <-> 15 W writes,
+        # invalidating each fresh telemetry window and inducing a control loop.
+        # Governor remains the sole TDP writer; Act may still tune its pacing.
+        offset = 0.0
         # Without an offset the controller's own value goes out as is (emergency watts included).
         target = budget.tdp if not offset else round(
             min(max(budget.normal_max_w, budget.tdp), max(budget.min_w, budget.tdp + offset)), 1)

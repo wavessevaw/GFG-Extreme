@@ -221,9 +221,12 @@ class TargetPolicy:
             # The lower goal must divide the panel's refresh: the Governor never changes the
             # refresh rate, and 60 FPS on a fixed 90 Hz panel holds frames for 1, 2, 1, 2 scanouts
             # (11 / 22 ms judder).  45 FPS holds every frame for exactly two.
+            # Auto must defend the requested display goal. A brief dip below 28
+            # real FPS is not consent to halve output from 90 to 45 FPS: the
+            # renderer may still deliver ~80-90 generated frames. Only the
+            # explicitly battery-oriented preference may request this tradeoff.
             want = (self.lower_goal(hz) if hz == 90 and struggling
-                    and ((preference == "battery") or (preference == "auto" and real < 28))
-                    else hz)
+                    and preference == "battery" else hz)
         else:
             # At a 60 FPS cap the measured output need not reach 90, even if
             # the game now has headroom. Trial an upgrade only after sustained
