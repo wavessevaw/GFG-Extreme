@@ -1439,6 +1439,15 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
         result = forward_real(fg, queue, app, NULL, next, NULL, &next_us);
         goto timing;
     }
+    if(fg->clock.period_ns && !fg->pacing_active) {
+        /* GSF's cut/deadline admission belongs to the output worker. A
+         * synchronous fallback must neither block the app nor count endpoint
+         * recovery as generated content. Preserve this real present. */
+        bypass_log(fg,4u,"gsf-requires-output-worker",app,id_mode);
+        fg->te_gap=1;if(frame)skip_outputs(fg,DROP_BYPASS,2);
+        result=forward_real(fg,queue,app,NULL,next,ids,&next_us);
+        goto timing;
+    }
     if (fg->disabled || queue != fg->queue || idx >= fg->image_count ||
         app->waitSemaphoreCount > 16) {
         const char *reason = fg->disabled ? "bridge-disabled" : queue != fg->queue ?
