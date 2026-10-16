@@ -22,4 +22,4 @@ Run the full Backend CI, Temporal Engine and Frame Fusion checks on this PR. Loc
 
 The historical source search and all requested causal detector classes are not complete. Point context is not a full scene fingerprint. Fast summaries are sliding; native loading remains heuristic. Universal per-action efficacy/rollback transactions remain future work. The plant models application and sensor delays rather than emulating SteamOS/Vulkan. Hardware QAM/clock restore, temperature and frame delivery still require device tests.
 
-Keep draft. Do not merge to main or publish a release as part of this task.
+The repository owner subsequently authorized merging the verified Governor fixes and publishing software release 2.1.3. That release authorization does not turn the incomplete full audit or missing hardware validation into completed work. Diagnostic input files and private audit exports remain excluded from the public release.
