@@ -56,8 +56,8 @@ class CausalProofTests(unittest.TestCase):
             status = r.tick(i / 10)
         self.assertFalse(status["proof_policy_acknowledged"])
         self.assertEqual(status["proof"]["response"]["session_n"], 0)
-        self.assertIsNone(status["benefit"]["provenance"]["response"]
-                          if "response" in status["benefit"].get("provenance", {}) else None)
+        self.assertEqual(status["benefit"]["provenance"]["response"], "model-or-telemetry")
+        self.assertFalse(status["benefit"]["measured"]["response"])
 
     def test_repeated_real_present_counter_cannot_prove_shaping_gain(self):
         r, c, _ = runner(StalePresentChannel())
