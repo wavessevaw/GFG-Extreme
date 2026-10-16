@@ -197,7 +197,7 @@ int main(int argc, char** argv) {
         snprintf(p, sizeof p, "%s/meta.json", analysis_dir);
         FILE* m = fopen(p, "w");
         if (m) {
-            fprintf(m, "{\"tiles_x\": %u, \"tiles_y\": %u, \"pairs\": %zu, \"outputs\": %zu}\n", tx, ty, pairs, step - 1);
+            fprintf(m, "{\"tiles_x\": %u, \"tiles_y\": %u, \"pairs\": %zu, \"outputs\": %u}\n", tx, ty, pairs, outputs);
             fclose(m);
         }
     }
