@@ -129,7 +129,7 @@ class HoldAndTargetTests(unittest.TestCase):
     def test_the_display_target_does_not_flap(self):
         policy = TargetPolicy()
         def observe(real, output, first, last, now):
-            return policy.update(90, real, output, "auto", True,
+            return policy.update(90, real, output, "battery", True,
                                  sample_seq=last, first_sample_seq=first, span_s=4, now=now)
         self.assertEqual(observe(45, 90, 1, 10, 0), 90)
         self.assertEqual(observe(20, 40, 11, 20, 10), 90)
