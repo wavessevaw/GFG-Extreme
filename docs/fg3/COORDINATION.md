@@ -1,4 +1,30 @@
 <!-- codex-fg3-coordination -->
+# GSF architecture decision and compute prototype — 2026-10-16
+
+The owner's latest synthesis directive supersedes the earlier instruction to
+stop independent FG design. Choose one architecture, build a minimum compute
+prototype, compare identical recorded/reference frames against GPU LMC, and
+revise failed simplifications before native integration. No release or merge.
+
+Decision: docs/fg3/ARCHITECTURE_DECISION_1_0.md.
+Protocol and limits: docs/fg3/SHARED_FLOW_PROTOTYPE.md.
+Code checkpoint: 75ca946, published on both integration/PR branches.
+
+Selected prototype: GFG Shared Flow, hierarchical bidirectional flow + one
+robust affine candidate + retained dominant-motion palette and dense visibility.
+Rejected compact reconstruction loses small moving details. Affine without
+palette passed small scenes but failed native 1280x800; restoring palette
+recovers quality in the initial native probe. Keep these negative results.
+
+GSF compute checks: 182 checks / 0 failures with fresh VVL. Includes exact static
+pixels, timeline/hold/discontinuity, pan/HUD and cut recovery. Expanded 1280x800
+comparisons are running: separate quality+validation and no-download timing,
+identical inputs/history, one-vs-two-output bit equality, motion/edge/HUD ROI.
+No physical Deck acceptance, scanout, power or input-latency result is asserted.
+No runtime/default selection changed; main remains untouched.
+
+## Previous checkpoint and reference evidence
+
 # P0 direction change acknowledged — 2026-10-16
 
 Authoritative latest directive:

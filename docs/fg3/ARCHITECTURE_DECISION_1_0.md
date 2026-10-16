@@ -1,8 +1,10 @@
 # GFG Frame Generator: Architecture Decision 1.0
 
 Дата: 16.10.2026. Решение: **GFG Shared Flow (GSF)** — иерархический
-двунаправленный optical flow с проверкой доверия, ограниченным локальным уточнением
-и двумя реконструкциями из общего анализа пары. LMC сохраняется как контрольная
+двунаправленный optical flow, один устойчивый affine-предиктор, палитра доминирующих
+движений и плотное локальное уточнение видимости. Две реконструкции используют общий
+анализ пары. Первоначальное компактное упрощение отклонено измерениями ниже.
+LMC сохраняется как контрольная
 реализация. Новый backend сначала существует только в вычислительном benchmark;
 нативная интеграция и публикация продукта не выполняются до экспериментальных gates.
 
@@ -48,7 +50,7 @@
 | B: дешёвый общий flow + сложные области | зависит от доли сложных блоков; нужен жёсткий предел | тот же lookahead | classifier может пропустить тонкий объект | RGB-only, явные confidence masks | Основа адаптивной стоимости |
 | C: coarse-to-fine flow | дешёвый coarse search, уточнение локально | тот же lookahead | aliasing, малые быстро движущиеся детали | хорошо сочетается с B | Основа движения |
 | D: история / предсказание | может сократить search, не гарантированно | экстраполяция уменьшает lookahead ценой ошибки | cuts, ускорение, newly visible content | история должна инвалидироваться на GPU | Только проверяемый predictor, не автономный генератор |
-| E: GSF = B+C + ограниченная D | ожидается меньше global/model/dense-field passes | один реальный интервал + compute/presentation margin | границы, неизвестная глубина, шум и ошибочная уверенность | reuse Vulkan infrastructure, новый compute backend | **Выбрано** |
+| E: GSF = B+C + ограниченная D | меньше global-model work; dense visibility и palette сохранены после ablation | один реальный интервал + compute/presentation margin | границы, неизвестная глубина, шум и ошибочная уверенность | reuse Vulkan infrastructure, новый compute backend | **Выбрано, с пересмотром по прототипам** |
 | Текущий GPU LMC | измеренная аппаратная выборка выше; solver/fields обязательны | lookahead + текущая очередь | global planes могут помогать камере; их цена не всегда оправдана | уже реализован, WSI ещё не принят | Контроль, не выбрасывается |
 
 Предыдущий LMC не объявляется ошибочным целиком. Ошибочны ожидания, что меньше
@@ -62,7 +64,9 @@ CPU work автоматически даст 90 scanouts; что planes/orphans 
 R[n-1], R[n] (GPU images)
   -> обновление luma/RGB pyramid только для нового R[n]
   -> coarse-to-fine B->A и A->B, predictor из предыдущей пары
-  -> residual / forward-backward agreement / ограниченное локальное уточнение
+  -> block confidence / HUD / cut votes
+  -> один robust affine predictor + до четырёх dominant-motion candidates
+  -> dense half-res field / residual mask / bounded orphan refinement
   -> общие flow + confidence + cut state
        -> visibility-aware reconstruction(t=1/3) -> G1
        -> visibility-aware reconstruction(t=2/3) -> G2
@@ -76,11 +80,16 @@ R[n-1], R[n] (GPU images)
 2. **Движение.** Пирамида до 1/16; block matching в обе стороны. Старые векторы —
    кандидаты, которые должны выиграть по текущей фотометрии. Нельзя доверять им
    без проверки или переносить через gap/cut/resize.
-3. **Адаптивное уточнение.** На block grid оценить residual и disagreement.
-   Для уверенных блоков оставить вектор; для остальных — ограниченное число
-   локальных/subpixel кандидатов. Нет обязательного глобального RANSAC/IRLS,
-   палитры и dense half-resolution field на каждой паре. Общий worst-case budget
-   должен быть конечным даже когда всё изображение сложное.
+3. **Общие motion candidates и уточнение.** Из уже найденных согласованных
+   текстурных блоков один workgroup из 64 lanes строит affine-предиктор:
+   три weighted least-squares итерации, Huber-подобный вес с порогом 2 px.
+   Это только кандидат: локальная фотометрия проверяет его наряду с соседними
+   векторами и до четырёх доминирующих движений из сохранённой LMC palette.
+   Нет обязательных 128 RANSAC hypotheses × три слоя × шесть IRLS итераций.
+   Плотный half-res field **сохраняется**: block-only вариант теряет thin detail.
+   Сохраняются residual mask, ограниченная orphan-очередь и уточнение field.
+   Кандидаты отсекаются по уже имеющимся нижним границам стоимости; orphan work
+   ограничен существующим cap. Новая compact confidence/reconstruction не выбрана.
 4. **Реконструкция.** Перенести координаты к t; проверить A/B trajectories,
    границы и agreement обратного flow. Уверенный участок обрабатывается дёшево;
    сложный — соседние motion hypotheses и односторонняя видимость. Не усреднять
@@ -104,11 +113,13 @@ allocation, benchmark NPY input/output, тестовые сцены, input hashe
 LMC, borrowed-device tests и сохранённый native transport как отдельный workstream.
 Coarse block search и history из LMC переиспользуются без переименования авторства.
 
-В новом compute backend заменяются обязательный global-model fit, palette,
-dense fields, orphan list search и half-res per-output SELECT на компактное
-pair confidence/refinement и собственную time-aware реконструкцию. Если качество
-падает, выяснять конкретную отсутствующую motion hypothesis; нельзя объявлять
-экономию победой и скрывать regression средним показателем.
+В выбранном compute backend заменяется обязательный multi-plane global-model fit
+одним ограниченным affine-предиктором. Palette, dense fields, orphan refinement и
+time-specific SELECT/COMPOSE сохраняются: эксперименты подтвердили их пользу.
+Это собственный вычислительный путь на базе GFG, а не переименование выигрыша от
+общего анализа: LMC уже делал общий анализ. Изменение выигрывает, только если
+сэкономленный fit не теряет полезных motion hypotheses. Memory allocations у
+выбранного варианта равны GPU LMC; экономия compact buffer layout ему не приписывается.
 
 Первый prototype может разделять descriptor ABI с LMC ради малого изменения.
 Неиспользуемые bindings получают маленькие валидные buffers/images; экономию
@@ -159,9 +170,10 @@ Promotion gates до native integration:
 - cuts/recovery и partial outputs не засчитываются как 3×;
 - при провале хотя бы одного gate новый backend не становится default.
 
-Architecture chosen; аппаратная эффективность, динамическое качество и итоговый
-паритет — открытые гипотезы. Результаты первого прототипа добавляются рядом с
-решением, включая отрицательные результаты и последующий пересмотр.
+Основная архитектура выбрана; её глобальная оптимальность не доказана.
+Аппаратная эффективность, динамическое качество на играх и итоговый паритет —
+открытые гипотезы. Исходники и отрицательные варианты сохранены для воспроизведения;
+в runtime/native default алгоритм не включён.
 
 ## Первый отрицательный результат — прототип 0.1
 
@@ -171,6 +183,25 @@ Architecture chosen; аппаратная эффективность, динам
 Визуализация показывает раздвоение малого движущегося объекта. Простого
 block-level confidence и соседних block vectors недостаточно вместо dense
 visibility refinement. Вариант отклонён для default/native integration.
-Следующий ablation сохраняет проверенные dense visibility/orphan этапы LMC,
-отдельно проверяя необходимость обязательного global-model fit. Итоговые
-решение и gates будут обновлены по сравнению всех сцен, не только этих двух.
+Следующие ablations сохранили dense visibility/orphan этапы и отдельно проверили
+необходимость global-model fit и motion palette.
+
+## Пересмотр после проверки 1280×800
+
+`shared-flow-dense` убирает fit и palette; `shared-flow-affine` добавляет один
+robust affine candidate. На коротких 384 px сценах второй вариант часто проходит
+gates, но на native 1280×800 strafe получает 30.244 dB против 31.914 у LMC.
+Разница −1.670 dB недопустима. У baseline здесь три полезных motion planes;
+ограничение RANSAC samples на расстояние 120 px делает маленький корпус
+нерепрезентативным для оценки global model. Отрицательный результат сохранён.
+
+`shared-flow-palette` (alias `gsf`) возвращает палитру, сохраняя один affine fit.
+На том же полном разрешении первый quality probe получает 32.093 dB:
+удаление palette оказалось существенной частью потери. Нельзя было приписывать
+всю регрессию отсутствию projective planes. Последующий сравнительный прогон
+разделяет quality/download и timing/no-download. Эти результаты ограничены
+входными сценами: ни superiority на всех играх, ни Deck 90 Hz не установлены.
+
+Результаты, протокол и воспроизведение: [SHARED_FLOW_PROTOTYPE.md](SHARED_FLOW_PROTOTYPE.md).
+Подтверждение сокращения cost требует измерения на RADV с игрой; software speedup
+не переносится в бюджет Deck. Gate 15% сохраняется, не понижается после эксперимента.
