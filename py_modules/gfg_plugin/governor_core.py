@@ -1928,7 +1928,9 @@ class BudgetController:
             ),
             "rejected": sorted(self.rejected),
             "reprobe_interval_s": self._probe_delay(),
-            "work_tdp_w": max((w for _, w in self.held), default=None),
+            "work_tdp_w": self._work_tdp(self._now),
+            "validation_pending": self._validation_pending,
+            "decision_seq": self.decision_seq,
             "recovering_to": (
                 {"point": self.points[self.recover[0]].key, "tdp_w": self.recover[1]} if self.recover else None
             ),

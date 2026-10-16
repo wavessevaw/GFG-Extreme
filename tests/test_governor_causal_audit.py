@@ -35,6 +35,10 @@ class CausalAuditTests(unittest.TestCase):
         c.idx=next(i for i,p in enumerate(c.points) if p.key=='45x2')
         c.tdp=c.draw_w=9;c._remember_held(2)
         self.assertEqual(c._work_tdp(3),9)
+        c._now=3
+        self.assertEqual(c.status()['work_tdp_w'],9,'diagnostics must match the actual context')
+        c._now=1000
+        self.assertIsNone(c.status()['work_tdp_w'],'expired evidence cannot remain live in status')
 
     def test_work_memory_has_a_cardinality_bound(self):
         c=controller();c.tdp=c.draw_w=10
