@@ -149,9 +149,18 @@ class SplitMemoryTests(unittest.TestCase):
         self.assertFalse(m.start_session())
 
     def test_damaged_record_loads(self):
-        m = ps.SplitMemory({"level": "x", "pairs": [1.0, float("nan"), "y"], "off": None, "sessions": None})
+        m = ps.SplitMemory({"schema": ps.SPLIT_MEMORY_SCHEMA,
+                            "level": "x", "pairs": [1.0, float("nan"), "y"],
+                            "off": None, "sessions": None})
         self.assertEqual((m.level, m.pairs, m.sessions), (0, [1.0], 0))
         self.assertEqual(ps.SplitMemory(json.loads(json.dumps(m.to_record()))).pairs, [1.0])
+
+    def test_old_session_memory_cannot_disable_corrected_split(self):
+        stale = ps.SplitMemory({"level": 4, "pairs": [-5.0] * 20,
+                                "pair_sessions": 4, "sessions": 100, "off": 100})
+        self.assertEqual((stale.level, stale.pairs, stale.sessions, stale.off), (0, [], 0, None))
+        self.assertFalse(stale.start_session())
+        self.assertEqual(stale.to_record()["schema"], ps.SPLIT_MEMORY_SCHEMA)
 
 
 class CpuFreqActuatorTests(unittest.TestCase):
