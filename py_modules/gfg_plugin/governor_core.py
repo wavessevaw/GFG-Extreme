@@ -848,7 +848,10 @@ def window_verdict(summary: Dict[str, Any], point: OperatingPoint) -> WindowVerd
         point.multiplier > 1.0 and reference < base * 0.60
         and float(output_median) < reference * 1.25
     )
-    stall = reference < base * STALL_REAL_RATIO or no_generation_during_collapse
+    # Active generated delivery is evidence of gameplay even below half the
+    # real cap. Calling 12->36 FPS a loading stall blocks ordinary recovery for
+    # two minutes at precisely the time a resumed heavy scene needs watts.
+    stall = (point.multiplier <= 1.0 and reference < base * STALL_REAL_RATIO) or no_generation_during_collapse
     flags = {"short": short, "stall": stall}
     if hard > 0:
         return WindowVerdict(False, severe, "hard-pressure", **flags)
@@ -918,6 +921,7 @@ class BudgetController:
     FAST_GAP_S = 3.0             # at most one fast raise per this many seconds
     FAST_STEP_W = 2.0
     WORK_MEMORY_S = 900.0        # how long a level the game needed is remembered
+    MAX_WORK_POINTS = 128
     # Draw this close to the cap: the cap is what limits.  The Deck's draw
     # sensor swings about 1 W around a binding cap (field log: 5.1-6.2 W
     # at a 6 W cap while the game crawled at 13 real).
@@ -1017,6 +1021,9 @@ class BudgetController:
         self.starved_checks = 0
         self.fast_at: Optional[float] = None
         self.held: list[tuple[float, float]] = []   # (time, tdp) of levels that held
+        self._held_context: Dict[tuple[float, float], str] = {}
+        self._validation_pending = False
+        self.decision_seq = 0
         self.last_reason = "budget-start"
         self.not_power_bound_holds = 0
         self.warm_started = False
@@ -1195,6 +1202,7 @@ class BudgetController:
             self.tdp = round(float(tdp), 1)
         if (self.idx, self.tdp) != self.prev:
             self.settled_since = None
+            self.decision_seq += 1
         self.good = self.bad = 0
         self.last_reason = reason
         return "move"
@@ -1229,6 +1237,7 @@ class BudgetController:
     def _binding(self, draw_w: Optional[float]) -> bool:
         return (
             self.tdp is not None and isinstance(draw_w, (int, float))
+            and not isinstance(draw_w, bool) and math.isfinite(float(draw_w)) and draw_w >= 0
             and float(draw_w) >= self.tdp - self.DRAW_BINDING_MARGIN_W
         )
 
@@ -1236,10 +1245,16 @@ class BudgetController:
         # Only a level the game actually used: a cap far above the draw says
         # nothing about what the game needs.
         if self.tdp_control and self.tdp is not None and self._binding(self.draw_w):
-            self.held = [(t, w) for t, w in self.held if now - t < self.WORK_MEMORY_S]
-            self.held.append((now, float(self.tdp)))
+            key = self.point.key
+            self.held = [(t, w) for t, w in self.held if 0 <= now-t < self.WORK_MEMORY_S
+                         and not (self._held_context.get((t,w)) == key and abs(w-self.tdp) < .05)]
+            entry = (now, float(self.tdp))
+            self.held.append(entry)
+            self.held = self.held[-self.MAX_WORK_POINTS:]
+            self._held_context = {e:self._held_context[e] for e in self.held if e in self._held_context}
+            self._held_context[entry] = key
 
-    def _work_tdp(self, now: float) -> Optional[float]:
+    def _work_tdp(self, now: float, *, idx: Optional[int] = None) -> Optional[float]:
         """Highest recently proven workload TDP, not the latest economy setting.
 
         The held list records healthy operating points at a binding cap. During
@@ -1248,8 +1263,19 @@ class BudgetController:
         proven level within the bounded memory horizon so a heavier scene can
         recover watts before changing the frame-generation target.
         """
-        recent = [float(w) for t, w in self.held if now - t < self.WORK_MEMORY_S]
+        key = self.points[self.idx if idx is None else idx].key
+        # Legacy in-memory pairs remain readable; production writes always
+        # attach the full cadence/resolution key. A controller is session-local.
+        recent = [float(w) for t, w in self.held if 0 <= now-t < self.WORK_MEMORY_S
+                  and self._held_context.get((t,w), key) == key]
         return max(recent) if recent else None
+
+    def recovery_tdp(self, now: float, *, idx: Optional[int] = None) -> Optional[float]:
+        """Reachable recovery evidence, never an unlimited historical ceiling."""
+        work = self._work_tdp(now, idx=idx)
+        if work is None or not self.tdp_control or self.cap_ignored:
+            return None
+        return min(max(self.min_w, work), self.normal_max_w)
 
     def fast_check(self, now: float, real_median: Optional[float], draw_w: Optional[float]) -> str:
         """Called every loop iteration with the last few seconds of real FPS.
@@ -1260,7 +1286,7 @@ class BudgetController:
         first.  Up to the ideal budget only; above it the slow path decides.
         """
         self._now = now
-        if not (self.tdp_control and self.tdp is not None and not self.cap_ignored):
+        if not (self.tdp_control and self.tdp is not None and not self.cap_ignored) or self.thermal == "hot":
             self.starved_checks = 0
             return "hold"
         if not isinstance(real_median, (int, float)) or not math.isfinite(float(real_median)):
@@ -1282,9 +1308,9 @@ class BudgetController:
             return "hold"
         if self.fast_at is not None and now - self.fast_at < self.FAST_GAP_S:
             return "hold"
-        return self._fast_raise(now)
+        return self._fast_raise(now, severe=float(real_median) < base * SEVERE_REAL_RATIO)
 
-    def _fast_raise(self, now: float) -> str:
+    def _fast_raise(self, now: float, *, severe: bool = True) -> str:
         if self.probe in ("down", "economy") and self.last_good is not None:
             # The lower level did not hold. Restore the last known-good point,
             # and recover previously proven workload watts. A down-search must
@@ -1295,7 +1321,7 @@ class BudgetController:
                 self.rejected[self.point.key] = now
                 self._note_failure(self.point, now)
             idx, last_good_tdp = self.last_good
-            remembered_tdp = self._work_tdp(now)
+            remembered_tdp = self.recovery_tdp(now, idx=idx) if severe else None
             target_tdp = max(float(last_good_tdp or 0.0), float(remembered_tdp or 0.0))
             # Fast recovery restores proven normal workload watts, but never
             # bypasses the controller's normal ceiling or device/user cap.
@@ -1314,9 +1340,11 @@ class BudgetController:
                     self.reprobe_interval = min(self.reprobe_interval * 2.0, self.REPROBE_MAX_S)
             self._lock(now, "economy-recovery:restore-known-good")
             self.good = 0
+            self.settled_since = None
+            self._validation_pending = True
             self.fast_at, self.starved_checks = now, 0
             return "move"
-        remembered_tdp = self._work_tdp(now)
+        remembered_tdp = self.recovery_tdp(now)
         ceiling = min(max(self.ideal_max_w, float(remembered_tdp or 0.0)), self.normal_max_w)
         if self.tdp >= ceiling - 1e-6:
             return "hold"
@@ -1324,9 +1352,11 @@ class BudgetController:
         target = min(target, ceiling)
         self.probe = None
         self._move("fast-raise:starved", tdp=target)
-        self.last_good = (self.idx, self.tdp)   # a later failed probe never reverts below this
+        # This is a request for more power, not healthy evidence at that level.
+        # Keep the proven rollback point until fresh windows validate the move.
         self.phase = "locked"
-        self.locked_since = self.settled_since = now
+        self.locked_since, self.settled_since = now, None
+        self._validation_pending = True
         self.short_since = self.stall_since = self.stall_step_at = None
         self.fast_at, self.starved_checks = now, 0
         return "move"
@@ -1427,6 +1457,12 @@ class BudgetController:
         self.good += 1
         self.request_failures = 0
         if self.phase == "locked":
+            if self._validation_pending and self.good < self.HEALTHY_WINDOWS:
+                return "hold"
+            if self.good >= self.HEALTHY_WINDOWS:
+                self._validation_pending = False
+                self.last_good = (self.idx, self.tdp)
+                self._remember_held(now)
             if self.settled_since is None:
                 self.settled_since = now
             if getattr(self, "hold_probes", False):
@@ -1611,12 +1647,18 @@ class BudgetController:
             elif self.probe == "down":
                 self._note_floor_failure(now)
             idx, tdp = self.last_good
+            old_good_tdp = tdp
+            restore_work = self.probe in ("down", "economy")
+            if restore_work and verdict.severe and verdict.short and not verdict.stall and tdp is not None:
+                tdp = min(self.normal_max_w, max(tdp, self.recovery_tdp(now, idx=idx) or tdp))
             from_phase = self.phase
             self.probe = None
             self._move(f"probe-failed:{verdict.reason}", idx=idx, tdp=tdp)
             if from_phase == "search_down":
                 self.phase = "upgrade"
-                self.good = self.HEALTHY_WINDOWS - 1  # the restored level already held
+                # The exact rollback point already held; a higher remembered
+                # recovery level needs the full fresh validation window count.
+                self.good = (self.HEALTHY_WINDOWS - 1 if tdp == old_good_tdp else 0)
             else:
                 if from_phase == "probe":
                     if self.recover is not None:
@@ -1624,6 +1666,10 @@ class BudgetController:
                     else:
                         self.reprobe_interval = min(self.reprobe_interval * 2.0, self.REPROBE_MAX_S)
                 self._lock(now, f"probe-failed:{verdict.reason}")
+                if restore_work:
+                    self.good = 0
+                    self.settled_since = None
+                    self._validation_pending = True
             return "move"
         if verdict.stall:
             # Loading screen / transition: hold, in any phase, until it has lasted
@@ -1882,7 +1928,9 @@ class BudgetController:
             ),
             "rejected": sorted(self.rejected),
             "reprobe_interval_s": self._probe_delay(),
-            "work_tdp_w": max((w for _, w in self.held), default=None),
+            "work_tdp_w": self._work_tdp(self._now),
+            "validation_pending": self._validation_pending,
+            "decision_seq": self.decision_seq,
             "recovering_to": (
                 {"point": self.points[self.recover[0]].key, "tdp_w": self.recover[1]} if self.recover else None
             ),

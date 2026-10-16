@@ -157,7 +157,7 @@ Go to **Settings → Diagnostics → Check setup** to check the renderer, launch
 
 ## Status and limitations
 
-**Stable software release: 2.1.2.** Candidate 2.1.3 is being validated; its CI and Steam Deck hardware results will be reported separately. This **does not** imply Steam Deck LCD/OLED hardware validation of dynamic GPU Clock or Half Rate Shading. Generated-frame acquisition timeouts and Frame OS Act gains need independent device testing. Allow Tearing is not automatically controlled.
+**Software release: 2.1.3.** Governor recovery, causal-memory and target-coordination fixes are covered by automated regression tests. CI, Temporal Engine and Frame Fusion software checks pass; physical Steam Deck validation remains outstanding. This **does not** imply Steam Deck LCD/OLED hardware validation of dynamic GPU Clock or Half Rate Shading. Generated-frame acquisition timeouts and Frame OS Act gains need independent device testing. Allow Tearing is not automatically controlled.
 
 Measured output cadence is not the same as optical frame delivery. The 60/90 target transition on OLED, visual quality with VRS and physical restore behavior must be checked in games before performance or battery claims.
 
@@ -195,6 +195,6 @@ With Continuous Boost off, Short Boost requests a **500 ms pulse on right-stick 
 
 **Continuous Boost** is an optional Autopilot switch, off by default. It holds the higher real-frame cadence without the 1.5-second pulse limit and can use more power. Menus, heat, ineffective delivery and power-search guards still pause it.
 
-The built-in profile is shown as **stable** in Profiles. Its existing persisted identifier is retained so saved profiles and Steam launch commands continue to work. Users of the 2.1.3 test builds (Temporal Engine, GFG Shell, Native FG) should install the stable 2.1.3 ZIP explicitly.
+The built-in profile is shown as **stable** in Profiles. Its existing persisted identifier is retained so saved profiles and Steam launch commands continue to work. Users of the 2.1.2 test builds (Temporal Engine, GFG Shell, Native FG) should install the stable 2.1.3 ZIP explicitly.
 
 <div align="center"><img src="docs/img/card-profile.png" alt="Profiles with the built-in stable profile" width="390"></div>

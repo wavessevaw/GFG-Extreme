@@ -1912,6 +1912,15 @@ class GovernorService:
             return
         self._last_event_key = key
         payload = {"ts": time.time(), "event": event, "reason": reason, **fields}
+        if event in ("budget-step", "tdp-set", "tdp-write-failed"):
+            budget = self._budget
+            payload.update({
+                "decision_id": f"budget-{id(budget):x}-{getattr(budget, 'decision_seq', 0)}",
+                "evaluation_after_sample_seq": self._evaluation_after_seq,
+                "work_tdp_w": (budget.recovery_tdp(self._clock())
+                               if callable(getattr(budget, "recovery_tdp", None)) else None),
+                "validation_pending": getattr(budget, "_validation_pending", False),
+            })
         try:
             self.events_path.parent.mkdir(parents=True, exist_ok=True)
             with self.events_path.open("a", encoding="utf-8") as handle:
@@ -3290,7 +3299,7 @@ class GovernorService:
             # If active generation resumes below that level and the current cap
             # is binding, recover watts first; do not reinterpret the temporary
             # starvation as proof that a 90 Hz panel should target 45 FPS.
-            work_tdp = budget._work_tdp(self._clock()) if budget.tdp_control else None
+            work_tdp = budget.recovery_tdp(self._clock())
             power_recovery = bool(
                 not loading_transition and budget.tdp_control and budget.tdp is not None
                 and work_tdp is not None and float(work_tdp) >= float(budget.tdp) + 0.5
@@ -3302,7 +3311,16 @@ class GovernorService:
             self._status["autopilot_target_hold_reason"] = "loading-transition"
         elif power_recovery:
             self._status["autopilot_target_hold_reason"] = "known-good-tdp-recovery"
-            return int(display_target)
+            # Misses collected before restoring our own cap cannot decide the
+            # post-recovery goal. Consume this window and start a fresh run.
+            self._autopilot_targets.update(
+                display_target, None, None, self._autopilot_preference(profile), False, now=self._clock())
+            self._autopilot_targets.last_seq = max(
+                self._autopilot_targets.last_seq, int(summary.get("last_sample_seq") or 0))
+            # If 45 is already the deliberate policy goal, restoring its watts
+            # is not a 90 FPS capacity trial. Keep both state machines on the
+            # same goal; TargetPolicy owns the bounded upward retry.
+            return min(int(display_target), int(self._autopilot_targets.target or display_target))
         else:
             self._status.pop("autopilot_target_hold_reason", None)
         chosen = int(self._autopilot_targets.update(
@@ -4139,12 +4157,20 @@ class GovernorService:
         result = await asyncio.to_thread(self.power.set_tdp_w, target)
         if not result.get("success"):
             self._status.update({"state": "PAUSED", "reason": "tdp-write-failed"})
+            self._event("tdp-write-failed", budget.last_reason, requested_w=target,
+                        decision_result="unconfirmed", profile=profile)
             return False
+        previous_applied = self._applied_tdp
         self._applied_tdp = target
         self._mark_autopilot_transition()
         self._evaluation_after_seq = self.observer.sample_seq
         self._tdp_set_seq = self.observer.sample_seq
+        self._draw_samples = []
+        budget.draw_w = None  # a previous cap's draw cannot prove this cap binds
         self._event("tdp-set", budget.last_reason, watts=target, profile=profile,
+                    previous_applied_w=previous_applied, requested_w=target,
+                    applied_w=target, application_basis="actuator-success-not-performance-proof",
+                    decision_result="awaiting-fresh-performance-evidence",
                     **({"frame_os_offset_w": target - budget.tdp} if target != budget.tdp else {}))
         return True
 
