@@ -1049,7 +1049,7 @@ static VkResult forward_real(VkQueue queue, const VkPresentInfoKHR *app, const V
 /* acquire + copy + present one synthetic output; 1 presented, 0 skipped, -1 error */
 static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v, uint32_t real_index,
                              PFN_vkQueuePresentKHR next, const gfg_present_id_hooks *ids,
-                             double *next_us) {
+                             int dynamic_fifo, double *next_us) {
     uint32_t img = UINT32_MAX;
     double tp = now_us();
     VkResult r = fg->AcquireNextImageKHR(fg->device, fg->swapchain, 0, rs->acquire_sem[k],
@@ -1122,6 +1122,13 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v, u
             pi.pNext = &pid.v1;
         }
     }
+    /* A prior dynamic override can persist on the swapchain. Select FIFO for
+     * each generated call too; never borrow the application's fence or ID. */
+    const VkPresentModeKHR fifo = VK_PRESENT_MODE_FIFO_KHR;
+    const VkSwapchainPresentModeInfoEXT present_mode = {
+        .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODE_INFO_EXT,
+        .pNext = pi.pNext, .swapchainCount = 1, .pPresentModes = &fifo};
+    if (dynamic_fifo) pi.pNext = &present_mode;
     const double t = now_us();
     r = next(fg->queue, &pi);
     *next_us += now_us() - t;
@@ -1248,7 +1255,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
         if (!generate) STAT_ADD(holds, 1);
         if (generate) {
             for (int k = 0; k < 2; ++k) {
-                int g = present_synthetic(fg, rs, k, v, idx, next, ids, &next_us);
+                int g = present_synthetic(fg, rs, k, v, idx, next, ids, app_chain.dynamic_mode, &next_us);
                 if (g <= 0) {
                     if (g < 0) STAT_ADD(errors, 1);
                     break;
