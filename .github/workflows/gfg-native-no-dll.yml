@@ -109,9 +109,10 @@ jobs:
               manifest = json.loads(archive.read("GFG-Native-FG/MANIFEST.json"))
           commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
           if manifest["source_commit"] != commit or manifest["source_worktree_dirty"] is not False:
+              status = subprocess.check_output(["git", "status", "--short", "--untracked-files=all"], text=True).strip().replace("\n", " | ")
               print("::error title=Package provenance mismatch::"
                     f"source_commit={manifest['source_commit']} expected={commit} "
-                    f"source_worktree_dirty={manifest['source_worktree_dirty']}")
+                    f"source_worktree_dirty={manifest['source_worktree_dirty']} status={status}")
               raise SystemExit(1)
           print(f"Package provenance: clean source_commit={commit}")
           PY
