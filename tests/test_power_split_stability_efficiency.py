@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "py_modules")]
 
 from gfg_plugin import power_split as ps
+from gfg_plugin.governor_core import BudgetController, WindowVerdict
 from test_power_split import LADDER, run, sample
 from test_governor_runtime import RuntimeBase
 
@@ -156,6 +157,36 @@ class SplitMemoryQuality(unittest.TestCase):
         s.pairs = [{"gain": 8.0, "khz": LADDER[1]} for _ in range(4)]
         m.record(s)
         self.assertEqual(m.level, 0)
+
+
+class InterleavedGovernorResourceArbitration(unittest.TestCase):
+    def test_cpu_probe_prevents_optional_tdp_reprobe_but_not_forever(self):
+        c = BudgetController(target_output_fps=90, now=0,
+                             min_tdp_w=6, max_tdp_w=15)
+        c.phase = "locked"
+        c.locked_since = 0
+        c.settled_since = 10
+        c.good = c.HEALTHY_WINDOWS
+        c.reprobe_interval = c.REPROBE_S
+        c.hold_cpu_split = True
+        before = (c.idx, c.tdp, c.phase)
+        self.assertEqual(c.observe(1000, WindowVerdict(True, False, "holds"),
+                                   c.point.base_target_fps, 90), "hold")
+        self.assertEqual((c.idx, c.tdp, c.phase), before)
+        c.hold_cpu_split = False
+        self.assertEqual(c.observe(1020, WindowVerdict(True, False, "holds"),
+                                   c.point.base_target_fps, 90), "move")
+        self.assertNotEqual((c.idx, c.tdp, c.phase), before)
+
+    def test_active_cpu_split_does_not_disable_emergency_guard(self):
+        c = BudgetController(target_output_fps=90, now=0,
+                             min_tdp_w=6, max_tdp_w=15)
+        c.phase = "locked"
+        c.hold_cpu_split = True
+        verdict = WindowVerdict(False, True, "real-below-cap", short=True)
+        c.observe(100, verdict, 20, 60)
+        self.assertNotEqual(c.last_reason, "cpu-split-hold",
+                            "a CPU proof window must not mask unhealthy frames")
 
 
 class GovernorPowerSplitActuation(RuntimeBase):
