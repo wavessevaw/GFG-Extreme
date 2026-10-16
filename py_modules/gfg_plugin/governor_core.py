@@ -1303,16 +1303,17 @@ class BudgetController:
             from_phase = self.phase
             self.probe = None
             self._move("economy-recovery:restore-known-good", idx=idx, tdp=target_tdp)
-            if from_phase == "search_down":
-                self.phase = "upgrade"
-                self.good = self.HEALTHY_WINDOWS - 1
-            else:
-                if from_phase == "probe":
-                    if self.recover is not None:
-                        self.recover_interval = min(self.recover_interval * 2.0, self.RECOVER_MAX_S)
-                    else:
-                        self.reprobe_interval = min(self.reprobe_interval * 2.0, self.REPROBE_MAX_S)
-                self._lock(now, "economy-recovery:restore-known-good")
+            # The recovered workload TDP may be higher than last_good, so do not
+            # count the old healthy windows as proof that this new level holds.
+            # Lock at the restored point and let fresh windows validate it before
+            # any multiplier or economy probe can run again.
+            if from_phase == "probe":
+                if self.recover is not None:
+                    self.recover_interval = min(self.recover_interval * 2.0, self.RECOVER_MAX_S)
+                else:
+                    self.reprobe_interval = min(self.reprobe_interval * 2.0, self.REPROBE_MAX_S)
+            self._lock(now, "economy-recovery:restore-known-good")
+            self.good = 0
             self.fast_at, self.starved_checks = now, 0
             return "move"
         remembered_tdp = self._work_tdp(now)
