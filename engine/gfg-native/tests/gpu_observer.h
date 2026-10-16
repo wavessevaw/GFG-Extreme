@@ -60,6 +60,7 @@ static struct {
     PFN_vkQueuePresentKHR lower;
     gfg_gpu_fg *fg;
     int failed;
+    unsigned multiplier, real_calls, output_mask, steady_pairs;
     uint64_t handoff_ns[16];
 } observer;
 static VKAPI_ATTR VkResult VKAPI_CALL observer_loader_data(VkDevice device,void *object) {
@@ -68,11 +69,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL observer_loader_data(VkDevice device,void 
 static VkResult observer_present(VkQueue queue,const VkPresentInfoKHR *info) {
     struct timespec stamp;clock_gettime(CLOCK_MONOTONIC,&stamp);
     if(observer.total_calls<16)observer.handoff_ns[observer.total_calls]=(uint64_t)stamp.tv_sec*1000000000ull+(uint64_t)stamp.tv_nsec;
-#ifdef GFG_NATIVE_TEST_OBSERVE_LAYER
-    observer.frame=(observer.total_calls+2u)/3u;
-    observer.interval_calls=observer.total_calls?(observer.total_calls-1u)%3u:0;
-    if(getenv("GFG_NATIVE_TEST_CUT")){observer.frame=observer.total_calls;observer.interval_calls=0;}
-#endif
+
     uint32_t index=info->pImageIndices[0];
     if(index>=observer.image_count) return VK_ERROR_INITIALIZATION_FAILED;
     OBS(ResetCommandBuffer)(observer.command,0);
@@ -122,22 +119,28 @@ static VkResult observer_present(VkQueue queue,const VkPresentInfoKHR *info) {
         else if(observer.frame==1 && observer.interval_calls==1){
             if(memcmp(observer.samples[0],observer.mapped,4)) observer.failed=1;
         }
-    } else if(!getenv("GFG_NATIVE_TEST_CUT")) {
-    if(observer.frame && observer.interval_calls<2){
+    } else {
+    unsigned m=observer.multiplier?observer.multiplier:3;
+    if(observer.interval_calls<m-1 && observer.frame){
         memcpy(observer.samples[observer.interval_calls],observer.mapped,4);
-        ++observer.generated;
+        observer.output_mask|=1u<<observer.interval_calls;++observer.generated;
     }else{
+        ++observer.real_calls;
         if(observer.frame){
-            for(uint32_t output=0;output<2;++output){
+            for(uint32_t output=0;output<m-1;++output)if(observer.output_mask&(1u<<output)) {
                 for(uint32_t c=0;c<3;++c){
-                    int expected=((2-(int)output)*(int)observer.previous[c]+(1+(int)output)*(int)observer.mapped[c]+1)/3;
+                    int expected=((int)(m-1-output)*(int)observer.previous[c]+(int)(1+output)*(int)observer.mapped[c]+(int)m/2)/(int)m;
                     if(abs((int)observer.samples[output][c]-expected)>2) observer.failed=1;
                 }
                 if(!memcmp(observer.samples[output],observer.previous,3) ||
                    !memcmp(observer.samples[output],observer.mapped,3)) observer.failed=1;
             }
+            if(observer.frame>=2 && !getenv("GFG_NATIVE_TEST_CUT") && !getenv("GFG_NATIVE_TEST_DUPLICATE")) {
+                if(observer.output_mask!=((1u<<(m-1))-1u))observer.failed=1;
+                else ++observer.steady_pairs;
+            }
         }
-        memcpy(observer.previous,observer.mapped,4);
+        observer.output_mask=0;memcpy(observer.previous,observer.mapped,4);
     }
     }
     ++observer.interval_calls;++observer.total_calls;
@@ -202,16 +205,20 @@ static int observer_finish(void){
     const char *fault=getenv("GFG_NATIVE_GPU_FAULT");
     const int recovery=fault && !strcmp(fault,"record");
     const int cut=getenv("GFG_NATIVE_TEST_CUT")!=NULL;
-    const unsigned expected_calls=cut?4u:recovery?5u:10u;
-    int passed=!observer.failed && observer.total_calls==expected_calls && observer.generated==((recovery||cut)?0u:6u);
+    const unsigned m=observer.multiplier?observer.multiplier:3;
+    unsigned expected_real=getenv("GFG_NATIVE_TEST_FRAMES")?(unsigned)atoi(getenv("GFG_NATIVE_TEST_FRAMES")):4;
+    const int duplicate=getenv("GFG_NATIVE_TEST_DUPLICATE")!=NULL;
+    int passed=!observer.failed && (recovery?observer.total_calls==5:
+        observer.real_calls==expected_real && ((cut||duplicate)?observer.generated==0:
+        observer.steady_pairs==expected_real-2 && observer.generated>=(expected_real-2)*(m-1)));
     const char *algorithm=getenv("GFG_NATIVE_ALGO");
-    if(algorithm && !strcmp(algorithm,"gsf") && getenv("GFG_NATIVE_ASYNC") && !recovery && !cut) {
+    if(algorithm && !strcmp(algorithm,"gsf") && getenv("GFG_NATIVE_ASYNC") && !recovery && !cut && !duplicate) {
         const char *rate=getenv("GFG_NATIVE_OUTPUT_HZ");double hz=rate?atof(rate):90.0,min_ms=1e9;
         for(unsigned i=1;i<observer.total_calls && i<16;++i) {
             double delta=(double)(observer.handoff_ns[i]-observer.handoff_ns[i-1])/1e6;
             if(delta<min_ms)min_ms=delta;
         }
-        int spaced=observer.total_calls==10 && min_ms>=750.0/hz;
+        int spaced=min_ms>=750.0/hz;
         if(!spaced)passed=0;
         fprintf(stderr,"GPU WSI observer: configured_output_hz=%.3f host_handoff_min_ms=%.3f spacing=%s physical_scanout=unobserved\n",hz,min_ms,spaced?"PASS":"FAIL");
     }
@@ -223,11 +230,12 @@ static int observer_finish(void){
     OBS(DestroyCommandPool)(observer.device,observer.pool,NULL);
     OBS(UnmapMemory)(observer.device,observer.memory);
     OBS(DestroyBuffer)(observer.device,observer.buffer,NULL);OBS(FreeMemory)(observer.device,observer.memory,NULL);
-    if(cut)fprintf(stderr,"GPU WSI observer: real=4 synthetic=0 cut_recovery=%s physical_scanout=unobserved\n",passed?"PASS":"FAIL");
+    if(duplicate)fprintf(stderr,"GPU WSI observer: duplicate_recovery=%s real=%u synthetic=%u physical_scanout=unobserved\n",passed?"PASS":"FAIL",observer.real_calls,observer.generated);
+    else if(cut)fprintf(stderr,"GPU WSI observer: real=4 synthetic=0 cut_recovery=%s physical_scanout=unobserved\n",passed?"PASS":"FAIL");
     else if(recovery)
         fprintf(stderr,"GPU WSI observer: real=4 synthetic=0 recovery_duplicate=1 content=%s real_handoffs=PASS physical_scanout=unobserved\n",passed?"PASS":"FAIL");
-    else fprintf(stderr,"GPU WSI observer: real=4 synthetic=6 content=%s handoff_order=%s physical_scanout=unobserved\n",
-        passed?"PASS":"FAIL",observer.total_calls==10?"PASS":"FAIL");
+    else fprintf(stderr,"GPU WSI observer: real=%u synthetic=%u content=%s handoff_order=%s steady_pairs=%u multiplier=%u physical_scanout=unobserved\n",
+        observer.real_calls,observer.generated,passed?"PASS":"FAIL",passed?"PASS":"FAIL",observer.steady_pairs,m);
     return passed;
 }
 

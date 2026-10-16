@@ -22,7 +22,7 @@ typedef struct output_job {
     uint64_t id;
     VkPresentTimeGOOGLE time;
     VkPresentTimingInfoEXT timing;
-    uint64_t queued_ns;
+    uint64_t queued_ns, admitted_ns, serial;
 } output_job;
 
 struct gfg_output {
@@ -102,8 +102,10 @@ static void *output_main(void *arg) {
         pthread_mutex_unlock(&o->lock);
         /* Two real periods: preserve the real frame, but never synthesize a
          * stale pair into a growing output backlog. The mailbox cannot grow. */
+        o->stale_after_ns=2*gfg_gpu_fg_source_period_ns(o->gpu);
         const int stale = tick_ns() - j->queued_ns > o->stale_after_ns;
         if (stale) gfg_gpu_fg_restart_history(o->gpu);
+        gfg_gpu_fg_set_source(o->gpu,j->queued_ns,j->admitted_ns,j->serial);
         gfg_gpu_fg_set_output_pacing(o->gpu,1);
         VkResult r = gfg_gpu_fg_present(o->gpu, o->queue, &j->pi, o->present, &o->ids);
         gfg_gpu_fg_set_output_pacing(o->gpu,0);
@@ -160,10 +162,11 @@ fail:
     pthread_cond_destroy(&o->changed);pthread_mutex_destroy(&o->lock);free(o);return NULL;
 }
 
-VkResult gfg_output_submit(gfg_output *o, const VkPresentInfoKHR *app, int *handled) {
+VkResult gfg_output_submit(gfg_output *o, const VkPresentInfoKHR *app, uint64_t source_ns, int *handled) {
     *handled = 0;
     output_job *j = copy_job(app, o->ids.mode);
     if (!j) return VK_SUCCESS; /* caller drains and forwards synchronously */
+    if(source_ns)j->queued_ns=source_ns;
     if(j->image>=o->image_count){free(j);return VK_SUCCESS;}
     pthread_mutex_lock(&o->lock);
     if (o->pending) ++o->backpressure;
@@ -185,7 +188,8 @@ VkResult gfg_output_submit(gfg_output *o, const VkPresentInfoKHR *app, int *hand
         r=o->submit(o->queue,1,&consume,VK_NULL_HANDLE);
         if(r==VK_SUCCESS){
             j->waits[0]=o->gates[j->image];j->pi.waitSemaphoreCount=1;
-            j->queued_ns=tick_ns(); /* queue age starts after mailbox backpressure */
+            j->admitted_ns=tick_ns(); /* capture time must survive mailbox backpressure */
+            j->serial=o->submitted+1;
             o->image_pending[j->image]=1;
             o->pending = j; ++o->submitted; pthread_cond_broadcast(&o->changed); r = o->advisory;
         } else {o->error=r;free(j);}

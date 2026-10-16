@@ -96,7 +96,9 @@ integration; актуальные Governor power/cap loops не нуждаютс
 Color WSI observer использует uniform clears, а textured warp проверен отдельно
 в borrowed-device test. Нельзя утверждать на этой основе качество движения в игре,
 прозрачностей, частиц, переменного FPS, refresh change или аппаратные 30→90.
-Clock9Hz/source3Hz предназначен для functional fixture; не performance proof.
+В snapshot clock9Hz задавался явно, но test app отправлял source каждые33мс;
+описание «source3Hz» в старом отчёте не подтверждено. Этот дефект fixture
+исправляется явным sourceHz и запретом catch-up burst. Не performance proof.
 
 ## Решение по обнаруженным разрывам
 

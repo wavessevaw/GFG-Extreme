@@ -714,9 +714,10 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
         lmc_fill(cb, &m->globals, LMC_G_OHIST, LMC_G_OCLEAR, 0);           /* orphan selection */
         lmc_transfer_barrier(cb);
     }
+    if(m->shared_flow){lmc_fill(cb,&m->globals,100,4,0);lmc_transfer_barrier(cb);}
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->layout, 0, 1, &m->set0[par], 0, NULL);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_PREP]);
-    lmc_push_c(ctx, cb, 0.0f, 0, 0, 0, generate ? 0 : 1);
+    lmc_push_c(ctx, cb, 0.0f, 0, 0, 0, (generate?0:1)|(m->shared_flow?2:0));
     vkCmdDispatch(cb, groups(W, 8), groups(H, 8), 1);
     compute_barrier(cb);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_DOWN]);
@@ -935,10 +936,11 @@ static void lmc_record_output(te_context* ctx, te_slot* slot, const te_submit* s
     VkBufferCopy c1 = {0, (VkDeviceSize)TE_GLOBALS_HEADER * i, 4};
     vkCmdCopyBuffer(cb, m->layers.buf, slot->readback.buf, 1, &c1);
     if(m->shared_flow) {
-        VkBufferCopy state[3]={{m->compact_flow?0:88,(VkDeviceSize)TE_GLOBALS_HEADER*i+12,4},
+        VkBufferCopy state[4]={{m->compact_flow?0:88,(VkDeviceSize)TE_GLOBALS_HEADER*i+12,4},
                               {96,(VkDeviceSize)TE_GLOBALS_HEADER*i+16,4},
-                              {92,(VkDeviceSize)TE_GLOBALS_HEADER*i+20,4}};
-        vkCmdCopyBuffer(cb,m->globals.buf,slot->readback.buf,3,state);
+                              {92,(VkDeviceSize)TE_GLOBALS_HEADER*i+20,4},
+                              {100,(VkDeviceSize)TE_GLOBALS_HEADER*i+24,4}};
+        vkCmdCopyBuffer(cb,m->globals.buf,slot->readback.buf,4,state);
     }
     VkBufferCopy c2 = {LMC_G_ORPHANS, (VkDeviceSize)TE_GLOBALS_HEADER * i + 4, 8};
     vkCmdCopyBuffer(cb, m->globals.buf, slot->readback.buf, 1, &c2);

@@ -105,6 +105,7 @@ typedef struct native_device {
     pthread_mutex_t queue_lock; /* every host access to an app/worker queue */
     native_instance *instance;
     int gpu_capable;  /* external memory fd + timeline enabled by this layer */
+    int display_timing; /* 0 absent, 1 app namespace, 2 layer-owned GOOGLE timing */
     int semaphore_fd; /* VK_KHR_external_semaphore_fd enabled */
     int present_caps; /* NATIVE_PRESENT_* enabled (by the app or, for tracing, by us) */
     int present_trace;
@@ -235,6 +236,7 @@ typedef struct {
     VkPhysicalDevicePresentIdFeaturesKHR present_id;
     VkPhysicalDevicePresentWaitFeaturesKHR present_wait;
     int active;
+    int display_timing; /* 0 absent, 1 app namespace, 2 layer-owned GOOGLE timing */
     int semaphore_fd;
     int present_caps; /* NATIVE_PRESENT_* enabled on the created device */
     int app_present_ids; /* the application owns its ID/wait/timing namespace */
@@ -312,6 +314,7 @@ static const char *native_patch_device(native_instance *inst, VkPhysicalDevice p
     if (enumerate(phys, NULL, &n, ext) != VK_SUCCESS) { free(ext); return "extension-query"; }
     const int mem_fd = native_has_extension(ext, n, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
     const int sem_fd = native_has_extension(ext, n, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
+    const int has_timing=native_has_extension(ext,n,VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME);
     const int has_pid = native_has_extension(ext, n, VK_KHR_PRESENT_ID_EXTENSION_NAME);
     const int has_pwait = native_has_extension(ext, n, VK_KHR_PRESENT_WAIT_EXTENSION_NAME);
     free(ext);
@@ -355,7 +358,7 @@ static const char *native_patch_device(native_instance *inst, VkPhysicalDevice p
             add_pwait = !(p->present_caps & NATIVE_PRESENT_WAIT);
         }
     }
-    p->extensions = calloc(ci->enabledExtensionCount + 4u, sizeof(char *));
+    p->extensions = calloc(ci->enabledExtensionCount + 5u, sizeof(char *));
     if (!p->extensions) return "oom";
     uint32_t count = 0;
     for (uint32_t i = 0; i < ci->enabledExtensionCount; ++i)
@@ -371,6 +374,11 @@ static const char *native_patch_device(native_instance *inst, VkPhysicalDevice p
         p->extensions[count++] = VK_KHR_PRESENT_ID_EXTENSION_NAME;
     if (add_pwait && !native_requested_extension(ci, VK_KHR_PRESENT_WAIT_EXTENSION_NAME))
         p->extensions[count++] = VK_KHR_PRESENT_WAIT_EXTENSION_NAME;
+    if(native_requested_extension(ci,VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME))p->display_timing=1;
+    else if(has_timing) {
+        p->extensions[count++]=VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME;
+        p->display_timing=2;
+    }
     p->ci.enabledExtensionCount = count;
     p->ci.ppEnabledExtensionNames = p->extensions;
     /* timelineSemaphore: an app Vulkan12Features struct forbids also
@@ -436,6 +444,7 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
                                                    phys, ci, &patch);
     VkResult result = next(phys, patch.active ? &patch.ci : ci, alloc, out);
     const int gpu_capable = patch.active && result == VK_SUCCESS;
+    const int display_timing=gpu_capable?patch.display_timing:0;
     const int semaphore_fd = gpu_capable && patch.semaphore_fd;
     const int present_caps = gpu_capable ? patch.present_caps : 0;
     const int app_present_ids = gpu_capable && patch.app_present_ids;
@@ -473,6 +482,7 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     d->gpu_capable = gpu_capable;
     d->set_loader_data = set_loader_data;
     d->semaphore_fd = semaphore_fd;
+    d->display_timing=display_timing;
     d->present_caps = present_caps;
     d->present_trace = native_env_is_1("GFG_NATIVE_PRESENT_TRACE");
     d->app_present_ids = app_present_ids;
@@ -762,6 +772,10 @@ static VkResult native_locked_present(VkQueue queue, const VkPresentInfoKHR *inf
 #ifdef GFG_NATIVE_TEST_OBSERVE_LAYER
 #include "../tests/gpu_observer.h"
 static int test_observer_active;
+void gfg_test_observer_kind(unsigned kind,uint64_t frame,unsigned multiplier) {
+    observer.frame=(uint32_t)frame;observer.interval_calls=kind==2?multiplier-1:kind;
+    observer.multiplier=multiplier;
+}
 #endif
 static VkResult native_serialized_present(VkQueue queue, const VkPresentInfoKHR *info) {
 #ifdef GFG_NATIVE_TEST_OBSERVE_LAYER
@@ -1295,6 +1309,11 @@ native_AcquireNextImage2KHR(VkDevice device, const VkAcquireNextImageInfoKHR *in
 
 static VKAPI_ATTR VkResult VKAPI_CALL
 native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
+    struct timespec source_time;clock_gettime(CLOCK_MONOTONIC,&source_time);
+    const uint64_t source_ns=(uint64_t)source_time.tv_sec*1000000000ull+(uint64_t)source_time.tv_nsec;
+#ifndef GFG_NATIVE_WITH_TE
+    (void)source_ns;
+#endif
     native_device *d = find_device(dispatch_key(queue));
     if (!d || !d->present) return VK_ERROR_INITIALIZATION_FAILED;
     /* Record only the game's acquired indices. The async path consumes its
@@ -1346,7 +1365,7 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
                         .gdpa = d->async_output ? native_worker_gdpa : d->gdpa,
                         .swapchain = sc->handle, .extent = sc->extent, .format = sc->format,
                         .present_mode = sc->present_mode, .force_fifo=sc->force_fifo, .queue = queue,
-                        .family = q->family, .semaphore_fd = d->semaphore_fd,
+                        .family = q->family, .semaphore_fd = d->semaphore_fd, .display_timing=d->display_timing,
                         .set_loader_data = d->set_loader_data};
                     sc->gpu = gfg_gpu_fg_create(&gi);
                     if (sc->gpu) {
@@ -1427,7 +1446,7 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
      * zero-timeout polls share this lock to satisfy Vulkan's host sync rule. */
     int queued = 0;
     if (output) {
-        result = gfg_output_submit(output,info,&queued);
+        result = gfg_output_submit(output,info,source_ns,&queued);
         if (queued) path = "gpu-async";
         else gfg_output_drain(output,0,UINT64_MAX,NULL);
     } else if (d->async_output) native_drain_device(d); /* multi-swapchain / fallback order */

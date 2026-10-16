@@ -150,6 +150,7 @@ struct te_context {
     int have_last;
     VkDeviceSize memory_bytes; /* device memory this context allocated (internal and imported) */
     uint64_t submits;          /* submissions so far */
+    uint64_t output_ready[TE_MAX_OUTPUTS];
     uint64_t outputs_completed;/* outputs whose GPU work finished */
 };
 
@@ -1406,7 +1407,7 @@ static void collect(te_context* ctx, te_slot* slot) {
             for (int c = 0; c < 3; ++c) st->tiles[i][c] = g[c];
         }
         if(ctx->lmc->shared_flow){st->scene_cut=((const uint32_t*)rb)[3];st->shared_flow_fallback=((const uint32_t*)rb)[4];
-            st->shared_flow_cut_bad_blocks=((const uint32_t*)rb)[5];}
+            st->shared_flow_cut_bad_blocks=((const uint32_t*)rb)[5];st->source_duplicate=((const uint32_t*)rb)[6]==0;}
         st->profiled = 0;
         ctx->have_last = 1;
         slot->generated = 0;
@@ -1578,6 +1579,7 @@ VkResult te_submit_frame(te_context* ctx, const te_submit* s) {
         sr = queue_submit(ctx->dev, n, si, slot->fence);
         if (sr != VK_SUCCESS) return fail(sr, "vkQueueSubmit failed (%d)", sr);
     }
+    for(uint32_t i=0;i<TE_MAX_OUTPUTS;++i)ctx->output_ready[i]=i<outs?s->signal_first+i:0;
     slot->in_flight = 1;
     slot->outputs = outs;
     slot->generated = outs > 0;
@@ -1698,6 +1700,24 @@ VkImage te_output_image(te_context* ctx, uint32_t output) {
 void te_device_timestamp_info(const te_device* dev, uint32_t* valid_bits, float* period_ns) {
     if(valid_bits) *valid_bits=dev->ts_bits;
     if(period_ns) *period_ns=dev->props.limits.timestampPeriod;
+}
+
+VkResult te_output_control(te_context* ctx,uint32_t output,uint64_t ready_value,
+                         uint32_t* scene_cut,int* held,int* duplicate) {
+    if(!ctx || !ctx->lmc || !ctx->lmc->shared_flow || !ctx->timeline ||
+       output>=TE_MAX_OUTPUTS || !ready_value || ctx->output_ready[output]!=ready_value)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    select_device(ctx->dev);
+    uint64_t reached=0;
+    VkResult r=vkGetSemaphoreCounterValue(ctx->dev->device,ctx->timeline,&reached);
+    if(r!=VK_SUCCESS)return r;
+    if(reached<ready_value)return VK_NOT_READY;
+    te_slot* slot=&ctx->ring[(ctx->ring_next+TE_RING-1)%TE_RING];
+    const uint32_t* header=(const uint32_t*)((const uint8_t*)slot->readback.map+TE_GLOBALS_HEADER*output);
+    if(scene_cut)*scene_cut=header[3];
+    if(held)*held=slot->held;
+    if(duplicate)*duplicate=header[6]==0;
+    return VK_SUCCESS;
 }
 
 VkResult te_last_stats(te_context* ctx, te_pair_stats* stats) {

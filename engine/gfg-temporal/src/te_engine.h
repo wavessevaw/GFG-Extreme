@@ -95,6 +95,7 @@ typedef struct {
     int shared_flow;                    /* experimental pair-shared backend, not a fitted global model */
     int shared_flow_fallback;           /* current pair requested full projective model after confidence test */
     uint32_t shared_flow_cut_bad_blocks; /* full-RGB compensated residual >0.15; dense GSF only */
+    int source_duplicate;                 /* exact full-resolution RGB equality, GSF only */
     int model_gpu;                      /* LMC model/IRLS/palette execute on GPU, no fit worker */
     int lmc_tier;                        /* LMC: cost tier of the pair */
     double frame_ms[TE_MAX_OUTPUTS][TE_FRAME_COUNT];
@@ -168,6 +169,11 @@ VkResult te_timeline_wait(te_context* ctx, uint64_t value, uint64_t timeout_ns);
  * startup to verify imported shared-FD payload ordering before WSI presents. */
 VkResult te_timeline_fd_probe(te_context* ctx, uint64_t wait_value, uint64_t signal_value);
 uint32_t te_context_outputs(const te_context* ctx);
+/* Read the small coherent control header for one completed output of the
+ * latest submission. ready_value must match that submission's timeline value;
+ * this never waits for output 2, reads pixels, or collects incomplete queries. */
+VkResult te_output_control(te_context* ctx,uint32_t output,uint64_t ready_value,
+                         uint32_t* scene_cut,int* held,int* duplicate);
 VkResult te_last_stats(te_context* ctx, te_pair_stats* stats);
 VkResult te_download_rgb(te_context* ctx, uint32_t output, uint8_t* rgb);
 

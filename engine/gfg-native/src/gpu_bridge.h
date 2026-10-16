@@ -24,6 +24,7 @@ typedef struct {
     int force_fifo;
     VkQueue queue;                    /* the app's present queue */
     uint32_t family;
+    int display_timing;               /* GOOGLE extension enabled: 1 app namespace, 2 private */
     int semaphore_fd;                 /* VK_KHR_external_semaphore_fd enabled on the app device */
     PFN_vkSetDeviceLoaderData set_loader_data; /* dispatch for layer-allocated command buffers */
 } gfg_gpu_fg_create_info;
@@ -73,6 +74,8 @@ void gfg_gpu_fg_set_output_thread(gfg_gpu_fg *fg, pthread_mutex_t *wsi);
 /* Only the output worker enables this around its call; synchronous metadata
  * fallback must never sleep on the application's Present thread. */
 void gfg_gpu_fg_set_output_pacing(gfg_gpu_fg *fg,int active);
+/* Output worker only; timestamps were captured before mailbox backpressure. */
+void gfg_gpu_fg_set_source(gfg_gpu_fg *fg,uint64_t captured_ns,uint64_t admitted_ns,uint64_t serial);
 uint64_t gfg_gpu_fg_source_period_ns(gfg_gpu_fg *fg);
 void gfg_gpu_fg_restart_history(gfg_gpu_fg *fg); /* output thread only */
 int gfg_gpu_fg_waiting_image(gfg_gpu_fg *fg);

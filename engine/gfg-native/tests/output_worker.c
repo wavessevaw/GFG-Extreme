@@ -33,6 +33,10 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL dispatch(VkDevice device,const c
     return NULL;
 }
 void gfg_gpu_fg_set_output_thread(gfg_gpu_fg *fg, pthread_mutex_t *wsi) { (void)fg; (void)wsi; }
+static uint64_t observed_source,observed_admission,observed_serial;
+void gfg_gpu_fg_set_source(gfg_gpu_fg *fg,uint64_t capture,uint64_t admission,uint64_t serial) {
+    (void)fg;observed_source=capture;observed_admission=admission;observed_serial=serial;
+}
 void gfg_gpu_fg_set_output_pacing(gfg_gpu_fg *fg,int active) { (void)fg;(void)active; }
 uint64_t gfg_gpu_fg_source_period_ns(gfg_gpu_fg *fg) {(void)fg;return 33333333ull;}
 void gfg_gpu_fg_restart_history(gfg_gpu_fg *fg) { (void)fg; ++history_restarts; }
@@ -100,14 +104,14 @@ int main(void) {
     gfg_output_acquired(out,3,(VkSemaphore)(uintptr_t)7);
     p->pi.pNext=&p->id; p->id.pNext=NULL;
     int handled=0;
-    assert(gfg_output_submit(out,&p->pi,&handled)==VK_SUCCESS && handled && p->result==VK_SUCCESS);
+    assert(gfg_output_submit(out,&p->pi,0,&handled)==VK_SUCCESS && handled && p->result==VK_SUCCESS);
     assert(app_wait_submits==1); /* already consumed even while backend is paused */
     assert(!gfg_output_sem_reusable(out,(VkSemaphore)(uintptr_t)7));
     pthread_mutex_lock(&backend_lock);
     while(!entered) pthread_cond_wait(&backend_changed,&backend_lock);
     assert(observed_image==3); pthread_mutex_unlock(&backend_lock);
     p->index=4; p->present_id=43;
-    assert(gfg_output_submit(out,&p->pi,&handled)==VK_SUCCESS && handled);
+    assert(gfg_output_submit(out,&p->pi,0,&handled)==VK_SUCCESS && handled);
     assert(app_wait_submits==2);
     /* Caller storage is now invalid. Both the executing and pending job must
      * retain scalar arrays, ID, semaphore handles and no pResults pointer. */
@@ -123,6 +127,7 @@ int main(void) {
     assert(gfg_output_drain(out,0,1000000000,&remaining)==VK_SUCCESS);
     assert(out->completed==2 && out->completed_id==43 && observed_image==4);
     assert(out->stale==1 && history_restarts==1);
+    assert(observed_serial==2 && observed_source<observed_admission && observed_admission>0);
     assert(gfg_output_sem_reusable(out,(VkSemaphore)(uintptr_t)7));
     gfg_output_destroy(out);
 
@@ -130,9 +135,9 @@ int main(void) {
     backend_result=VK_ERROR_DEVICE_LOST;
     out=gfg_output_create((gfg_gpu_fg *)(uintptr_t)1,VK_NULL_HANDLE,NULL,NULL,&wsi,
                           VK_NULL_HANDLE,dispatch,5,NULL); assert(out);
-    assert(gfg_output_submit(out,&p->pi,&handled)==VK_SUCCESS && handled);
+    assert(gfg_output_submit(out,&p->pi,0,&handled)==VK_SUCCESS && handled);
     assert(gfg_output_drain(out,0,1000000000,NULL)==VK_ERROR_DEVICE_LOST);
-    assert(gfg_output_submit(out,&p->pi,&handled)==VK_ERROR_DEVICE_LOST && handled);
+    assert(gfg_output_submit(out,&p->pi,0,&handled)==VK_ERROR_DEVICE_LOST && handled);
     assert(p->result==VK_ERROR_DEVICE_LOST);
     assert(gfg_output_status(out)==VK_ERROR_DEVICE_LOST && app_wait_submits==3);
     gfg_output_destroy(out); pthread_mutex_destroy(&wsi); munmap(p,4096);

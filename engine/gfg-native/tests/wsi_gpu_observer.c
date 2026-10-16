@@ -214,6 +214,11 @@ int main(void) {
     VkFenceCreateInfo render_fci={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,.flags=VK_FENCE_CREATE_SIGNALED_BIT};
     VkFence render_fence;TRY(vkCreateFence(device,&render_fci,NULL,&render_fence));
     struct timespec deadline;clock_gettime(CLOCK_MONOTONIC,&deadline);
+    const char *hz_env=getenv("GFG_NATIVE_TEST_SOURCE_HZ");
+    unsigned source_hz=hz_env?(unsigned)strtoul(hz_env,NULL,10):30;
+    REQUIRE(source_hz>=1 && source_hz<=240);
+    const long source_period=1000000000l/source_hz;
+    fprintf(stderr,"test source cadence_hz=%u clock=CLOCK_MONOTONIC catchup=disabled\n",source_hz);
     const char *count_env=getenv("GFG_NATIVE_TEST_FRAMES");
     uint32_t frame_count=count_env?(uint32_t)strtoul(count_env,NULL,10):300;
     REQUIRE(frame_count>0 && frame_count<=100000);
@@ -244,6 +249,7 @@ int main(void) {
         vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
             VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&pre);
         VkClearColorValue clear={.float32={0.20f+0.05f*(frame%4),0.2f,0.80f-0.05f*(frame%4),1}};
+        if(getenv("GFG_NATIVE_TEST_DUPLICATE"))clear=(VkClearColorValue){.float32={0.25f,0.2f,0.75f,1}};
         if(getenv("GFG_NATIVE_TEST_CUT")) {
             float value=frame%2?.9f:.1f;
             clear=(VkClearColorValue){.float32={value,value,value,1}};
@@ -286,7 +292,8 @@ int main(void) {
         else TRY(present_gdpa(queue,&pi));
 #endif
 #ifdef GFG_NATIVE_TEST_ASYNC
-        deadline.tv_nsec+=33333333;
+        clock_gettime(CLOCK_MONOTONIC,&deadline);
+        deadline.tv_nsec+=source_period;
         if(deadline.tv_nsec>=1000000000){++deadline.tv_sec;deadline.tv_nsec-=1000000000;}
         clock_nanosleep(CLOCK_MONOTONIC,TIMER_ABSTIME,&deadline,NULL);
 #else

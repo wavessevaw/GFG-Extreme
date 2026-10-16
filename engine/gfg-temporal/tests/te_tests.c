@@ -755,6 +755,7 @@ static void test_shared_cut(te_device* dev) {
     }
     EXPECT(run_pair(ctx,0,b,2,ts),"GSF post-cut static pair");
     te_last_stats(ctx,&st);EXPECT(!st.scene_cut,"GSF cut state does not stick");
+    EXPECT(st.source_duplicate,"GSF exact repeated RGB pair is a duplicate, never unique synthesis");
     for(uint32_t i=0;i<2;++i){te_download_rgb(ctx,i,o);EXPECT(memcmp(o,b,W*H*3)==0,"GSF post-cut pixels exact");}
     free(a);free(b);free(o);te_context_destroy(ctx);
 }
