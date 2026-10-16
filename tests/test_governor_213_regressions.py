@@ -63,6 +63,38 @@ class KnownGoodTdpRecoveryTests(unittest.TestCase):
         self.assertGreaterEqual(budget.tdp, 10.0)
         self.assertLessEqual(budget.tdp, budget.ideal_max_w)
 
+    def test_work_tdp_remembers_highest_proven_point_not_latest_economy_step(self):
+        budget = BudgetController(
+            target_output_fps=90, now=100.0, min_tdp_w=3.0, max_tdp_w=15.0,
+        )
+        budget.held = [(99.0, 10.0), (100.0, 9.0), (101.0, 7.0)]
+        self.assertEqual(budget._work_tdp(102.0), 10.0)
+
+    def test_fast_recovery_restores_known_good_point_above_ideal_budget(self):
+        budget = BudgetController(
+            target_output_fps=90, now=100.0, min_tdp_w=3.0, max_tdp_w=15.0,
+        )
+        budget.tdp = 6.0
+        budget.draw_w = 6.2
+        budget.held = [(99.0, 13.0), (100.0, 8.0), (101.0, 7.0)]
+        self.assertEqual(budget.fast_check(101.0, 15.0, 6.2), "hold")
+        self.assertEqual(budget.fast_check(102.0, 15.0, 6.2), "move")
+        self.assertEqual(budget.tdp, 13.0)
+
+    def test_failed_economy_probe_restores_work_tdp_not_only_previous_one_watt_step(self):
+        budget = BudgetController(
+            target_output_fps=90, now=100.0, min_tdp_w=3.0, max_tdp_w=15.0,
+        )
+        budget.tdp = 6.0
+        budget.draw_w = 6.2
+        budget.held = [(99.0, 10.0), (100.0, 9.0), (101.0, 7.0)]
+        budget.probe = "down"
+        budget.last_good = (budget.idx, 7.0)
+        budget.phase = "search_down"
+        self.assertEqual(budget._fast_raise(102.0), "move")
+        self.assertEqual(budget.tdp, 10.0)
+        self.assertIn("known-good", budget.last_reason)
+
     def test_autopilot_keeps_90_goal_while_known_good_tdp_recovery_is_possible(self):
         svc = GovernorService.__new__(GovernorService)
         svc._mode = lambda _profile: "autopilot"
