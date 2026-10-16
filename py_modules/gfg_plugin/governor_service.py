@@ -1,4 +1,4 @@
-"""Live orchestration service for GFG Governor (GFG Extreme 2.1.2).
+"""Live orchestration service for GFG Governor (GFG Extreme 2.1.3).
 
 Observe -> prove -> choose -> apply (runtime overlay) -> confirm -> optimise
 power -> lock -> intervene only on fresh evidence.
@@ -77,7 +77,7 @@ from .governor_confirmation import (  # noqa: F401  (Request and the operation s
     APPLIED_OPERATIONS, EARLY_DELIVERED_SPAN_SECONDS, FAILED_OPERATIONS, Request, evaluate_confirmation, confirmation_evidence, matches,
 )
 
-VERSION = "2.1.2"
+VERSION = "2.1.3"
 
 
 POWER_STATE_NAMES = {"optimizing": "OPTIMIZE_POWER", "locked": "LOCKED", "guard": "GUARD"}
@@ -1912,6 +1912,15 @@ class GovernorService:
             return
         self._last_event_key = key
         payload = {"ts": time.time(), "event": event, "reason": reason, **fields}
+        if event in ("budget-step", "tdp-set", "tdp-write-failed"):
+            budget = self._budget
+            payload.update({
+                "decision_id": f"budget-{id(budget):x}-{getattr(budget, 'decision_seq', 0)}",
+                "evaluation_after_sample_seq": self._evaluation_after_seq,
+                "work_tdp_w": (budget.recovery_tdp(self._clock())
+                               if callable(getattr(budget, "recovery_tdp", None)) else None),
+                "validation_pending": getattr(budget, "_validation_pending", False),
+            })
         try:
             self.events_path.parent.mkdir(parents=True, exist_ok=True)
             with self.events_path.open("a", encoding="utf-8") as handle:
@@ -3276,11 +3285,50 @@ class GovernorService:
                     self._autopilot_targets.update(display_target, None, None,
                         self._autopilot_preference(profile), False, now=self._clock())
                 return min(int(display_target), int(self._autopilot_targets.target or display_target))
+        budget = self._budget
+        loading_transition = False
+        power_recovery = False
+        if budget is not None and fresh and isinstance(real, (int, float)) and isinstance(output, (int, float)):
+            base = float(budget.point.base_target_fps)
+            loading_transition = bool(
+                budget.point.multiplier > 1.0 and base > 0
+                and float(real) < base * 0.60
+                and float(output) < float(real) * 1.25
+            )
+            # The game has already demonstrated a higher working power level.
+            # If active generation resumes below that level and the current cap
+            # is binding, recover watts first; do not reinterpret the temporary
+            # starvation as proof that a 90 Hz panel should target 45 FPS.
+            work_tdp = budget.recovery_tdp(self._clock())
+            power_recovery = bool(
+                not loading_transition and budget.tdp_control and budget.tdp is not None
+                and work_tdp is not None and float(work_tdp) >= float(budget.tdp) + 0.5
+                and budget._binding(budget.draw_w)
+                and float(real) < base * 0.85
+                and float(output) < float(display_target) * 0.85
+            )
+        if loading_transition:
+            self._status["autopilot_target_hold_reason"] = "loading-transition"
+        elif power_recovery:
+            self._status["autopilot_target_hold_reason"] = "known-good-tdp-recovery"
+            # Misses collected before restoring our own cap cannot decide the
+            # post-recovery goal. Consume this window and start a fresh run.
+            self._autopilot_targets.update(
+                display_target, None, None, self._autopilot_preference(profile), False, now=self._clock())
+            self._autopilot_targets.last_seq = max(
+                self._autopilot_targets.last_seq, int(summary.get("last_sample_seq") or 0))
+            # If 45 is already the deliberate policy goal, restoring its watts
+            # is not a 90 FPS capacity trial. Keep both state machines on the
+            # same goal; TargetPolicy owns the bounded upward retry.
+            return min(int(display_target), int(self._autopilot_targets.target or display_target))
+        else:
+            self._status.pop("autopilot_target_hold_reason", None)
         chosen = int(self._autopilot_targets.update(
             display_target, real, output, self._autopilot_preference(profile), fresh,
             sample_seq=summary.get("last_sample_seq"),
             first_sample_seq=summary.get("first_sample_seq"),
-            span_s=summary.get("sample_span_s"), now=self._clock()))
+            span_s=summary.get("sample_span_s"), now=self._clock(),
+            loading_transition=loading_transition))
         if display_target < 90:
             chosen = min(chosen, int(display_target))
         return chosen
@@ -3806,7 +3854,21 @@ class GovernorService:
             self._fast_last_sample_seq = sample_seq
             draw_now = statistics.median(self._draw_samples[-3:]) if self._draw_samples else None
             before = budget.tdp
-            if budget.fast_check(now, (recent.get("real") or {}).get("median"), draw_now) == "move":
+            fast_real = (recent.get("real") or {}).get("median")
+            fast_output = (recent.get("output") or {}).get("median")
+            fast_base = float(budget.point.base_target_fps)
+            loading_transition = bool(
+                budget.point.multiplier > 1.0 and isinstance(fast_real, (int, float))
+                and isinstance(fast_output, (int, float))
+                and float(fast_real) < fast_base * 0.60
+                and float(fast_output) < float(fast_real) * 1.25
+            )
+            # A loading collapse must reset starvation evidence rather than
+            # trigger the fast TDP path; resumed generated gameplay has output
+            # clearly above real FPS and is eligible for known-good recovery.
+            if loading_transition:
+                fast_real = None
+            if budget.fast_check(now, fast_real, draw_now) == "move":
                 self._event("budget-step", budget.last_reason, profile=profile,
                             real=(recent.get("real") or {}).get("median"), draw_w=draw_now,
                             before={"tdp_w": before}, after={"point": budget.point.key, "tdp_w": budget.tdp,
@@ -4095,12 +4157,20 @@ class GovernorService:
         result = await asyncio.to_thread(self.power.set_tdp_w, target)
         if not result.get("success"):
             self._status.update({"state": "PAUSED", "reason": "tdp-write-failed"})
+            self._event("tdp-write-failed", budget.last_reason, requested_w=target,
+                        decision_result="unconfirmed", profile=profile)
             return False
+        previous_applied = self._applied_tdp
         self._applied_tdp = target
         self._mark_autopilot_transition()
         self._evaluation_after_seq = self.observer.sample_seq
         self._tdp_set_seq = self.observer.sample_seq
+        self._draw_samples = []
+        budget.draw_w = None  # a previous cap's draw cannot prove this cap binds
         self._event("tdp-set", budget.last_reason, watts=target, profile=profile,
+                    previous_applied_w=previous_applied, requested_w=target,
+                    applied_w=target, application_basis="actuator-success-not-performance-proof",
+                    decision_result="awaiting-fresh-performance-evidence",
                     **({"frame_os_offset_w": target - budget.tdp} if target != budget.tdp else {}))
         return True
 
@@ -4299,6 +4369,7 @@ class GovernorService:
                 waiter.cancel()
 
     async def _loop(self) -> None:
+        last_hud_beat = time.monotonic()
         while not self._stop.is_set():
             # Clear before the iteration: a poke that lands while it runs
             # (a Saved write, a toggle) wakes the next one right away.
@@ -4317,7 +4388,17 @@ class GovernorService:
                 await self._wait_governor(self.IDLE_LOOP_SECONDS)
                 continue
             half = self.LOOP_SECONDS / 2
+            # HUD has its own 500 ms cadence, independent of power decisions.
+            # Frequent UI/config wakeups must not starve the HUD heartbeat.
             if await self._wait_governor(half):
+                if time.monotonic() - last_hud_beat >= half:
+                    try:
+                        await self._refresh_hud_beat()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as error:
+                        self.log.debug("HUD refresh failed: %s", error)
+                    last_hud_beat = time.monotonic()
                 continue
             try:
                 await self._refresh_hud_beat()
@@ -4325,4 +4406,5 @@ class GovernorService:
                 raise
             except Exception as error:
                 self.log.debug("HUD refresh failed: %s", error)
+            last_hud_beat = time.monotonic()
             await self._wait_governor(half)

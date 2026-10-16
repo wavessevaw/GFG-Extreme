@@ -1538,7 +1538,7 @@ class Plugin:
 
         await self.governor_service.start()
         await self._start_shell_bridge()
-        decky.logger.info("GFG Extreme 2.1.2 started")
+        decky.logger.info("GFG Extreme 2.1.3 started")
 
     async def _start_shell_bridge(self) -> None:
         """GFG Shell's local link (read status + allow-listed Governor settings)."""
