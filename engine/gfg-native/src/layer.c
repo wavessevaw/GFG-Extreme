@@ -48,6 +48,7 @@ typedef struct native_swapchain {
     struct native_swapchain *next;
     VkSwapchainKHR handle;
     VkFormat format;
+    VkColorSpaceKHR color_space;
     VkExtent2D extent;
     uint64_t presents;
     uint64_t acquired;
@@ -984,6 +985,13 @@ static const char *native_ineligible_reason(const VkSwapchainCreateInfoKHR *ci) 
               (ci->imageFormat == VK_FORMAT_A2B10G10R10_UNORM_PACK32 ||
                ci->imageFormat == VK_FORMAT_A2R10G10B10_UNORM_PACK32)))
         return "unsupported-format";
+    if(ci->imageColorSpace!=VK_COLOR_SPACE_SRGB_NONLINEAR_KHR &&
+       ci->imageColorSpace!=VK_COLOR_SPACE_HDR10_ST2084_EXT)
+        return "unsupported-color-space";
+    if(ci->imageColorSpace==VK_COLOR_SPACE_HDR10_ST2084_EXT &&
+       ci->imageFormat!=VK_FORMAT_A2B10G10R10_UNORM_PACK32 &&
+       ci->imageFormat!=VK_FORMAT_A2R10G10B10_UNORM_PACK32)
+        return "unsupported-pq-format";
     return NULL;
 }
 
@@ -1143,6 +1151,7 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
     if (pthread_mutex_init(&sc->output_wsi, NULL)) { free(sc); return VK_SUCCESS; }
 #endif
     sc->format = ci->imageFormat;
+    sc->color_space = ci->imageColorSpace;
     sc->extent = ci->imageExtent;
     sc->copy_eligible = candidate;
     sc->present_mode = candidate ? extended.presentMode : ci->presentMode;
@@ -1379,7 +1388,7 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
                         .instance = d->instance->handle, .gipa = d->instance->gipa,
                         .physical = d->physical, .device = d->handle,
                         .gdpa = d->async_output ? native_worker_gdpa : d->gdpa,
-                        .swapchain = sc->handle, .extent = sc->extent, .format = sc->format,
+                        .swapchain = sc->handle, .extent = sc->extent, .format = sc->format, .color_space=sc->color_space,
                         .present_mode = sc->present_mode, .force_fifo=sc->force_fifo, .queue = queue,
                         .family = q->family, .semaphore_fd = d->semaphore_fd, .display_timing=d->display_timing,
                         .set_loader_data = d->set_loader_data};

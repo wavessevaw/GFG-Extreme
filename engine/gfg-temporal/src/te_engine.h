@@ -48,6 +48,7 @@ typedef struct {
 } te_params;
 
 enum { TE_ALGO_TILES = 0, TE_ALGO_LMC = 1, TE_ALGO_LMC_GPU = 2, TE_ALGO_SHARED_FLOW = 3 };
+enum { TE_TRANSFER_CODED = 0, TE_TRANSFER_PQ = 1 };
 #define TE_LMC_TIERS 3
 
 void te_params_default(te_params* params);
@@ -68,6 +69,7 @@ typedef struct {
     VkFormat source_format;   /* 0: legacy SDR8; native GPU may sample packed UNORM10 */
     int shared_flow_dense;    /* experiment: 0 compact; 1 dense; 2 affine; 3 palette; 4 guarded projective fit */
     int output_fp16;          /* native HDR: rgba16f outputs, no intermediate 8-bit quantization */
+    uint32_t color_transfer;  /* PQ: reconstruct in cached linear nits, return PQ-encoded FP16 */
 } te_context_desc;
 
 void te_context_desc_default(te_context_desc* desc, uint32_t width, uint32_t height, uint32_t outputs);

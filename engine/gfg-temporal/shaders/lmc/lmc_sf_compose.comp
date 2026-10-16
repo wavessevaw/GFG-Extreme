@@ -4,6 +4,7 @@
 // Pair fields are reused; visibility at 1/3 and 2/3 is evaluated separately.
 #include "lmc_common.glsl"
 #include "lmc_store.glsl"
+#include "lmc_color.glsl"
 #ifndef OUTPUT_FMT
 #define OUTPUT_FMT rgba8
 #endif
@@ -25,7 +26,13 @@ void consider(vec2 v) {
     vec3 d=abs(ca-cb);float residual=(d.r+d.g+d.b)/3.0;
     bool both=va && vb_;
     float score=both?residual+0.002*(ea+eb):0.075+0.002*(va?ea:eb);
-    if(score<best_){best_=score;mode_=both?3:(va?1:2);colour_=both?mix(ca,cb,time_):(va?ca:cb);}
+    if(score<best_){best_=score;mode_=both?3:(va?1:2);
+#ifdef GFG_LINEAR_PQ
+        colour_=both?mix(composition_rgb(0,a),composition_rgb(1,b),time_):composition_rgb(va?0:1,va?a:b);
+#else
+        colour_=both?mix(ca,cb,time_):(va?ca:cb);
+#endif
+    }
 }
 void main() {
     ivec2 p=ivec2(gl_GlobalInvocationID.xy);if(any(greaterThanEqual(p,P.size.xy)))return;
@@ -38,7 +45,12 @@ void main() {
     vec2 vb_=field(0,pixel_).xy,va=field(1,pixel_).xy;
     vb_=field(0,pixel_+(1.0-time_)*2.0*vb_).xy;
     va=field(1,pixel_-time_*2.0*va).xy;
-    best_=1e30;mode_=0;colour_=mix(ca,cb,time_);
+    best_=1e30;mode_=0;
+#ifdef GFG_LINEAR_PQ
+    colour_=mix(composition_rgb(0,pixel_),composition_rgb(1,pixel_),time_);
+#else
+    colour_=mix(ca,cb,time_);
+#endif
     consider(vb_);if(va!=vb_)consider(va);
     // High-confidence patches take two trajectories. Difficult regions get
     // neighboring surface hypotheses, bounded at 18 additional candidates.
@@ -51,6 +63,16 @@ void main() {
     // Stable HUD still requires moving-scene history. Static scene pixels
     // with zero motion take their exact texel, avoiding unnecessary filtering.
     if(imageLoad(hudCount,p).r>=uint(P.hud_pairs) ||
-            (vb_==vec2(0) && va==vec2(0) && ca==cb))colour_=time_<0.5?ca:cb;
+            (vb_==vec2(0) && va==vec2(0) && ca==cb)) {
+#ifdef GFG_LINEAR_PQ
+        vec4 exact=vec4(time_<0.5?ca:cb,1);imageStore(dst,p,P.pad1!=0?exact.bgra:exact);return;
+#else
+        colour_=time_<0.5?ca:cb;
+#endif
+    }
+#ifdef GFG_LINEAR_PQ
+    vec4 outc=vec4(composition_encode(colour_),1);imageStore(dst,p,P.pad1!=0?outc.bgra:outc);
+#else
     vec4 outc=vec4(colour_,1);imageStore(dst,p,P.pad1!=0?outc.bgra:outc);
+#endif
 }

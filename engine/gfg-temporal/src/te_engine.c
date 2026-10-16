@@ -961,6 +961,10 @@ static VkResult validate_desc(te_device* dev, const te_context_desc* d) {
     if (dev->borrowed)
         for (uint32_t i = 0; i < TE_MAX_OUTPUTS; ++i)
             if (d->dest_fds[i] >= 0) return VK_ERROR_FEATURE_NOT_PRESENT;
+    if (d->color_transfer > TE_TRANSFER_PQ ||
+            (d->color_transfer == TE_TRANSFER_PQ && (!d->source_format || !d->output_fp16 ||
+             (p->algorithm != TE_ALGO_LMC_GPU && p->algorithm != TE_ALGO_SHARED_FLOW))))
+        return fail(VK_ERROR_FEATURE_NOT_PRESENT, "PQ reconstruction requires packed10 GPU LMC/GSF and FP16 output");
     if (d->source_format || d->output_fp16) {
         if (!dev->borrowed || d->host_io || d->source_bgra || d->output_bgra ||
                 !d->output_fp16 || (d->source_format != VK_FORMAT_A2B10G10R10_UNORM_PACK32 &&
@@ -972,6 +976,14 @@ static VkResult validate_desc(te_device* dev, const te_context_desc* d) {
                 VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
                 VK_FORMAT_FEATURE_BLIT_SRC_BIT))
             return fail(VK_ERROR_FORMAT_NOT_SUPPORTED, "GPU lacks native HDR input/output formats");
+        if (d->color_transfer == TE_TRANSFER_PQ) {
+            if(dev->props.limits.maxPerStageDescriptorSamplers < 18 ||
+               dev->props.limits.maxPerStageDescriptorSampledImages < 18)
+                return fail(VK_ERROR_FEATURE_NOT_PRESENT, "PQ reconstruction requires 18 sampled images");
+            if(!format_ok(dev->phys,VK_FORMAT_R16G16B16A16_SFLOAT,
+               VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT|VK_FORMAT_FEATURE_TRANSFER_DST_BIT))
+                return fail(VK_ERROR_FORMAT_NOT_SUPPORTED,"GPU lacks filterable linear HDR cache");
+        }
     }
     if (d->output_bgra && p->algorithm == TE_ALGO_LMC)
         return fail(VK_ERROR_FEATURE_NOT_PRESENT, "BGRA output packing requires tile or GPU LMC algorithm");

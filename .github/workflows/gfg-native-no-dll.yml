@@ -42,6 +42,18 @@ jobs:
             --core-build engine/gfg-temporal/build \
             --validation-layers /usr/share/vulkan/explicit_layer.d \
             --out gsf-pipeline-results
+      - name: HDR PQ numerical reconstruction and precision (software only)
+        run: |
+          python3 scripts/check_hdr_pq.py --native-build engine/gfg-native/build-te \
+            --validation-layers /usr/share/vulkan/explicit_layer.d --out hdr-pq-results
+      - name: Preserve HDR numerical evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: HDR-PQ-numerical-software-${{ github.sha }}
+          path: hdr-pq-results/
+          if-no-files-found: warn
+          retention-days: 7
       - name: Preserve GSF pipeline evidence even if later legacy checks fail
         if: always()
         uses: actions/upload-artifact@v4

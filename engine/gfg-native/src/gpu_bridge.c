@@ -113,6 +113,8 @@ struct gfg_gpu_fg {
     imported_image src[2], dst[2];
     int src_bgra;
     int hdr10;
+    VkColorSpaceKHR color_space;
+    int linear_pq;
     enum { OUT_COPY, OUT_BLIT, OUT_BLIT_COPY } out_mode;
     VkImage scratch;             /* OUT_BLIT_COPY: B8G8R8A8_UNORM swizzle target */
     VkDeviceMemory scratch_memory;
@@ -806,6 +808,9 @@ static unsigned env_uint(const char *name, unsigned def, unsigned lo, unsigned h
 gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     if (!info || !info->device || !info->queue || !info->gdpa || !info->gipa ||
         !info->physical || !supported_format(info->format) ||
+        (info->color_space!=VK_COLOR_SPACE_SRGB_NONLINEAR_KHR &&
+         info->color_space!=VK_COLOR_SPACE_HDR10_ST2084_EXT) ||
+        (info->color_space==VK_COLOR_SPACE_HDR10_ST2084_EXT && !is_hdr10(info->format)) ||
         info->present_mode != VK_PRESENT_MODE_FIFO_KHR ||
         info->extent.width < 16 || info->extent.height < 16 ||
         info->extent.width > 8192 || info->extent.height > 8192)
@@ -825,6 +830,8 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     fg->log = getenv("GFG_NATIVE_TRACE") != NULL;
     fg->src_bgra = is_bgra(info->format);
     fg->hdr10 = is_hdr10(info->format);
+    fg->color_space=info->color_space;
+    fg->linear_pq=info->color_space==VK_COLOR_SPACE_HDR10_ST2084_EXT;
     const char *why = "entrypoints";
     const char *sync_mode = getenv("GFG_NATIVE_GPU_SYNC");
     if (sync_mode && strcmp(sync_mode, "same-device") && strcmp(sync_mode, "shared-fd")) {
@@ -979,6 +986,7 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     cd.source_bgra = fg->src_bgra;
     cd.source_format = fg->hdr10 ? info->format : VK_FORMAT_UNDEFINED;
     cd.output_fp16 = fg->hdr10;
+    cd.color_transfer=info->color_space==VK_COLOR_SPACE_HDR10_ST2084_EXT?TE_TRANSFER_PQ:TE_TRANSFER_CODED;
     cd.output_bgra = fg->same_device && fg->src_bgra;
     cd.sync_fd = sync_fd; /* ownership passes to TE (closed on failure too) */
     if (te_context_create(fg->engine, &cd, &fg->context) != VK_SUCCESS) {
@@ -1086,13 +1094,14 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     STAT_SET(sync_mode, fg->same_device ? 3 : 1);
     fprintf(stderr,
         "[gfg-native] GPU bridge active: %ux%u format=%d out=%s sync=%s images=%u"
-        " present_mode=%d inflight=%u algo=%s verify=%d startup_ms=%.2f\n",
+        " present_mode=%d inflight=%u algo=%s verify=%d startup_ms=%.2f color_space=%d transfer=%s linear_cache_bytes=%llu\n",
         fg->extent.width, fg->extent.height, (int)fg->format,
         fg->out_mode == OUT_COPY ? "copy" : fg->out_mode == OUT_BLIT ? "blit" : "blit+copy",
         fg->same_device ? "same-device" : "shared-timeline-fd", fg->image_count,
         (int)fg->present_mode, fg->ring_size,
         cd.params.algorithm == TE_ALGO_SHARED_FLOW ? "gsf" : cd.params.algorithm == TE_ALGO_LMC_GPU ? "lmc-gpu" : cd.params.algorithm == TE_ALGO_LMC ? "lmc" : "tiles", fg->verify,
-        (now_us() - t0) / 1000.0);
+        (now_us() - t0) / 1000.0,(int)fg->color_space,fg->linear_pq?"pq-linear-nits":"coded",
+        (unsigned long long)(fg->linear_pq?(uint64_t)fg->extent.width*fg->extent.height*16:0));
     return fg;
 fail:
     fprintf(stderr, "[gfg-native] GPU bridge unavailable stage=%s\n", why);
@@ -1782,11 +1791,13 @@ timing:
                     fg->accepted_ns[0]||fg->accepted_ns[1]?"WSI-accepted":fg->deadline_drop?"deadline-miss":"history-or-display-budget";
                 fprintf(status,"{\"schema\":1,\"engine\":\"gfg-native-gsf\",\"pid\":%ld,\"generation\":%llu,"
                     "\"process_start_ticks\":%llu,\"updated_unix_ms\":%llu,\"multiplier\":%u,\"reason\":\"%s\","
-                    "\"source_fps\":%.3f,\"real_wsi_accepted\":%llu,\"generated_wsi_accepted\":%llu,\"physical_displayed_fps\":null}\n",
+                    "\"source_fps\":%.3f,\"real_wsi_accepted\":%llu,\"generated_wsi_accepted\":%llu,"
+                    "\"color_space\":%d,\"color_transfer\":\"%s\",\"physical_displayed_fps\":null}\n",
                     (long)getpid(),(unsigned long long)fg->generation,(unsigned long long)fg->process_start_ticks,
                     (unsigned long long)((uint64_t)real.tv_sec*1000ull+(uint64_t)real.tv_nsec/1000000ull),fg->multiplier,reason,
                     fg->clock.interval_ns?1e9/(double)fg->clock.interval_ns:0.0,
-                    (unsigned long long)fg->real_accepted,(unsigned long long)fg->generated_accepted);
+                    (unsigned long long)fg->real_accepted,(unsigned long long)fg->generated_accepted,
+                    (int)fg->color_space,fg->linear_pq?"pq-linear-nits":"coded");
                 if(fclose(status)==0)rename(temp,path);else unlink(temp);
             }else if(fd>=0)close(fd);
         }

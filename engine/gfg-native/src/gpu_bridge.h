@@ -20,6 +20,7 @@ typedef struct {
     VkSwapchainKHR swapchain;
     VkExtent2D extent;
     VkFormat format;
+    VkColorSpaceKHR color_space;       /* packed10 alone does not imply HDR PQ */
     VkPresentModeKHR present_mode;
     int force_fifo;
     VkQueue queue;                    /* the app's present queue */

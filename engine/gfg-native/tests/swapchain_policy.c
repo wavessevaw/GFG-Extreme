@@ -56,6 +56,13 @@ int main(void) {
     ci.imageFormat=VK_FORMAT_A2B10G10R10_UNORM_PACK32;
     setenv("GFG_NATIVE_GPU_BRIDGE","1",1);
     assert(native_ineligible_reason(&ci)==NULL);
+    ci.imageColorSpace=VK_COLOR_SPACE_HDR10_ST2084_EXT;
+    assert(native_ineligible_reason(&ci)==NULL);
+    ci.imageColorSpace=VK_COLOR_SPACE_HDR10_HLG_EXT;
+    assert(!strcmp(native_ineligible_reason(&ci),"unsupported-color-space"));
+    ci.imageColorSpace=VK_COLOR_SPACE_HDR10_ST2084_EXT;ci.imageFormat=VK_FORMAT_B8G8R8A8_UNORM;
+    assert(!strcmp(native_ineligible_reason(&ci),"unsupported-pq-format"));
+    ci.imageColorSpace=VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;ci.imageFormat=VK_FORMAT_A2B10G10R10_UNORM_PACK32;
     VkPresentModeKHR mailbox=VK_PRESENT_MODE_MAILBOX_KHR;
     const VkSwapchainPresentModesCreateInfoEXT modes={.sType=VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODES_CREATE_INFO_EXT,
         .presentModeCount=1,.pPresentModes=&mailbox};

@@ -1,11 +1,11 @@
-GFG Native FG internal.7 / Decky 2.1.5-gsf.7 — experimental
+GFG Native FG internal.8 / Decky 2.1.5-gsf.8 — experimental
 ===========================================================
 
 Read MANIFEST.json for the exact source commit, ELF hash and build environment.
 No physical 90-Hz/OLED, SteamOS/Proton-game, quality, power or latency acceptance
 is claimed. Software Vulkan checks do not replace Steam Deck execution.
 
-The locally published internal.7 ELF was built with Debian GCC14.2.0,
+The locally published internal.8 ELF was built with Debian GCC14.2.0,
 glslang15.2.0 and Vulkan-Headers v1.4.365 against an explicit glibc2.31 SDK
 extracted from signed Debian bullseye APT packages. The ELF requires symbols
 only through GLIBC2.17 and was loaded using the actual glibc2.31 loader.

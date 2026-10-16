@@ -6,10 +6,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #define CHECK(x) do { if(!(x)){fprintf(stderr,"HDR precision failed line %d: %s\n",__LINE__,#x);fprintf(stderr,"TE: %s\n",te_last_error());exit(1);} } while(0)
 #define OK(x) CHECK((x)==VK_SUCCESS)
 enum { W=64,H=64,N=W*H };
 static unsigned errors;
+static double pq_decode(double code) {
+    double v=pow(code,32.0/2523.0);
+    return 10000.0*pow(fmax(v-3424.0/4096.0,0)/(2413.0/128.0-2392.0/128.0*v),16384.0/2610.0);
+}
+static unsigned pq_encode(double nits) {
+    double v=pow(fmax(nits,0)/10000.0,2610.0/16384.0);
+    return (unsigned)llround(1023.0*pow((3424.0/4096.0+2413.0/128.0*v)/(1+2392.0/128.0*v),2523.0/32.0));
+}
 static VKAPI_ATTR VkBool32 VKAPI_CALL message(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
         VkDebugUtilsMessageTypeFlagsEXT type,const VkDebugUtilsMessengerCallbackDataEXT *data,void *user) {
     (void)type;(void)user;
@@ -35,6 +44,12 @@ static void finish(VkDevice d,VkQueue q,VkCommandBuffer cb) {
     OK(vkQueueSubmit(q,1,&s,VK_NULL_HANDLE));OK(vkDeviceWaitIdle(d));
 }
 int main(void) {
+    const int linear=getenv("GFG_TEST_PQ_LINEAR")!=NULL;
+    const int pq=linear || getenv("GFG_TEST_PQ_DUPLICATE")!=NULL;
+    const unsigned outputs=getenv("GFG_TEST_X2")?1u:2u;
+    unsigned source_code[2][3];
+    for(unsigned s=0;s<2;++s)for(unsigned c=0;c<3;++c)
+        source_code[s][c]=pq_encode(c==0?(s?0.01:0.0):c==1?100.0*(s+1):5000.0*(s+1));
     VkApplicationInfo app={.sType=VK_STRUCTURE_TYPE_APPLICATION_INFO,.apiVersion=VK_API_VERSION_1_2};
     const char *extensions[]={VK_EXT_DEBUG_UTILS_EXTENSION_NAME};
     VkValidationFeatureEnableEXT sync=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
@@ -84,12 +99,15 @@ int main(void) {
     OK(vkCreateImage(d,&image,NULL,&target));vkGetImageMemoryRequirements(d,target,&req);
     alloc.allocationSize=req.size;alloc.memoryTypeIndex=memory_type(p,req.memoryTypeBits,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     OK(vkAllocateMemory(d,&alloc,NULL,&target_memory));OK(vkBindImageMemory(d,target,target_memory,0));
-    te_context_desc desc;te_context_desc_default(&desc,W,H,2);desc.host_io=0;
+    te_context_desc desc;te_context_desc_default(&desc,W,H,outputs);desc.host_io=0;
     desc.source_format=format;desc.output_fp16=1;desc.params.cut_thr=2;
     if(getenv("GFG_TEST_FORCE_CLASS")){desc.params.adaptive=0;desc.params.force_class=atoi(getenv("GFG_TEST_FORCE_CLASS"));}
     if(getenv("GFG_TEST_GPU_LMC"))desc.params.algorithm=TE_ALGO_LMC_GPU;
+    if(getenv("GFG_TEST_GSF")){desc.params.algorithm=TE_ALGO_SHARED_FLOW;desc.shared_flow_dense=4;}
+    if(pq)desc.color_transfer=TE_TRANSFER_PQ;
     te_context *ctx;OK(te_context_create(engine,&desc,&ctx));
     for(unsigned slot=0;slot<2;++slot) {
+        if(linear)for(unsigned i=0;i<N;++i)pixels[i]=(3u<<30)|source_code[slot][0]|(source_code[slot][1]<<10)|(source_code[slot][2]<<20);
         begin(cb);VkImage source=te_source_image(ctx,slot);
         VkImageMemoryBarrier b=barrier(source,VK_ACCESS_SHADER_READ_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL);
         vkCmdPipelineBarrier(cb,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&b);
@@ -97,9 +115,9 @@ int main(void) {
         vkCmdCopyBufferToImage(cb,buffer,source,VK_IMAGE_LAYOUT_GENERAL,1,&copy);
         b.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;b.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
         vkCmdPipelineBarrier(cb,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,0,NULL,0,NULL,1,&b);finish(d,q,cb);
-        te_submit submit={.slot=slot,.count=slot?2:0,.timestamps={1.f/3,2.f/3}};OK(te_submit_frame(ctx,&submit));OK(te_wait_idle(ctx));
+        te_submit submit={.slot=slot,.count=slot?outputs:0,.timestamps={outputs==1?0.5f:1.f/3,2.f/3}};OK(te_submit_frame(ctx,&submit));OK(te_wait_idle(ctx));
     }
-    for(unsigned out=0;out<2;++out) {
+    for(unsigned out=0;out<outputs;++out) {
         begin(cb);VkImage output=te_output_image(ctx,out);
         VkImageMemoryBarrier b[2]={barrier(output,VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL),
             barrier(target,0,VK_ACCESS_TRANSFER_WRITE_BIT,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_GENERAL)};
@@ -114,19 +132,35 @@ int main(void) {
         VkMemoryBarrier host={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT};
         vkCmdPipelineBarrier(cb,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&host,0,NULL,0,NULL);finish(d,q,cb);
         unsigned mismatches=0;
-        for(unsigned i=0;i<N;++i)if(pixels[N*(out+1)+i]!=pixels[i]) {
-            if(mismatches<5)fprintf(stderr,"HDR mismatch output=%u i=%u expected=%08x got=%08x\n",out,i,pixels[i],pixels[N*(out+1)+i]);
-            ++mismatches;
+        unsigned expected[3]={0},coded[3]={0};
+        if(linear)for(unsigned c=0;c<3;++c) {
+            const double t=outputs==1?0.5:(double)(out+1)/3.0;
+            expected[c]=pq_encode((1-t)*pq_decode((double)source_code[0][c]/1023)+t*pq_decode((double)source_code[1][c]/1023));
+            coded[c]=(unsigned)llround((1-t)*source_code[0][c]+t*source_code[1][c]);
+            CHECK(abs((int)expected[c]-(int)coded[c])>=2);
+        }
+        for(unsigned i=0;i<N;++i) {
+            uint32_t actual=pixels[N*(out+1)+i];
+            if(linear) {
+                for(unsigned c=0;c<3;++c)if(abs((int)((actual>>(10*c))&1023)-(int)expected[c])>1) {
+                    if(mismatches<5)fprintf(stderr,"PQ mismatch output=%u channel=%u expected-linear=%u wrong-coded=%u actual=%u\n",out,c,expected[c],coded[c],(actual>>(10*c))&1023);
+                    ++mismatches;
+                }
+            } else if(actual!=pixels[i]) {
+                if(mismatches<5)fprintf(stderr,"HDR mismatch output=%u i=%u expected=%08x got=%08x\n",out,i,pixels[i],actual);
+                ++mismatches;
+            }
         }
         CHECK(!mismatches);
+        if(linear)fprintf(stderr,"PQ linear output=%u codes=%u,%u,%u coded-average-rejected=%u,%u,%u PASS\n",out,expected[0],expected[1],expected[2],coded[0],coded[1],coded[2]);
     }
-    fprintf(stderr,"HDR precision: format=%d two outputs preserve all 1024 packed levels exactly PASS\n",(int)format);
+    fprintf(stderr,"HDR precision: format=%d outputs=%u %s PASS\n",(int)format,outputs,linear?"linear-light PQ reconstruction":"all 1024 packed levels preserved exactly");
     te_context_destroy(ctx);vkDestroyImage(d,target,NULL);vkFreeMemory(d,target_memory,NULL);
     }
     te_device_destroy(engine);vkDestroyCommandPool(d,pool,NULL);vkUnmapMemory(d,memory);vkDestroyBuffer(d,buffer,NULL);vkFreeMemory(d,memory,NULL);
     vkDestroyDevice(d,NULL);
     PFN_vkDestroyDebugUtilsMessengerEXT destroy=(PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance,"vkDestroyDebugUtilsMessengerEXT");
     destroy(instance,messenger,NULL);vkDestroyInstance(instance,NULL);CHECK(errors==0 && formats_tested>0);
-    puts("HDR precision: supported packed10 formats, FP16 synthesis, 1024 distinct levels, two outputs bit-exact PASS; scanout unobserved");
+    puts(linear?"HDR PQ: packed10, cached linear nits, x2/x3 CPU-oracle comparison PASS; scanout unobserved":"HDR precision: supported packed10 formats, FP16 synthesis, 1024 distinct levels, two outputs bit-exact PASS; scanout unobserved");
     return 0;
 }
