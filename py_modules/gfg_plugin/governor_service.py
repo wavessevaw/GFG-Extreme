@@ -289,6 +289,10 @@ class GovernorService:
         self._launch: Dict[str, Any] = {}
         self._launch_polled = -1e9
         self._saved_fp: Any = None
+        # Settings and Governor mode are not part of Saved TOML's fingerprint.
+        # Keep the live Fusion scope independently so switching the UI toggle
+        # while a point is active cannot strand the renderer on the old scope.
+        self._fusion_scope_synced: Optional[bool] = None
         self._record: Optional[OverlayRecord] = None
         self._synced_deltas: Optional[Dict[str, Any]] = None
 
@@ -924,13 +928,30 @@ class GovernorService:
         config = response.get("config") if isinstance(response, dict) else None
         return config if isinstance(config, dict) else None
 
+    def _frame_fusion_scope(self, profile: str) -> bool:
+        """Runtime consent, not Saved state and not proof of native GPU work."""
+        return (self._profile_enabled(profile) and self._mode(profile) == "autopilot"
+                and self.frame_fusion_enabled())
+
+    @staticmethod
+    def _overlay_with_current_fusion_scope(base: Dict[str, Any], point: Dict[str, Any]) -> Dict[str, Any]:
+        """A cached full Request.deltas may carry an outdated Fusion toggle.
+
+        Keep the latest owner-controlled scope from base even when other active
+        point deltas were captured before the player changed Fusion or mode.
+        """
+        merged = {**base, **point}
+        if "gfg_frame_fusion" in base:
+            merged["gfg_frame_fusion"] = base["gfg_frame_fusion"]
+        return merged
+
     def _base_for(self, profile: str, saved: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         if saved is None:
             return {}
         try:
             return {**base_deltas(saved, scale_ready=self._scale_ready(profile)),
                     **({"adaptive_max_multiplier": 4} if self._profile_enabled(profile) else {}),
-                    "gfg_frame_fusion": self._profile_enabled(profile) and self._mode(profile) == "autopilot" and self.frame_fusion_enabled()}
+                    "gfg_frame_fusion": self._frame_fusion_scope(profile)}
         except PointNotApplicable as error:
             self._status.setdefault("overlay", {})["scale_ready_ignored"] = error.reason
             return {}
@@ -1569,8 +1590,22 @@ class GovernorService:
             if not self.cpu.owned and not getattr(self.cpu, "restore_pending", False):
                 self._mark_autopilot_transition()
         if self._autopilot_blocks_planned():
-            self._status["power_split"] = {"enabled": self._power_split_enabled(), "phase": "frozen",
-                                           "reason": "gpu-clock-trial", "available": bool(self.cpu.discover())}
+            # A blocked experiment must NOT inherit an earlier CPU cap. Prior
+            # versions returned without stepping the split or restoring sysfs,
+            # so GPU/VRS trials measured a different CPU budget from baseline.
+            now = self._clock()
+            if self._split is not None:
+                self._split.step(now, False, SplitSample(None, 0.0, None, None, None, None, None))
+            if self.cpu.owned or getattr(self.cpu, "restore_pending", False):
+                restored = await asyncio.to_thread(self.cpu.restore)
+                if restored:
+                    self._mark_autopilot_transition()
+            pending = self.cpu.owned or getattr(self.cpu, "restore_pending", False)
+            self._status["power_split"] = {
+                "enabled": self._power_split_enabled(),
+                "phase": "restore-pending" if pending else "frozen",
+                "reason": "cpu-cap-restore-pending" if pending else "autopilot-trial",
+                "available": bool(self.cpu.discover()), "control": self.cpu.status()}
             return
         self._sync_split_memory(profile)
         split, budget = self._split, self._budget
@@ -1590,8 +1625,6 @@ class GovernorService:
                         and not self._menu_covering() and self._trusted_game_focus() is not False
                         and not self.cpu.external_change
                         and not getattr(self.cpu, "restore_pending", False))
-        if eligible and split.enabled and not self.cpu.owned:
-            eligible = await asyncio.to_thread(self.cpu.claim)
         sensors = self._status.get("sensors") or {}
         recent = self.observer.summary(self.FAST_CHECK_SECONDS)
         draw = statistics.median(self._draw_samples[-3:]) if self._draw_samples else None
@@ -1602,12 +1635,24 @@ class GovernorService:
             real_fps=(recent.get("real") or {}).get("median"), target_real=target_real,
             top_core_pct=sensors.get("cpu_top_core_pct"), gpu_busy_pct=sensors.get("gpu_busy_pct"),
             gpu_mhz=sensors.get("gpu_clock_mhz"), draw_w=draw, tdp_w=self._applied_tdp,
-            steady=budget is not None and budget.phase == "locked"))
+            steady=bool(budget is not None and budget.phase == "locked"
+                        and budget.probe is None and self._request is None
+                        and not self._autopilot_arbiter.freeze_tdp)))
+        # Do not repeatedly claim and release the CPU sysfs actuator while
+        # merely monitoring. Claim immediately before the first real cap, so
+        # the saved original remains the user's latest value.
+        if cap is not None and not self.cpu.owned:
+            if not await asyncio.to_thread(self.cpu.claim):
+                split.step(now, False, SplitSample(None, target_real, None, None, None, None, None))
+                cap = None
         if self.cpu.owned:
             if cap is None and split.level == 0 and split.ab_phase is None:
                 await asyncio.to_thread(self.cpu.restore)
             elif not await asyncio.to_thread(self.cpu.set_cap_khz, cap):
                 split.step(now, False, SplitSample(None, target_real, None, None, None, None, None))
+                # The sysfs transaction may have partially applied. The
+                # actuator owns the write-ahead undo and must verify restore.
+                await asyncio.to_thread(self.cpu.restore)
         change = split.last_change
         if change is not None:
             self._mark_autopilot_transition()
@@ -1773,7 +1818,7 @@ class GovernorService:
         self._point_deltas = {**self._point_deltas, "scaling_sharpness": want}
         if self._injection is not None:
             self._injection = {**self._injection, "scaling_sharpness": want}
-        desired = {**self._base_for(profile, saved), **(self._injection or self._point_deltas)}
+        desired = self._overlay_with_current_fusion_scope(self._base_for(profile, saved), self._injection or self._point_deltas)
         mark = self.observer.event_seq
         try:
             record = await asyncio.to_thread(self._ensure_overlay_sync, profile, desired, self._point["key"])
@@ -2398,23 +2443,34 @@ class GovernorService:
         fingerprint = getattr(self.configuration, "saved_config_fingerprint", lambda: None)()
         header = self.overlay.read_header(profile)
         if self._saved_fp is None and header is not None and header.get("owner") == self.overlay.owner_pid:
-            self._saved_fp = fingerprint  # first look: overlay was projected at enable/reconcile
-            return
+            self._saved_fp = fingerprint  # still verify the runtime-only Fusion scope below
+        desired_scope = self._frame_fusion_scope(profile)
+        scope_changed = self._fusion_scope_synced is None or self._fusion_scope_synced != desired_scope
         stale = (
             header is None
             or header.get("owner") != self.overlay.owner_pid
             or fingerprint != self._saved_fp
+            or scope_changed
         )
         if not stale:
             return
         base = self._base_for(profile, saved)
-        desired = {**base, **(self._injection or self._point_deltas)}
+        desired = self._overlay_with_current_fusion_scope(base, self._injection or self._point_deltas)
         key = self._point["key"] if self._point else "base"
         try:
             record = await asyncio.to_thread(self._ensure_overlay_sync, profile, desired, key)
             if record is not None:
                 self._record = record
             self._saved_fp = fingerprint
+            # A failed base projection must not count as a scope acknowledgement.
+            # Re-evaluate it on a later iteration once the launch overlay is usable.
+            if "gfg_frame_fusion" in desired:
+                self._fusion_scope_synced = bool(desired["gfg_frame_fusion"])
+                if scope_changed:
+                    self._event("frame-fusion-scope-synced", "runtime-overlay", profile=profile,
+                                requested=desired_scope, point=key, revision=record.revision if record else None)
+            else:
+                self._fusion_scope_synced = None
         except (OSError, ValueError) as error:
             self._status.setdefault("overlay", {})["sync_error"] = str(error)
 
@@ -2555,7 +2611,7 @@ class GovernorService:
             profile = self._status.get("profile") or ""
             if profile and self._point:
                 saved = await asyncio.to_thread(self._saved_profile_config, profile)
-                await self._rollback(profile, {**self._base_for(profile, saved), **self._point_deltas}, "flow-step-failed")
+                await self._rollback(profile, self._overlay_with_current_fusion_scope(self._base_for(profile, saved), self._point_deltas), "flow-step-failed")
         self._sample_session()
         profile = self._status.get("profile") or ""
         try:
@@ -2609,7 +2665,7 @@ class GovernorService:
         if previous is not None and previous != context and flow.wanted is not None:
             flow.reset()
             await asyncio.to_thread(self._write_overlay_sync, profile,
-                                    {**self._base_for(profile, saved), **self._point_deltas}, self._point["key"])
+                                    self._overlay_with_current_fusion_scope(self._base_for(profile, saved), self._point_deltas), self._point["key"])
         context_matches = bool(latest.get("context") and ack.get("context") == latest.get("context"))
         eligible = bool(self._settings.get("auto_flow") is not False
                         and self._status.get("enabled") and self._status.get("state") == "LOCKED"
@@ -2650,7 +2706,7 @@ class GovernorService:
                                         self._point["key"])
             except (OSError, ValueError):
                 flow.reset()
-                await self._rollback(profile, {**self._base_for(profile, saved), **self._point_deltas},
+                await self._rollback(profile, self._overlay_with_current_fusion_scope(self._base_for(profile, saved), self._point_deltas),
                                      "flow-write-failed")
                 raise
         if before_busy != flow.busy:
@@ -3933,6 +3989,13 @@ class GovernorService:
         self._evaluation_after_seq = self.observer.sample_seq
         feedback = self._power_feedback(profile, budget)
         before = (budget.point.key, budget.tdp, budget.phase)
+        # Exclusivity for the short CPU clock trial/A-B-A windows. Do not
+        # inhibit emergency power restoration or real-frame safety guards.
+        # Ordinary held CPU caps do not block Governor's long-term TDP search:
+        # a fresh TDP probe preempts them, then CPU Split backs off.
+        split = self._split
+        budget.hold_cpu_split = bool(split and
+                                    (split.phase == "probe" or split.ab_phase is not None))
         reason_before, holds_before = budget.last_reason, getattr(budget, "not_power_bound_holds", 0)
         action = budget.observe(now, verdict, (fresh.get("real") or {}).get("median"),
                                 (fresh.get("output") or {}).get("median"))
@@ -4038,7 +4101,7 @@ class GovernorService:
         saved = await asyncio.to_thread(self._saved_profile_config, profile)
         if saved is None:
             return False
-        desired = {**self._base_for(profile, saved), **(wanted or self._point_deltas)}
+        desired = self._overlay_with_current_fusion_scope(self._base_for(profile, saved), wanted or self._point_deltas)
         key = self._point["key"] if self._point else "base"
         try:
             record = await asyncio.to_thread(self._ensure_overlay_sync, profile, desired, key)
@@ -4064,7 +4127,7 @@ class GovernorService:
             key = self._point["key"] if self._point else "base"
             try:
                 await asyncio.to_thread(self._ensure_overlay_sync, profile,
-                                        {**self._base_for(profile, saved), **self._point_deltas}, key)
+                                        self._overlay_with_current_fusion_scope(self._base_for(profile, saved), self._point_deltas), key)
             except (OSError, ValueError):
                 pass
         self._event("frame-os-injection", "stop", profile=profile, cause=reason)

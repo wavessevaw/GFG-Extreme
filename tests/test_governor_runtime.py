@@ -939,6 +939,15 @@ class BudgetRuntimeTests(RuntimeBase):
         return int((self.cpufreq / "policy0" / "scaling_max_freq").read_text())
 
     def gpu_bound_play(self, seconds, top=30.0, until_capped=False):
+        # Isolate the CPU/GPU split from Governor TDP trials. The split must
+        # refuse new caps while Governor is settling/probing watts. Confirmed
+        # steady watts are a prerequisite, not an artificial GPU gain.
+        if self.svc._budget is not None:
+            self.svc._budget.phase = "locked"
+            self.svc._budget.probe = None
+            self.svc._budget.locked_since = self.t["now"]
+            self.svc._budget.settled_since = self.t["now"]
+            self.svc._budget.reprobe_interval = 1e6
         self.svc.sensors.sample = lambda force=False: {"gpu_busy_pct": 97.0, "cpu_top_core_pct": top,
                                                        "gpu_clock_mhz": 1200.0}
         st = None
@@ -964,9 +973,10 @@ class BudgetRuntimeTests(RuntimeBase):
         events = [json.loads(l) for l in Path(self.svc.events_path).read_text().splitlines()]
         steps = [e for e in events if e.get("event") == "power-split"]
         self.assertTrue(steps and steps[0]["reason"] == "step-down")
-        self.gpu_bound_play(ps_probe_s() + 3)          # the probe holds: the level is remembered
+        self.gpu_bound_play(ps_probe_s() + 3)          # a brief hold is not an efficiency proof
         game = self.svc._split_key[0]
-        self.assertGreater(self.svc._settings["power_split_games"][game]["level"], 0, "remembered per game")
+        self.assertEqual(self.svc._settings["power_split_games"][game]["level"], 0,
+                         "do not remember unmeasured CPU caps across game sessions")
         # the point goes (game exit, mode change): the user's clock is back at once
         asyncio.run(self.svc._release_point("game", "test"))
         self.assertEqual(self.cpu_khz(), 3_500_000)
