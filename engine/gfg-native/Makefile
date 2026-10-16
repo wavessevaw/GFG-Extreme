@@ -187,3 +187,11 @@ clean:
 $(BUILD)/hdr-precision: tests/hdr_precision.c $(TE_LIB)
 	mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I$(VULKAN_HEADERS) -I../gfg-temporal/src -o $@ $< $(TE_LIB) -lvulkan -ldl -lpthread -lm
+
+$(BUILD)/presentation-timing: tests/presentation_timing.c src/gpu_bridge.c src/gpu_bridge.h src/frame_clock.h src/present_chain.h $(TE_LIB)
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I$(VULKAN_HEADERS) -I../gfg-temporal/src -o $@ $< $(TE_LIB) -ldl -lm -lpthread
+
+presentation-timing: $(BUILD)/presentation-timing
+	$(BUILD)/presentation-timing
+.PHONY: presentation-timing

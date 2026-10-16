@@ -418,6 +418,15 @@ for (const mode of ["budget","balanced","quality","extreme"]) {
   if (!(await page.getByText("stable",{exact:true}).count())) {failed++;console.error("FAIL stable profile label");}
   await page.close();cases.push(["stable-profile-label"]);
 }
+{
+  const page = await openPage(browser, { ...STATES["home-idle-oled"], native_gsf: { requested_mode: "off", installed: true, contexts: [] } }, ["Settings", "Diagnostics"]);
+  await page.getByText("×3", { exact: true }).click();
+  const sets = await page.evaluate(() => window.__nativeGsfSets || []);
+  if (sets.join(",") !== "3" || !(await page.getByText("Restart the game to apply.", { exact: true }).count())) {
+    failed++; console.error("FAIL independent native GSF mode RPC/restart feedback");
+  }
+  await page.close();cases.push(["native-gsf-mode"]);
+}
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);
 process.exit(failed ? 1 : 0);

@@ -1,4 +1,39 @@
 <!-- codex-fg3-coordination -->
+
+
+## P0 implementation 1.1 — source checkpoint for PR133
+
+The baseline architecture is retained. Inventory covers the actual237-file diff
+at5782aa9 (not the stale-main411-file estimate). Source-time pair scheduling,
+independent G1/G2 admission, x2 midpoint/x3 thirds, exact GPU RGB duplicate gate,
+per-output control-header readiness and bounded age-preserving worker are implemented.
+Display-budget exclusions suppress the corresponding GPU output; G2-only uses one
+reconstruction at2/3 with a valid V+2 timeline signal.
+
+Native GSF is a separate opt-in UI/RPC/module/launcher, with checksum-verified
+component staging and Off/2/3. No new power control; no hidden foreign FG fallback.
+GOOGLE timing is provisioned only when advertised, private/app namespaces stay
+separate, refresh can be queried, and GFG is explicitly above FROG Gamescope WSI.
+Real Gamescope/compositor/DRM execution remains untested; packet tests are not
+hardware proof. See NATIVE_GSF_IMPLEMENTATION_1_1.md and HARDWARE_ACCEPTANCE_1_1.md.
+
+Software:17 full-path checks pass,183 core assertions, native contracts,62 targeted
+backend checks and118 browser screens. An additional4 WSI checks pass against the
+actual ABI-targeted production ELF (x3/x2/recreate/unknown metadata, VVL0errors).
+Host ELF requiring glibc2.38 was rejected; a signed-package glibc2.31 SDK build
+requires symbols only through2.17 and loads with the actual2.31 loader.
+
+The90Hz lavapipe trace is a negative performance result, not the product target:
+45real/28generated WSI acceptances, no physical scanout.26 G1 skips retained a G2;
+5 lower-refresh cases dispatched/presented G2 alone with zero validation errors.
+Original failures and before/after traces are preserved in the1.1 evidence ZIP.
+
+C hardware and D practical acceptance: NOT TESTED. No /dev/dri or connected Deck
+endpoint. No stable release or claim of30→90OLED. Next work requires actual
+SteamOS/Gamescope timing/DRM and optical uniqueness/latency evidence; inspect
+single-queueG1-copy-afterG2, real-game contention, missed renderer cut and PQ quality.
+No new algorithm comparison or PSNR sweep is authorized merely to fill this gap.
+
 # Architecture accepted; GSF native implementation — 2026-10-16
 
 The owner's latest P0 directive closes comparative research and prioritizes a
@@ -33,7 +68,7 @@ Implemented code:
 pass under fresh VVL, both layer orders: 182 core assertions, borrowed device,
 independent actual G1/G2/R pixel/order/spacing observation, recreate, queue idle,
 unknown metadata, cut-credit exclusion and real-only fallback without worker. 31 Python regressions and both 168-check LMC baselines pass.
-Functional output clock 9 Hz/source 3 Hz; four real+six distinct synthetic with
+Historical fixture configured output clock9Hz, but its source3Hz description was wrong (the old app paced33ms); four real+six distinct synthetic with
 ~111 ms minimum host handoff spacing. 90 Hz software attempts missed deadlines and
 are archived as failures. No interpolation/scanout success is inferred from CI.
 

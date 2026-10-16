@@ -24,6 +24,7 @@ const rpc = {
   setFrameOsActUnlock: safeCallable("set_governor_frame_os_act_unlock"),
   setFrameOsAb: safeCallable("set_governor_frame_os_ab"),
   setFrameFusion: safeCallable("set_governor_frame_fusion"),
+  setNativeGsf: safeCallable("set_native_gsf"),
   setTemporalEngine: safeCallable("set_governor_temporal_engine"),
   setFrameOsFeature: safeCallable("set_governor_frame_os_feature"),
   setPowerSplit: safeCallable("set_governor_power_split"),
@@ -514,7 +515,8 @@ function ExtremeOffer({ o, onTry, onHide }) {
 
 function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch }) {
   const [busy, setBusy] = useState(false);
-  const missing = inst && inst.installed === false;
+  const nativeSelected = s.native_gsf && s.native_gsf.installed && ["2", "3"].includes(s.native_gsf.requested_mode);
+  const missing = !nativeSelected && inst && inst.installed === false;
   const xt = s.mode === "extreme";
   const x = s.extreme || {};
   const d = describeExtreme(s, describe(s));
@@ -1088,6 +1090,7 @@ function AdvancedPage({ back, s, insp, launch, go, profile }) {
     h(ForgetModel, { profile }),
     h(FrameOsPanel, { s, profile }),
     s && s.mode === "autopilot" ? h(FrameFusionPanel, { s }) : null,
+    h(NativeGsfPanel, { s }),
     h(TemporalEnginePanel, { s }),
     h("div", { className: "sec" }, "INSPECTOR"),
     h("div", { className: "cols" }, col("SAVED", sv), col("EFFECTIVE", ef), col("GOVERNOR", s && s.active_point ? { point: POINT_LABEL(s.active_point) } : {}, true), col("ACTUAL", ac)));
@@ -1167,6 +1170,29 @@ const TE_STATE = {
   "generating": "The Temporal Engine produces the generated frames.",
   "fallback": "Not used in this game; regular frame generation kept the work.",
 };
+function NativeGsfPanel({ s }) {
+  const native = (s && s.native_gsf) || {};
+  const [mode, setMode] = useState(native.requested_mode || "off");
+  const [message, setMessage] = useState("");
+  useEffect(() => { setMode(native.requested_mode || "off"); }, [native.requested_mode]);
+  const save = async (next) => {
+    try {
+      const result = await rpc.setNativeGsf(next);
+      if (result && result.success) { setMode(next); setMessage("Restart the game to apply."); }
+      else setMessage("Could not save native generator mode.");
+    } catch (_) { setMessage("Could not save native generator mode."); }
+  };
+  const contexts = native.contexts || [];
+  return h("div", null,
+    h("div", { className: "sec" }, "GFG NATIVE GENERATOR · EXPERIMENTAL"),
+    h(Seg, { value: mode, options: [["off", "Off"], ["2", "×2"], ["3", "×3"]], onChange: save }),
+    h(Note, { quiet: true }, native.installed ? "Independent GPU generator. Steam Deck display acceptance pending." : "Native component is not installed."),
+    h(Note, { quiet: true }, contexts.length ? "Live native contexts: " + contexts.length + ". Displayed FPS: unverified." : (native.reason || "Waiting for a game.")),
+    ...contexts.map((context, index) => h(Note, { key: index, quiet: true },
+      "Source " + num(context.source_fps || 0, 1) + " FPS · WSI accepted " + (context.real_wsi_accepted || 0) + " real / " + (context.generated_wsi_accepted || 0) + " generated · " + (context.reason || ""))),
+    message ? h(Note, { quiet: true }, message) : null);
+}
+
 function TemporalEnginePanel({ s }) {
   const te = (s && s.temporal_engine) || {};
   const [mode, setMode] = useState(te.requested_mode || "off");

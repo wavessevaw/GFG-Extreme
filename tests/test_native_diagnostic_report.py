@@ -1,5 +1,6 @@
 """Diagnostic summaries must recognize the runtime's actual log messages."""
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 
@@ -10,6 +11,28 @@ spec.loader.exec_module(report)
 
 
 class DiagnosticReportTests(unittest.TestCase):
+    def test_pair_rates_use_observed_handoffs_and_classify_missing_g1(self):
+        records = []
+        for i, accepted, drops in (
+            (1, [0, 0, 1033000000], [2, 2]),
+            (2, [1044000000, 1055000000, 1066000000], [-1, -1]),
+            (3, [0, 1088000000, 1099000000], [6, -1]),
+        ):
+            records.append(dict(schema=1, event='pair', pid=7, generation=1, pair=i,
+                source1_ns=1000000000+(i-1)*33000000, worker_start_ns=1001000000+(i-1)*33000000,
+                admitted_ns=1000500000+(i-1)*33000000, multiplier=3,
+                wsi_accepted_ns=accepted, drop_code=drops,
+                drop_detail=['expired', 'history']))
+        summary = report.summarize_trace('\n'.join(json.dumps(r) for r in records)+'\ninvalid')
+        self.assertEqual(summary['pairs'], 3)
+        self.assertEqual(summary['invalid_records'], 1)
+        self.assertEqual(summary['invalid_pairs'], [])
+        self.assertEqual(summary['rates']['generated_wsi'][0]['count'], 3)
+        self.assertLess(summary['rates']['all_wsi'][0]['fps'], 90)
+        self.assertEqual(summary['drop_codes']['6'], 1)
+        self.assertIsNone(summary['physical_displayed_fps'])
+        self.assertIsNone(summary['unique_displayed_fps'])
+
     def test_runtime_retirement_counters_are_visible_without_smoke_test_output(self):
         text = report.render({
             "app.stderr.log":

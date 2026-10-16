@@ -197,6 +197,10 @@ struct gfg_gpu_fg {
     PFN_vkGetPastPresentationTimingGOOGLE past_timing;
     uint64_t readiness_ns[2], accepted_ns[3], wsi_ns[3];
     int slot_drop[2];
+    const char *slot_detail[2];
+    uint64_t readiness_wait_ns[2];
+    uint32_t google_ids[3];
+    unsigned transport_submit_mask;
 
 };
 
@@ -214,7 +218,7 @@ int gfg_gpu_fg_waiting_image(gfg_gpu_fg *fg) { return atomic_load(&fg->waiting_i
 static VkResult output_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKHR *pi,
                                PFN_vkQueuePresentKHR next,unsigned kind) {
     if(fg->pacing_active && fg->clock.period_ns) {
-        const uint64_t target=gfg_frame_clock_target(&fg->clock,kind);
+        const uint64_t target=gfg_frame_clock_target(&fg->clock,kind)-(fg->display_timing==2?fg->clock.period_ns/4:0);
         struct timespec now;clock_gettime(CLOCK_MONOTONIC,&now);
         const uint64_t ns=(uint64_t)now.tv_sec*1000000000ull+(uint64_t)now.tv_nsec;
         if(ns<target) {
@@ -234,7 +238,7 @@ static VkResult output_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInf
     VkPresentTimesInfoGOOGLE times={.sType=VK_STRUCTURE_TYPE_PRESENT_TIMES_INFO_GOOGLE,
         .pNext=pi->pNext,.swapchainCount=1,.pTimes=&at};
     if(fg->display_timing==2 && fg->pacing_active && fg->clock.period_ns && pi->swapchainCount==1) {
-        at.presentID=++fg->google_id;
+        at.presentID=++fg->google_id;fg->google_ids[kind]=at.presentID;
         at.desiredPresentTime=gfg_frame_clock_target(&fg->clock,kind);
         timed.pNext=&times;
     }
@@ -1074,7 +1078,7 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     fg->next_value = fg->same_device ? 1 : 3;
     fg->timing_total_us = calloc(TIMING_CAP, sizeof(double));
     fg->timing_own_us = calloc(TIMING_CAP, sizeof(double));
-    if (fg->log || getenv("GFG_NATIVE_TIMING")) {
+    if (fg->log || fg->telemetry || getenv("GFG_NATIVE_TIMING")) {
         fg->gpu_first_ms = calloc(TIMING_CAP, sizeof(double));
         fg->gpu_pair_ms = calloc(TIMING_CAP, sizeof(double));
     }
@@ -1115,6 +1119,11 @@ void gfg_gpu_fg_destroy(gfg_gpu_fg *fg) {
         1e9/(double)fg->clock.period_ns,(unsigned long long)fg->pacing_waits,(unsigned long long)fg->pacing_late,
         (unsigned long long)fg->clock.resyncs,(unsigned long long)fg->drop_outputs[DROP_DEADLINE],
         (unsigned long long)fg->drop_outputs[DROP_CUT]);
+    if(fg->status_dir) {
+        char path[4096];
+        int n=snprintf(path,sizeof(path),"%s/%ld-%llu.json",fg->status_dir,(long)getpid(),(unsigned long long)fg->generation);
+        if(n>0 && n<(int)sizeof(path))unlink(path);
+    }
     fg->in_present = 0;
     /* The stopped worker may have finished with a pass-through job. Its
      * private gate and downstream binary waits then have no transport-ring
@@ -1333,7 +1342,7 @@ static VkResult forward_real(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoK
 }
 
 /* acquire + copy + present one synthetic output; 1 presented, 0 skipped, -1 error */
-static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v, uint32_t real_index,
+static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, int output_index, uint64_t v, uint32_t real_index,
                              PFN_vkQueuePresentKHR next, const gfg_present_id_hooks *ids,
                              int dynamic_fifo, double *next_us) {
     uint32_t img = UINT32_MAX;
@@ -1341,24 +1350,27 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v, u
     VkResult r;
     double target_us=fg->output_deadline_us;
     if(fg->pacing_active && fg->clock.period_ns) {
-        const uint64_t target=gfg_frame_clock_target(&fg->clock,(unsigned)k);
-        uint64_t now=(uint64_t)(now_us()*1000.0),value=v+1+(uint64_t)k;
+        const uint64_t target=gfg_frame_clock_target(&fg->clock,(unsigned)k)-(fg->display_timing==2?fg->clock.period_ns/4:0);
+        uint64_t now=(uint64_t)(now_us()*1000.0),value=v+1+(uint64_t)output_index;
         if(fg->cut_drop || fg->duplicate_drop)return 0;
         if(!gfg_frame_clock_admit(&fg->clock,(unsigned)k,now)) {
-            fg->deadline_drop=1;return 0;
+            fg->slot_detail[k]="expired-before-readiness";fg->deadline_drop=1;return 0;
         }
         VkSemaphoreWaitInfo wait={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
             .semaphoreCount=1,.pSemaphores=&fg->timeline,.pValues=&value};
         count_wait(fg);
         r=fg->WaitSemaphores(fg->device,&wait,target>now?target-now:0);
+        const uint64_t observed=(uint64_t)(now_us()*1000.0);
+        fg->readiness_wait_ns[k]=observed-now;
+        if(r==VK_SUCCESS)fg->readiness_ns[k]=observed;
         if(r==VK_TIMEOUT || (r==VK_SUCCESS && (uint64_t)(now_us()*1000.0)>target)) {
-            fg->deadline_drop=1;return 0;
+            fg->slot_detail[k]="gpu-readiness-deadline";fg->deadline_drop=1;return 0;
         }
         if(r!=VK_SUCCESS){fail_log(fg,"output readiness",r);return -1;}
         fg->readiness_ns[k]=(uint64_t)(now_us()*1000.0);
         if(!fg->control_checked) {
             uint32_t cut=0;int held=0,duplicate=0;
-            r=te_output_control(fg->context,(uint32_t)k,value,&cut,&held,&duplicate);
+            r=te_output_control(fg->context,(uint32_t)output_index,value,&cut,&held,&duplicate);
             if(r!=VK_SUCCESS){fail_log(fg,"output control",r);return -1;}
             fg->control_checked=1;
             if(cut || held){fg->cut_drop=1;return 0;}
@@ -1384,8 +1396,8 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v, u
     fg->phase_us[2] += now_us() - tp;
     tp = now_us();
     if (r == VK_NOT_READY || r == VK_TIMEOUT) {
-        if(fg->pacing_active && fg->clock.period_ns)fg->deadline_drop=1;
-        else STAT_ADD(acquire_not_ready, 1);
+        fg->slot_detail[k]="WSI-acquire-unavailable";
+        STAT_ADD(acquire_not_ready, 1);
         return 0;
     }
     if ((r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) || img >= fg->image_count) {
@@ -1400,14 +1412,14 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v, u
         retire_acquired(fg,rs->acquire_sem[k]);return -1;
     }
     const int generated=!inject_fault(fg,"record") &&
-        record_generated(fg,rs->gen_cb[k],fg->dst[k].image,fg->images[img]);
+        record_generated(fg,rs->gen_cb[k],fg->dst[output_index].image,fg->images[img]);
     if(!generated){
         fg->disabled=1;
         if(!record_duplicate(fg,rs->gen_cb[k],fg->images[real_index],fg->images[img])){
             retire_acquired(fg,rs->acquire_sem[k]);return -1;
         }
     }
-    const uint64_t value = v + 1 + (uint64_t)k;
+    const uint64_t value = v + 1 + (uint64_t)output_index;
     VkSemaphore waits[2] = {rs->acquire_sem[k], fg->timeline};
     /* same-device barriers include ALL_COMMANDS to cover previous TE shader
      * reads. Acquired-image layout transitions must wait at that same scope,
@@ -1441,6 +1453,7 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v, u
     r = fg->QueueSubmit(fg->queue, 1, &si, VK_NULL_HANDLE);
     fg->phase_us[3] += now_us() - tp;
     if (!ok(r)) { fail_log(fg, "synthetic submit", r); fg->disabled = 1; fg->recreate_required=1; return -1; }
+    fg->transport_submit_mask|=1u<<(unsigned)k;
     VkPresentInfoKHR pi = {.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1, .pWaitSemaphores = &fg->ready[img],
         .swapchainCount = 1, .pSwapchains = &fg->swapchain, .pImageIndices = &img};
@@ -1501,6 +1514,10 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     memset(fg->accepted_ns,0,sizeof(fg->accepted_ns));
     memset(fg->wsi_ns,0,sizeof(fg->wsi_ns));
     fg->slot_drop[0]=fg->slot_drop[1]=DROP_HISTORY;
+    fg->slot_detail[0]=fg->slot_detail[1]="not-admitted";
+    memset(fg->readiness_wait_ns,0,sizeof(fg->readiness_wait_ns));
+    memset(fg->google_ids,0,sizeof(fg->google_ids));
+    fg->transport_submit_mask=0;
     if(!fg->source_ns)fg->source_ns=(uint64_t)(t0*1000.0);
     fg->source_serial=fg->frame+1;
     const uint64_t source0=fg->previous_source_ns,serial0=fg->previous_serial;
@@ -1521,6 +1538,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
         if(fg->clock.discontinuity)fg->te_gap=1;
     }
     fg->output_deadline_us = t0 + (double)gfg_gpu_fg_source_period_ns(fg)/1000.0;
+    unsigned dispatched_outputs=0,dispatched_mask=0;
     double next_us = 0.0;
     STAT_ADD(real_presents, 1);
     const uint64_t frame = fg->frame++;
@@ -1621,14 +1639,21 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     }
     fg->next_value += 3;
     /* From here ready[idx] is signalled: the real present below waits it. */
-    const int generate = fg->te_frames > 0 && !fg->te_gap;
+    const int have_pair = fg->te_frames > 0 && !fg->te_gap;
+    const unsigned compute_mask=fg->clock.period_ns?fg->clock.mask:(1u<<(fg->multiplier-1))-1u;
+    const int generate = have_pair && compute_mask;
     te_submit s = {0};
     s.slot = fg->te_slot;
     /* Initial/gap frames only rebuild history. The former two full-size hold
      * outputs were never presented, but still consumed GPU memory bandwidth. */
-    s.count = generate || !fg->same_device ? fg->multiplier-1 : 0u;
+    s.count = generate ? (uint32_t)__builtin_popcount(compute_mask) : !fg->same_device ? fg->multiplier-1 : 0u;
     s.timestamps[0] = 1.0f / (float)fg->multiplier;
     s.timestamps[1] = 2.0f / 3.0f;
+    if(generate) {
+        unsigned output=0;
+        for(unsigned k=0;k<fg->multiplier-1;++k)if(compute_mask&(1u<<k))
+            s.timestamps[output++]=(float)(k+1)/(float)fg->multiplier;
+    }
     s.wait_value = v;
     s.signal_first = s.count ? v + 3-s.count : v + 2;
     s.nonblocking = 1;
@@ -1639,8 +1664,9 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     fg->phase_us[1] += now_us() - tp;
     gpu_sample(fg);
     int presented = 0;
-    drop_reason = DROP_HISTORY;
+    drop_reason = have_pair && !compute_mask?DROP_RATE:DROP_HISTORY;
     if (tr == VK_SUCCESS) {
+        dispatched_outputs=s.count;dispatched_mask=generate?compute_mask:0;
         fg->last_te_value = v + 2;
         fg->te_slot ^= 1u;
         fg->te_frames++;
@@ -1648,12 +1674,13 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
         if (!generate) STAT_ADD(holds, 1);
         if (!s.count) ++fg->history_only_submits;
         if (generate) {
+            unsigned generated_index=0;
             for (unsigned k = 0; k < fg->multiplier-1; ++k) {
                 fg->deadline_drop=0;
                 if(fg->clock.period_ns && !(fg->clock.mask&(1u<<k))) {
-                    fg->slot_drop[k]=DROP_RATE;skip_outputs(fg,DROP_RATE,1);continue;
+                    fg->slot_detail[k]="display-refresh-budget";fg->slot_drop[k]=DROP_RATE;skip_outputs(fg,DROP_RATE,1);continue;
                 }
-                int g = present_synthetic(fg, rs, (int)k, v+2-s.count, idx, next, ids, app_chain.dynamic_mode, &next_us);
+                int g = present_synthetic(fg, rs, (int)k, (int)generated_index++, v+2-s.count, idx, next, ids, app_chain.dynamic_mode, &next_us);
                 if (g <= 0) {
                     if (g < 0) STAT_ADD(errors, 1);
                     unsigned reason=g<0?DROP_ERROR:fg->cut_drop?DROP_CUT:fg->duplicate_drop?DROP_DUPLICATE:fg->deadline_drop?DROP_DEADLINE:DROP_ACQUIRE;
@@ -1664,7 +1691,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
                         for(++k;k<fg->multiplier-1;++k){fg->slot_drop[k]=DROP_ERROR;skip_outputs(fg,DROP_ERROR,1);}
                         break;
                     }
-                } else {++presented;fg->slot_drop[k]=-1;}
+                } else {++presented;fg->slot_drop[k]=-1;fg->slot_detail[k]="WSI-accepted";}
             }
             if (fg->verify && presented == 2 && frame % fg->verify_every == 0)
                 verify_submit(fg, v, fg->te_slot ^ 1u);
@@ -1706,19 +1733,21 @@ timing:
         fprintf(fg->telemetry,"{\"schema\":1,\"event\":\"pair\",\"pid\":%ld,\"generation\":%llu,\"pair\":%llu,"
             "\"source0_id\":%llu,\"source1_id\":%llu,\"source0_ns\":%llu,\"source1_ns\":%llu,"
             "\"admitted_ns\":%llu,\"worker_start_ns\":%llu,\"worker_end_ns\":%llu,\"interval_ns\":%llu,"
-            "\"refresh_period_ns\":%llu,\"multiplier\":%u,\"planned_mask\":%u,"
+            "\"refresh_period_ns\":%llu,\"multiplier\":%u,\"planned_mask\":%u,\"dispatched_outputs\":%u,\"compute_mask\":%u,\"transport_submit_mask\":%u,\"source_discontinuity\":%u,"
             "\"target_ns\":[%llu,%llu,%llu],\"readiness_observed_ns\":[%llu,%llu],"
             "\"wsi_accepted_ns\":[%llu,%llu,%llu],\"wsi_call_ns\":[%llu,%llu,%llu],"
-            "\"cpu_phase_us\":[%.3f,%.3f,%.3f,%.3f,%.3f],\"te_sequence\":%llu,\"drop_code\":[%d,%d],\"cut\":%d,\"duplicate\":%d,\"physical_displayed\":null,\"visually_unique\":null}\n",
+            "\"readiness_wait_ns\":[%llu,%llu],\"google_present_ids\":[%u,%u,%u],\"drop_detail\":[\"%s\",\"%s\"],\"cpu_phase_us\":[%.3f,%.3f,%.3f,%.3f,%.3f],\"te_sequence\":%llu,\"drop_code\":[%d,%d],\"cut\":%d,\"duplicate\":%d,\"physical_displayed\":null,\"visually_unique\":null}\n",
             (long)getpid(),(unsigned long long)fg->generation,(unsigned long long)fg->frame,
             (unsigned long long)serial0,(unsigned long long)fg->source_serial,
             (unsigned long long)source0,(unsigned long long)fg->source_ns,
             (unsigned long long)fg->admitted_ns,(unsigned long long)(t0*1000.0),(unsigned long long)(now_us()*1000.0),
-            (unsigned long long)fg->clock.interval_ns,(unsigned long long)fg->clock.period_ns,fg->multiplier,fg->clock.mask,
+            (unsigned long long)fg->clock.interval_ns,(unsigned long long)fg->clock.period_ns,fg->multiplier,fg->clock.mask,dispatched_outputs,dispatched_mask,fg->transport_submit_mask,fg->clock.discontinuity,
             (unsigned long long)fg->clock.target_ns[0],(unsigned long long)fg->clock.target_ns[1],(unsigned long long)fg->clock.target_ns[2],
             (unsigned long long)fg->readiness_ns[0],(unsigned long long)fg->readiness_ns[1],
             (unsigned long long)fg->accepted_ns[0],(unsigned long long)fg->accepted_ns[1],(unsigned long long)fg->accepted_ns[2],
             (unsigned long long)fg->wsi_ns[0],(unsigned long long)fg->wsi_ns[1],(unsigned long long)fg->wsi_ns[2],
+            (unsigned long long)fg->readiness_wait_ns[0],(unsigned long long)fg->readiness_wait_ns[1],
+            fg->google_ids[0],fg->google_ids[1],fg->google_ids[2],fg->slot_detail[0],fg->slot_detail[1],
             fg->phase_us[0]-phase_before[0],fg->phase_us[1]-phase_before[1],fg->phase_us[2]-phase_before[2],
             fg->phase_us[3]-phase_before[3],fg->phase_us[4]-phase_before[4],(unsigned long long)fg->te_frames,
             fg->slot_drop[0],fg->slot_drop[1],fg->cut_drop,fg->duplicate_drop);
@@ -1738,7 +1767,7 @@ timing:
         fflush(fg->telemetry);
     }
     fg->real_accepted+=fg->accepted_ns[2]!=0;
-    fg->generated_accepted+=(fg->accepted_ns[0]!=0)+(fg->accepted_ns[1]!=0);
+    fg->generated_accepted+=(fg->slot_drop[0]==-1)+(fg->multiplier==3 && fg->slot_drop[1]==-1);
     uint64_t status_now=(uint64_t)(now_us()*1000.0);
     if(fg->status_dir && status_now-fg->status_last_ns>=250000000ull) {
         char path[4096],temp[4096];

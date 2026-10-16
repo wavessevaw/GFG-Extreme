@@ -81,7 +81,7 @@ from .profile_storage import (
 )
 
 
-WRAPPER_FORMAT_VERSION = 88
+WRAPPER_FORMAT_VERSION = 89
 WRAPPER_FORMAT_MARKER = f"# mako-wrapper-format: {WRAPPER_FORMAT_VERSION}"
 HOST_COMPATIBILITY_MARKER = "# mako-host-compatibility: aarch64-passthrough-v1"
 DIAGNOSTICS_DEFAULT_MARKER = (
@@ -747,6 +747,7 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
     frame_os_layer_dir = context.frame_os_layer_dir or frame_os_layer_target_dir(context.local_share_dir)
     inherited_managed_layer_removal_lines: list[str] = []
     for layer_name in (
+        "VK_LAYER_GFG_native",
         MAKO_LAYER_NAME,
         SPATIAL_SCALING_LAYER_NAME,
         GAMESCOPE_WSI_LAYER_NAME_64,
@@ -890,6 +891,20 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         '    case "$gfg_temporal_mode" in observe|shadow|experimental) export GFG_TEMPORAL_ENGINE="$gfg_temporal_mode" ;; esac',
         'fi',
         'unset gfg_temporal_marker gfg_temporal_mode',
+        # Independent native GSF takes precedence over the old MAKO engine.
+        f'gfg_native_marker={shlex.quote(str(context.runtime_state_dir / "native-gsf.mode"))}',
+        'export DISABLE_GFG_NATIVE_FG=1',
+        'unset GFG_NATIVE_FG GFG_NATIVE_GPU_BRIDGE GFG_NATIVE_CPU_BRIDGE GFG_NATIVE_MODE',
+        'gfg_native_mode=off',
+        'gfg_native_requested=off',
+        'if [ -r "$gfg_native_marker" ]; then gfg_native_requested="$(head -c 8 "$gfg_native_marker" | tr -d \'\\n\')"; fi',
+        'case "$gfg_native_requested" in 2|3)',
+        '    mako_renderer_enabled=0',
+        '    export DISABLE_MAKO=1',
+        '    unset ENABLE_MAKO GFG_TEMPORAL_ENGINE',
+        '    if [ "$mako_flatpak_runtime" != 1 ]; then gfg_native_mode="$gfg_native_requested"; fi',
+        '    ;;',
+        'esac',
         # Flatpak preparation stages the host's own WSI binary beside its
         # guarded manifest, so Heroic and EmuDeck use this same chain without
         # exposing or searching the host's global Vulkan layer directory.
@@ -995,6 +1010,29 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         f"        mako_managed_instance_layers={MAKO_LAYER_NAME}",
         "    fi",
         "fi",
+        'if [ "$gfg_native_mode" != off ]; then',
+        '    gfg_native_root="${XDG_DATA_HOME:-$HOME/.local/share}/gfg-native"',
+        '    if [ -r "$gfg_native_root/VkLayer_gfg_native.json" ] && [ -r "$gfg_native_root/libVkLayer_gfg_native.so" ]; then',
+        '        export GFG_NATIVE_MODE="$gfg_native_mode" GFG_NATIVE_ALGO=gsf GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1',
+        '        export GFG_NATIVE_ASYNC=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_FORCE_FIFO=0',
+        '        unset DISABLE_GFG_NATIVE_FG GFG_NATIVE_CPU_BRIDGE',
+        '        export VK_LAYER_PATH="$gfg_native_root${VK_LAYER_PATH:+:$VK_LAYER_PATH}"',
+        '        mako_managed_instance_layers=VK_LAYER_GFG_native',
+        '        gfg_native_wsi_manifest=' + gamescope_wsi_manifest,
+        '        if [ ! -r "$gfg_native_wsi_manifest" ]; then gfg_native_wsi_manifest=/usr/share/vulkan/implicit_layer.d/VkLayer_FROG_gamescope_wsi.x86_64.json; fi',
+        '        if [ "$mako_gamescope_wsi_session" = 1 ] && [ -r "$gfg_native_wsi_manifest" ]; then',
+        f'            mako_managed_instance_layers="VK_LAYER_GFG_native:{GAMESCOPE_WSI_LAYER_NAME_64}"',
+        '            export VK_LAYER_PATH="$VK_LAYER_PATH:$(dirname -- "$gfg_native_wsi_manifest")"',
+        '        fi',
+        '        unset gfg_native_wsi_manifest',
+        '        export GFG_NATIVE_STATUS_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/gfg-native/status"',
+        '        mkdir -p "$GFG_NATIVE_STATUS_DIR"',
+        '    else',
+        '        export DISABLE_GFG_NATIVE_FG=1',
+        '        printf "GFG native component missing; real-only fallback.\\n" >&2',
+        '    fi',
+        'fi',
+        'unset gfg_native_marker gfg_native_mode gfg_native_root gfg_native_requested',
         # Frame OS: the pacer must see the game's real frames, so it goes above the renderer.
         # The renderer then also needs the explicit list (its implicit gate is cleared below).
         # Flatpak sandboxes do not get the layer until it is staged there.

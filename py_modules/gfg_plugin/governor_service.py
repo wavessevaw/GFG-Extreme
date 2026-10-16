@@ -51,7 +51,7 @@ from .package_paths import PLUGIN_ROOT
 from .managed_files import write_managed_text_atomically
 from .host_sensors import HostSensors, diagnose
 from . import extreme as extreme_policy
-from . import temporal_engine
+from . import temporal_engine, native_gsf
 from .autopilot.arbiter import Arbiter
 from .autopilot.gpu_clock import GpuClock
 from .autopilot.half_rate import HalfRateShading
@@ -1179,6 +1179,22 @@ class GovernorService:
             return {"success": False, "error": str(error)}
         return {"success": True, "enabled": enabled, "relaunch_required": True}
 
+    def set_native_gsf(self, mode: str) -> Dict[str, Any]:
+        if mode not in native_gsf.MODES:
+            return {"success": False, "error": "invalid-native-gsf-mode"}
+        if mode != "off" and getattr(self.configuration, "user_home", None) is not None:
+            staged = native_gsf.stage_packaged(self.configuration.user_home)
+            if not staged["success"]:
+                return staged
+        result = native_gsf.set_mode(self.configuration.runtime_state_dir, mode, self.log, getattr(self.configuration, "user_home", None))
+        if result["success"]:
+            self._event("native-gsf-mode", mode, relaunch_required=True)
+            self._poke()
+        return result
+
+    def native_gsf_status(self) -> Dict[str, Any]:
+        return native_gsf.status(self.configuration.runtime_state_dir, getattr(self.configuration, "user_home", None))
+
     # ------------------------------------------------- Temporal Engine (exp.)
     def temporal_engine_mode(self) -> str:
         """Launch mode of the experimental engine. Off unless the player chose one;
@@ -2047,6 +2063,7 @@ class GovernorService:
                               "quality": "motion-image-quality", "extreme": "real-frames-and-headroom",
                               "autopilot": "orchestrate"}.get(self._mode(profile or value.get("profile", "")))
         value["extreme"] = self._status.get("extreme") or {"enabled": False, "state": "OFF"}
+        value["native_gsf"] = self.native_gsf_status()
         value["temporal_engine"] = self.temporal_engine_status()
         value["scale_blocked"] = (("game-ignores-render-scale" if self._scale_blocked == extreme_policy.GAME_IGNORES_SCALE
                                    else self._scale_blocked)

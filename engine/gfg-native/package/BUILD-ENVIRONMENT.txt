@@ -34,3 +34,11 @@ Run one local diagnostic capture by setting the Steam launch option to
 
 Status: EXPERIMENTAL / NOT ACCEPTED. The package does not prove physical 90 Hz,
 OLED scanout, game quality, power, latency or stability on Steam Deck.
+
+internal.6 local experimental artifact:
+  Debian GCC14.2.0; glslang15.2.0; Vulkan-Headers v1.4.365.
+  Explicit glibc2.31 build SDK from signed Debian bullseye APT packages.
+  Maximum required ELF symbol version: GLIBC2.17; actual glibc2.31 loader test passed.
+  See SOURCE/scripts/build_native_steam_abi.sh and source repository
+  docs/fg3/STEAM_ABI_BUILD.md for pinned package receipts and rebuild flags.
+  No SDK libc is shipped or installed by the package.

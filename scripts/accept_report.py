@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
+import json
+import statistics
 import re
 from pathlib import Path
 import tarfile
@@ -26,6 +29,82 @@ def load_logs(source: Path) -> dict[str, str]:
             if stream is not None:
                 files[path.name] = stream.read().decode(errors="replace")
     return files
+
+
+def summarize_trace(text: str) -> dict:
+    """API timestamps measured in the capture, never physical display FPS."""
+    records, invalid = [], 0
+    for line in text.splitlines():
+        try:
+            record = json.loads(line)
+            if not isinstance(record, dict) or record.get("schema") != 1:
+                raise ValueError("schema")
+            records.append(record)
+        except (ValueError, TypeError):
+            invalid += 1
+    pairs = [r for r in records if r.get("event") == "pair"]
+    drops, detail = Counter(), Counter()
+    rates = {"source": [], "real_wsi": [], "generated_wsi": [], "all_wsi": []}
+    capture_age, mailbox_wait, admission_wait = [], [], []
+    identities = set()
+    errors = []
+    for pair in pairs:
+        try:
+            identity = (int(pair["pid"]), int(pair["generation"]), int(pair["pair"]))
+            if identity in identities:
+                raise ValueError("duplicate pair identity")
+            identities.add(identity)
+            source = int(pair["source1_ns"])
+            worker = int(pair["worker_start_ns"])
+            admitted = int(pair["admitted_ns"])
+            if source > worker or not source:
+                raise ValueError("source timestamp after worker")
+            capture_age.append((worker-source)/1e6)
+            if admitted:
+                mailbox_wait.append((worker-admitted)/1e6)
+                admission_wait.append((admitted-source)/1e6)
+            group = identity[:2]
+            rates["source"].append((group, source))
+            accepted = pair["wsi_accepted_ns"]
+            for k in range(3):
+                at = int(accepted[k])
+                if at:
+                    rates["all_wsi"].append((group, at))
+                    if k == 2 or pair["drop_code"][k] == -1:
+                        rates["real_wsi" if k == 2 else "generated_wsi"].append((group, at))
+            for k in range(int(pair["multiplier"])-1 if pair.get("source0_id", 1) else 0):
+                code = pair["drop_code"][k]
+                if code != -1:
+                    drops[str(code)] += 1
+                    detail[pair.get("drop_detail", ["unknown", "unknown"])[k]] += 1
+        except (ValueError, KeyError, TypeError, IndexError) as error:
+            errors.append(str(error))
+    def measured_rate(events):
+        # Multiple processes/swapchains are reported separately, never merged
+        # into one fictitious game FPS. Include each observed interval once.
+        groups = {}
+        for key, at in events:
+            groups.setdefault(key, []).append(at)
+        return [{"pid": key[0], "generation": key[1], "count": len(values),
+                 "fps": (len(values)-1)*1e9/(max(values)-min(values)) if len(values)>1 and max(values)>min(values) else None}
+                for key, values in sorted(groups.items())]
+    def quantiles(values):
+        if not values:
+            return None
+        ordered = sorted(values)
+        return {"median": statistics.median(ordered), "p95": ordered[int(.95*(len(ordered)-1))], "max": ordered[-1]}
+    gpu = [r for r in records if r.get("event") == "gpu_pair" and r.get("timed")]
+    return {"scope": "source/API/WSI observations; no physical scanout or uniqueness proof",
+            "pairs": len(pairs), "invalid_records": invalid, "invalid_pairs": errors,
+            "rates": {key: measured_rate(events) for key, events in rates.items()},
+            "drop_codes": dict(drops), "drop_details": dict(detail),
+            "capture_to_worker_ms": quantiles(capture_age), "mailbox_wait_ms": quantiles(mailbox_wait),
+            "capture_to_admission_ms": quantiles(admission_wait),
+            "gpu_samples": len(gpu),
+            "gpu_first_ready_ms": quantiles([g["ready_ms"][0] for g in gpu]),
+            "gpu_last_ready_ms": quantiles([g["ready_ms"][int(g["outputs"])-1] for g in gpu]),
+            "compositor_feedback": sum(r.get("event") == "compositor_feedback" for r in records),
+            "physical_displayed_fps": None, "unique_displayed_fps": None}
 
 
 def render(files: dict[str, str]) -> str:
@@ -161,6 +240,14 @@ def render(files: dict[str, str]) -> str:
                       "- Application owns present IDs; synthetic IDs and the layer's completion monitor are disabled. No completion cadence was measured."
                       if app_owned else
                       "- No `present_done` records were captured; completed monitored presents are not established (a monitor may have started without receiving IDs)."])
+    trace = files.get("pairs.jsonl")
+    if trace is not None:
+        summary = summarize_trace(trace)
+        lines.extend(["", "## Pair-level measured trace", "",
+                      "Source FPS and accepted WSI rates below come from timestamps. No Real × multiplier estimate.",
+                      "Drop codes: 0 ring; 1 TE busy; 2 history; 3 WSI acquire; 4 bypass; 5 error; 6 deadline; 7 cut; 8 display budget; 9 duplicate.",
+                      "GPU durations are sampled device timestamps; readiness observations include CPU/queue waits.",
+                      "```json", json.dumps(summary, indent=2), "```"])
     lines.extend(["", "## Device snapshot", "", "```text", start.rstrip(), "```", ""])
     return "\n".join(lines)
 

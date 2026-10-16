@@ -104,6 +104,8 @@ static void pattern(uint8_t *px, uint32_t w, uint32_t h, uint32_t frame) {
 }
 
 int main(void) {
+    const unsigned source_hz=env_uint("GFG_TEST_SOURCE_HZ",0);
+    REQUIRE(source_hz<=240);
     const uint32_t frames = env_uint("GFG_TEST_FRAMES", 24);
     const uint32_t want_w = env_uint("GFG_TEST_WIDTH", 96), want_h = env_uint("GFG_TEST_HEIGHT", 64);
     const int validation = env_1("GFG_TEST_VALIDATION");
@@ -413,6 +415,12 @@ int main(void) {
             REQUIRE(presented==VK_ERROR_OUT_OF_DATE_KHR);
         else TRY(presented);
         if (pace_idle) TRY(vkQueueWaitIdle(queue)); /* app-side pacing, outside the layer */
+        if(source_hz) {
+            struct timespec deadline;clock_gettime(CLOCK_MONOTONIC,&deadline);
+            deadline.tv_nsec+=1000000000l/source_hz;
+            if(deadline.tv_nsec>=1000000000l){++deadline.tv_sec;deadline.tv_nsec-=1000000000l;}
+            clock_nanosleep(CLOCK_MONOTONIC,TIMER_ABSTIME,&deadline,NULL);
+        }
     }
     if(env_1("GFG_TEST_RECREATE")) {
         VkSwapchainKHR replacement=VK_NULL_HANDLE;
@@ -464,7 +472,7 @@ int main(void) {
         CHECK(st.version == 1);
         CHECK(st.bridges_created == 1);
         CHECK(st.real_presents == frames);
-        CHECK(st.synthetic_presents + st.skipped_synthetic == 2ull * (frames - 1));
+        CHECK(st.synthetic_presents + st.skipped_synthetic == (getenv("GFG_NATIVE_MODE") && !strcmp(getenv("GFG_NATIVE_MODE"),"2")?1ull:2ull) * (frames - 1));
         if (!env_1("GFG_TEST_ALLOW_SKIPS")) CHECK(st.skipped_synthetic == 0);
         CHECK(st.errors == (env_1("GFG_TEST_EXPECT_FAULT")?1u:0u));
         CHECK(st.present_path_host_pixel_reads == 0);

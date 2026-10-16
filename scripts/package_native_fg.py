@@ -8,6 +8,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import io
+import tarfile
 import os
 from pathlib import Path
 import re
@@ -127,6 +129,9 @@ def package(binary: Path, outdir: Path, version: str, build_environment: str | N
         "LICENSE.md": (ROOT / "LICENSE.md").read_bytes(),
     }
     files.update(source_files())
+    files["SOURCE/scripts/build_native_steam_abi.sh"] = (ROOT / "scripts/build_native_steam_abi.sh").read_bytes()
+    for name in ("NATIVE_GSF_IMPLEMENTATION_1_1.md", "STEAM_ABI_BUILD.md", "HARDWARE_ACCEPTANCE_1_1.md"):
+        files["SOURCE/docs/fg3/"+name]=(ROOT / "docs/fg3" / name).read_bytes()
     manifest = json.loads(files["VkLayer_gfg_native.json"])
     if manifest["layer"]["name"] != "VK_LAYER_GFG_native" or \
        manifest["layer"]["library_path"] != "./libVkLayer_gfg_native.so":
@@ -140,18 +145,21 @@ def package(binary: Path, outdir: Path, version: str, build_environment: str | N
         "source_base_commit": commit,
         "source_worktree_dirty": dirty,
         "source_identity": "SHA256SUMS.txt covers included corresponding source",
-        "algorithm": "GFG LMC GPU model fit; shared analysis; t=1/3,2/3 (tiles diagnostic opt-in)",
+        "algorithm": "Independent GFG GSF adaptive GPU analysis; x2 t=1/2; x3 t=1/3,2/3",
         "transport": "bounded asynchronous WSI output; serialized application queue; GPU image copies; no CPU pixel staging",
-        "multiplier": 3,
+        "multipliers": [2, 3],
+        "default_multiplier": 3,
         "architecture": "linux-x86_64",
         "runtime_requires": ["Vulkan 1.2", "64-bit Linux"],
+        "elf_glibc_versions": sorted(set(re.findall(r"GLIBC_[0-9.]+", subprocess.check_output(["readelf", "--version-info", str(binary)], text=True)))),
+        "elf_needed": re.findall(r"Shared library: \[(.*?)\]", subprocess.check_output(["readelf", "-d", str(binary)], text=True)),
         "runtime_forbidden": ["MAKO Renderer", "Lossless Scaling", "Lossless.dll"],
         "build_environment": build_environment or (
             "GitHub Actions ubuntu-22.04, gcc-12, Vulkan-Headers v1.4.365; see BUILD-ENVIRONMENT.txt"
             if os.environ.get("GITHUB_ACTIONS") == "true"
             else "Local build; environment not attested. BUILD-ENVIRONMENT.txt describes the canonical CI rebuild."
         ),
-        "stage": "internal development; NOT COMPLETED",
+        "stage": "experimental; hardware acceptance NOT TESTED",
         "hardware_acceptance": False,
         "physical_display_verified": False,
         "elf_sha256": digest(files["libVkLayer_gfg_native.so"]),
@@ -179,11 +187,59 @@ def package(binary: Path, outdir: Path, version: str, build_environment: str | N
     return path
 
 
+def decky_package(native_zip: Path, index: Path, outdir: Path) -> Path:
+    """Bundle the integrated GFG UI/backend and the same verified component.
+
+    Native mode remains opt-in; the old optional renderer package is preserved
+    for compatibility and is never selected by the native launcher.
+    """
+    subprocess.run(["git", "diff", "--quiet", "HEAD", "--", "py_modules", "frontend", "dist", "package.json", "plugin.json"], cwd=ROOT, check=True)
+    if index.read_bytes() != (ROOT / "dist/index.js").read_bytes():
+        raise ValueError("Decky frontend must match the committed dist/index.js")
+    files = {}
+    data = subprocess.check_output(["git", "archive", "HEAD"], cwd=ROOT)
+    with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+        for member in archive:
+            if not member.isfile() or member.name.startswith((".github/", "docs/", "tests/")):
+                continue
+            stream = archive.extractfile(member)
+            files[member.name] = stream.read()
+    files["dist/index.js"] = index.read_bytes()
+    with zipfile.ZipFile(native_zip) as archive:
+        for item in archive.infolist():
+            name = item.filename.removeprefix(ARTIFACT_ROOT + "/")
+            if item.is_dir() or name == item.filename or name.startswith("/") or ".." in Path(name).parts:
+                raise ValueError("Invalid component archive member")
+            files["bin/gfg-native/" + name] = archive.read(item)
+    metadata = json.loads(files["package.json"])
+    component = json.loads(files["bin/gfg-native/MANIFEST.json"])
+    metadata["version"] = component["version"]
+    metadata["gfgPrerelease"] = True
+    metadata["bundled_native_gsf"] = component
+    files["package.json"] = (json.dumps(metadata, indent=2) + "\n").encode()
+    files["NATIVE-GSF-EXPERIMENTAL.txt"] = b"Native GSF hardware acceptance: NOT TESTED. Settings > Diagnostics > GFG Native Generator. Mode click verifies and installs the bundled independent component. Off by default. No stable release.\n"
+    path = outdir / ("GFG-Extreme-GSF-" + component["version"] + ".zip")
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, data in sorted(files.items()):
+            zi = zipfile.ZipInfo("GFG-Extreme/" + name, date_time=(2026, 10, 16, 0, 0, 0))
+            zi.create_system = 3
+            zi.external_attr = (0o100755 if name.endswith((".sh", ".so")) else 0o100644) << 16
+            archive.writestr(zi, data, compress_type=zipfile.ZIP_DEFLATED)
+    with zipfile.ZipFile(path) as archive:
+        if archive.testzip():
+            raise ValueError("Decky archive CRC failure")
+    print(f"Integrated experimental Decky package: {path} sha256={digest(path.read_bytes())}")
+    return path
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--outdir", type=Path, required=True)
-    parser.add_argument("--version", default="0.0.0-fg3-internal.5")
+    parser.add_argument("--version", default="0.0.0-fg3-internal.6")
     parser.add_argument("--build-environment", help="Actual build environment; otherwise inferred from GitHub Actions or marked unattested")
+    parser.add_argument("--decky-index", type=Path, help="Also build integrated Decky experiment with this freshly built frontend")
     args = parser.parse_args()
-    package(args.binary.resolve(), args.outdir.resolve(), args.version, args.build_environment)
+    native = package(args.binary.resolve(), args.outdir.resolve(), args.version, args.build_environment)
+    if args.decky_index:
+        decky_package(native, args.decky_index.resolve(), args.outdir.resolve())

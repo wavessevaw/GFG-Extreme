@@ -14,8 +14,13 @@ if (( $# < 1 )); then
   printf 'Usage: gfg-native [--off] [--diagnose] <game-command> [args...]\n' >&2
   exit 2
 fi
+mode_file="${GFG_NATIVE_MODE_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/mako-render/runtime-state/native-gsf.mode}"
+mode="${GFG_NATIVE_MODE:-}"
+if [[ -z "$mode" && -r "$mode_file" ]]; then mode=$(head -c 8 "$mode_file" | tr -d '\n'); fi
+mode=${mode:-3} # invoking this explicit launcher opts in; plugin defaults off
+case "$mode" in off|2|3) ;; *) mode=off; printf 'GFG: invalid native mode, using real-only.\n' >&2 ;; esac
 root="${XDG_DATA_HOME:-$HOME/.local/share}/gfg-native"
-if (( disabled )) || [[ "${GFG_NATIVE_MODE:-3}" == off ]] || \
+if (( disabled )) || [[ "$mode" == off ]] || \
    [[ ! -r "$root/VkLayer_gfg_native.json" || ! -r "$root/libVkLayer_gfg_native.so" ]]; then
   unset GFG_NATIVE_FG GFG_NATIVE_GPU GFG_NATIVE_GPU_BRIDGE GFG_NATIVE_CPU_BRIDGE GFG_NATIVE_ASYNC GFG_NATIVE_FORCE_FIFO
   export DISABLE_GFG_NATIVE_FG=1
@@ -33,9 +38,33 @@ unset DISABLE_GFG_NATIVE_FG
 export GFG_NATIVE_FG=1
 export GFG_NATIVE_GPU_BRIDGE=1
 export GFG_NATIVE_GPU_SYNC=same-device
-export GFG_NATIVE_ALGO="${GFG_NATIVE_ALGO:-lmc-gpu}"
-export GFG_NATIVE_ASYNC="${GFG_NATIVE_ASYNC:-1}"
-export GFG_NATIVE_FORCE_FIFO="${GFG_NATIVE_FORCE_FIFO:-1}"
+export GFG_NATIVE_ALGO=gsf
+export GFG_NATIVE_MODE="$mode"
+export GFG_NATIVE_ASYNC=1
+export GFG_NATIVE_FORCE_FIFO=0
+if [[ -n "${GAMESCOPE_WAYLAND_DISPLAY:-}" && -z "${GFG_NATIVE_GAMESCOPE_MANIFEST:-}" ]]; then
+  for candidate in /usr/share/vulkan/implicit_layer.d/VkLayer_FROG_gamescope_wsi.x86_64.json \
+      "$HOME/.local/share/mako-render/vulkan/gamescope_wsi_compatibility.d/VkLayer_FROG_gamescope_wsi.x86_64.json"; do
+    if [[ -r "$candidate" ]]; then export GFG_NATIVE_GAMESCOPE_MANIFEST="$candidate"; break; fi
+  done
+fi
+# GFG must be above Gamescope WSI. Its public FIFO contract maps to a
+# compositor-managed FIFO / driver MAILBOX transport internally.
+if [[ -n "${GAMESCOPE_WAYLAND_DISPLAY:-}" && -n "${GFG_NATIVE_GAMESCOPE_MANIFEST:-}" && -r "$GFG_NATIVE_GAMESCOPE_MANIFEST" ]]; then
+  gamescope_dir=$(dirname -- "$GFG_NATIVE_GAMESCOPE_MANIFEST")
+  export VK_LAYER_PATH="$VK_LAYER_PATH:$gamescope_dir"
+  export VK_INSTANCE_LAYERS="VK_LAYER_GFG_native:VK_LAYER_FROG_gamescope_wsi_x86_64${VK_INSTANCE_LAYERS:+:$VK_INSTANCE_LAYERS}"
+  export DISABLE_GAMESCOPE_WSI=1
+fi
+status_dir="${XDG_STATE_HOME:-$HOME/.local/state}/gfg-native/status"
+mkdir -p "$status_dir"
+export GFG_NATIVE_STATUS_DIR="$status_dir"
+layers=:
+IFS=: read -r -a layer_names <<< "$VK_INSTANCE_LAYERS"
+for layer in "${layer_names[@]}"; do
+  [[ -z "$layer" || "$layers" == *":$layer:"* ]] || layers+="$layer:"
+done
+export VK_INSTANCE_LAYERS="${layers#:}"; export VK_INSTANCE_LAYERS="${VK_INSTANCE_LAYERS%:}"
 unset GFG_NATIVE_GPU GFG_NATIVE_CPU_BRIDGE
 export DISABLE_MAKO=1
 export DISABLE_MAKO_SPATIAL_SCALING=1

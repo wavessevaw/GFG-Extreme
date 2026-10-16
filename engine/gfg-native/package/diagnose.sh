@@ -22,6 +22,7 @@ stamp="${run##*/}"
 chmod 700 "$state" "$run"
 export GFG_DIAGNOSTIC_CAPTURE="$run"
 if [[ "$mode" == native ]]; then
+  export GFG_NATIVE_TELEMETRY="$run/pairs.jsonl"
   export GFG_NATIVE_TRACE=1
   export GFG_NATIVE_TIMING=1
   export GFG_NATIVE_PRESENT_TRACE=1
@@ -47,7 +48,7 @@ fi
   printf '\n--- selected runtime variables ---\n'
   for name in VK_INSTANCE_LAYERS VK_LAYER_PATH GFG_NATIVE_FG GFG_NATIVE_GPU_BRIDGE \
       GFG_NATIVE_GPU_SYNC GFG_NATIVE_ALGO GFG_NATIVE_LMC_TIER GFG_NATIVE_TRACE \
-      GFG_NATIVE_TIMING GFG_NATIVE_PRESENT_TRACE; do
+      GFG_NATIVE_TIMING GFG_NATIVE_PRESENT_TRACE GFG_NATIVE_MODE GFG_NATIVE_OUTPUT_HZ GFG_NATIVE_ASYNC GFG_NATIVE_FORCE_FIFO; do
     if [[ -v "$name" ]]; then printf '%s=%q\n' "$name" "${!name}"; fi
   done
   printf '\n--- installed GFG payload SHA-256 ---\n'

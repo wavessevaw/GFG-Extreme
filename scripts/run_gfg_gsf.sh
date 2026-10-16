@@ -13,7 +13,9 @@ if [[ ! -f "$layer_dir/VkLayer_gfg_native.json" || ! -f "$layer_dir/libVkLayer_g
 fi
 export GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_ASYNC=1
 export GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=gsf
-export GFG_NATIVE_OUTPUT_HZ=${GFG_NATIVE_OUTPUT_HZ:-90}
+# Refresh is queried from WSI when available; OUTPUT_HZ is an explicit override.
+export GFG_NATIVE_MODE=${GFG_NATIVE_MODE:-3}
+export GFG_NATIVE_FORCE_FIFO=0
 export VK_LAYER_PATH="$layer_dir${VK_LAYER_PATH:+:$VK_LAYER_PATH}"
 case ":${VK_INSTANCE_LAYERS:-}:" in
     *:VK_LAYER_GFG_native:*) ;;
