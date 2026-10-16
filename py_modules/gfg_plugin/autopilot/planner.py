@@ -169,7 +169,8 @@ class TargetPolicy:
         return hz // 2
 
     def update(self, display_hz, real_fps, output_fps, preference, fresh,
-               *, sample_seq=None, first_sample_seq=None, span_s=None, now=None) -> int:
+               *, sample_seq=None, first_sample_seq=None, span_s=None, now=None,
+               loading_transition=False) -> int:
         # now/seq are passed by Governor in production; the optional arguments
         # keep this pure policy usable from independent unit tests.
         if now is None:
@@ -202,6 +203,15 @@ class TargetPolicy:
 
         real, output = _num(real_fps), _num(output_fps)
         if real is None or output is None or real <= 0:
+            self.pending = None
+            self.pending_n = 0
+            return self.target
+
+        # A collapsed, non-generating stream is a loading/transition signal, not
+        # evidence that the player's steady-state target should be halved. The
+        # sample sequence above is still consumed so the same window cannot be
+        # counted again when gameplay resumes.
+        if loading_transition:
             self.pending = None
             self.pending_n = 0
             return self.target
