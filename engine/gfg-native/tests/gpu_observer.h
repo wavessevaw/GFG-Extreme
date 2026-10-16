@@ -5,8 +5,45 @@
  */
 #include "gpu_bridge.h"
 #include <math.h>
+#ifdef GFG_NATIVE_TEST_OBSERVE_LAYER
+#define OBS_FUNCS(X) \
+    X(AllocateCommandBuffers) \
+    X(AllocateMemory) \
+    X(BeginCommandBuffer) \
+    X(BindBufferMemory) \
+    X(CmdCopyImageToBuffer) \
+    X(CmdPipelineBarrier) \
+    X(CreateBuffer) \
+    X(CreateCommandPool) \
+    X(CreateFence) \
+    X(CreateSemaphore) \
+    X(DestroyBuffer) \
+    X(DestroyCommandPool) \
+    X(DestroyFence) \
+    X(DestroySemaphore) \
+    X(EndCommandBuffer) \
+    X(FreeMemory) \
+    X(GetBufferMemoryRequirements) \
+    X(MapMemory) \
+    X(QueueSubmit) \
+    X(ResetCommandBuffer) \
+    X(ResetFences) \
+    X(UnmapMemory) \
+    X(WaitForFences)
+static struct {
+#define OBS_DECLARE(n) PFN_vk##n n;
+    OBS_FUNCS(OBS_DECLARE)
+#undef OBS_DECLARE
+} observer_api;
+static PFN_vkSetDeviceLoaderData observer_set_loader_data;
+#define OBS(n) observer_api.n
+#else
+#define OBS(n) vk##n
+#endif
+
 static struct {
     VkDevice device;
+    VkPhysicalDeviceMemoryProperties memory_props;
     VkQueue queue;
     VkImage *images;
     VkExtent2D extent;
@@ -27,21 +64,25 @@ static VKAPI_ATTR VkResult VKAPI_CALL observer_loader_data(VkDevice device,void 
     (void)device;(void)object;return VK_SUCCESS; /* top-level loader allocated these */
 }
 static VkResult observer_present(VkQueue queue,const VkPresentInfoKHR *info) {
+#ifdef GFG_NATIVE_TEST_OBSERVE_LAYER
+    observer.frame=(observer.total_calls+2u)/3u;
+    observer.interval_calls=observer.total_calls?(observer.total_calls-1u)%3u:0;
+#endif
     uint32_t index=info->pImageIndices[0];
     if(index>=observer.image_count) return VK_ERROR_INITIALIZATION_FAILED;
-    vkResetCommandBuffer(observer.command,0);
+    OBS(ResetCommandBuffer)(observer.command,0);
     VkCommandBufferBeginInfo bi={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-    if(vkBeginCommandBuffer(observer.command,&bi)!=VK_SUCCESS) return VK_ERROR_INITIALIZATION_FAILED;
+    if(OBS(BeginCommandBuffer)(observer.command,&bi)!=VK_SUCCESS) return VK_ERROR_INITIALIZATION_FAILED;
     VkImageMemoryBarrier before={.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         .oldLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,.newLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         .dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT,
         .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
         .image=observer.images[index],.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1}};
-    vkCmdPipelineBarrier(observer.command,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
+    OBS(CmdPipelineBarrier)(observer.command,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
         0,0,NULL,0,NULL,1,&before);
     VkBufferImageCopy region={.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
         .imageExtent={observer.extent.width,observer.extent.height,1}};
-    vkCmdCopyImageToBuffer(observer.command,observer.images[index],VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    OBS(CmdCopyImageToBuffer)(observer.command,observer.images[index],VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         observer.buffer,1,&region);
     VkImageMemoryBarrier after=before;
     after.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;after.newLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
@@ -50,9 +91,9 @@ static VkResult observer_present(VkQueue queue,const VkPresentInfoKHR *info) {
         .srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT,
         .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
         .buffer=observer.buffer,.offset=0,.size=VK_WHOLE_SIZE};
-    vkCmdPipelineBarrier(observer.command,VK_PIPELINE_STAGE_TRANSFER_BIT,
+    OBS(CmdPipelineBarrier)(observer.command,VK_PIPELINE_STAGE_TRANSFER_BIT,
         VK_PIPELINE_STAGE_HOST_BIT|VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,0,0,NULL,1,&host,1,&after);
-    if(vkEndCommandBuffer(observer.command)!=VK_SUCCESS) return VK_ERROR_INITIALIZATION_FAILED;
+    if(OBS(EndCommandBuffer)(observer.command)!=VK_SUCCESS) return VK_ERROR_INITIALIZATION_FAILED;
     VkPipelineStageFlags stages[64];
     if(info->waitSemaphoreCount>64) return VK_ERROR_INITIALIZATION_FAILED;
     for(uint32_t i=0;i<info->waitSemaphoreCount;++i) stages[i]=VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
@@ -60,10 +101,10 @@ static VkResult observer_present(VkQueue queue,const VkPresentInfoKHR *info) {
         .waitSemaphoreCount=info->waitSemaphoreCount,.pWaitSemaphores=info->pWaitSemaphores,.pWaitDstStageMask=stages,
         .commandBufferCount=1,.pCommandBuffers=&observer.command,
         .signalSemaphoreCount=1,.pSignalSemaphores=&observer.ready[index]};
-    vkResetFences(observer.device,1,&observer.fence);
-    VkResult r=vkQueueSubmit(queue,1,&submit,observer.fence);
+    OBS(ResetFences)(observer.device,1,&observer.fence);
+    VkResult r=OBS(QueueSubmit)(queue,1,&submit,observer.fence);
     if(r!=VK_SUCCESS) return r;
-    r=vkWaitForFences(observer.device,1,&observer.fence,VK_TRUE,UINT64_MAX);
+    r=OBS(WaitForFences)(observer.device,1,&observer.fence,VK_TRUE,UINT64_MAX);
     if(r!=VK_SUCCESS) return r;
     for(size_t pixel=0;pixel<(size_t)observer.extent.width*observer.extent.height;++pixel)
         for(unsigned c=0;c<3;++c)
@@ -107,9 +148,14 @@ static int observer_start(VkInstance instance,VkPhysicalDevice physical,VkDevice
     VkBufferCreateInfo bci={.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size=(VkDeviceSize)extent.width*extent.height*4,
         .usage=VK_BUFFER_USAGE_TRANSFER_DST_BIT,.sharingMode=VK_SHARING_MODE_EXCLUSIVE};
-    if(vkCreateBuffer(device,&bci,NULL,&observer.buffer)!=VK_SUCCESS) return 0;
-    VkMemoryRequirements req;vkGetBufferMemoryRequirements(device,observer.buffer,&req);
-    VkPhysicalDeviceMemoryProperties memory;vkGetPhysicalDeviceMemoryProperties(physical,&memory);
+    if(OBS(CreateBuffer)(device,&bci,NULL,&observer.buffer)!=VK_SUCCESS) return 0;
+    VkMemoryRequirements req;OBS(GetBufferMemoryRequirements)(device,observer.buffer,&req);
+    VkPhysicalDeviceMemoryProperties memory;
+#ifdef GFG_NATIVE_TEST_OBSERVE_LAYER
+    memory=observer.memory_props;
+#else
+    OBS(GetPhysicalDeviceMemoryProperties)(physical,&memory);
+#endif
     uint32_t type=UINT32_MAX;
     for(uint32_t i=0;i<memory.memoryTypeCount;++i)
         if((req.memoryTypeBits&(1u<<i)) && (memory.memoryTypes[i].propertyFlags&
@@ -117,42 +163,54 @@ static int observer_start(VkInstance instance,VkPhysicalDevice physical,VkDevice
             (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){type=i;break;}
     if(type==UINT32_MAX) return 0;
     VkMemoryAllocateInfo mai={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,.allocationSize=req.size,.memoryTypeIndex=type};
-    if(vkAllocateMemory(device,&mai,NULL,&observer.memory)!=VK_SUCCESS ||
-       vkBindBufferMemory(device,observer.buffer,observer.memory,0)!=VK_SUCCESS ||
-       vkMapMemory(device,observer.memory,0,VK_WHOLE_SIZE,0,(void **)&observer.mapped)!=VK_SUCCESS) return 0;
+    if(OBS(AllocateMemory)(device,&mai,NULL,&observer.memory)!=VK_SUCCESS ||
+       OBS(BindBufferMemory)(device,observer.buffer,observer.memory,0)!=VK_SUCCESS ||
+       OBS(MapMemory)(device,observer.memory,0,VK_WHOLE_SIZE,0,(void **)&observer.mapped)!=VK_SUCCESS) return 0;
     VkCommandPoolCreateInfo pci={.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,.queueFamilyIndex=family};
-    if(vkCreateCommandPool(device,&pci,NULL,&observer.pool)!=VK_SUCCESS) return 0;
+    if(OBS(CreateCommandPool)(device,&pci,NULL,&observer.pool)!=VK_SUCCESS) return 0;
     VkCommandBufferAllocateInfo ai={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .commandPool=observer.pool,.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY,.commandBufferCount=1};
-    if(vkAllocateCommandBuffers(device,&ai,&observer.command)!=VK_SUCCESS) return 0;
+    if(OBS(AllocateCommandBuffers)(device,&ai,&observer.command)!=VK_SUCCESS) return 0;
+#ifdef GFG_NATIVE_TEST_OBSERVE_LAYER
+    if(observer_set_loader_data && observer_set_loader_data(device,observer.command)!=VK_SUCCESS) return 0;
+#endif
     VkFenceCreateInfo fci={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-    if(vkCreateFence(device,&fci,NULL,&observer.fence)!=VK_SUCCESS) return 0;
+    if(OBS(CreateFence)(device,&fci,NULL,&observer.fence)!=VK_SUCCESS) return 0;
     observer.ready=calloc(count,sizeof(*observer.ready));if(!observer.ready) return 0;
     VkSemaphoreCreateInfo sci={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     for(uint32_t i=0;i<count;++i)
-        if(vkCreateSemaphore(device,&sci,NULL,&observer.ready[i])!=VK_SUCCESS) return 0;
+        if(OBS(CreateSemaphore)(device,&sci,NULL,&observer.ready[i])!=VK_SUCCESS) return 0;
+#ifndef GFG_NATIVE_TEST_OBSERVE_LAYER
     const gfg_gpu_fg_create_info info={.instance=instance,.gipa=vkGetInstanceProcAddr,
         .physical=physical,.device=device,.gdpa=vkGetDeviceProcAddr,.swapchain=swapchain,
         .extent=extent,.format=format,.present_mode=VK_PRESENT_MODE_FIFO_KHR,
         .queue=queue,.family=family,.set_loader_data=observer_loader_data};
     observer.fg=gfg_gpu_fg_create(&info);
     return observer.fg!=NULL;
+#else
+    (void)instance; (void)physical; (void)format; (void)swapchain; (void)observer_loader_data;
+    return 1;
+#endif
 }
 static int observer_finish(void){
     const char *fault=getenv("GFG_NATIVE_GPU_FAULT");
     const int recovery=fault && !strcmp(fault,"record");
     const unsigned expected_calls=recovery?5u:10u;
     int passed=!observer.failed && observer.total_calls==expected_calls && observer.generated==(recovery?0u:6u);
+#ifndef GFG_NATIVE_TEST_OBSERVE_LAYER
     gfg_gpu_fg_destroy(observer.fg);
-    for(uint32_t i=0;i<observer.image_count;++i)vkDestroySemaphore(observer.device,observer.ready[i],NULL);
-    free(observer.ready);vkDestroyFence(observer.device,observer.fence,NULL);
-    vkDestroyCommandPool(observer.device,observer.pool,NULL);
-    vkUnmapMemory(observer.device,observer.memory);
-    vkDestroyBuffer(observer.device,observer.buffer,NULL);vkFreeMemory(observer.device,observer.memory,NULL);
+#endif
+    for(uint32_t i=0;i<observer.image_count;++i)OBS(DestroySemaphore)(observer.device,observer.ready[i],NULL);
+    free(observer.ready);OBS(DestroyFence)(observer.device,observer.fence,NULL);
+    OBS(DestroyCommandPool)(observer.device,observer.pool,NULL);
+    OBS(UnmapMemory)(observer.device,observer.memory);
+    OBS(DestroyBuffer)(observer.device,observer.buffer,NULL);OBS(FreeMemory)(observer.device,observer.memory,NULL);
     if(recovery)
         fprintf(stderr,"GPU WSI observer: real=4 synthetic=0 recovery_duplicate=1 content=%s real_handoffs=PASS physical_scanout=unobserved\n",passed?"PASS":"FAIL");
     else fprintf(stderr,"GPU WSI observer: real=4 synthetic=6 content=%s handoff_order=%s physical_scanout=unobserved\n",
         passed?"PASS":"FAIL",observer.total_calls==10?"PASS":"FAIL");
     return passed;
 }
+
+#undef OBS

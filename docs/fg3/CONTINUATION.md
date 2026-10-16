@@ -1,3 +1,38 @@
+# 2026-10-16 async development checkpoint — not accepted
+
+This checkpoint preserves the in-progress bounded output worker before further
+fixes. The owner has since explicitly requested a pre-release after generator
+fixes; older statements below prohibiting any public pre-release are superseded.
+Main merge and physical acceptance remain separate and unclaimed.
+
+Implemented: one executing and one pending output job; immutable present arrays;
+synchronous enqueue of application semaphore waits into private per-image gates;
+serialized application/output queue host calls; finite image/ring waits in the
+worker; acquisition priority; ordered drain for resize, idle and teardown.
+Independent test-only WSI pixel observation passes G1/G2/R order and distinct
+intermediate content for tiles and GPU LMC in both layer orders. No pixel
+readback instrumentation is included in the production library.
+
+Still investigating: optional verification-fence collection with async output
+reproduces WRITE_AFTER_PRESENT on reused real swapchain images in Vulkan
+validation 1.4.309. Production async without that verification passes the local
+smoke, but that does not justify ignoring the failed stress gate.
+
+Device evidence: 074536Z internal.4 saw 7339 real / 4051 synthetic / 10613
+skipped WSI calls. Last bridge lost 2986 outputs to ring saturation, 2986 to
+history rewarm and 4183 to acquire misses. No physical scanout observed.
+082931Z uses the same internal.4 ELF, but no bridge was initialized: Witcher 3
+requested MAILBOX and A2B10G10R10 HDR (format 64), unsupported by that build.
+Do not interpret that capture as a GPU performance result. Both FIFO negotiation
+and precision-preserving HDR transport need implementation/testing before the
+requested pre-release.
+
+No authenticated Deck endpoint exists in the workspace. Hardware acceptance
+cannot be invented or replaced by software checks. Continue the implementation,
+validation and publication work; do not close #132 based on this checkpoint.
+
+---
+
 # Active assignment — not a completion report
 
 Owner mandate: #132, 30 real → 90 physically displayed FPS on Steam Deck OLED,

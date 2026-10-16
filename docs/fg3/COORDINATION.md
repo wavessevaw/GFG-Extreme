@@ -1,3 +1,17 @@
+# Active checkpoint, 2026-10-16
+
+The owner's latest log shows a separate activation blocker: Witcher 3 uses
+MAILBOX plus A2B10G10R10 HDR; internal.4 deliberately bypasses both. This is
+being handled alongside the async output implementation, not as another
+request for logs. Current worker, queue synchronization, immutable metadata
+and actual G1/G2/R pixel-observer tests are preserved in this commit. Optional
+verification under async still reproduces WRITE_AFTER_PRESENT; do not ship or
+claim acceptance while that gate fails. Physical OLED 30→90 is unverified.
+The owner explicitly authorized a pre-release after fixes; earlier release
+prohibition below is superseded for a clearly experimental pre-release.
+
+---
+
 <!-- codex-fg3-coordination -->
 Continuation against issue #132 and PR #133. PR #133 is the integration base:
 `claude/native-gpu-bridge` at `8e3f58c16ea8a7fcd11462518f90bd19fe29094f`.

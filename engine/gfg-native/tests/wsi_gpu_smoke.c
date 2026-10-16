@@ -313,6 +313,8 @@ int main(void) {
     VkCommandBufferAllocateInfo cai = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = INFLIGHT};
     TRY(vkAllocateCommandBuffers(device, &cai, cmd));
+    if(env_1("GFG_TEST_CB_HANDLES"))
+        fprintf(stderr,"GFG test app command buffers: %p %p\n",(void *)cmd[0],(void *)cmd[1]);
     VkFence fences[INFLIGHT];
     VkFence *present_fences = maintenance_chain ? calloc(frames, sizeof(*present_fences)) : NULL;
     if (maintenance_chain) {
@@ -400,6 +402,10 @@ int main(void) {
             .pNext = &dynamic, .swapchainCount = 1,
             .pFences = maintenance_chain ? &present_fences[frame] : NULL};
         if (proton_chain) pi.pNext = maintenance_chain ? (const void *)&present_fence : &regions;
+        const uint32_t device_mask=1;
+        const VkDeviceGroupPresentInfoKHR group={.sType=VK_STRUCTURE_TYPE_DEVICE_GROUP_PRESENT_INFO_KHR,
+            .pNext=pi.pNext,.swapchainCount=1,.pDeviceMasks=&device_mask,.mode=VK_DEVICE_GROUP_PRESENT_MODE_LOCAL_BIT_KHR};
+        if(env_1("GFG_TEST_UNKNOWN_PRESENT") && frame==frames/2) pi.pNext=&group;
         VkResult presented=vkQueuePresentKHR(queue,&pi);
         REQUIRE(present_fence.pNext == &dynamic && dynamic.pNext == &regions);
         REQUIRE(app_mode == VK_PRESENT_MODE_FIFO_KHR && present_region.pRectangles == &rect);
@@ -408,7 +414,16 @@ int main(void) {
         else TRY(presented);
         if (pace_idle) TRY(vkQueueWaitIdle(queue)); /* app-side pacing, outside the layer */
     }
-    TRY(vkDeviceWaitIdle(device));
+    if(env_1("GFG_TEST_RECREATE")) {
+        VkSwapchainKHR replacement=VK_NULL_HANDLE;
+        swci.oldSwapchain=swapchain;
+        TRY(vkCreateSwapchainKHR(device,&swci,NULL,&replacement));
+        TRY(vkQueueWaitIdle(queue));
+        vkDestroySwapchainKHR(device,swapchain,NULL);
+        swapchain=replacement;
+        puts("GFG native: recreate with pending output + queue idle drain PASS");
+    } else if(env_1("GFG_TEST_QUEUE_IDLE_ONLY")) TRY(vkQueueWaitIdle(queue));
+    else TRY(vkDeviceWaitIdle(device));
     if (maintenance_chain) {
         TRY(vkWaitForFences(device, frames, present_fences, VK_TRUE, 5000000000ull));
         for (uint32_t i = 0; i < frames; ++i) {

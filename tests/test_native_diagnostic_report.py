@@ -96,6 +96,17 @@ class DiagnosticReportTests(unittest.TestCase):
         self.assertIn("GPU timestamp samples unavailable", text)
         self.assertNotIn("4.200", text)
 
+    def test_async_worker_timings_are_not_misreported_as_game_present_cpu_cost(self):
+        text=report.render({"app.stderr.log":
+            "present-timing path=gpu-async 1280x800 frames=30 median_us=10.0 p95_us=500.0 max_us=1000.0\n"
+            "output-worker retired submitted=32 completed=32 stale=1 backpressure=2 error=0\n"
+            "gpu-bridge present_cpu frames=30 total_median_us=20000.0 total_p95_us=30000.0 "
+            "layer_own_median_us=19000.0 layer_own_p95_us=29000.0\n"})
+        self.assertIn("Output worker CPU call time",text)
+        self.assertIn("not the game's API-call time",text)
+        self.assertIn("median / p95 / max: 10.0 / 500.0 / 1000.0",text)
+        self.assertIn("Stale jobs reset to real-only history: 1",text)
+
 
 if __name__ == "__main__":
     unittest.main()

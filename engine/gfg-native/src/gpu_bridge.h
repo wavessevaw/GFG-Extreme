@@ -5,6 +5,7 @@
 #ifndef GFG_GPU_BRIDGE_H
 #define GFG_GPU_BRIDGE_H
 #include <stdint.h>
+#include <pthread.h>
 #include <vulkan/vulkan.h>
 #include <vulkan/vk_layer.h>
 
@@ -66,4 +67,8 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue,
                             const gfg_present_id_hooks *ids);
 void gfg_gpu_fg_destroy(gfg_gpu_fg *fg);
 void gfg_gpu_fg_stats(gfg_gpu_stats *out);
+/* Only called while no present job is executing. A NULL lock restores sync mode. */
+void gfg_gpu_fg_set_output_thread(gfg_gpu_fg *fg, pthread_mutex_t *wsi);
+void gfg_gpu_fg_restart_history(gfg_gpu_fg *fg); /* output thread only */
+int gfg_gpu_fg_waiting_image(gfg_gpu_fg *fg);
 #endif

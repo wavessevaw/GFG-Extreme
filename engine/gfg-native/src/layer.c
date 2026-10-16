@@ -20,6 +20,7 @@
 #include "cpu_bridge.h"
 #include "gpu_bridge.h"
 #include "present_ids.h"
+#include "output_worker.h"
 #endif
 #include <time.h>
 
@@ -58,6 +59,9 @@ typedef struct native_swapchain {
     int bridge_attempted;
     gfg_gpu_fg *gpu;
     int gpu_attempted;
+    gfg_output *output;
+    VkSemaphore *acquire_semaphores;
+    pthread_mutex_t output_wsi;
     struct native_present_ids *ids; /* B4: layer-owned present ids (PRESENT_TRACE) */
 #endif
     VkSwapchainCreateFlagsKHR create_flags;
@@ -83,6 +87,20 @@ typedef struct native_device {
     PFN_vkGetSwapchainImagesKHR get_images;
     PFN_vkAcquireNextImageKHR acquire;
     PFN_vkAcquireNextImage2KHR acquire2;
+    PFN_vkQueueSubmit submit;
+    PFN_vkQueueSubmit2 submit2, submit2_khr;
+    PFN_vkQueueBindSparse bind_sparse;
+    PFN_vkQueueWaitIdle queue_idle;
+    PFN_vkDeviceWaitIdle device_idle;
+    PFN_vkQueueBeginDebugUtilsLabelEXT queue_label_begin;
+    PFN_vkQueueEndDebugUtilsLabelEXT queue_label_end;
+    PFN_vkQueueInsertDebugUtilsLabelEXT queue_label_insert;
+    PFN_vkQueueSetPerformanceConfigurationINTEL queue_perf;
+    PFN_vkQueueSetPerfHintQCOM queue_hint;
+    PFN_vkQueueNotifyOutOfBandNV queue_oob;
+    PFN_vkQueueNotifyOutOfBandLegacyNV queue_oob_legacy;
+    int async_output;
+    pthread_mutex_t queue_lock; /* every host access to an app/worker queue */
     native_instance *instance;
     int gpu_capable;  /* external memory fd + timeline enabled by this layer */
     int semaphore_fd; /* VK_KHR_external_semaphore_fd enabled */
@@ -443,6 +461,10 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
         destroy(*out, alloc); free(d);
         return VK_ERROR_INITIALIZATION_FAILED;
     }
+    if (pthread_mutex_init(&d->queue_lock, NULL) != 0) {
+        pthread_mutex_destroy(&d->lock); destroy(*out, alloc); free(d);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
     d->handle = *out;
     d->key = dispatch_key(*out);
     d->physical = phys;
@@ -452,6 +474,8 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     d->present_caps = present_caps;
     d->present_trace = native_env_is_1("GFG_NATIVE_PRESENT_TRACE");
     d->app_present_ids = app_present_ids;
+    d->async_output = gpu_capable && native_env_is_1("GFG_NATIVE_ASYNC") &&
+        !(getenv("GFG_NATIVE_GPU_SYNC") && !strcmp(getenv("GFG_NATIVE_GPU_SYNC"), "shared-fd"));
     d->gdpa = gdpa;
     d->destroy = destroy;
     d->get_queue = (PFN_vkGetDeviceQueue)gdpa(*out, "vkGetDeviceQueue");
@@ -470,6 +494,19 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     d->wait_present2 = (PFN_vkWaitForPresent2KHR)gdpa(*out, "vkWaitForPresent2KHR");
     d->acquire2 = (PFN_vkAcquireNextImage2KHR)
         gdpa(*out, "vkAcquireNextImage2KHR");
+    d->submit = (PFN_vkQueueSubmit)gdpa(*out, "vkQueueSubmit");
+    d->submit2 = (PFN_vkQueueSubmit2)gdpa(*out, "vkQueueSubmit2");
+    d->submit2_khr = (PFN_vkQueueSubmit2)gdpa(*out, "vkQueueSubmit2KHR");
+    d->bind_sparse = (PFN_vkQueueBindSparse)gdpa(*out, "vkQueueBindSparse");
+    d->queue_idle = (PFN_vkQueueWaitIdle)gdpa(*out, "vkQueueWaitIdle");
+    d->device_idle = (PFN_vkDeviceWaitIdle)gdpa(*out, "vkDeviceWaitIdle");
+    d->queue_label_begin = (PFN_vkQueueBeginDebugUtilsLabelEXT)gdpa(*out, "vkQueueBeginDebugUtilsLabelEXT");
+    d->queue_label_end = (PFN_vkQueueEndDebugUtilsLabelEXT)gdpa(*out, "vkQueueEndDebugUtilsLabelEXT");
+    d->queue_label_insert = (PFN_vkQueueInsertDebugUtilsLabelEXT)gdpa(*out, "vkQueueInsertDebugUtilsLabelEXT");
+    d->queue_perf = (PFN_vkQueueSetPerformanceConfigurationINTEL)gdpa(*out, "vkQueueSetPerformanceConfigurationINTEL");
+    d->queue_hint = (PFN_vkQueueSetPerfHintQCOM)gdpa(*out, "vkQueueSetPerfHintQCOM");
+    d->queue_oob = (PFN_vkQueueNotifyOutOfBandNV)gdpa(*out, "vkQueueNotifyOutOfBandNV");
+    d->queue_oob_legacy = (PFN_vkQueueNotifyOutOfBandLegacyNV)gdpa(*out, "vkQueueNotifyOutOfBandLegacyNV");
     pthread_mutex_lock(&map_lock);
     for (native_instance *i = instances; i; i = i->next)
         if (i->key == dispatch_key(phys)) {
@@ -688,6 +725,119 @@ static VkResult native_ids_translate(native_present_ids *ids, uint64_t app_id, u
 #endif
 
 #define NATIVE_TIMING_CAP 8192
+/* All queue host operations, including app submits resolved through GIPA,
+ * share one device lock. It is never held across a worker fence/image wait. */
+static VKAPI_ATTR VkResult VKAPI_CALL native_QueueSubmit(VkQueue q, uint32_t n, const VkSubmitInfo *s, VkFence f) {
+    native_device *d = find_device(dispatch_key(q));
+    if (!d || !d->submit) return VK_ERROR_INITIALIZATION_FAILED;
+    pthread_mutex_lock(&d->queue_lock); VkResult r = d->submit(q,n,s,f);
+    pthread_mutex_unlock(&d->queue_lock); return r;
+}
+static VKAPI_ATTR VkResult VKAPI_CALL native_QueueSubmit2(VkQueue q, uint32_t n, const VkSubmitInfo2 *s, VkFence f) {
+    native_device *d = find_device(dispatch_key(q));
+    if (!d || !d->submit2) return VK_ERROR_INITIALIZATION_FAILED;
+    pthread_mutex_lock(&d->queue_lock); VkResult r = d->submit2(q,n,s,f);
+    pthread_mutex_unlock(&d->queue_lock); return r;
+}
+static VKAPI_ATTR VkResult VKAPI_CALL native_QueueSubmit2KHR(VkQueue q, uint32_t n, const VkSubmitInfo2 *s, VkFence f) {
+    native_device *d = find_device(dispatch_key(q));
+    if (!d || !d->submit2_khr) return VK_ERROR_INITIALIZATION_FAILED;
+    pthread_mutex_lock(&d->queue_lock); VkResult r = d->submit2_khr(q,n,s,f);
+    pthread_mutex_unlock(&d->queue_lock); return r;
+}
+static VKAPI_ATTR VkResult VKAPI_CALL native_QueueBindSparse(VkQueue q, uint32_t n, const VkBindSparseInfo *s, VkFence f) {
+    native_device *d = find_device(dispatch_key(q));
+    if (!d || !d->bind_sparse) return VK_ERROR_INITIALIZATION_FAILED;
+    pthread_mutex_lock(&d->queue_lock); VkResult r = d->bind_sparse(q,n,s,f);
+    pthread_mutex_unlock(&d->queue_lock); return r;
+}
+static VkResult native_locked_present(VkQueue queue, const VkPresentInfoKHR *info) {
+    native_device *d = find_device(dispatch_key(queue));
+    if (!d || !d->present) return VK_ERROR_INITIALIZATION_FAILED;
+    pthread_mutex_lock(&d->queue_lock); VkResult r = d->present(queue, info);
+    pthread_mutex_unlock(&d->queue_lock); return r;
+}
+#ifdef GFG_NATIVE_TEST_OBSERVE_LAYER
+#include "../tests/gpu_observer.h"
+static int test_observer_active;
+#endif
+static VkResult native_serialized_present(VkQueue queue, const VkPresentInfoKHR *info) {
+#ifdef GFG_NATIVE_TEST_OBSERVE_LAYER
+    if (test_observer_active) return observer_present(queue,info);
+#endif
+    return native_locked_present(queue,info);
+}
+/* The bridge's own WSI must reach the next layer directly. Re-entering the
+ * application acquire wrapper would compete with its own output priority and
+ * recursively lock the swapchain. Only queue host entrypoints are wrapped. */
+#ifdef GFG_NATIVE_WITH_TE
+static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL native_worker_gdpa(VkDevice device, const char *name) {
+    native_device *d = find_device(dispatch_key(device));
+    if (!d || !name) return NULL;
+    if (!strcmp(name,"vkQueueSubmit")) return (PFN_vkVoidFunction)native_QueueSubmit;
+    if (!strcmp(name,"vkQueueSubmit2")) return d->submit2 ? (PFN_vkVoidFunction)native_QueueSubmit2 : NULL;
+    if (!strcmp(name,"vkQueueSubmit2KHR")) return d->submit2_khr ? (PFN_vkVoidFunction)native_QueueSubmit2KHR : NULL;
+    return d->gdpa(device,name);
+}
+#endif
+static VkResult native_drain_device(native_device *d) {
+    VkResult result = VK_SUCCESS;
+#ifdef GFG_NATIVE_WITH_TE
+    pthread_mutex_lock(&d->lock);
+    for (native_swapchain *sc = d->swapchains; sc; sc = sc->next)
+        if (sc->output) {
+            VkResult r = gfg_output_drain(sc->output,0,UINT64_MAX,NULL);
+            if (r < 0) result = r;
+        }
+    pthread_mutex_unlock(&d->lock);
+#else
+    (void)d;
+#endif
+    return result;
+}
+static VKAPI_ATTR VkResult VKAPI_CALL native_QueueWaitIdle(VkQueue q) {
+    native_device *d = find_device(dispatch_key(q));
+    if (!d || !d->queue_idle) return VK_ERROR_INITIALIZATION_FAILED;
+    /* Always wait the real GPU queue even if a previous WSI job failed. */
+    native_drain_device(d);
+    pthread_mutex_lock(&d->queue_lock); VkResult r = d->queue_idle(q);
+    pthread_mutex_unlock(&d->queue_lock); return r;
+}
+static VKAPI_ATTR VkResult VKAPI_CALL native_DeviceWaitIdle(VkDevice device) {
+    native_device *d = find_device(dispatch_key(device));
+    if (!d || !d->device_idle) return VK_ERROR_INITIALIZATION_FAILED;
+    native_drain_device(d);
+    pthread_mutex_lock(&d->queue_lock); VkResult r = d->device_idle(device);
+    pthread_mutex_unlock(&d->queue_lock); return r;
+}
+#define QUEUE_VOID_LABEL(name, field) \
+static VKAPI_ATTR void VKAPI_CALL native_##name(VkQueue q, const VkDebugUtilsLabelEXT *p) { \
+    native_device *d = find_device(dispatch_key(q)); if (!d || !d->field) return; \
+    pthread_mutex_lock(&d->queue_lock); d->field(q,p); pthread_mutex_unlock(&d->queue_lock); }
+QUEUE_VOID_LABEL(QueueBeginDebugUtilsLabelEXT,queue_label_begin)
+QUEUE_VOID_LABEL(QueueInsertDebugUtilsLabelEXT,queue_label_insert)
+#undef QUEUE_VOID_LABEL
+static VKAPI_ATTR void VKAPI_CALL native_QueueEndDebugUtilsLabelEXT(VkQueue q) {
+    native_device *d = find_device(dispatch_key(q)); if (!d || !d->queue_label_end) return;
+    pthread_mutex_lock(&d->queue_lock); d->queue_label_end(q); pthread_mutex_unlock(&d->queue_lock);
+}
+static VKAPI_ATTR VkResult VKAPI_CALL native_QueueSetPerformanceConfigurationINTEL(VkQueue q, VkPerformanceConfigurationINTEL p) {
+    native_device *d = find_device(dispatch_key(q)); if (!d || !d->queue_perf) return VK_ERROR_INITIALIZATION_FAILED;
+    pthread_mutex_lock(&d->queue_lock); VkResult r=d->queue_perf(q,p); pthread_mutex_unlock(&d->queue_lock); return r;
+}
+static VKAPI_ATTR VkResult VKAPI_CALL native_QueueSetPerfHintQCOM(VkQueue q, const VkPerfHintInfoQCOM *p) {
+    native_device *d = find_device(dispatch_key(q)); if (!d || !d->queue_hint) return VK_ERROR_INITIALIZATION_FAILED;
+    pthread_mutex_lock(&d->queue_lock); VkResult r=d->queue_hint(q,p); pthread_mutex_unlock(&d->queue_lock); return r;
+}
+static VKAPI_ATTR void VKAPI_CALL native_QueueNotifyOutOfBandNV(VkQueue q, const VkOutOfBandQueueTypeInfoNV *p) {
+    native_device *d = find_device(dispatch_key(q)); if (!d || !d->queue_oob) return;
+    pthread_mutex_lock(&d->queue_lock); d->queue_oob(q,p); pthread_mutex_unlock(&d->queue_lock);
+}
+static VKAPI_ATTR void VKAPI_CALL native_QueueNotifyOutOfBandLegacyNV(VkQueue q, uint32_t p) {
+    native_device *d = find_device(dispatch_key(q)); if (!d || !d->queue_oob_legacy) return;
+    pthread_mutex_lock(&d->queue_lock); d->queue_oob_legacy(q,p); pthread_mutex_unlock(&d->queue_lock);
+}
+
 static int native_cmp_double(const void *a, const void *b) {
     const double x = *(const double *)a, y = *(const double *)b;
     return x < y ? -1 : x > y;
@@ -705,11 +855,22 @@ static void native_swapchain_free(native_swapchain *sc) {
             v[n / 2], v[(uint32_t)((n - 1) * 0.95)], v[n - 1]);
     }
 #ifdef GFG_NATIVE_WITH_TE
+    gfg_output_stop(sc->output);
+#ifdef GFG_NATIVE_TEST_OBSERVE_LAYER
+    if (test_observer_active) {
+        if (!observer_finish()) abort();
+        free(observer.images);
+        test_observer_active=0;
+    }
+#endif
 #ifdef GFG_NATIVE_WITH_CPU_BRIDGE
     if (sc->bridge) gfg_cpu_fg_destroy(sc->bridge);
 #endif
     if (sc->gpu) gfg_gpu_fg_destroy(sc->gpu);
+    gfg_output_destroy(sc->output);
+    free(sc->acquire_semaphores);
     native_ids_destroy(sc->ids); /* stops the monitor before the swapchain goes */
+    pthread_mutex_destroy(&sc->output_wsi);
 #endif
     free(sc->present_us);
     free(sc->owned);
@@ -719,6 +880,13 @@ static void native_swapchain_free(native_swapchain *sc) {
 static VKAPI_ATTR void VKAPI_CALL
 native_DestroyDevice(VkDevice device, const VkAllocationCallbacks *alloc) {
     if (!device) return;
+    /* Keep the dispatch mapping alive until worker submissions are drained. */
+    native_device *live = find_device(dispatch_key(device));
+    if (live) {
+        native_swapchain *sc = live->swapchains;
+        live->swapchains = NULL;
+        while (sc) { native_swapchain *next = sc->next; native_swapchain_free(sc); sc = next; }
+    }
     native_device *found = NULL;
     pthread_mutex_lock(&map_lock);
     for (native_device **p = &devices; *p; p = &(*p)->next)
@@ -741,6 +909,7 @@ native_DestroyDevice(VkDevice device, const VkAllocationCallbacks *alloc) {
     }
     found->destroy(device, alloc);
     pthread_mutex_destroy(&found->lock);
+    pthread_mutex_destroy(&found->queue_lock);
     free(found);
 }
 
@@ -837,6 +1006,17 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
     native_device *d = find_device(dispatch_key(device));
     if (!d || !d->create_swapchain || !ci || !out)
         return VK_ERROR_INITIALIZATION_FAILED;
+#ifdef GFG_NATIVE_WITH_TE
+    /* A successful create retires oldSwapchain immediately. Finish its jobs
+     * before it becomes illegal to acquire the pending generated images. */
+    if (ci->oldSwapchain) {
+        pthread_mutex_lock(&d->lock);
+        for (native_swapchain *old = d->swapchains; old; old = old->next)
+            if (old->handle == ci->oldSwapchain && old->output)
+                gfg_output_drain(old->output,0,UINT64_MAX,NULL);
+        pthread_mutex_unlock(&d->lock);
+    }
+#endif
     int candidate = 0;
     const char *reason = NULL;
     VkImageUsageFlags supported_usage = 0;
@@ -909,6 +1089,9 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
         return VK_SUCCESS;
     }
     sc->handle = *out;
+#ifdef GFG_NATIVE_WITH_TE
+    if (pthread_mutex_init(&sc->output_wsi, NULL)) { free(sc); return VK_SUCCESS; }
+#endif
     sc->format = ci->imageFormat;
     sc->extent = ci->imageExtent;
     sc->copy_eligible = candidate;
@@ -924,7 +1107,12 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
         if (d->get_images(device, *out, &image_count, NULL) == VK_SUCCESS &&
                 image_count > 0 && image_count <= 256) {
             sc->owned = calloc(image_count, sizeof(*sc->owned));
-            if (sc->owned) sc->image_count = image_count;
+            if (sc->owned) {
+                sc->image_count = image_count;
+#ifdef GFG_NATIVE_WITH_TE
+                sc->acquire_semaphores=calloc(image_count,sizeof(*sc->acquire_semaphores));
+#endif
+            }
         }
     }
     pthread_mutex_lock(&d->lock);
@@ -965,7 +1153,11 @@ native_DestroySwapchainKHR(VkDevice device, VkSwapchainKHR sc,
     d->destroy_swapchain(device, sc, alloc);
 }
 
-static void native_acquired(native_device *d, VkSwapchainKHR handle, uint32_t index) {
+static void native_acquired(native_device *d, VkSwapchainKHR handle, uint32_t index, VkSemaphore semaphore) {
+#ifndef GFG_NATIVE_WITH_TE
+    (void)semaphore;
+#endif
+    if(native_env_is_1("GFG_TEST_CB_HANDLES")) fprintf(stderr,"GFG app acquired idx=%u sem=%p\n",index,(void*)semaphore);
     pthread_mutex_lock(&d->lock);
     for (native_swapchain *sc = d->swapchains; sc; sc = sc->next) {
         if (sc->handle != handle) continue;
@@ -974,6 +1166,10 @@ static void native_acquired(native_device *d, VkSwapchainKHR handle, uint32_t in
         } else {
             sc->owned[index] = 1;
             ++sc->acquired;
+#ifdef GFG_NATIVE_WITH_TE
+            if(sc->acquire_semaphores) sc->acquire_semaphores[index]=semaphore;
+            if(sc->output) gfg_output_acquired(sc->output,index,semaphore);
+#endif
         }
         break;
     }
@@ -982,6 +1178,50 @@ static void native_acquired(native_device *d, VkSwapchainKHR handle, uint32_t in
 
 #ifdef GFG_NATIVE_WITH_TE
 static native_present_ids *native_find_ids(native_device *d, VkSwapchainKHR swapchain);
+static gfg_output *native_find_output(native_device *d, VkSwapchainKHR swapchain) {
+    gfg_output *out = NULL;
+    pthread_mutex_lock(&d->lock);
+    for (native_swapchain *sc = d->swapchains; sc; sc = sc->next)
+        if (sc->handle == swapchain) { out = sc->output; break; }
+    pthread_mutex_unlock(&d->lock); return out;
+}
+static uint64_t native_remaining(uint64_t start, uint64_t timeout) {
+    const uint64_t elapsed = native_now_ns() - start;
+    return timeout == UINT64_MAX ? timeout : elapsed < timeout ? timeout - elapsed : 0;
+}
+static int native_semaphore_reusable(native_device *d,VkSemaphore semaphore) {
+    int ready=1;pthread_mutex_lock(&d->lock);
+    for(native_swapchain *sc=d->swapchains;sc;sc=sc->next)
+        if(sc->output && !gfg_output_sem_reusable(sc->output,semaphore)) ready=0;
+    pthread_mutex_unlock(&d->lock);return ready;
+}
+/* Async acquires never hold the WSI mutex while waiting for an image that
+ * the output thread must enqueue. Timeout 0 remains strictly nonblocking. */
+static VkResult native_async_acquire(native_device *d, gfg_output *output,
+        VkSwapchainKHR swapchain, uint64_t timeout, VkSemaphore semaphore, VkFence fence,
+        const VkAcquireNextImageInfoKHR *info, uint32_t *index) {
+    const uint64_t start = native_now_ns();
+    native_present_ids *ids = output ? NULL : native_find_ids(d,swapchain);
+    pthread_mutex_t *lock = output ? gfg_output_wsi(output) : ids ? &ids->wsi_lock : NULL;
+    for (;;) {
+        VkResult status = output ? gfg_output_status(output) : VK_SUCCESS;
+        if (status < 0) return status;
+        VkResult r = VK_NOT_READY;
+        /* A compositor-released image should go to the waiting output first. */
+        if (native_semaphore_reusable(d,semaphore) && (!output || !gfg_output_waiting_image(output)) &&
+            (!lock || pthread_mutex_trylock(lock) == 0)) {
+            if (info) {
+                VkAcquireNextImageInfoKHR immediate = *info; immediate.timeout = 0;
+                r = d->acquire2(d->handle, &immediate, index);
+            } else r = d->acquire(d->handle, swapchain, 0, semaphore, fence, index);
+            if(lock) pthread_mutex_unlock(lock);
+        }
+        if (r != VK_NOT_READY && r != VK_TIMEOUT) return r;
+        if (!timeout) return VK_NOT_READY;
+        if (!native_remaining(start,timeout)) return VK_TIMEOUT;
+        struct timespec delay = {.tv_nsec = 250000}; nanosleep(&delay,NULL);
+    }
+}
 #endif
 
 static VKAPI_ATTR VkResult VKAPI_CALL
@@ -989,16 +1229,23 @@ native_AcquireNextImageKHR(VkDevice device, VkSwapchainKHR swapchain,
         uint64_t timeout, VkSemaphore semaphore, VkFence fence, uint32_t *index) {
     native_device *d = find_device(dispatch_key(device));
     if (!d || !d->acquire) return VK_ERROR_INITIALIZATION_FAILED;
+    VkResult result;
 #ifdef GFG_NATIVE_WITH_TE
+    gfg_output *output = native_find_output(d,swapchain);
+    if (d->async_output) result = native_async_acquire(d,output,swapchain,timeout,semaphore,fence,NULL,index);
+    else {
     native_present_ids *ids = d->present_trace ? native_find_ids(d, swapchain) : NULL;
     if (ids) pthread_mutex_lock(&ids->wsi_lock);
 #endif
-    VkResult result = d->acquire(device, swapchain, timeout, semaphore, fence, index);
+    result = d->acquire(device, swapchain, timeout, semaphore, fence, index);
 #ifdef GFG_NATIVE_WITH_TE
     if (ids) pthread_mutex_unlock(&ids->wsi_lock);
+    }
+#else
+    result = d->acquire(device, swapchain, timeout, semaphore, fence, index);
 #endif
     if ((result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) && index)
-        native_acquired(d, swapchain, *index);
+        native_acquired(d, swapchain, *index, semaphore);
     return result;
 }
 
@@ -1007,17 +1254,25 @@ native_AcquireNextImage2KHR(VkDevice device, const VkAcquireNextImageInfoKHR *in
         uint32_t *index) {
     native_device *d = find_device(dispatch_key(device));
     if (!d || !d->acquire2) return VK_ERROR_INITIALIZATION_FAILED;
+    VkResult result;
 #ifdef GFG_NATIVE_WITH_TE
+    gfg_output *output = info ? native_find_output(d,info->swapchain) : NULL;
+    if (d->async_output && info) result = native_async_acquire(d,output,info->swapchain,info->timeout,
+                                             info->semaphore,info->fence,info,index);
+    else {
     native_present_ids *ids = d->present_trace && info
         ? native_find_ids(d, info->swapchain) : NULL;
     if (ids) pthread_mutex_lock(&ids->wsi_lock);
 #endif
-    VkResult result = d->acquire2(device, info, index);
+    result = d->acquire2(device, info, index);
 #ifdef GFG_NATIVE_WITH_TE
     if (ids) pthread_mutex_unlock(&ids->wsi_lock);
+    }
+#else
+    result = d->acquire2(device, info, index);
 #endif
     if ((result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) && index && info)
-        native_acquired(d, info->swapchain, *index);
+        native_acquired(d, info->swapchain, *index, info->semaphore);
     return result;
 }
 
@@ -1043,7 +1298,7 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
     }
     // Exactly one forward: no synthetic present or extra swapchain acquisition
     // until the independent image/queue/timeline ownership contract is proven.
-    VkResult result;
+    VkResult result = VK_ERROR_INITIALIZATION_FAILED;
     struct timespec present_start;
     clock_gettime(CLOCK_MONOTONIC, &present_start);
     const char *path = "none";
@@ -1053,6 +1308,7 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
     const char *flag = getenv("GFG_NATIVE_CPU_BRIDGE");
 #endif
     gfg_gpu_fg *gpu = NULL;
+    gfg_output *output = NULL;
     native_present_ids *sync_ids = NULL;
     gfg_present_id_hooks ids = {0};
     /* GPU bridge takes precedence; when requested it never falls back to
@@ -1069,13 +1325,40 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
                     if (q->handle != queue) continue;
                     gfg_gpu_fg_create_info gi = {
                         .instance = d->instance->handle, .gipa = d->instance->gipa,
-                        .physical = d->physical, .device = d->handle, .gdpa = d->gdpa,
+                        .physical = d->physical, .device = d->handle,
+                        .gdpa = d->async_output ? native_worker_gdpa : d->gdpa,
                         .swapchain = sc->handle, .extent = sc->extent, .format = sc->format,
                         .present_mode = sc->present_mode, .queue = queue,
                         .family = q->family, .semaphore_fd = d->semaphore_fd,
                         .set_loader_data = d->set_loader_data};
                     sc->gpu = gfg_gpu_fg_create(&gi);
-                    if (sc->gpu) sc->ids = native_ids_create(d, sc);
+                    if (sc->gpu) {
+#ifdef GFG_NATIVE_TEST_OBSERVE_LAYER
+                        uint32_t n=sc->image_count;
+                        VkImage *images=calloc(n,sizeof(*images));
+#define OBS_LOAD(name) observer_api.name=(PFN_vk##name)d->gdpa(d->handle,"vk" #name);
+                        OBS_FUNCS(OBS_LOAD)
+#undef OBS_LOAD
+                        observer_api.QueueSubmit=native_QueueSubmit;
+                        observer_set_loader_data=d->set_loader_data;
+                        PFN_vkGetPhysicalDeviceMemoryProperties props=(PFN_vkGetPhysicalDeviceMemoryProperties)
+                            d->instance->gipa(d->instance->handle,"vkGetPhysicalDeviceMemoryProperties");
+                        props(d->physical,&observer.memory_props);
+                        if (!images || d->get_images(d->handle,sc->handle,&n,images)!=VK_SUCCESS ||
+                            !observer_start(d->instance->handle,d->physical,d->handle,queue,
+                                sc->handle,sc->extent,sc->format,images,n,q->family,native_locked_present)) abort();
+                        test_observer_active=1;
+#endif
+                        sc->ids = native_ids_create(d, sc);
+                        if (d->async_output && sc->acquire_semaphores) {
+                            const gfg_present_id_hooks hooks = {
+                                .mode = sc->ids ? sc->ids->mode : 0,
+                                .assign = sc->ids ? native_ids_assign : NULL, .user = sc->ids};
+                            sc->output = gfg_output_create(sc->gpu,queue,native_serialized_present,&hooks,
+                                sc->ids ? &sc->ids->wsi_lock : &sc->output_wsi,
+                                d->handle,native_worker_gdpa,sc->image_count,sc->acquire_semaphores);
+                        }
+                    }
                     break;
                 }
                 if (!sc->gpu)
@@ -1086,6 +1369,7 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
                         " external memory fd / timeline); real-frame pass-through\n");
             }
             gpu = sc->gpu;
+            output = sc->output;
             sync_ids = sc->ids;
             if (sc->ids) {
                 ids.mode = sc->ids->mode;
@@ -1124,10 +1408,18 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
     #endif
     /* The optional wait monitor uses the same swapchain as QueuePresent. Its
      * zero-timeout polls share this lock to satisfy Vulkan's host sync rule. */
-    if (sync_ids) pthread_mutex_lock(&sync_ids->wsi_lock);
+    int queued = 0;
+    if (output) {
+        result = gfg_output_submit(output,info,&queued);
+        if (queued) path = "gpu-async";
+        else gfg_output_drain(output,0,UINT64_MAX,NULL);
+    } else if (d->async_output) native_drain_device(d); /* multi-swapchain / fallback order */
+    if (!queued) {
+    if (sync_ids && !output) pthread_mutex_lock(&sync_ids->wsi_lock);
     if (gpu) {
         path = "gpu";
-        result = gfg_gpu_fg_present(gpu, queue, info, d->present, &ids);
+        result = gfg_gpu_fg_present(gpu, queue, info,
+                                    d->async_output ? native_serialized_present : d->present, &ids);
     }
 #ifdef GFG_NATIVE_WITH_CPU_BRIDGE
     else if (bridge) {
@@ -1136,11 +1428,12 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
     }
 #endif
     else {
-        result = d->present(queue, info);
+        result = native_serialized_present(queue, info);
     }
-    if (sync_ids) pthread_mutex_unlock(&sync_ids->wsi_lock);
+    if (sync_ids && !output) pthread_mutex_unlock(&sync_ids->wsi_lock);
+    }
 #else
-    result = d->present(queue, info);
+    result = native_serialized_present(queue, info);
 #endif
     struct timespec present_end;
     clock_gettime(CLOCK_MONOTONIC, &present_end);
@@ -1171,12 +1464,41 @@ static native_present_ids *native_find_ids(native_device *d, VkSwapchainKHR swap
     pthread_mutex_unlock(&d->lock);
     return ids;
 }
+static VkResult native_output_wait(native_device *d, gfg_output *output, VkSwapchainKHR sc,
+        uint64_t id, uint64_t timeout, const VkPresentWait2InfoKHR *info) {
+    const uint64_t start = native_now_ns();
+    VkResult r = gfg_output_drain(output,id,timeout,NULL);
+    if (r != VK_SUCCESS) return r;
+    pthread_mutex_t *lock = gfg_output_wsi(output);
+    for (;;) {
+        r = VK_TIMEOUT;
+        if (!pthread_mutex_trylock(lock)) {
+            if (info) {
+                VkPresentWait2InfoKHR poll = *info; poll.timeout = 0;
+                r = d->wait_present2(d->handle,sc,&poll);
+            } else r = d->wait_present(d->handle,sc,id,0);
+            pthread_mutex_unlock(lock);
+        }
+        if (r != VK_TIMEOUT) return r;
+        if (!timeout || !native_remaining(start,timeout)) return VK_TIMEOUT;
+        struct timespec delay = {.tv_nsec = 250000}; nanosleep(&delay,NULL);
+    }
+}
+#include "wsi_queries.inc"
 static VKAPI_ATTR VkResult VKAPI_CALL
 native_WaitForPresentKHR(VkDevice device, VkSwapchainKHR swapchain, uint64_t present_id,
                          uint64_t timeout) {
     native_device *d = find_device(dispatch_key(device));
     if (!d || !d->wait_present) return VK_ERROR_INITIALIZATION_FAILED;
     native_present_ids *ids = native_find_ids(d, swapchain);
+    gfg_output *output = native_find_output(d, swapchain);
+    if (output && !ids) return native_output_wait(d,output,swapchain,present_id,timeout,NULL);
+    if (output) {
+        uint64_t remaining;
+        VkResult r = gfg_output_drain(output,0,timeout,&remaining);
+        if (r != VK_SUCCESS) return r;
+        timeout = remaining;
+    }
     if (!ids) return d->wait_present(device, swapchain, present_id, timeout);
     if (!present_id) {
         pthread_mutex_lock(&ids->wsi_lock);
@@ -1198,6 +1520,15 @@ native_WaitForPresent2KHR(VkDevice device, VkSwapchainKHR swapchain,
     native_device *d = find_device(dispatch_key(device));
     if (!d || !d->wait_present2) return VK_ERROR_INITIALIZATION_FAILED;
     native_present_ids *ids = native_find_ids(d, swapchain);
+    gfg_output *output = native_find_output(d, swapchain);
+    if (output && !ids && info) return native_output_wait(d,output,swapchain,info->presentId,info->timeout,info);
+    VkPresentWait2InfoKHR after_drain;
+    if (output && info) {
+        uint64_t remaining;
+        VkResult r = gfg_output_drain(output,0,info->timeout,&remaining);
+        if (r != VK_SUCCESS) return r;
+        after_drain = *info; after_drain.timeout = remaining; info = &after_drain;
+    }
     if (!ids) return d->wait_present2(device, swapchain, info);
     if (!info || !info->presentId) {
         pthread_mutex_lock(&ids->wsi_lock);
@@ -1236,7 +1567,30 @@ native_gdpa(VkDevice device, const char *symbol) {
     if (d->present) HOOK(QueuePresentKHR);
     if (d->acquire) HOOK(AcquireNextImageKHR);
     if (d->acquire2) HOOK(AcquireNextImage2KHR);
+    if (d->submit) HOOK(QueueSubmit);
+    if (d->submit2) HOOK(QueueSubmit2);
+    if (d->submit2_khr) HOOK(QueueSubmit2KHR);
+    if (d->bind_sparse) HOOK(QueueBindSparse);
+    if (d->queue_idle) HOOK(QueueWaitIdle);
+    if (d->device_idle) HOOK(DeviceWaitIdle);
+    if (d->queue_label_begin) HOOK(QueueBeginDebugUtilsLabelEXT);
+    if (d->queue_label_end) HOOK(QueueEndDebugUtilsLabelEXT);
+    if (d->queue_label_insert) HOOK(QueueInsertDebugUtilsLabelEXT);
+    if (d->queue_perf) HOOK(QueueSetPerformanceConfigurationINTEL);
+    if (d->queue_hint) HOOK(QueueSetPerfHintQCOM);
+    if (d->queue_oob) HOOK(QueueNotifyOutOfBandNV);
+    if (d->queue_oob_legacy) HOOK(QueueNotifyOutOfBandLegacyNV);
 #ifdef GFG_NATIVE_WITH_TE
+    if (d->gdpa(device,"vkGetSwapchainStatusKHR")) HOOK(GetSwapchainStatusKHR);
+    if (d->gdpa(device,"vkGetRefreshCycleDurationGOOGLE")) HOOK(GetRefreshCycleDurationGOOGLE);
+    if (d->gdpa(device,"vkGetPastPresentationTimingGOOGLE")) HOOK(GetPastPresentationTimingGOOGLE);
+    if (d->gdpa(device,"vkSetSwapchainPresentTimingQueueSizeEXT")) HOOK(SetSwapchainPresentTimingQueueSizeEXT);
+    if (d->gdpa(device,"vkGetSwapchainTimingPropertiesEXT")) HOOK(GetSwapchainTimingPropertiesEXT);
+    if (d->gdpa(device,"vkGetSwapchainTimeDomainPropertiesEXT")) HOOK(GetSwapchainTimeDomainPropertiesEXT);
+    if (d->gdpa(device,"vkGetPastPresentationTimingEXT")) HOOK(GetPastPresentationTimingEXT);
+    if (d->gdpa(device,"vkReleaseSwapchainImagesKHR")) HOOK(ReleaseSwapchainImagesKHR);
+    if (d->gdpa(device,"vkReleaseSwapchainImagesEXT")) HOOK(ReleaseSwapchainImagesEXT);
+    if (d->gdpa(device,"vkSetHdrMetadataEXT")) HOOK(SetHdrMetadataEXT);
     if (d->wait_present) HOOK(WaitForPresentKHR);
     if (d->wait_present2) HOOK(WaitForPresent2KHR);
 #endif
@@ -1254,6 +1608,11 @@ native_gipa(VkInstance instance, const char *symbol) {
     HOOK(DestroyInstance);
     HOOK(CreateDevice);
     if (!instance) return NULL;
+    HOOK(QueueSubmit); HOOK(QueueSubmit2); HOOK(QueueSubmit2KHR); HOOK(QueueBindSparse);
+    HOOK(QueueWaitIdle); HOOK(DeviceWaitIdle);
+    HOOK(QueueBeginDebugUtilsLabelEXT); HOOK(QueueEndDebugUtilsLabelEXT); HOOK(QueueInsertDebugUtilsLabelEXT);
+    HOOK(QueueSetPerformanceConfigurationINTEL); HOOK(QueueSetPerfHintQCOM);
+    HOOK(QueueNotifyOutOfBandNV); HOOK(QueueNotifyOutOfBandLegacyNV);
     // Instance-level lookup of device commands must not bypass our layer.
     // Many Vulkan frameworks resolve WSI commands via vkGetInstanceProcAddr.
     if (!strcmp(symbol, "vkGetDeviceQueue"))
@@ -1271,6 +1630,10 @@ native_gipa(VkInstance instance, const char *symbol) {
     if (!strcmp(symbol, "vkAcquireNextImage2KHR"))
         return (PFN_vkVoidFunction)native_AcquireNextImage2KHR;
 #ifdef GFG_NATIVE_WITH_TE
+    HOOK(GetSwapchainStatusKHR); HOOK(GetRefreshCycleDurationGOOGLE); HOOK(GetPastPresentationTimingGOOGLE);
+    HOOK(SetSwapchainPresentTimingQueueSizeEXT); HOOK(GetSwapchainTimingPropertiesEXT);
+    HOOK(GetSwapchainTimeDomainPropertiesEXT); HOOK(GetPastPresentationTimingEXT);
+    HOOK(ReleaseSwapchainImagesKHR); HOOK(ReleaseSwapchainImagesEXT); HOOK(SetHdrMetadataEXT);
     if (!strcmp(symbol, "vkWaitForPresentKHR"))
         return (PFN_vkVoidFunction)native_WaitForPresentKHR;
     if (!strcmp(symbol, "vkWaitForPresent2KHR"))

@@ -54,6 +54,8 @@ def render(files: dict[str, str]) -> str:
     timings = last(
         r"present_cpu frames=(\d+).*?total_median_us=([0-9.]+).*?total_p95_us=([0-9.]+).*?"
         r"layer_own_median_us=([0-9.]+).*?layer_own_p95_us=([0-9.]+)", stderr)
+    worker = last(r"output-worker retired submitted=(\d+) completed=(\d+) stale=(\d+) backpressure=(\d+) error=(-?\d+)", stderr)
+    app_cpu = last(r"present-timing path=gpu-async[^\n]*?frames=(\d+) median_us=([0-9.]+) p95_us=([0-9.]+) max_us=([0-9.]+)",stderr)
     gpu_line = last(r"gpu-bridge gpu_elapsed[^\n]*", stderr)
     gpu = re.search(
         r"samples=(\d+) held_samples=(\d+) output1_median_ms=([0-9.]+) output1_p95_ms=([0-9.]+) "
@@ -113,12 +115,23 @@ def render(files: dict[str, str]) -> str:
         lines.append(f"- Reservations rescued by selecting another free slot: {losses.group(7)}")
     if timings:
         lines.extend([
-            "", "## CPU time inside layer", "",
+            "", "## Output worker CPU call time" if worker else "## CPU time inside layer", "",
             f"- Samples: {timings.group(1)}",
             f"- Full present call median / p95: {timings.group(2)} / {timings.group(3)} µs",
             f"- Layer-owned CPU median / p95: {timings.group(4)} / {timings.group(5)} µs",
-            "- These are API-path CPU timings, not end-to-end display latency.",
+            "- These are output-thread call timings, including its resource polling and downstream WSI. They are not the game's API-call time or display latency."
+            if worker else "- These are API-path CPU timings, not end-to-end display latency.",
         ])
+    if app_cpu:
+        lines.extend(["", "## Game present-call enqueue/backpressure time", "",
+                      f"- Samples: {app_cpu.group(1)}; median / p95 / max: {app_cpu.group(2)} / {app_cpu.group(3)} / {app_cpu.group(4)} µs",
+                      "- Includes waiting for a bounded mailbox slot; excludes GPU completion and physical scanout."])
+    if worker:
+        lines.extend(["", "## Bounded output worker", "",
+                      f"- Submitted / handed-off jobs: {worker.group(1)} / {worker.group(2)}",
+                      f"- Stale jobs reset to real-only history: {worker.group(3)}",
+                      f"- Mailbox backpressure events: {worker.group(4)}; deferred WSI error: {worker.group(5)}",
+                      "- At most one queued and one executing job; unknown metadata drains earlier jobs before synchronous forwarding."])
     if gpu:
         lines.extend(["", "## Latest bridge GPU timestamp samples", "",
                       f"- Completed generated-pair samples: {gpu.group(1)}; held samples excluded: {gpu.group(2)}",

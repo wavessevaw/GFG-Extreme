@@ -39,6 +39,8 @@ def native_elf(binary: Path) -> bytes:
         raise ValueError("GPU transport is missing; refusing CPU/pass-through artifact")
     if b"rgba_to_rgb" in raw or b"OWN TE8 CPU bridge active" in raw:
         raise ValueError("Legacy CPU pixel transport must not ship in FG3 GPU artifact")
+    if b"GPU WSI observer:" in raw:
+        raise ValueError("Test-only WSI pixel observer must not ship in the GPU artifact")
     return raw
 
 
@@ -139,7 +141,7 @@ def package(binary: Path, outdir: Path, version: str, build_environment: str | N
         "source_worktree_dirty": dirty,
         "source_identity": "SHA256SUMS.txt covers included corresponding source",
         "algorithm": "GFG LMC GPU model fit; shared analysis; t=1/3,2/3 (tiles diagnostic opt-in)",
-        "transport": "application-device GPU image copies; no CPU pixel staging",
+        "transport": "bounded asynchronous WSI output; serialized application queue; GPU image copies; no CPU pixel staging",
         "multiplier": 3,
         "architecture": "linux-x86_64",
         "runtime_requires": ["Vulkan 1.2", "64-bit Linux"],
@@ -181,7 +183,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--outdir", type=Path, required=True)
-    parser.add_argument("--version", default="0.0.0-fg3-internal.4")
+    parser.add_argument("--version", default="0.0.0-fg3-internal.5")
     parser.add_argument("--build-environment", help="Actual build environment; otherwise inferred from GitHub Actions or marked unattested")
     args = parser.parse_args()
     package(args.binary.resolve(), args.outdir.resolve(), args.version, args.build_environment)

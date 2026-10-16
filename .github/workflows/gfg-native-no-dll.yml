@@ -32,7 +32,7 @@ jobs:
           make -C engine/gfg-temporal all lib 2>&1 | tee build-core.log
           engine/gfg-temporal/build/te-tests 2>&1 | tee core.log
           GFG_TEST_GPU_LMC=1 engine/gfg-temporal/build/te-tests 2>&1 | tee core-gpu-lmc.log
-          make -C engine/gfg-native ENABLE_TE=1 BUILD=build-te VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" layer build-te/wsi-gpu-smoke build-te/borrowed-device build-te/gpu-wsi-observer swapchain-policy memory-policy present-ids present-chain gpu-ring 2>&1 | tee build-native.log
+          make -C engine/gfg-native ENABLE_TE=1 BUILD=build-te VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" layer build-te/wsi-gpu-smoke build-te/borrowed-device build-te/gpu-wsi-observer build-te/observer-layer/libVkLayer_gfg_native.so build-te/async-observer-app swapchain-policy memory-policy present-ids present-chain gpu-ring output-worker queue-serialization 2>&1 | tee build-native.log
       - name: Loader, real-frame fallback and legacy CPU regression
         run: |
           set -euo pipefail
@@ -90,6 +90,37 @@ jobs:
           GFG_NATIVE_GPU_FAULT=record xvfb-run -a engine/gfg-native/build-te/gpu-wsi-observer 2>&1 | tee recovery.log
           grep -q 'synthetic=0 recovery_duplicate=1 content=PASS real_handoffs=PASS' recovery.log
           if grep -E 'VALIDATION ERROR|Validation Error|VUID-' borrowed*.log observer*.log gpu-*.log proton-*.log skip-*.log fault-*.log recovery.log; then exit 1; fi
+      - name: Bounded async output, lifecycle, metadata and actual intermediate pixels
+        env:
+          VK_LAYER_PATH: /usr/share/vulkan/explicit_layer.d
+        run: |
+          set -euo pipefail
+          async_env=(GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_ASYNC=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_TRACE=1 GFG_NATIVE_TIMING=1 GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_PROTON_CHAIN=1)
+          for order in VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation VK_LAYER_KHRONOS_validation:VK_LAYER_GFG_native; do
+            stem=${order//:/_}
+            for scenario in normal queue-idle recreate unknown; do
+              extra=()
+              case "$scenario" in
+                queue-idle) extra=(GFG_TEST_QUEUE_IDLE_ONLY=1) ;;
+                recreate) extra=(GFG_TEST_RECREATE=1) ;;
+                unknown) extra=(GFG_TEST_UNKNOWN_PRESENT=1 GFG_TEST_ALLOW_SKIPS=1) ;;
+              esac
+              env "${async_env[@]}" GFG_NATIVE_ALGO=tiles GFG_TEST_FRAMES=30 "${extra[@]}" VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "async-$scenario-$stem.log"
+              grep -q 'validation errors=0' "async-$scenario-$stem.log"
+              if [[ "$scenario" != unknown ]]; then grep -q 'real=30 synthetic=58 skipped=0' "async-$scenario-$stem.log"; fi
+            done
+            env "${async_env[@]}" GFG_NATIVE_ALGO=lmc-gpu GFG_TEST_FRAMES=8 GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=2 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "async-lmc-$stem.log"
+            grep -q 'real=8 synthetic=14 skipped=0' "async-lmc-$stem.log"
+            for fault in record submit index; do
+              env "${async_env[@]}" GFG_NATIVE_ALGO=tiles GFG_TEST_FRAMES=2 GFG_TEST_EXPECT_FAULT=1 GFG_TEST_ALLOW_SKIPS=1 GFG_NATIVE_GPU_FAULT="$fault" VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "async-fault-$fault-$stem.log"
+              grep -q 'real=2 synthetic=0 skipped=2' "async-fault-$fault-$stem.log"
+            done
+            for algo in tiles lmc-gpu; do
+              env GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_ASYNC=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO="$algo" GFG_NATIVE_TEST_FRAMES=4 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te/observer-layer:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/async-observer-app 2>&1 | tee "async-pixels-$algo-$stem.log"
+              grep -q 'real=4 synthetic=6 content=PASS handoff_order=PASS' "async-pixels-$algo-$stem.log"
+            done
+          done
+          if grep -E 'VALIDATION ERROR|Validation Error|VUID-' async-*.log; then exit 1; fi
       - name: Immutable feature chains and FIFO fail-closed behavior
         env:
           VK_LAYER_PATH: /usr/share/vulkan/explicit_layer.d
@@ -236,7 +267,7 @@ jobs:
           cp "$RUNNER_TEMP/fg3-private/installed.log" "$logs/"
           rm "$RUNNER_TEMP/fg3-private/installed.log"
           cp "$RUNNER_TEMP/native-compatibility.log" "$logs/"
-          cp gpu-*.log proton-*.log skip-*.log fault-*.log disabled-timeline-*.log mailbox-*.log \
+          cp gpu-*.log proton-*.log skip-*.log fault-*.log async-*.log disabled-timeline-*.log mailbox-*.log \
             shared-fd.log relay-rejected.log "$logs/"
           {
             printf 'source_commit=%s\n' "$(git rev-parse HEAD)"

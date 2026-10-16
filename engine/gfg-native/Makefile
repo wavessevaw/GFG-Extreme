@@ -6,8 +6,8 @@ ENABLE_TE ?= 0
 ENABLE_CPU_BRIDGE ?= 0
 TE_LIB ?= ../gfg-temporal/build/libgfg-temporal.a
 ifeq ($(ENABLE_TE),1)
-NATIVE_SOURCES := src/layer.c src/gpu_bridge.c
-NATIVE_HEADERS := src/cpu_bridge.h src/gpu_bridge.h src/present_ids.h src/present_chain.h src/memory_policy.h
+NATIVE_SOURCES := src/layer.c src/gpu_bridge.c src/output_worker.c
+NATIVE_HEADERS := src/cpu_bridge.h src/gpu_bridge.h src/output_worker.h src/wsi_queries.inc src/present_ids.h src/present_chain.h src/memory_policy.h
 NATIVE_CPPFLAGS := -DGFG_NATIVE_WITH_TE -I../gfg-temporal/src
 ifeq ($(ENABLE_CPU_BRIDGE),1)
 NATIVE_SOURCES += src/cpu_bridge.c
@@ -23,7 +23,7 @@ NATIVE_LDLIBS :=
 NATIVE_DEPS :=
 endif
 
-.PHONY: layer abi smoke wsi-smoke wsi-smoke-te wsi-smoke-gpu swapchain-policy memory-policy present-ids present-chain gpu-ring clean
+.PHONY: layer abi smoke wsi-smoke wsi-smoke-te wsi-smoke-gpu swapchain-policy memory-policy present-ids present-chain gpu-ring output-worker clean
 layer: $(BUILD)/libVkLayer_gfg_native.so $(BUILD)/VkLayer_gfg_native.json
 
 $(BUILD)/libVkLayer_gfg_native.so: $(NATIVE_SOURCES) $(NATIVE_HEADERS) $(NATIVE_DEPS)
@@ -79,6 +79,31 @@ $(BUILD)/gpu-ring: tests/gpu_ring.c src/gpu_bridge.c src/gpu_bridge.h src/presen
 
 gpu-ring: $(BUILD)/gpu-ring
 	$(BUILD)/gpu-ring
+
+$(BUILD)/output-worker: tests/output_worker.c src/output_worker.c src/output_worker.h src/present_chain.h src/gpu_bridge.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I$(VULKAN_HEADERS) -o $@ tests/output_worker.c -lpthread
+
+output-worker: $(BUILD)/output-worker
+	$(BUILD)/output-worker
+
+$(BUILD)/queue-serialization: tests/queue_serialization.c src/layer.c
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Wno-unused-function -I$(VULKAN_HEADERS) -o $@ tests/queue_serialization.c -lpthread
+
+queue-serialization: $(BUILD)/queue-serialization
+	$(BUILD)/queue-serialization
+
+# Test-only layer: inspects actual async output pixels before lower WSI.
+# Keep it in its own layer directory; it must never enter the shipped package.
+$(BUILD)/observer-layer/libVkLayer_gfg_native.so: $(NATIVE_SOURCES) $(NATIVE_HEADERS) tests/gpu_observer.h $(TE_LIB)
+	mkdir -p $(BUILD)/observer-layer
+	$(CC) $(CFLAGS) -fvisibility=hidden -I$(VULKAN_HEADERS) -Isrc -DGFG_NATIVE_WITH_TE -DGFG_NATIVE_TEST_OBSERVE_LAYER -I../gfg-temporal/src -shared -Wl,-z,defs -o $@ $(NATIVE_SOURCES) $(TE_LIB) -lvulkan -ldl -lm -lpthread
+	cp VkLayer_gfg_native.json $(BUILD)/observer-layer/
+
+$(BUILD)/async-observer-app: tests/wsi_gpu_observer.c
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DGFG_NATIVE_TEST_SMALL -DGFG_NATIVE_TEST_ASYNC -DVK_USE_PLATFORM_XCB_KHR -I$(VULKAN_HEADERS) -o $@ $< -lvulkan -lxcb
 
 $(BUILD)/swapchain-policy: tests/swapchain_policy.c src/layer.c
 	mkdir -p $(BUILD)

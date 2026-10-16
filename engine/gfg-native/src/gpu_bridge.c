@@ -157,6 +157,10 @@ struct gfg_gpu_fg {
     int fault_used;
     int log;
     int in_present;
+    pthread_mutex_t *output_wsi;
+    atomic_int waiting_image;
+    uint64_t output_waits;
+    double output_deadline_us;
     unsigned bypass_logged;
     int mode_override_logged;
     int generation_logged;
@@ -172,6 +176,18 @@ struct gfg_gpu_fg {
     double gpu_stage_ms[TE_STAGE_COUNT], gpu_lmc_ms[TE_LMC_PROF_COUNT];
     uint64_t gpu_lmc_count[TE_LMC_PROF_COUNT];
 };
+
+void gfg_gpu_fg_set_output_thread(gfg_gpu_fg *fg, pthread_mutex_t *wsi) { fg->output_wsi = wsi; }
+void gfg_gpu_fg_restart_history(gfg_gpu_fg *fg) { fg->te_gap = 1; }
+int gfg_gpu_fg_waiting_image(gfg_gpu_fg *fg) { return atomic_load(&fg->waiting_image); }
+
+static VkResult output_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKHR *pi,
+                               PFN_vkQueuePresentKHR next) {
+    if (fg->output_wsi) pthread_mutex_lock(fg->output_wsi);
+    VkResult r = next(queue, pi);
+    if (fg->output_wsi) pthread_mutex_unlock(fg->output_wsi);
+    return r;
+}
 
 static struct {
     atomic_uint_fast64_t v[sizeof(gfg_gpu_stats) / sizeof(uint64_t)];
@@ -257,7 +273,8 @@ static void gpu_sample(gfg_gpu_fg *fg) {
 
 /* Every blocking wait goes through these so the counters prove the contract. */
 static void count_wait(gfg_gpu_fg *fg) {
-    if (fg->in_present) STAT_ADD(present_path_cpu_waits, 1);
+    if (fg->in_present && fg->output_wsi) ++fg->output_waits;
+    else if (fg->in_present) STAT_ADD(present_path_cpu_waits, 1);
     else STAT_ADD(teardown_cpu_waits, 1);
 }
 static VkResult wait_fence(gfg_gpu_fg *fg, VkFence fence, uint64_t timeout) {
@@ -597,7 +614,8 @@ static void verify_submit(gfg_gpu_fg *fg, uint64_t v, uint32_t cur_slot) {
     const uint64_t wait_value = v + 2;
     VkTimelineSemaphoreSubmitInfo tsi = {.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
         .waitSemaphoreValueCount = 1, .pWaitSemaphoreValues = &wait_value};
-    const VkPipelineStageFlags stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    const VkPipelineStageFlags stage = fg->same_device ?
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_TRANSFER_BIT;
     VkSubmitInfo si = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .pNext = &tsi,
         .waitSemaphoreCount = 1, .pWaitSemaphores = &fg->timeline, .pWaitDstStageMask = &stage,
         .commandBufferCount = 1, .pCommandBuffers = &cb};
@@ -870,6 +888,9 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
             if (!ok(fg->CreateSemaphore(fg->device, &bsci, NULL, &rs->acquire_sem[k]))) goto fail;
         }
         if (!ok(fg->CreateFence(fg->device, &fci, NULL, &rs->fence))) goto fail;
+        if(env_flag("GFG_TEST_CB_HANDLES"))
+            fprintf(stderr,"GFG test transport ring=%u real=%p gen0=%p gen1=%p\n",
+                    r,(void *)rs->real_cb,(void *)rs->gen_cb[0],(void *)rs->gen_cb[1]);
     }
     if (!alloc_cb(fg, &fg->init_cb)) goto fail;
     if (!ok(fg->CreateFence(fg->device, &fci, NULL, &fg->init_fence))) goto fail;
@@ -977,7 +998,7 @@ void gfg_gpu_fg_destroy(gfg_gpu_fg *fg) {
             (long)getpid(), (unsigned long long)fg->frame);
         fprintf(stderr, "[gfg-native] gpu-bridge skipped_outputs ring=%llu te=%llu history=%llu"
                 " acquire=%llu bypass=%llu error=%llu ring_reclaimed=%llu pid=%ld bridge_frames=%llu"
-                " history_only_submits=%llu\n",
+                " history_only_submits=%llu output_thread_waits=%llu\n",
                 (unsigned long long)fg->drop_outputs[DROP_RING],
                 (unsigned long long)fg->drop_outputs[DROP_TE],
                 (unsigned long long)fg->drop_outputs[DROP_HISTORY],
@@ -985,7 +1006,8 @@ void gfg_gpu_fg_destroy(gfg_gpu_fg *fg) {
                 (unsigned long long)fg->drop_outputs[DROP_BYPASS],
                 (unsigned long long)fg->drop_outputs[DROP_ERROR],
                 (unsigned long long)fg->ring_reclaimed, (long)getpid(),
-                (unsigned long long)fg->frame, (unsigned long long)fg->history_only_submits);
+                (unsigned long long)fg->frame, (unsigned long long)fg->history_only_submits,
+                (unsigned long long)fg->output_waits);
         if (fg->gpu_count) {
             double fm, fp, pm, pp;
             percentile(fg->gpu_first_ms, fg->gpu_count, &fm, &fp);
@@ -1081,6 +1103,7 @@ void gfg_gpu_fg_destroy(gfg_gpu_fg *fg) {
 
 static VkResult submit_real(gfg_gpu_fg *fg, ring_slot *rs, const VkPresentInfoKHR *app,
                             uint32_t idx, uint64_t v) {
+    if(env_flag("GFG_TEST_CB_HANDLES")) fprintf(stderr,"GFG transport real frame=%llu idx=%u image=%p cb=%p wait=%p\n",(unsigned long long)fg->frame,idx,(void*)fg->images[idx],(void*)rs->real_cb,app->waitSemaphoreCount?(void*)app->pWaitSemaphores[0]:NULL);
     VkSemaphore waits[17];
     VkPipelineStageFlags stages[17];
     uint64_t wait_values[17];
@@ -1088,13 +1111,15 @@ static VkResult submit_real(gfg_gpu_fg *fg, ring_slot *rs, const VkPresentInfoKH
     if (app->waitSemaphoreCount > 16) return VK_ERROR_OUT_OF_HOST_MEMORY;
     for (uint32_t i = 0; i < app->waitSemaphoreCount; ++i) {
         waits[nw] = app->pWaitSemaphores[i];
-        stages[nw] = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        stages[nw] = fg->same_device ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_TRANSFER_BIT;
         wait_values[nw++] = 0; /* binary: ignored */
     }
-    if (fg->last_te_value) {
-        /* all TE work submitted so far (it reads the slot we overwrite) */
+    if (fg->last_te_value && !fg->same_device) {
+        /* Cross-device TE needs the timeline wait. Same-queue TE reads are
+         * ordered by the ALL_COMMANDS source-image barrier; importing an old
+         * timeline snapshot is unnecessary. */
         waits[nw] = fg->timeline;
-        stages[nw] = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        stages[nw] = fg->same_device ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_TRANSFER_BIT;
         wait_values[nw++] = fg->last_te_value;
     }
     VkSemaphore signals[2] = {fg->timeline, fg->ready[idx]};
@@ -1132,7 +1157,7 @@ static void bypass_log(gfg_gpu_fg *fg, unsigned bit, const char *reason,
             app->swapchainCount, app->waitSemaphoreCount, id_mode, types);
 }
 
-static VkResult forward_real(VkQueue queue, const VkPresentInfoKHR *app, const VkSemaphore *wait,
+static VkResult forward_real(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKHR *app, const VkSemaphore *wait,
                              PFN_vkQueuePresentKHR next, const gfg_present_id_hooks *ids,
                              double *next_us) {
     VkPresentInfoKHR real = *app;
@@ -1147,7 +1172,7 @@ static VkResult forward_real(VkQueue queue, const VkPresentInfoKHR *app, const V
         real.pNext = gfg_pc_head(&chain);
     }
     const double t = now_us();
-    VkResult r = next(queue, &real);
+    VkResult r = output_present(fg, queue, &real, next);
     if (next_us) *next_us += now_us() - t;
     return r;
 }
@@ -1158,8 +1183,22 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v, u
                              int dynamic_fifo, double *next_us) {
     uint32_t img = UINT32_MAX;
     double tp = now_us();
-    VkResult r = fg->AcquireNextImageKHR(fg->device, fg->swapchain, 0, rs->acquire_sem[k],
-                                         VK_NULL_HANDLE, &img);
+    VkResult r;
+    /* WSI acquisition is polled with the host lock released between attempts.
+     * Never block an app acquire while holding that same swapchain lock. Give
+     * waiting output priority over a new app acquire; share one real-period budget. */
+    const double acquire_end = fg->output_wsi ? fg->output_deadline_us : now_us();
+    if (fg->output_wsi) atomic_store(&fg->waiting_image, 1);
+    for (;;) {
+        if (fg->output_wsi) pthread_mutex_lock(fg->output_wsi);
+        r = fg->AcquireNextImageKHR(fg->device, fg->swapchain, 0, rs->acquire_sem[k],
+                                   VK_NULL_HANDLE, &img);
+        if (fg->output_wsi) pthread_mutex_unlock(fg->output_wsi);
+        if ((r != VK_NOT_READY && r != VK_TIMEOUT) || !fg->output_wsi || now_us() >= acquire_end) break;
+        ++fg->output_waits;
+        struct timespec delay = {.tv_nsec = 250000}; nanosleep(&delay, NULL);
+    }
+    if (fg->output_wsi) atomic_store(&fg->waiting_image, 0);
     fg->phase_us[2] += now_us() - tp;
     tp = now_us();
     if (r == VK_NOT_READY || r == VK_TIMEOUT) { STAT_ADD(acquire_not_ready, 1); return 0; }
@@ -1184,7 +1223,12 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v, u
     }
     const uint64_t value = v + 1 + (uint64_t)k;
     VkSemaphore waits[2] = {rs->acquire_sem[k], fg->timeline};
-    VkPipelineStageFlags stages[2] = {VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT};
+    /* same-device barriers include ALL_COMMANDS to cover previous TE shader
+     * reads. Acquired-image layout transitions must wait at that same scope,
+     * not a later TRANSFER-only point (WRITE_AFTER_PRESENT under load). */
+    const VkPipelineStageFlags wait_stage = fg->same_device ?
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_TRANSFER_BIT;
+    VkPipelineStageFlags stages[2] = {wait_stage, wait_stage};
     uint64_t wait_values[2] = {0, value};
     VkTimelineSemaphoreSubmitInfo tsi = {.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
         .waitSemaphoreValueCount = 2, .pWaitSemaphoreValues = wait_values};
@@ -1236,7 +1280,7 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v, u
         .pNext = pi.pNext, .swapchainCount = 1, .pPresentModes = &fifo};
     if (dynamic_fifo) pi.pNext = &present_mode;
     const double t = now_us();
-    r = next(fg->queue, &pi);
+    r = output_present(fg, fg->queue, &pi, next);
     *next_us += now_us() - t;
     if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) {
         fail_log(fg, "synthetic present", r);
@@ -1260,6 +1304,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
                             PFN_vkQueuePresentKHR next, const gfg_present_id_hooks *ids) {
     if (!fg || !app || !next) return VK_ERROR_INITIALIZATION_FAILED;
     const double t0 = now_us();
+    fg->output_deadline_us = t0 + 33333.333; /* one 30Hz real-frame period */
     double next_us = 0.0;
     STAT_ADD(real_presents, 1);
     const uint64_t frame = fg->frame++;
@@ -1272,7 +1317,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
         bypass_log(fg, 1u, chain_reason, app, id_mode);
         fg->te_gap = 1;
         if (frame) skip_outputs(fg, DROP_BYPASS, 2);
-        result = forward_real(queue, app, NULL, next, NULL, &next_us);
+        result = forward_real(fg, queue, app, NULL, next, NULL, &next_us);
         goto timing;
     }
     if (fg->disabled || queue != fg->queue || idx >= fg->image_count ||
@@ -1282,7 +1327,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
         bypass_log(fg, 2u, reason, app, id_mode);
         fg->te_gap = 1;
         if (frame) skip_outputs(fg, DROP_BYPASS, 2);
-        result = forward_real(queue, app, NULL, next, ids, &next_us);
+        result = forward_real(fg, queue, app, NULL, next, ids, &next_us);
         goto timing;
     }
     if (app_chain.dynamic_mode && app_chain.requested_mode != VK_PRESENT_MODE_FIFO_KHR &&
@@ -1300,7 +1345,15 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     const int inject = fg->inject_every && frame % fg->inject_every == fg->inject_every - 1;
     const int inject_te_busy = inject && (frame / fg->inject_every) % 2 == 0;
     if (inject && !inject_te_busy) { STAT_ADD(ring_busy, 1); pass_through = 1; }
-    if (!pass_through && !(rs = reserve_ring(fg))) {
+    if (!pass_through && !(rs = reserve_ring(fg)) && fg->output_wsi && !fg->disabled) {
+        /* A GPU wait belongs to the output thread, not the game present call.
+         * It prevents busy -> bypass -> history-reset oscillation. */
+        const double left = fg->output_deadline_us - now_us();
+        VkResult ready = wait_fence(fg, fg->ring[fg->ring_next].fence,
+                                    left > 0.0 ? (uint64_t)(left * 1000.0) : 0);
+        if (ready == VK_SUCCESS) rs = reserve_ring(fg);
+    }
+    if (!pass_through && !rs) {
         if (!fg->disabled) STAT_ADD(ring_busy, 1);
         else { drop_reason = DROP_ERROR; STAT_ADD(errors, 1); }
         pass_through = 1;
@@ -1323,7 +1376,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
         fg->te_gap = 1;
         if (frame) skip_outputs(fg, drop_reason, 2);
         fg->in_present = 0;
-        result = forward_real(queue, app, NULL, next, ids, &next_us);
+        result = forward_real(fg, queue, app, NULL, next, ids, &next_us);
         goto timing;
     }
     const uint64_t v = fg->next_value;
@@ -1403,7 +1456,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     fg->in_present = 0;
     /* Real-only fences/timing and immutable copied metadata stay on the app's
      * real present; synthetic calls never borrow those completion objects. */
-    result = forward_real(queue, app, &fg->ready[idx], next, ids, &next_us);
+    result = forward_real(fg, queue, app, &fg->ready[idx], next, ids, &next_us);
     if(fg->recreate_required && (result==VK_SUCCESS || result==VK_SUBOPTIMAL_KHR)){
         result=VK_ERROR_OUT_OF_DATE_KHR;
         if(app->pResults) app->pResults[0]=result;
