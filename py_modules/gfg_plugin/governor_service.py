@@ -3276,11 +3276,41 @@ class GovernorService:
                     self._autopilot_targets.update(display_target, None, None,
                         self._autopilot_preference(profile), False, now=self._clock())
                 return min(int(display_target), int(self._autopilot_targets.target or display_target))
+        budget = self._budget
+        loading_transition = False
+        power_recovery = False
+        if budget is not None and fresh and isinstance(real, (int, float)) and isinstance(output, (int, float)):
+            base = float(budget.point.base_target_fps)
+            loading_transition = bool(
+                budget.point.multiplier > 1.0 and base > 0
+                and float(real) < base * 0.60
+                and float(output) < float(real) * 1.25
+            )
+            # The game has already demonstrated a higher working power level.
+            # If active generation resumes below that level and the current cap
+            # is binding, recover watts first; do not reinterpret the temporary
+            # starvation as proof that a 90 Hz panel should target 45 FPS.
+            work_tdp = budget._work_tdp(self._clock()) if budget.tdp_control else None
+            power_recovery = bool(
+                not loading_transition and budget.tdp_control and budget.tdp is not None
+                and work_tdp is not None and float(work_tdp) >= float(budget.tdp) + 0.5
+                and budget._binding(budget.draw_w)
+                and float(real) < base * 0.85
+                and float(output) < float(display_target) * 0.85
+            )
+        if loading_transition:
+            self._status["autopilot_target_hold_reason"] = "loading-transition"
+        elif power_recovery:
+            self._status["autopilot_target_hold_reason"] = "known-good-tdp-recovery"
+            return int(display_target)
+        else:
+            self._status.pop("autopilot_target_hold_reason", None)
         chosen = int(self._autopilot_targets.update(
             display_target, real, output, self._autopilot_preference(profile), fresh,
             sample_seq=summary.get("last_sample_seq"),
             first_sample_seq=summary.get("first_sample_seq"),
-            span_s=summary.get("sample_span_s"), now=self._clock()))
+            span_s=summary.get("sample_span_s"), now=self._clock(),
+            loading_transition=loading_transition))
         if display_target < 90:
             chosen = min(chosen, int(display_target))
         return chosen
@@ -4299,6 +4329,7 @@ class GovernorService:
                 waiter.cancel()
 
     async def _loop(self) -> None:
+        last_hud_beat = time.monotonic()
         while not self._stop.is_set():
             # Clear before the iteration: a poke that lands while it runs
             # (a Saved write, a toggle) wakes the next one right away.
@@ -4317,7 +4348,17 @@ class GovernorService:
                 await self._wait_governor(self.IDLE_LOOP_SECONDS)
                 continue
             half = self.LOOP_SECONDS / 2
+            # HUD has its own 500 ms cadence, independent of power decisions.
+            # Frequent UI/config wakeups must not starve the HUD heartbeat.
             if await self._wait_governor(half):
+                if time.monotonic() - last_hud_beat >= half:
+                    try:
+                        await self._refresh_hud_beat()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as error:
+                        self.log.debug("HUD refresh failed: %s", error)
+                    last_hud_beat = time.monotonic()
                 continue
             try:
                 await self._refresh_hud_beat()
@@ -4325,4 +4366,5 @@ class GovernorService:
                 raise
             except Exception as error:
                 self.log.debug("HUD refresh failed: %s", error)
+            last_hud_beat = time.monotonic()
             await self._wait_governor(half)
