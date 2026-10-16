@@ -2353,7 +2353,7 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
             runner.executor_active = True
             self.svc._applied_tdp = None
             asyncio.run(self.svc._apply_budget_tdp("game"))
-            self.assertEqual(self.svc.power.writes[-1], min(self.svc._budget.normal_max_w, self.svc._budget.tdp + 4.0))
+            self.assertEqual(self.svc.power.writes[-1], self.svc._budget.tdp)
 
 
 class HudCadenceTests(unittest.TestCase):
