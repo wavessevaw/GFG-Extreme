@@ -180,7 +180,10 @@ class ProofMeter:
     def load(self, prior: Dict[str, List[float]], skip: Optional[set] = None) -> None:
         """What earlier sessions measured in this game (the rings start measured) and the metrics
         not to test because their effect is off here."""
-        self.prior = {m: [float(v) for v in prior.get(m) or []] for m in METRICS}
+        self.prior = {m: [float(v) for v in prior.get(m) or []
+                          if isinstance(v, (int, float)) and not isinstance(v, bool)
+                          and math.isfinite(float(v)) and abs(float(v)) <= 10_000]
+                      for m in METRICS}
         self.skip = set(skip or ())
 
     # ------------------------------------------------------------------ internals
@@ -209,6 +212,12 @@ _T99 = (63.66, 9.92, 5.84, 4.60, 4.03, 3.71, 3.50, 3.36, 3.25)
 
 
 def stats(values: List[float], confidence: float = 0.95) -> Dict[str, Any]:
+    # Corrupt/legacy A/B records must never leak NaN/Infinity to the HUD,
+    # JSON settings or per-game verdicts. Percentages outside any physical
+    # plausibility window are malformed provenance, not useful samples.
+    values = [float(v) for v in values if isinstance(v, (int, float))
+              and not isinstance(v, bool) and math.isfinite(float(v))
+              and abs(float(v)) <= 10_000]
     n = len(values)
     if n == 0:
         return {"n": 0, "mean": None, "low": None, "high": None, "measured": False}
