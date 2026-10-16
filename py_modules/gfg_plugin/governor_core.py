@@ -1465,7 +1465,12 @@ class BudgetController:
                 self._remember_held(now)
             if self.settled_since is None:
                 self.settled_since = now
-            if getattr(self, "hold_probes", False):
+            if (getattr(self, "hold_probes", False)
+                    or getattr(self, "hold_cpu_split", False)):
+                # While a separate CPU cap or A/B/A proof is actively changing
+                # sysfs, TDP must not begin another optional watts experiment.
+                # Unhealthy evidence and emergency fast_check are still free
+                # to protect real frames; this gates optional reprobes only.
                 return "hold"
             if now - self.locked_since < self._probe_delay():
                 return "hold"

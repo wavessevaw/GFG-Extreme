@@ -1557,8 +1557,22 @@ class GovernorService:
             if not self.cpu.owned and not getattr(self.cpu, "restore_pending", False):
                 self._mark_autopilot_transition()
         if self._autopilot_blocks_planned():
-            self._status["power_split"] = {"enabled": self._power_split_enabled(), "phase": "frozen",
-                                           "reason": "gpu-clock-trial", "available": bool(self.cpu.discover())}
+            # A blocked experiment must NOT inherit an earlier CPU cap. Prior
+            # versions returned without stepping the split or restoring sysfs,
+            # so GPU/VRS trials measured a different CPU budget from baseline.
+            now = self._clock()
+            if self._split is not None:
+                self._split.step(now, False, SplitSample(None, 0.0, None, None, None, None, None))
+            if self.cpu.owned or getattr(self.cpu, "restore_pending", False):
+                restored = await asyncio.to_thread(self.cpu.restore)
+                if restored:
+                    self._mark_autopilot_transition()
+            pending = self.cpu.owned or getattr(self.cpu, "restore_pending", False)
+            self._status["power_split"] = {
+                "enabled": self._power_split_enabled(),
+                "phase": "restore-pending" if pending else "frozen",
+                "reason": "cpu-cap-restore-pending" if pending else "autopilot-trial",
+                "available": bool(self.cpu.discover()), "control": self.cpu.status()}
             return
         self._sync_split_memory(profile)
         split, budget = self._split, self._budget
@@ -1578,8 +1592,6 @@ class GovernorService:
                         and not self._menu_covering() and self._trusted_game_focus() is not False
                         and not self.cpu.external_change
                         and not getattr(self.cpu, "restore_pending", False))
-        if eligible and split.enabled and not self.cpu.owned:
-            eligible = await asyncio.to_thread(self.cpu.claim)
         sensors = self._status.get("sensors") or {}
         recent = self.observer.summary(self.FAST_CHECK_SECONDS)
         draw = statistics.median(self._draw_samples[-3:]) if self._draw_samples else None
@@ -1590,12 +1602,24 @@ class GovernorService:
             real_fps=(recent.get("real") or {}).get("median"), target_real=target_real,
             top_core_pct=sensors.get("cpu_top_core_pct"), gpu_busy_pct=sensors.get("gpu_busy_pct"),
             gpu_mhz=sensors.get("gpu_clock_mhz"), draw_w=draw, tdp_w=self._applied_tdp,
-            steady=budget is not None and budget.phase == "locked"))
+            steady=bool(budget is not None and budget.phase == "locked"
+                        and budget.probe is None and self._request is None
+                        and not self._autopilot_arbiter.freeze_tdp)))
+        # Do not repeatedly claim and release the CPU sysfs actuator while
+        # merely monitoring. Claim immediately before the first real cap, so
+        # the saved original remains the user's latest value.
+        if cap is not None and not self.cpu.owned:
+            if not await asyncio.to_thread(self.cpu.claim):
+                split.step(now, False, SplitSample(None, target_real, None, None, None, None, None))
+                cap = None
         if self.cpu.owned:
             if cap is None and split.level == 0 and split.ab_phase is None:
                 await asyncio.to_thread(self.cpu.restore)
             elif not await asyncio.to_thread(self.cpu.set_cap_khz, cap):
                 split.step(now, False, SplitSample(None, target_real, None, None, None, None, None))
+                # The sysfs transaction may have partially applied. The
+                # actuator owns the write-ahead undo and must verify restore.
+                await asyncio.to_thread(self.cpu.restore)
         change = split.last_change
         if change is not None:
             self._mark_autopilot_transition()
@@ -3924,6 +3948,13 @@ class GovernorService:
         self._evaluation_after_seq = self.observer.sample_seq
         feedback = self._power_feedback(profile, budget)
         before = (budget.point.key, budget.tdp, budget.phase)
+        # Exclusivity for the short CPU clock trial/A-B-A windows. Do not
+        # inhibit emergency power restoration or real-frame safety guards.
+        # Ordinary held CPU caps do not block Governor's long-term TDP search:
+        # a fresh TDP probe preempts them, then CPU Split backs off.
+        split = self._split
+        budget.hold_cpu_split = bool(split and
+                                    (split.phase == "probe" or split.ab_phase is not None))
         reason_before, holds_before = budget.last_reason, getattr(budget, "not_power_bound_holds", 0)
         action = budget.observe(now, verdict, (fresh.get("real") or {}).get("median"),
                                 (fresh.get("output") or {}).get("median"))
