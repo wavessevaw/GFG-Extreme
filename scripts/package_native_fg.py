@@ -233,6 +233,10 @@ def decky_package(native_zip: Path, index: Path, outdir: Path) -> Path:
         files[path] = re.sub(r'^' + prefix + r' = "[^"]+"',
                             prefix + ' = "' + metadata["version"] + '"',
                             files[path].decode(), count=1, flags=re.M).encode()
+    for name in ("plugin.py", "session_recorder.py"):
+        path = "py_modules/gfg_plugin/" + name
+        files[path] = files[path].replace(('GFG Extreme ' + metadata["base_version"]).encode(),
+                                        ('GFG Extreme ' + metadata["version"]).encode())
     files["NATIVE-GSF-EXPERIMENTAL.txt"] = b"Native GSF hardware acceptance: NOT TESTED. Bundled independent component is verified and installed at plugin startup, without enabling frame generation. Settings > Diagnostics > GFG Native Generator: Off / x2 / x3. The Steam launch option is shown only when the executable launcher and component are present. Off by default. No stable release.\n"
     path = outdir / ("GFG-Extreme-" + metadata["version"] + ".zip")
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
