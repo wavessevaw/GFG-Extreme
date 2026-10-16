@@ -55,6 +55,15 @@ class CausalAuditTests(unittest.TestCase):
         c.observe(30,WindowVerdict(False,False,'real-below-cap',short=True),27,81)
         self.assertEqual(c.tdp,7,'mild probe failure needs its rollback point, not historical maximum')
 
+    def test_periodic_slow_recovery_needs_two_windows_before_reprobe(self):
+        c=controller();c.tdp=c.draw_w=13;c._remember_held(1)
+        c.tdp=6;c.draw_w=None;c.last_good=(c.idx,7);c.phase='probe';c.probe='down'
+        c.observe(30,BAD,15,45)
+        self.assertEqual(c.tdp,13)
+        self.assertEqual(c.observe(300,GOOD,30,90),'hold')
+        self.assertIsNone(c.probe)
+        self.assertIsNone(c.settled_since)
+
     def test_expired_lock_cannot_reprobe_on_single_new_healthy_window(self):
         c=controller();c.tdp=7;c._fast_raise(1)
         self.assertEqual(c.observe(100,GOOD,30,90),'hold')

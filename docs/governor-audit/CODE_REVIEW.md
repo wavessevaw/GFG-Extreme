@@ -14,7 +14,7 @@ This PR contains source changes, synthetic tests and reusable offline tools only
 
 ## Reproduction and validation
 
-`tests/test_governor_causal_audit.py` contains 13 counterexample tests. `tools/governor_scenario_bench.py` runs 22 deterministic closed-loop plant scenarios; 3 tests cover trajectory invariants, bounded model recovery and deterministic replay. `tests/test_governor_history_audit.py` checks byte deduplication, damaged rows, unknown telemetry and evidence references using synthetic inputs.
+`tests/test_governor_causal_audit.py` contains 14 counterexample tests. `tools/governor_scenario_bench.py` runs 22 deterministic closed-loop plant scenarios; 3 tests cover trajectory invariants, bounded model recovery and deterministic replay. `tests/test_governor_history_audit.py` checks byte deduplication, damaged rows, unknown telemetry and evidence references using synthetic inputs.
 
 Run the full Backend CI, Temporal Engine and Frame Fusion checks on this PR. Local results are tracked in the PR description and a subsequent validation note. No Steam Deck hardware validation or battery-life benefit is claimed.
 

@@ -1669,6 +1669,7 @@ class BudgetController:
                 if restore_work:
                     self.good = 0
                     self.settled_since = None
+                    self._validation_pending = True
             return "move"
         if verdict.stall:
             # Loading screen / transition: hold, in any phase, until it has lasted
