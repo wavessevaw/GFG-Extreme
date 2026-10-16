@@ -4,6 +4,7 @@
 // camera-model fit, dense fields and orphan search. Original GFG code.
 #include "lmc_common.glsl"
 layout(local_size_x=64) in;
+shared uvec2 fit_votes[64];
 
 float patch_error(int grid,vec2 centre,vec2 v) {
     float e=0.0;int n=0;
@@ -22,9 +23,29 @@ vec2 reverse_raw(int grid,vec2 half_pos) {
 }
 void main() {
     int i=int(gl_GlobalInvocationID.x);
+    if(PC.pass_==4) {
+        // A geometric consistency check uses current matched blocks, never
+        // held-out targets. Only a poor predictor pays for full projective fit.
+        uint lid=gl_LocalInvocationIndex;uvec2 votes=uvec2(0);
+        for(int j=int(lid);j<P.counts.y;j+=64)if(LY.live[j]!=0u) {
+            vec2 v=vb[P.blk_off.x+j].xy*2.0;
+            ivec2 bb=ivec2(j%lblocks(1).x,j/lblocks(1).x);
+            vec2 b=vec2(bb*8)+3.5;
+            bool bad=LY.layer_count==0u;
+            if(!bad)bad=distance(apply_h(LY.layers[0],b-v),b)>1.5+0.03*length(v);
+            votes+=uvec2(bad?1u:0u,1u);
+        }
+        fit_votes[lid]=votes;barrier();
+        for(uint s=32u;s>0u;s>>=1u){if(lid<s)fit_votes[lid]+=fit_votes[lid+s];barrier();}
+        if(lid==0u) {
+            G.hist[0]=G.pad_g0==0u && fit_votes[0].y>=12u && fit_votes[0].x*2u>fit_votes[0].y?1u:0u;
+            if(G.hist[0]!=0u)LY.layer_count=0u;
+        }
+        return;
+    }
     if(i>=P.counts.y)return;
     if(PC.pass_==3){if(i==0){G.moving=G.moving_votes*2u>uint(P.counts.y)?1u:0u;G.pal_count=0u;
-        G.pad_g0=G.pad_g1*4u>uint(P.counts.y)*3u?1u:0u;}return;}
+        G.pad_g0=G.pad_g1*4u>uint(P.counts.y)*3u?1u:0u;G.hist[0]=0u;}return;}
     if(PC.pass_==2) {
         bool cut=G.orphans_a>uint(P.counts.y)*3u/2u;
         if(i==0){G.pal_count=cut?1u:0u;G.moving=G.moving_votes>uint(P.counts.y)/50u?1u:0u;}

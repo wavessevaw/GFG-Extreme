@@ -66,7 +66,7 @@ typedef struct {
     VkSemaphore application_timeline; /* borrowed device: caller-owned, feature enabled by caller */
     int output_bgra;           /* tile outputs store BGRA bytes for GPU copy into a BGRA swapchain */
     VkFormat source_format;   /* 0: legacy SDR8; native GPU may sample packed UNORM10 */
-    int shared_flow_dense;    /* experiment: 0 compact; 1 dense; 2 +robust affine; 3 +motion palette */
+    int shared_flow_dense;    /* experiment: 0 compact; 1 dense; 2 affine; 3 palette; 4 guarded projective fit */
     int output_fp16;          /* native HDR: rgba16f outputs, no intermediate 8-bit quantization */
 } te_context_desc;
 
@@ -93,6 +93,7 @@ typedef struct {
     double lmc_fit_ms;                   /* LMC: CPU time of this pair's motion-model fit */
     double ready_ms[TE_MAX_OUTPUTS];     /* analysis start to each output ready, includes fit/queue gaps */
     int shared_flow;                    /* experimental pair-shared backend, not a fitted global model */
+    int shared_flow_fallback;           /* current pair requested full projective model after confidence test */
     int model_gpu;                      /* LMC model/IRLS/palette execute on GPU, no fit worker */
     int lmc_tier;                        /* LMC: cost tier of the pair */
     double frame_ms[TE_MAX_OUTPUTS][TE_FRAME_COUNT];

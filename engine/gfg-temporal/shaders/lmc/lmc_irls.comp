@@ -146,6 +146,7 @@ void accum_part(inout vec4 a[6], vec2 x, vec2 u, float w, const int part) {
 }
 
 void main() {
+    if((PC.flags&32)!=0 && G.hist[0]==0u)return;
     lid = gl_LocalInvocationIndex;
     int n = NB;
 

@@ -116,6 +116,7 @@ def main():
                 m=score(frames,out,start,pairs,3,meta.get('quality_rois',[]));m['allocation_bytes']=rows[0]['allocation_bytes']
                 m['quality_run_first_pair_gpu_ms']=rows[0]['pair_ready_ms'];m['quality_process_wall_s']=wall
                 m['cut_flags']=sum(r['scene_cut'] for r in rows)
+                m['projective_fallback_pairs']=sum(r.get('model_fallback',0) for r in rows)
                 m['input_interval_cut_pairs']=sum(any(start+k*3<c<=start+(k+1)*3 for c in meta.get('scene_cuts',[])) for k in range(pairs))
                 m['quality_output_sha256']=sha(args.work/(name+'-'+algo+'-quality.npy'))
                 m['timing_rows']=[];m['device_log']=name+'-'+algo+'-quality.log'

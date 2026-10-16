@@ -67,6 +67,7 @@ float wg_sum(float v) {
 }
 
 void main() {
+    if((PC.flags&32)!=0 && G.hist[0]==0u)return;
     int n = NB;
     uint lid = gl_LocalInvocationIndex;
 

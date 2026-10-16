@@ -471,7 +471,7 @@ static VkResult lmc_create(te_context* ctx) {
         if(i==LMC_SF_MODEL && ctx->desc.shared_flow_dense<2)continue;
         if(i==LMC_SF_COMPOSE && !m->compact_flow)continue;
         if(i>=LMC_SF_PREPARE && !m->shared_flow)continue;
-        if(m->shared_flow && i>=LMC_GPU_HYP && i<LMC_SF_PREPARE && !(i==LMC_GPU_PALETTE && ctx->desc.shared_flow_dense==3))continue;
+        if(m->shared_flow && i>=LMC_GPU_HYP && i<LMC_SF_PREPARE && ctx->desc.shared_flow_dense!=4 && !(i==LMC_GPU_PALETTE && ctx->desc.shared_flow_dense==3))continue;
         if(m->compact_flow && i!=LMC_PREP && i!=LMC_DOWN && i!=LMC_SEARCH && i<LMC_SF_PREPARE)continue;
         if (i >= LMC_GPU_HYP && i<LMC_SF_PREPARE && !m->gpu_fit) continue;
         if (i == LMC_SEARCH) continue;  /* specialised per level and grid below */
@@ -699,7 +699,7 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
         pthread_mutex_unlock(&m->fit_lock);
         lmc_fill(cb, &m->layers, 0, 4, 0);                    /* layer_count */
         lmc_fill(cb, &m->globals, 4, 4, 0);                   /* moving */
-        if(m->shared_flow){lmc_fill(cb,&m->globals,0,4,0);lmc_fill(cb,&m->globals,88,8,0);}
+        if(m->shared_flow){lmc_fill(cb,&m->globals,0,4,0);lmc_fill(cb,&m->globals,88,12,0);}
         if (ctx->frames > 0) {
             VkClearColorValue zero = {{0, 0, 0, 0}};
             VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
@@ -778,7 +778,19 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
             vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_SF_MODEL]);
             vkCmdDispatch(cb,1,1,1);compute_barrier(cb);
         }
-        if(ctx->desc.shared_flow_dense==3){
+        if(ctx->desc.shared_flow_dense==4) {
+            vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_SF_PREPARE]);
+            lmc_push_c(ctx,cb,0,1,0,4,0);vkCmdDispatch(cb,1,1,1);compute_barrier(cb);
+            for(int layer=0;layer<LMC_MAX_LAYERS;++layer){
+                vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_GPU_IRLS]);
+                lmc_push_c(ctx,cb,0,1,0,1,32);vkCmdDispatch(cb,1,1,1);compute_barrier(cb);
+                vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_GPU_HYP]);
+                lmc_push_c(ctx,cb,0,1,0,2,32);vkCmdDispatch(cb,LMC_HYPS+LMC_MAX_LAYERS,1,1);compute_barrier(cb);
+                vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_GPU_IRLS]);
+                lmc_push_c(ctx,cb,0,1,0,3,32);vkCmdDispatch(cb,1,1,1);compute_barrier(cb);
+            }
+        }
+        if(ctx->desc.shared_flow_dense>=3){
             vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_GPU_PALETTE]);
             lmc_push_c(ctx,cb,0,1,0,0,0);vkCmdDispatch(cb,1,1,1);compute_barrier(cb);
         }
@@ -923,8 +935,9 @@ static void lmc_record_output(te_context* ctx, te_slot* slot, const te_submit* s
     VkBufferCopy c1 = {0, (VkDeviceSize)TE_GLOBALS_HEADER * i, 4};
     vkCmdCopyBuffer(cb, m->layers.buf, slot->readback.buf, 1, &c1);
     if(m->shared_flow) {
-        VkBufferCopy cut={m->compact_flow?0:88,(VkDeviceSize)TE_GLOBALS_HEADER*i+12,4};
-        vkCmdCopyBuffer(cb,m->globals.buf,slot->readback.buf,1,&cut);
+        VkBufferCopy state[2]={{m->compact_flow?0:88,(VkDeviceSize)TE_GLOBALS_HEADER*i+12,4},
+                              {96,(VkDeviceSize)TE_GLOBALS_HEADER*i+16,4}};
+        vkCmdCopyBuffer(cb,m->globals.buf,slot->readback.buf,2,state);
     }
     VkBufferCopy c2 = {LMC_G_ORPHANS, (VkDeviceSize)TE_GLOBALS_HEADER * i + 4, 8};
     vkCmdCopyBuffer(cb, m->globals.buf, slot->readback.buf, 1, &c2);
