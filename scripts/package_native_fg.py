@@ -49,8 +49,12 @@ def source_files() -> dict[str, bytes]:
         for path in base.rglob("*"):
             if not path.is_file() or path.is_symlink():
                 continue
-            if any(part in ("build", "build-te", "__pycache__", ".git", "results")
-                   for part in path.relative_to(base).parts):
+            if any(
+                part in ("build", "__pycache__", ".git", "results")
+                or part == "build-te"
+                or part.startswith(("build-", "build_"))
+                for part in path.relative_to(base).parts
+            ):
                 continue
             if path.suffix not in EXTENSIONS and path.name not in ("Makefile",):
                 continue
