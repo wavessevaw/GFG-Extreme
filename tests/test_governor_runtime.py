@@ -719,7 +719,7 @@ class ReleaseTests(RuntimeBase):
         self.assertEqual(st["reason"], "new-game-session")
         self.assertIsNone(st["active_point"])
 
-    def test_panel_refresh_rate_caps_the_target_and_invalidates_point(self):
+    def test_oled_keeps_the_90_target_when_the_panel_reports_60hz(self):
         self.display.read_current_refresh_hz = lambda: None          # not readable: nothing changes
         self.apply_45x2()
         self.assertEqual(self.svc.get_status()["target_output_fps"], 90)
@@ -728,13 +728,12 @@ class ReleaseTests(RuntimeBase):
         st = self.step()
         self.assertEqual(st["target_output_fps"], 90)
         self.assertIsNotNone(st["active_point"])
-        self.display.read_current_refresh_hz = lambda: 60          # the player set the panel to 60 Hz
+        self.display.read_current_refresh_hz = lambda: 60          # 60 FPS is an LCD / dock target only
         self.svc._last_display_poll = -1e9
         st = self.step()
-        self.assertEqual(st["target_output_fps"], 60)
-        self.assertEqual(st["device"]["target_reason"], "panel-running-60hz")
-        self.assertEqual(st["reason"], "display-mode-changed")
-        self.assertIsNone(st["active_point"])
+        self.assertEqual(st["target_output_fps"], 90)
+        self.assertNotEqual(st["device"]["target_reason"], "panel-running-60hz")
+        self.assertIsNotNone(st["active_point"])
 
     def test_dock_switch_invalidates_point(self):
         self.apply_45x2()
@@ -1140,6 +1139,18 @@ class BudgetRuntimeTests(RuntimeBase):
         st = self.step()
         self.assertIsNone(self.svc._request)
         self.assertNotEqual((self.svc._point or {}).get("key"), "30x3@80", "never applied")
+        # 2.1.2: the confirmed 30 real x3 cadence is kept at 100 % render scale, not rolled back
+        self.assertEqual((self.svc._point or {}).get("key"), "30x3")
+        self.assertEqual(self.svc._budget.point.key, "30x3")
+        self.assertEqual(float(self.overlay_profile().get("scaling_factor", 1.0)), 1.0, "100 % render scale")
+        logged = [json.loads(line) for line in self.svc.events_path.read_text().splitlines() if line.strip()]
+        self.assertFalse([e for e in logged if e.get("event") == "operating-point-rejected"
+                          and e.get("point") == "30x3@80"], "the cadence was not rolled back")
+        self.assertTrue([e for e in logged if e.get("event") == "render-scale-dropped-cadence-kept"])
+        for _ in range(12):                       # no scaled retry cycle after cycle
+            self.feed(12, 30, 90)
+            st = self.step(6.0)
+            self.assertFalse(st["request"] and "@" in str(st["request"]["point"]), st["request"])
         self.assertEqual(st["scale_blocked"], "game-ignores-render-scale")
         self.assertFalse(self.svc._budget_can_scale({"scale_capable": True}))
         # a new session of the same game skips the scaled points at once
@@ -2342,7 +2353,7 @@ class FrameOsIntegrationTests(BudgetRuntimeTests):
             runner.executor_active = True
             self.svc._applied_tdp = None
             asyncio.run(self.svc._apply_budget_tdp("game"))
-            self.assertEqual(self.svc.power.writes[-1], min(self.svc._budget.normal_max_w, self.svc._budget.tdp + 4.0))
+            self.assertEqual(self.svc.power.writes[-1], self.svc._budget.tdp)
 
 
 class HudCadenceTests(unittest.TestCase):

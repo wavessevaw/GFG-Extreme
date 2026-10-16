@@ -96,15 +96,12 @@ func _build_top_bar() -> void:
 	h.offset_top = 14
 	h.custom_minimum_size = Vector2(0, 48)
 	add_child(h)
-	var logo := Control.new()
+	var logo := TextureRect.new()   # the GFG wolf, as in the plugin
+	logo.texture = preload("res://assets/gfg_wolf.png")
 	logo.custom_minimum_size = Vector2(44, 44)
+	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	logo.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	logo.draw.connect(func():
-		logo.draw_circle(Vector2(22, 22), 21, UI.TEXT)
-		logo.draw_circle(Vector2(22, 22), 17, UI.RED)
-		var f := UI.font("bold")
-		var ts := f.get_string_size("G", HORIZONTAL_ALIGNMENT_LEFT, -1, 22)
-		logo.draw_string(f, Vector2(22 - ts.x / 2, 30), "G", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, UI.TEXT))
 	h.add_child(logo)
 	h.add_child(_gap(18))
 	_tab_pill = Panel.new()
@@ -164,11 +161,11 @@ func _build_hint_bar() -> void:
 	bar.offset_left = 36
 	bar.offset_right = -36
 	add_child(bar)
-	bar.add_child(UI.keycap("☰"))
-	bar.add_child(_vcenter(UI.label("МЕНЮ", 15, UI.TEXT_DIM, "semibold")))
-	bar.add_child(_gap(10))
 	bar.add_child(UI.keycap("⧉"))
-	bar.add_child(_vcenter(UI.label("БЫСТРЫЕ НАСТРОЙКИ", 15, UI.TEXT_DIM, "semibold")))
+	bar.add_child(_vcenter(UI.label("Меню", 17, Color(UI.TEXT, 0.82), "semibold")))
+	bar.add_child(_gap(10))
+	bar.add_child(UI.keycap("☰"))
+	bar.add_child(_vcenter(UI.label("Быстрые настройки", 17, Color(UI.TEXT, 0.82), "semibold")))
 	bar.add_child(UI.spacer())
 	_hints = UI.hbox(10)
 	bar.add_child(_hints)
@@ -187,7 +184,7 @@ func set_hints(list: Array) -> void:
 		if i > 0:
 			_hints.add_child(_gap(14))
 		_hints.add_child(UI.glyph(list[i][0]))
-		_hints.add_child(_vcenter(UI.label(list[i][1], 16, UI.TEXT, "medium")))
+		_hints.add_child(_vcenter(UI.label(list[i][1], 17, UI.TEXT, "semibold")))
 
 
 var _backdrop_gen := 0
@@ -217,6 +214,7 @@ func set_backdrop(path: String, strength: float = 1.0) -> void:
 		if gen != _backdrop_gen:
 			return
 		_backdrop_path = path
+		_set_accent(UI.accent_of(t))
 		var cur: TextureRect = backdrop.get_node("Drift/Art")
 		var nxt: TextureRect = backdrop.get_node("Drift/ArtNext")
 		if _backdrop_tween != null:
@@ -234,6 +232,31 @@ func set_backdrop(path: String, strength: float = 1.0) -> void:
 			_backdrop_tween.chain().tween_callback(func():
 				cur.texture = nxt.texture
 				nxt.modulate.a = 0.0))
+
+
+## The ambient light and the dust take the art's colour, cross-faded.
+func _set_accent(c: Color) -> void:
+	var glow: TextureRect = backdrop.get_node("Glow")
+	var bloom: TextureRect = backdrop.get_node("Bloom")
+	var gg: Gradient = (glow.texture as GradientTexture2D).gradient
+	var bg: Gradient = (bloom.texture as GradientTexture2D).gradient
+	var g0: Color = gg.get_color(0)
+	var b0: Color = bg.get_color(0)
+	var dust: CPUParticles2D = backdrop.get_node("Dust")
+	var d0: Color = dust.color
+	var t := create_tween()
+	t.tween_method(func(k: float):
+		gg.set_color(0, g0.lerp(Color(c, 0.30), k))
+		bg.set_color(0, b0.lerp(Color(c.lerp(UI.RED, 0.5), 0.24), k))
+		dust.color = d0.lerp(c.lerp(Color.WHITE, 0.6), k), 0.0, 1.0, 0.6).set_trans(Tween.TRANS_SINE)
+
+
+## Parallax: the art shifts a little with the focus (x in -1..1 across a row).
+func parallax(x: float) -> void:
+	var drift: Control = backdrop.get_node("Drift")
+	var base := Vector2(-UI.PARALLAX_PX, -UI.PARALLAX_PX)
+	FX.to(drift, "position", base + Vector2(-clampf(x, -1.0, 1.0) * UI.PARALLAX_PX * 0.7, 0), 0.9,
+		Tween.TRANS_SINE, Tween.EASE_OUT)
 
 
 ## Ken Burns: a slow, endless zoom of the art (6 % over 24 s, there and back).
@@ -365,6 +388,8 @@ func _on_game_state(state: String, g: Dictionary) -> void:
 	# Only launches started from the shell show the launch screen; a game started
 	# from Steam's own UI is tracked silently.
 	var ours: bool = _launch.visible
+	if state == "running" or state == "launching":
+		_back_during_game = false
 	match state:
 		"running":
 			if ours:
@@ -391,6 +416,10 @@ func _input(event: InputEvent) -> void:
 	if _logged_inputs < 40 and (event is InputEventJoypadButton or event is InputEventKey) and event.is_pressed():
 		_logged_inputs += 1
 		Log.info("input", "%s device=%d %s" % [event.get_class(), event.device, event.as_text()])
+	if _input_blocked():
+		# a game (or Steam) is on top: its buttons are not ours
+		get_viewport().set_input_as_handled()
+		return
 	if _launch.visible:
 		if event.is_action_pressed("ui_cancel"):
 			_launch.on_back()
@@ -404,8 +433,10 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		elif ov.navigate(event):
 			get_viewport().set_input_as_handled()
-		elif event.is_action_pressed("shell_tab_next") or event.is_action_pressed("shell_tab_prev") \
-				or event.is_action_pressed("shell_search") or event.is_action_pressed("shell_option"):
+		elif event.is_action_pressed("shell_tab_next") or event.is_action_pressed("shell_tab_prev"):
+			ov.on_tab(1 if event.is_action_pressed("shell_tab_next") else -1)
+			get_viewport().set_input_as_handled()
+		elif event.is_action_pressed("shell_search") or event.is_action_pressed("shell_option"):
 			get_viewport().set_input_as_handled()   # nothing behind the overlay reacts
 		return
 	if event.is_action_pressed("shell_quick"):
@@ -457,14 +488,31 @@ func _update_status() -> void:
 
 
 var _focus_lost_at := -1.0
+var _focused := true
+var _ignore_until := 0.0          # the press that brought the shell back is not a command
+var _back_during_game := false    # the player came back to the shell while the game still runs
+
+
+## Joypad events reach the shell even while a game has the screen (Godot reads the pads
+## directly). Nothing reacts to them while the shell is not focused, while a game runs
+## (unless the player came back to the shell), or for a moment after the focus returns.
+func _input_blocked() -> bool:
+	if not _focused or Time.get_ticks_msec() / 1000.0 < _ignore_until:
+		return true
+	return Shell.runner.state == "running" and not _back_during_game
 
 
 func _notification(what: int) -> void:
 	# Out of focus (a game or Steam on top): idle at a few frames per second.
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
 		Engine.max_fps = 10
+		_focused = false
 		_focus_lost_at = Time.get_ticks_msec() / 1000.0
 	elif what == NOTIFICATION_APPLICATION_FOCUS_IN:
+		_focused = true
+		_ignore_until = Time.get_ticks_msec() / 1000.0 + 0.4
+		if Shell.runner.state == "running" and _focus_lost_at > 0:
+			_back_during_game = true
 		if Shell.runner.state != "running":
 			Engine.max_fps = 0
 		# Fallback for titles without a launch marker: the game took the screen and we
@@ -478,7 +526,7 @@ func _notification(what: int) -> void:
 			toast("С возвращением в GFG Shell")
 
 
-## Test/CI hooks: --gfg-page=<page|game:ID|quick|menu|power|launch> and --gfg-screenshot=<png>.
+## Test/CI hooks: --gfg-page=<page|game:ID|quick[:gfg|sys]|menu|power|launch> and --gfg-screenshot=<png>.
 func _handle_cmdline() -> void:
 	var page := ""
 	var shot := ""
@@ -490,7 +538,9 @@ func _handle_cmdline() -> void:
 	if page != "":
 		if page.begins_with("game:"):
 			open_game(Shell.library_game_by_appid(int(page.substr(5))))
-		elif page == "quick":
+		elif page == "quick" or page.begins_with("quick:"):
+			if page.begins_with("quick:"):
+				_quick.tab = page.substr(6)
 			_quick.open()
 		elif page == "menu":
 			_menu.open()
@@ -504,6 +554,15 @@ func _handle_cmdline() -> void:
 			push(page)
 	if shot != "":
 		await get_tree().create_timer(3.0).timeout
+		if OS.get_cmdline_user_args().has("--gfg-motion"):
+			# motion check: move the focus right, then a frame every 0.1 s (<shot>-<n>.png)
+			var ev := InputEventAction.new()
+			ev.action = "ui_right"
+			ev.pressed = true
+			Input.parse_input_event(ev)
+			for n in 8:
+				await get_tree().create_timer(0.1).timeout
+				get_viewport().get_texture().get_image().save_png(shot.replace(".png", "-%d.png" % n))
 		var img := get_viewport().get_texture().get_image()
 		img.save_png(shot)
 		Log.info("app", "screenshot " + shot)

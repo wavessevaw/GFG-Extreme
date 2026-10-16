@@ -165,6 +165,59 @@ var css = `
 .gfg .xbtn{flex:1;display:flex;align-items:center;justify-content:center;height:36px;border-radius:11px;background:var(--s2);border:1px solid var(--line);font-size:12.5px;font-weight:700;color:var(--tx);cursor:pointer}
 .gfg .xbtn.on{background:linear-gradient(135deg,#ff2d1a,#b30800);border-color:transparent;color:#fff}
 .gfg .xconsent .xbtns{width:100%}
+/* 2.1.2 home: tiles and rings */
+.gfg .home2 .top{margin-bottom:8px}
+.gfg .tl{position:relative;border-radius:16px;padding:11px 12px;background:linear-gradient(180deg,#17171c,#121216);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),inset 0 0 0 1px #1f1f25;min-width:0}
+.gfg .hero2{flex-direction:row;align-items:center;gap:14px;padding:14px;background:linear-gradient(180deg,#17171c,#121216)}
+.gfg .hero2.live{background:radial-gradient(120% 120% at 0% 50%,rgba(251,13,0,.22),rgba(251,13,0,0) 55%),linear-gradient(180deg,#17171c,#121216)}
+.gfg .ring2{position:relative;width:132px;height:132px;flex:none}
+.gfg .ring2 svg{position:absolute;inset:0;transform:rotate(-90deg)}
+.gfg .ring2 .arc2{transition:stroke-dashoffset .6s;filter:drop-shadow(0 0 6px rgba(251,13,0,.7))}
+.gfg .ring2 .num{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.gfg .ring2 .wolfimg{margin-bottom:2px}
+.gfg .ring2 .big{font-size:40px;font-weight:900;line-height:.95;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.gfg .ring2 .sub{font-size:8.5px;font-weight:800;letter-spacing:.2em;color:var(--tx2);margin-top:3px}
+.gfg .hside{flex:1;min-width:0;display:flex;flex-direction:column;gap:7px}
+.gfg .hside .lab{font-size:9px;font-weight:800;letter-spacing:.16em;color:#6f6f7a}
+.gfg .hbig{font-size:24px;font-weight:800;white-space:nowrap;font-variant-numeric:tabular-nums}.gfg .hbig .x{color:#ff3b2a}.gfg .hbig.small{font-size:18px}
+.gfg .badge{align-self:flex-start;font-size:9.5px;font-weight:800;letter-spacing:.08em;padding:4px 8px;border-radius:99px;white-space:nowrap}
+.gfg .badge.ok{color:#2fd27a;background:rgba(47,210,122,.12)}.gfg .badge.busy{color:#ffb020;background:rgba(255,176,32,.12)}.gfg .badge.idle{color:var(--tx2);background:var(--s3)}
+.gfg .bg3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}
+.gfg .bg2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.gfg .mr{display:flex;align-items:center;gap:7px;padding:10px 8px}
+.gfg .mring{position:relative;width:42px;height:42px;flex:none}.gfg .mring svg{position:absolute;inset:0;transform:rotate(-90deg)}
+.gfg .mring i{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}.gfg .mring i svg{position:static;transform:none}
+.gfg .mr b{display:block;font-size:14px;font-weight:800;white-space:nowrap;font-variant-numeric:tabular-nums}.gfg .mr span{display:block;font-size:8px;font-weight:800;letter-spacing:.1em;color:#6f6f7a;margin-top:2px}
+.gfg .bstate{display:flex;align-items:center;gap:10px;margin-top:8px;padding:10px 12px}
+.gfg .bstate .sic{width:26px;height:26px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex:none;background:rgba(255,255,255,.06);color:var(--tx2)}
+.gfg .bstate.ok .sic{background:rgba(47,210,122,.14);color:#2fd27a}.gfg .bstate.busy .sic{background:rgba(255,176,32,.14);color:#ffb020}.gfg .bstate.warn .sic{background:var(--redbg);color:#ff5242}
+.gfg .bstate b{display:block;font-size:12.5px;font-weight:700}.gfg .bstate span{display:block;font-size:11px;color:#8d8d97;line-height:1.35;margin-top:1px}
+.gfg .bmodes{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px}
+.gfg .bmode{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 2px 9px;color:#8d8d97;cursor:pointer}
+.gfg .bmode b{font-size:10.5px;font-weight:800;letter-spacing:.03em;color:#a6a6af}
+.gfg .bmode.on{background:linear-gradient(180deg,#fff,#e6e6ea);box-shadow:0 6px 18px -6px rgba(255,255,255,.35);color:#0a0a0d}.gfg .bmode.on b{color:#0a0a0d}
+.gfg .home2 .run{margin-top:8px;height:52px;border-radius:16px;font-size:14px;letter-spacing:.26em}
+.gfg .home2 .run.stop{background:#16161b;border:0;box-shadow:inset 0 0 0 1px #26262d}
+.gfg .btg{display:flex;flex-direction:column;align-items:stretch;gap:9px;cursor:pointer;border-top:0!important;padding:11px 12px;min-height:0}
+.gfg .btg .bh{display:flex;align-items:center;justify-content:space-between}
+.gfg .bic{width:28px;height:28px;border-radius:9px;background:#22222a;display:flex;align-items:center;justify-content:center;color:#c9c9d1}
+.gfg .btg.on .bic{background:var(--redbg);color:#ff5242}
+.gfg .btg .tog{width:34px;height:20px}.gfg .btg .tog::after{top:2px;left:2px;width:16px;height:16px}.gfg .btg .tog.on::after{left:16px}
+.gfg .btg .tog.on{box-shadow:0 0 12px rgba(251,13,0,.45)}
+.gfg .btx b{display:block;font-size:12.5px;font-weight:800}.gfg .btx span{display:block;font-size:10.5px;color:#7a7a85;line-height:1.3;margin-top:2px}
+.gfg .btg.wide{grid-column:span 2;flex-direction:row;align-items:center;gap:12px}.gfg .btg.wide .bh{order:3}.gfg .btg.wide .bh .bic{display:none}.gfg .btg.wide .btx{flex:1;order:2}
+.gfg .btg.wide::before{content:"";order:1}
+.gfg .fstrip2{display:flex;align-items:center;gap:6px;margin-top:8px;padding:8px 8px 8px 10px}
+.gfg .fstrip2 .bk{width:44px;flex:none;font-size:9px;font-weight:800;letter-spacing:.14em;color:#6f6f7a;display:flex;flex-direction:column;gap:4px}
+.gfg .fsq{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;min-width:0}
+.gfg .fsq .sw{position:relative;width:100%;height:30px;border-radius:9px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);overflow:hidden}
+.gfg .fsq .slash{position:absolute;left:50%;top:-4px;bottom:-4px;width:2px;background:var(--tx3);transform:rotate(45deg)}
+.gfg .fsq .fl{font-size:8.5px;font-weight:700;color:#7a7a85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.gfg .fsq.on .sw{box-shadow:0 0 0 2px #121216,0 0 0 4px #ff3b2a}.gfg .fsq.on .fl{color:var(--tx)}.gfg .fsq.dis{opacity:.4}
+.gfg .fchev{color:#6f6f7a;font-size:20px;padding:0 2px 0 4px;cursor:pointer}
+.gfg .bnav{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px}
+.gfg .bnv{display:flex;flex-direction:column;align-items:center;gap:7px;padding:12px 2px 10px;color:#d5d5dc;cursor:pointer}.gfg .bnv b{font-size:10.5px;font-weight:700;color:#a6a6af}
+.gfg .binfo .bk{font-size:9px;font-weight:800;letter-spacing:.16em;color:#6f6f7a}.gfg .binfo .bv{font-size:17px;font-weight:800;margin-top:6px}.gfg .binfo .bs{font-size:10px;color:#6f6f7a;margin-top:4px}
 `;
 
 // frontend/src/logo.js
@@ -196,8 +249,6 @@ var safeCallable = (name) => {
   };
 };
 var rpc = {
-  themeStatus: safeCallable("get_theme_status"),
-  themeInstall: safeCallable("install_gfg_theme"),
   shellStatus: safeCallable("get_shell_status"),
   shellInstall: safeCallable("install_gfg_shell"),
   shellUninstall: safeCallable("uninstall_gfg_shell"),
@@ -278,8 +329,8 @@ var TIER_TEXT = {
 };
 var PHASE_TEXT = { settle: "Starting at 10 W", search_down: "Lowering TDP", upgrade: "Fewer generated frames", probe: "Re-checking", locked: "Watching", guard: "Protecting" };
 var MODE_TEXT = {
-  balanced: "Balanced: starts at about 45 real FPS on OLED or 30 on LCD and 12 W. Uses ratios up to \xD73.75 when needed to keep output steady, within your Deck's normal power range.",
-  budget: "Battery: the lowest TDP that holds steady frames, down to this Deck's measured minimum. Tests cheaper frame ratios before keeping extra watts. Normal ratios reach \xD73.75: 24 real FPS at 90 Hz or 16 at 60 Hz. Deeper only as a last resort.",
+  balanced: "Balanced: starts at about 45 real FPS on OLED or 30 on LCD and 12 W. Uses ratios up to \xD73; \xD73.25\u2013\xD73.75 only when needed to keep output steady, within your Deck's normal power range.",
+  budget: "Battery: the lowest TDP that holds steady frames, down to this Deck's measured minimum. Tests cheaper frame ratios before keeping extra watts. Ratios up to \xD73; \xD73.25\u2013\xD73.75 (down to 24 real FPS at 90 Hz) only when needed. Deeper only as a last resort.",
   quality: "Quality: keeps your render resolution and uses the fewest generated frames that hold. Then lowers TDP; rechecks finer frame ratios after stable play. Uses more battery.",
   extreme: "Extreme \u2014 BETA / EXPERIMENTAL. In development; not recommended for regular play. Uses your Deck's stock limit \u2014 15 W, or your own lower limit, never more, no overclock. Lowers render resolution to 90% / 80% with matched sharpening only when the engine confirms it. Uses more battery than Balanced.",
   autopilot: "Autopilot chooses the steady frame rate and the lowest power that holds it. It uses Governor for TDP. A GPU clock change is one step, then checked. If the frames get worse, the previous setting comes back."
@@ -373,7 +424,7 @@ var budgetRule = (b) => {
 };
 function describe(s) {
   const cap = s.capability && s.capability.reason || "";
-  if (!s.enabled) return { head: "Ready", body: "Press Run \u2014 GFG will pick the target for this screen and manage the engine.", tone: "idle" };
+  if (!s.enabled) return { head: "Ready", body: "Press Start \u2014 GFG picks the target for this screen and manages the engine.", tone: "idle" };
   if (cap === "relaunch-required-for-governor-overlay" || s.reason === "relaunch-required-for-governor-overlay") return { head: "Restart the game once", body: "This game was started without the GFG launch command, or before this GFG version. Relaunch it once; after that GFG can be turned on while the game runs.", tone: "warn" };
   if (s.state === "PAUSED" && s.reason === "steam-menu-open") return { head: "Steam menu open", body: PAUSED_TEXT[s.reason], tone: "idle" };
   if (s.state === "PAUSED") return { head: "Paused", body: PAUSED_TEXT[s.reason] || "Waiting (" + (s.reason || "unknown") + "). Your saved profile is untouched.", tone: "warn" };
@@ -541,86 +592,6 @@ function useGovernor(profile) {
   }, [refresh]);
   return [s, refresh];
 }
-function Ring({ value, max, label, sub, size = 176, stroke = 9, cls = "", wolf }) {
-  const r = (size - stroke) / 2 - 1, c = 2 * Math.PI * r, f = Math.max(0, Math.min(1, max ? value / max : 0));
-  return h(
-    "div",
-    { className: "ring " + cls, style: { width: size, height: size } },
-    h(
-      "svg",
-      { viewBox: "0 0 " + size + " " + size, width: size, height: size },
-      h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#26262d", strokeWidth: stroke }),
-      wolf ? h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#fb0d00", strokeOpacity: 0.25, strokeWidth: stroke + 5, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f) }) : null,
-      h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#fb0d00", strokeWidth: stroke, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } })
-    ),
-    // Extreme: the GFG wolf sits inside the main ring, the number under it.
-    h(
-      "div",
-      { className: "num" + (wolf ? " wolf" : "") },
-      wolf ? h("img", { className: "wolfimg", src: LOGO, width: Math.round(size * 0.36), height: Math.round(size * 0.36) }) : null,
-      h("div", { className: "big" }, label),
-      sub && !(wolf && size < 100) ? h("div", { className: "sub" }, sub) : null
-    )
-  );
-}
-function Arc({ value, max, label, sub, wolf }) {
-  const w = 190, r = 80, cx = w / 2, cy = 92, f = Math.max(0, Math.min(1, max ? value / max : 0));
-  const len = Math.PI * r, d = "M " + (cx - r) + " " + cy + " A " + r + " " + r + " 0 0 1 " + (cx + r) + " " + cy;
-  return h(
-    "div",
-    { className: "arc" },
-    h(
-      "svg",
-      { viewBox: "0 0 " + w + " 100", width: w, height: 100 },
-      h("path", { d, fill: "none", stroke: "#26262d", strokeWidth: 8, strokeLinecap: "round" }),
-      h("path", { d, fill: "none", stroke: "#fb0d00", strokeWidth: 8, strokeLinecap: "round", strokeDasharray: len, strokeDashoffset: len * (1 - f), style: { transition: "stroke-dashoffset .6s" } })
-    ),
-    h(
-      "div",
-      { className: "num" + (wolf ? " wolf" : "") },
-      wolf ? h("img", { className: "wolfimg", src: LOGO, width: 34, height: 34 }) : null,
-      h("div", { className: "big" }, label),
-      h("div", { className: "sub" }, sub)
-    )
-  );
-}
-var HERO_LAYOUTS = ["classic", "compact", "side", "arc"];
-var HERO_KEY = "gfg.hero";
-function useHeroLayout() {
-  const [layout, setLayout] = useState(() => {
-    try {
-      const v = window.localStorage.getItem(HERO_KEY);
-      if (HERO_LAYOUTS.includes(v)) return v;
-    } catch (e) {
-    }
-    return "side";
-  });
-  const next = () => setLayout((cur) => {
-    const v = HERO_LAYOUTS[(HERO_LAYOUTS.indexOf(cur) + 1) % HERO_LAYOUTS.length];
-    try {
-      window.localStorage.setItem(HERO_KEY, v);
-    } catch (e) {
-    }
-    return v;
-  });
-  return [layout, next];
-}
-function HeroTop({ layout, onTap, value, max, label, sub, d, wolf }) {
-  const head = wolf ? h("div", { className: "h xh" }, d.head, h("span", { className: "xbadge" }, "\u25B2 ON")) : h("div", { className: "h" }, d.head);
-  const status = (cls) => h(
-    "div",
-    { className: "status" + (cls ? " " + cls : "") },
-    cls ? h("div", { className: "k" }, sub) : null,
-    head,
-    d.body ? h("div", { className: "p" }, d.body) : null
-  );
-  const tap = (child) => h(Focusable, { className: "herotap", onClick: onTap }, child);
-  const x = wolf ? " x" : "";
-  if (layout === "side") return h("div", { className: "hero-side" }, tap(h(Ring, { value, max, label, size: 84, stroke: 6, cls: "side" + x, wolf })), status("left"));
-  if (layout === "compact") return h("div", { className: "hero-col" }, tap(h(Ring, { value, max, label, sub, size: 128, stroke: 7, cls: "compact" + x, wolf })), status());
-  if (layout === "arc") return h("div", { className: "hero-col" }, tap(h(Arc, { value, max, label, sub, wolf })), status());
-  return h("div", { className: "hero-col" }, tap(h(Ring, { value, max, label, sub, cls: x.trim(), wolf })), status());
-}
 var ringHue = (v, max) => v < 0 ? 0 : 25 + 115 * Math.min(1, Math.abs(v) / max);
 function MiniRing({ value, max, text, displayText, label, live, estimate, fixed }) {
   const r = 26, w = 4, size = 2 * (r + w), c = 2 * Math.PI * r;
@@ -771,21 +742,21 @@ function FrameTimingControls({ profile, settings, refresh, autopilot = false }) 
       h(Toggle, {
         on: features.latency,
         title: "Frame timing",
-        sub: "Control frame-start timing in Act; active after native confirmation",
+        sub: "Even frame starts, once the engine confirms",
         onChange: (v) => change("latency", v)
       }),
       h(Toggle, {
         on: features.shield,
         title: "Stall shield",
-        sub: "Avoid extra waiting after a late frame; does not remove loading or shader stalls",
+        sub: "No extra wait after a late frame",
         onChange: (v) => change("shield", v)
       }),
-      autopilot ? h(Toggle, { on: features.boost, title: "Short Boost", sub: "Briefly raises real-frame cadence, then returns to calm. Maximum 1.5 seconds; funded within your power limit.", onChange: (v) => change("boost", v) }) : null,
-      autopilot ? h(Toggle, { on: features.continuous_boost, title: "Continuous Boost", sub: "Keeps higher real-frame cadence without the 1.5-second limit. Uses more power; pauses in menus and for thermal, delivery or power-search guards. Overrides short pulses. Off by default.", onChange: (v) => change("continuous_boost", v) }) : null,
+      autopilot ? h(Toggle, { on: features.boost, title: "Short Boost", sub: "Up to 1.5 s more real frames on a heavy scene, within your power limit", onChange: (v) => change("boost", v) }) : null,
+      autopilot ? h(Toggle, { on: features.continuous_boost, title: "Continuous Boost", sub: "Keeps the boost on; uses more power. Pauses in menus and when hot", onChange: (v) => change("continuous_boost", v) }) : null,
       autopilot ? h(Toggle, {
         on: features.touch_boost,
         title: "Stick touch Boost",
-        sub: "Starts a short pulse on right-stick contact. Motion may extend it up to 1.5 seconds. Autopilot only.",
+        sub: "A short pulse when the right stick moves",
         onChange: (v) => change("touch_boost", v)
       }) : null
     ),
@@ -856,6 +827,100 @@ function ActConsent({ onAnswer }) {
     )
   );
 }
+var TI = {
+  batt: "M2 7h17v10H2zM22 11v2M6 11v2",
+  scale: "M12 3v18M5 7h14M2 14l3-7 3 7a3 2 0 0 1-6 0zM16 14l3-7 3 7a3 2 0 0 1-6 0z",
+  gem: "M6 3h12l4 6-10 12L2 9zM2 9h20",
+  auto: "M12 2l2.4 5.6L20 10l-5.6 2.4L12 18l-2.4-5.6L4 10l5.6-2.4z",
+  tune: "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6",
+  info: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 16v-4M12 8h.01",
+  tv: "M2 4h20v13H2zM8 21h8M12 17v4",
+  cog: "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1",
+  check: "M20 6L9 17l-5-5",
+  play: "M7 4l14 8-14 8z",
+  warn: "M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z",
+  layers: "M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5",
+  bolt: "M13 2L4 14h7l-1 8 9-12h-7z",
+  shade: "M3 3h18v18H3zM3 12h18M12 3v18",
+  clock: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 6v6l4 2",
+  shield: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
+  stick: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z",
+  infin: "M18 8a4 4 0 1 1 0 8c-3 0-5-4-6-4s-3 4-6 4a4 4 0 1 1 0-8c3 0 5 4 6 4s3-4 6-4z"
+};
+var TIcon = ({ d, size = 16 }) => h("svg", { viewBox: "0 0 24 24", width: size, height: size, fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, h("path", { d }));
+function MiniRingTile({ frac, color, icon, value, label }) {
+  const r = 17, c = 2 * Math.PI * r, f = Math.max(0, Math.min(1, frac || 0));
+  return h(
+    "div",
+    { className: "tl mr" },
+    h(
+      "div",
+      { className: "mring" },
+      h(
+        "svg",
+        { viewBox: "0 0 42 42", width: 42, height: 42 },
+        h("circle", { cx: 21, cy: 21, r, fill: "none", stroke: "#24242b", strokeWidth: 5 }),
+        h("circle", { cx: 21, cy: 21, r, fill: "none", stroke: color, strokeWidth: 5, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: c * (1 - f), style: { transition: "stroke-dashoffset .6s" } })
+      ),
+      h("i", { style: { color } }, h(TIcon, { d: icon, size: 14 }))
+    ),
+    h("div", null, h("b", null, value), h("span", null, label))
+  );
+}
+function SwitchTile({ on, icon, title, sub, onChange, wide }) {
+  return h(
+    Focusable,
+    { className: "row tl btg" + (on ? " on" : "") + (wide ? " wide" : ""), onClick: () => onChange(!on) },
+    h("div", { className: "bh" }, h("div", { className: "bic" }, h(TIcon, { d: icon, size: 15 })), h("div", { className: "tog" + (on ? " on" : "") }, h("i"))),
+    h("div", { className: "btx" }, h("b", null, title), sub ? h("span", null, sub) : null)
+  );
+}
+function QuickTiles({ s, profile, refresh }) {
+  const fusion = s.frame_fusion || {};
+  const fusionOn = fusion.setting_enabled !== void 0 ? fusion.setting_enabled === true : fusion.enabled !== false;
+  const fs = (s.frame_os || {}).feature_settings || {};
+  const boostOn = fs.boost !== false;
+  const busy = useRef(false);
+  const run = async (fn) => {
+    if (busy.current) return;
+    busy.current = true;
+    try {
+      await fn();
+    } catch (e) {
+    }
+    busy.current = false;
+    refresh();
+  };
+  return h(
+    "div",
+    { className: "bg2" },
+    h(SwitchTile, { on: fusionOn, icon: TI.layers, title: "Frame Fusion", sub: "Smoother generated frames", onChange: (v) => run(() => rpc.setFrameFusion(v)) }),
+    h(SwitchTile, { on: boostOn, icon: TI.bolt, title: "Boost", sub: "Extra real frames on heavy scenes", onChange: (v) => run(() => rpc.setFrameOsFeature(profile, "boost", v)) })
+  );
+}
+function FilterStrip({ profile, cfg, patch, go }) {
+  const insp = useFilterInspector(profile, cfg);
+  if (!cfg) return null;
+  const st = filterState(cfg, insp, true), active = presetOf(cfg), disabled = st.tone === "warn" && !filtersOn(cfg);
+  const shown = FILTER_PRESETS.slice(0, 5);
+  return h(
+    "div",
+    null,
+    h(
+      "div",
+      { className: "tl fstrip2" },
+      h("div", { className: "bk" }, "FILTER", st.pill ? h("span", { className: "pill " + (st.pill === "LIVE" ? "live" : "would") }, st.pill) : null),
+      ...shown.map((p) => h(
+        Focusable,
+        { key: p.id, className: "fsq" + (active === p.id ? " on" : "") + (disabled ? " dis" : ""), onClick: disabled ? void 0 : () => applyPreset(cfg, patch, p) },
+        h("div", { className: "sw", style: { background: p.sw } }, p.id === "off" ? h("i", { className: "slash" }) : null),
+        h("div", { className: "fl" }, p.name)
+      )),
+      h(Focusable, { className: "fchev", onClick: () => go("filters") }, "\u203A")
+    ),
+    st.tone === "warn" ? h("div", { className: "fnote warn" }, st.text) : null
+  );
+}
 function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch }) {
   const [busy, setBusy] = useState(false);
   const nativeSelected = s.native_gsf && s.native_gsf.installed && ["2", "3"].includes(s.native_gsf.requested_mode);
@@ -864,7 +929,6 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
   const x = s.extreme || {};
   const d = describeExtreme(s, describe(s));
   const [asking, setAsking] = useState(false);
-  const [offerHidden, setOfferHidden] = useState(false);
   const setMode = async (v) => {
     if (v === "extreme" && x.act_consent == null && !asking) {
       setAsking(true);
@@ -909,19 +973,17 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
     await refresh();
     setBusy(false);
   };
-  const showLive = s.enabled && out != null;
-  const [heroLayout, nextHero] = useHeroLayout();
+  const live = s.enabled && out != null;
   const tdp = pw.observed_tdp_w != null ? pw.observed_tdp_w : pw.current_tdp_w;
-  const eff = s.effort && s.effort.level;
-  const effWhy = eff && s.effort.reason;
+  const limit = xt && x.ceiling && x.ceiling.ceiling_w || pw.initial_tdp_w || pw.maximum_tdp_w || 15;
   const mins = s.battery && s.battery.minutes_left;
+  const pct = s.battery && s.battery.percent;
   const cap0 = s.capability && s.capability.reason || "";
   const needsLaunch = s.enabled && (cap0 === "relaunch-required-for-governor-overlay" || s.reason === "relaunch-required-for-governor-overlay" || s.reason === "game-not-running" || s.reason === "diagnostics-active-no-events");
   const [problems, setProblems] = useState([]);
-  const troubledNow = s.state === "PAUSED" || s.enabled && s.reason === "target-not-proven-viable";
-  const troubled = troubledNow;
+  const troubled = s.state === "PAUSED" || s.enabled && s.reason === "target-not-proven-viable";
   useEffect(() => {
-    if (!troubledNow) {
+    if (!troubled) {
       setProblems([]);
       return;
     }
@@ -933,149 +995,205 @@ function Home({ s, profile, go, refresh, inst, reloadInst, launch, cfg, patch })
     return () => {
       alive = false;
     };
-  }, [troubledNow, s.reason]);
-  const dg = s.diagnosis || {}, sn = s.sensors || {};
-  const health = s.enabled ? [
-    dg.bottleneck && dg.bottleneck !== "unknown" && dg.bottleneck !== "none" ? { gpu: "GPU-bound", cpu: "CPU-bound", power: "Power-limited" }[dg.bottleneck] : null,
-    sn.temp_c != null ? Math.round(sn.temp_c) + " \xB0C" + (dg.thermal === "hot" ? " \xB7 hot" : dg.thermal === "heating" ? " \xB7 heating up" : "") : null,
-    dg.smoothness === "stuttering" ? "stutter detected" : dg.smoothness === "smooth" ? "smooth" : null
-  ].filter(Boolean).join(" \xB7 ") : "";
-  const left = mins != null ? mins >= 60 ? Math.floor(mins / 60) + "h" + String(mins % 60).padStart(2, "0") : mins + "m" : "";
+  }, [troubled, s.reason]);
+  const left = mins != null ? Math.floor(mins / 60) + ":" + String(mins % 60).padStart(2, "0") : null;
+  const saved = !xt && pw.owned && pw.initial_tdp_w && tdp != null && pw.initial_tdp_w - tdp >= 1 ? num(pw.initial_tdp_w - tdp, 0) + " W under your limit" : "";
+  const apMsg = s.mode === "autopilot" && s.autopilot && s.autopilot.message;
+  const onTarget = live && out >= target * 0.92;
+  const badge = !s.enabled ? ["idle", "\u25CF READY"] : !live ? ["busy", "\u25CF MEASURING"] : onTarget ? ["ok", "\u2713 ON TARGET"] : ["busy", "\u25CF ADJUSTING"];
+  const tone = troubled ? "warn" : !s.enabled ? "idle" : s.state === "LOCKED" || s.autopilot && s.autopilot.state === "HOLD" ? "ok" : "busy";
+  const R2 = 58, C = 2 * Math.PI * R2, f = live ? Math.max(0, Math.min(1, out / target)) : 0;
+  const modes = [["budget", "Battery", TI.batt], ["balanced", "Balanced", TI.scale], ["quality", "Quality", TI.gem], ["autopilot", "Auto", TI.auto]];
+  const curMode = s.mode === "extreme" ? "autopilot" : s.mode || "budget";
+  const runBtn = h(
+    Focusable,
+    { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? void 0 : toggle },
+    h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 16 }),
+    busy ? "WORKING\u2026" : missing ? "INSTALL ENGINE" : s.enabled ? "STOP" : "START"
+  );
   return h(
     "div",
-    null,
+    { className: "home2" },
     h(
       "div",
       { className: "top" },
-      h("div", { className: "brand" }, h("img", { src: LOGO, width: 30, height: 30, style: { marginRight: 8, verticalAlign: "middle" } }), "GFG", h("b", null, "\xB7"), "EXTREME"),
+      h("div", { className: "brand" }, h("img", { src: LOGO, width: 28, height: 28, style: { marginRight: 8, verticalAlign: "middle" } }), "GFG", h("b", null, "\xB7"), "EXTREME"),
       h("div", { className: "chip" + (s.enabled ? " on" : "") }, h("i"), MODE_NAME[dev.mode] || "Display")
     ),
     h(
       "div",
-      { className: "card hero" + (xt ? " xt" : "") },
-      h(HeroTop, { layout: heroLayout, onTap: nextHero, value: showLive ? out : 0, max: target, label: showLive ? num(out, 0) : String(target), sub: showLive ? "FPS OUTPUT" : "TARGET FPS", d, wolf: xt }),
-      showLive ? h(
+      { className: "card hero hero2" + (live ? " live" : "") + (xt ? " xt" : "") },
+      h(
         "div",
-        { className: "flow" },
-        h("div", { className: "stat" }, h("div", { className: "v" }, num(real, 0)), h("div", { className: "l" }, "REAL")),
-        h("div", { className: "a" }, "\u2192"),
-        h("div", { className: "stat hot" }, h("div", { className: "v" }, mult ? fmtMult(mult) : POINT_LABEL(s.active_point)), h("div", { className: "l" }, "GFG")),
-        h("div", { className: "a" }, "\u2192"),
-        h("div", { className: "stat" }, h("div", { className: "v" }, num(out, 0)), h("div", { className: "l" }, "OUTPUT"))
-      ) : null,
-      xt && s.enabled ? h(
+        { className: "ring2" },
+        h(
+          "svg",
+          { viewBox: "0 0 132 132", width: 132, height: 132 },
+          h("circle", { cx: 66, cy: 66, r: R2, fill: "none", stroke: "#24242b", strokeWidth: 10 }),
+          h("circle", { cx: 66, cy: 66, r: R2, fill: "none", stroke: "#ff2a1a", strokeWidth: 10, strokeLinecap: "round", strokeDasharray: C, strokeDashoffset: C * (1 - f), className: "arc2" })
+        ),
+        h(
+          "div",
+          { className: "num wolf" },
+          h("img", { className: "wolfimg", src: LOGO, width: 30, height: 30 }),
+          h("div", { className: "big" }, live ? num(out, 0) : String(target)),
+          h("div", { className: "sub" }, live ? "FPS" : "TARGET FPS")
+        )
+      ),
+      h(
         "div",
-        { className: "gain" },
-        h("span", { className: "gl" }, extremeLine(x)),
-        h("span", null, "Gain vs Balanced: not measured yet \u2014 shown only after a same-scene A-B-A check")
-      ) : null,
-      s.enabled ? h(
+        { className: "hside" },
+        live ? h("div", { className: "lab" }, "REAL \xD7 GFG") : h("div", { className: "lab" }, "THIS SCREEN"),
+        live ? h("div", { className: "hbig" }, num(real, 0), " ", h("span", { className: "x" }, mult ? fmtMult(mult) : POINT_LABEL(s.active_point))) : h("div", { className: "hbig small" }, (MODE_NAME[dev.mode] || "Display").replace("Steam Deck ", "") + " \xB7 " + (dev.refresh_hz || target) + " Hz"),
+        h("div", { className: "lab" }, live ? "GOAL " + target + " \xB7 \xB18 %" : "YOUR LIMIT " + num(limit, 0) + " W"),
+        h("div", { className: "badge " + badge[0] }, badge[1])
+      )
+    ),
+    xt && s.enabled ? h(
+      "div",
+      { className: "gain" },
+      h("span", { className: "gl" }, extremeLine(x)),
+      h("span", null, "Gain vs Balanced: not measured yet \u2014 shown only after a same-scene A-B-A check")
+    ) : null,
+    h(
+      "div",
+      { className: "bg3" },
+      h(MiniRingTile, { frac: live && real ? real / target : 0, color: "#ff5242", icon: TI.layers, value: live ? num(real, 0) : "\u2014", label: "REAL" }),
+      h(MiniRingTile, { frac: tdp != null ? tdp / limit : 0, color: "#ff8a3d", icon: TI.bolt, value: tdp != null ? num(tdp, 0) + " W" : num(limit, 0) + " W", label: tdp != null ? "POWER" : "LIMIT" }),
+      h(MiniRingTile, { frac: pct != null ? pct / 100 : 0, color: "#2fd27a", icon: TI.batt, value: left && s.enabled ? left : pct != null ? Math.round(pct) + " %" : "\u2014", label: left && s.enabled ? "LEFT" : "BATTERY" })
+    ),
+    h(
+      "div",
+      { className: "tl bstate " + tone },
+      h("div", { className: "sic" }, h(TIcon, { d: tone === "warn" ? TI.warn : tone === "idle" ? TI.play : TI.check, size: 14 })),
+      h(
         "div",
-        { className: "effort" },
-        h("span", null, "GFG EFFORT"),
-        h("b", { className: eff ? "lv " + eff : "lv" }, eff ? eff.toUpperCase() : "ASSESSING\u2026", effWhy ? h("span", { className: "why" }, " \xB7 " + effWhy) : null)
-      ) : null,
-      tdp != null ? h(
-        "div",
-        { className: "power" },
-        h("div", { className: "r" }, h("span", null, "TDP NOW"), h("span", null, num(tdp, 0) + " W" + (left ? "  \xB7  " + left + " left" : ""))),
-        !xt && pw.owned && pw.initial_tdp_w && pw.initial_tdp_w - tdp >= 1 ? h("div", { className: "r" }, h("span", null, "SAVING"), h("span", null, num(pw.initial_tdp_w - tdp, 0) + " W under your " + num(pw.initial_tdp_w, 0) + " W limit")) : null,
-        h("div", { className: "bar" }, h("div", { style: { width: Math.min(100, tdp / (xt && x.ceiling && x.ceiling.ceiling_w || pw.initial_tdp_w || pw.maximum_tdp_w || 15) * 100) + "%" } }))
-      ) : null
+        null,
+        h("b", null, d.head, xt && s.enabled ? h("span", { className: "xbadge" }, "\u25B2 ON") : null),
+        h("span", null, [s.enabled ? apMsg || d.body : d.body, saved].filter(Boolean).join(" \xB7 "))
+      )
     ),
     xt && s.enabled ? h(ExtremeCard, { x, profile, refresh }) : null,
-    !xt && s.mode !== "autopilot" && s.enabled && s.extreme_offer && !offerHidden ? null : null,
-    s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os, power: s.power, battery: s.battery && s.battery.percent }) : null,
-    h(
-      Focusable,
-      { className: "run" + (s.enabled ? " stop" : ""), onClick: busy ? void 0 : toggle },
-      h(Icon, { d: s.enabled ? ICONS.stop : ICONS.play, size: 18 }),
-      busy ? "WORKING\u2026" : missing ? "INSTALL ENGINE" : s.enabled ? "STOP" : "RUN"
-    ),
-    h("div", { className: "hint" }, s.enabled ? "Stop returns everything to your saved profile." : missing ? "The GFG engine is not installed yet. One tap installs it." : "Target " + target + " FPS \xB7 " + (dev.reason || "picked automatically for this screen")),
-    h("div", { className: "sec" }, "MODE"),
-    h(Seg, { cls: "four", value: s.mode === "extreme" ? "autopilot" : s.mode || "budget", options: [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"], ["autopilot", "Autopilot"]], onChange: setMode }),
+    h("div", { className: "bmodes" }, ...modes.map(([v, label, icon]) => h(Focusable, { key: v, className: "tl bmode" + (curMode === v ? " on" : ""), onClick: () => setMode(v) }, h(TIcon, { d: icon, size: 17 }), h("b", null, label)))),
     asking ? h(ActConsent, { onAnswer: answerAct }) : null,
-    h(Note, { quiet: true }, MODE_TEXT[s.mode || "budget"]),
-    s.mode === "autopilot" ? h(
-      "div",
-      { className: "card" },
-      h("div", { className: "sec" }, "AUTOPILOT"),
-      h(
-        "div",
-        { className: "kv" },
-        h("span", null, "State"),
-        h("b", null, s.autopilot && s.autopilot.state || "OBSERVE"),
-        h("span", null, "Real"),
-        h("b", null, s.autopilot && s.autopilot.real_fps != null ? num(s.autopilot.real_fps, 0) : "\u2013"),
-        h("span", null, "Output"),
-        h("b", null, s.autopilot && s.autopilot.output_fps != null ? num(s.autopilot.output_fps, 0) : "\u2013"),
-        h("span", null, "GPU clock"),
-        h("b", null, s.autopilot && s.autopilot.gpu_clock && s.autopilot.gpu_clock.available ? (s.autopilot.gpu_clock.limit_mhz || s.autopilot.gpu_clock.current_limit_mhz) + " MHz" : "Unavailable")
-      ),
-      h(Note, { quiet: true }, s.autopilot && s.autopilot.message || "Waiting for measured frames."),
-      h(Seg, { value: s.autopilot && s.autopilot.preference || "auto", options: [["auto", "Auto"], ["battery", "Battery"], ["smoothness", "Smoothness"]], onChange: async (v) => {
-        try {
-          await rpc.setAutopilotPreference(profile, v);
-        } catch (e) {
-        }
-        refresh();
-      } }),
-      h(Toggle, {
-        on: !!s.autopilot_shading_allowed,
-        title: "Try Half Rate Shading",
-        sub: "Optional 2\xD72 shading experiment when GPU-limited. May blur text and game details. GFG measures FPS and restores it on failure or Stop.",
-        onChange: async (v) => {
-          try {
-            await rpc.setAutopilotShading(profile, v);
-          } catch (e) {
-          }
-          refresh();
-        }
-      }),
-      s.autopilot_shading_allowed ? h(Note, { quiet: true }, "Shading: " + ((s.autopilot_shading || {}).mode || "unavailable") + " \xB7 Steam RADV dynamic VRS (physical Deck energy gain requires comparison).") : null,
-      h(FrameTimingControls, { profile, settings: (s.frame_os || {}).feature_settings, refresh, autopilot: true }),
-      h(FrameFusionPanel, { s, refresh })
-    ) : null,
-    s.frame_fusion && s.frame_fusion.scope_update_required ? h(Note, null, "Install the updated engine and restart the game. This running engine cannot enforce Autopilot-only Fusion.") : null,
-    health ? h("div", { className: "hint" }, health) : null,
-    h("div", { style: { height: 12 } }),
-    h(FiltersCard, { profile, cfg, patch, go }),
-    !s.session && s.last_session ? h(
-      "div",
-      { className: "card" },
-      h("div", { className: "sec" }, "LAST SESSION"),
-      h(SessionRings, { ls: s.last_session, target, battery: s.battery && s.battery.percent }),
-      h(
-        "div",
-        { className: "kv", style: { marginTop: 12 } },
-        h("span", null, "Played"),
-        h("b", null, num(s.last_session.minutes, 0) + " min"),
-        s.last_session.mode === "mixed" ? h("span", null, "Modes") : null,
-        s.last_session.mode === "mixed" ? h("b", null, sessionModes(s.last_session)) : null,
-        s.last_session.frame_os ? h("span", null, "Frame OS") : null,
-        s.last_session.frame_os ? h("b", null, frameOsMinutes(s.last_session.frame_os)) : null,
-        s.last_session.reference_w ? h("span", null, "Your limit") : null,
-        s.last_session.reference_w ? h("b", null, num(s.last_session.reference_w, 0) + " W") : null,
-        s.last_session.saved_w > 0 ? h("span", null, "Saved") : null,
-        s.last_session.saved_w > 0 ? h("b", null, "~" + num(s.last_session.saved_w, 1) + " W under your limit on average") : null,
-        s.last_session.saved_wh > 0 ? h("span", null, "Energy saved") : null,
-        s.last_session.saved_wh > 0 ? h("b", null, "~" + num(s.last_session.saved_wh, 1) + " Wh measured" + (s.last_session.battery_minutes_gained > 0 ? " \xB7 ~" + s.last_session.battery_minutes_gained + " min more battery" : "")) : null,
-        s.last_session.max_temp_c ? h("span", null, "Hottest") : null,
-        s.last_session.max_temp_c ? h("b", null, num(s.last_session.max_temp_c, 0) + " \xB0C" + (s.last_session.hot_pct ? " \xB7 warm " + s.last_session.hot_pct + "% of the time" : "")) : null,
-        s.last_session.stutter_pct ? h("span", null, "Stutter") : null,
-        s.last_session.stutter_pct ? h("b", null, s.last_session.stutter_pct + "% of the time") : null
-      )
-    ) : null,
+    !s.enabled ? runBtn : null,
+    missing ? h("div", { className: "hint" }, "The GFG engine is not installed yet. One tap installs it.") : null,
     needsLaunch ? h("div", null, h("div", { className: "sec" }, "START THE GAME WITH THIS LAUNCH OPTION"), h(LaunchCopy, { launch })) : null,
     troubled && problems.length ? h("div", { className: "card" }, h("div", { className: "sec" }, "LIKELY CAUSE"), ...problems.map((c, i) => h("div", { key: i, className: "hint", style: { textAlign: "left" } }, "\u2022 " + c.advice))) : null,
     troubled ? h("div", { className: "list" }, h(Row, { icon: "play", title: problems.length ? "Check setup" : "Something wrong? Record a log", sub: "Settings \u2192 Diagnostics", onClick: () => go(problems.length ? "setup" : "advanced") })) : null,
+    s.frame_fusion && s.frame_fusion.scope_update_required ? h(Note, null, "Install the updated engine and restart the game. This running engine cannot enforce Autopilot-only Fusion.") : null,
+    s.mode === "autopilot" ? h(QuickTiles, { s, profile, refresh }) : null,
+    h(FilterStrip, { profile, cfg, patch, go }),
     h(
       "div",
-      { className: "list" },
-      h(Row, { icon: "bolt", title: "Details", sub: "What GFG does and why", onClick: () => go("governor") }),
-      h(Row, { icon: "cog", title: "Settings", sub: "Overlay, profile, diagnostics", onClick: () => go("settings") })
-    )
+      { className: "bnav" },
+      h(Focusable, { className: "tl bnv", onClick: () => go("finetune") }, h(TIcon, { d: TI.tune, size: 18 }), h("b", null, "Fine-tune")),
+      h(Focusable, { className: "tl bnv", onClick: () => go("governor") }, h(TIcon, { d: TI.info, size: 18 }), h("b", null, "Details")),
+      h(Focusable, { className: "tl bnv", onClick: () => go("shell") }, h(TIcon, { d: TI.tv, size: 18 }), h("b", null, "Shell")),
+      h(Focusable, { className: "tl bnv", onClick: () => go("settings") }, h(TIcon, { d: TI.cog, size: 18 }), h("b", null, "Settings"))
+    ),
+    s.enabled ? runBtn : null
+  );
+}
+function FineTunePage({ back, s, profile, refresh }) {
+  const ap = s.autopilot || {};
+  const wanted = (s.frame_os || {}).feature_settings || {};
+  const norm = (w) => ({ latency: w.latency !== false, shield: w.shield !== false, touch_boost: w.touch_boost !== false, boost: w.boost !== false, continuous_boost: w.continuous_boost === true });
+  const [features, setFeatures] = useState(norm(wanted));
+  const [error, setError] = useState("");
+  const busy = useRef(false);
+  useEffect(() => {
+    setFeatures(norm(wanted));
+    setError("");
+  }, [profile, wanted.latency, wanted.shield, wanted.touch_boost, wanted.boost, wanted.continuous_boost]);
+  const change = async (feature, enabled) => {
+    if (busy.current) return;
+    busy.current = true;
+    setError("");
+    try {
+      const r = await rpc.setFrameOsFeature(profile, feature, enabled);
+      if (!r || !r.success) throw new Error(r && r.error || "Could not save frame timing");
+      setFeatures(r.features || { ...features, [feature]: enabled });
+      refresh();
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      busy.current = false;
+    }
+  };
+  const fusion = s.frame_fusion || {};
+  const [fusionOn, setFusionOn] = useState(fusion.setting_enabled !== void 0 ? fusion.setting_enabled === true : fusion.enabled !== false);
+  useEffect(() => {
+    setFusionOn(fusion.setting_enabled !== void 0 ? fusion.setting_enabled === true : fusion.enabled !== false);
+  }, [fusion.setting_enabled, fusion.enabled]);
+  const [fusionErr, setFusionErr] = useState("");
+  const setFusion = async (v) => {
+    setFusionErr("");
+    try {
+      const r = await rpc.setFrameFusion(v);
+      if (r && r.success) {
+        setFusionOn(r.enabled === true);
+        refresh();
+      } else setFusionErr(r && r.error || "Could not save Frame Fusion");
+    } catch (e) {
+      setFusionErr("Could not save Frame Fusion");
+    }
+  };
+  return h(
+    Page,
+    { title: "Fine-tune", onBack: back },
+    h("div", { className: "sec" }, "AUTO MODE PREFERS"),
+    h(Seg, { value: ap.preference || "auto", options: [["auto", "Balance"], ["battery", "Battery"], ["smoothness", "Smoothness"]], onChange: async (v) => {
+      try {
+        await rpc.setAutopilotPreference(profile, v);
+      } catch (e) {
+      }
+      refresh();
+    } }),
+    s.mode === "autopilot" ? h(
+      "div",
+      { className: "bg2", style: { marginTop: 8 } },
+      h(
+        "div",
+        { className: "tl binfo" },
+        h("div", { className: "bk" }, "STATE"),
+        h("div", { className: "bv" }, ap.state === "HOLD" ? "Holding" : ap.state || "Observing"),
+        h("div", { className: "bs" }, (ap.real_fps != null ? num(ap.real_fps, 0) : "\u2013") + " real \xB7 " + (ap.output_fps != null ? num(ap.output_fps, 0) : "\u2013") + " out")
+      ),
+      h(
+        "div",
+        { className: "tl binfo" },
+        h("div", { className: "bk" }, "GPU CLOCK"),
+        h("div", { className: "bv" }, ap.gpu_clock && ap.gpu_clock.available ? (ap.gpu_clock.limit_mhz || ap.gpu_clock.current_limit_mhz) + " MHz" : "Auto"),
+        h("div", { className: "bs" }, "set by Autopilot")
+      )
+    ) : h(Note, { quiet: true }, "These apply in Auto mode."),
+    h("div", { className: "sec" }, "BOOST"),
+    h(
+      "div",
+      { className: "bg2" },
+      h(SwitchTile, { on: features.boost, icon: TI.bolt, title: "Short Boost", sub: "Up to 1.5 s on a heavy scene", onChange: (v) => change("boost", v) }),
+      h(SwitchTile, { on: features.touch_boost, icon: TI.stick, title: "Stick touch Boost", sub: "A pulse when the stick moves", onChange: (v) => change("touch_boost", v) }),
+      h(SwitchTile, { on: features.continuous_boost, icon: TI.infin, title: "Continuous Boost", sub: "Always on \xB7 more power", onChange: (v) => change("continuous_boost", v) }),
+      h(SwitchTile, { on: !!s.autopilot_shading_allowed, icon: TI.shade, title: "Half Rate Shading", sub: "Saves power \xB7 may blur text", onChange: async (v) => {
+        try {
+          await rpc.setAutopilotShading(profile, v);
+        } catch (e) {
+        }
+        refresh();
+      } })
+    ),
+    h("div", { className: "sec" }, "FRAMES"),
+    h(
+      "div",
+      { className: "bg2" },
+      h(SwitchTile, { on: features.latency, icon: TI.clock, title: "Frame timing", sub: "Even frame starts", onChange: (v) => change("latency", v) }),
+      h(SwitchTile, { on: features.shield, icon: TI.shield, title: "Stall shield", sub: "No wait after a late frame", onChange: (v) => change("shield", v) }),
+      h(SwitchTile, { on: fusionOn, icon: TI.layers, title: "Frame Fusion", sub: "Applies from the next game start", onChange: setFusion, wide: true })
+    ),
+    error ? h(Note, null, error) : null,
+    fusionErr ? h(Note, null, fusionErr) : null,
+    h(Note, { quiet: true }, "Defaults are right for most games. Each switch is explained in Details.")
   );
 }
 var SPLIT_WAIT = {
@@ -1169,13 +1287,6 @@ var presetOf = (cfg) => {
   if (!filtersOn(cfg)) return "off";
   return (FILTER_PRESETS.find((p) => Object.entries(p.f).every(([k, v]) => typeof v === "number" ? Math.abs((cfg[k] || 0) - v) < 0.01 : cfg[k] === v)) || {}).id || "custom";
 };
-function filterSummary(cfg) {
-  if (!filtersOn(cfg)) return "Off";
-  const parts = cfg.vkbasalt_shader && cfg.vkbasalt_shader !== "none" ? cfg.vkbasalt_shader.split(":").map((e) => EFFECT_NAME[e] || e) : [];
-  if (cfg.vkbasalt_antialiasing && cfg.vkbasalt_antialiasing !== "none") parts.push(cfg.vkbasalt_antialiasing.toUpperCase());
-  if (cfg.vkbasalt_sharpening && cfg.vkbasalt_sharpening !== "none") parts.push(cfg.vkbasalt_sharpening.toUpperCase() + " " + Math.round((cfg.vkbasalt_sharpness || 0) * 100) + "%");
-  return parts.length ? parts.join(" + ") : "No effect";
-}
 function filterState(cfg, insp, wasOn) {
   const actual = insp && insp.actual || {};
   const running = actual.state === "running";
@@ -1213,24 +1324,6 @@ function PresetGrid({ cfg, onPick, disabled }) {
   )));
 }
 var applyPreset = (cfg, patch, p) => patch(p.id === "off" ? { ...p.f } : { external_vulkan_layer: "vkbasalt", ...p.f });
-function FiltersCard({ profile, cfg, patch, go }) {
-  const insp = useFilterInspector(profile, cfg);
-  if (!cfg) return null;
-  const st = filterState(cfg, insp, true), active = presetOf(cfg);
-  return h(
-    "div",
-    { className: "card filters" },
-    h("div", { className: "fos-head" }, h("span", null, "FILTERS"), st.pill ? h("span", { className: "pill " + (st.pill === "LIVE" ? "live" : "would") }, st.pill) : null),
-    h(PresetGrid, { cfg, disabled: st.tone === "warn" && !filtersOn(cfg), onPick: (p) => applyPreset(cfg, patch, p) }),
-    h(
-      Focusable,
-      { className: "fmore", onClick: () => go("filters") },
-      h("span", null, active === "custom" ? "Custom \xB7 " + filterSummary(cfg) : filterSummary(cfg)),
-      h("b", null, "Fine-tune \u203A")
-    ),
-    h("div", { className: "fnote " + st.tone }, st.text)
-  );
-}
 function FiltersPage({ back, profile, cfg, patch }) {
   const insp = useFilterInspector(profile, cfg);
   if (!cfg) return h(Page, { title: "Filters", onBack: back }, h("div", { className: "hint" }, "Loading\u2026"));
@@ -1303,9 +1396,44 @@ function FiltersPage({ back, profile, cfg, patch }) {
 function GovernorPage({ s, back, profile, refresh }) {
   const dev = s.device || {}, req = s.request, pt = s.active_point, lad = s.ladder || {}, b = s.budget;
   const mode = s.mode || "budget";
+  const effort = s.enabled ? s.effort || {} : null;
   return h(
     Page,
     { title: "Details", onBack: back },
+    h(Note, { quiet: true }, MODE_TEXT[mode] || MODE_TEXT.budget),
+    effort ? h(
+      "div",
+      { className: "effort card" },
+      h("span", null, "GFG EFFORT"),
+      h("b", { className: effort.level ? "lv " + effort.level : "lv" }, effort.level ? effort.level.toUpperCase() : "ASSESSING\u2026", effort.reason ? h("span", { className: "why" }, " \xB7 " + effort.reason) : null)
+    ) : null,
+    s.enabled && s.frame_os && s.frame_os.mode && s.frame_os.mode !== "off" ? h(FrameOsCard, { fo: s.frame_os, power: s.power, battery: s.battery && s.battery.percent }) : null,
+    !s.session && s.last_session ? h(
+      "div",
+      { className: "card" },
+      h("div", { className: "sec" }, "LAST SESSION"),
+      h(SessionRings, { ls: s.last_session, target: s.target_output_fps || (s.device || {}).target || 60, battery: s.battery && s.battery.percent }),
+      h(
+        "div",
+        { className: "kv", style: { marginTop: 12 } },
+        h("span", null, "Played"),
+        h("b", null, num(s.last_session.minutes, 0) + " min"),
+        s.last_session.mode === "mixed" ? h("span", null, "Modes") : null,
+        s.last_session.mode === "mixed" ? h("b", null, sessionModes(s.last_session)) : null,
+        s.last_session.frame_os ? h("span", null, "Frame OS") : null,
+        s.last_session.frame_os ? h("b", null, frameOsMinutes(s.last_session.frame_os)) : null,
+        s.last_session.reference_w ? h("span", null, "Your limit") : null,
+        s.last_session.reference_w ? h("b", null, num(s.last_session.reference_w, 0) + " W") : null,
+        s.last_session.saved_w > 0 ? h("span", null, "Saved") : null,
+        s.last_session.saved_w > 0 ? h("b", null, "~" + num(s.last_session.saved_w, 1) + " W under your limit on average") : null,
+        s.last_session.saved_wh > 0 ? h("span", null, "Energy saved") : null,
+        s.last_session.saved_wh > 0 ? h("b", null, "~" + num(s.last_session.saved_wh, 1) + " Wh measured" + (s.last_session.battery_minutes_gained > 0 ? " \xB7 ~" + s.last_session.battery_minutes_gained + " min more battery" : "")) : null,
+        s.last_session.max_temp_c ? h("span", null, "Hottest") : null,
+        s.last_session.max_temp_c ? h("b", null, num(s.last_session.max_temp_c, 0) + " \xB0C" + (s.last_session.hot_pct ? " \xB7 warm " + s.last_session.hot_pct + "% of the time" : "")) : null,
+        s.last_session.stutter_pct ? h("span", null, "Stutter") : null,
+        s.last_session.stutter_pct ? h("b", null, s.last_session.stutter_pct + "% of the time") : null
+      )
+    ) : null,
     mode === "extreme" && s.extreme && s.extreme.enabled ? h("div", { className: "sec" }, "EXTREME") : null,
     mode === "extreme" && s.extreme && s.extreme.enabled ? h("div", { className: "card" }, h(
       "div",
@@ -1388,7 +1516,7 @@ function GovernorPage({ s, back, profile, refresh }) {
       "div",
       { className: "kv" },
       h("span", null, "Multipliers"),
-      h("b", null, "\xD71 to \xD73.75, steps of 0.25"),
+      h("b", null, "\xD71 to \xD73, steps of 0.25; up to \xD73.75 only when needed"),
       h("span", null, "Saved profile"),
       h("b", null, "never modified"),
       h("span", null, "TDP"),
@@ -1423,7 +1551,7 @@ function FgPage({ back, cfg, patch }) {
       null,
       h("div", { className: "sec" }, "SAVED MULTIPLIER"),
       h(Seg, { value: String(mult), options: [["2", "\xD72"], ["3", "\xD73"]], onChange: (v) => patch({ multiplier: Number(v) }) }),
-      h(Note, { quiet: true }, "Used when the Governor is off. With the Governor on, it picks \xD71 to \xD73.75 itself (\xD74 only as a last resort) and never changes this value.")
+      h(Note, { quiet: true }, "Used when the Governor is off. With the Governor on, it picks \xD71 to \xD73 itself (up to \xD73.75 only when needed, \xD74 as a last resort) and never changes this value.")
     ) : h(Note, { quiet: true }, "External backend: GFG observes only and does not change it.")
   );
 }
@@ -1621,7 +1749,6 @@ function SettingsPage({ back, go, profile, s }) {
       "div",
       { className: "list", style: { marginTop: 0 } },
       h(Row, { icon: "play", title: "GFG Shell", sub: "Controller game shell (beta): install and launch", onClick: () => go("shell") }),
-      h(Row, { icon: "filter", title: "GFG theme", sub: "Install the Steam interface theme for CSS Loader", onClick: () => go("theme") }),
       h(Row, { icon: "hud", title: "In-game overlay", sub: "FPS, \xD7N, TDP while playing", onClick: () => go("hud") }),
       h(Row, { icon: "user", title: "Profile", value: profileLabel(profile || "Default"), onClick: () => go("profiles") }),
       h(Row, { icon: "play", title: "Launch command", sub: "Copy it into the game's Steam launch options", onClick: () => go("launch") }),
@@ -1639,46 +1766,6 @@ function SettingsPage({ back, go, profile, s }) {
       h(Row, { icon: "cog", title: "All settings", sub: "Every profile option", onClick: () => go("all") })
     ),
     h("div", { className: "hint" }, "GFG Extreme " + (s && s.version || ""))
-  );
-}
-function ThemePage({ back }) {
-  const [status, setStatus] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
-  useEffect(() => {
-    rpc.themeStatus().then(setStatus).catch((e) => setMsg(String(e)));
-  }, []);
-  const install = async () => {
-    setBusy(true);
-    setMsg("");
-    try {
-      const result = await rpc.themeInstall();
-      setMsg(result && result.success ? result.message : result && result.error || "Installation failed.");
-      setStatus(await rpc.themeStatus());
-    } catch (e) {
-      setMsg(String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return h(
-    Page,
-    { title: "GFG theme", onBack: back },
-    h(Note, { quiet: true }, "Install CSS Loader from the Decky store first. GFG copies its bundled theme to the CSS Loader themes folder."),
-    h(
-      "div",
-      { className: "card" },
-      h("b", null, status && status.current ? "Installed and up to date" : status && status.installed ? "Update available" : "Not installed"),
-      h("div", { className: "hint", style: { textAlign: "left", wordBreak: "break-all" } }, status && status.path || "~/homebrew/themes/GFG Extreme")
-    ),
-    h("div", { className: "list" }, h(Row, {
-      icon: "filter",
-      title: busy ? "Installing\u2026" : status && status.installed ? "Update / reinstall theme" : "Install theme",
-      onClick: busy ? void 0 : install
-    })),
-    msg ? h(Note, { quiet: true }, msg) : null,
-    status && status.success === false ? h(Note, null, status.error) : null,
-    h(Note, { quiet: true }, "After installing, open CSS Loader, reload themes and enable GFG Extreme.")
   );
 }
 var SHELL_NAME = "GFG Shell";
@@ -1943,7 +2030,7 @@ function FrameFusionPanel({ s, refresh }) {
     h("div", { className: "list" }, h(Toggle, {
       title: "Frame Fusion",
       on: enabled,
-      sub: "Optimizes compatible native and scaled frames in Autopilot. Start the game with the updated engine.",
+      sub: "Smoother generated frames in Auto mode; applies from the next game start",
       onChange: change
     })),
     error ? h(Note, null, error) : null,
@@ -2389,11 +2476,11 @@ function Content() {
   let body;
   if (!s) body = h("div", { className: "hint" }, "Loading\u2026");
   else if (screen === "governor") body = h(GovernorPage, { s, back, profile, refresh });
+  else if (screen === "finetune") body = h(FineTunePage, { s, back, profile, refresh });
   else if (screen === "fg") body = h(FgPage, { back: () => setScreen("settings"), cfg, patch });
   else if (screen === "scaling") body = h(ScalingPage, { s, back: () => setScreen("settings"), profile, refresh });
   else if (screen === "hud") body = h(HudPage, { back: () => setScreen("settings"), s, profile, refresh });
   else if (screen === "profiles") body = h(ProfilesPage, { back: () => setScreen("settings"), profiles, current: profile, pick, reload: loadProfiles });
-  else if (screen === "theme") body = h(ThemePage, { back: () => setScreen("settings") });
   else if (screen === "shell") body = h(ShellPage, { back: () => setScreen("settings") });
   else if (screen === "settings") body = h(SettingsPage, { back, go, profile, s });
   else if (screen === "setup") body = h(SetupCheckPage, { back: () => setScreen("advanced"), profile });

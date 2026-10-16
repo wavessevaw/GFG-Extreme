@@ -84,12 +84,32 @@ static func launch_uri(g: Dictionary) -> String:
 	return "steam://rungameid/" + str(g.get("launch_id", g.get("appid", "")))
 
 
+## Steam game known to be absent from every library (owned but not installed).
+static func needs_install(g: Dictionary) -> bool:
+	return str(g.get("kind", "steam")) == "steam" and g.has("installed") and not g.installed \
+		and int(g.get("appid", 0)) > 0
+
+
+static func install_uri(g: Dictionary) -> String:
+	return "steam://install/%d" % int(g.get("appid", 0))
+
+
 func launch(g: Dictionary) -> bool:
 	if state == "launching" or state == "running":
 		Log.warn("runner", "launch ignored: %s already %s" % [game.get("name", "?"), state])
 		return false
-	var uri := launch_uri(g)
 	var cmd := steam_command()
+	if needs_install(g):
+		# Not on the device: Steam's install dialog instead of waiting 3 minutes for a
+		# process that cannot appear. The screens send these to steam://install already;
+		# this keeps any other caller from ending in a launch timeout.
+		var iuri := install_uri(g)
+		_last_launch_cmd = PackedStringArray([cmd, iuri])
+		Log.info("runner", "%s is not installed: %s %s" % [g.get("name", "?"), cmd, iuri])
+		OS.create_process(cmd, [iuri])
+		launch_failed.emit(g, "not-installed")   # the launch screen shows why; state stays idle
+		return true
+	var uri := launch_uri(g)
 	_last_launch_cmd = PackedStringArray([cmd, uri])
 	Log.info("runner", "launch %s via %s %s" % [g.get("name", "?"), cmd, uri])
 	var pid := OS.create_process(cmd, [uri])

@@ -8,6 +8,7 @@ var fails := 0
 var checks := 0
 var step := 0
 var wait := 0
+var _quick_tab := ""
 
 
 func check(c: bool, what: String) -> void:
@@ -44,7 +45,7 @@ func _process(_d: float) -> bool:
 		0:
 			check(app.current_page() == "home", "starts on home")
 			check(focus() != null and focus().get_parent() != null, "home has focus")
-			pad(JOY_BUTTON_START)                     # main menu
+			pad(JOY_BUTTON_BACK)                      # ⧉ View: main menu
 		1:
 			check(app._menu.visible, "Menu opens the side menu")
 			var before := focus()
@@ -80,12 +81,24 @@ func _process(_d: float) -> bool:
 			pad(JOY_BUTTON_B)
 		8:
 			check(app.current_page() == "library", "B returns to the library")
-			pad(JOY_BUTTON_BACK)
+			pad(JOY_BUTTON_START)
 		9:
-			check(app._quick.visible and app._quick.is_ancestor_of(focus()), "View opens Quick settings with focus")
-			pad(JOY_BUTTON_BACK)
+			check(app._quick.visible and app._quick.is_ancestor_of(focus()), "☰ Menu opens Quick settings with focus")
+			_quick_tab = app._quick.tab
+			pad(JOY_BUTTON_RIGHT_SHOULDER)
+			check(app._quick.tab != _quick_tab and app._quick.visible and app.current_page() == "library",
+				"R1 in Quick settings switches its tab, not the page behind")
+			check(app._quick.is_ancestor_of(focus()), "focus stays in Quick settings after a tab switch")
+			pad(JOY_BUTTON_START)
 		10:
-			check(not app._quick.visible, "View closes Quick settings")
+			check(not app._quick.visible, "☰ Menu closes Quick settings")
+			app.get_node("/root/Shell").runner.state = "running"   # a game has the screen
+			pad(JOY_BUTTON_A)
+			pad(JOY_BUTTON_BACK)
+		11:
+			check(app.current_page() == "library" and not app._menu.visible,
+				"buttons pressed in a running game do nothing in the shell")
+			app.get_node("/root/Shell").runner.state = "idle"
 			print("ui nav: %d checks, %d failures" % [checks, fails])
 			quit(fails)
 			return true
