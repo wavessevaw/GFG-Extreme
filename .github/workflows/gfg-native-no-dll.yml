@@ -15,7 +15,6 @@ jobs:
       CC: gcc-12
       CXX: g++-12
       VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-      VK_LAYER_PATH: /usr/share/vulkan/explicit_layer.d
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -47,6 +46,7 @@ jobs:
       - name: Borrowed device, actual WSI image contents and sync validation
         env:
           VK_INSTANCE_LAYERS: VK_LAYER_KHRONOS_validation
+          VK_LAYER_PATH: /usr/share/vulkan/explicit_layer.d
         run: |
           set -euo pipefail
           engine/gfg-native/build-te/borrowed-device 2>&1 | tee borrowed.log
@@ -73,6 +73,8 @@ jobs:
           grep -q 'synthetic=0 recovery_duplicate=1 content=PASS real_handoffs=PASS' recovery.log
           if grep -E 'VALIDATION ERROR|Validation Error|VUID-' borrowed*.log observer*.log gpu-*.log skip-*.log fault-*.log recovery.log; then exit 1; fi
       - name: Immutable feature chains and FIFO fail-closed behavior
+        env:
+          VK_LAYER_PATH: /usr/share/vulkan/explicit_layer.d
         run: |
           set -euo pipefail
           for order in VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation VK_LAYER_KHRONOS_validation:VK_LAYER_GFG_native; do
@@ -132,7 +134,7 @@ jobs:
       - name: Check installed GPU WSI path
         run: |
           set -euo pipefail
-          HOME="$RUNNER_TEMP/fg3-home" GFG_TEST_FRAMES=24 GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=4 VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation xvfb-run -a "$RUNNER_TEMP/fg3-home/.local/bin/gfg-native" "$GITHUB_WORKSPACE/engine/gfg-native/build-te/wsi-gpu-smoke" 2>&1 | tee "$RUNNER_TEMP/fg3-private/installed.log"
+          HOME="$RUNNER_TEMP/fg3-home" GFG_TEST_FRAMES=24 GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=4 VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation VK_LAYER_PATH=/usr/share/vulkan/explicit_layer.d xvfb-run -a "$RUNNER_TEMP/fg3-home/.local/bin/gfg-native" "$GITHUB_WORKSPACE/engine/gfg-native/build-te/wsi-gpu-smoke" 2>&1 | tee "$RUNNER_TEMP/fg3-private/installed.log"
           grep -q 'algo=lmc-gpu' "$RUNNER_TEMP/fg3-private/installed.log"
           grep -q 'validation errors=0' "$RUNNER_TEMP/fg3-private/installed.log"
           if grep -E 'VUID-|VALIDATION ERROR' "$RUNNER_TEMP/fg3-private/installed.log"; then exit 1; fi
@@ -172,11 +174,27 @@ jobs:
           fi
           tail -n 60 "$log"
           if (( result != 0 )); then
-            details="$(tail -n 30 "$log" | tr '\n' ' ' | cut -c1-8000)"
+            ctest_log="$RUNNER_TEMP/gfg-native-compatibility/build/Testing/Temporary/LastTest.log"
+            ctest_details=""
+            if [[ -r "$ctest_log" ]]; then
+              ctest_details="$(python3 - "$ctest_log" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          text = Path(sys.argv[1]).read_text(errors="replace")
+          blocks = re.split(r"(?m)(?=^\d+/\d+ Test: )", text)
+          failed = [block for block in blocks if re.search(r"(?m)^Test Failed\.$", block)]
+          print("\n".join(failed[-5:]))
+          PY
+              )"
+            fi
+            details="$( { tail -n 30 "$log"; printf '\nFailing CTest output:\n%s\n' "$ctest_details"; } | tr '\n' ' ' | cut -c1-8000)"
             printf '::error title=Native bootstrap build failure::exit=%s; %s\n' "$result" "$details"
             {
               printf '## Native no-DLL compatibility build failure (exit %s)\n\n```text\n' "$result"
               tail -n 60 "$log"
+              printf '\nFailing CTest output:\n%s\n' "$ctest_details"
               printf '\n```\n'
             } >> "$GITHUB_STEP_SUMMARY"
           fi
