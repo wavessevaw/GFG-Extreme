@@ -159,9 +159,17 @@ class FrameOsRunner:
 
     @property
     def tdp_offset_w(self) -> float:
-        """Watts to add to the Governor's cap for the current level (act mode only)."""
-        if not (self.enabled and self.mode == "act" and self.executor_active and self.policy and self.policy.broker):
-            return 0.0
+        """Actual Frame OS hardware TDP offset: zero with Governor sole writer.
+
+        Boost can still request a higher real-frame cadence from the pacer.
+        The old +4 W/negative rest offset was only hypothetical after 2.1.4
+        and cannot be reported as applied or included in energy accounting.
+        """
+        return 0.0
+
+    @property
+    def requested_tdp_offset_w(self) -> float:
+        """Unapplied, policy-only request retained for diagnostic comparison."""
         return self._offset_for(self.last.get("decision") or {})
 
     def _offset_for(self, decision: Dict[str, Any]) -> float:
@@ -314,6 +322,8 @@ class FrameOsRunner:
                          tdp_w=settled_cap, counted=control is None)
         last["hardware_tdp_w"] = self.applied_tdp_w
         last["boost_tdp_offset_applied"] = False
+        last["requested_tdp_offset_w"] = self._offset_for(last["decision"])
+        last["applied_tdp_offset_w"] = 0.0
         last["proof"] = self.proof.summary()
         proof = last["proof"]
         last["benefit"] = apply_proof(self.benefit.summary(), proof)
