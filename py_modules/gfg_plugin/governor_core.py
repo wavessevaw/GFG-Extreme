@@ -841,7 +841,14 @@ def window_verdict(summary: Dict[str, Any], point: OperatingPoint) -> WindowVerd
     tolerated = (not severe and reference >= base * ON_TARGET_RATIO
                  and float(output_median) >= point.target_output_fps * ON_TARGET_RATIO)
     short = float(real_p5) < base * HOLD_REAL_RATIO and not tolerated
-    stall = reference < base * STALL_REAL_RATIO
+    # During frame generation, a deep real-FPS collapse with output tracking
+    # real FPS means the generator is not delivering its expected frames (common
+    # on loading/location transitions). Do not treat that interval as a TDP level.
+    no_generation_during_collapse = (
+        point.multiplier > 1.0 and reference < base * 0.60
+        and float(output_median) < reference * 1.25
+    )
+    stall = reference < base * STALL_REAL_RATIO or no_generation_during_collapse
     flags = {"short": short, "stall": stall}
     if hard > 0:
         return WindowVerdict(False, severe, "hard-pressure", **flags)
