@@ -29,7 +29,7 @@ def sha(path):
 
 
 def score(seq,out,start,pairs,step,rois=()):
-    ps,ss,roi,te=[],[],[],[];duplicates=0;equal_outputs=0;dynamic=0
+    ps,ss,roi,te,endpoint_ps,edge_ps=[],[],[],[],[],[];duplicates=0;equal_outputs=0;dynamic=0
     hud={r['name']:[] for r in rois}
     for k in range(pairs):
         i=start+k*step;a=seq[i];b=seq[i+step];prev=a;pg=a
@@ -37,6 +37,7 @@ def score(seq,out,start,pairs,step,rois=()):
         for j in range(2):
             gt=seq[i+j+1];im=out[2*k+j]
             ps.append(float(psnr_y(im,gt)));ss.append(float(ssim_y(im,gt)))
+            endpoint_ps.append(float(psnr_y(a if j==0 else b,gt)))
             for r in rois:
                 x0,y0,x1,y1=r['rect'];h,w=im.shape[:2]
                 x0,x1=max(0,x0),min(w,x1);y0,y1=max(0,y0),min(h,y1)
@@ -48,6 +49,12 @@ def score(seq,out,start,pairs,step,rois=()):
                 dynamic+=1
                 error=luma(to_float(im))-luma(to_float(gt));mse=float(np.mean(error[mask]**2))
                 roi.append(99.0 if mse<1e-12 else -10*np.log10(mse))
+                contrast=np.zeros(mask.shape,bool);g=gt.astype(np.int16)
+                contrast[1:]|=np.max(np.abs(g[1:]-g[:-1]),axis=2)>12
+                contrast[:,1:]|=np.max(np.abs(g[:,1:]-g[:,:-1]),axis=2)>12
+                edge=contrast&mask
+                if edge.any():
+                    e=float(np.mean(error[edge]**2));edge_ps.append(99.0 if e<1e-12 else -10*np.log10(e))
                 duplicates+=int(np.array_equal(im,a) or np.array_equal(im,b))
             prev,pg=im,gt
         te.append(float(temporal_error(prev,b,pg,b))*255)
@@ -55,6 +62,8 @@ def score(seq,out,start,pairs,step,rois=()):
                 motion_roi_psnr=float(np.mean(roi)) if roi else None,
                 temporal_error=float(np.mean(te)),dynamic_outputs=dynamic,
                 endpoint_duplicates=duplicates,equal_output_pairs=equal_outputs,outputs=2*pairs,
+                nearest_endpoint_psnr_y=float(np.mean(endpoint_ps)),
+                motion_edge_psnr_y=float(np.mean(edge_ps)) if edge_ps else None,
                 hud_psnr_y={k:float(np.mean(v)) for k,v in hud.items() if v})
 
 
@@ -73,6 +82,8 @@ def main():
     report=dict(schema=1,scope='offscreen Vulkan; not Deck GPU performance or physical scanout',
                 source_commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
                 worktree_dirty=bool(subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True).strip()),
+                worktree_status=subprocess.check_output(['git','status','--porcelain'],cwd=ROOT,text=True).splitlines(),
+                code_diff_sha256=hashlib.sha256(subprocess.check_output(['git','diff','HEAD','--','engine/gfg-temporal','tools/temporal_bench'],cwd=ROOT)).hexdigest(),
                 bench_sha256=sha(args.bench),timing_warmup_pairs_discarded=1,segments=[])
     selected=set(filter(None,args.segments.split(',')))
     algos=args.algorithms.split(',')
@@ -138,6 +149,7 @@ def main():
                     v=m['vs_lmc'];m['software_gate_pass']=bool(v['psnr_delta']>=-.3 and
                         (v['motion_roi_delta'] is None or v['motion_roi_delta']>=-1) and
                         v['worst_hud_delta']>=-1 and not m['cut_flags'] and not m['input_interval_cut_pairs'] and
+                        not m['endpoint_duplicates'] and (not m['dynamic_outputs'] or m['psnr_y']>m['nearest_endpoint_psnr_y']) and
                         v['temporal_ratio']<=1.05 and v['pair_gpu_ratio']<=.85)
             report['segments'].append(base)
             (args.work/'comparison.json').write_text(json.dumps(report,indent=2,allow_nan=False)+'\n')
