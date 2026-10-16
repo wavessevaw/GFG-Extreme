@@ -106,6 +106,18 @@ class NativeGpuInstallTests(unittest.TestCase):
                              env=dict(self.env, XDG_STATE_HOME=str(state)))
         self.assertEqual(result, "game-ran")
 
+    def test_unavailable_diagnostic_capture_still_runs_game_and_preserves_status(self):
+        self.run_script("install.sh")
+        state = self.home / "blocked-state"
+        state.write_text("not a directory")
+        program = "import sys; print('game-ran'); sys.exit(19)"
+        result = subprocess.run([str(self.launcher), "--off", "--diagnose", shutil.which("python3"),
+                                 "-c", program], env=dict(self.env, XDG_STATE_HOME=str(state)),
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 19, result.stderr)
+        self.assertIn('game-ran', result.stdout)
+        self.assertIn('without capture', result.stderr)
+
     def test_repeated_staging_keeps_previous_distinct_version_for_rollback(self):
         self.run_script("install.sh")
         previous = self.launcher.read_bytes()

@@ -125,13 +125,22 @@ def main():
     run('startup-off-actual-wsi', [launcher, args.wsi_app], expected=['validation errors=0'])
     for mode in ('2', '3'):
         backend(mode)
+        extra = {'GFG_TEST_EXPECT_GPU': '1', 'GFG_TEST_CHAIN_VK12': '1',
+                 'GFG_TEST_READONLY_FEATURES': '1'}
+        if mode == '3':
+            extra['GFG_TEST_PROTON_CHAIN'] = '1'
         log = run('installed-x' + mode, [launcher, '--diagnose', args.wsi_app],
-                  {'GFG_TEST_EXPECT_GPU': '1'}, ['validation errors=0', 'GPU bridge WSI smoke PASS'])
+                  extra, ['validation errors=0', 'GPU bridge WSI smoke PASS'])
         assert 'GPU bridge active' in log
+        if mode == '3':
+            assert 'original_metadata_unchanged=PASS' in log
     run('explicit-off-inherited-layer-actual-wsi', [launcher, '--off', args.wsi_app],
         {'VK_INSTANCE_LAYERS': 'VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation',
          'VK_LOADER_LAYERS_ENABLE': 'VK_LAYER_GFG_native', 'GFG_NATIVE_FG': '1',
          'GFG_NATIVE_GPU_BRIDGE': '1'}, ['validation errors=0'])
+    blocked = home / 'not-a-state-directory'; blocked.write_text('fixture')
+    run('unavailable-diagnostics-actual-wsi', [launcher, '--off', '--diagnose', args.wsi_app],
+        {'XDG_STATE_HOME': str(blocked)}, ['without capture', 'validation errors=0'])
     library.rename(library.with_suffix('.disabled'))
     try:
         run('missing-component-actual-wsi', [launcher, args.wsi_app], expected=['validation errors=0'])

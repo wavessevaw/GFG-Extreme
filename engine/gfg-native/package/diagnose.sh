@@ -12,14 +12,24 @@ if [[ $# -eq 0 ]]; then
   exit 2
 fi
 
+capture_unavailable() {
+  printf 'GFG: diagnostic capture unavailable; starting the game without capture.\n' >&2
+  exec "$@"
+}
+# Diagnostics are optional. A full/unwritable state directory or unavailable
+# capture utilities must not turn the launch option into a game-start failure.
+for utility in date mkdir mktemp chmod mkfifo tee; do
+  command -v "$utility" >/dev/null 2>&1 || capture_unavailable "$@"
+done
 root="${XDG_DATA_HOME:-$HOME/.local/share}/gfg-native"
 state="${XDG_STATE_HOME:-$HOME/.local/state}/gfg-native/diagnostics"
-stamp="$(date -u '+%Y%m%dT%H%M%SZ')"
+stamp="$(date -u '+%Y%m%dT%H%M%SZ')" || capture_unavailable "$@"
 umask 077
-mkdir -p "$state"
-run="$(mktemp -d "$state/$stamp.XXXXXX")"
+mkdir -p "$state" 2>/dev/null || capture_unavailable "$@"
+run="$(mktemp -d "$state/$stamp.XXXXXX")" || capture_unavailable "$@"
 stamp="${run##*/}"
-chmod 700 "$state" "$run"
+chmod 700 "$state" "$run" || capture_unavailable "$@"
+tee /dev/null </dev/null >/dev/null || capture_unavailable "$@"
 export GFG_DIAGNOSTIC_CAPTURE="$run"
 if [[ "$mode" == native ]]; then
   export GFG_NATIVE_TELEMETRY="$run/pairs.jsonl"
@@ -78,15 +88,15 @@ fi
   else
     printf 'vulkaninfo=not-installed\n'
   fi
-} > "$run/system-start.txt" 2>&1
+} > "$run/system-start.txt" 2>&1 || capture_unavailable "$@"
 
-cat > "$run/capture-info.txt" <<EOF
+cat > "$run/capture-info.txt" <<EOF || capture_unavailable "$@"
 This local bundle contains game stdout/stderr and selected device metadata.
 Review it for private game/account paths before sharing. It is never uploaded by this script.
 The timestamps and bridge counters are WSI/API observations, not physical scanout.
 EOF
 
-mkfifo "$run/stdout.pipe" "$run/stderr.pipe"
+mkfifo "$run/stdout.pipe" "$run/stderr.pipe" || capture_unavailable "$@"
 tee "$run/app.stdout.log" < "$run/stdout.pipe" &
 stdout_tee=$!
 tee "$run/app.stderr.log" < "$run/stderr.pipe" >&2 &
@@ -95,10 +105,10 @@ set +e
 "$@" > "$run/stdout.pipe" 2> "$run/stderr.pipe"
 app_status=$?
 set -e
-wait "$stdout_tee"
-wait "$stderr_tee"
-rm -f "$run/stdout.pipe" "$run/stderr.pipe"
-printf '%s\n' "$app_status" > "$run/process-status.txt"
+wait "$stdout_tee" || :
+wait "$stderr_tee" || :
+rm -f "$run/stdout.pipe" "$run/stderr.pipe" || :
+printf '%s\n' "$app_status" > "$run/process-status.txt" || :
 
 {
   printf 'capture_end_utc=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
@@ -109,17 +119,20 @@ printf '%s\n' "$app_status" > "$run/process-status.txt"
       /sys/class/power_supply/BAT*/capacity /sys/class/power_supply/BAT*/status; do
     printf '%s=' "$path"; cat "$path" 2>/dev/null || true
   done
-} > "$run/system-end.txt" 2>&1
+} > "$run/system-end.txt" 2>&1 || :
 
 if command -v python3 >/dev/null 2>&1 && [[ -r "$root/accept_report.py" ]]; then
-  python3 "$root/accept_report.py" "$run" --output "$run/report.md"
+  python3 "$root/accept_report.py" "$run" --output "$run/report.md" || :
 else
-  printf '# GFG Native diagnostic — NOT ACCEPTANCE\n\nPhysical display scanout is unobserved.\n' > "$run/report.md"
+  printf '# GFG Native diagnostic — NOT ACCEPTANCE\n\nPhysical display scanout is unobserved.\n' > "$run/report.md" || :
 fi
 
 bundle="$state/$stamp.tar.gz"
-tar -czf "$bundle" -C "$state" "$stamp"
-printf 'GFG diagnostic bundle: %s\n' "$bundle"
-sha256sum "$bundle"
+if tar -czf "$bundle" -C "$state" "$stamp"; then
+  printf 'GFG diagnostic bundle: %s\n' "$bundle"
+  sha256sum "$bundle" || :
+else
+  printf 'GFG: could not archive diagnostic capture in %s\n' "$run" >&2
+fi
 printf 'Physical display scanout: unobserved; hardware acceptance NOT COMPLETED.\n'
 exit "$app_status"
