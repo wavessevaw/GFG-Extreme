@@ -32,6 +32,7 @@
  *      copy swapchain[idx] -> TE source slot (EXTERNAL ownership release),
  *      signal timeline V and ready[idx];
  *   2. te_submit_frame{slot, count 2, t {1/3, 2/3}, wait V, signal V+1, nonblocking};
+ *      same-device initial/gap frames use count 0 and signal V+2 after history;
  *   3. for k = 1, 2: acquire (timeout 0), submit: wait acquire semaphore +
  *      timeline >= V+k, copy/blit dest[k-1] -> image, signal ready[img]; present;
  *   4. forward the app's present with pWaitSemaphores = { ready[idx] }.
@@ -57,6 +58,7 @@
 
 #define RING_MAX 4
 #define TIMING_CAP 8192
+enum { DROP_RING, DROP_TE, DROP_HISTORY, DROP_ACQUIRE, DROP_BYPASS, DROP_ERROR, DROP_COUNT };
 
 #define FN(name) PFN_vk##name name
 #define DEVICE_FUNCS(X) \
@@ -119,12 +121,16 @@ struct gfg_gpu_fg {
     VkFence init_fence;
     ring_slot ring[RING_MAX];
     uint32_t ring_size;
+    uint32_t ring_next;          /* advances on reservations, never on skipped app frames */
+    uint64_t ring_reclaimed;
+    uint64_t drop_outputs[DROP_COUNT]; /* per bridge, mutually exclusive output slots */
     uint64_t frame;              /* real presents seen by this bridge */
 
     te_device *engine;
     te_context *context;
     uint32_t te_slot;            /* next source slot TE expects */
     uint64_t te_frames;          /* frames TE accepted */
+    uint64_t history_only_submits;
     int te_gap;                  /* a frame since the last accepted one was not fed to TE */
     uint64_t next_value;         /* first value of the next block */
     uint64_t last_te_value;      /* last value TE will signal */
@@ -160,6 +166,11 @@ struct gfg_gpu_fg {
     double phase_us[5];
     uint64_t phase_n;
     uint32_t timing_count;
+    uint64_t gpu_last_sequence;
+    uint32_t gpu_count, gpu_held_samples;
+    double *gpu_first_ms, *gpu_pair_ms;
+    double gpu_stage_ms[TE_STAGE_COUNT], gpu_lmc_ms[TE_LMC_PROF_COUNT];
+    uint64_t gpu_lmc_count[TE_LMC_PROF_COUNT];
 };
 
 static struct {
@@ -186,6 +197,62 @@ static int ok(VkResult r) { return r == VK_SUCCESS; }
 static void fail_log(gfg_gpu_fg *fg, const char *what, VkResult r) {
     (void)fg;
     fprintf(stderr, "[gfg-native] gpu-bridge %s vkresult=%d\n", what, (int)r);
+}
+
+/* A skipped app frame does not own a slot. Indexing by app frame modulo the
+ * ring can select a newer, pending fence while an older slot is already free.
+ * Poll all candidates without resetting or waiting on a pending fence. */
+static ring_slot *reserve_ring(gfg_gpu_fg *fg) {
+    for (uint32_t k = 0; k < fg->ring_size; ++k) {
+        const uint32_t i = (fg->ring_next + k) % fg->ring_size;
+        ring_slot *rs = &fg->ring[i];
+        if (rs->busy) {
+            const VkResult r = fg->GetFenceStatus(fg->device, rs->fence);
+            if (r == VK_NOT_READY) continue;
+            if (r != VK_SUCCESS) {
+                fail_log(fg, "ring fence", r);
+                fg->disabled = 1;
+                return NULL;
+            }
+            rs->busy = 0;
+        }
+        if (k) ++fg->ring_reclaimed;
+        fg->ring_next = (i + 1) % fg->ring_size;
+        return rs;
+    }
+    return NULL;
+}
+
+static void skip_outputs(gfg_gpu_fg *fg, unsigned reason, uint64_t count) {
+    fg->drop_outputs[reason] += count;
+    STAT_ADD(skipped_synthetic, count);
+}
+
+/* TE already writes GPU timestamp queries. Read only the latest completed
+ * sample collected by its nonblocking fence poll; no GPU wait or pixel read.
+ * This is a sample, not an exhaustive trace of every completed pair. */
+static void gpu_sample(gfg_gpu_fg *fg) {
+    if (!fg->context || !fg->gpu_pair_ms || !fg->gpu_first_ms) return;
+    te_pair_stats s;
+    if (te_last_stats(fg->context, &s) != VK_SUCCESS ||
+        s.sequence <= fg->gpu_last_sequence) return;
+    fg->gpu_last_sequence = s.sequence;
+    if (s.held) { ++fg->gpu_held_samples; return; }
+    if (!s.timed || s.outputs != 2 || fg->gpu_count == TIMING_CAP) return;
+    const uint32_t i = fg->gpu_count++;
+    fg->gpu_first_ms[i] = s.ready_ms[0];
+    fg->gpu_pair_ms[i] = s.ready_ms[1];
+    for (unsigned k = 0; k < TE_STAGE_COUNT; ++k) fg->gpu_stage_ms[k] += s.stage_ms[k];
+    for (unsigned k = 0; k < TE_LMC_PROF_COUNT; ++k)
+        if (s.lmc_ms[k] >= 0.0) {
+            fg->gpu_lmc_ms[k] += s.lmc_ms[k];
+            ++fg->gpu_lmc_count[k];
+        }
+    if (fg->log && (i < 3 || i % 120 == 0))
+        fprintf(stderr, "[gfg-native] gpu_pair sequence=%llu output1_ready_ms=%.3f"
+                " output2_ready_ms=%.3f model_gpu=%d model_ms=%.3f tier=%d\n",
+                (unsigned long long)s.sequence, s.ready_ms[0], s.ready_ms[1],
+                s.model_gpu, s.lmc_ms[TE_LMC_FIT_WAIT], s.lmc_tier);
 }
 
 /* Every blocking wait goes through these so the counters prove the contract. */
@@ -850,6 +917,10 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     fg->next_value = fg->same_device ? 1 : 3;
     fg->timing_total_us = calloc(TIMING_CAP, sizeof(double));
     fg->timing_own_us = calloc(TIMING_CAP, sizeof(double));
+    if (fg->log || getenv("GFG_NATIVE_TIMING")) {
+        fg->gpu_first_ms = calloc(TIMING_CAP, sizeof(double));
+        fg->gpu_pair_ms = calloc(TIMING_CAP, sizeof(double));
+    }
     STAT_ADD(bridges_created, 1);
     STAT_SET(sync_mode, fg->same_device ? 3 : 1);
     fprintf(stderr,
@@ -887,6 +958,7 @@ void gfg_gpu_fg_destroy(gfg_gpu_fg *fg) {
         for (uint32_t r = 0; r < fg->ring_size; ++r)
             if (fg->ring[r].busy) (void)wait_fence(fg, fg->ring[r].fence, 2000000000ull);
     }
+    if (fg->context) { te_poll(fg->context); gpu_sample(fg); }
     gfg_gpu_stats st;
     gfg_gpu_fg_stats(&st);
     if (fg->log || getenv("GFG_NATIVE_TIMING")) {
@@ -903,6 +975,38 @@ void gfg_gpu_fg_destroy(gfg_gpu_fg *fg) {
             (unsigned long long)st.present_path_cpu_waits,
             (unsigned long long)st.verify_checks, (unsigned long long)st.verify_distinct,
             (long)getpid(), (unsigned long long)fg->frame);
+        fprintf(stderr, "[gfg-native] gpu-bridge skipped_outputs ring=%llu te=%llu history=%llu"
+                " acquire=%llu bypass=%llu error=%llu ring_reclaimed=%llu pid=%ld bridge_frames=%llu"
+                " history_only_submits=%llu\n",
+                (unsigned long long)fg->drop_outputs[DROP_RING],
+                (unsigned long long)fg->drop_outputs[DROP_TE],
+                (unsigned long long)fg->drop_outputs[DROP_HISTORY],
+                (unsigned long long)fg->drop_outputs[DROP_ACQUIRE],
+                (unsigned long long)fg->drop_outputs[DROP_BYPASS],
+                (unsigned long long)fg->drop_outputs[DROP_ERROR],
+                (unsigned long long)fg->ring_reclaimed, (long)getpid(),
+                (unsigned long long)fg->frame, (unsigned long long)fg->history_only_submits);
+        if (fg->gpu_count) {
+            double fm, fp, pm, pp;
+            percentile(fg->gpu_first_ms, fg->gpu_count, &fm, &fp);
+            percentile(fg->gpu_pair_ms, fg->gpu_count, &pm, &pp);
+            fprintf(stderr, "[gfg-native] gpu-bridge gpu_elapsed samples=%u held_samples=%u"
+                    " output1_median_ms=%.3f output1_p95_ms=%.3f"
+                    " output2_median_ms=%.3f output2_p95_ms=%.3f"
+                    " scope=analysis-start-to-output-ready pid=%ld\n",
+                    fg->gpu_count, fg->gpu_held_samples, fm, fp, pm, pp, (long)getpid());
+            fprintf(stderr, "[gfg-native] gpu-bridge gpu_analysis_mean_ms pyramid=%.3f"
+                    " analyze=%.3f classify=%.3f\n",
+                    fg->gpu_stage_ms[0] / fg->gpu_count, fg->gpu_stage_ms[1] / fg->gpu_count,
+                    fg->gpu_stage_ms[2] / fg->gpu_count);
+            static const char *const names[TE_LMC_PROF_COUNT] = {
+                "search_b", "search_a", "layers", "model", "field", "masked", "orphan", "field2"};
+            for (unsigned k = 0; k < TE_LMC_PROF_COUNT; ++k)
+                if (fg->gpu_lmc_count[k])
+                    fprintf(stderr, "[gfg-native] gpu-bridge gpu_lmc_mean_ms stage=%s ms=%.3f samples=%llu\n",
+                            names[k], fg->gpu_lmc_ms[k] / fg->gpu_lmc_count[k],
+                            (unsigned long long)fg->gpu_lmc_count[k]);
+        } else fprintf(stderr, "[gfg-native] gpu-bridge gpu_elapsed samples=0 unavailable=1\n");
         if (fg->timing_total_us && fg->timing_count > 2) {
             /* first two frames carry one-time work (TE warm-up); excluded */
             uint32_t n = fg->timing_count - 2;
@@ -968,6 +1072,8 @@ void gfg_gpu_fg_destroy(gfg_gpu_fg *fg) {
     free(fg->ready);
     free(fg->timing_total_us);
     free(fg->timing_own_us);
+    free(fg->gpu_first_ms);
+    free(fg->gpu_pair_ms);
     free(fg);
 }
 
@@ -1165,7 +1271,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     if (chain_reason) {
         bypass_log(fg, 1u, chain_reason, app, id_mode);
         fg->te_gap = 1;
-        if (frame) STAT_ADD(skipped_synthetic, 2);
+        if (frame) skip_outputs(fg, DROP_BYPASS, 2);
         result = forward_real(queue, app, NULL, next, NULL, &next_us);
         goto timing;
     }
@@ -1175,7 +1281,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
             "different-present-queue" : idx >= fg->image_count ? "invalid-image-index" : "too-many-wait-semaphores";
         bypass_log(fg, 2u, reason, app, id_mode);
         fg->te_gap = 1;
-        if (frame) STAT_ADD(skipped_synthetic, 2);
+        if (frame) skip_outputs(fg, DROP_BYPASS, 2);
         result = forward_real(queue, app, NULL, next, ids, &next_us);
         goto timing;
     }
@@ -1187,31 +1293,35 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     }
     fg->in_present = 1;
     if (fg->verify) verify_collect(fg, 0);
-    ring_slot *rs = &fg->ring[frame % fg->ring_size];
+    ring_slot *rs = NULL;
     int pass_through = 0;
+    unsigned drop_reason = DROP_RING;
     /* test-only: alternate the two skip paths on every inject_every-th frame */
     const int inject = fg->inject_every && frame % fg->inject_every == fg->inject_every - 1;
     const int inject_te_busy = inject && (frame / fg->inject_every) % 2 == 0;
     if (inject && !inject_te_busy) { STAT_ADD(ring_busy, 1); pass_through = 1; }
-    if (!pass_through && rs->busy) {
-        VkResult fs = fg->GetFenceStatus(fg->device, rs->fence);
-        if (fs == VK_SUCCESS) rs->busy = 0;
-        else if (fs == VK_NOT_READY) { STAT_ADD(ring_busy, 1); pass_through = 1; }
-        else { fg->disabled = 1; pass_through = 1; }
+    if (!pass_through && !(rs = reserve_ring(fg))) {
+        if (!fg->disabled) STAT_ADD(ring_busy, 1);
+        else { drop_reason = DROP_ERROR; STAT_ADD(errors, 1); }
+        pass_through = 1;
     }
     if (!pass_through && !ok(fg->ResetFences(fg->device, 1, &rs->fence))) {
         fg->disabled = 1;
+        STAT_ADD(errors, 1);
+        drop_reason = DROP_ERROR;
         pass_through = 1;
     }
     if (!pass_through && !record_real(fg, rs->real_cb, fg->images[idx], fg->src[fg->te_slot].image,
                                      fg->verify ? fg->verify_hist[fg->te_slot] : VK_NULL_HANDLE)) {
         fg->disabled = 1;
+        STAT_ADD(errors, 1);
+        drop_reason = DROP_ERROR;
         pass_through = 1;
     }
     if (pass_through) {
         /* app semaphores untouched: forward unmodified */
         fg->te_gap = 1;
-        if (frame) STAT_ADD(skipped_synthetic, 2);
+        if (frame) skip_outputs(fg, drop_reason, 2);
         fg->in_present = 0;
         result = forward_real(queue, app, NULL, next, ids, &next_us);
         goto timing;
@@ -1227,37 +1337,44 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
         STAT_ADD(errors, 1);
         fg->disabled = 1;
         fg->in_present = 0;
+        if (frame) skip_outputs(fg, DROP_ERROR, 2);
         result = r;
         goto timing;
     }
     fg->next_value += 3;
     /* From here ready[idx] is signalled: the real present below waits it. */
+    const int generate = fg->te_frames > 0 && !fg->te_gap;
     te_submit s = {0};
     s.slot = fg->te_slot;
-    s.count = 2;
+    /* Initial/gap frames only rebuild history. The former two full-size hold
+     * outputs were never presented, but still consumed GPU memory bandwidth. */
+    s.count = generate || !fg->same_device ? 2u : 0u;
     s.timestamps[0] = 1.0f / 3.0f;
     s.timestamps[1] = 2.0f / 3.0f;
     s.wait_value = v;
-    s.signal_first = v + 1;
+    s.signal_first = s.count ? v + 1 : v + 2;
     s.nonblocking = 1;
     s.discontinuity = fg->te_frames > 0 && fg->te_gap;
     s.lmc_tier = fg->lmc_tier;
-    const int generate = fg->te_frames > 0 && !fg->te_gap;
     tp = now_us();
     VkResult tr = inject_te_busy ? VK_NOT_READY : te_submit_frame(fg->context, &s);
     fg->phase_us[1] += now_us() - tp;
+    gpu_sample(fg);
     int presented = 0;
+    drop_reason = DROP_HISTORY;
     if (tr == VK_SUCCESS) {
         fg->last_te_value = v + 2;
         fg->te_slot ^= 1u;
         fg->te_frames++;
         fg->te_gap = 0;
         if (!generate) STAT_ADD(holds, 1);
+        if (!s.count) ++fg->history_only_submits;
         if (generate) {
             for (int k = 0; k < 2; ++k) {
                 int g = present_synthetic(fg, rs, k, v, idx, next, ids, app_chain.dynamic_mode, &next_us);
                 if (g <= 0) {
                     if (g < 0) STAT_ADD(errors, 1);
+                    drop_reason = g < 0 ? DROP_ERROR : DROP_ACQUIRE;
                     break;
                 }
                 ++presented;
@@ -1266,6 +1383,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
                 verify_submit(fg, v, fg->te_slot ^ 1u);
         }
     } else {
+        drop_reason = tr == VK_NOT_READY ? DROP_TE : DROP_ERROR;
         if (tr == VK_NOT_READY) STAT_ADD(te_busy, 1);
         else {
             fprintf(stderr, "[gfg-native] gpu-bridge te_submit: %s (%d)\n", te_last_error(), (int)tr);
@@ -1274,11 +1392,12 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
         }
         fg->te_gap = 1;
     }
-    if (frame) STAT_ADD(skipped_synthetic, (uint64_t)(2 - presented));
+    if (frame) skip_outputs(fg, drop_reason, (uint64_t)(2 - presented));
     /* the ring slot's fence covers everything submitted for this frame */
     tp = now_us();
-    if (ok(fg->QueueSubmit(fg->queue, 0, NULL, rs->fence))) rs->busy = 1;
-    else fg->disabled = 1;
+    const VkResult fence_submit = fg->QueueSubmit(fg->queue, 0, NULL, rs->fence);
+    if (ok(fence_submit)) rs->busy = 1;
+    else { fail_log(fg, "ring fence submit", fence_submit); STAT_ADD(errors, 1); fg->disabled = 1; }
     fg->phase_us[4] += now_us() - tp;
     fg->phase_n++;
     fg->in_present = 0;

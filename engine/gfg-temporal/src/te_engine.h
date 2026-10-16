@@ -104,7 +104,7 @@ typedef struct {
     uint32_t count;             /* synthetic outputs to produce (0: history only) */
     float timestamps[TE_MAX_OUTPUTS]; /* strictly increasing in (0, 1) */
     uint64_t wait_value;        /* timeline value of the new frame; 0: no wait */
-    uint64_t signal_first;      /* output i signals signal_first + i; 0: no signal */
+    uint64_t signal_first;      /* output i signals signal_first + i; count=0: analysis completion; 0: no signal */
     int nonblocking;            /* return VK_NOT_READY instead of waiting for a free slot */
     int download;               /* host_io: copy outputs to staging for te_download_rgb */
     int profile;                /* time each executor on its own for this pair */

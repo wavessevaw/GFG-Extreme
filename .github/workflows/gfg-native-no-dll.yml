@@ -32,7 +32,7 @@ jobs:
           make -C engine/gfg-temporal all lib 2>&1 | tee build-core.log
           engine/gfg-temporal/build/te-tests 2>&1 | tee core.log
           GFG_TEST_GPU_LMC=1 engine/gfg-temporal/build/te-tests 2>&1 | tee core-gpu-lmc.log
-          make -C engine/gfg-native ENABLE_TE=1 BUILD=build-te VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" layer build-te/wsi-gpu-smoke build-te/borrowed-device build-te/gpu-wsi-observer swapchain-policy memory-policy present-ids present-chain 2>&1 | tee build-native.log
+          make -C engine/gfg-native ENABLE_TE=1 BUILD=build-te VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" layer build-te/wsi-gpu-smoke build-te/borrowed-device build-te/gpu-wsi-observer swapchain-policy memory-policy present-ids present-chain gpu-ring 2>&1 | tee build-native.log
       - name: Loader, real-frame fallback and legacy CPU regression
         run: |
           set -euo pipefail
@@ -66,14 +66,27 @@ jobs:
             grep -q 'real=8 synthetic=14 skipped=0' "proton-$stem.log"
             grep -q 'original_metadata_unchanged=PASS' "proton-$stem.log"
             grep -q 'validation errors=0' "proton-$stem.log"
-            GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=30 GFG_NATIVE_GPU_BRIDGE_INJECT_SKIP=5 GFG_TEST_ALLOW_SKIPS=1 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "skip-$stem.log"
+            grep -Eq 'gpu_elapsed samples=[1-9][0-9]* ' "proton-$stem.log"
+            grep -q 'history_only_submits=1' "proton-$stem.log"
+            GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_NATIVE_TRACE=1 GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=30 GFG_NATIVE_GPU_BRIDGE_INJECT_SKIP=5 GFG_TEST_ALLOW_SKIPS=1 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "skip-$stem.log"
             grep -q 'validation errors=0' "skip-$stem.log"
             for fault in record submit index; do
               recovery=''; if [ "$fault" != record ]; then recovery='GFG_TEST_EXPECT_RECREATE=1'; fi
-              env GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=2 GFG_TEST_EXPECT_FAULT=1 GFG_TEST_ALLOW_SKIPS=1 GFG_NATIVE_GPU_FAULT="$fault" $recovery VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "fault-$fault-$stem.log"
+              env GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_NATIVE_TRACE=1 GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=2 GFG_TEST_EXPECT_FAULT=1 GFG_TEST_ALLOW_SKIPS=1 GFG_NATIVE_GPU_FAULT="$fault" $recovery VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "fault-$fault-$stem.log"
               grep -q 'validation errors=0' "fault-$fault-$stem.log"
             done
           done
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          for path in [*Path('.').glob('proton-*.log'), *Path('.').glob('skip-*.log'), *Path('.').glob('fault-*.log')]:
+              text = path.read_text()
+              retired = re.search(r'GPU bridge retired real=\d+ synthetic=\d+ skipped=(\d+)', text)
+              losses = re.search(r'skipped_outputs ring=(\d+) te=(\d+) history=(\d+) acquire=(\d+) bypass=(\d+) error=(\d+)', text)
+              assert retired and losses, f'missing loss accounting in {path}'
+              assert sum(map(int, losses.groups())) == int(retired.group(1)), f'loss accounting mismatch in {path}'
+          print('Output loss accounting agrees with cumulative counters on generated, skip and recovery paths')
+          PY
           GFG_NATIVE_GPU_FAULT=record xvfb-run -a engine/gfg-native/build-te/gpu-wsi-observer 2>&1 | tee recovery.log
           grep -q 'synthetic=0 recovery_duplicate=1 content=PASS real_handoffs=PASS' recovery.log
           if grep -E 'VALIDATION ERROR|Validation Error|VUID-' borrowed*.log observer*.log gpu-*.log proton-*.log skip-*.log fault-*.log recovery.log; then exit 1; fi

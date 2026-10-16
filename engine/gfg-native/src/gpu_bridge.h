@@ -36,7 +36,7 @@ typedef struct {
     uint64_t synthetic_presents;      /* synthetic presents accepted by the WSI (SUCCESS/SUBOPTIMAL) */
     uint64_t skipped_synthetic;       /* synthetic slots not presented after the first frame */
     uint64_t te_busy;                 /* te_submit_frame returned VK_NOT_READY */
-    uint64_t ring_busy;               /* our per-frame ring slot was still in flight */
+    uint64_t ring_busy;               /* all transport ring slots were still in flight */
     uint64_t acquire_not_ready;       /* vkAcquireNextImageKHR(timeout 0) NOT_READY/TIMEOUT */
     uint64_t holds;                   /* TE pairs submitted as hold (first frame / discontinuity) */
     uint64_t errors;

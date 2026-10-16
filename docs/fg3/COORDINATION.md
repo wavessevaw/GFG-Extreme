@@ -4,6 +4,54 @@ Continuation against issue #132 and PR #133. PR #133 is the integration base:
 The working branch `codex/fg3-integration` is a fast-forward descendant of it.
 Stable `main` is untouched.
 
+## Actual-device generation and remaining losses — 2026-10-16 07:16 UTC
+
+The next owner-supplied Witcher 3 capture matches the `internal.3` ELF hash
+`a09d5e366f6281e2c3483f272f7059de7b9493e37b0869275c5318edef81bc71`.
+Its final cumulative snapshot is **3806 real / 3080 synthetic / 4522 skipped /
+0 layer errors**. Thus the present metadata compatibility fix has enabled
+synthetic WSI handoffs on the actual SteamOS/RADV device. This is **1.809 API
+handoffs per real**, with only **40.52%** of synthetic opportunities handed
+off, not 3× delivery or physical FPS. Five bridges were created. There were
+911 transport-ring busy events, 1202 zero-timeout image acquire misses and
+468 history holds including the five initial frames; TE-busy was zero.
+App-owned IDs disable synthetic ID instrumentation, so completion/scanout
+cadence remains unobserved. CPU present-call median/p95 was 329.9/690.3 µs
+(layer-owned 307.5/651.5 µs); these are not GPU cost or input latency. GPU
+timestamps were not captured. The raw archive remains outside Git.
+
+The current changes fix a concrete resource selection error: indexing the
+transport ring by app-frame modulo can pick a newer pending slot after a
+skip while an older slot is free. Reservations now advance independently of
+skipped app frames and scan all slots with nonblocking fence polls. Ring
+depth and swapchain image count are unchanged. This can remove avoidable
+misses, not actual GPU saturation; the old log cannot quantify that subset.
+
+The same-device initial/gap path previously synthesized two full-size hold
+outputs which native WSI never displayed. It now submits history only. TE's
+zero-output path signals the requested analysis-completion timeline value;
+the next source copy still waits on real GPU completion. The opt-in shared-FD
+path retains its previous hold behavior. New diagnostics expose mutually
+exclusive output-loss counts per bridge, reservations rescued by another
+slot, history-only submissions, and sampled completed GPU timestamp intervals
+to both outputs with LMC stage means. There are no additional GPU waits on
+the present path; the LMC query read no longer uses QUERY_RESULT_WAIT_BIT.
+GPU timestamps include scheduling gaps and exclude game rendering, transport
+copies and physical scanout. A report explicitly states when GPU cost is
+unknown; API multipliers are never labelled displayed FPS.
+
+Local software validation passed: 30 native Python tests; both 168-check core
+modes; borrowed-device zero-output timeline/history→generation regression;
+both Proton maintenance1 layer orders (8 real/14 synthetic/0 skipped, all app
+fences complete); injected skip recovery (30/36/22, disjoint losses 6 ring +
+6 TE + 10 history); record/submit/index recovery with app fences; independent
+WSI content/order checks for tiles and GPU LMC. No synchronization-validation
+errors were recorded. GPU timestamps in those logs are software llvmpipe
+measurements, not Deck performance. Remote CI is a separate pending check.
+`internal.4` is a test-package version only. The independent output worker, deadlines, image
+availability/backpressure under Gamescope, physical cadence, quality, power,
+latency and long-duration acceptance remain open. Do not merge or release.
+
 I read the PR and its latest owner task (`issuecomment-6205050293`, 2026-10-16).
 It requests a reproducible installable **experimental test package**, package
 integrity and provenance, a tested exact rollback/uninstall path, full CI, and
@@ -42,8 +90,9 @@ layer orders with 8 real / 14 synthetic / 0 skipped, all 8 app present fences
 completed, and zero synchronization-validation errors. Record/submit/index
 fault tests with app fences and independent WSI pixel observers also passed.
 The read-only metadata tests cover both ID versions and tail-ID handling.
-CI will explicitly report a maintenance1 fence-path skip on older ICDs while
-still testing incremental present. This is **not yet a successful Deck rerun**.
+CI explicitly reports a maintenance1 fence-path skip on older ICDs while
+still testing incremental present. The later device rerun above observed
+synthetic handoffs, but did not satisfy hardware acceptance.
 
 ## Published package and CI checkpoint — 2026-10-16
 

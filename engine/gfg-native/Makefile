@@ -23,7 +23,7 @@ NATIVE_LDLIBS :=
 NATIVE_DEPS :=
 endif
 
-.PHONY: layer abi smoke wsi-smoke wsi-smoke-te wsi-smoke-gpu swapchain-policy memory-policy present-ids present-chain clean
+.PHONY: layer abi smoke wsi-smoke wsi-smoke-te wsi-smoke-gpu swapchain-policy memory-policy present-ids present-chain gpu-ring clean
 layer: $(BUILD)/libVkLayer_gfg_native.so $(BUILD)/VkLayer_gfg_native.json
 
 $(BUILD)/libVkLayer_gfg_native.so: $(NATIVE_SOURCES) $(NATIVE_HEADERS) $(NATIVE_DEPS)
@@ -72,6 +72,13 @@ $(BUILD)/present-chain: tests/present_chain.c src/present_chain.h
 
 present-chain: $(BUILD)/present-chain
 	$(BUILD)/present-chain
+
+$(BUILD)/gpu-ring: tests/gpu_ring.c src/gpu_bridge.c src/gpu_bridge.h src/present_chain.h $(TE_LIB)
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I$(VULKAN_HEADERS) -I../gfg-temporal/src -o $@ tests/gpu_ring.c $(TE_LIB) -ldl -lpthread -lm
+
+gpu-ring: $(BUILD)/gpu-ring
+	$(BUILD)/gpu-ring
 
 $(BUILD)/swapchain-policy: tests/swapchain_policy.c src/layer.c
 	mkdir -p $(BUILD)

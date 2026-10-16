@@ -61,6 +61,41 @@ class DiagnosticReportTests(unittest.TestCase):
         self.assertIn("a monitor may have started without receiving IDs", text)
         self.assertNotIn("Synthetic WSI handoffs observed: **yes**", text)
 
+    def test_device_generation_reports_backpressure_without_inventing_gpu_or_display_fps(self):
+        text = report.render({"app.stderr.log":
+            "[gfg-native] GPU bridge active: 1280x800 algo=lmc-gpu\n"
+            "[gfg-native] present-ids policy=application-owned synthetic_ids=omitted monitor=0\n"
+            "[gfg-native] GPU bridge retired real=3806 synthetic=3080 skipped=4522 "
+            "te_busy=0 ring_busy=911 acquire_not_ready=1202 holds=468 errors=0 "
+            "present_path_host_pixel_reads=0 present_path_cpu_waits=0\n"})
+        for value in ("API handoffs per real present: 1.809× (not displayed FPS)",
+                      "ring busy: 911", "image acquire not ready: 1202", "history holds including initialization: 468",
+                      "GPU timestamp samples unavailable", "Application owns present IDs"):
+            self.assertIn(value, text)
+        self.assertNotIn("a monitor may have started", text)
+
+    def test_gpu_elapsed_and_loss_scope_remain_separate_from_process_and_cpu_totals(self):
+        text = report.render({"app.stderr.log":
+            "[gfg-native] gpu-bridge skipped_outputs ring=2 te=4 history=2 acquire=1 bypass=0 error=0 "
+            "ring_reclaimed=3 pid=1 bridge_frames=12\n"
+            "[gfg-native] gpu-bridge gpu_elapsed samples=8 held_samples=2 output1_median_ms=4.200 "
+            "output1_p95_ms=5.000 output2_median_ms=6.100 output2_p95_ms=8.000 scope=analysis-start-to-output-ready pid=1\n"
+            "[gfg-native] gpu-bridge gpu_lmc_mean_ms stage=model ms=0.400 samples=8\n"})
+        for value in ("per bridge, not process totals", "history restart after a gap: 2",
+                      "selecting another free slot: 3", "Completed generated-pair samples: 8",
+                      "4.200 / 5.000 ms", "6.100 / 8.000 ms", "model: 0.400 ms",
+                      "transport copies and physical scanout are outside"):
+            self.assertIn(value, text)
+        self.assertNotIn("GPU timestamp samples unavailable", text)
+
+    def test_later_unavailable_gpu_record_does_not_reuse_an_earlier_bridge_sample(self):
+        text = report.render({"app.stderr.log":
+            "gpu-bridge gpu_elapsed samples=8 held_samples=2 output1_median_ms=4.200 "
+            "output1_p95_ms=5.000 output2_median_ms=6.100 output2_p95_ms=8.000\n"
+            "gpu-bridge gpu_elapsed samples=0 unavailable=1\n"})
+        self.assertIn("GPU timestamp samples unavailable", text)
+        self.assertNotIn("4.200", text)
+
 
 if __name__ == "__main__":
     unittest.main()

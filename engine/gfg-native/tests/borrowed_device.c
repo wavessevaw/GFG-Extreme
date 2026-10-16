@@ -140,8 +140,19 @@ int main(void) {
     OK(vkQueueSubmit(queue,1,&signal,VK_NULL_HANDLE));
     te_submit ordered={.slot=0,.count=2,.timestamps={1.f/3,2.f/3},.wait_value=1,.signal_first=2};
     OK(te_submit_frame(context,&ordered));OK(te_timeline_wait(context,3,UINT64_MAX));
-    OK(te_wait_idle(context));te_context_destroy(context);te_device_destroy(engine);
-    uint64_t value=0;OK(vkGetSemaphoreCounterValue(device,timeline,&value));REQUIRE(value==3);
+    OK(te_wait_idle(context));
+    /* Native initial/gap frames should rebuild history without synthesizing
+     * two discarded full-size holds, while still signalling completion. */
+    te_submit history={.slot=1,.count=0,.wait_value=3,.signal_first=4,.discontinuity=1};
+    OK(te_submit_frame(context,&history));OK(te_timeline_wait(context,4,5000000000ull));
+    OK(te_wait_idle(context));OK(te_last_stats(context,&stats));
+    REQUIRE(stats.outputs_completed_total==2);
+    ordered.slot=0;ordered.wait_value=4;ordered.signal_first=5;
+    OK(te_submit_frame(context,&ordered));OK(te_timeline_wait(context,6,5000000000ull));
+    OK(te_wait_idle(context));OK(te_last_stats(context,&stats));
+    REQUIRE(!stats.held && stats.outputs==2 && stats.outputs_completed_total==4);
+    te_context_destroy(context);te_device_destroy(engine);
+    uint64_t value=0;OK(vkGetSemaphoreCounterValue(device,timeline,&value));REQUIRE(value==6);
     vkDestroySemaphore(device,timeline,NULL);vkDestroyDevice(device,NULL);vkDestroyInstance(instance,NULL);
     puts("borrowed GPU: exact 1/3,2/3 pixels, BGRA packing, no optional features, device lifetime PASS");
     return 0;

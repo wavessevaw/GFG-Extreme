@@ -1370,7 +1370,7 @@ static void collect(te_context* ctx, te_slot* slot) {
     if (st->timed && slot->lmc_timed &&
         vkGetQueryPoolResults(ctx->dev->device, slot->queries, TE_LMC_Q0, TE_LMC_PROF_COUNT + 1,
                               sizeof ts, ts + TE_LMC_Q0, sizeof ts[0],
-                              VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) == VK_SUCCESS)
+                              VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
         for (int k = 0; k < TE_LMC_PROF_COUNT; ++k) st->lmc_ms[k] = DELTA(TE_LMC_Q0 + k, TE_LMC_Q0 + k + 1);
     /* the wait for the CPU motion fit sits between stage points 2 and 3: GPU time is without it */
     st->model_gpu = ctx->lmc && ctx->lmc->gpu_fit;
@@ -1518,7 +1518,17 @@ VkResult te_submit_frame(te_context* ctx, const te_submit* s) {
         si[0].signalSemaphoreCount = 1;
         si[0].pSignalSemaphores = &ctx->lmc->fit_tl;
     }
-    if (s->wait_value || split) si[0].pNext = &tsi[0];
+    /* A history-only update has no output submissions. Still publish its
+     * completion, so external source copies cannot overwrite an image while
+     * the pyramid reads it. Never make the caller wait for an unsent value. */
+    uint64_t history_ready = s->signal_first;
+    if (!outs && history_ready) {
+        tsi[0].signalSemaphoreValueCount = 1;
+        tsi[0].pSignalSemaphoreValues = &history_ready;
+        si[0].signalSemaphoreCount = 1;
+        si[0].pSignalSemaphores = &ctx->timeline;
+    }
+    if (s->wait_value || split || (!outs && history_ready)) si[0].pNext = &tsi[0];
     /* the outputs (after the second half), into the slot when the worker submits them */
     VkSubmitInfo* os = split ? slot->lsub : si;
     VkTimelineSemaphoreSubmitInfo* ot = split ? slot->ltsi : tsi;

@@ -54,6 +54,13 @@ def render(files: dict[str, str]) -> str:
     timings = last(
         r"present_cpu frames=(\d+).*?total_median_us=([0-9.]+).*?total_p95_us=([0-9.]+).*?"
         r"layer_own_median_us=([0-9.]+).*?layer_own_p95_us=([0-9.]+)", stderr)
+    gpu_line = last(r"gpu-bridge gpu_elapsed[^\n]*", stderr)
+    gpu = re.search(
+        r"samples=(\d+) held_samples=(\d+) output1_median_ms=([0-9.]+) output1_p95_ms=([0-9.]+) "
+        r"output2_median_ms=([0-9.]+) output2_p95_ms=([0-9.]+)",
+        gpu_line.group(0) if gpu_line else "")
+    losses = last(r"gpu-bridge skipped_outputs ring=(\d+) te=(\d+) history=(\d+) "
+                  r"acquire=(\d+) bypass=(\d+) error=(\d+) ring_reclaimed=(\d+).*?bridge_frames=(\d+)", stderr)
 
     lines = [
         "# GFG Native diagnostic report — NOT ACCEPTANCE",
@@ -62,7 +69,7 @@ def render(files: dict[str, str]) -> str:
         "",
         f"- Generator bridge initialized in captured log: **{active}**",
         f"- Algorithm: **{algo_match.group(1) if algo_match else 'not observed'}**",
-        f"- Game process exit code: **{status.strip()}**",
+        f"- Launched command exit code (may be a Steam wrapper): **{status.strip()}**",
         "- Physical display / KMS scanout: **unobserved**",
         "- 30 real → 90 distinct physical FPS acceptance: **false / not established**",
     ]
@@ -79,12 +86,31 @@ def render(files: dict[str, str]) -> str:
         lines.extend(["", "## Latest captured cumulative counters", "",
                       "Latest process snapshot across swapchain recreations; earlier snapshots are not added again.", ""])
         lines.extend(f"- {name}: {value}" for name, value in zip(names, values))
+        real = int(retired.group(1) if retired else stats.group(2))
+        skipped = int(retired.group(3) if retired else stats.group(4))
+        if real:
+            lines.append(f"- API handoffs per real present: {(real + synthetic) / real:.3f}× (not displayed FPS)")
+        if synthetic + skipped:
+            lines.append(f"- Synthetic output opportunities handed to WSI: {100 * synthetic / (synthetic + skipped):.2f}%")
+        if retired:
+            events = re.search(r"te_busy=(\d+) ring_busy=(\d+) acquire_not_ready=(\d+) holds=(\d+)", retired.group(0))
+            if events:
+                lines.extend(["", "Backpressure event counts (events, not lost output counts):", ""])
+                lines.extend(f"- {name}: {value}" for name, value in zip(
+                    ("TE busy", "ring busy", "image acquire not ready", "history holds including initialization"), events.groups()))
         if synthetic == 0:
             lines.extend(["", "Bridge initialization succeeded, but generation was not observed. CPU passthrough timings do not measure generation cost."])
     bypass = list(dict.fromkeys(re.findall(r"fg_bypass reason=([^\s]+)", stderr)))
     if bypass:
         lines.extend(["", "## Captured bypass reasons", ""])
         lines.extend(f"- {reason}" for reason in bypass)
+    if losses:
+        lines.extend(["", "## Latest bridge output losses", "",
+                      f"This bridge saw {losses.group(8)} real presents. These counts are per bridge, not process totals.", ""])
+        lines.extend(f"- {name}: {value}" for name, value in zip(
+            ("ring unavailable", "TE unavailable", "history restart after a gap", "image unavailable",
+             "metadata/disabled bypass", "error recovery"), losses.groups()[:6]))
+        lines.append(f"- Reservations rescued by selecting another free slot: {losses.group(7)}")
     if timings:
         lines.extend([
             "", "## CPU time inside layer", "",
@@ -93,6 +119,20 @@ def render(files: dict[str, str]) -> str:
             f"- Layer-owned CPU median / p95: {timings.group(4)} / {timings.group(5)} µs",
             "- These are API-path CPU timings, not end-to-end display latency.",
         ])
+    if gpu:
+        lines.extend(["", "## Latest bridge GPU timestamp samples", "",
+                      f"- Completed generated-pair samples: {gpu.group(1)}; held samples excluded: {gpu.group(2)}",
+                      f"- Analysis start → first output ready, median / p95: {gpu.group(3)} / {gpu.group(4)} ms",
+                      f"- Analysis start → second output ready, median / p95: {gpu.group(5)} / {gpu.group(6)} ms",
+                      "- Sampled completed pairs, not an exhaustive trace. Elapsed GPU timestamps include queue/scheduling gaps; game rendering, transport copies and physical scanout are outside this interval."])
+        stage_text = stderr[gpu_line.end():].split("GPU bridge active:", 1)[0]
+        stages = re.findall(r"gpu_lmc_mean_ms stage=([^ ]+) ms=([0-9.]+) samples=(\d+)", stage_text)
+        if stages:
+            lines.extend(["", "LMC analysis stage means (overlap with the ready intervals above; do not add twice):", ""])
+            lines.extend(f"- {name}: {ms} ms ({samples} samples)" for name, ms, samples in stages)
+    else:
+        lines.extend(["", "## GPU generation cost", "",
+                      "- GPU timestamp samples unavailable in this capture. CPU present-call timings cannot establish GPU generation cost."])
     if len(present_done) > 1 and intervals_us:
         mean = sum(intervals_us) / len(intervals_us)
         fps = 1_000_000.0 / mean if mean else 0.0
@@ -103,7 +143,10 @@ def render(files: dict[str, str]) -> str:
             "- Present-wait completion is not physical panel scanout.",
         ])
     else:
+        app_owned = "present-ids policy=application-owned" in stderr
         lines.extend(["", "## Optional Vulkan present-wait observations", "",
+                      "- Application owns present IDs; synthetic IDs and the layer's completion monitor are disabled. No completion cadence was measured."
+                      if app_owned else
                       "- No `present_done` records were captured; completed monitored presents are not established (a monitor may have started without receiving IDs)."])
     lines.extend(["", "## Device snapshot", "", "```text", start.rstrip(), "```", ""])
     return "\n".join(lines)

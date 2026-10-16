@@ -38,6 +38,12 @@ fi
     printf '\n--- SteamOS release ---\n'
     cat /etc/steamos-release
   fi
+  printf '\n--- installed graphics packages ---\n'
+  if command -v pacman >/dev/null 2>&1; then
+    pacman -Q gamescope mesa vulkan-radeon 2>&1 || true
+  else
+    printf 'pacman=not-installed\n'
+  fi
   printf '\n--- selected runtime variables ---\n'
   for name in VK_INSTANCE_LAYERS VK_LAYER_PATH GFG_NATIVE_FG GFG_NATIVE_GPU_BRIDGE \
       GFG_NATIVE_GPU_SYNC GFG_NATIVE_ALGO GFG_NATIVE_LMC_TIER GFG_NATIVE_TRACE \
@@ -56,13 +62,18 @@ fi
     printf '%s=' "$path"; cat "$path" 2>/dev/null || true
   done
   printf '\n--- power / temperature snapshots (raw sysfs units) ---\n'
+  for path in /sys/class/hwmon/hwmon*/name /sys/class/hwmon/hwmon*/temp*_label \
+      /sys/class/hwmon/hwmon*/power*_label; do
+    printf '%s=' "$path"; cat "$path" 2>/dev/null || true
+  done
   for path in /sys/class/hwmon/hwmon*/temp*_input /sys/class/hwmon/hwmon*/power*_average \
       /sys/class/power_supply/BAT*/capacity /sys/class/power_supply/BAT*/status; do
     printf '%s=' "$path"; cat "$path" 2>/dev/null || true
   done
   printf '\n--- Vulkan summary (hardware UUID fields removed) ---\n'
   if command -v vulkaninfo >/dev/null 2>&1; then
-    timeout 20s vulkaninfo --summary 2>&1 | sed -E '/(deviceUUID|driverUUID|deviceLUID)/Id' || true
+    env -u VK_INSTANCE_LAYERS -u VK_LAYER_PATH GFG_NATIVE_FG=0 GFG_NATIVE_GPU_BRIDGE=0 \
+      timeout 20s vulkaninfo --summary 2>&1 | sed -E '/(deviceUUID|driverUUID|deviceLUID)/Id' || true
   else
     printf 'vulkaninfo=not-installed\n'
   fi

@@ -61,7 +61,18 @@ test package. Session end is not task completion.
    application acquire/present/wait calls to honor Vulkan external
    synchronization, with 1 ms between polls. The Deck layer order
    and actual KMS/panel cadence remain unknown.
-5. Hardware acceptance remains pending: this cloud executor has no
+5. The second actual Deck capture (2026-10-16 07:16 UTC) observed generation:
+   3806 real / 3080 synthetic / 4522 skipped / 0 layer errors, matching the
+   internal.3 ELF. This fixes the earlier zero-generation compatibility block
+   only. App-owned IDs mean no synthetic completion cadence is observable.
+   Ring-busy=911, acquire misses=1202, holds=468 including five bridge starts;
+   CPU median/p95=329.9/690.3 µs, GPU cost unavailable in that capture.
+   The next checkpoint scans free slots independently of skipped app frames,
+   avoids unused same-device hold-output dispatches with history-only timeline
+   completion, and adds actual completed GPU timestamp samples and disjoint
+   per-output loss counters. Preserve both queue/semaphore and zero-output
+   timeline regression checks. This does not solve physical output pacing.
+6. Hardware acceptance remains pending: this cloud executor has no
    authenticated Deck endpoint. The inventory zip contains device metadata,
    not a connection. Do not invent endpoints or claim hardware results, and do
    not ask the owner to relay patches or repeat manual test steps. Continue
@@ -99,7 +110,8 @@ delivered `9ec5d5b` package initialized but did not generate: real=3503,
 synthetic=0, skipped=6996 (last cumulative snapshot after five swapchains).
 `docs/fg3/COORDINATION.md` records the present-chain compatibility fix and
 corrected report selection. The capture does not log exact pNext node types;
-do not invent them or claim the new `internal.3` package passed on Deck.
+do not invent them. The later capture proves internal.3 WSI generation (above),
+not successful physical 3× delivery or a passed hardware acceptance.
 
 Inventory: Galileo, SteamOS 3.8.28 (20260922.1), glibc 2.41,
 Mesa 26.0.0-devel d246f60ddf / RADV VANGOGH, kernel
