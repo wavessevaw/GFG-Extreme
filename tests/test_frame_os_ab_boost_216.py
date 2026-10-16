@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "py_modules"))
 
 from gfg_plugin.frame_os.runner import FrameOsRunner
+from gfg_plugin.frame_os.proof import ProofMeter
 from gfg_plugin.frame_os.input_sensor import InputState, ABS_RX, EV_ABS, EVENT
 from test_frame_os_proof import FakeChannel, FakeReader
 
@@ -88,6 +89,28 @@ class CausalProofTests(unittest.TestCase):
         self.assertGreaterEqual(status["proof"]["response"]["session_n"], 3)
         self.assertTrue(status["proof"]["response"]["session"]["measured"])
         self.assertAlmostEqual(status["benefit"]["response_pct"], 48.0, delta=2)
+
+
+class IndependentEnergySamplingTests(unittest.TestCase):
+    def simulate(self, clocked):
+        meter = ProofMeter()
+        control = None
+        for i in range(1200):
+            t = i / 10
+            meter.observe(t, eligible=True, level="rest", telemetry={},
+                          draw_w=10.0 if control else 6.0,
+                          draw_sample_id=(0 if clocked == "stale" else int(t))
+                                         if clocked else None)
+            control = meter.control(t, "rest")
+        return meter.summary()["energy"]
+
+    def test_one_stale_1hz_draw_reading_is_not_many_independent_samples(self):
+        self.assertEqual(self.simulate("stale")["session_n"], 0)
+
+    def test_independent_one_hz_draw_refreshes_can_prove_rest_energy(self):
+        good = self.simulate("fresh")
+        self.assertGreaterEqual(good["session_n"], 3)
+        self.assertAlmostEqual(good["session"]["mean"], 40.0, delta=1.0)
 
 
 class RealAppliedPowerTests(unittest.TestCase):
