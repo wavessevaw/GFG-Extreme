@@ -84,6 +84,41 @@ class NativeGpuInstallTests(unittest.TestCase):
         self.assertIn("GFG_NATIVE_GPU_BRIDGE=1\n", output)
         self.assertNotIn("DISABLE_GFG_NATIVE_FG=", output)
 
+    def test_off_clears_only_own_layer_and_runs_without_external_helpers(self):
+        self.run_script("install.sh")
+        env = dict(self.env, GFG_NATIVE_FG="1", GFG_NATIVE_GPU_BRIDGE="1",
+                   VK_INSTANCE_LAYERS="foreign.before:VK_LAYER_GFG_native:foreign.after:VK_LAYER_GFG_native",
+                   VK_LOADER_LAYERS_ENABLE="foreign.*,VK_LAYER_GFG_native,another",
+                   PATH="/nonexistent", GFG_NATIVE_MODE_FILE="/nonexistent/settings")
+        program = "import json,os,sys; print(json.dumps([sys.argv[1:],os.getenv('VK_INSTANCE_LAYERS'),os.getenv('VK_LOADER_LAYERS_ENABLE'),os.getenv('GFG_NATIVE_GPU_BRIDGE')])); sys.exit(17)"
+        result = subprocess.run(["/bin/bash", str(self.launcher), "--off", shutil.which("python3"),
+                                 "-c", program, "", "a b", "$(literal)", "тест"],
+                                env=env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 17, result.stderr)
+        self.assertEqual(json.loads(result.stdout), [["", "a b", "$(literal)", "тест"],
+                         "foreign.before:foreign.after", "foreign.*,another", None])
+
+    def test_telemetry_directory_failure_does_not_prevent_game_start(self):
+        self.run_script("install.sh")
+        state = self.home / "blocked-state"
+        state.write_text("not a directory")
+        result = self.launch("/usr/bin/printf", "%s", "game-ran",
+                             env=dict(self.env, XDG_STATE_HOME=str(state)))
+        self.assertEqual(result, "game-ran")
+
+    def test_repeated_staging_keeps_previous_distinct_version_for_rollback(self):
+        self.run_script("install.sh")
+        previous = self.launcher.read_bytes()
+        previous_manifest = b'{"version":"previous"}\n'
+        (self.pkg / "MANIFEST.json").write_bytes(previous_manifest)
+        self.checksums(); self.run_script("install.sh")
+        (self.pkg / "gfg-native.sh").write_text("#!/bin/bash\nexec \"$@\"\n# upgraded\n")
+        (self.pkg / "MANIFEST.json").write_text('{"version":"next"}\n')
+        self.checksums(); self.run_script("install.sh"); self.run_script("install.sh")
+        self.run_script("rollback.sh")
+        self.assertEqual(self.launcher.read_bytes(), previous)
+        self.assertEqual((self.target / "MANIFEST.json").read_bytes(), previous_manifest)
+
     def test_one_command_diagnostic_captures_local_report_without_upload(self):
         self.run_script("install.sh")
         program = "import os; print('diagnostic-command-ran'); print('trace='+str(os.getenv('GFG_NATIVE_TRACE')))"
@@ -109,6 +144,7 @@ class NativeGpuInstallTests(unittest.TestCase):
             self.assertFalse((self.target / "diagnose.sh").exists())
             self.assertFalse((self.target / "accept_report.py").exists())
             self.assertEqual(self.launch("/usr/bin/printf", "%s", "a b"), "a b")
+            self.assertEqual(self.launch("--off", "/usr/bin/printf", "%s", "a b"), "a b")
 
     def test_disabled_diagnostic_runs_game_and_preserves_failure_status(self):
         self.run_script("install.sh")

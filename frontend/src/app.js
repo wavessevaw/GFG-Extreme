@@ -1258,7 +1258,7 @@ function NativeGsfPanel({ s }) {
     try {
       const result = await rpc.setNativeGsf(next);
       if (result && result.success) { setMode(next); setMessage("Restart the game to apply."); }
-      else setMessage("Could not save native generator mode.");
+      else setMessage("Native generator unavailable: " + ((result && result.error) || "installation failed"));
     } catch (_) { setMessage("Could not save native generator mode."); }
   };
   const contexts = native.contexts || [];
@@ -1266,6 +1266,9 @@ function NativeGsfPanel({ s }) {
     h("div", { className: "sec" }, "GFG NATIVE GENERATOR · EXPERIMENTAL"),
     h(Seg, { value: mode, options: [["off", "Off"], ["2", "×2"], ["3", "×3"]], onChange: save }),
     h(Note, { quiet: true }, native.installed ? "Independent GPU generator. Steam Deck display acceptance pending." : "Native component is not installed."),
+    native.launch_command ? h(Note, { quiet: true }, "Steam launch option: " + native.launch_command) : null,
+    native.component_version ? h(Note, { quiet: true }, "Native build: " + native.component_version) : null,
+    native.installation_error ? h(Note, null, "Installation: " + native.installation_error) : null,
     h(Note, { quiet: true }, contexts.length ? "Live native contexts: " + contexts.length + ". Displayed FPS: unverified." : (native.reason || "Waiting for a game.")),
     ...contexts.map((context, index) => h(Note, { key: index, quiet: true },
       "Source " + num(context.source_fps || 0, 1) + " FPS · WSI accepted " + (context.real_wsi_accepted || 0) + " real / " + (context.generated_wsi_accepted || 0) + " generated · " + (context.reason || ""))),

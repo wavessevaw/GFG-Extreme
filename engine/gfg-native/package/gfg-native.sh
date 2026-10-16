@@ -14,20 +14,42 @@ if (( $# < 1 )); then
   printf 'Usage: gfg-native [--off] [--diagnose] <game-command> [args...]\n' >&2
   exit 2
 fi
-mode_file="${GFG_NATIVE_MODE_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/mako-render/runtime-state/native-gsf.mode}"
-mode="${GFG_NATIVE_MODE:-}"
-if [[ -z "$mode" && -r "$mode_file" ]]; then mode=$(head -c 8 "$mode_file" | tr -d '\n'); fi
-mode=${mode:-3} # invoking this explicit launcher opts in; plugin defaults off
-case "$mode" in off|2|3) ;; *) mode=off; printf 'GFG: invalid native mode, using real-only.\n' >&2 ;; esac
-root="${XDG_DATA_HOME:-$HOME/.local/share}/gfg-native"
-if (( disabled )) || [[ "$mode" == off ]] || \
-   [[ ! -r "$root/VkLayer_gfg_native.json" || ! -r "$root/libVkLayer_gfg_native.so" ]]; then
+# Bypass before reading settings or invoking any optional helper. Steam/Proton
+# may inherit our activation variables from a parent process or another wrapper.
+passthrough() {
   unset GFG_NATIVE_FG GFG_NATIVE_GPU GFG_NATIVE_GPU_BRIDGE GFG_NATIVE_CPU_BRIDGE GFG_NATIVE_ASYNC GFG_NATIVE_FORCE_FIFO
   export DISABLE_GFG_NATIVE_FG=1
+  local variable value item joined separator
+  local -a entries
+  for variable in VK_INSTANCE_LAYERS VK_LOADER_LAYERS_ENABLE; do
+    [[ -v "$variable" ]] || continue
+    value=${!variable}; joined=
+    if [[ "$variable" == VK_INSTANCE_LAYERS ]]; then separator=:
+    else separator=,; fi
+    IFS="$separator" read -r -a entries <<< "$value"
+    for item in "${entries[@]}"; do
+      [[ -z "$item" || "$item" == VK_LAYER_GFG_native ]] && continue
+      joined+="${joined:+$separator}$item"
+    done
+    if [[ -n "$joined" ]]; then export "$variable=$joined"; else unset "$variable"; fi
+  done
   if (( diagnose )) && [[ -r "$root/diagnose.sh" ]]; then
     exec bash "$root/diagnose.sh" --passthrough "$@"
   fi
   exec "$@"
+}
+root="${XDG_DATA_HOME:-$HOME/.local/share}/gfg-native"
+if (( disabled )); then passthrough "$@"; fi
+mode_file="${GFG_NATIVE_MODE_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/mako-render/runtime-state/native-gsf.mode}"
+mode="${GFG_NATIVE_MODE:-}"
+if [[ -z "$mode" && -r "$mode_file" ]]; then
+  IFS= read -r -n 8 mode < "$mode_file" || :
+fi
+mode=${mode:-3} # invoking this explicit launcher opts in; plugin defaults off
+case "$mode" in off|2|3) ;; *) mode=off; printf 'GFG: invalid native mode, using real-only.\n' >&2 ;; esac
+if [[ "$mode" == off ]] || \
+   [[ ! -r "$root/VkLayer_gfg_native.json" || ! -r "$root/libVkLayer_gfg_native.so" ]]; then
+  passthrough "$@"
 fi
 export VK_LAYER_PATH="$root${VK_LAYER_PATH:+:$VK_LAYER_PATH}"
 case ":${VK_INSTANCE_LAYERS:-}:" in
@@ -57,8 +79,13 @@ if [[ -n "${GAMESCOPE_WAYLAND_DISPLAY:-}" && -n "${GFG_NATIVE_GAMESCOPE_MANIFEST
   export DISABLE_GAMESCOPE_WSI=1
 fi
 status_dir="${XDG_STATE_HOME:-$HOME/.local/state}/gfg-native/status"
-mkdir -p "$status_dir"
-export GFG_NATIVE_STATUS_DIR="$status_dir"
+if mkdir -p "$status_dir" 2>/dev/null; then
+  export GFG_NATIVE_STATUS_DIR="$status_dir"
+else
+  # Optional telemetry must never prevent a game from starting.
+  unset GFG_NATIVE_STATUS_DIR
+  printf 'GFG: native status directory unavailable; starting without live status.\n' >&2
+fi
 layers=:
 IFS=: read -r -a layer_names <<< "$VK_INSTANCE_LAYERS"
 for layer in "${layer_names[@]}"; do

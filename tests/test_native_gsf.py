@@ -1,5 +1,6 @@
 """Independent generator settings, real launcher selection and honest live status."""
 import hashlib
+import asyncio
 import shutil
 import json
 import logging
@@ -12,6 +13,7 @@ import time
 import types
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'py_modules'))
@@ -101,6 +103,67 @@ class NativeGsfTests(unittest.TestCase):
         (package / 'libVkLayer_gfg_native.so').write_bytes(b'corrupt')
         self.assertFalse(native_gsf.stage_packaged(self.home, package)['success'])
         self.assertEqual(installed.read_bytes(), previous)
+
+    def test_missing_bundle_and_launcher_cannot_report_success(self):
+        missing = self.home / "no-bundle"
+        self.assertFalse(native_gsf.stage_packaged(self.home, missing)["success"])
+        self.install_fixture()
+        result = native_gsf.status(self.runtime, self.home)
+        self.assertFalse(result["installed"])
+        self.assertFalse(result["launcher_ready"])
+        self.assertIsNone(result["launch_command"])
+
+    def test_missing_launcher_rejects_x3_without_changing_mode(self):
+        from gfg_plugin.governor_service import GovernorService
+        svc = GovernorService.__new__(GovernorService)
+        svc.configuration = self.config
+        installer = native_gsf.stage_packaged
+        with patch('gfg_plugin.native_gsf.stage_packaged', side_effect=lambda home:
+                   installer(home, self.home / 'missing')):
+            result = svc.set_native_gsf('3')
+        self.assertFalse(result['success'])
+        self.assertEqual(native_gsf.requested(self.runtime), 'off')
+
+    def test_integrated_staging_initializes_off_and_preserves_later_choice(self):
+        from gfg_plugin.governor_service import GovernorService
+        package = self.home / 'bundle'; package.mkdir()
+        for name in ('install.sh', 'gfg-native.sh', 'diagnose.sh'):
+            shutil.copy2(ROOT / 'engine/gfg-native/package' / name, package / name)
+        for name in ('libVkLayer_gfg_native.so', 'VkLayer_gfg_native.json', 'accept_report.py'):
+            (package / name).write_bytes(b'installer fixture, not a Vulkan test')
+        (package / 'MANIFEST.json').write_text('{"version":"0.0.0-fg3-internal.7"}\n')
+        (package / 'SHA256SUMS.txt').write_text(''.join(
+            f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n'
+            for p in sorted(package.iterdir())))
+        svc = GovernorService.__new__(GovernorService)
+        svc.configuration, svc.log = self.config, self.log
+        installer = native_gsf.stage_packaged
+        with patch('gfg_plugin.native_gsf.stage_packaged', side_effect=lambda home: installer(home, package)):
+            self.assertTrue(svc.prepare_native_gsf()['success'])
+            self.assertEqual((self.runtime / native_gsf.MARKER).read_text(), 'off\n')
+            status = svc.native_gsf_status()
+            self.assertTrue(status['launcher_ready'])
+            self.assertEqual(status['component_version'], '0.0.0-fg3-internal.7')
+            result = subprocess.run([str(self.home / '.local/bin/gfg-native'), '/usr/bin/env'],
+                                    env=dict(os.environ, HOME=str(self.home)), capture_output=True, text=True, check=True)
+            self.assertIn('DISABLE_GFG_NATIVE_FG=1\n', result.stdout)
+            self.assertNotIn('GFG_NATIVE_GPU_BRIDGE=1\n', result.stdout)
+            native_gsf.set_mode(self.runtime, '3', self.log)
+            self.assertTrue(svc.prepare_native_gsf()['success'])
+            self.assertEqual(native_gsf.requested(self.runtime), '3')
+
+    def test_startup_stages_native_even_when_legacy_renderer_is_unsupported(self):
+        from gfg_plugin.plugin import Plugin
+        plugin = Plugin.__new__(Plugin)
+        calls = []
+        plugin.governor_service = SimpleNamespace(prepare_native_gsf=lambda:
+            calls.append('stage-native') or {'success': True})
+        plugin.installation_service = SimpleNamespace(current_package_host_compatibility=lambda:
+            calls.append('legacy-check') or ('unsupported', False, 'legacy-incompatible'))
+        plugin.configuration_service = SimpleNamespace(enforce_unsupported_host_passthrough_if_needed=lambda: False)
+        plugin.flatpak_service = SimpleNamespace(disable_incompatible_host_overrides=lambda: {'success': True})
+        asyncio.run(plugin._main())
+        self.assertEqual(calls, ['stage-native', 'legacy-check'])
 
     def test_status_requires_live_pid_and_matching_start_time(self):
         folder = self.home / '.local/state/gfg-native/status'

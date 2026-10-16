@@ -1,7 +1,34 @@
 <!-- codex-fg3-coordination -->
 
+## P0 launch recovery on current main (2.1.5)
 
-## Published experimental packages — hardware NOT TESTED
+The owner reports every game exits immediately, also with `gfg-native --off`.
+This is NOT established as a GPU failure. Removing the entire GFG Steam prefix
+is the recovery path when the executable itself is absent. No new user logs requested.
+
+Merged actual upstream main 516b734 (2.1.5), preserving Governor emergency-quality
+and loading-transition fixes alongside the fixed-target experiment guard. The
+previous integrated archive used 2.1.2-te.8 and is withdrawn below.
+
+Implemented: native component staging at plugin startup, executable readiness,
+visible install errors/build/Steam command, initial Off marker matching the UI,
+idempotent installs preserving previous-version rollback, inherited native layer
+removal in --off, telemetry-directory failure no longer blocking games, and
+option-aware passthrough after uninstall/first rollback. A separate real defect
+in CreateDevice retry restores consumed loader LINK_INFO before real-only retry
+(34be414); this is not claimed as the user's crash cause.
+
+Software checks so far: full merged backend 1351 tests (1 skipped), frontend121
+screens, native device/queue/clock/metadata contracts,17 full-pipeline checks
+including actual x2/x3 pixel observation and validation in both layer orders.
+Latest readiness/rollback regressions19 pass. Final exact-archive checks and a
+2.1.5-gsf.7 experimental package follow this source checkpoint.
+Hardware remains NOT TESTED; no connected Deck endpoint or /dev/dri in this cloud.
+No 90-FPS, SteamOS runtime or all-games-fixed claim is made.
+
+
+
+## Withdrawn internal.6 — do not install
 
 Source commit:f7d007998f137697d1a186af1afc79c3255a6ef8.
 - Integrated Decky:docs/fg3/artifacts/GFG-Extreme-GSF-0.0.0-fg3-internal.6.zip

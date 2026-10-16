@@ -418,6 +418,25 @@ for (const mode of ["budget","balanced","quality","extreme"]) {
   }
   await page.close();cases.push(["native-gsf-mode"]);
 }
+{
+  const command = "/home/deck/.local/bin/gfg-native %command%";
+  const page = await openPage(browser, { ...STATES["home-idle-oled"], native_gsf: { requested_mode: "off", installed: true, launcher_ready: true, launch_command: command, component_version: "0.0.0-fg3-internal.7", contexts: [] } }, ["Settings", "Diagnostics"]);
+  if (!(await page.getByText("Steam launch option: " + command, { exact: true }).count()) ||
+      !(await page.getByText("Native build: 0.0.0-fg3-internal.7", { exact: true }).count())) {
+    failed++; console.error("FAIL native installation identity/launch option");
+  }
+  await page.close(); cases.push(["native-gsf-installed"]);
+}
+{
+  const page = await openPage(browser, { ...STATES["home-idle-oled"], __nativeInstallFail: true, native_gsf: { requested_mode: "off", installed: false, contexts: [] } }, ["Settings", "Diagnostics"]);
+  await page.getByText("×3", { exact: true }).click();
+  if (!(await page.getByText("Native generator unavailable: native-launcher-not-ready-after-install", { exact: true }).count()) ||
+      await page.getByText("Restart the game to apply.", { exact: true }).count() ||
+      await page.getByText(/Steam launch option:/).count()) {
+    failed++; console.error("FAIL unavailable native launcher incorrectly advertised");
+  }
+  await page.close(); cases.push(["native-gsf-install-failure"]);
+}
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);
 process.exit(failed ? 1 : 0);

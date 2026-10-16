@@ -1182,8 +1182,8 @@ class GovernorService:
     def set_native_gsf(self, mode: str) -> Dict[str, Any]:
         if mode not in native_gsf.MODES:
             return {"success": False, "error": "invalid-native-gsf-mode"}
-        if mode != "off" and getattr(self.configuration, "user_home", None) is not None:
-            staged = native_gsf.stage_packaged(self.configuration.user_home)
+        if mode != "off":
+            staged = self.prepare_native_gsf()
             if not staged["success"]:
                 return staged
         result = native_gsf.set_mode(self.configuration.runtime_state_dir, mode, self.log, getattr(self.configuration, "user_home", None))
@@ -1192,14 +1192,31 @@ class GovernorService:
             self._poke()
         return result
 
+    def prepare_native_gsf(self) -> Dict[str, Any]:
+        home = getattr(self.configuration, "user_home", None)
+        result = native_gsf.stage_packaged(home) if home is not None else {
+            "success": False, "error": "native-user-home-unavailable"}
+        if result.get("success") and not (self.configuration.runtime_state_dir / native_gsf.MARKER).exists():
+            # The standalone CLI opts in when invoked without a marker. An
+            # integrated Decky install must instead agree with the UI's Off.
+            initialized = native_gsf.set_mode(self.configuration.runtime_state_dir, "off", self.log, home)
+            if not initialized.get("success"):
+                result = initialized
+        self._native_stage_result = result
+        return result
+
     def native_gsf_status(self) -> Dict[str, Any]:
-        return native_gsf.status(self.configuration.runtime_state_dir, getattr(self.configuration, "user_home", None))
+        result = native_gsf.status(self.configuration.runtime_state_dir, getattr(self.configuration, "user_home", None))
+        staged = getattr(self, "_native_stage_result", {})
+        if staged.get("error"):
+            result["installation_error"] = staged["error"]
+        return result
 
     # ------------------------------------------------- Temporal Engine (exp.)
     def temporal_engine_mode(self) -> str:
         """Launch mode of the experimental engine. Off unless the player chose one;
         experimental additionally needs the stored, explicit consent."""
-        raw = self._settings.get("temporal_engine")
+        raw = getattr(self, "_settings", {}).get("temporal_engine")
         raw = raw if isinstance(raw, dict) else {}
         mode = temporal_engine.normalize_mode(raw.get("mode"))
         if mode == "experimental" and raw.get("experimental_consent") is not True:

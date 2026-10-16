@@ -1421,6 +1421,12 @@ class Plugin:
         Any initialization code should go here.
         """
         decky.logger.info("GFG Extreme loaded")
+        # The independent native launcher must exist before the UI advertises
+        # its Steam command. Staging leaves the requested mode unchanged/off.
+        # It also works when the legacy optional renderer is incompatible.
+        native_stage = await asyncio.to_thread(self.governor_service.prepare_native_gsf)
+        if not native_stage.get("success"):
+            decky.logger.warning("Native GSF launcher unavailable: %s", native_stage.get("error"))
         try:
             _host, host_supported, host_error = (
                 await asyncio.to_thread(

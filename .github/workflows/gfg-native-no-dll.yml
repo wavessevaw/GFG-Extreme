@@ -32,7 +32,7 @@ jobs:
           make -C engine/gfg-temporal all lib 2>&1 | tee build-core.log
           engine/gfg-temporal/build/te-tests 2>&1 | tee core.log
           GFG_TEST_GPU_LMC=1 engine/gfg-temporal/build/te-tests 2>&1 | tee core-gpu-lmc.log
-          make -C engine/gfg-native ENABLE_TE=1 BUILD=build-te VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" layer build-te/wsi-gpu-smoke build-te/borrowed-device build-te/gpu-wsi-observer build-te/observer-layer/libVkLayer_gfg_native.so build-te/async-observer-app build-te/hdr-precision swapchain-policy memory-policy present-ids present-chain gpu-ring output-worker queue-serialization presentation-timing 2>&1 | tee build-native.log
+          make -C engine/gfg-native ENABLE_TE=1 BUILD=build-te VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" layer build-te/wsi-gpu-smoke build-te/borrowed-device build-te/gpu-wsi-observer build-te/observer-layer/libVkLayer_gfg_native.so build-te/async-observer-app build-te/hdr-precision swapchain-policy memory-policy present-ids present-chain gpu-ring output-worker queue-serialization presentation-timing device-fallback 2>&1 | tee build-native.log
       - name: GSF full native pipeline (9 Hz software clock, not Deck performance)
         run: |
           set -euo pipefail

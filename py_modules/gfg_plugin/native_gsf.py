@@ -11,15 +11,37 @@ from .managed_files import write_managed_text_atomically
 MODES = ("off", "2", "3")
 MARKER = "native-gsf.mode"
 
+def installation(user_home: Path | None) -> dict:
+    """A Steam launch option is usable only when its executable exists too."""
+    if user_home is None:
+        return {"installed": False, "launcher_ready": False, "launch_command": None,
+                "component_version": None}
+    root = user_home / ".local/share/gfg-native"
+    launcher = user_home / ".local/bin/gfg-native"
+    ready = launcher.is_file() and os.access(launcher, os.X_OK)
+    installed = ready and all((root / f).is_file() and os.access(root / f, os.R_OK)
+                             for f in ("libVkLayer_gfg_native.so", "VkLayer_gfg_native.json"))
+    version = None
+    try:
+        version = json.loads((root / "MANIFEST.json").read_text()).get("version")
+    except (OSError, ValueError, AttributeError):
+        pass
+    return {"installed": installed, "launcher_ready": ready,
+            "launch_command": str(launcher) + " %command%" if installed else None,
+            "component_version": version}
+
 def stage_packaged(user_home: Path, package_root: Path | None = None) -> dict:
     """Install only a checksum-verified bundled native component as the game user.
 
-    The mode click is the opt-in. No network, foreign engine, power change or
-    system installation occurs. install.sh preserves the previous component.
+    Staging on plugin startup does not activate the layer. The mode click is
+    still the opt-in. No network, power change or system installation occurs.
+    The idempotent installer preserves the last distinct component for rollback.
     """
     package = package_root or Path(__file__).resolve().parents[2] / "bin/gfg-native"
     if not (package / "install.sh").is_file():
-        return {"success": True, "packaged": False}
+        ready = installation(user_home)
+        return {"success": ready["installed"], "packaged": False, **ready,
+                **({} if ready["installed"] else {"error": "native-component-not-packaged-or-installed"})}
     env = dict(os.environ, HOME=str(user_home),
                XDG_DATA_HOME=str(user_home / ".local/share"),
                XDG_STATE_HOME=str(user_home / ".local/state"))
@@ -32,7 +54,9 @@ def stage_packaged(user_home: Path, package_root: Path | None = None) -> dict:
                                 capture_output=True, text=True, timeout=30)
         if result.returncode:
             return {"success": False, "error": "native-package-check-or-install-failed"}
-        return {"success": True, "packaged": True}
+        ready = installation(user_home)
+        return {"success": ready["installed"], "packaged": True, **ready,
+                **({} if ready["installed"] else {"error": "native-launcher-not-ready-after-install"})}
     except (OSError, KeyError, subprocess.TimeoutExpired) as error:
         return {"success": False, "error": str(error)}
 
@@ -60,8 +84,8 @@ def set_mode(runtime: Path, mode: str, logger, user_home: Path | None = None) ->
 
 def status(runtime: Path, user_home: Path | None) -> dict:
     mode = requested(runtime)
-    root = user_home / ".local/share/gfg-native" if user_home is not None else None
-    installed = root is not None and all((root / f).is_file() for f in ("libVkLayer_gfg_native.so", "VkLayer_gfg_native.json"))
+    ready = installation(user_home)
+    installed = ready["installed"]
     contexts = []
     folder = user_home / ".local/state/gfg-native/status" if user_home is not None else None
     try:
@@ -85,7 +109,7 @@ def status(runtime: Path, user_home: Path | None) -> dict:
                 continue
     except OSError:
         pass
-    return {"requested_mode": mode, "installed": installed, "contexts": contexts,
+    return {"requested_mode": mode, **ready, "contexts": contexts,
             "state": "active-wsi" if contexts else "off" if mode == "off" else "waiting" if installed else "unavailable",
             "reason": None if contexts else "restart-game-to-apply" if installed else "native-component-not-installed",
             "physical_displayed_fps": None, "unique_displayed_fps": None,

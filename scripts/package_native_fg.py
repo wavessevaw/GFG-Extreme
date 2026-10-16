@@ -216,12 +216,25 @@ def decky_package(native_zip: Path, index: Path, outdir: Path) -> Path:
             modes["bin/gfg-native/" + name] = (item.external_attr >> 16) & 0o777
     metadata = json.loads(files["package.json"])
     component = json.loads(files["bin/gfg-native/MANIFEST.json"])
-    metadata["version"] = component["version"]
+    metadata["base_version"] = metadata["version"]
+    sequence = component["version"].rsplit(".", 1)[1]
+    metadata["version"] += "-gsf." + sequence
     metadata["gfgPrerelease"] = True
     metadata["bundled_native_gsf"] = component
     files["package.json"] = (json.dumps(metadata, indent=2) + "\n").encode()
-    files["NATIVE-GSF-EXPERIMENTAL.txt"] = b"Native GSF hardware acceptance: NOT TESTED. Settings > Diagnostics > GFG Native Generator. Mode click verifies and installs the bundled independent component. Off by default. No stable release.\n"
-    path = outdir / ("GFG-Extreme-GSF-" + component["version"] + ".zip")
+    lock = json.loads(files["package-lock.json"])
+    lock["version"] = lock["packages"][""]["version"] = metadata["version"]
+    files["package-lock.json"] = (json.dumps(lock, indent=2) + "\n").encode()
+    # Keep the installed UI, backend and diagnostic build identity consistent.
+    # The archive's base_version + component source_commit record this explicit
+    # packaging transform; the source checkout keeps upstream's base version.
+    for name, prefix in (("governor_service.py", "VERSION"), ("log_report.py", "CURRENT_VERSION")):
+        path = "py_modules/gfg_plugin/" + name
+        files[path] = re.sub(r'^' + prefix + r' = "[^"]+"',
+                            prefix + ' = "' + metadata["version"] + '"',
+                            files[path].decode(), count=1, flags=re.M).encode()
+    files["NATIVE-GSF-EXPERIMENTAL.txt"] = b"Native GSF hardware acceptance: NOT TESTED. Bundled independent component is verified and installed at plugin startup, without enabling frame generation. Settings > Diagnostics > GFG Native Generator: Off / x2 / x3. The Steam launch option is shown only when the executable launcher and component are present. Off by default. No stable release.\n"
+    path = outdir / ("GFG-Extreme-" + metadata["version"] + ".zip")
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name, data in sorted(files.items()):
             zi = zipfile.ZipInfo("GFG-Extreme/" + name, date_time=(2026, 10, 16, 0, 0, 0))
@@ -240,7 +253,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--outdir", type=Path, required=True)
-    parser.add_argument("--version", default="0.0.0-fg3-internal.6")
+    parser.add_argument("--version", default="0.0.0-fg3-internal.7")
     parser.add_argument("--build-environment", help="Actual build environment; otherwise inferred from GitHub Actions or marked unattested")
     parser.add_argument("--decky-index", type=Path, help="Also build integrated Decky experiment with this freshly built frontend")
     args = parser.parse_args()
