@@ -153,13 +153,18 @@ class PowerSplit:
         if not s.steady:
             # A TDP or operating-point trial is not evidence about CPU split.
             # The active CPU cap must not be carried into a second experiment.
+            # Preserve the more precise frame-deficit reason if the FPS collapsed
+            # before or during that transition.
+            short = (_ok(s.real_fps) and _ok(s.target_real) and s.target_real > 0
+                     and s.real_fps < DIP_FPS * s.target_real)
+            reason = "real-frames-short" if short else "governor-transition"
             self._abort_ab()
             if self.level:
-                self._move(now, 0, "governor-transition")
+                self._move(now, 0, reason)
                 self.next_at = now + COOLDOWN_S
             else:
                 self.next_at = max(self.next_at or now, now + STEP_GAP_S)
-            self.phase, self.reason = "free", "governor-transition"
+            self.phase, self.reason = "free", reason
             return self.cap_khz
         if self.next_at is None:
             self.next_at = now + STEP_GAP_S          # let the game settle at its point first
