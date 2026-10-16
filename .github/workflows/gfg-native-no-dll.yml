@@ -146,10 +146,20 @@ jobs:
 
       - name: Compare rebuilt native library with package
         run: cmp "$RUNNER_TEMP/fg3-stage/GFG-Native-FG/libVkLayer_gfg_native.so" "$RUNNER_TEMP/fg3-source-native/libVkLayer_gfg_native.so"
-      - name: Retain native no-DLL compatibility bootstrap check
+      - name: Build and test native no-DLL compatibility bootstrap
         run: |
-          python3 scripts/build_frame_fusion.py --native-no-dll --work "$RUNNER_TEMP/gfg-native-compatibility" --headers "$RUNNER_TEMP/vkh/include"
-          python3 scripts/check_native_independence.py --source "$RUNNER_TEMP/gfg-native-compatibility/source"
+          set -uo pipefail
+          log="$RUNNER_TEMP/native-compatibility.log"
+          python3 scripts/build_frame_fusion.py --native-no-dll --work "$RUNNER_TEMP/gfg-native-compatibility" --headers "$RUNNER_TEMP/vkh/include" >"$log" 2>&1
+          result=$?
+          tail -n 60 "$log"
+          if (( result != 0 )); then
+            while IFS= read -r line; do printf '::error title=Native bootstrap build failure::%s\n' "$line"; done < <(tail -n 60 "$log")
+          fi
+          exit "$result"
+
+      - name: Verify native no-DLL source contract
+        run: python3 scripts/check_native_independence.py --source "$RUNNER_TEMP/gfg-native-compatibility/source"
       - name: Collect build and validation logs for the test artifact
         run: |
           set -euo pipefail
@@ -161,6 +171,7 @@ jobs:
             "$logs/"
           cp "$RUNNER_TEMP/fg3-private/installed.log" "$logs/"
           rm "$RUNNER_TEMP/fg3-private/installed.log"
+          cp "$RUNNER_TEMP/native-compatibility.log" "$logs/"
           cp gpu-*.log skip-*.log fault-*.log disabled-timeline-*.log mailbox-*.log \
             shared-fd.log relay-rejected.log "$logs/"
           {
