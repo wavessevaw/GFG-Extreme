@@ -71,6 +71,7 @@ static VkResult observer_present(VkQueue queue,const VkPresentInfoKHR *info) {
 #ifdef GFG_NATIVE_TEST_OBSERVE_LAYER
     observer.frame=(observer.total_calls+2u)/3u;
     observer.interval_calls=observer.total_calls?(observer.total_calls-1u)%3u:0;
+    if(getenv("GFG_NATIVE_TEST_CUT")){observer.frame=observer.total_calls;observer.interval_calls=0;}
 #endif
     uint32_t index=info->pImageIndices[0];
     if(index>=observer.image_count) return VK_ERROR_INITIALIZATION_FAILED;
@@ -121,7 +122,7 @@ static VkResult observer_present(VkQueue queue,const VkPresentInfoKHR *info) {
         else if(observer.frame==1 && observer.interval_calls==1){
             if(memcmp(observer.samples[0],observer.mapped,4)) observer.failed=1;
         }
-    } else {
+    } else if(!getenv("GFG_NATIVE_TEST_CUT")) {
     if(observer.frame && observer.interval_calls<2){
         memcpy(observer.samples[observer.interval_calls],observer.mapped,4);
         ++observer.generated;
@@ -200,10 +201,11 @@ static int observer_start(VkInstance instance,VkPhysicalDevice physical,VkDevice
 static int observer_finish(void){
     const char *fault=getenv("GFG_NATIVE_GPU_FAULT");
     const int recovery=fault && !strcmp(fault,"record");
-    const unsigned expected_calls=recovery?5u:10u;
-    int passed=!observer.failed && observer.total_calls==expected_calls && observer.generated==(recovery?0u:6u);
+    const int cut=getenv("GFG_NATIVE_TEST_CUT")!=NULL;
+    const unsigned expected_calls=cut?4u:recovery?5u:10u;
+    int passed=!observer.failed && observer.total_calls==expected_calls && observer.generated==((recovery||cut)?0u:6u);
     const char *algorithm=getenv("GFG_NATIVE_ALGO");
-    if(algorithm && !strcmp(algorithm,"gsf") && getenv("GFG_NATIVE_ASYNC") && !recovery) {
+    if(algorithm && !strcmp(algorithm,"gsf") && getenv("GFG_NATIVE_ASYNC") && !recovery && !cut) {
         const char *rate=getenv("GFG_NATIVE_OUTPUT_HZ");double hz=rate?atof(rate):90.0,min_ms=1e9;
         for(unsigned i=1;i<observer.total_calls && i<16;++i) {
             double delta=(double)(observer.handoff_ns[i]-observer.handoff_ns[i-1])/1e6;
@@ -221,7 +223,8 @@ static int observer_finish(void){
     OBS(DestroyCommandPool)(observer.device,observer.pool,NULL);
     OBS(UnmapMemory)(observer.device,observer.memory);
     OBS(DestroyBuffer)(observer.device,observer.buffer,NULL);OBS(FreeMemory)(observer.device,observer.memory,NULL);
-    if(recovery)
+    if(cut)fprintf(stderr,"GPU WSI observer: real=4 synthetic=0 cut_recovery=%s physical_scanout=unobserved\n",passed?"PASS":"FAIL");
+    else if(recovery)
         fprintf(stderr,"GPU WSI observer: real=4 synthetic=0 recovery_duplicate=1 content=%s real_handoffs=PASS physical_scanout=unobserved\n",passed?"PASS":"FAIL");
     else fprintf(stderr,"GPU WSI observer: real=4 synthetic=6 content=%s handoff_order=%s physical_scanout=unobserved\n",
         passed?"PASS":"FAIL",observer.total_calls==10?"PASS":"FAIL");

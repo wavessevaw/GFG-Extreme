@@ -60,7 +60,7 @@
 
 #define RING_MAX 4
 #define TIMING_CAP 8192
-enum { DROP_RING, DROP_TE, DROP_HISTORY, DROP_ACQUIRE, DROP_BYPASS, DROP_ERROR, DROP_DEADLINE, DROP_COUNT };
+enum { DROP_RING, DROP_TE, DROP_HISTORY, DROP_ACQUIRE, DROP_BYPASS, DROP_ERROR, DROP_DEADLINE, DROP_CUT, DROP_COUNT };
 
 #define FN(name) PFN_vk##name name
 #define DEVICE_FUNCS(X) \
@@ -183,6 +183,7 @@ struct gfg_gpu_fg {
     int pacing_active;
     uint64_t pacing_waits, pacing_late;
     int deadline_drop;
+    int cut_drop;
 };
 
 void gfg_gpu_fg_set_output_thread(gfg_gpu_fg *fg, pthread_mutex_t *wsi) { fg->output_wsi = wsi; }
@@ -1036,9 +1037,10 @@ static void percentile(double *v, uint32_t n, double *median, double *p95) {
 
 void gfg_gpu_fg_destroy(gfg_gpu_fg *fg) {
     if (!fg) return;
-    if(fg->clock.period_ns)fprintf(stderr,"[gfg-native] output_clock hz=%.3f handoff_waits=%llu late_handoffs=%llu resyncs=%llu skipped_deadline=%llu physical_scanout=unverified\n",
+    if(fg->clock.period_ns)fprintf(stderr,"[gfg-native] output_clock hz=%.3f handoff_waits=%llu late_handoffs=%llu resyncs=%llu skipped_deadline=%llu skipped_cut=%llu physical_scanout=unverified\n",
         1e9/(double)fg->clock.period_ns,(unsigned long long)fg->pacing_waits,(unsigned long long)fg->pacing_late,
-        (unsigned long long)fg->clock.resyncs,(unsigned long long)fg->drop_outputs[DROP_DEADLINE]);
+        (unsigned long long)fg->clock.resyncs,(unsigned long long)fg->drop_outputs[DROP_DEADLINE],
+        (unsigned long long)fg->drop_outputs[DROP_CUT]);
     fg->in_present = 0;
     /* The stopped worker may have finished with a pass-through job. Its
      * private gate and downstream binary waits then have no transport-ring
@@ -1266,6 +1268,19 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v, u
     if(fg->pacing_active && fg->clock.period_ns) {
         const uint64_t target=gfg_frame_clock_target(&fg->clock,(unsigned)k);
         uint64_t now=(uint64_t)(now_us()*1000.0),value=v+1+(uint64_t)k;
+        if(k==0) {
+            /* This single-queue transport queues both outputs before their
+             * copies. Collect their small control header before giving WSI
+             * synthetic credit. Never count cut/hold endpoint copies as FG3.
+             * This is metadata only, not a pixel readback. */
+            count_wait(fg);
+            if(!te_context_idle(fg->context,target>now?target-now:0)) {fg->deadline_drop=1;return 0;}
+            te_pair_stats state;
+            if(te_last_stats(fg->context,&state)==VK_SUCCESS && (state.scene_cut || state.held)) {
+                fg->cut_drop=1;return 0;
+            }
+            now=(uint64_t)(now_us()*1000.0);
+        }
         VkSemaphoreWaitInfo wait={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
             .semaphoreCount=1,.pSemaphores=&fg->timeline,.pValues=&value};
         count_wait(fg);
@@ -1405,6 +1420,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     if (!fg || !app || !next) return VK_ERROR_INITIALIZATION_FAILED;
     const double t0 = now_us();
     fg->deadline_drop=0;
+    fg->cut_drop=0;
     if(fg->pacing_active && fg->clock.period_ns)
         gfg_frame_clock_pair(&fg->clock,(uint64_t)(t0*1000.0));
     fg->output_deadline_us = t0 + (double)gfg_gpu_fg_source_period_ns(fg)/1000.0;
@@ -1530,7 +1546,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
                 int g = present_synthetic(fg, rs, k, v, idx, next, ids, app_chain.dynamic_mode, &next_us);
                 if (g <= 0) {
                     if (g < 0) STAT_ADD(errors, 1);
-                    drop_reason = g < 0 ? DROP_ERROR : fg->deadline_drop?DROP_DEADLINE:DROP_ACQUIRE;
+                    drop_reason = g < 0 ? DROP_ERROR : fg->cut_drop?DROP_CUT:fg->deadline_drop?DROP_DEADLINE:DROP_ACQUIRE;
                     break;
                 }
                 ++presented;

@@ -244,6 +244,10 @@ int main(void) {
         vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
             VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&pre);
         VkClearColorValue clear={.float32={0.20f+0.05f*(frame%4),0.2f,0.80f-0.05f*(frame%4),1}};
+        if(getenv("GFG_NATIVE_TEST_CUT")) {
+            float value=frame%2?.9f:.1f;
+            clear=(VkClearColorValue){.float32={value,value,value,1}};
+        }
         VkImageSubresourceRange range={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
         vkCmdClearColorImage(cmd,images[index],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&clear,1,&range);
         VkImageMemoryBarrier post=pre;

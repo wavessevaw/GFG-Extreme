@@ -42,6 +42,7 @@ def main():
     for i,order in enumerate(['VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation','VK_LAYER_KHRONOS_validation:VK_LAYER_GFG_native']):
         e=dict(env,VK_INSTANCE_LAYERS=order,VK_LAYER_PATH=str(native/'observer-layer')+':'+validation,GFG_NATIVE_TEST_FRAMES='4')
         run(f'pixels-order-{i}',[native/'async-observer-app'],e,['real=4 synthetic=6 content=PASS handoff_order=PASS','spacing=PASS'])
+        run(f'cut-order-{i}',[native/'async-observer-app'],dict(e,GFG_NATIVE_TEST_CUT='1'),['real=4 synthetic=0 cut_recovery=PASS','skipped_cut=6'])
         e=dict(env,VK_INSTANCE_LAYERS=order,VK_LAYER_PATH=str(native)+':'+validation,
                GFG_TEST_EXPECT_GPU='1',GFG_TEST_VALIDATION='1',GFG_TEST_FRAMES='6')
         for name,extra in [('recreate',dict(GFG_TEST_RECREATE='1')),
