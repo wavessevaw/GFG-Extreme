@@ -24,7 +24,10 @@ class LiveFusionScopeTests(RuntimeBase):
         self.svc.set_mode("game", "autopilot")
         self.svc._active_profile = "game"
         self.svc._point = {"key": "30x3"}
-        self.svc._point_deltas = {"frame_generation_enabled": True,
+        # Production _accept_request caches the *full* overlay, including
+        # Fusion consent, rather than just the cadence deltas.
+        self.svc._point_deltas = {"gfg_frame_fusion": True,
+                                  "frame_generation_enabled": True,
                                   "adaptive": False, "multiplier": 3,
                                   "base_fps_cap": 30, "target_fps": 90}
         self.saved = self.svc._saved_profile_config("game")
@@ -94,6 +97,29 @@ class LiveFusionScopeTests(RuntimeBase):
         self.sync()
         self.assertEqual(self.scope(), (False, 30))
         self.assertIs(self.svc._fusion_scope_synced, False)
+
+    def test_cached_old_full_point_cannot_override_latest_consent(self):
+        self.assertIs(self.svc._point_deltas["gfg_frame_fusion"], True)
+        self.svc.set_frame_fusion(False)
+        self.sync()
+        self.assertEqual(self.scope(), (False, 30))
+        self.assertIs(self.svc._point_deltas["gfg_frame_fusion"], True,
+                      "the original trial cache may stay intact")
+
+    def test_active_frame_os_injection_cannot_restore_stale_fusion(self):
+        self.svc._injection = {**self.svc._point_deltas,
+                               "base_fps_cap": 45}
+        self.svc.set_frame_fusion(False)
+        self.sync()
+        self.assertEqual(self.scope(), (False, 45))
+        self.assertTrue(self.svc._injection["gfg_frame_fusion"],
+                        "stale injected overlay is deliberately present")
+
+    def test_switching_away_from_autopilot_closes_fusion_with_live_point(self):
+        self.svc.set_mode("game", "balanced")
+        self.sync()
+        self.assertEqual(self.scope(), (False, 30))
+        self.assertIs(self.svc._point_deltas["gfg_frame_fusion"], True)
 
     def test_no_extra_rewrites_when_runtime_scope_is_unchanged(self):
         self.sync()
