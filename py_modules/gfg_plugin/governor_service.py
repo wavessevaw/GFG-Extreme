@@ -3836,7 +3836,21 @@ class GovernorService:
             self._fast_last_sample_seq = sample_seq
             draw_now = statistics.median(self._draw_samples[-3:]) if self._draw_samples else None
             before = budget.tdp
-            if budget.fast_check(now, (recent.get("real") or {}).get("median"), draw_now) == "move":
+            fast_real = (recent.get("real") or {}).get("median")
+            fast_output = (recent.get("output") or {}).get("median")
+            fast_base = float(budget.point.base_target_fps)
+            loading_transition = bool(
+                budget.point.multiplier > 1.0 and isinstance(fast_real, (int, float))
+                and isinstance(fast_output, (int, float))
+                and float(fast_real) < fast_base * 0.60
+                and float(fast_output) < float(fast_real) * 1.25
+            )
+            # A loading collapse must reset starvation evidence rather than
+            # trigger the fast TDP path; resumed generated gameplay has output
+            # clearly above real FPS and is eligible for known-good recovery.
+            if loading_transition:
+                fast_real = None
+            if budget.fast_check(now, fast_real, draw_now) == "move":
                 self._event("budget-step", budget.last_reason, profile=profile,
                             real=(recent.get("real") or {}).get("median"), draw_w=draw_now,
                             before={"tdp_w": before}, after={"point": budget.point.key, "tdp_w": budget.tdp,
