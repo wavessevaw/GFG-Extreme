@@ -1454,6 +1454,10 @@ class GovernorService:
             self.frame_os.draw_w = self.power.status().get("draw_w")
         except Exception:
             self.frame_os.draw_w = (self._status.get("power_feedback") or {}).get("draw_w")
+        # A 10 Hz runner sees this same ~1 Hz reading repeatedly. A/B power
+        # proof needs independent sensor refreshes, not ten copies of a cached
+        # sample masquerading as ten measurements.
+        self.frame_os.draw_sample_at = self._clock() if self.frame_os.draw_w is not None else None
         self.frame_os.configure(
             enabled=True, mode=mode, output_hz=float(point.target_output_fps),
             calm_real_hz=float(point.base_target_fps),
