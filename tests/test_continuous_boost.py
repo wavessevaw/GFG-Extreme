@@ -64,7 +64,8 @@ class ContinuousRunnerTests(unittest.TestCase):
             now[0] = t
             status = r.tick(t)
             self.assertEqual(status['decision']['level'], 'boost')
-            self.assertEqual(r.tdp_offset_w, 4)
+            self.assertEqual(r.tdp_offset_w, 0, "paced boost cannot claim extra physical watts")
+            self.assertEqual(r.requested_tdp_offset_w, 4)
         now[0] = 91
         self.assertEqual(r.tdp_offset_w, 0)
         r.configure(**{**config, 'continuous_boost_enabled': False})
