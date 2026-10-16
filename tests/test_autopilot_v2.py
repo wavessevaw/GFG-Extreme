@@ -338,6 +338,7 @@ class GoalAndPauseTests(unittest.TestCase):
             svc = fixture.svc
             svc._settings.setdefault("profiles", {}).setdefault("game", {})["enabled"] = True
             svc.set_mode("game", "autopilot")
+            svc._autopilot_preference = lambda profile: "battery"  # explicit opt-in to half-refresh goal
             svc._budget = BudgetController(target_output_fps=90, now=0.0)
             now = {"value": 0}
             svc._clock = lambda: now["value"]
