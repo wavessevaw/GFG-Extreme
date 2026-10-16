@@ -157,7 +157,13 @@ jobs:
           fi
           tail -n 60 "$log"
           if (( result != 0 )); then
-            while IFS= read -r line; do printf '::error title=Native bootstrap build failure::%s\n' "$line"; done < <(tail -n 60 "$log")
+            details="$(tail -n 30 "$log" | tr '\n' ' ' | cut -c1-8000)"
+            printf '::error title=Native bootstrap build failure::exit=%s; %s\n' "$result" "$details"
+            {
+              printf '## Native no-DLL compatibility build failure (exit %s)\n\n```text\n' "$result"
+              tail -n 60 "$log"
+              printf '\n```\n'
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
           exit "$result"
 
