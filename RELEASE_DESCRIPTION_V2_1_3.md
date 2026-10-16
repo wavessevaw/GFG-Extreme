@@ -19,3 +19,5 @@ Automated regression tests cover known-good TDP recovery, loading-transition cla
 This release does not claim that the changes have been verified in a real Steam Deck game session until hardware testing is completed.
 
 Install **GFG-Extreme-v2_1_3.zip** through Decky's Install from zip.
+
+SHA-256: `<sha256>` — also see **SHA256SUMS.txt**.
