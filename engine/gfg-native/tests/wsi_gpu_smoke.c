@@ -17,6 +17,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_xcb.h>
 #include <xcb/xcb.h>
@@ -192,17 +194,30 @@ int main(void) {
     VkDeviceQueueCreateInfo qi = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
         .queueFamilyIndex = family, .queueCount = 1, .pQueuePriorities = &priority};
     const char *dext[] = {"VK_KHR_swapchain"};
-    /* an app-owned feature chain the layer must patch, not replace */
-    VkPhysicalDeviceVulkan12Features f12 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
-    VkPhysicalDeviceFeatures2 f2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &f12};
+    /* An app-owned feature chain the layer must preserve exactly. */
     const int chain12 = env_1("GFG_TEST_CHAIN_VK12");
+    const int chain12_disabled = env_1("GFG_TEST_CHAIN_VK12_DISABLED");
+    VkPhysicalDeviceVulkan12Features f12_local = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .timelineSemaphore = chain12 && !chain12_disabled ? VK_TRUE : VK_FALSE};
+    void *feature_page = NULL;
+    VkPhysicalDeviceVulkan12Features *f12 = &f12_local;
+    if (chain12 && env_1("GFG_TEST_READONLY_FEATURES")) {
+        feature_page = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        REQUIRE(feature_page != MAP_FAILED);
+        memcpy(feature_page, &f12_local, sizeof(f12_local));
+        REQUIRE(mprotect(feature_page, 4096, PROT_READ) == 0);
+        f12 = feature_page;
+    }
     VkDeviceCreateInfo di = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .pNext = chain12 ? &f2 : NULL,
+        .pNext = chain12 ? f12 : NULL,
         .queueCreateInfoCount = 1, .pQueueCreateInfos = &qi,
         .enabledExtensionCount = 1, .ppEnabledExtensionNames = dext};
     VkDevice device = VK_NULL_HANDLE;
     TRY(vkCreateDevice(physical, &di, NULL, &device));
-    REQUIRE(f12.timelineSemaphore == VK_FALSE); /* restored after the call */
+    REQUIRE(f12->timelineSemaphore == (chain12 && !chain12_disabled ? VK_TRUE : VK_FALSE));
+    if (feature_page) REQUIRE(munmap(feature_page, 4096) == 0);
     VkQueue queue = VK_NULL_HANDLE;
     vkGetDeviceQueue(device, family, 0, &queue);
     REQUIRE(queue);
@@ -232,7 +247,9 @@ int main(void) {
         .imageColorSpace = color.colorSpace, .imageExtent = ext, .imageArrayLayers = 1,
         .imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT, .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .preTransform = caps.currentTransform, .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-        .presentMode = VK_PRESENT_MODE_FIFO_KHR, .clipped = VK_TRUE};
+        .presentMode = env_1("GFG_TEST_MAILBOX_SWAPCHAIN")
+            ? VK_PRESENT_MODE_MAILBOX_KHR : VK_PRESENT_MODE_FIFO_KHR,
+        .clipped = VK_TRUE};
     if (!(caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR))
         for (uint32_t bit = 1; bit <= 8; bit *= 2)
             if (caps.supportedCompositeAlpha & bit) { swci.compositeAlpha = (VkCompositeAlphaFlagBitsKHR)bit; break; }

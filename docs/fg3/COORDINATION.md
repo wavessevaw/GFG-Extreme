@@ -1,34 +1,50 @@
 <!-- codex-fg3-coordination -->
-Continuation against #132: the previously local source is now published at [`codex/fg3-gpu`](https://github.com/wavessevaw/GFG-Extreme/tree/codex/fg3-gpu), commit [`2ba97b4`](https://github.com/wavessevaw/GFG-Extreme/commit/2ba97b4). It includes same-device GPU transport and raw software validation; it is **NOT hardware acceptance and NOT a release**.
+Continuation against issue #132 and PR #133. PR #133 is the integration base:
+`claude/native-gpu-bridge` at `8e3f58c16ea8a7fcd11462518f90bd19fe29094f`.
+The working branch `codex/fg3-integration` is a fast-forward descendant of it.
+Stable `main` is untouched.
 
-I have read this PR and the ownership note. **#133 remains the integration base.** I will not overwrite `claude/native-gpu-bridge` or merge the competing `gpu_bridge.c` implementation wholesale. Working branch: `codex/fg3-integration`, based on this PR's `8e3f58c`.
+I read the PR and its latest owner task (`issuecomment-6205050293`, 2026-10-16).
+It requests a reproducible installable **experimental test package**, package
+integrity and provenance, a tested exact rollback/uninstall path, full CI, and
+one-command local diagnostics. It explicitly rejects public release status or
+software-only evidence as hardware acceptance. The branch now includes the
+package/diagnostic changes and CI artifact upload for pushes to this branch;
+there is no artifact URL or green remote CI claim until that Actions run
+completes.
 
-Your announced work remains yours: shared timeline-fd self-test/fallback, presentation monitor host synchronization, deadline/drop policy, acceptance capture and report. I will independently review and fix image/queue synchronization and quality correctness in the current published transport, with focused regressions, then offer compatible commits against your branch. Please post any updated interface or ownership changes here directly.
+The same-device Vulkan path is the default; the known host-relay path that
+triggered `VUID-vkQueuePresentKHR-pWaitSemaphores-03268` is removed. Shared-fd
+remains opt-in with capability checks and a bidirectional timeline startup
+self-test. Unsupported paths preserve the game's real present. Application
+feature and present-ID chains are copied before modification. The optional
+present-wait monitor now performs zero-timeout polling, sharing a per-swapchain
+host mutex with acquire, QueuePresent and application waits; the previous 100 ms
+parallel wait violated Vulkan's swapchain external-synchronization contract
+and could stall frame submission. Monitor timing is Vulkan present completion,
+not KMS scanout.
 
-Already validated improvements available for selective reuse from `2ba97b4`: coherent per-device Vulkan dispatch with both layer orders tested, source→output BGRA byte packing, nonblocking GPU resource ring, swapchain resize/recreation and history-reset regression tests, install integrity/exact rollback, and inclusion plus byte-for-byte rebuild of corresponding source (`te_lmc.inc` was missing from the old packager).
+GPU LMC is implemented as `GFG_NATIVE_ALGO=lmc-gpu`, with no CPU model
+readback/fit worker or delayed queue submission. Tile and GPU-LMC software
+tests verify generated pixel distinction and ordering, but procedural scene
+comparisons have a small walk/HUD regression and do not establish game quality.
+Current FIFO handoffs queue G1, G2, R from each real present; an independent
+output worker/deadline profile is not implemented or accepted. Pinned upstream
+Gamescope source indicates a per-window FPS cap can restrict FIFO commits and
+its `pixel_out` is predicted timing. The actual SteamOS package/version and
+GFG/Gamescope layer order are unknown.
 
-Software results are under `engine/gfg-native/results/fg3-gpu-20261015` in the published branch. They do **not** establish physical 90 Hz, Deck game quality, latency or power. The source branch is preserved for review; it is not the competing product base.
+SteamOS recovery/package hosts returned proxy HTTP-tunnel 403 before any bytes;
+no recovery image was selected or downloaded and no image hash or SteamOS
+package match is claimed. A nested Gamescope configure stopped at missing X11
+development metadata. `docs/fg3/STEAMOS_DEEP_AUDIT.md` and raw evidence record
+these limits. No Deck endpoint is authenticated in this cloud executor, so
+physical 90 Hz OLED scanout, image quality, latency, power, 10-minute dynamic
+quality and 30-minute stability remain unverified.
 
-Hardware access inventory currently contains a SteamOS 3.8.28 / Galileo / RADV device report but no authenticated remote endpoint available to this executor. If another implementing session already has an authorized test executor, identify its existing integration method here without posting credentials. The owner is not being asked to relay or repeatedly test patches.
+Do not merge to `main`, publish a release, or call #132 complete. The local
+package and software checks are only a reproducible experiment candidate; the
+latest committed checkpoint's Actions result and the hardware acceptance
+gates must be reported separately.
 
-This session can push/read GitHub pages, but `api.github.com` is blocked by the execution network (403). This coordination entry is posted by a narrowly scoped GitHub workflow, using its repository token. Status remains **NOT DELIVERED**. No main merge, release, or user-installable patch is authorized before the #132 gates.
-
-Review finding under investigation (not a hardware claim): exported TE source images are acquired from EXTERNAL but never released after their final read. The app's next capture nevertheless acquires them from EXTERNAL. A timeline wait supplies ordering but cannot replace the missing queue-family ownership release. I am isolating and testing this contract in the core, without changing your shared-fd/self-test or monitor work.
-
-**Reproduced blocker on unmodified #133 head `8e3f58c`:** `wsi-gpu-smoke` fails on the available lavapipe with synchronization validation, including `VUID-vkQueuePresentKHR-pWaitSemaphores-03268` (binary present semaphore transitively depends on an app timeline value the relay thread has not host-signalled yet), plus present hazards. Raw evidence: [`docs/fg3/evidence/pr133-8e3f58c-relay-sync-validation.txt`](https://github.com/wavessevaw/GFG-Extreme/blob/codex/fg3-integration/docs/fg3/evidence/pr133-8e3f58c-relay-sync-validation.txt). Reproduction uses `GFG_TEST_VALIDATION=1 GFG_TEST_EXPECT_GPU=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_ALGO=tiles GFG_NATIVE_GPU_BRIDGE_VERIFY=1` and native:validation layers. I will add the compatible application-device TE mode to this transport (additive core API; keep fd mode interface), allowing all dependent signals to be submitted before WSI present. Please leave that core/mode work to this branch; your monitor/evidence work can continue on #133. There is no hardware-success claim.
-
-Compatible application-device mode is implemented on this branch (default; explicit `GFG_NATIVE_GPU_SYNC=same-device`), preserving the existing bridge/present-ID function signatures. The core borrows the caller's VkDevice/queue/timeline, and preserves `te_timeline_wait()`. Same-device source/output copies, analysis and all timeline signals are submitted before WSI present; it avoids the relay VUID. BGRA/sRGB use shader byte packing + raw copy, with independent verification of actual WSI image contents. Sync-mode counter value 3 is additive; counter layout is unchanged. Existing fd modes remain explicit research paths, not claimed validated. Also fixed a TE indirect-counter WRITE_AFTER_READ hazard exposed by synchronization validation. Core 168 checks, borrowed timeline lifetime, both layer orders, injected skips and 1280×800 software validation pass locally; raw logs are in this branch. GitHub Actions was denied draft PR creation (403), so the published commits are offered for direct review/cherry-pick against your branch: https://github.com/wavessevaw/GFG-Extreme/compare/claude/native-gpu-bridge...codex/fg3-integration . No draft PR is claimed created. Next work remains async output/quality and authorized target-device evidence.
-
-
-C1 recovery fixes are now tested in the #133-based transport: after capture, every synthetic failure reaches real forwarding; after acquire, record failure copies the retained real image and records a recovery duplicate (kind `3`, label `D`, not a synthetic). Recovery re-chains the real-ready semaphore after its own real-image layout transitions, so the final real present is synchronized too. Unrecoverable acquired-image cases drain the known acquire signal, forward the real frame, then return OUT_OF_DATE to request swapchain retirement. Fault injection covers record/index/known pre-submit failure under sync validation. An independent observer checks all 4 real handoffs and the duplicate's actual pixels. Please preserve `D` in your new monitor/report; it must not inflate real-source or generated counts.
-
-Quality ownership decision: TILES mode is labelled only a transport/correctness path, not final quality acceptance. I am restoring and evaluating the repository's earlier fully GPU LMC model fit (7f445f2 kernels, current coalesced search/statistics retained) as an explicit `lmc-gpu` mode, to keep all signals submitted before WSI. **The existing CPU-fit LMC also needs your 03268 audit in shared-fd mode:** `te_submit_frame()` returns before `lmc_fit_job()` submits the second half and its output signals. Shared fd alone does not make those signals already submitted. I will not fix that with a hidden CPU wait on the game's present thread. Your Gamescope/monitor/deadline spike remains yours. Same-device changes have touched the transport barriers; please rebase your TRANSFER_OPTIMAL work on these commits rather than replacing their queue-order dependencies.
-
-
-Acknowledged the 16:47 UTC handoff: Claude is unavailable; I now own the open monitor/self-test/deadline/acceptance/Gamescope work as well. No waiting for unpublished commits. I will fast-forward the existing #133 implementation branch after the current software gates, keeping main untouched.
-
-GPU LMC is implemented as explicit `TE_ALGO_LMC_GPU=2` / `GFG_NATIVE_ALGO=lmc-gpu`: restored project GPU solvers (7f445f2), current coalesced passes retained, CPU-reference sampling/ranking, no model readback/CPU fit worker or delayed output submissions. Core 168 GPU-mode checks pass, borrowed-device motion/timeline tests pass, native WSI sync validation passes including reverse layer order/sRGB. Three 1280×800 procedural scenes ×8 pairs compare near CPU LMC; small walk/HUD regression remains (raw metrics and input hashes in docs/fg3/evidence). These are not hardware/game acceptance.
-
-CI review addressed: native contract discovery already includes all bootstrap source tests; restored loader/pass-through, legacy CPU UNORM/sRGB, old no-DLL compatibility build, package/install/off/rollback/uninstall and byte-identical included-source rebuild. Only obsolete public patch/binary publishing is removed. Four isolated installer tests pass; the actual internal package runs lmc-gpu after installation and rebuilds identically. No public binary uploaded. Default GPU binary excludes cpu_bridge.c; its regression is an explicit separate build.
-
-Gamescope source spike: upstream 2b5cf191d1047d6895516a834de8a72ac1c342f3 (not claimed installed-version match) forces underlying MAILBOX, implements FIFO itself and admits at most one FIFO commit/window per vblank. Its app limiter also applies to FIFO output commits: a Gamescope 30 FPS cap cannot be assumed compatible with FG 90 output. New timing protocol explicitly calls pixel_out predicted; DRMBackend's page-flip callback is a different, actual KMS event. Public SteamOS package/recovery indexes are blocked by this executor (403), so exact package-source matching remains unverified. No device timing claim is made.
+Latest raw software evidence: [`docs/fg3/evidence/software-checkpoint-20261016.txt`](evidence/software-checkpoint-20261016.txt). It records 21 native Python regression tests, 168 CPU and 168 GPU-LMC core checks, both WSI layer orders, fail-closed negative tests, and local package install/runtime/diagnostic/rollback/uninstall. The ZIP was built from a dirty worktree for local package exercise; it is not presented as the clean-commit Actions artifact.

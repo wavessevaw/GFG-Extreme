@@ -158,6 +158,9 @@ uint64_t te_context_memory_bytes(const te_context* ctx);
 uint64_t te_timeline_value(te_context* ctx);
 VkResult te_timeline_signal(te_context* ctx, uint64_t value);
 VkResult te_timeline_wait(te_context* ctx, uint64_t value, uint64_t timeout_ns);
+/* Queue a timeline wait/signal probe on TE's own queue. Used only at bridge
+ * startup to verify imported shared-FD payload ordering before WSI presents. */
+VkResult te_timeline_fd_probe(te_context* ctx, uint64_t wait_value, uint64_t signal_value);
 uint32_t te_context_outputs(const te_context* ctx);
 VkResult te_last_stats(te_context* ctx, te_pair_stats* stats);
 VkResult te_download_rgb(te_context* ctx, uint32_t output, uint8_t* rgb);

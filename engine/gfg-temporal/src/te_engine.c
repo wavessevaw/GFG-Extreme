@@ -1641,6 +1641,23 @@ VkResult te_timeline_wait(te_context* ctx, uint64_t value, uint64_t timeout_ns) 
     return vkWaitSemaphores(ctx->dev->device,&info,timeout_ns);
 }
 
+VkResult te_timeline_fd_probe(te_context* ctx, uint64_t wait_value, uint64_t signal_value) {
+    if (!ctx || !ctx->timeline || ctx->dev->borrowed || !wait_value ||
+        signal_value <= wait_value)
+        return fail(VK_ERROR_FEATURE_NOT_PRESENT, "shared timeline probe needs an imported timeline and increasing values");
+    const VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    const uint64_t wait = wait_value, signal = signal_value;
+    VkTimelineSemaphoreSubmitInfo timeline = {
+        .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+        .waitSemaphoreValueCount = 1, .pWaitSemaphoreValues = &wait,
+        .signalSemaphoreValueCount = 1, .pSignalSemaphoreValues = &signal};
+    VkSubmitInfo submit = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .pNext = &timeline,
+        .waitSemaphoreCount = 1, .pWaitSemaphores = &ctx->timeline,
+        .pWaitDstStageMask = &stage, .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &ctx->timeline};
+    return queue_submit(ctx->dev, 1, &submit, VK_NULL_HANDLE);
+}
+
 uint32_t te_context_outputs(const te_context* ctx) { return ctx->desc.outputs; }
 
 VkImage te_source_image(te_context* ctx, uint32_t slot) {

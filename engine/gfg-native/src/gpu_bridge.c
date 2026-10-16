@@ -5,8 +5,10 @@
  *
  * Default: application-device TE context, same queue, GPU-only pixel flow.
  * All timeline signals are submitted before dependent WSI present calls.
- * Explicit shared/relay modes below preserve the research fd implementation;
- * relay is NOT validated as a conformant WSI path (VUID 03268).
+ * Only same-device and explicitly requested shared-fd synchronization are
+ * allowed. The host-signalled relay is removed because it reproduced VUID
+ * 03268: a present semaphore depended on a timeline signal not yet submitted
+ * to a queue. Unsupported shared-fd capability means safe pass-through.
  * No CPU pixel access and no CPU wait on the present path in steady state.
  * The explicit fd research mode below uses a separate device; the default
  * same-device mode uses ordinary image barriers and the caller-owned timeline.
@@ -22,10 +24,8 @@
  *   V+2 : TE finished synthetic output 1 (t = 2/3) and all TE work of pair n
  * Shared mode: the timeline is created exportable on the app device and
  *   imported by TE (te_context_desc.sync_fd), so both GPUs wait/signal it.
- * Relay mode (no VK_KHR_external_semaphore_fd, e.g. lavapipe): two timelines,
- *   a relay THREAD (never the present thread) host-waits one and host-signals
- *   the other.  GPU work is still submitted wait-before-signal; the present
- *   thread never blocks.
+ * Shared mode imports one timeline payload into TE; the WSI layer submits every
+ * dependent signal before presenting. No host relay or host pixel wait exists.
  *
  * Present n (single swapchain, the app's present queue):
  *   1. submit: wait app semaphores (TRANSFER) + timeline >= last TE value,
@@ -45,7 +45,6 @@
  */
 #include "gpu_bridge.h"
 #include "te_engine.h"
-#include <pthread.h>
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -56,7 +55,6 @@
 #include <unistd.h>
 
 #define RING_MAX 4
-#define RELAY_CAP 8
 #define TIMING_CAP 8192
 
 #define FN(name) PFN_vk##name name
@@ -86,15 +84,6 @@ typedef struct {
     int busy;
 } ring_slot;
 
-typedef struct {
-    pthread_t thread;
-    pthread_mutex_t lock;
-    pthread_cond_t cond;
-    uint64_t jobs[RELAY_CAP];
-    uint32_t head, count;
-    int stop, started, failed;
-} relay_state;
-
 struct gfg_gpu_fg {
     VkDevice device;
     VkQueue queue;
@@ -120,10 +109,9 @@ struct gfg_gpu_fg {
     VkImage scratch;             /* OUT_BLIT_COPY: B8G8R8A8_UNORM swizzle target */
     VkDeviceMemory scratch_memory;
 
-    VkSemaphore timeline;        /* app device: shared with TE or relayed */
+    VkSemaphore timeline;        /* app device: shared with TE */
     int shared_sync;
     int same_device; /* TE records on the application device and present queue */
-    relay_state relay;
 
     VkCommandPool pool;
     VkCommandBuffer init_cb;
@@ -138,7 +126,7 @@ struct gfg_gpu_fg {
     uint64_t te_frames;          /* frames TE accepted */
     int te_gap;                  /* a frame since the last accepted one was not fed to TE */
     uint64_t next_value;         /* first value of the next block */
-    uint64_t last_te_value;      /* last value TE (or the relay) will signal */
+    uint64_t last_te_value;      /* last value TE will signal */
     int lmc_tier;
 
     /* test-only verification (GFG_NATIVE_GPU_BRIDGE_VERIFY=1) */
@@ -468,74 +456,6 @@ static void retire_acquired(gfg_gpu_fg *fg,VkSemaphore acquired){
     fg->disabled=1;fg->recreate_required=1;
 }
 
-/* ------------------------------------------------------------ relay mode */
-
-static VkResult app_timeline_wait(gfg_gpu_fg *fg, uint64_t value, uint64_t timeout) {
-    VkSemaphoreWaitInfo wi = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
-        .semaphoreCount = 1, .pSemaphores = &fg->timeline, .pValues = &value};
-    return fg->WaitSemaphores(fg->device, &wi, timeout);
-}
-static VkResult app_timeline_signal(gfg_gpu_fg *fg, uint64_t value) {
-    VkSemaphoreSignalInfo si = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO,
-        .semaphore = fg->timeline, .value = value};
-    return fg->SignalSemaphore(fg->device, &si);
-}
-
-/* Off the present thread: forwards V app->TE, then V+1, V+2 TE->app. */
-static void *relay_main(void *arg) {
-    gfg_gpu_fg *fg = arg;
-    relay_state *rs = &fg->relay;
-    const uint64_t slice = 50000000ull; /* 50 ms, re-checks stop */
-    pthread_mutex_lock(&rs->lock);
-    for (;;) {
-        while (!rs->count && !rs->stop) pthread_cond_wait(&rs->cond, &rs->lock);
-        if (!rs->count || rs->stop > 1) break;
-        const uint64_t v = rs->jobs[rs->head];
-        pthread_mutex_unlock(&rs->lock);
-        VkResult r = VK_TIMEOUT;
-        int step = 0;
-        while (step < 3) {
-            if (step == 0) r = app_timeline_wait(fg, v, slice);
-            else r = te_timeline_wait(fg->context, v + (uint64_t)step, slice);
-            if (r == VK_TIMEOUT) {
-                pthread_mutex_lock(&rs->lock);
-                int hard = rs->stop > 1;
-                pthread_mutex_unlock(&rs->lock);
-                if (hard) break;
-                continue;
-            }
-            if (!ok(r)) break;
-            r = step == 0 ? te_timeline_signal(fg->context, v)
-                          : app_timeline_signal(fg, v + (uint64_t)step);
-            if (!ok(r)) break;
-            ++step;
-        }
-        pthread_mutex_lock(&rs->lock);
-        if (step < 3) { rs->failed = 1; break; }
-        rs->head = (rs->head + 1) % RELAY_CAP;
-        --rs->count;
-        pthread_cond_broadcast(&rs->cond);
-    }
-    pthread_cond_broadcast(&rs->cond);
-    pthread_mutex_unlock(&rs->lock);
-    return NULL;
-}
-static int relay_has_room(gfg_gpu_fg *fg) {
-    relay_state *rs = &fg->relay;
-    pthread_mutex_lock(&rs->lock);
-    int room = rs->count < RELAY_CAP && !rs->failed && !rs->stop;
-    pthread_mutex_unlock(&rs->lock);
-    return room;
-}
-static void relay_push(gfg_gpu_fg *fg, uint64_t v) {
-    relay_state *rs = &fg->relay;
-    pthread_mutex_lock(&rs->lock);
-    rs->jobs[(rs->head + rs->count) % RELAY_CAP] = v;
-    ++rs->count;
-    pthread_cond_signal(&rs->cond);
-    pthread_mutex_unlock(&rs->lock);
-}
-
 /* ------------------------------------------------------------ verification */
 
 static int verify_setup(gfg_gpu_fg *fg) {
@@ -673,6 +593,28 @@ static int env_flag(const char *name) {
     const char *v = getenv(name);
     return v && v[0] == '1' && v[1] == '\0';
 }
+
+/* A successful FD import only proves handle creation. Before enabling WSI,
+ * prove that host signals on the app payload are visible to TE and that a
+ * queue signal on TE's imported payload is visible back on the app device.
+ * This is an opt-in startup check; it never runs on the frame hot path. */
+static int shared_timeline_selftest(gfg_gpu_fg *fg) {
+    if (fg->same_device) return 1;
+    VkSemaphoreSignalInfo signal = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO,
+        .semaphore = fg->timeline, .value = 1};
+    if (!ok(fg->SignalSemaphore(fg->device, &signal))) return 0;
+    if (te_timeline_wait(fg->context, 1, 1000000000ull) != VK_SUCCESS) return 0;
+    if (te_timeline_fd_probe(fg->context, 1, 2) != VK_SUCCESS) return 0;
+    const uint64_t target = 2;
+    VkSemaphoreWaitInfo wait = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+        .semaphoreCount = 1, .pSemaphores = &fg->timeline, .pValues = &target};
+    if (!ok(fg->WaitSemaphores(fg->device, &wait, 1000000000ull))) return 0;
+    uint64_t value = 0;
+    if (!ok(fg->GetSemaphoreCounterValue(fg->device, fg->timeline, &value)) || value < 2)
+        return 0;
+    fprintf(stderr, "[gfg-native] shared timeline selftest=PASS app_to_te=1 te_queue_to_app=2\n");
+    return 1;
+}
 static unsigned env_uint(const char *name, unsigned def, unsigned lo, unsigned hi) {
     const char *v = getenv(name);
     if (!v || !*v) return def;
@@ -685,6 +627,7 @@ static unsigned env_uint(const char *name, unsigned def, unsigned lo, unsigned h
 gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     if (!info || !info->device || !info->queue || !info->gdpa || !info->gipa ||
         !info->physical || !supported_format(info->format) ||
+        info->present_mode != VK_PRESENT_MODE_FIFO_KHR ||
         info->extent.width < 16 || info->extent.height < 16 ||
         info->extent.width > 8192 || info->extent.height > 8192)
         return NULL;
@@ -701,11 +644,13 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     fg->set_loader_data = info->set_loader_data;
     fg->log = getenv("GFG_NATIVE_TRACE") != NULL;
     fg->src_bgra = is_bgra(info->format);
-    const char *force_relay = getenv("GFG_NATIVE_GPU_SYNC");
-    fg->same_device = !force_relay || !strcmp(force_relay,"same-device");
-    pthread_mutex_init(&fg->relay.lock, NULL);
-    pthread_cond_init(&fg->relay.cond, NULL);
     const char *why = "entrypoints";
+    const char *sync_mode = getenv("GFG_NATIVE_GPU_SYNC");
+    if (sync_mode && strcmp(sync_mode, "same-device") && strcmp(sync_mode, "shared-fd")) {
+        why = "unsupported-sync-mode";
+        goto fail;
+    }
+    fg->same_device = !sync_mode || !strcmp(sync_mode, "same-device");
 #define LOAD(name) fg->name = (PFN_vk##name)info->gdpa(info->device, "vk" #name); \
     if (!fg->name) goto fail;
     DEVICE_FUNCS(LOAD)
@@ -749,8 +694,8 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     for (uint32_t i = 0; i < n; ++i)
         if (!ok(fg->CreateSemaphore(fg->device, &bsci, NULL, &fg->ready[i]))) goto fail;
 
-    /* External-device mode remains explicit for independent fd-path validation. */
-    /* TE on its own device, same GPU */
+    /* TE on the caller's device by default, or a same-GPU TE device in
+     * explicit shared-fd mode. */
     why = "te-device";
     VkPhysicalDeviceIDProperties id = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES};
     VkPhysicalDeviceProperties2 p2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
@@ -772,8 +717,12 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     te_device_supports_fd_import(fg->engine, &te_mem, &te_sem);
     why = "te-memory-fd";
     if (!fg->same_device && !te_mem) goto fail;
-    fg->shared_sync = fg->same_device || (info->semaphore_fd && te_sem && fg->GetSemaphoreFdKHR &&
-                      !(force_relay && !strcmp(force_relay, "relay")));
+    fg->shared_sync = fg->same_device ||
+        (info->semaphore_fd && te_sem && fg->GetSemaphoreFdKHR);
+    if (!fg->shared_sync) {
+        why = "shared-timeline-fd-unavailable";
+        goto fail;
+    }
 
     /* timeline on the app device: exportable in shared mode */
     why = "timeline";
@@ -807,6 +756,8 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
         fprintf(stderr, "[gfg-native] gpu-bridge TE context: %s\n", te_last_error());
         goto fail;
     }
+    why = "shared-timeline-selftest";
+    if (!shared_timeline_selftest(fg)) goto fail;
     const char *tier = getenv("GFG_NATIVE_LMC_TIER");
     if (tier && tier[0] >= '0' && tier[0] <= '2' && tier[1] == '\0') fg->lmc_tier = tier[0] - '0';
 
@@ -892,30 +843,20 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     if (!ok(fg->QueueSubmit(fg->queue, 1, &isi, fg->init_fence))) goto fail;
 
 
-    if (!fg->shared_sync) {
-        why = "relay-thread";
-        if (pthread_create(&fg->relay.thread, NULL, relay_main, fg) != 0) goto fail;
-        fg->relay.started = 1;
-    }
-    fg->next_value = 1;
+    fg->next_value = fg->same_device ? 1 : 3;
     fg->timing_total_us = calloc(TIMING_CAP, sizeof(double));
     fg->timing_own_us = calloc(TIMING_CAP, sizeof(double));
     STAT_ADD(bridges_created, 1);
-    STAT_SET(sync_mode, fg->same_device ? 3 : fg->shared_sync ? 1 : 2);
+    STAT_SET(sync_mode, fg->same_device ? 3 : 1);
     fprintf(stderr,
         "[gfg-native] GPU bridge active: %ux%u format=%d out=%s sync=%s images=%u"
         " present_mode=%d inflight=%u algo=%s verify=%d startup_ms=%.2f\n",
         fg->extent.width, fg->extent.height, (int)fg->format,
         fg->out_mode == OUT_COPY ? "copy" : fg->out_mode == OUT_BLIT ? "blit" : "blit+copy",
-        fg->same_device ? "same-device" : fg->shared_sync ? "shared-timeline-fd" : "host-relay", fg->image_count,
+        fg->same_device ? "same-device" : "shared-timeline-fd", fg->image_count,
         (int)fg->present_mode, fg->ring_size,
         cd.params.algorithm == TE_ALGO_LMC_GPU ? "lmc-gpu" : cd.params.algorithm == TE_ALGO_LMC ? "lmc" : "tiles", fg->verify,
         (now_us() - t0) / 1000.0);
-    if (fg->present_mode != VK_PRESENT_MODE_FIFO_KHR &&
-        fg->present_mode != VK_PRESENT_MODE_FIFO_RELAXED_KHR)
-        fprintf(stderr, "[gfg-native] gpu-bridge WARNING present_mode=%d is not FIFO:"
-                " synthetic frames are not paced by vblank backpressure\n",
-                (int)fg->present_mode);
     return fg;
 fail:
     fprintf(stderr, "[gfg-native] GPU bridge unavailable stage=%s\n", why);
@@ -936,29 +877,6 @@ static void percentile(double *v, uint32_t n, double *median, double *p95) {
 void gfg_gpu_fg_destroy(gfg_gpu_fg *fg) {
     if (!fg) return;
     fg->in_present = 0;
-    /* Relay: drain what the GPU will still signal, then stop. */
-    if (fg->relay.started) {
-        relay_state *rs = &fg->relay;
-        struct timespec until;
-        clock_gettime(CLOCK_REALTIME, &until);
-        until.tv_sec += 3;
-        pthread_mutex_lock(&rs->lock);
-        while (rs->count && !rs->failed &&
-               pthread_cond_timedwait(&rs->cond, &rs->lock, &until) == 0) {}
-        rs->stop = rs->count ? 2 : 1;
-        pthread_cond_broadcast(&rs->cond);
-        pthread_mutex_unlock(&rs->lock);
-        STAT_ADD(teardown_cpu_waits, 1);
-        pthread_join(rs->thread, NULL);
-    }
-    if (fg->device && fg->timeline && fg->GetSemaphoreCounterValue && !fg->shared_sync) {
-        /* never leave a GPU wait on a value nobody will signal */
-        uint64_t cur = 0;
-        if (ok(fg->GetSemaphoreCounterValue(fg->device, fg->timeline, &cur)) &&
-            cur < fg->next_value + 3)
-            (void)app_timeline_signal(fg, fg->next_value + 3);
-        if (fg->context) (void)te_timeline_signal(fg->context, fg->next_value + 3);
-    }
     if (fg->verify) verify_collect(fg, 1);
     if (fg->device && fg->WaitForFences) {
         if (fg->init_fence && fg->init_cb) (void)wait_fence(fg, fg->init_fence, 2000000000ull);
@@ -1041,8 +959,6 @@ void gfg_gpu_fg_destroy(gfg_gpu_fg *fg) {
         fg->DestroyBuffer(fg->device, fg->verify_buffer, NULL);
     if (fg->device && fg->FreeMemory && fg->verify_memory)
         fg->FreeMemory(fg->device, fg->verify_memory, NULL);
-    pthread_mutex_destroy(&fg->relay.lock);
-    pthread_cond_destroy(&fg->relay.cond);
     free(fg->images);
     free(fg->ready);
     free(fg->timing_total_us);
@@ -1082,10 +998,31 @@ static VkResult submit_real(gfg_gpu_fg *fg, ring_slot *rs, const VkPresentInfoKH
     return fg->QueueSubmit(fg->queue, 1, &si, VK_NULL_HANDLE);
 }
 
+/* The bridge's synthetic presents cannot safely reproduce arbitrary app
+ * VkPresentInfoKHR pNext payloads (present fences, device-group masks, damage
+ * regions, etc.). Preserve the app call and bypass generation unless the
+ * chain is empty or is exactly one present-ID node owned by the layer trace. */
+static int present_chain_supported(const VkPresentInfoKHR *app,
+                                   const gfg_present_id_hooks *ids) {
+    if (!app->pNext) return 1;
+    if (!ids || !ids->mode || !ids->assign || app->swapchainCount != 1)
+        return 0;
+    const VkBaseInStructure *node = app->pNext;
+    if (node->pNext) return 0;
+    if (ids->mode == 1 && node->sType == VK_STRUCTURE_TYPE_PRESENT_ID_KHR) {
+        const VkPresentIdKHR *present_id = (const VkPresentIdKHR *)node;
+        return present_id->swapchainCount == 1 && present_id->pPresentIds;
+    }
+    if (ids->mode == 2 && node->sType == VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR) {
+        const VkPresentId2KHR *present_id = (const VkPresentId2KHR *)node;
+        return present_id->swapchainCount == 1 && present_id->pPresentIds;
+    }
+    return 0;
+}
+
 /* Forward the app's present (optionally with our wait semaphore), replacing
- * its present id by a layer id when the layer owns the sequence. The app's
- * VkPresentIdKHR/VkPresentId2KHR (identical layout) is patched in place for
- * the call and restored; without one, ours is prepended. Rest of pNext as is. */
+ * its ID in a private stack copy. The caller's structure and ID array remain
+ * immutable throughout vkQueuePresentKHR. */
 static VkResult forward_real(VkQueue queue, const VkPresentInfoKHR *app, const VkSemaphore *wait,
                              PFN_vkQueuePresentKHR next, const gfg_present_id_hooks *ids,
                              double *next_us) {
@@ -1094,36 +1031,60 @@ static VkResult forward_real(VkQueue queue, const VkPresentInfoKHR *app, const V
         real.waitSemaphoreCount = 1;
         real.pWaitSemaphores = wait;
     }
-    VkPresentIdKHR *app_ids = NULL;
-    const uint64_t *saved = NULL;
+    const VkBaseInStructure *app_id_node = NULL;
+    const uint64_t *app_present_ids = NULL;
     uint64_t layer_id = 0;
-    VkPresentIdKHR ours = {0};
+    union {
+        VkPresentIdKHR v1;
+        VkPresentId2KHR v2;
+    } owned_id = {0};
     if (ids && ids->mode && ids->assign && app->swapchainCount == 1) {
-        for (VkBaseInStructure *n = (VkBaseInStructure *)app->pNext; n; n = (VkBaseInStructure *)n->pNext)
+        for (const VkBaseInStructure *n = app->pNext; n;
+             n = (const VkBaseInStructure *)n->pNext)
             if (n->sType == VK_STRUCTURE_TYPE_PRESENT_ID_KHR ||
                 n->sType == VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR) {
-                app_ids = (VkPresentIdKHR *)n;
+                app_id_node = n;
                 break;
             }
-        const uint64_t app_id = app_ids && app_ids->swapchainCount == 1 && app_ids->pPresentIds
-            ? app_ids->pPresentIds[0] : 0;
+        uint64_t app_id = 0;
+        if (app_id_node && app_id_node->sType == VK_STRUCTURE_TYPE_PRESENT_ID_KHR) {
+            const VkPresentIdKHR *app_ids = (const VkPresentIdKHR *)app_id_node;
+            if (app_ids->swapchainCount == 1) app_present_ids = app_ids->pPresentIds;
+        } else if (app_id_node && app_id_node->sType == VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR) {
+            const VkPresentId2KHR *app_ids = (const VkPresentId2KHR *)app_id_node;
+            if (app_ids->swapchainCount == 1) app_present_ids = app_ids->pPresentIds;
+        }
+        if (app_present_ids) app_id = app_present_ids[0];
         layer_id = ids->assign(ids->user, 0, app_id);
-        if (app_ids && app_ids->swapchainCount == 1) {
-            saved = app_ids->pPresentIds;
-            app_ids->pPresentIds = &layer_id;
-        } else if (!app_ids && layer_id) {
-            ours.sType = ids->mode == 2 ? VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR
-                                        : VK_STRUCTURE_TYPE_PRESENT_ID_KHR;
-            ours.pNext = app->pNext;
-            ours.swapchainCount = 1;
-            ours.pPresentIds = &layer_id;
-            real.pNext = &ours;
+        if (app_present_ids && app_id_node == (const VkBaseInStructure *)app->pNext) {
+            if (app_id_node->sType == VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR) {
+                owned_id.v2 = *(const VkPresentId2KHR *)app_id_node;
+                owned_id.v2.pPresentIds = &layer_id;
+                real.pNext = &owned_id.v2;
+            } else {
+                owned_id.v1 = *(const VkPresentIdKHR *)app_id_node;
+                owned_id.v1.pPresentIds = &layer_id;
+                real.pNext = &owned_id.v1;
+            }
+        } else if (!app_id_node && layer_id) {
+            if (ids->mode == 2) {
+                owned_id.v2.sType = VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR;
+                owned_id.v2.pNext = app->pNext;
+                owned_id.v2.swapchainCount = 1;
+                owned_id.v2.pPresentIds = &layer_id;
+                real.pNext = &owned_id.v2;
+            } else {
+                owned_id.v1.sType = VK_STRUCTURE_TYPE_PRESENT_ID_KHR;
+                owned_id.v1.pNext = app->pNext;
+                owned_id.v1.swapchainCount = 1;
+                owned_id.v1.pPresentIds = &layer_id;
+                real.pNext = &owned_id.v1;
+            }
         }
     }
     const double t = now_us();
     VkResult r = next(queue, &real);
     if (next_us) *next_us += now_us() - t;
-    if (app_ids && saved) app_ids->pPresentIds = saved;
     return r;
 }
 
@@ -1186,12 +1147,22 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v, u
         .waitSemaphoreCount = 1, .pWaitSemaphores = &fg->ready[img],
         .swapchainCount = 1, .pSwapchains = &fg->swapchain, .pImageIndices = &img};
     uint64_t layer_id = 0;
-    VkPresentIdKHR pid = {0};
+    union {
+        VkPresentIdKHR v1;
+        VkPresentId2KHR v2;
+    } pid = {0};
     if (ids && ids->mode && ids->assign && (layer_id = ids->assign(ids->user, generated?k+1:3, 0)) != 0) {
-        pid.sType = ids->mode == 2 ? VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR : VK_STRUCTURE_TYPE_PRESENT_ID_KHR;
-        pid.swapchainCount = 1;
-        pid.pPresentIds = &layer_id;
-        pi.pNext = &pid;
+        if (ids->mode == 2) {
+            pid.v2.sType = VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR;
+            pid.v2.swapchainCount = 1;
+            pid.v2.pPresentIds = &layer_id;
+            pi.pNext = &pid.v2;
+        } else {
+            pid.v1.sType = VK_STRUCTURE_TYPE_PRESENT_ID_KHR;
+            pid.v1.swapchainCount = 1;
+            pid.v1.pPresentIds = &layer_id;
+            pi.pNext = &pid.v1;
+        }
     }
     const double t = now_us();
     r = next(fg->queue, &pi);
@@ -1218,6 +1189,12 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     const uint64_t frame = fg->frame++;
     const uint32_t idx = app->pImageIndices[0];
     VkResult result;
+    if (app->swapchainCount != 1 || !present_chain_supported(app, ids)) {
+        fg->te_gap = 1;
+        if (frame) STAT_ADD(skipped_synthetic, 2);
+        result = forward_real(queue, app, NULL, next, NULL, &next_us);
+        goto timing;
+    }
     if (fg->disabled || queue != fg->queue || idx >= fg->image_count ||
         app->waitSemaphoreCount > 16) {
         fg->te_gap = 1;
@@ -1238,10 +1215,6 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
         if (fs == VK_SUCCESS) rs->busy = 0;
         else if (fs == VK_NOT_READY) { STAT_ADD(ring_busy, 1); pass_through = 1; }
         else { fg->disabled = 1; pass_through = 1; }
-    }
-    if (!pass_through && !fg->shared_sync && !relay_has_room(fg)) {
-        STAT_ADD(te_busy, 1);
-        pass_through = 1;
     }
     if (!pass_through && !ok(fg->ResetFences(fg->device, 1, &rs->fence))) {
         fg->disabled = 1;
@@ -1293,7 +1266,6 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     int presented = 0;
     if (tr == VK_SUCCESS) {
         fg->last_te_value = v + 2;
-        if (!fg->shared_sync) relay_push(fg, v);
         fg->te_slot ^= 1u;
         fg->te_frames++;
         fg->te_gap = 0;
@@ -1327,7 +1299,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     fg->phase_us[4] += now_us() - tp;
     fg->phase_n++;
     fg->in_present = 0;
-    /* pNext (fences, present modes, ...) untouched; only the present id is remapped */
+    /* App pNext is either empty or the supported layer-owned present-ID node. */
     result = forward_real(queue, app, &fg->ready[idx], next, ids, &next_us);
     if(fg->recreate_required && (result==VK_SUCCESS || result==VK_SUBOPTIMAL_KHR)){
         result=VK_ERROR_OUT_OF_DATE_KHR;

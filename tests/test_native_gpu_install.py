@@ -21,11 +21,13 @@ class NativeGpuInstallTests(unittest.TestCase):
         self.home = self.root / "home"
         self.home.mkdir()
         self.env = dict(os.environ, HOME=str(self.home), XDG_DATA_HOME=str(self.home / "data"))
+        self.env["XDG_STATE_HOME"] = str(self.home / ".local/state")
         for name in ("GFG_NATIVE_FG", "GFG_NATIVE_GPU", "GFG_NATIVE_GPU_BRIDGE", "GFG_NATIVE_ALGO", "GFG_NATIVE_MODE", "GFG_NATIVE_CPU_BRIDGE",
                      "DISABLE_GFG_NATIVE_FG", "VK_INSTANCE_LAYERS", "VK_LAYER_PATH"):
             self.env.pop(name, None)
         for file in (ROOT / "engine/gfg-native/package").glob("*.sh"):
             shutil.copy2(file, self.pkg / file.name)
+        shutil.copy2(ROOT / "scripts/accept_report.py", self.pkg)
         (self.pkg / "libVkLayer_gfg_native.so").write_bytes(b"fixture payload for installer only")
         shutil.copy2(ROOT / "engine/gfg-native/VkLayer_gfg_native.json", self.pkg)
         self.checksums()
@@ -50,6 +52,8 @@ class NativeGpuInstallTests(unittest.TestCase):
         self.launcher.parent.mkdir(parents=True)
         previous = {self.target / "libVkLayer_gfg_native.so": b"previous ELF\0",
                     self.target / "VkLayer_gfg_native.json": b"previous manifest",
+                    self.target / "diagnose.sh": b"previous diagnostics",
+                    self.target / "accept_report.py": b"previous report",
                     self.launcher: b"#!/bin/sh\nprintf 'previous launcher'\n"}
         for p, data in previous.items():
             p.write_bytes(data)
@@ -80,12 +84,28 @@ class NativeGpuInstallTests(unittest.TestCase):
         self.assertIn("GFG_NATIVE_GPU_BRIDGE=1\n", output)
         self.assertNotIn("DISABLE_GFG_NATIVE_FG=", output)
 
+    def test_one_command_diagnostic_captures_local_report_without_upload(self):
+        self.run_script("install.sh")
+        program = "import os; print('diagnostic-command-ran'); print('trace='+str(os.getenv('GFG_NATIVE_TRACE')))"
+        result = subprocess.run([str(self.launcher), "--diagnose", shutil.which("python3"), "-c", program],
+                                env=self.env, text=True, capture_output=True, check=True)
+        self.assertIn("diagnostic-command-ran", result.stdout)
+        self.assertIn("trace=1", result.stdout)
+        captures = list((self.home / ".local/state/gfg-native/diagnostics").glob("*.tar.gz"))
+        self.assertEqual(len(captures), 1)
+        report = (captures[0].parent / captures[0].name.removesuffix(".tar.gz") / "report.md").read_text()
+        self.assertIn("NOT ACCEPTANCE", report)
+        self.assertIn("Physical display / KMS scanout: **unobserved**", report)
+        self.assertTrue((captures[0].parent / captures[0].name.removesuffix(".tar.gz") / "app.stderr.log").is_file())
+
     def test_first_install_rollback_and_uninstall_leave_working_launch_option(self):
         for cleanup in ("rollback.sh", "uninstall.sh"):
             self.run_script("install.sh")
             self.run_script(cleanup)
             self.assertFalse((self.target / "libVkLayer_gfg_native.so").exists())
             self.assertFalse((self.target / "VkLayer_gfg_native.json").exists())
+            self.assertFalse((self.target / "diagnose.sh").exists())
+            self.assertFalse((self.target / "accept_report.py").exists())
             self.assertEqual(self.launch("/usr/bin/printf", "%s", "a b"), "a b")
 
 

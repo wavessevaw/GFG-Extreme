@@ -74,6 +74,9 @@ def package(binary: Path, outdir: Path, version: str) -> Path:
         "uninstall.sh": (ROOT / "engine/gfg-native/package/uninstall.sh").read_bytes(),
         "rollback.sh": (ROOT / "engine/gfg-native/package/rollback.sh").read_bytes(),
         "gfg-native.sh": (ROOT / "engine/gfg-native/package/gfg-native.sh").read_bytes(),
+        "diagnose.sh": (ROOT / "engine/gfg-native/package/diagnose.sh").read_bytes(),
+        "accept_report.py": (ROOT / "scripts/accept_report.py").read_bytes(),
+        "BUILD-ENVIRONMENT.txt": (ROOT / "engine/gfg-native/package/BUILD-ENVIRONMENT.txt").read_bytes(),
         "README.ru.md": (ROOT / "engine/gfg-native/package/README.ru.md").read_bytes(),
         "LICENSE.md": (ROOT / "LICENSE.md").read_bytes(),
     }
@@ -97,6 +100,7 @@ def package(binary: Path, outdir: Path, version: str) -> Path:
         "architecture": "linux-x86_64",
         "runtime_requires": ["Vulkan 1.2", "64-bit Linux"],
         "runtime_forbidden": ["MAKO Renderer", "Lossless Scaling", "Lossless.dll"],
+        "build_environment": "GitHub Actions ubuntu-22.04, gcc-12, Vulkan-Headers v1.4.365; see BUILD-ENVIRONMENT.txt",
         "stage": "internal development; NOT COMPLETED",
         "hardware_acceptance": False,
         "physical_display_verified": False,

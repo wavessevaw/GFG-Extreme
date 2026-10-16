@@ -111,7 +111,7 @@ wsi-smoke-gpu:
 	@if [ -f "$(VALIDATION_LAYER_DIR)/VkLayer_khronos_validation.json" ]; then \
 	  echo "wsi-smoke-gpu: run 1 with VK_LAYER_KHRONOS_validation"; \
 	  $(GPU_SMOKE_ENV) GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=4 \
-	  GFG_TEST_VALIDATION=1 GFG_TEST_CHAIN_VK12=1 \
+	  GFG_TEST_VALIDATION=1 GFG_TEST_CHAIN_VK12=1 GFG_TEST_READONLY_FEATURES=1 \
 	  VK_INSTANCE_LAYERS=VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation \
 	  VK_LAYER_PATH="$(abspath build-te):$(VALIDATION_LAYER_DIR)" build-te/wsi-gpu-smoke && \
 	  echo "wsi-smoke-gpu: run 1b skip-path fault injection with VK_LAYER_KHRONOS_validation" && \
@@ -122,6 +122,7 @@ wsi-smoke-gpu:
 	else \
 	  echo "wsi-smoke-gpu: SKIP validation (VK_LAYER_KHRONOS_validation not installed)"; \
 	  $(GPU_SMOKE_ENV) GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=4 \
+	  GFG_TEST_CHAIN_VK12=1 GFG_TEST_READONLY_FEATURES=1 \
 	  VK_INSTANCE_LAYERS=VK_LAYER_GFG_native VK_LAYER_PATH="$(abspath build-te)" build-te/wsi-gpu-smoke; \
 	fi
 	$(GPU_SMOKE_ENV) GFG_NATIVE_TIMING=1 \

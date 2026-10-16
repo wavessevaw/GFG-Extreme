@@ -3,7 +3,7 @@ on:
   pull_request:
   push:
     branches: [codex/fg3-integration]
-    paths: ["engine/gfg-native/**", "engine/gfg-temporal/**", ".github/workflows/gfg-native-no-dll.yml"]
+    paths: ["engine/gfg-native/**", "engine/gfg-temporal/**", "scripts/package_native_fg.py", "scripts/accept_report.py", "docs/fg3/**", ".github/workflows/gfg-native-no-dll.yml"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -29,11 +29,11 @@ jobs:
       - name: Core and native contracts
         run: |
           set -euo pipefail
-          python3 -m unittest discover -s tests -p 'test_native*.py' -v
-          make -C engine/gfg-temporal all lib
+          python3 -m unittest discover -s tests -p 'test_native*.py' -v 2>&1 | tee python-tests.log
+          make -C engine/gfg-temporal all lib 2>&1 | tee build-core.log
           engine/gfg-temporal/build/te-tests 2>&1 | tee core.log
           GFG_TEST_GPU_LMC=1 engine/gfg-temporal/build/te-tests 2>&1 | tee core-gpu-lmc.log
-          make -C engine/gfg-native ENABLE_TE=1 BUILD=build-te VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" layer build-te/wsi-gpu-smoke build-te/borrowed-device build-te/gpu-wsi-observer swapchain-policy memory-policy present-ids
+          make -C engine/gfg-native ENABLE_TE=1 BUILD=build-te VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" layer build-te/wsi-gpu-smoke build-te/borrowed-device build-te/gpu-wsi-observer swapchain-policy memory-policy present-ids 2>&1 | tee build-native.log
       - name: Loader, real-frame fallback and legacy CPU regression
         run: |
           set -euo pipefail
@@ -58,7 +58,7 @@ jobs:
           grep -q 'synthetic=6 content=PASS handoff_order=PASS' observer.log
           grep -q 'synthetic=6 content=PASS handoff_order=PASS' observer-srgb.log
           for order in VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation VK_LAYER_KHRONOS_validation:VK_LAYER_GFG_native; do
-            GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=120 GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=4 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "gpu-$order.log"
+            GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_CHAIN_VK12=1 GFG_TEST_READONLY_FEATURES=1 GFG_TEST_FRAMES=120 GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=4 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "gpu-$order.log"
             grep -q 'validation errors=0' "gpu-$order.log"
             grep -q 'real=120 synthetic=238 skipped=0' "gpu-$order.log"
             GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=same-device GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=30 GFG_NATIVE_GPU_BRIDGE_INJECT_SKIP=5 GFG_TEST_ALLOW_SKIPS=1 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "skip-$order.log"
@@ -72,6 +72,25 @@ jobs:
           GFG_NATIVE_GPU_FAULT=record xvfb-run -a engine/gfg-native/build-te/gpu-wsi-observer 2>&1 | tee recovery.log
           grep -q 'synthetic=0 recovery_duplicate=1 content=PASS real_handoffs=PASS' recovery.log
           if grep -E 'VALIDATION ERROR|Validation Error|VUID-' borrowed*.log observer*.log gpu-*.log skip-*.log fault-*.log recovery.log; then exit 1; fi
+      - name: Immutable feature chains and FIFO fail-closed behavior
+        run: |
+          set -euo pipefail
+          for order in VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation VK_LAYER_KHRONOS_validation:VK_LAYER_GFG_native; do
+            stem=${order//:/_}
+            GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_TRACE=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=4 GFG_TEST_CHAIN_VK12=1 GFG_TEST_CHAIN_VK12_DISABLED=1 GFG_TEST_READONLY_FEATURES=1 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "disabled-timeline-$stem.log"
+            grep -q 'reason=app-disabled-timeline' "disabled-timeline-$stem.log"
+            grep -q 'candidate=0.*reason=frame-bridge-unavailable' "disabled-timeline-$stem.log"
+            grep -q 'validation errors=0' "disabled-timeline-$stem.log"
+            GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_TRACE=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=4 GFG_TEST_CHAIN_VK12=1 GFG_TEST_READONLY_FEATURES=1 GFG_TEST_MAILBOX_SWAPCHAIN=1 VK_INSTANCE_LAYERS="$order" VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee "mailbox-$stem.log"
+            grep -q 'candidate=0.*reason=non-fifo-present-mode' "mailbox-$stem.log"
+            grep -q 'validation errors=0' "mailbox-$stem.log"
+          done
+          GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=shared-fd GFG_NATIVE_TRACE=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=4 VK_INSTANCE_LAYERS=VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee shared-fd.log
+          grep -q 'validation errors=0' shared-fd.log
+          GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_GPU_SYNC=relay GFG_NATIVE_TRACE=1 GFG_TEST_VALIDATION=1 GFG_TEST_FRAMES=4 VK_INSTANCE_LAYERS=VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation VK_LAYER_PATH="$GITHUB_WORKSPACE/engine/gfg-native/build-te:$VK_LAYER_PATH" xvfb-run -a engine/gfg-native/build-te/wsi-gpu-smoke 2>&1 | tee relay-rejected.log
+          grep -q 'reason=unsupported-sync-mode' relay-rejected.log
+          grep -q 'validation errors=0' relay-rejected.log
+          if grep -E 'VALIDATION ERROR|Validation Error|VUID-' disabled-timeline-*.log mailbox-*.log shared-fd.log relay-rejected.log; then exit 1; fi
       - name: Private package, installed GPU path, rollback and reproducible source
         run: |
           set -euo pipefail
@@ -83,7 +102,7 @@ jobs:
           sha256sum --check --status SHA256SUMS.txt
           HOME="$RUNNER_TEMP/fg3-home" bash install.sh
           HOME="$RUNNER_TEMP/fg3-home" "$RUNNER_TEMP/fg3-home/.local/bin/gfg-native" --off /bin/true
-          HOME="$RUNNER_TEMP/fg3-home" GFG_TEST_FRAMES=24 GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=4 VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation xvfb-run -a "$RUNNER_TEMP/fg3-home/.local/bin/gfg-native" "$GITHUB_WORKSPACE/engine/gfg-native/build-te/wsi-gpu-smoke" 2>&1 | tee installed.log
+          HOME="$RUNNER_TEMP/fg3-home" GFG_TEST_FRAMES=24 GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=4 VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation xvfb-run -a "$RUNNER_TEMP/fg3-home/.local/bin/gfg-native" "$GITHUB_WORKSPACE/engine/gfg-native/build-te/wsi-gpu-smoke" 2>&1 | tee "$RUNNER_TEMP/fg3-private/installed.log"
           grep -q 'algo=lmc-gpu' installed.log
           grep -q 'validation errors=0' installed.log
           if grep -E 'VUID-|VALIDATION ERROR' installed.log; then exit 1; fi
@@ -100,4 +119,35 @@ jobs:
         run: |
           python3 scripts/build_frame_fusion.py --native-no-dll --work "$RUNNER_TEMP/gfg-native-compatibility" --headers "$RUNNER_TEMP/vkh/include"
           python3 scripts/check_native_independence.py --source "$RUNNER_TEMP/gfg-native-compatibility/source"
-      # Intentionally no patch/ZIP artifact upload, prerelease, or hardware claim.
+      - name: Collect build and validation logs for the test artifact
+        run: |
+          set -euo pipefail
+          logs="$RUNNER_TEMP/fg3-private/validation-logs"
+          mkdir -p "$logs"
+          cp python-tests.log build-core.log build-native.log core.log core-gpu-lmc.log \
+            pass.log cpu.log cpu-srgb.log borrowed.log borrowed-gpu-lmc.log \
+            observer.log observer-srgb.log observer-gpu-lmc.log recovery.log \
+            "$logs/"
+          cp "$RUNNER_TEMP/fg3-private/installed.log" "$logs/"
+          rm "$RUNNER_TEMP/fg3-private/installed.log"
+          cp gpu-*.log skip-*.log fault-*.log disabled-timeline-*.log mailbox-*.log \
+            shared-fd.log relay-rejected.log "$logs/"
+          {
+            printf 'source_commit=%s\n' "$(git rev-parse HEAD)"
+            printf 'runner=ubuntu-22.04\ncompiler='; gcc-12 --version | head -n 1
+            printf 'vulkan_headers_tag=v1.4.365\n'
+            printf 'test_scope=software-only; no physical scanout or Deck performance claim\n'
+            printf '\nCore checks:\n'
+            grep -hE 'te-tests:|semaphore fd import not supported' "$logs"/core*.log
+            printf '\nNative validation summary:\n'
+            grep -hE 'validation errors=|gpu stats bridges=|WSI smoke PASS|content=PASS' "$logs"/*.log || true
+          } > "$logs/TEST-RESULTS.txt"
+          sha256sum "$logs"/*.log "$logs/TEST-RESULTS.txt" > "$logs/SHA256SUMS.txt"
+      - name: Attach experimental test package for manual Deck validation
+        if: github.event_name == 'push' && github.ref == 'refs/heads/codex/fg3-integration'
+        uses: actions/upload-artifact@v4
+        with:
+          name: GFG-Native-FG-experimental-${{ github.sha }}
+          path: ${{ runner.temp }}/fg3-private/*
+          if-no-files-found: error
+          retention-days: 7

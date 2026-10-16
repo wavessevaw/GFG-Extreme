@@ -90,6 +90,7 @@ int main(void) {
     desc.host_io=1;desc.output_bgra=1;desc.params.full_density=2;
     if(getenv("GFG_TEST_GPU_LMC")) desc.params.algorithm=TE_ALGO_LMC_GPU;
     OK(te_context_create(engine,&desc,&context));
+    REQUIRE(te_timeline_fd_probe(context,1,2)==VK_ERROR_FEATURE_NOT_PRESENT);
     unsigned char *a=malloc(W*H*3),*b=malloc(W*H*3),*expected=malloc(W*H*3),*out=malloc(W*H*3);
     REQUIRE(a && b && expected && out);
     moving_pattern(a,0,0);moving_pattern(b,6,3);

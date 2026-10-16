@@ -1,0 +1,36 @@
+GFG Native FG3 experimental package build environment
+=====================================================
+
+Canonical downloadable artifact: the `Native FG3 GPU validation (software
+only)` GitHub Actions run for the source commit recorded in MANIFEST.json.
+The workflow runs on `ubuntu-22.04`, sets `CC=gcc-12`, and fetches
+Khronos Vulkan-Headers tag `v1.4.365`. It installs Mesa's lavapipe ICD, the
+Khronos validation layers, Xvfb, glslang-tools and spirv-tools for software
+checks. Those tools validate source/runtime contracts only; they are not the
+Steam Deck GPU or display.
+
+Rebuild the native layer from a fresh checkout of MANIFEST.json's
+`source_commit` with the same tagged headers:
+
+  git clone --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers vkh
+  make -C engine/gfg-temporal -j2 all lib
+  make -C engine/gfg-native ENABLE_TE=1 BUILD=build-te \
+    VULKAN_HEADERS="$PWD/vkh/include" layer
+  python3 scripts/package_native_fg.py \
+    --binary engine/gfg-native/build-te/libVkLayer_gfg_native.so \
+    --outdir dist
+
+The CI workflow also runs the native contract suite, CPU and GPU LMC core
+checks, loader and no-DLL bootstrap tests, both Vulkan layer orders, WSI and
+pixel-observer tests, sync/fault/pass-through checks, package installation,
+rollback/uninstall and a byte-identical rebuild from the included source.
+Uploaded validation logs are separate files beside the ZIP in the CI artifact.
+
+Install after extracting the ZIP: `bash install.sh`.
+Rollback to the exact prior GFG files: `bash rollback.sh`.
+Remove GFG Native and keep the transparent launch wrapper: `bash uninstall.sh`.
+Run one local diagnostic capture by setting the Steam launch option to
+`~/.local/bin/gfg-native --diagnose %command%`.
+
+Status: EXPERIMENTAL / NOT ACCEPTED. The package does not prove physical 90 Hz,
+OLED scanout, game quality, power, latency or stability on Steam Deck.

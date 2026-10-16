@@ -4,7 +4,8 @@ Owner mandate: #132, 30 real → 90 physically displayed FPS on Steam Deck OLED,
 1280×800 / 90 Hz, usable dynamic quality, bounded latency and preserved real
 FPS. No claim of delivery until physical acceptance, quality/power/latency,
 10-minute dynamic and 30-minute stability evidence. No main merge or public
-experimental binaries. Session end is not task completion.
+release. PR #133 requests an expiring Actions artifact for an experimental
+test package. Session end is not task completion.
 
 ## Published state and collaboration
 
@@ -30,33 +31,40 @@ experimental binaries. Session end is not task completion.
 ## Current findings and exact next work
 
 1. Keep the passing same-device path; repeat GPU tests after meaningful edits.
-   The old relay mode reproduces VUID 03268. Its failure evidence is preserved.
-   A timeline host signal in a relay thread is not a submitted resolving GPU
-   signal. CPU-fit LMC split submissions also require this audit in fd mode.
-2. Finish regression and publish recovery fixes for C1. Record-failure fallback
+   The old relay mode reproduced VUID 03268 and has now been removed. Shared-fd
+   mode is explicit; any failed capability/import check prevents GPU bridge
+   activation and retains the real present. llvmpipe lacks semaphore-FD import,
+   so the shared-fd self-test success path remains untested. CPU-fit LMC split
+   submissions also remain outside the validated same-device package path.
+2. C1 recovery fixes are in the branch. Record-failure fallback
    copies the retained real image (duplicate kind D, not synthetic), re-chains
    its real-ready semaphore, then forwards the original. Unrecoverable acquire
    failures forward real and request OUT_OF_DATE / swapchain retirement.
-   Three fault-injection cases and independent WSI-pixel observation pass.
-3. Explicit GPU LMC fit is implemented and under validation; evaluate against CPU LMC before selecting
-   final quality/performance settings. Earlier GPU kernels exist at `7f445f2`:
+   Three fault-injection cases and independent WSI-pixel observation pass under
+   software synchronization validation.
+3. GPU LMC fit is implemented and its 168 core checks pass. Earlier GPU kernels
+   exist at `7f445f2`:
    lmc_layers.comp, lmc_irls.comp, lmc_palette.comp, lmc_plane.glsl and the host
    dispatch sequence in te_lmc.inc. Current kernels have better coalesced
    statistics/search/orphan passes; retain them. Do not restore a worker that
    submits to the application queue from another thread. Keep CPU-fit LMC as
    reference. Do not mislabel old FIT_WAIT GPU work as excluded CPU time.
-4. Implement/integrate asynchronous paced output with the other agent's
-   Gamescope findings. Current back-to-back FIFO presents are NOT final 90 Hz
-   pacing. Any worker using the app queue requires host synchronization with
-   ALL app queue API calls, retained per-job outputs and copied pNext payloads;
-   do not introduce races or unbounded stale jobs. Current public pNext remap
-   mutates caller-owned structures and also needs immutable-chain review.
-5. Resolve target-hardware access via authorized integration. Both sessions
-   currently report no authenticated Deck endpoint. The user's inventory zip
-   contains only artifacts.json/report.json, not a connection. Do not invent
-   endpoints or claim hardware results. Ask for existing authorized executor
-   through PR coordination, not repeated owner installs. Continue independent
-   engineering while this remains unavailable.
+4. Current FIFO bridge queues G1, G2, then R inside each real present call on
+   the application's queue; it has no independent output worker, and software
+   handoff count is not proof of 90 Hz scanout. Do not add an async worker
+   without serializing every host access to the app queue, retaining per-job
+   images, copying all pNext payloads, bounding stale work, and proving
+   destruction/drain behavior. Present-ID rewriting uses a private node and
+   ID value; caller-owned chains remain immutable. Its optional present-wait
+   monitor uses zero-timeout polling and a per-swapchain mutex shared with
+   application acquire/present/wait calls to honor Vulkan external
+   synchronization, with 1 ms between polls. The Deck layer order
+   and actual KMS/panel cadence remain unknown.
+5. Hardware acceptance remains pending: this cloud executor has no
+   authenticated Deck endpoint. The inventory zip contains device metadata,
+   not a connection. Do not invent endpoints or claim hardware results, and do
+   not ask the owner to relay patches or repeat manual test steps. Continue
+   independent engineering and keep the physical tests visible as unverified.
 
 ## Reproduction in the current cloud workspace
 
@@ -114,12 +122,17 @@ Package/install/rollback code and 4 tests were brought forward from the
 preserved source branch, adapted to GFG_NATIVE_GPU_BRIDGE and lmc-gpu. Default
 GPU binary no longer compiles cpu_bridge.c; ENABLE_CPU_BRIDGE=1 explicitly
 builds the legacy regression. Full source includes .inc and GPU solvers.
-Internal package only, hardware_acceptance=false; no public artifacts.
+Internal package only, hardware_acceptance=false; an expiring Actions artifact
+is configured on pushes to this branch, with no release publication.
 CI restores loader/pass-through, CPU UNORM/sRGB, bootstrap, private package,
 installed GPU runtime, rollback/uninstall and byte-identical source rebuild,
-in addition to GPU/sync/fault checks. Do not remove mandatory regression gates.
+in addition to GPU/sync/fault checks. The package includes build environment
+and exact commands; Actions upload is configured to include validation logs.
+Do not remove mandatory regression gates. Raw local verification is captured
+in [`software-checkpoint-20261016.txt`](evidence/software-checkpoint-20261016.txt);
+its ZIP is explicitly marked dirty-worktree evidence, not the CI artifact.
 
-## Gamescope source spike underway
+## SteamOS and Gamescope source audit
 
 Read-only upstream checkout: /workspace/gfg-research-sources/gamescope,
 2b5cf191d1047d6895516a834de8a72ac1c342f3 (2026-10-13). It is NOT proven to
@@ -139,3 +152,26 @@ frame/commit→KMS visibility correlation or an independent physical observer.
 No nested Gamescope build has been completed yet. Dependencies include pinned
 wlroots, liftoff, vkroots, Wayland/X11/SDL and optional DRM; preserve exact
 submodule commits if building. Do not replace the owner's SteamOS compositor.
+
+`docs/fg3/STEAMOS_DEEP_AUDIT.md` records the bounded source audit and the
+SteamOS recovery/package-host probe. All five official hosts failed before an
+HTTP response with proxy 403; no recovery image was downloaded and no hash or
+package match is claimed. Meson/Ninja were available, but the nested configure
+stopped at missing X11 metadata; no Gamescope build is claimed. `pixel_out` in
+the pinned source is predicted presentation time; KMS page-flip has a separate
+timestamp and no complete present-ID/framebuffer correlation. The monitor fix
+above does not change that evidence boundary.
+
+## Diagnostic test package checkpoint
+
+The PR #133 owner comment `issuecomment-6205050293` asks for a reproducible
+experimental installable package, tested rollback/uninstall, full CI, a
+checksum and one-command diagnostics, explicitly not a public release or
+hardware acceptance. The integration branch now contains `--diagnose`, a
+private local archive/report, install/rollback/uninstall coverage, and a
+seven-day GitHub Actions artifact upload on pushes to this branch only. The
+report clearly labels physical display and KMS scanout unobserved. The package
+must be built from the committed checkpoint and CI artifact; no artifact link
+or green remote CI is claimed until Actions completes. Diagnostic app
+stdout/stderr can contain private paths and stays local unless a user chooses
+to share it.

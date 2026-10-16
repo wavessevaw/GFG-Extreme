@@ -83,5 +83,30 @@ class NativeLayerTests(unittest.TestCase):
         self.assertIn("free(fg->rgba_cached)", bridge)
         self.assertIn('disable_slow_bridge(fg,"before-real-present"', bridge)
 
+    def test_present_wait_monitor_serializes_swapchain_host_access(self):
+        code = (ENGINE / "src/layer.c").read_text()
+        monitor = code.split("static void *native_monitor_main", 1)[1].split(
+            "static uint64_t native_ids_assign", 1)[0]
+        present = code.split("native_QueuePresentKHR(VkQueue queue", 1)[1].split(
+            "#ifdef GFG_NATIVE_WITH_TE\nstatic native_present_ids *native_find_ids", 1)[0]
+        self.assertIn("pthread_mutex_t wsi_lock", code)
+        self.assertIn('d->present_trace = native_env_is_1("GFG_NATIVE_PRESENT_TRACE")', code)
+        self.assertIn("native_ids_driver_wait(ids, id, 0)", monitor)
+        self.assertIn("pthread_mutex_lock(&ids->wsi_lock)", monitor)
+        acquire = code.split("native_AcquireNextImageKHR(", 1)[1].split(
+            "native_AcquireNextImage2KHR(", 1)[0]
+        acquire2 = code.split("native_AcquireNextImage2KHR(", 1)[1].split(
+            "native_QueuePresentKHR(", 1)[0]
+        self.assertIn("pthread_mutex_lock(&ids->wsi_lock)", acquire)
+        self.assertIn("pthread_mutex_lock(&ids->wsi_lock)", acquire2)
+        self.assertIn("pthread_mutex_lock(&sync_ids->wsi_lock)", present)
+        self.assertIn("pthread_mutex_unlock(&sync_ids->wsi_lock)", present)
+        wait = code.split("native_WaitForPresentKHR(", 1)[1].split(
+            "native_WaitForPresent2KHR(", 1)[0]
+        self.assertIn("pthread_mutex_lock(&ids->wsi_lock)", wait)
+        wait2 = code.split("native_WaitForPresent2KHR(", 1)[1].split(
+            "#endif", 1)[0]
+        self.assertIn("pthread_mutex_lock(&ids->wsi_lock)", wait2)
+
 if __name__ == "__main__":
     unittest.main()
