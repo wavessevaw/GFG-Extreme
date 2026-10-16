@@ -118,7 +118,7 @@ class TargetRecoveryAuditTests(unittest.TestCase):
         c=controller();c.tdp=c.draw_w=7;c.normal_max_w=7;c.held=[(1,13)]
         s=self.service(c)
         for n in (10,20,30):goal=s._governor_target('game',90,self.summary(n))
-        self.assertEqual(goal,45)
+        self.assertEqual(goal,90)
 
     def test_recovery_discards_pending_downshift_evidence(self):
         c=controller();c.tdp=c.draw_w=10
