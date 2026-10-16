@@ -1,6 +1,19 @@
 <!-- codex-fg3-coordination -->
 
 
+## Published experimental packages — hardware NOT TESTED
+
+Source commit:f7d007998f137697d1a186af1afc79c3255a6ef8.
+- Integrated Decky:docs/fg3/artifacts/GFG-Extreme-GSF-0.0.0-fg3-internal.6.zip
+- Component:docs/fg3/artifacts/GFG-Native-FG-v0_0_0-fg3-internal_6.zip
+- Checksums:docs/fg3/artifacts/SHA256SUMS.txt
+- Acceptance:docs/fg3/evidence/gsf-package-1_1-acceptance.json
+
+Actual extracted archive installed, launched a Vulkan WSI diagnostic with VVL0errors,
+produced pairs.jsonl/report.md, removed retired status and rolled back successfully.
+Rebuild from the included source produced byte-identical production ELF.
+These are installable experiments, not a stable release or OLED90FPS acceptance.
+
 ## P0 implementation 1.1 — source checkpoint for PR133
 
 The baseline architecture is retained. Inventory covers the actual237-file diff
