@@ -150,8 +150,11 @@ jobs:
         run: |
           set -uo pipefail
           log="$RUNNER_TEMP/native-compatibility.log"
-          python3 scripts/build_frame_fusion.py --native-no-dll --work "$RUNNER_TEMP/gfg-native-compatibility" --headers "$RUNNER_TEMP/vkh/include" >"$log" 2>&1
-          result=$?
+          if python3 scripts/build_frame_fusion.py --native-no-dll --work "$RUNNER_TEMP/gfg-native-compatibility" --headers "$RUNNER_TEMP/vkh/include" >"$log" 2>&1; then
+            result=0
+          else
+            result=$?
+          fi
           tail -n 60 "$log"
           if (( result != 0 )); then
             while IFS= read -r line; do printf '::error title=Native bootstrap build failure::%s\n' "$line"; done < <(tail -n 60 "$log")
