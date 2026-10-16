@@ -417,6 +417,25 @@ static void native_unpatch_device(native_device_patch *p) {
     p->extensions = NULL;
 }
 
+/* Lower layers consume the loader's LINK_INFO cursor even on failure. A
+ * fallback is a fresh traversal of that chain, not a call with its exhausted
+ * cursor. Only the loader-owned mutable link is restored; app feature/extension
+ * structures remain unchanged. Capture the cursor after consuming OUR link. */
+static VkResult native_create_device_with_fallback(PFN_vkCreateDevice next,
+        VkPhysicalDevice physical,const VkDeviceCreateInfo *app,
+        const VkDeviceCreateInfo *patched,VkLayerDeviceCreateInfo *loader_link,
+        const VkAllocationCallbacks *allocator,VkDevice *device,int *fallback) {
+    VkLayerDeviceLink *downstream=loader_link->u.pLayerInfo;
+    *fallback=0;
+    VkResult result=next(physical,patched?patched:app,allocator,device);
+    if(patched && result!=VK_SUCCESS) {
+        loader_link->u.pLayerInfo=downstream;
+        *fallback=1;
+        result=next(physical,app,allocator,device);
+    }
+    return result;
+}
+
 static VKAPI_ATTR VkResult VKAPI_CALL
 native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     const VkAllocationCallbacks *alloc, VkDevice *out) {
@@ -442,19 +461,16 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     native_device_patch patch;
     const char *patch_reason = native_patch_device(find_instance(dispatch_key(phys)),
                                                    phys, ci, &patch);
-    VkResult result = next(phys, patch.active ? &patch.ci : ci, alloc, out);
-    const int gpu_capable = patch.active && result == VK_SUCCESS;
+    int fallback=0;
+    VkResult result=native_create_device_with_fallback(next,phys,ci,
+        patch.active?&patch.ci:NULL,link,alloc,out,&fallback);
+    const int gpu_capable = patch.active && !fallback && result == VK_SUCCESS;
     const int display_timing=gpu_capable?patch.display_timing:0;
     const int semaphore_fd = gpu_capable && patch.semaphore_fd;
     const int present_caps = gpu_capable ? patch.present_caps : 0;
     const int app_present_ids = gpu_capable && patch.app_present_ids;
-    const int patched = patch.active;
     native_unpatch_device(&patch);
-    if (patched && result != VK_SUCCESS) {
-        /* Never prevent the game's own device: retry exactly as requested. */
-        patch_reason = "patched-create-failed";
-        result = next(phys, ci, alloc, out);
-    }
+    if(fallback)patch_reason="patched-create-failed-real-only";
     if (tracing())
         fprintf(stderr, "[gfg-native] device gpu_bridge_capable=%d semaphore_fd=%d"
                 " present_caps=0x%x reason=%s\n", gpu_capable, semaphore_fd, present_caps,

@@ -195,3 +195,11 @@ $(BUILD)/presentation-timing: tests/presentation_timing.c src/gpu_bridge.c src/g
 presentation-timing: $(BUILD)/presentation-timing
 	$(BUILD)/presentation-timing
 .PHONY: presentation-timing
+
+$(BUILD)/device-fallback: tests/device_fallback.c src/layer.c
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Wno-unused-function -I$(VULKAN_HEADERS) -o $@ $< -lpthread
+
+device-fallback: $(BUILD)/device-fallback
+	$(BUILD)/device-fallback
+.PHONY: device-fallback
