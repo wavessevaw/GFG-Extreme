@@ -83,7 +83,7 @@ static FILE* npy_create(const char* path, size_t n, size_t h, size_t w) {
 static void usage(void) {
     fprintf(stderr,
             "usage: te-bench --frames seq.npy [--start S] [--pairs N] [--step K] [--outputs N] [--crop WxH]\n"
-            "                [--algo tiles|lmc|lmc-gpu|shared-flow] [--tier 0..2] [--mode adaptive|full|light|reuse] [--tile 8|16|32] [--levels L] [--range R]\n"
+            "                [--algo tiles|lmc|lmc-gpu|shared-flow|shared-flow-dense] [--tier 0..2] [--mode adaptive|full|light|reuse] [--tile 8|16|32] [--levels L] [--range R]\n"
             "                [--light-thr X] [--probe N] [--profile] [--out gen.npy] [--json stats.jsonl]\n"
             "                [--analysis DIR] [--device NAME] [--validation] [--no-download]\n");
 }
@@ -98,7 +98,7 @@ int main(int argc, char** argv) {
     const char *frames_path = NULL, *out_path = NULL, *json_path = NULL, *analysis_dir = NULL, *device = NULL;
     size_t start = 0, pairs = 0, step = 3, cw = 0, ch = 0;
     int profile = 0, validation = 0, download = 1, tier = 0;
-    uint32_t outputs=0;
+    uint32_t outputs=0;int shared_dense=0;
     te_params params;
     te_params_default(&params);
     for (int i = 1; i < argc; ++i) {
@@ -121,7 +121,8 @@ int main(int argc, char** argv) {
                 else { usage(); return 2; }
             }
         } else if (ARG("--algo")) {
-            if (strcmp(v,"shared-flow")==0) params.algorithm=TE_ALGO_SHARED_FLOW;
+            if (strcmp(v,"shared-flow-dense")==0){params.algorithm=TE_ALGO_SHARED_FLOW;shared_dense=1;}
+            else if (strcmp(v,"shared-flow")==0) params.algorithm=TE_ALGO_SHARED_FLOW;
             else if (strcmp(v,"lmc-gpu")==0) params.algorithm=TE_ALGO_LMC_GPU;
             else if (strcmp(v, "lmc") == 0) params.algorithm = TE_ALGO_LMC;
             else if (strcmp(v, "tiles") == 0) params.algorithm = TE_ALGO_TILES;
@@ -164,7 +165,7 @@ int main(int argc, char** argv) {
     }
     te_context_desc cd;
     te_context_desc_default(&cd, (uint32_t)W, (uint32_t)H, outputs);
-    cd.params = params;
+    cd.params = params;cd.shared_flow_dense=shared_dense;
     cd.profile = profile;
     cd.host_io = 1;
     te_context* ctx;
@@ -176,7 +177,7 @@ int main(int argc, char** argv) {
     uint32_t tx, ty;
     uint32_t tiles = te_tile_count(ctx, &tx, &ty);
     fprintf(stderr, "te-bench: %s %zux%zu algo %s tiles %ux%u pairs %zu step %zu mode %s%s\n", te_device_name(dev), W, H,
-            params.algorithm == TE_ALGO_SHARED_FLOW ? "shared-flow" : params.algorithm == TE_ALGO_LMC_GPU ? "lmc-gpu" : params.algorithm == TE_ALGO_LMC ? "lmc" : "tiles", tx, ty, pairs, step, params.adaptive ? "adaptive" : (params.force_class == 2 ? "full" : params.force_class == 1 ? "light" : "reuse"),
+            params.algorithm == TE_ALGO_SHARED_FLOW ? (shared_dense?"shared-flow-dense":"shared-flow") : params.algorithm == TE_ALGO_LMC_GPU ? "lmc-gpu" : params.algorithm == TE_ALGO_LMC ? "lmc" : "tiles", tx, ty, pairs, step, params.adaptive ? "adaptive" : (params.force_class == 2 ? "full" : params.force_class == 1 ? "light" : "reuse"),
             profile ? " profile" : "");
     FILE* out = out_path ? npy_create(out_path, pairs * outputs, H, W) : NULL;
     FILE* json = json_path ? fopen(json_path, "w") : NULL;
@@ -249,7 +250,7 @@ int main(int argc, char** argv) {
                                                                "field", "masked", "orphan", "field2"};
                 fprintf(json, ", \"lmc_ms\": {");
                 for (int k = 0; k < TE_LMC_PROF_COUNT; ++k)
-                    fprintf(json, "%s\"%s\": %.4f", k ? ", " : "", ps.model_gpu && k==TE_LMC_FIT_WAIT?"gpu_model":names[k], ps.lmc_ms[k]);
+                    fprintf(json, "%s\"%s\": %.4f", k ? ", " : "", ps.shared_flow && k==TE_LMC_FIT_WAIT?"pair_control":ps.model_gpu && k==TE_LMC_FIT_WAIT?"gpu_model":names[k], ps.lmc_ms[k]);
                 fprintf(json, "}, \"cpu_fit_ms\": %.4f, \"first_ready_ms\": %.4f, \"pair_ready_ms\": %.4f, "
                               "\"lmc_counts\": [%u, %u, %u]", ps.lmc_fit_ms, ps.ready_ms[0],
                         ps.ready_ms[ps.outputs - 1], ps.tiles[0][0], ps.tiles[0][1], ps.tiles[0][2]);

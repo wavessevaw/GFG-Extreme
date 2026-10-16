@@ -1387,8 +1387,9 @@ static void collect(te_context* ctx, te_slot* slot) {
                               VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
         for (int k = 0; k < TE_LMC_PROF_COUNT; ++k) st->lmc_ms[k] = DELTA(TE_LMC_Q0 + k, TE_LMC_Q0 + k + 1);
     /* the wait for the CPU motion fit sits between stage points 2 and 3: GPU time is without it */
-    st->model_gpu = ctx->lmc && ctx->lmc->gpu_fit;
-    if (!st->model_gpu && st->lmc_ms[TE_LMC_FIT_WAIT] > 0.0) {
+    st->shared_flow=ctx->lmc && ctx->lmc->shared_flow;
+    st->model_gpu = ctx->lmc && ctx->lmc->gpu_fit && !ctx->lmc->shared_flow;
+    if (ctx->lmc && !ctx->lmc->gpu_fit && st->lmc_ms[TE_LMC_FIT_WAIT] > 0.0) {
         st->stage_ms[TE_STAGE_CLASSIFY] -= st->lmc_ms[TE_LMC_FIT_WAIT];
         if (st->stage_ms[TE_STAGE_CLASSIFY] < 0.0) st->stage_ms[TE_STAGE_CLASSIFY] = 0.0;
     }
@@ -1402,7 +1403,7 @@ static void collect(te_context* ctx, te_slot* slot) {
             const uint32_t* g = (const uint32_t*)(rb + TE_GLOBALS_HEADER * i);
             for (int c = 0; c < 3; ++c) st->tiles[i][c] = g[c];
         }
-        if(ctx->lmc->shared_flow)st->scene_cut=((const uint32_t*)rb)[0];
+        if(ctx->lmc->compact_flow)st->scene_cut=((const uint32_t*)rb)[0];
         st->profiled = 0;
         ctx->have_last = 1;
         slot->generated = 0;
