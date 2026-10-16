@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * GFG Native WSI: independent Vulkan-loader layer foundation.
  *
- * This stage ONLY negotiates capabilities and forwards real presentation.
- * It intentionally does NOT claim to generate or deliver synthetic frames.
+ * GPU generation runs on the application device with bounded asynchronous
+ * WSI output when requested. Tests establish WSI content/order, not scanout.
  * No MAKO, LSFG, Lossless.dll, or extracted model is linked or loaded.
  * All functionality is opt-in via GFG_NATIVE_FG=1.
  */
@@ -16,6 +16,7 @@
 
 #include <vulkan/vulkan.h>
 #include <vulkan/vk_layer.h>
+#include "swapchain_chain.h"
 #ifdef GFG_NATIVE_WITH_TE
 #include "cpu_bridge.h"
 #include "gpu_bridge.h"
@@ -67,6 +68,7 @@ typedef struct native_swapchain {
     VkSwapchainCreateFlagsKHR create_flags;
     int copy_eligible; /* enabled transfer usage only; never means captured */
     VkPresentModeKHR present_mode;
+    int force_fifo;
     const char *path; /* "gpu", "cpu" or "none": which transport handled presents */
     double *present_us; /* GFG_NATIVE_TIMING=1: CPU time per app present */
     uint32_t present_samples;
@@ -771,9 +773,16 @@ static VkResult native_serialized_present(VkQueue queue, const VkPresentInfoKHR 
  * application acquire wrapper would compete with its own output priority and
  * recursively lock the swapchain. Only queue host entrypoints are wrapped. */
 #ifdef GFG_NATIVE_WITH_TE
+static VKAPI_ATTR VkResult VKAPI_CALL native_worker_QueueWaitIdle(VkQueue q) {
+    native_device *d=find_device(dispatch_key(q));
+    if(!d || !d->queue_idle)return VK_ERROR_INITIALIZATION_FAILED;
+    pthread_mutex_lock(&d->queue_lock);VkResult r=d->queue_idle(q);
+    pthread_mutex_unlock(&d->queue_lock);return r;
+}
 static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL native_worker_gdpa(VkDevice device, const char *name) {
     native_device *d = find_device(dispatch_key(device));
     if (!d || !name) return NULL;
+    if (!strcmp(name,"vkQueueWaitIdle")) return (PFN_vkVoidFunction)native_worker_QueueWaitIdle;
     if (!strcmp(name,"vkQueueSubmit")) return (PFN_vkVoidFunction)native_QueueSubmit;
     if (!strcmp(name,"vkQueueSubmit2")) return d->submit2 ? (PFN_vkVoidFunction)native_QueueSubmit2 : NULL;
     if (!strcmp(name,"vkQueueSubmit2KHR")) return d->submit2_khr ? (PFN_vkVoidFunction)native_QueueSubmit2KHR : NULL;
@@ -940,7 +949,10 @@ static const char *native_ineligible_reason(const VkSwapchainCreateInfoKHR *ci) 
     if (ci->imageArrayLayers != 1) return "array-layers";
     if (ci->imageSharingMode != VK_SHARING_MODE_EXCLUSIVE) return "sharing-mode";
     if (!ci->imageExtent.width || !ci->imageExtent.height) return "zero-extent";
-    if (!native_supported_sdr8_format(ci->imageFormat))
+    if (!native_supported_sdr8_format(ci->imageFormat) &&
+            !(native_env_is_1("GFG_NATIVE_GPU_BRIDGE") &&
+              (ci->imageFormat == VK_FORMAT_A2B10G10R10_UNORM_PACK32 ||
+               ci->imageFormat == VK_FORMAT_A2R10G10B10_UNORM_PACK32)))
         return "unsupported-format";
     return NULL;
 }
@@ -1024,12 +1036,20 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
     VkResult caps_result = VK_SUCCESS;
     VkResult extended_result = VK_SUCCESS;
     VkSwapchainCreateInfoKHR extended = *ci;
+    gfg_create_chain create_copy;
+    const int ordinary_mode = ci->presentMode == VK_PRESENT_MODE_MAILBOX_KHR ||
+        ci->presentMode == VK_PRESENT_MODE_IMMEDIATE_KHR || ci->presentMode == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+    int mode_copy_ok = 1;
+    if (d->async_output && ordinary_mode && native_env_is_1("GFG_NATIVE_FORCE_FIFO"))
+        mode_copy_ok = gfg_create_fifo(&create_copy,&extended);
     VkSurfaceCapabilitiesKHR caps = {0};
     if (!d->instance || !d->instance->enabled) {
         reason = "layer-not-enabled";
     } else if (!native_copy_bridge_requested(d)) {
         reason = "frame-bridge-unavailable";
-    } else if ((reason = native_ineligible_reason(ci)) != NULL) {
+    } else if (!mode_copy_ok) {
+        reason = "cannot-copy-fifo-create-chain";
+    } else if ((reason = native_ineligible_reason(&extended)) != NULL) {
         /* Keep the original WSI path untouched on unsupported shapes. */
     } else if (native_copy_usage_ready(ci->imageUsage)) {
         /* The game already requested both copy operations. Keep its
@@ -1095,7 +1115,8 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
     sc->format = ci->imageFormat;
     sc->extent = ci->imageExtent;
     sc->copy_eligible = candidate;
-    sc->present_mode = ci->presentMode;
+    sc->present_mode = candidate ? extended.presentMode : ci->presentMode;
+    sc->force_fifo = sc->present_mode != ci->presentMode;
     sc->create_flags = ci->flags;
     {
         const char *timing = getenv("GFG_NATIVE_TIMING");
@@ -1124,7 +1145,7 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
             "[gfg-native] swapchain %ux%u candidate=%d output=real-only"
             " reason=%s format=%d flags=0x%x layers=%u sharing=%d"
             " requested_usage=0x%x supported_usage=0x%x caps_queried=%d"
-            " caps_result=%d extended_result=%d min_images=%u->%u images=%u present_mode=%d\n",
+            " caps_result=%d extended_result=%d min_images=%u->%u images=%u present_mode=%d requested_present_mode=%d\n",
             sc->extent.width, sc->extent.height, sc->copy_eligible,
             reason ? reason : "accepted", (int)ci->imageFormat,
             (unsigned)ci->flags, ci->imageArrayLayers,
@@ -1132,7 +1153,7 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
             (unsigned)supported_usage, caps_queried,
             (int)caps_result, (int)extended_result, ci->minImageCount,
             candidate ? extended.minImageCount : ci->minImageCount, sc->image_count,
-            (int)ci->presentMode);
+            (int)sc->present_mode, (int)ci->presentMode);
     return VK_SUCCESS;
 }
 
@@ -1241,8 +1262,6 @@ native_AcquireNextImageKHR(VkDevice device, VkSwapchainKHR swapchain,
 #ifdef GFG_NATIVE_WITH_TE
     if (ids) pthread_mutex_unlock(&ids->wsi_lock);
     }
-#else
-    result = d->acquire(device, swapchain, timeout, semaphore, fence, index);
 #endif
     if ((result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) && index)
         native_acquired(d, swapchain, *index, semaphore);
@@ -1268,8 +1287,6 @@ native_AcquireNextImage2KHR(VkDevice device, const VkAcquireNextImageInfoKHR *in
 #ifdef GFG_NATIVE_WITH_TE
     if (ids) pthread_mutex_unlock(&ids->wsi_lock);
     }
-#else
-    result = d->acquire2(device, info, index);
 #endif
     if ((result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) && index && info)
         native_acquired(d, info->swapchain, *index, info->semaphore);
@@ -1280,8 +1297,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL
 native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
     native_device *d = find_device(dispatch_key(queue));
     if (!d || !d->present) return VK_ERROR_INITIALIZATION_FAILED;
-    // Observe acquisition ownership. Do NOT consume the application's semaphores
-    // or mutate VkPresentInfoKHR; those belong to the game/real-frame path.
+    /* Record only the game's acquired indices. The async path consumes its
+     * semaphore waits before returning and owns a private metadata copy. */
     if (info && info->pImageIndices && info->pSwapchains) {
         pthread_mutex_lock(&d->lock);
         for (uint32_t n = 0; n < info->swapchainCount; ++n) {
@@ -1296,8 +1313,8 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
         }
         pthread_mutex_unlock(&d->lock);
     }
-    // Exactly one forward: no synthetic present or extra swapchain acquisition
-    // until the independent image/queue/timeline ownership contract is proven.
+    /* Unsupported shapes keep the real present; eligible single-swapchain
+     * jobs use the native GPU transport below. */
     VkResult result = VK_ERROR_INITIALIZATION_FAILED;
     struct timespec present_start;
     clock_gettime(CLOCK_MONOTONIC, &present_start);
@@ -1328,7 +1345,7 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
                         .physical = d->physical, .device = d->handle,
                         .gdpa = d->async_output ? native_worker_gdpa : d->gdpa,
                         .swapchain = sc->handle, .extent = sc->extent, .format = sc->format,
-                        .present_mode = sc->present_mode, .queue = queue,
+                        .present_mode = sc->present_mode, .force_fifo=sc->force_fifo, .queue = queue,
                         .family = q->family, .semaphore_fd = d->semaphore_fd,
                         .set_loader_data = d->set_loader_data};
                     sc->gpu = gfg_gpu_fg_create(&gi);

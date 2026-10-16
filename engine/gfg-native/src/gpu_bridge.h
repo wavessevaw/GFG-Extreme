@@ -21,6 +21,7 @@ typedef struct {
     VkExtent2D extent;
     VkFormat format;
     VkPresentModeKHR present_mode;
+    int force_fifo;
     VkQueue queue;                    /* the app's present queue */
     uint32_t family;
     int semaphore_fd;                 /* VK_KHR_external_semaphore_fd enabled on the app device */

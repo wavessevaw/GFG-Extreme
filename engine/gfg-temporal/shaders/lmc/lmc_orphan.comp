@@ -23,7 +23,8 @@ layout(local_size_x = 64) in;
 shared float s_c[64];
 shared int s_i[64];
 shared float s_y[64], s_w[64];
-shared uint s_oh[130];
+// Avoid reusing the std430 ohist[130] array type in older glslang.
+shared uint s_oh[131];
 
 bool hud_at(ivec2 p) { return imageLoad(hudCount, p).r >= uint(P.hud_pairs); }
 

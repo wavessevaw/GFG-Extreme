@@ -52,5 +52,27 @@ int main(void) {
     ci.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
     assert(!strcmp(native_ineligible_reason(&ci), "sharing-mode"));
     puts("GFG native: present-extension mask and protection refusal PASS");
+    ci.imageSharingMode=VK_SHARING_MODE_EXCLUSIVE;
+    ci.imageFormat=VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+    setenv("GFG_NATIVE_GPU_BRIDGE","1",1);
+    assert(native_ineligible_reason(&ci)==NULL);
+    VkPresentModeKHR mailbox=VK_PRESENT_MODE_MAILBOX_KHR;
+    const VkSwapchainPresentModesCreateInfoEXT modes={.sType=VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODES_CREATE_INFO_EXT,
+        .presentModeCount=1,.pPresentModes=&mailbox};
+    const VkImageFormatListCreateInfo formats={.sType=VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO,.pNext=&modes};
+    ci.pNext=&formats;ci.presentMode=mailbox;
+    VkSwapchainCreateInfoKHR effective=ci;gfg_create_chain copy;
+    assert(gfg_create_fifo(&copy,&effective));
+    assert(ci.pNext==&formats && formats.pNext==&modes && modes.pPresentModes[0]==mailbox);
+    const VkImageFormatListCreateInfo *f=effective.pNext;
+    const VkSwapchainPresentModesCreateInfoEXT *m=f->pNext;
+    assert(effective.presentMode==VK_PRESENT_MODE_FIFO_KHR && f!=&formats && m!=&modes);
+    assert(m->presentModeCount==1 && m->pPresentModes[0]==VK_PRESENT_MODE_FIFO_KHR);
+    VkBaseInStructure unknown={.sType=(VkStructureType)1999999999,.pNext=(const void*)&modes};
+    effective=ci;effective.pNext=&unknown;
+    assert(!gfg_create_fifo(&copy,&effective));
+    assert(effective.pNext==&unknown && effective.presentMode==mailbox);
+    unsetenv("GFG_NATIVE_GPU_BRIDGE");
+    puts("GFG native: HDR10 eligibility and immutable FIFO create-mode prefix PASS");
     return 0;
 }

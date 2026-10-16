@@ -1,3 +1,34 @@
+# Current direction: reference reimplementation, not release
+
+Read the owner directive before any next implementation or publication:
+https://github.com/wavessevaw/GFG-Extreme/pull/133#issuecomment-6212340968
+
+This overrides earlier pre-release plans in this file. No release/main merge.
+Preserve the current async/HDR work as research; do not keep expanding a new
+pipeline without evidence that it improves the path to reference parity.
+First verify reference repositories, licenses, versions, installation behavior
+and Steam Deck evidence, then write docs/fg3/REFERENCE_REIMPLEMENTATION.md with
+mechanism-level sources and a minimum independent implementation plan.
+
+Current checkpoint evidence/known failures are in COORDINATION.md and
+ASYNC_HDR_CHECKPOINT.md. Local production/core objects under /workspace/.gfg-*
+are not distributable Deck acceptance. Fresh validation was built at
+/workspace/.gfg-validation-new/layers from VVL 4b1aed23df16586928df89c3dbfd7adf8daf7464,
+using Vulkan-Headers c46850864f4661461b0f6cb9922c058ffea4915e and its pinned
+dependencies. System validation 1.4.309 has an async+readback fence WSI hazard
+that did not occur under the fresh validator; the latter exposed Workgroup
+ArrayStride errors in palette/orphan shaders. Source padding fixes are present;
+rebuild core then native, validate before concluding they resolve those errors.
+Raw local evidence: /workspace/artifacts/gfg-async-evidence. Never upload raw
+user game/account paths. No authenticated hardware endpoint is configured.
+
+The last owner upload 082931Z has hash 119300... for the old internal.4 native
+ELF, no generated frames: MAILBOX / packed10 HDR bypass, not GPU cost failure.
+Official SteamOS recovery inspection remains required; distinguish the recovery
+image's version from installed 3.8.28. No physical 30→90 assertion is authorized.
+
+---
+
 # 2026-10-16 async development checkpoint — not accepted
 
 This checkpoint preserves the in-progress bounded output worker before further

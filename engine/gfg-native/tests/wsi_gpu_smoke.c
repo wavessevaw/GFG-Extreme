@@ -389,7 +389,7 @@ int main(void) {
         VkPresentInfoKHR pi = {.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
             .waitSemaphoreCount = 1, .pWaitSemaphores = &rendered[index],
             .swapchainCount = 1, .pSwapchains = &swapchain, .pImageIndices = &index};
-        const VkPresentModeKHR app_mode = VK_PRESENT_MODE_FIFO_KHR;
+        const VkPresentModeKHR app_mode = swci.presentMode;
         const VkRectLayerKHR rect = {.extent = ext};
         const VkPresentRegionKHR present_region = {.rectangleCount = 1, .pRectangles = &rect};
         const VkPresentRegionsKHR regions = {.sType = VK_STRUCTURE_TYPE_PRESENT_REGIONS_KHR,
@@ -408,7 +408,7 @@ int main(void) {
         if(env_1("GFG_TEST_UNKNOWN_PRESENT") && frame==frames/2) pi.pNext=&group;
         VkResult presented=vkQueuePresentKHR(queue,&pi);
         REQUIRE(present_fence.pNext == &dynamic && dynamic.pNext == &regions);
-        REQUIRE(app_mode == VK_PRESENT_MODE_FIFO_KHR && present_region.pRectangles == &rect);
+        REQUIRE(app_mode == swci.presentMode && present_region.pRectangles == &rect);
         if(env_1("GFG_TEST_EXPECT_RECREATE") && frame+1==frames)
             REQUIRE(presented==VK_ERROR_OUT_OF_DATE_KHR);
         else TRY(presented);

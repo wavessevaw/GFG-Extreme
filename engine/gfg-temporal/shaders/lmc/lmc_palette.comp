@@ -13,7 +13,9 @@ layout(local_size_x = 512) in;
 #define WG 512
 #define CK 32
 
-shared uint s_h[64 * 64];
+// Keep the Workgroup type distinct from the std430 SSBO histogram type.
+// Older glslang otherwise shares its ArrayStride decoration into Workgroup.
+shared uint s_h[64 * 64 + 1];
 shared uint s_key[WG / 4];   // per subgroup (any subgroup size >= 4)
 
 uint wg_max(uint v) {

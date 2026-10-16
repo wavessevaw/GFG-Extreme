@@ -119,7 +119,7 @@ int blk_offset(int l) { return l == 1 ? P.blk_off.x : l == 2 ? P.blk_off.y : l =
 // reference bilinear(): pixel-index coordinates, clamp to [0, n - 1.0001]
 float luma_a(int l, vec2 q) {
     vec2 s = vec2(lpix(l));
-    vec2 uv = (clamp(q, vec2(0.0), s - 1.0001) + 0.5) / s;
+    vec2 uv = (clamp(q, vec2(0.0), s - 1.0) + 0.5) / s;
     if (l == 0) return textureLod(lumaA0, uv, 0.0).r;
     if (l == 1) return textureLod(lumaA1, uv, 0.0).r;
     if (l == 2) return textureLod(lumaA2, uv, 0.0).r;
@@ -129,7 +129,7 @@ float luma_a(int l, vec2 q) {
 
 float luma_b(int l, vec2 q) {
     vec2 s = vec2(lpix(l));
-    vec2 uv = (clamp(q, vec2(0.0), s - 1.0001) + 0.5) / s;
+    vec2 uv = (clamp(q, vec2(0.0), s - 1.0) + 0.5) / s;
     if (l == 0) return textureLod(lumaB0, uv, 0.0).r;
     if (l == 1) return textureLod(lumaB1, uv, 0.0).r;
     if (l == 2) return textureLod(lumaB2, uv, 0.0).r;
@@ -161,13 +161,13 @@ vec4 gather_b(int l, ivec2 t) {
 
 vec3 half_rgb(int which, vec2 q) {
     vec2 s = vec2(P.size.zw);
-    vec2 uv = (clamp(q, vec2(0.0), s - 1.0001) + 0.5) / s;
+    vec2 uv = (clamp(q, vec2(0.0), s - 1.0) + 0.5) / s;
     return which == 0 ? textureLod(halfA, uv, 0.0).rgb : textureLod(halfB, uv, 0.0).rgb;
 }
 
 vec3 full_rgb(int which, vec2 q) {
     vec2 s = vec2(P.size.xy);
-    vec2 uv = (clamp(q, vec2(0.0), s - 1.0001) + 0.5) / s;
+    vec2 uv = (clamp(q, vec2(0.0), s - 1.0) + 0.5) / s;
     return which == 0 ? textureLod(srcA, uv, 0.0).rgb : textureLod(srcB, uv, 0.0).rgb;
 }
 

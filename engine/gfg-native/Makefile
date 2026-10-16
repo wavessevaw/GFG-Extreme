@@ -7,7 +7,7 @@ ENABLE_CPU_BRIDGE ?= 0
 TE_LIB ?= ../gfg-temporal/build/libgfg-temporal.a
 ifeq ($(ENABLE_TE),1)
 NATIVE_SOURCES := src/layer.c src/gpu_bridge.c src/output_worker.c
-NATIVE_HEADERS := src/cpu_bridge.h src/gpu_bridge.h src/output_worker.h src/wsi_queries.inc src/present_ids.h src/present_chain.h src/memory_policy.h
+NATIVE_HEADERS := src/cpu_bridge.h src/gpu_bridge.h src/output_worker.h src/wsi_queries.inc src/present_ids.h src/present_chain.h src/memory_policy.h src/swapchain_chain.h
 NATIVE_CPPFLAGS := -DGFG_NATIVE_WITH_TE -I../gfg-temporal/src
 ifeq ($(ENABLE_CPU_BRIDGE),1)
 NATIVE_SOURCES += src/cpu_bridge.c
@@ -17,7 +17,7 @@ NATIVE_LDLIBS := $(TE_LIB) -ldl -lm
 NATIVE_DEPS := $(TE_LIB)
 else
 NATIVE_SOURCES := src/layer.c
-NATIVE_HEADERS :=
+NATIVE_HEADERS := src/swapchain_chain.h
 NATIVE_CPPFLAGS :=
 NATIVE_LDLIBS :=
 NATIVE_DEPS :=
@@ -175,3 +175,7 @@ abi: $(BUILD)/libVkLayer_gfg_native.so
 
 clean:
 	rm -rf $(BUILD)
+
+$(BUILD)/hdr-precision: tests/hdr_precision.c $(TE_LIB)
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I$(VULKAN_HEADERS) -I../gfg-temporal/src -o $@ $< $(TE_LIB) -lvulkan -ldl -lpthread -lm

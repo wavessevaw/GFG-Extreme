@@ -104,6 +104,20 @@ int main(void) {
     app.pNext = &v1;
     fence.pNext = &v1; /* cycle/duplicate must fail without walking forever. */
     assert(!strcmp(gfg_pc_prepare(&out, &app, 1), "duplicate-present-metadata"));
+    VkPresentInfoKHR passthrough=app;
+    unknown.pNext=(const void *)&mode;mode.pNext=&timings;
+    app.pNext=&unknown;
+    assert(!gfg_pc_fifo_fallback(&out,&app,&passthrough));
+    const uint32_t mask=1;
+    VkDeviceGroupPresentInfoKHR group={.sType=VK_STRUCTURE_TYPE_DEVICE_GROUP_PRESENT_INFO_KHR,
+        .pNext=&mode,.swapchainCount=1,.pDeviceMasks=&mask,.mode=VK_DEVICE_GROUP_PRESENT_MODE_LOCAL_BIT_KHR};
+    app.pNext=&group;passthrough=app;
+    assert(gfg_pc_fifo_fallback(&out,&app,&passthrough));
+    const VkDeviceGroupPresentInfoKHR *pg=passthrough.pNext;
+    const VkSwapchainPresentModeInfoEXT *pm=pg->pNext;
+    assert(pg!=&group && pg->pDeviceMasks==&mask && pm!=&mode);
+    assert(pm->pPresentModes[0]==VK_PRESENT_MODE_FIFO_KHR && pm->pNext==&timings);
+    assert(mode.pPresentModes[0]==VK_PRESENT_MODE_MAILBOX_KHR && group.pNext==&mode);
     app.pNext = NULL;
     assert(!gfg_pc_prepare(&out, &app, 0) && !gfg_pc_head(&out));
     app.swapchainCount = 2;

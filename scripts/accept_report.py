@@ -128,7 +128,7 @@ def render(files: dict[str, str]) -> str:
                       "- Includes waiting for a bounded mailbox slot; excludes GPU completion and physical scanout."])
     if worker:
         lines.extend(["", "## Bounded output worker", "",
-                      f"- Submitted / handed-off jobs: {worker.group(1)} / {worker.group(2)}",
+                      f"- Submitted / finished jobs: {worker.group(1)} / {worker.group(2)}",
                       f"- Stale jobs reset to real-only history: {worker.group(3)}",
                       f"- Mailbox backpressure events: {worker.group(4)}; deferred WSI error: {worker.group(5)}",
                       "- At most one queued and one executing job; unknown metadata drains earlier jobs before synchronous forwarding."])

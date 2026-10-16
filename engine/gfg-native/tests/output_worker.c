@@ -8,7 +8,7 @@
 
 static pthread_mutex_t backend_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t backend_changed = PTHREAD_COND_INITIALIZER;
-static int entered, release_backend;
+static int entered, release_backend, history_restarts;
 static VkResult backend_result;
 static uint32_t observed_image;
 static unsigned gate_creates,gate_destroys,app_wait_submits;
@@ -33,7 +33,7 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL dispatch(VkDevice device,const c
     return NULL;
 }
 void gfg_gpu_fg_set_output_thread(gfg_gpu_fg *fg, pthread_mutex_t *wsi) { (void)fg; (void)wsi; }
-void gfg_gpu_fg_restart_history(gfg_gpu_fg *fg) { (void)fg; }
+void gfg_gpu_fg_restart_history(gfg_gpu_fg *fg) { (void)fg; ++history_restarts; }
 int gfg_gpu_fg_waiting_image(gfg_gpu_fg *fg) { (void)fg; return 0; }
 VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue q, const VkPresentInfoKHR *pi,
         PFN_vkQueuePresentKHR next, const gfg_present_id_hooks *ids) {
@@ -114,11 +114,13 @@ int main(void) {
     uint64_t remaining=99;
     assert(gfg_output_drain(out,0,1000000,&remaining)==VK_TIMEOUT && remaining==0);
     pthread_mutex_lock(&out->lock); assert(out->busy && out->pending && out->submitted==2);
+    out->pending->queued_ns=tick_ns()-100000000ull; /* deterministic expired job */
     pthread_mutex_unlock(&out->lock);
     pthread_mutex_lock(&backend_lock); release_backend=1;
     pthread_cond_broadcast(&backend_changed); pthread_mutex_unlock(&backend_lock);
     assert(gfg_output_drain(out,0,1000000000,&remaining)==VK_SUCCESS);
     assert(out->completed==2 && out->completed_id==43 && observed_image==4);
+    assert(out->stale==1 && history_restarts==1);
     assert(gfg_output_sem_reusable(out,(VkSemaphore)(uintptr_t)7));
     gfg_output_destroy(out);
 

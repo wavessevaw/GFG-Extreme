@@ -7,7 +7,10 @@
 #include "lmc_common.glsl"
 #include "lmc_store.glsl"
 layout(local_size_x = 8, local_size_y = 8) in;
-layout(set = 1, binding = 0, rgba8) uniform writeonly image2D dst;
+#ifndef OUTPUT_FMT
+#define OUTPUT_FMT rgba8
+#endif
+layout(set = 1, binding = 0, OUTPUT_FMT) uniform writeonly image2D dst;
 
 vec4 output_color(vec4 value){return P.pad1!=0?value.bgra:value;}
 

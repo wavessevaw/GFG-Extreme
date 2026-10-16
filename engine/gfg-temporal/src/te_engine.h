@@ -65,6 +65,8 @@ typedef struct {
     int source_bgra;           /* source images are B8G8R8A8 (sampling keeps RGBA semantics) */
     VkSemaphore application_timeline; /* borrowed device: caller-owned, feature enabled by caller */
     int output_bgra;           /* tile outputs store BGRA bytes for GPU copy into a BGRA swapchain */
+    VkFormat source_format;   /* 0: legacy SDR8; native GPU may sample packed UNORM10 */
+    int output_fp16;          /* native HDR: rgba16f outputs, no intermediate 8-bit quantization */
 } te_context_desc;
 
 void te_context_desc_default(te_context_desc* desc, uint32_t width, uint32_t height, uint32_t outputs);

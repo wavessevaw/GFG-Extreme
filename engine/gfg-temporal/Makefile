@@ -14,7 +14,8 @@ TE_ICD ?= /usr/share/vulkan/icd.d/lvp_icd.json
 SHADERS := me stats classify lists reuse light full
 FMT_SHADERS := luma down
 LMC_SHADERS := prep down search layers hyp irls palette field masked orphan select compose
-SPV := $(SHADERS:%=$(BUILD)/spv/%.spv) \
+FP16_SHADERS := reuse light full lmc_compose
+SPV := $(FP16_SHADERS:%=$(BUILD)/spv/%_fp16.spv) $(SHADERS:%=$(BUILD)/spv/%.spv) \
        $(foreach s,$(FMT_SHADERS),$(BUILD)/spv/$(s)_r16f.spv $(BUILD)/spv/$(s)_r32f.spv) \
        $(LMC_SHADERS:%=$(BUILD)/spv/lmc_%.spv)
 HDR := $(wildcard shaders/*.glsl)
@@ -36,6 +37,16 @@ $(BUILD)/libgfg-temporal.a: $(BUILD)/pic/te_engine.o $(BUILD)/pic/te_scheduler.o
 $(BUILD)/spv/%.spv: shaders/%.comp $(HDR)
 	@mkdir -p $(@D)
 	$(GLSLANG) -V --target-env vulkan1.2 -o $@ $< >/dev/null
+	$(SPIRV_VAL) --target-env vulkan1.2 $@
+
+$(BUILD)/spv/lmc_%_fp16.spv: shaders/lmc/lmc_%.comp $(LMC_HDR)
+	@mkdir -p $(@D)
+	$(GLSLANG) -V --target-env vulkan1.2 -DOUTPUT_FMT=rgba16f -o $@ $< >/dev/null
+	$(SPIRV_VAL) --target-env vulkan1.2 $@
+
+$(BUILD)/spv/%_fp16.spv: shaders/%.comp $(HDR)
+	@mkdir -p $(@D)
+	$(GLSLANG) -V --target-env vulkan1.2 -DOUTPUT_FMT=rgba16f -o $@ $< >/dev/null
 	$(SPIRV_VAL) --target-env vulkan1.2 $@
 
 $(BUILD)/spv/%_r16f.spv: shaders/%.comp $(HDR)

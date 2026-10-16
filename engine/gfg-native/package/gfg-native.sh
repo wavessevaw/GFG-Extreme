@@ -17,7 +17,7 @@ fi
 root="${XDG_DATA_HOME:-$HOME/.local/share}/gfg-native"
 if (( disabled )) || [[ "${GFG_NATIVE_MODE:-3}" == off ]] || \
    [[ ! -r "$root/VkLayer_gfg_native.json" || ! -r "$root/libVkLayer_gfg_native.so" ]]; then
-  unset GFG_NATIVE_FG GFG_NATIVE_GPU GFG_NATIVE_GPU_BRIDGE GFG_NATIVE_CPU_BRIDGE GFG_NATIVE_ASYNC
+  unset GFG_NATIVE_FG GFG_NATIVE_GPU GFG_NATIVE_GPU_BRIDGE GFG_NATIVE_CPU_BRIDGE GFG_NATIVE_ASYNC GFG_NATIVE_FORCE_FIFO
   export DISABLE_GFG_NATIVE_FG=1
   if (( diagnose )) && [[ -r "$root/diagnose.sh" ]]; then
     exec bash "$root/diagnose.sh" --passthrough "$@"
@@ -35,6 +35,7 @@ export GFG_NATIVE_GPU_BRIDGE=1
 export GFG_NATIVE_GPU_SYNC=same-device
 export GFG_NATIVE_ALGO="${GFG_NATIVE_ALGO:-lmc-gpu}"
 export GFG_NATIVE_ASYNC="${GFG_NATIVE_ASYNC:-1}"
+export GFG_NATIVE_FORCE_FIFO="${GFG_NATIVE_FORCE_FIFO:-1}"
 unset GFG_NATIVE_GPU GFG_NATIVE_CPU_BRIDGE
 export DISABLE_MAKO=1
 export DISABLE_MAKO_SPATIAL_SCALING=1

@@ -72,7 +72,7 @@ enum { DROP_RING, DROP_TE, DROP_HISTORY, DROP_ACQUIRE, DROP_BYPASS, DROP_ERROR, 
     X(CreateSemaphore) X(DestroySemaphore) X(CreateFence) X(DestroyFence) \
     X(ResetFences) X(GetFenceStatus) X(WaitForFences) X(QueueSubmit) \
     X(GetSemaphoreCounterValue) X(SignalSemaphore) X(WaitSemaphores) \
-    X(AcquireNextImageKHR) X(GetSwapchainImagesKHR)
+    X(AcquireNextImageKHR) X(GetSwapchainImagesKHR) X(QueueWaitIdle)
 
 typedef struct {
     VkImage image;
@@ -95,6 +95,7 @@ struct gfg_gpu_fg {
     VkExtent2D extent;
     VkFormat format;
     VkPresentModeKHR present_mode;
+    int force_fifo;
 #define DECLARE(name) FN(name);
     DEVICE_FUNCS(DECLARE)
 #undef DECLARE
@@ -108,6 +109,7 @@ struct gfg_gpu_fg {
 
     imported_image src[2], dst[2];
     int src_bgra;
+    int hdr10;
     enum { OUT_COPY, OUT_BLIT, OUT_BLIT_COPY } out_mode;
     VkImage scratch;             /* OUT_BLIT_COPY: B8G8R8A8_UNORM swizzle target */
     VkDeviceMemory scratch_memory;
@@ -288,9 +290,12 @@ static int is_bgra(VkFormat f) {
 static int is_srgb(VkFormat f) {
     return f == VK_FORMAT_B8G8R8A8_SRGB || f == VK_FORMAT_R8G8B8A8_SRGB;
 }
+static int is_hdr10(VkFormat f) {
+    return f == VK_FORMAT_A2B10G10R10_UNORM_PACK32 || f == VK_FORMAT_A2R10G10B10_UNORM_PACK32;
+}
 static int supported_format(VkFormat f) {
     return f == VK_FORMAT_B8G8R8A8_UNORM || f == VK_FORMAT_B8G8R8A8_SRGB ||
-           f == VK_FORMAT_R8G8B8A8_UNORM || f == VK_FORMAT_R8G8B8A8_SRGB;
+           f == VK_FORMAT_R8G8B8A8_UNORM || f == VK_FORMAT_R8G8B8A8_SRGB || is_hdr10(f);
 }
 
 static int32_t find_memory(const VkPhysicalDeviceMemoryProperties *mp, uint32_t bits,
@@ -428,7 +433,7 @@ static int record_real(gfg_gpu_fg *fg, VkCommandBuffer cb, VkImage swap, VkImage
                        VkImage hist) {
     if (!begin(fg, cb)) return 0;
     VkImageMemoryBarrier pre[2] = {
-        /* the app's semaphores are waited at TRANSFER (B7): stage pairing explicit */
+        /* Match the submit wait scope; same-device barriers include TE shader work. */
         image_barrier(swap, 0, VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_QUEUE_FAMILY_IGNORED,
                       VK_QUEUE_FAMILY_IGNORED),
@@ -446,7 +451,13 @@ static int record_real(gfg_gpu_fg *fg, VkCommandBuffer cb, VkImage swap, VkImage
             VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
             VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
         cmd_barrier(fg, cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 1, &h);
-        fg->CmdCopyImage(cb, swap, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, hist,
+        if (fg->hdr10) {
+            VkImageBlit blit = {.srcSubresource=region.srcSubresource,.dstSubresource=region.dstSubresource,
+                .srcOffsets={{0,0,0},{(int32_t)fg->extent.width,(int32_t)fg->extent.height,1}},
+                .dstOffsets={{0,0,0},{(int32_t)fg->extent.width,(int32_t)fg->extent.height,1}}};
+            fg->CmdBlitImage(cb,swap,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,hist,
+                            VK_IMAGE_LAYOUT_GENERAL,1,&blit,VK_FILTER_NEAREST);
+        } else fg->CmdCopyImage(cb, swap, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, hist,
                          VK_IMAGE_LAYOUT_GENERAL, 1, &region);
     }
     VkImageMemoryBarrier post[2] = {
@@ -547,12 +558,12 @@ static void retire_acquired(gfg_gpu_fg *fg,VkSemaphore acquired){
 /* ------------------------------------------------------------ verification */
 
 static int verify_setup(gfg_gpu_fg *fg) {
-    const VkFormat hist_format = fg->src_bgra ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
+    const VkFormat hist_format = fg->hdr10 ? VK_FORMAT_R16G16B16A16_SFLOAT : fg->src_bgra ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
     for (int i = 0; i < 2; ++i)
         if (!local_image(fg, &fg->verify_hist[i], &fg->verify_hist_memory[i], hist_format,
                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT))
             return 0;
-    const VkDeviceSize one = (VkDeviceSize)fg->extent.width * fg->extent.height * 4u;
+    const VkDeviceSize one = (VkDeviceSize)fg->extent.width * fg->extent.height * (fg->hdr10 ? 8u : 4u);
     fg->verify_bytes = one * 4u;
     VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = fg->verify_bytes, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -598,7 +609,7 @@ static void verify_submit(gfg_gpu_fg *fg, uint64_t v, uint32_t cur_slot) {
         .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT};
     fg->CmdPipelineBarrier(cb, fg->same_device?VK_PIPELINE_STAGE_ALL_COMMANDS_BIT:VK_PIPELINE_STAGE_TRANSFER_BIT,
                            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &waw, 0, NULL, 4, acq);
-    const VkDeviceSize one = (VkDeviceSize)fg->extent.width * fg->extent.height * 4u;
+    const VkDeviceSize one = (VkDeviceSize)fg->extent.width * fg->extent.height * (fg->hdr10 ? 8u : 4u);
     for (int i = 0; i < 4; ++i) {
         VkBufferImageCopy region = {.bufferOffset = one * (VkDeviceSize)i,
             .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
@@ -613,11 +624,11 @@ static void verify_submit(gfg_gpu_fg *fg, uint64_t v, uint32_t cur_slot) {
     if (!ok(fg->EndCommandBuffer(cb))) return;
     const uint64_t wait_value = v + 2;
     VkTimelineSemaphoreSubmitInfo tsi = {.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-        .waitSemaphoreValueCount = 1, .pWaitSemaphoreValues = &wait_value};
+        .waitSemaphoreValueCount = fg->same_device ? 0u : 1u, .pWaitSemaphoreValues = &wait_value};
     const VkPipelineStageFlags stage = fg->same_device ?
         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_TRANSFER_BIT;
     VkSubmitInfo si = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .pNext = &tsi,
-        .waitSemaphoreCount = 1, .pWaitSemaphores = &fg->timeline, .pWaitDstStageMask = &stage,
+        .waitSemaphoreCount = fg->same_device ? 0u : 1u, .pWaitSemaphores = &fg->timeline, .pWaitDstStageMask = &stage,
         .commandBufferCount = 1, .pCommandBuffers = &cb};
     if (!ok(fg->ResetFences(fg->device, 1, &fg->verify_fence))) return;
     if (!ok(fg->QueueSubmit(fg->queue, 1, &si, fg->verify_fence))) return;
@@ -625,12 +636,20 @@ static void verify_submit(gfg_gpu_fg *fg, uint64_t v, uint32_t cur_slot) {
     fg->verify_frame = fg->frame;
 }
 
-static uint64_t rgb_delta(const uint8_t *a, int a_bgra, const uint8_t *b, int b_bgra, size_t px) {
+static unsigned half_unorm(const uint8_t *p) {
+    uint16_t h; memcpy(&h,p,sizeof(h));
+    unsigned e=(h>>10)&31u, m=h&1023u;
+    if(h&0x8000u) return 0;
+    if(e>=15u) return 65535u;
+    /* Exact fixed-point conversion for nonnegative normalized half values. */
+    return e ? (((m+1024u)*65535u) >> (25u-e)) : (m*65535u >> 24u);
+}
+static uint64_t rgb_delta(const uint8_t *a, int a_bgra, const uint8_t *b, int b_bgra, size_t px, int fp16) {
     uint64_t sum = 0;
     for (size_t i = 0; i < px; ++i) {
         for (int c = 0; c < 3; ++c) {
-            int ca = a[4 * i + (a_bgra ? 2 - c : c)];
-            int cb = b[4 * i + (b_bgra ? 2 - c : c)];
+            int ca = fp16 ? (int)half_unorm(a+8*i+2*c) : a[4 * i + (a_bgra ? 2 - c : c)];
+            int cb = fp16 ? (int)half_unorm(b+8*i+2*c) : b[4 * i + (b_bgra ? 2 - c : c)];
             sum += (uint64_t)(ca > cb ? ca - cb : cb - ca);
         }
     }
@@ -653,13 +672,15 @@ static void verify_collect(gfg_gpu_fg *fg, int final) {
     }
     STAT_ADD(verify_host_reads, 1);
     const size_t px = (size_t)fg->extent.width * fg->extent.height;
-    const uint8_t *g1 = map, *g2 = g1 + px * 4, *rp = g2 + px * 4, *rn = rp + px * 4;
+    const size_t one=px*(fg->hdr10 ? 8u : 4u);
+    const uint8_t *g1 = map, *g2 = g1 + one, *rp = g2 + one, *rn = rp + one;
     const int sb = fg->src_bgra;
     const int gb = fg->same_device && fg->src_bgra;
-    uint64_t d12 = rgb_delta(g1, gb, g2, gb, px);
-    uint64_t d1p = rgb_delta(g1, gb, rp, sb, px), d1n = rgb_delta(g1, gb, rn, sb, px);
-    uint64_t d2p = rgb_delta(g2, gb, rp, sb, px), d2n = rgb_delta(g2, gb, rn, sb, px);
-    uint64_t dpn = rgb_delta(rp, sb, rn, sb, px);
+    uint64_t d12 = rgb_delta(g1, gb, g2, gb, px, fg->hdr10);
+    uint64_t d1p = rgb_delta(g1, gb, rp, sb, px, fg->hdr10), d1n = rgb_delta(g1, gb, rn, sb, px, fg->hdr10);
+    uint64_t d2p = rgb_delta(g2, gb, rp, sb, px, fg->hdr10), d2n = rgb_delta(g2, gb, rn, sb, px, fg->hdr10);
+    uint64_t dpn = rgb_delta(rp, sb, rn, sb, px, fg->hdr10);
+    if(fg->hdr10) { d12/=257;d1p/=257;d1n/=257;d2p/=257;d2n/=257;dpn/=257; }
     int distinct = d12 && d1p && d1n && d2p && d2n;
     /* interpolation sanity: G1 nearer R(n-1), G2 nearer R(n) */
     int ordered = d1p < d1n && d2n < d2p;
@@ -730,9 +751,11 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     fg->extent = info->extent;
     fg->format = info->format;
     fg->present_mode = info->present_mode;
+    fg->force_fifo = info->force_fifo;
     fg->set_loader_data = info->set_loader_data;
     fg->log = getenv("GFG_NATIVE_TRACE") != NULL;
     fg->src_bgra = is_bgra(info->format);
+    fg->hdr10 = is_hdr10(info->format);
     const char *why = "entrypoints";
     const char *sync_mode = getenv("GFG_NATIVE_GPU_SYNC");
     if (sync_mode && strcmp(sync_mode, "same-device") && strcmp(sync_mode, "shared-fd")) {
@@ -757,7 +780,15 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     mp(info->physical, &fg->memory_props);
 
     why = "output-format";
-    if (!fg->src_bgra || fg->same_device) {
+    if (fg->hdr10) {
+        if (!fg->same_device) goto fail;
+        VkFormatProperties output, swap;
+        fp(info->physical, VK_FORMAT_R16G16B16A16_SFLOAT, &output);
+        fp(info->physical, info->format, &swap);
+        if (!(output.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) ||
+                !(swap.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT)) goto fail;
+        fg->out_mode = OUT_BLIT;
+    } else if (!fg->src_bgra || fg->same_device) {
         fg->out_mode = OUT_COPY;
     } else {
         VkFormatProperties rgba, bgra;
@@ -839,6 +870,8 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     cd.application_timeline = fg->same_device ? fg->timeline : VK_NULL_HANDLE;
     cd.host_io = 0;
     cd.source_bgra = fg->src_bgra;
+    cd.source_format = fg->hdr10 ? info->format : VK_FORMAT_UNDEFINED;
+    cd.output_fp16 = fg->hdr10;
     cd.output_bgra = fg->same_device && fg->src_bgra;
     cd.sync_fd = sync_fd; /* ownership passes to TE (closed on failure too) */
     if (te_context_create(fg->engine, &cd, &fg->context) != VK_SUCCESS) {
@@ -973,6 +1006,13 @@ static void percentile(double *v, uint32_t n, double *median, double *p95) {
 void gfg_gpu_fg_destroy(gfg_gpu_fg *fg) {
     if (!fg) return;
     fg->in_present = 0;
+    /* The stopped worker may have finished with a pass-through job. Its
+     * private gate and downstream binary waits then have no transport-ring
+     * fence. Drain queue operations once at retirement before destroying any
+     * semaphores. The supplied async dispatch serializes this host access. */
+    if(fg->output_wsi && fg->QueueWaitIdle) {
+        count_wait(fg);(void)fg->QueueWaitIdle(fg->queue);
+    }
     if (fg->verify) verify_collect(fg, 1);
     if (fg->device && fg->WaitForFences) {
         if (fg->init_fence && fg->init_cb) (void)wait_fence(fg, fg->init_fence, 2000000000ull);
@@ -1116,8 +1156,7 @@ static VkResult submit_real(gfg_gpu_fg *fg, ring_slot *rs, const VkPresentInfoKH
     }
     if (fg->last_te_value && !fg->same_device) {
         /* Cross-device TE needs the timeline wait. Same-queue TE reads are
-         * ordered by the ALL_COMMANDS source-image barrier; importing an old
-         * timeline snapshot is unnecessary. */
+         * ordered by the ALL_COMMANDS source-image barrier. */
         waits[nw] = fg->timeline;
         stages[nw] = fg->same_device ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_TRANSFER_BIT;
         wait_values[nw++] = fg->last_te_value;
@@ -1170,6 +1209,11 @@ static VkResult forward_real(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoK
     if (!gfg_pc_prepare(&chain, app, mode)) {
         if (mode) gfg_pc_set_id(&chain, mode, ids->assign(ids->user, 0, chain.app_id));
         real.pNext = gfg_pc_head(&chain);
+    } else if (fg->force_fifo && !gfg_pc_fifo_fallback(&chain,app,&real)) {
+        /* A dynamic mode incompatible with the replacement swapchain cannot
+         * be forwarded safely through an uncopyable prefix. Retire explicitly. */
+        fg->disabled=fg->recreate_required=1;
+        return VK_ERROR_OUT_OF_DATE_KHR;
     }
     const double t = now_us();
     VkResult r = output_present(fg, queue, &real, next);
@@ -1233,7 +1277,11 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, uint64_t v, u
     VkTimelineSemaphoreSubmitInfo tsi = {.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
         .waitSemaphoreValueCount = 2, .pWaitSemaphoreValues = wait_values};
     VkSubmitInfo si = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .pNext = &tsi,
-        .waitSemaphoreCount = generated?2u:1u, .pWaitSemaphores = waits, .pWaitDstStageMask = stages,
+        /* Same-device TE work precedes this on the same queue; its shader
+         * writes are made visible by record_generated's image barrier. Only
+         * the acquired swapchain payload needs a semaphore wait here. */
+        .waitSemaphoreCount = generated && !fg->same_device ? 2u : 1u,
+        .pWaitSemaphores = waits, .pWaitDstStageMask = stages,
         .commandBufferCount = 1, .pCommandBuffers = &rs->gen_cb[k],
         .signalSemaphoreCount = 1, .pSignalSemaphores = &fg->ready[img]};
     tsi.waitSemaphoreValueCount=si.waitSemaphoreCount;

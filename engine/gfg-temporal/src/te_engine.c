@@ -774,6 +774,7 @@ static VkResult create_layouts(te_context* ctx) {
 
 static VkResult create_pipelines(te_context* ctx) {
     int r16 = ctx->dev->luma_format == VK_FORMAT_R16_SFLOAT;
+    int fp16 = ctx->desc.output_fp16;
     struct { const uint32_t* code; size_t size; } src[PIPE_COUNT] = {
         [PIPE_LUMA] = {r16 ? te_spv_luma_r16f : te_spv_luma_r32f, r16 ? sizeof te_spv_luma_r16f : sizeof te_spv_luma_r32f},
         [PIPE_DOWN] = {r16 ? te_spv_down_r16f : te_spv_down_r32f, r16 ? sizeof te_spv_down_r16f : sizeof te_spv_down_r32f},
@@ -781,9 +782,9 @@ static VkResult create_pipelines(te_context* ctx) {
         [PIPE_STATS] = {te_spv_stats, sizeof te_spv_stats},
         [PIPE_CLASSIFY] = {te_spv_classify, sizeof te_spv_classify},
         [PIPE_LISTS] = {te_spv_lists, sizeof te_spv_lists},
-        [PIPE_REUSE] = {te_spv_reuse, sizeof te_spv_reuse},
-        [PIPE_LIGHT] = {te_spv_light, sizeof te_spv_light},
-        [PIPE_FULL] = {te_spv_full, sizeof te_spv_full},
+        [PIPE_REUSE] = {fp16 ? te_spv_reuse_fp16 : te_spv_reuse, fp16 ? sizeof te_spv_reuse_fp16 : sizeof te_spv_reuse},
+        [PIPE_LIGHT] = {fp16 ? te_spv_light_fp16 : te_spv_light, fp16 ? sizeof te_spv_light_fp16 : sizeof te_spv_light},
+        [PIPE_FULL] = {fp16 ? te_spv_full_fp16 : te_spv_full, fp16 ? sizeof te_spv_full_fp16 : sizeof te_spv_full},
     };
     for (int i = 0; i < PIPE_COUNT; ++i) {
         VkResult r = make_pipeline(ctx, src[i].code, src[i].size, &ctx->pipe[i]);
@@ -947,8 +948,8 @@ static VkResult validate_desc(te_device* dev, const te_context_desc* d) {
     if(p->algorithm>TE_ALGO_LMC_GPU) return VK_ERROR_FEATURE_NOT_PRESENT;
     if(p->algorithm==TE_ALGO_LMC_GPU &&
         (dev->props.limits.maxComputeWorkGroupInvocations<512 || dev->props.limits.maxComputeWorkGroupSize[0]<512 ||
-         dev->props.limits.maxComputeSharedMemorySize<16896))
-        return fail(VK_ERROR_FEATURE_NOT_PRESENT,"GPU LMC requires 512-thread groups and 16896 bytes shared memory");
+         dev->props.limits.maxComputeSharedMemorySize<16900))
+        return fail(VK_ERROR_FEATURE_NOT_PRESENT,"GPU LMC requires 512-thread groups and 16900 bytes shared memory");
     if(p->algorithm==TE_ALGO_LMC_GPU && !dev->subgroup_arithmetic)
         return fail(VK_ERROR_FEATURE_NOT_PRESENT,"GPU LMC requires compute subgroup arithmetic");
     if (dev->borrowed && ((p->algorithm != TE_ALGO_TILES && p->algorithm != TE_ALGO_LMC_GPU) || d->export_fds || d->sync_fd >= 0 ||
@@ -957,6 +958,18 @@ static VkResult validate_desc(te_device* dev, const te_context_desc* d) {
     if (dev->borrowed)
         for (uint32_t i = 0; i < TE_MAX_OUTPUTS; ++i)
             if (d->dest_fds[i] >= 0) return VK_ERROR_FEATURE_NOT_PRESENT;
+    if (d->source_format || d->output_fp16) {
+        if (!dev->borrowed || d->host_io || d->source_bgra || d->output_bgra ||
+                !d->output_fp16 || (d->source_format != VK_FORMAT_A2B10G10R10_UNORM_PACK32 &&
+                d->source_format != VK_FORMAT_A2R10G10B10_UNORM_PACK32))
+            return fail(VK_ERROR_FEATURE_NOT_PRESENT, "HDR requires GPU-only borrowed packed10 input and fp16 output");
+        if (!format_ok(dev->phys, d->source_format, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT) ||
+                !format_ok(dev->phys, VK_FORMAT_R16G16B16A16_SFLOAT,
+                VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                VK_FORMAT_FEATURE_BLIT_SRC_BIT))
+            return fail(VK_ERROR_FORMAT_NOT_SUPPORTED, "GPU lacks native HDR input/output formats");
+    }
     if (d->output_bgra && p->algorithm == TE_ALGO_LMC)
         return fail(VK_ERROR_FEATURE_NOT_PRESENT, "BGRA output packing requires tile or GPU LMC algorithm");
     if (p->tile != 8 && p->tile != 16 && p->tile != 32) return fail(VK_ERROR_INITIALIZATION_FAILED, "tile must be 8, 16 or 32");
@@ -1015,7 +1028,8 @@ VkResult te_context_create(te_device* dev, const te_context_desc* desc, te_conte
     for (int s = 0; s < 2; ++s) {
         fds_taken[s] = 1;
         /* imports use the exporter's transfer/sampled contract (as MAKO's native source path) */
-        TRY(image_create(dev, &ctx->src[s], W, H, desc->source_bgra ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_R8G8B8A8_UNORM,
+        TRY(image_create(dev, &ctx->src[s], W, H, desc->source_format ? desc->source_format :
+                         desc->source_bgra ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_R8G8B8A8_UNORM,
                          VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, desc->source_fds[s],
                          desc->export_fds && desc->source_fds[s] < 0));
         for (int l = 0; l < TE_LUMA_IMAGES; ++l)
@@ -1032,7 +1046,7 @@ VkResult te_context_create(te_device* dev, const te_context_desc* desc, te_conte
         /* imported destinations use the same usage as MAKO's own backend import */
         VkImageUsageFlags du = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         if (desc->dest_fds[i] < 0 || desc->host_io) du |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT; /* host_io: test readback */
-        TRY(image_create(dev, &ctx->dst[i], W, H, VK_FORMAT_R8G8B8A8_UNORM, du, desc->dest_fds[i],
+        TRY(image_create(dev, &ctx->dst[i], W, H, desc->output_fp16 ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM, du, desc->dest_fds[i],
                          desc->export_fds && desc->dest_fds[i] < 0));
     }
     {

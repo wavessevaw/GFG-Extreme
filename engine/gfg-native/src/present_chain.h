@@ -20,6 +20,8 @@ typedef union {
     VkSwapchainPresentModeInfoEXT mode;
     VkPresentTimesInfoGOOGLE times;
     VkPresentTimingsInfoEXT timings;
+    VkDeviceGroupPresentInfoKHR group;
+    VkPresentRegionsKHR regions;
 } gfg_present_node;
 
 typedef struct {
@@ -119,6 +121,41 @@ static inline const char *gfg_pc_prepare(gfg_present_chain *out,
 
 static inline const void *gfg_pc_head(const gfg_present_chain *chain) {
     return chain->count ? &chain->nodes[0] : NULL;
+}
+
+/* Fallback can retain metadata the generator does not understand. If a
+ * create-time FIFO override changed the available mode list, copy only the
+ * known prefix through its mode node and preserve the entire suffix verbatim.
+ * An unknown prefix is never truncated or silently reinterpreted. */
+static inline int gfg_pc_fifo_fallback(gfg_present_chain *out, const VkPresentInfoKHR *app,
+                                      VkPresentInfoKHR *real) {
+    const VkBaseInStructure *n=app->pNext;uint32_t target=GFG_PRESENT_CHAIN_MAX,at=0;
+    for(;n && at<GFG_PRESENT_CHAIN_MAX;n=n->pNext,++at)
+        if(n->sType==VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODE_INFO_EXT){target=at;break;}
+    if(n && at==GFG_PRESENT_CHAIN_MAX)return 0;
+    if(target==GFG_PRESENT_CHAIN_MAX)return 1;
+    memset(out,0,sizeof(*out));out->effective_mode=VK_PRESENT_MODE_FIFO_KHR;
+    n=app->pNext;
+    for(at=0;at<=target;++at,n=n->pNext){
+        size_t size;
+        switch(n->sType){
+#define NODE(type,structure) case type:size=sizeof(structure);break
+        NODE(VK_STRUCTURE_TYPE_PRESENT_ID_KHR,VkPresentIdKHR);
+        NODE(VK_STRUCTURE_TYPE_PRESENT_ID_2_KHR,VkPresentId2KHR);
+        NODE(VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT,VkSwapchainPresentFenceInfoEXT);
+        NODE(VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODE_INFO_EXT,VkSwapchainPresentModeInfoEXT);
+        NODE(VK_STRUCTURE_TYPE_PRESENT_TIMES_INFO_GOOGLE,VkPresentTimesInfoGOOGLE);
+        NODE(VK_STRUCTURE_TYPE_PRESENT_TIMINGS_INFO_EXT,VkPresentTimingsInfoEXT);
+        NODE(VK_STRUCTURE_TYPE_DEVICE_GROUP_PRESENT_INFO_KHR,VkDeviceGroupPresentInfoKHR);
+        NODE(VK_STRUCTURE_TYPE_PRESENT_REGIONS_KHR,VkPresentRegionsKHR);
+#undef NODE
+        default:return 0;
+        }
+        memcpy(&out->nodes[at],n,size);
+        if(at)out->nodes[at-1].base.pNext=&out->nodes[at].base;
+    }
+    out->nodes[target].mode.pPresentModes=&out->effective_mode;
+    real->pNext=&out->nodes[0];return 1;
 }
 
 /* Assign every real present its private ID even when the app's ID was at the
