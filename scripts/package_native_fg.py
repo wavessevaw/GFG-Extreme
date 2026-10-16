@@ -197,6 +197,7 @@ def decky_package(native_zip: Path, index: Path, outdir: Path) -> Path:
     if index.read_bytes() != (ROOT / "dist/index.js").read_bytes():
         raise ValueError("Decky frontend must match the committed dist/index.js")
     files = {}
+    modes = {}
     data = subprocess.check_output(["git", "archive", "HEAD"], cwd=ROOT)
     with tarfile.open(fileobj=io.BytesIO(data)) as archive:
         for member in archive:
@@ -204,6 +205,7 @@ def decky_package(native_zip: Path, index: Path, outdir: Path) -> Path:
                 continue
             stream = archive.extractfile(member)
             files[member.name] = stream.read()
+            modes[member.name] = member.mode & 0o777
     files["dist/index.js"] = index.read_bytes()
     with zipfile.ZipFile(native_zip) as archive:
         for item in archive.infolist():
@@ -211,6 +213,7 @@ def decky_package(native_zip: Path, index: Path, outdir: Path) -> Path:
             if item.is_dir() or name == item.filename or name.startswith("/") or ".." in Path(name).parts:
                 raise ValueError("Invalid component archive member")
             files["bin/gfg-native/" + name] = archive.read(item)
+            modes["bin/gfg-native/" + name] = (item.external_attr >> 16) & 0o777
     metadata = json.loads(files["package.json"])
     component = json.loads(files["bin/gfg-native/MANIFEST.json"])
     metadata["version"] = component["version"]
@@ -223,7 +226,8 @@ def decky_package(native_zip: Path, index: Path, outdir: Path) -> Path:
         for name, data in sorted(files.items()):
             zi = zipfile.ZipInfo("GFG-Extreme/" + name, date_time=(2026, 10, 16, 0, 0, 0))
             zi.create_system = 3
-            zi.external_attr = (0o100755 if name.endswith((".sh", ".so")) else 0o100644) << 16
+            mode = modes.get(name, 0o755 if name.endswith((".sh", ".so")) else 0o644)
+            zi.external_attr = (0o100000 | mode) << 16
             archive.writestr(zi, data, compress_type=zipfile.ZIP_DEFLATED)
     with zipfile.ZipFile(path) as archive:
         if archive.testzip():
