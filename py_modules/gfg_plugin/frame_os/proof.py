@@ -80,11 +80,17 @@ class Window:
         self.sum = 0.0
         self.n = 0
         self.covered = 0.0
+        self.source_samples: set = set()
+        self.source_clocked = False
 
-    def add(self, value: Optional[float], dt: float) -> None:
+    def add(self, value: Optional[float], dt: float, *, sample_id: Optional[float] = None) -> None:
+        if sample_id is not None:
+            self.source_clocked = True
         if value is not None:
             self.sum += value * dt
             self.covered += dt
+            if sample_id is not None:
+                self.source_samples.add(sample_id)
 
     @property
     def mean(self) -> Optional[float]:
@@ -115,7 +121,7 @@ class ProofMeter:
 
     # ------------------------------------------------------------------ runner side
     def observe(self, now: float, *, eligible: bool, level: Optional[str], telemetry: Dict[str, Any],
-                draw_w: Optional[float]) -> None:
+                draw_w: Optional[float], draw_sample_id: Optional[float] = None) -> None:
         """One tick of what the game did under the control in effect since the last tick."""
         dt = 0.0 if self._last is None else max(0.0, min(1.0, now - self._last))
         self._last = now
@@ -134,10 +140,14 @@ class ProofMeter:
             self._abort(now)                     # the moment changed: no fair comparison
             return
         if now - self.window.start >= (test.settle_s if self.phase != "before" else 0.0):
-            self.window.add(_value(test, telemetry, draw_w), dt)
+            self.window.add(_value(test, telemetry, draw_w), dt,
+                            sample_id=draw_sample_id if test.metric == "energy" else None)
         if now - self.window.start < test.window_s + (test.settle_s if self.phase != "before" else 0.0):
             return
-        mean = self.window.mean if self.window.covered >= MIN_FILL * test.window_s else None
+        window = self.window
+        independently_sampled = (test.metric != "energy" or not window.source_clocked
+                                 or len(window.source_samples) >= 2)
+        mean = window.mean if window.covered >= MIN_FILL * test.window_s and independently_sampled else None
         if mean is None:
             self._abort(now)
             return
