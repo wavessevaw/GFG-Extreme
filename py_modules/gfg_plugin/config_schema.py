@@ -415,6 +415,11 @@ class ConfigurationManager:
                 f"{str(config['swapchain_image_count_compatibility']).lower()}",
                 "frame_generation_provisioned = "
                 f"{str(config['frame_generation_provisioned']).lower()}",
+                # This is a renderer-native, Autopilot-owned live scope. It must
+                # survive Saved -> Governor overlay -> TOML serialization:
+                # omitting it made MAKO default requested=false despite the
+                # game's GFG_FRAME_FUSION=1 launch provisioning.
+                f"gfg_frame_fusion = {str(config['gfg_frame_fusion']).lower()}",
                 f"frame_generation_enabled = {str(config['frame_generation_enabled']).lower()}",
                 f"fg_backend = {_toml_string(config['fg_backend'])}",
                 f"optiscaler_proxy = {_toml_string(config['optiscaler_proxy'])}",
