@@ -64,6 +64,42 @@ def source_files() -> dict[str, bytes]:
     return selected
 
 
+def worktree_dirty(packaged: dict[str, bytes]) -> bool:
+    """Ignore unrelated CI logs while rejecting source changes in the package."""
+    diff = subprocess.run(["git", "diff", "--quiet", "HEAD", "--"], cwd=ROOT)
+    if diff.returncode == 1:
+        return True
+    if diff.returncode != 0:
+        raise subprocess.CalledProcessError(diff.returncode, diff.args)
+
+    included_paths = {
+        name.removeprefix("SOURCE/")
+        for name in packaged
+        if name.startswith("SOURCE/")
+    }
+    included_paths.update({
+        "engine/gfg-native/VkLayer_gfg_native.json",
+        "engine/gfg-native/package/install.sh",
+        "engine/gfg-native/package/uninstall.sh",
+        "engine/gfg-native/package/rollback.sh",
+        "engine/gfg-native/package/gfg-native.sh",
+        "engine/gfg-native/package/diagnose.sh",
+        "engine/gfg-native/package/BUILD-ENVIRONMENT.txt",
+        "engine/gfg-native/package/README.ru.md",
+        "scripts/accept_report.py",
+        "scripts/package_native_fg.py",
+        "LICENSE.md",
+    })
+    untracked = subprocess.check_output(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+        cwd=ROOT,
+    ).split(b"\0")
+    return any(
+        path.decode("utf-8", "surrogateescape") in included_paths
+        for path in untracked if path
+    )
+
+
 def package(binary: Path, outdir: Path, version: str) -> Path:
     if not re.fullmatch(r"0\.0\.0-fg3-internal\.[0-9]+", version):
         raise ValueError("Only 0.0.0-fg3-internal.N development artifacts are authorized before hardware acceptance")
@@ -86,7 +122,7 @@ def package(binary: Path, outdir: Path, version: str) -> Path:
        manifest["layer"]["library_path"] != "./libVkLayer_gfg_native.so":
         raise ValueError("Native manifest identity mismatch")
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip())
+    dirty = worktree_dirty(files)
     provenance = {
         "schema": 1,
         "version": version,

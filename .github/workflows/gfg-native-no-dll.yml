@@ -95,6 +95,21 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/package_native_fg.py --binary engine/gfg-native/build-te/libVkLayer_gfg_native.so --outdir "$RUNNER_TEMP/fg3-private"
+          python3 - "$RUNNER_TEMP/fg3-private" <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          import sys
+          import zipfile
+
+          package = next(Path(sys.argv[1]).glob("*.zip"))
+          with zipfile.ZipFile(package) as archive:
+              manifest = json.loads(archive.read("GFG-Native-FG/MANIFEST.json"))
+          commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          assert manifest["source_commit"] == commit, manifest
+          assert manifest["source_worktree_dirty"] is False, manifest
+          print(f"Package provenance: clean source_commit={commit}")
+          PY
 
       - name: Verify package checksums and unpack source
         run: |
