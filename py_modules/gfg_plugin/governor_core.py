@@ -1602,8 +1602,34 @@ class BudgetController:
         )
 
     def _reprobe(self, now: float) -> str:
-        # Watts first: try -1 W with the current point.  Upward probes only win
-        # back quality that the guard gave up; spare headroom goes to watts.
+        # Deep ratios are temporary survival points, not an economy baseline.
+        # A Deck trace stayed at 23x3.913 for eight minutes: 24x3.75, 26x3.5
+        # and 28x3.25 had just failed, so _next_up() selected the rejected
+        # 24x3.75 and prevented *any* quality recovery.  Probe the proven
+        # comfort cadence (30x3 at 90 Hz) directly, without retrying the
+        # rejected intermediate ratios, before searching for cheaper watts.
+        # The normal rejection/known-failure gate prevents repeated bad trials.
+        if self._deep(self.idx) and self.idx < self.comfort_idx and not self.heat_limited:
+            candidate = self.comfort_idx
+            if self._upgrade_allowed(candidate, now):
+                # A power-saving search may have lowered the emergency point
+                # below watts previously needed for the comfort cadence.  Restore
+                # only *measured, held* headroom first and validate fresh windows
+                # before requesting the harder point.  The service intentionally
+                # applies operating points before TDP, so changing both here
+                # would test the harder point at the old insufficient wattage.
+                proven_w = self.recovery_tdp(now, idx=candidate)
+                if (self.tdp_control and self.tdp is not None and proven_w is not None
+                        and proven_w > self.tdp + 0.05):
+                    self.locked_since = now
+                    self.settled_since = None
+                    self._validation_pending = True
+                    self.good = 0
+                    return self._move("reprobe-emergency-restore-proven-headroom", tdp=proven_w)
+                self.phase, self.probe, self.next_probe = "probe", "up", "down"
+                return self._move("reprobe-emergency-quality-recovery", idx=candidate)
+        # Outside emergency recovery, watts first: try -1 W with the current
+        # point. Upward probes only win back quality the guard gave up.
         kinds = ["down", "up"] if self.next_probe == "down" else ["up", "down"]
         if self.flavor == "extreme":
             # Extreme: spare headroom buys real frames, never fewer watts.
