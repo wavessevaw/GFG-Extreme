@@ -933,6 +933,18 @@ class GovernorService:
         return (self._profile_enabled(profile) and self._mode(profile) == "autopilot"
                 and self.frame_fusion_enabled())
 
+    @staticmethod
+    def _overlay_with_current_fusion_scope(base: Dict[str, Any], point: Dict[str, Any]) -> Dict[str, Any]:
+        """A cached full Request.deltas may carry an outdated Fusion toggle.
+
+        Keep the latest owner-controlled scope from base even when other active
+        point deltas were captured before the player changed Fusion or mode.
+        """
+        merged = {**base, **point}
+        if "gfg_frame_fusion" in base:
+            merged["gfg_frame_fusion"] = base["gfg_frame_fusion"]
+        return merged
+
     def _base_for(self, profile: str, saved: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         if saved is None:
             return {}
@@ -1749,7 +1761,7 @@ class GovernorService:
         self._point_deltas = {**self._point_deltas, "scaling_sharpness": want}
         if self._injection is not None:
             self._injection = {**self._injection, "scaling_sharpness": want}
-        desired = {**self._base_for(profile, saved), **(self._injection or self._point_deltas)}
+        desired = self._overlay_with_current_fusion_scope(self._base_for(profile, saved), self._injection or self._point_deltas)
         mark = self.observer.event_seq
         try:
             record = await asyncio.to_thread(self._ensure_overlay_sync, profile, desired, self._point["key"])
@@ -2385,7 +2397,7 @@ class GovernorService:
         if not stale:
             return
         base = self._base_for(profile, saved)
-        desired = {**base, **(self._injection or self._point_deltas)}
+        desired = self._overlay_with_current_fusion_scope(base, self._injection or self._point_deltas)
         key = self._point["key"] if self._point else "base"
         try:
             record = await asyncio.to_thread(self._ensure_overlay_sync, profile, desired, key)
@@ -2541,7 +2553,7 @@ class GovernorService:
             profile = self._status.get("profile") or ""
             if profile and self._point:
                 saved = await asyncio.to_thread(self._saved_profile_config, profile)
-                await self._rollback(profile, {**self._base_for(profile, saved), **self._point_deltas}, "flow-step-failed")
+                await self._rollback(profile, self._overlay_with_current_fusion_scope(self._base_for(profile, saved), self._point_deltas), "flow-step-failed")
         self._sample_session()
         profile = self._status.get("profile") or ""
         try:
@@ -2595,7 +2607,7 @@ class GovernorService:
         if previous is not None and previous != context and flow.wanted is not None:
             flow.reset()
             await asyncio.to_thread(self._write_overlay_sync, profile,
-                                    {**self._base_for(profile, saved), **self._point_deltas}, self._point["key"])
+                                    self._overlay_with_current_fusion_scope(self._base_for(profile, saved), self._point_deltas), self._point["key"])
         context_matches = bool(latest.get("context") and ack.get("context") == latest.get("context"))
         eligible = bool(self._settings.get("auto_flow") is not False
                         and self._status.get("enabled") and self._status.get("state") == "LOCKED"
@@ -2636,7 +2648,7 @@ class GovernorService:
                                         self._point["key"])
             except (OSError, ValueError):
                 flow.reset()
-                await self._rollback(profile, {**self._base_for(profile, saved), **self._point_deltas},
+                await self._rollback(profile, self._overlay_with_current_fusion_scope(self._base_for(profile, saved), self._point_deltas),
                                      "flow-write-failed")
                 raise
         if before_busy != flow.busy:
@@ -4017,7 +4029,7 @@ class GovernorService:
         saved = await asyncio.to_thread(self._saved_profile_config, profile)
         if saved is None:
             return False
-        desired = {**self._base_for(profile, saved), **(wanted or self._point_deltas)}
+        desired = self._overlay_with_current_fusion_scope(self._base_for(profile, saved), wanted or self._point_deltas)
         key = self._point["key"] if self._point else "base"
         try:
             record = await asyncio.to_thread(self._ensure_overlay_sync, profile, desired, key)
@@ -4043,7 +4055,7 @@ class GovernorService:
             key = self._point["key"] if self._point else "base"
             try:
                 await asyncio.to_thread(self._ensure_overlay_sync, profile,
-                                        {**self._base_for(profile, saved), **self._point_deltas}, key)
+                                        self._overlay_with_current_fusion_scope(self._base_for(profile, saved), self._point_deltas), key)
             except (OSError, ValueError):
                 pass
         self._event("frame-os-injection", "stop", profile=profile, cause=reason)
