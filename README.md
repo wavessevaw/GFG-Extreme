@@ -10,22 +10,22 @@
 
 A Decky Loader plugin that coordinates the frame generator, CPU/GPU resources, rendering workload and power limits. Autopilot observes each game and chooses measurable, reversible adjustments rather than changing only TDP.
 
-[**Download 2.1.2**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v2.1.2) · [Install](#installation) · [Autopilot](#autopilot) · [Diagnostics](#diagnostics)
+[**Download 2.1.3**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v2.1.3) · [Install](#installation) · [Autopilot](#autopilot) · [Diagnostics](#diagnostics)
 
 ![Release](https://img.shields.io/github/v/release/wavessevaw/GFG-Extreme?style=flat-square&color=fb0d00&label=release)
 ![Steam Deck](https://img.shields.io/badge/Steam%20Deck-OLED%20%7C%20LCD-20242e?style=flat-square)
 ![Decky](https://img.shields.io/badge/Decky%20Loader-plugin-20242e?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-20242e?style=flat-square)
 
-<img src="docs/img/card-overview.png" alt="GFG Extreme 2.1.2 user interface: Battery, Autopilot and Details" width="900">
+<img src="docs/img/card-overview.png" alt="GFG Extreme 2.1.3 user interface: Battery, Autopilot and Details" width="900">
 
-<sub>Real GFG Extreme 2.1.2 interface rendered in a browser using illustrative sample data. Not measured game performance.</sub>
+<sub>Real GFG Extreme 2.1.3 interface rendered in a browser using illustrative sample data. Not measured game performance.</sub>
 
 </div>
 
 ## Autopilot
 
-**Autopilot in GFG Extreme 2.1.2 is not an automatic TDP slider.** It is an orchestration mode that balances frame pacing, genuinely rendered frames, generated output, visual workload, APU power and temperature. Watts are only one of its tools.
+**Autopilot in GFG Extreme 2.1.3 is not an automatic TDP slider.** It is an orchestration mode that balances frame pacing, genuinely rendered frames, generated output, visual workload, APU power and temperature. Watts are only one of its tools.
 
 The existing Governor handles a *rendering operating point*: the required real-frame cadence, generation multiplier, and available power. **Autopilot sits above the Governor.** It inspects the game, selects a promising type of intervention, reserves that resource for an isolated trial, and checks whether the result was worthwhile. It avoids adjusting several unrelated knobs simultaneously and then pretending to know which one helped.
 
@@ -84,7 +84,7 @@ On **Stop**, game exit or a mode change, GFG attempts to restore only the contro
 
 <div align="center">
 <img src="docs/img/card-autopilot.png" alt="Autopilot's confirmed configuration and skipped trial states" width="800">
-<sub>Actual 2.1.2 Autopilot cards using illustrative measurements: a verified operating point and a deferred experiment with no hardware write.</sub>
+<sub>Actual 2.1.3 Autopilot cards using illustrative measurements: a verified operating point and a deferred experiment with no hardware write.</sub>
 </div>
 
 
@@ -112,7 +112,7 @@ The optional Vulkan rings overlay shows output and real FPS, TDP, and additional
 
 ## Other features
 
-GFG Extreme 2.1.2 still includes the earlier Governor work, alongside the Autopilot:
+GFG Extreme 2.1.3 still includes the earlier Governor work, alongside the Autopilot:
 
 - **Per-game profiles**, remembered viable operating points and explicit reset of learned game data.
 - **Smart CPU/GPU power split**, which can trial a CPU cap in a GPU-bound game and restore it if measured performance worsens. Available only where the OS permits safe control.
@@ -131,7 +131,7 @@ GFG Extreme 2.1.2 still includes the earlier Governor work, alongside the Autopi
 
 Requires [Decky Loader](https://decky.xyz/) and [Lossless Scaling on Steam](https://store.steampowered.com/app/993090/Lossless_Scaling/) for the supported GFG generation setup.
 
-1. Download [**GFG-Extreme-v2_1_2.zip**](https://github.com/wavessevaw/GFG-Extreme/releases/download/v2.1.2/GFG-Extreme-v2_1_2.zip). Use Decky's **Install from zip** feature and approve the requested permissions for supported power controls.
+1. Download [**GFG-Extreme-v2_1_3.zip**](https://github.com/wavessevaw/GFG-Extreme/releases/download/v2.1.3/GFG-Extreme-v2_1_3.zip). Use Decky's **Install from zip** feature and approve the requested permissions for supported power controls.
 2. Open GFG Extreme and select **Install engine** if it is not installed.
 3. For a Steam game, open **Properties → Launch Options** and add:
 
@@ -157,7 +157,7 @@ Go to **Settings → Diagnostics → Check setup** to check the renderer, launch
 
 ## Status and limitations
 
-**Stable software release: 2.1.2.** Backend, frontend and mock Vulkan-layer tests, plus Decky ZIP integrity checks, pass in CI. This **does not** imply Steam Deck LCD/OLED hardware validation of dynamic GPU Clock or Half Rate Shading. Generated-frame acquisition timeouts and Frame OS Act gains need independent device testing. Allow Tearing is not automatically controlled.
+**Stable software release: 2.1.3.** Backend, frontend and mock Vulkan-layer tests, plus Decky ZIP integrity checks, pass in CI. This **does not** imply Steam Deck LCD/OLED hardware validation of dynamic GPU Clock or Half Rate Shading. Generated-frame acquisition timeouts and Frame OS Act gains need independent device testing. Allow Tearing is not automatically controlled.
 
 Measured output cadence is not the same as optical frame delivery. The 60/90 target transition on OLED, visual quality with VRS and physical restore behavior must be checked in games before performance or battery claims.
 
@@ -187,7 +187,7 @@ GPL-3.0-or-later · [License](LICENSE.md) · [Third-party notices](THIRD_PARTY_N
 
 ## Frame Fusion and short Boost
 
-Stable 2.1.2 includes both [Fusion Core and Native Fusion](docs/FRAME_FUSION.md), plus [short Boost and right-stick touch](docs/STICK_TOUCH_BOOST.md). **Fusion and Boost run only in Autopilot.** Their switches, frame timing, Stall Shield and compatible shading trials default on; explicit saved off choices remain off. The normal Battery, Balanced and Quality paths do not execute Fusion or Boost.
+Stable 2.1.3 includes both [Fusion Core and Native Fusion](docs/FRAME_FUSION.md), plus [short Boost and right-stick touch](docs/STICK_TOUCH_BOOST.md). **Fusion and Boost run only in Autopilot.** Their switches, frame timing, Stall Shield and compatible shading trials default on; explicit saved off choices remain off. The normal Battery, Balanced and Quality paths do not execute Fusion or Boost.
 
 Fusion can avoid a compatible scaler-input transfer or the native BGRA conversion. Steam Deck field logs confirm the native path executes; they do not establish an overall FPS, energy or input-latency gain. Incompatible formats and resource failures retain the existing path. Leaving Autopilot closes the shortcuts immediately; private history replacement follows the renderer's bounded transition.
 
@@ -195,6 +195,6 @@ With Continuous Boost off, Short Boost requests a **500 ms pulse on right-stick 
 
 **Continuous Boost** is an optional Autopilot switch, off by default. It holds the higher real-frame cadence without the 1.5-second pulse limit and can use more power. Menus, heat, ineffective delivery and power-search guards still pause it.
 
-The built-in profile is shown as **stable** in Profiles. Its existing persisted identifier is retained so saved profiles and Steam launch commands continue to work. Users of the 2.1.2 test builds (Temporal Engine, GFG Shell, Native FG) should install the stable 2.1.2 ZIP explicitly.
+The built-in profile is shown as **stable** in Profiles. Its existing persisted identifier is retained so saved profiles and Steam launch commands continue to work. Users of the 2.1.3 test builds (Temporal Engine, GFG Shell, Native FG) should install the stable 2.1.3 ZIP explicitly.
 
 <div align="center"><img src="docs/img/card-profile.png" alt="Profiles with the built-in stable profile" width="390"></div>
