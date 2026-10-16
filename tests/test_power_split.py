@@ -93,11 +93,11 @@ class PowerSplitTests(unittest.TestCase):
         run(s, 200, top=30.0)
         self.assertEqual(s.level, 0)
 
-    def test_remembered_level_is_the_first_stop(self):
+    def test_remembered_level_is_rechecked_one_step_at_a_time(self):
         s = ps.PowerSplit(LADDER)
         s.start_level = 3
         run(s, ps.STEP_GAP_S + 1, top=20.0)
-        self.assertEqual(s.level, 3)
+        self.assertEqual(s.level, 1, "past-session CPU headroom is not current evidence")
 
     def test_ab_pairs_measure_gpu_clock_per_watt(self):
         s = ps.PowerSplit(LADDER)
@@ -133,7 +133,7 @@ class SplitMemoryTests(unittest.TestCase):
             m.record(split)
         self.assertTrue(m.start_session())
         self.assertTrue(m.ruled_out)
-        self.assertEqual(m.level, 2)
+        self.assertEqual(m.level, 0, "unproved CPU caps must not be remembered")
         for _ in range(ps.RECHECK_SESSIONS - 1):
             self.assertTrue(m.start_session(), "off for RECHECK_SESSIONS sessions")
         self.assertFalse(m.start_session())
