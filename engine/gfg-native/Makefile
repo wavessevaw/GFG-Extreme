@@ -81,7 +81,7 @@ $(BUILD)/present-chain: tests/present_chain.c src/present_chain.h
 present-chain: $(BUILD)/present-chain
 	$(BUILD)/present-chain
 
-$(BUILD)/gpu-ring: tests/gpu_ring.c src/gpu_bridge.c src/gpu_bridge.h src/present_chain.h $(TE_LIB)
+$(BUILD)/gpu-ring: tests/gpu_ring.c src/gpu_bridge.c src/gpu_bridge.h src/frame_clock.h src/present_chain.h $(TE_LIB)
 	mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I$(VULKAN_HEADERS) -I../gfg-temporal/src -o $@ tests/gpu_ring.c $(TE_LIB) -ldl -lpthread -lm
 

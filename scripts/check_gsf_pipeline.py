@@ -39,6 +39,10 @@ def main():
     run('borrowed-gsf',[native/'borrowed-device'],dict(VK_LAYER_PATH=validation,VK_INSTANCE_LAYERS='VK_LAYER_KHRONOS_validation',GFG_TEST_GSF='1'),['device lifetime PASS'])
     env=dict(GFG_NATIVE_FG='1',GFG_NATIVE_GPU_BRIDGE='1',GFG_NATIVE_ASYNC='1',GFG_NATIVE_GPU_SYNC='same-device',
              GFG_NATIVE_ALGO='gsf',GFG_NATIVE_OUTPUT_HZ='9',GFG_NATIVE_TRACE='1')
+    run('sync-real-only-fallback',[native/'wsi-gpu-smoke'],dict(env,GFG_NATIVE_ASYNC='0',
+        VK_INSTANCE_LAYERS='VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation',VK_LAYER_PATH=str(native)+':'+validation,
+        GFG_TEST_EXPECT_GPU='1',GFG_TEST_VALIDATION='1',GFG_TEST_FRAMES='4',GFG_TEST_ALLOW_SKIPS='1'),
+        ['reason=gsf-requires-output-worker','real=4 synthetic=0 skipped=6','validation errors=0'])
     for i,order in enumerate(['VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation','VK_LAYER_KHRONOS_validation:VK_LAYER_GFG_native']):
         e=dict(env,VK_INSTANCE_LAYERS=order,VK_LAYER_PATH=str(native/'observer-layer')+':'+validation,GFG_NATIVE_TEST_FRAMES='4')
         run(f'pixels-order-{i}',[native/'async-observer-app'],e,['real=4 synthetic=6 content=PASS handoff_order=PASS','spacing=PASS'])
