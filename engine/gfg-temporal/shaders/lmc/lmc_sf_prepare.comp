@@ -23,7 +23,8 @@ vec2 reverse_raw(int grid,vec2 half_pos) {
 void main() {
     int i=int(gl_GlobalInvocationID.x);
     if(i>=P.counts.y)return;
-    if(PC.pass_==3){if(i==0){G.moving=G.moving_votes*2u>uint(P.counts.y)?1u:0u;G.pal_count=0u;}return;}
+    if(PC.pass_==3){if(i==0){G.moving=G.moving_votes*2u>uint(P.counts.y)?1u:0u;G.pal_count=0u;
+        G.pad_g0=G.pad_g1*4u>uint(P.counts.y)*3u?1u:0u;}return;}
     if(PC.pass_==2) {
         bool cut=G.orphans_a>uint(P.counts.y)*3u/2u;
         if(i==0){G.pal_count=cut?1u:0u;G.moving=G.moving_votes>uint(P.counts.y)/50u?1u:0u;}

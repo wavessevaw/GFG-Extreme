@@ -28,14 +28,19 @@ def sha(path):
     return h.hexdigest()
 
 
-def score(seq,out,start,pairs,step):
+def score(seq,out,start,pairs,step,rois=()):
     ps,ss,roi,te=[],[],[],[];duplicates=0;equal_outputs=0;dynamic=0
+    hud={r['name']:[] for r in rois}
     for k in range(pairs):
         i=start+k*step;a=seq[i];b=seq[i+step];prev=a;pg=a
         if np.array_equal(out[2*k],out[2*k+1]):equal_outputs+=1
         for j in range(2):
             gt=seq[i+j+1];im=out[2*k+j]
             ps.append(float(psnr_y(im,gt)));ss.append(float(ssim_y(im,gt)))
+            for r in rois:
+                x0,y0,x1,y1=r['rect'];h,w=im.shape[:2]
+                x0,x1=max(0,x0),min(w,x1);y0,y1=max(0,y0),min(h,y1)
+                if x1>x0 and y1>y0:hud[r['name']].append(float(psnr_y(im[y0:y1,x0:x1],gt[y0:y1,x0:x1])))
             te.append(float(temporal_error(prev,im,pg,gt))*255)
             mask=np.max(np.abs(a.astype(np.int16)-b.astype(np.int16)),axis=2)>5
             mask|=np.max(np.abs(gt.astype(np.int16)-a.astype(np.int16)),axis=2)>5
@@ -49,7 +54,8 @@ def score(seq,out,start,pairs,step):
     return dict(psnr_y=float(np.mean(ps)),ssim_y=float(np.mean(ss)),
                 motion_roi_psnr=float(np.mean(roi)) if roi else None,
                 temporal_error=float(np.mean(te)),dynamic_outputs=dynamic,
-                endpoint_duplicates=duplicates,equal_output_pairs=equal_outputs,outputs=2*pairs)
+                endpoint_duplicates=duplicates,equal_output_pairs=equal_outputs,outputs=2*pairs,
+                hud_psnr_y={k:float(np.mean(v)) for k,v in hud.items() if v})
 
 
 def main():
@@ -59,7 +65,7 @@ def main():
     ap.add_argument('--work',type=Path,required=True)
     ap.add_argument('--pairs',type=int,default=6)
     ap.add_argument('--timing-repeats',type=int,default=2)
-    ap.add_argument('--algorithms',default='lmc-gpu,shared-flow,shared-flow-dense')
+    ap.add_argument('--algorithms',default='lmc-gpu,shared-flow-palette')
     ap.add_argument('--segments',default='')
     ap.add_argument('--check-sharing',action='store_true')
     args=ap.parse_args();args.work.mkdir(parents=True,exist_ok=True)
@@ -96,9 +102,11 @@ def main():
                 width=int(frames.shape[2]),height=int(frames.shape[1]),start=start,pairs=pairs,methods={})
             for algo in algos:
                 rows,out,wall=run(path,start,pairs,algo,name+'-'+algo+'-quality',validate=True)
-                m=score(frames,out,start,pairs,3);m['allocation_bytes']=rows[0]['allocation_bytes']
+                m=score(frames,out,start,pairs,3,meta.get('quality_rois',[]));m['allocation_bytes']=rows[0]['allocation_bytes']
                 m['quality_run_first_pair_gpu_ms']=rows[0]['pair_ready_ms'];m['quality_process_wall_s']=wall
                 m['cut_flags']=sum(r['scene_cut'] for r in rows)
+                m['input_interval_cut_pairs']=sum(any(start+k*3<c<=start+(k+1)*3 for c in meta.get('scene_cuts',[])) for k in range(pairs))
+                m['quality_output_sha256']=sha(args.work/(name+'-'+algo+'-quality.npy'))
                 m['timing_rows']=[];m['device_log']=name+'-'+algo+'-quality.log'
                 base['methods'][algo]=m
                 if args.check_sharing:
@@ -125,9 +133,11 @@ def main():
                     m['vs_lmc']=dict(psnr_delta=m['psnr_y']-baseline['psnr_y'],
                         motion_roi_delta=(m['motion_roi_psnr']-baseline['motion_roi_psnr']) if m['motion_roi_psnr'] is not None else None,
                         temporal_ratio=m['temporal_error']/max(baseline['temporal_error'],1e-9),
-                        pair_gpu_ratio=m['pair_ready_ms']['median']/baseline['pair_ready_ms']['median'])
+                        pair_gpu_ratio=m['pair_ready_ms']['median']/baseline['pair_ready_ms']['median'],
+                        worst_hud_delta=min((v-baseline['hud_psnr_y'][k] for k,v in m['hud_psnr_y'].items()),default=0.0))
                     v=m['vs_lmc'];m['software_gate_pass']=bool(v['psnr_delta']>=-.3 and
                         (v['motion_roi_delta'] is None or v['motion_roi_delta']>=-1) and
+                        v['worst_hud_delta']>=-1 and not m['cut_flags'] and not m['input_interval_cut_pairs'] and
                         v['temporal_ratio']<=1.05 and v['pair_gpu_ratio']<=.85)
             report['segments'].append(base)
             (args.work/'comparison.json').write_text(json.dumps(report,indent=2,allow_nan=False)+'\n')

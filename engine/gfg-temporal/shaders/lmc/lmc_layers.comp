@@ -49,6 +49,8 @@ void main() {
         barrier();
     }
     if (lid != 0u) return;
+    // Experimental GSF cut vote; never changes the LMC baseline statistics.
+    if((PC.flags&16)!=0 && vb[P.blk_off.x+i].z>0.12)atomicAdd(G.pad_g1,1u);
     float tex = s_tex[0] / 64.0;
     uint hud = s_hud[0];
     // reference: (tex > 0.01) & ~hudb & (cb < 0.05), hudb = HUD share > 0.2

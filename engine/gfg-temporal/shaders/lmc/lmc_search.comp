@@ -230,7 +230,8 @@ void main() {
                 }
             } else {
                 if (k == k_t) {
-                    skip = (PC.flags & 1) == 0 || from_b || ((PC.flags & 16) != 0 && G.pal_count != 0u);
+                    skip = (PC.flags & 1) == 0 || from_b || ((PC.flags & 16) != 0 && G.pal_count != 0u) ||
+                        (GRID==0 && (PC.flags&32)!=0 && G.pad_g0!=0u);
                     v = skip ? vec2(0.0) : temporal_cand();
                 } else if (k < k_z) {
                     v = camera_cand(k - k_l);

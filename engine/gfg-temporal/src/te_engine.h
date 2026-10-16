@@ -66,7 +66,7 @@ typedef struct {
     VkSemaphore application_timeline; /* borrowed device: caller-owned, feature enabled by caller */
     int output_bgra;           /* tile outputs store BGRA bytes for GPU copy into a BGRA swapchain */
     VkFormat source_format;   /* 0: legacy SDR8; native GPU may sample packed UNORM10 */
-    int shared_flow_dense;    /* experimental ablation: retain dense visibility, omit global model */
+    int shared_flow_dense;    /* experiment: 0 compact; 1 dense; 2 +robust affine; 3 +motion palette */
     int output_fp16;          /* native HDR: rgba16f outputs, no intermediate 8-bit quantization */
 } te_context_desc;
 

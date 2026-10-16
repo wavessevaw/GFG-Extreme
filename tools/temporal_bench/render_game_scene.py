@@ -230,7 +230,7 @@ def draw_hud(img, t, rng_text):
     return np.asarray(im)
 
 
-def render(out: Path, fps: float, width: int, height: int, duration: float, samples: int):
+def render(out: Path, fps: float, width: int, height: int, duration: float, samples: int, start_time: float = 0.0):
     import moderngl
     ctx = moderngl.create_standalone_context(backend="egl")
     prog = ctx.program(vertex_shader=VERT, fragment_shader=FRAG)
@@ -253,7 +253,7 @@ def render(out: Path, fps: float, width: int, height: int, duration: float, samp
                                        shape=(count, height, width, 3))
     ctx.enable(moderngl.DEPTH_TEST)
     for k in range(count):
-        t = k / fps
+        t = start_time + k / fps
         eye, yaw, pitch, world = camera(t)
         view = look(eye, yaw, pitch)
         vp = proj @ view
@@ -297,9 +297,15 @@ def render(out: Path, fps: float, width: int, height: int, duration: float, samp
     meta = {
         "source": "render_game_scene.py (synthetic rasterised scene, Mesa llvmpipe)",
         "fps": fps, "width": width, "height": height, "frames": count,
-        "timestamps_s": [k / fps for k in range(count)],
-        "segments": [{"name": n, "start": int(round(a * fps)), "end": int(round(b * fps))} for n, a, b in SEGMENTS],
-        "scene_cuts": [int(round(6.0 * fps))],
+        "timestamps_s": [start_time + k / fps for k in range(count)],
+        "segments": [{"name": n, "start": max(0, int(round((a-start_time) * fps))),
+                      "end": min(count, int(round((b-start_time) * fps)))} for n,a,b in SEGMENTS
+                     if b>start_time and a<start_time+duration],
+        "scene_cuts": [int(round((6.0-start_time) * fps))] if start_time<6.0<start_time+duration else [],
+        "quality_rois": [{"name":"hud_ammo", "rect":[20,height-70,300,height-20]},
+                         {"name":"hud_map", "rect":[width-170,20,width-20,170]},
+                         {"name":"crosshair", "rect":[width//2-14,height//2-14,width//2+14,height//2+14]}],
+        "start_time": start_time,
         "msaa": samples,
     }
     (out / "meta.json").write_text(json.dumps(meta, indent=1))
@@ -314,9 +320,11 @@ def main():
     ap.add_argument("--height", type=int, default=800)
     ap.add_argument("--duration", type=float, default=7.0)
     ap.add_argument("--msaa", type=int, default=4)
+    ap.add_argument("--start-time", type=float, default=0.0)
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
-    meta = render(a.out, a.fps, a.width, a.height, a.duration, a.msaa)
+    if a.fps<=0 or a.duration<=0 or a.start_time<0:ap.error("positive fps/duration and nonnegative start-time required")
+    meta = render(a.out, a.fps, a.width, a.height, a.duration, a.msaa, a.start_time)
     print(f"rendered {meta['frames']} frames {meta['width']}x{meta['height']} at {meta['fps']} FPS -> {a.out}")
 
 

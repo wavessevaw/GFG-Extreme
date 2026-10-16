@@ -13,7 +13,7 @@ TE_ICD ?= /usr/share/vulkan/icd.d/lvp_icd.json
 
 SHADERS := me stats classify lists reuse light full
 FMT_SHADERS := luma down
-LMC_SHADERS := prep down search layers hyp irls palette field masked orphan select compose sf_prepare sf_compose
+LMC_SHADERS := prep down search layers hyp irls palette field masked orphan select compose sf_prepare sf_compose sf_model
 FP16_SHADERS := reuse light full lmc_compose lmc_sf_compose
 SPV := $(FP16_SHADERS:%=$(BUILD)/spv/%_fp16.spv) $(SHADERS:%=$(BUILD)/spv/%.spv) \
        $(foreach s,$(FMT_SHADERS),$(BUILD)/spv/$(s)_r16f.spv $(BUILD)/spv/$(s)_r32f.spv) \

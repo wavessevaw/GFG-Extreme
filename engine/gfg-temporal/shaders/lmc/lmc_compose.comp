@@ -26,6 +26,12 @@ void main() {
         imageStore(dst, p, output_color(vec4(cb0, 1.0)));
         return;
     }
+    // A cut is recovery, not two successful generated frames. The explicit
+    // flag keeps this experiment from altering existing LMC behavior.
+    if((PC.flags&16)!=0 && G.pad_g0!=0u) {
+        imageStore(dst,p,output_color(vec4(t>=0.5?cb0:ca0,1.0)));
+        return;
+    }
     if (imageLoad(hudCount, p).r >= uint(P.hud_pairs)) {
         imageStore(dst, p, output_color(vec4(t >= 0.5 ? cb0 : ca0, 1.0)));
         return;
@@ -35,7 +41,9 @@ void main() {
     float best = 1e30;
     // a choice equal to an earlier one gives the same error and colour and cannot
     // win (strict <): neighbouring cells mostly agree, so most pixels fetch once
-    vec4 seen[4];
+    // Avoid old glslang aliasing this Function array with the std430 palette
+    // array type (which carries ArrayStride). Only the first four are used.
+    vec4 seen[5];
     [[unroll]] for (int k = 0; k < 4; ++k) {
         ivec2 q = clamp(c0 + ivec2(k & 1, k >> 1), ivec2(0), hs - 1);
         vec4 s = SEL.sel[q.y * hs.x + q.x];

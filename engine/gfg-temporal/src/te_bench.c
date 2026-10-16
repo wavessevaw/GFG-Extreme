@@ -83,7 +83,8 @@ static FILE* npy_create(const char* path, size_t n, size_t h, size_t w) {
 static void usage(void) {
     fprintf(stderr,
             "usage: te-bench --frames seq.npy [--start S] [--pairs N] [--step K] [--outputs N] [--crop WxH]\n"
-            "                [--algo tiles|lmc|lmc-gpu|shared-flow|shared-flow-dense] [--tier 0..2] [--mode adaptive|full|light|reuse] [--tile 8|16|32] [--levels L] [--range R]\n"
+            "                [--algo tiles|lmc|lmc-gpu|gsf|shared-flow|shared-flow-dense|shared-flow-affine|shared-flow-palette]\n"
+            "                [--tier 0..2] [--mode adaptive|full|light|reuse] [--tile 8|16|32] [--levels L] [--range R]\n"
             "                [--light-thr X] [--probe N] [--profile] [--out gen.npy] [--json stats.jsonl]\n"
             "                [--analysis DIR] [--device NAME] [--validation] [--no-download]\n");
 }
@@ -121,7 +122,9 @@ int main(int argc, char** argv) {
                 else { usage(); return 2; }
             }
         } else if (ARG("--algo")) {
-            if (strcmp(v,"shared-flow-dense")==0){params.algorithm=TE_ALGO_SHARED_FLOW;shared_dense=1;}
+            if (strcmp(v,"gsf")==0 || strcmp(v,"shared-flow-palette")==0){params.algorithm=TE_ALGO_SHARED_FLOW;shared_dense=3;}
+            else if (strcmp(v,"shared-flow-affine")==0){params.algorithm=TE_ALGO_SHARED_FLOW;shared_dense=2;}
+            else if (strcmp(v,"shared-flow-dense")==0){params.algorithm=TE_ALGO_SHARED_FLOW;shared_dense=1;}
             else if (strcmp(v,"shared-flow")==0) params.algorithm=TE_ALGO_SHARED_FLOW;
             else if (strcmp(v,"lmc-gpu")==0) params.algorithm=TE_ALGO_LMC_GPU;
             else if (strcmp(v, "lmc") == 0) params.algorithm = TE_ALGO_LMC;
@@ -177,7 +180,7 @@ int main(int argc, char** argv) {
     uint32_t tx, ty;
     uint32_t tiles = te_tile_count(ctx, &tx, &ty);
     fprintf(stderr, "te-bench: %s %zux%zu algo %s tiles %ux%u pairs %zu step %zu mode %s%s\n", te_device_name(dev), W, H,
-            params.algorithm == TE_ALGO_SHARED_FLOW ? (shared_dense?"shared-flow-dense":"shared-flow") : params.algorithm == TE_ALGO_LMC_GPU ? "lmc-gpu" : params.algorithm == TE_ALGO_LMC ? "lmc" : "tiles", tx, ty, pairs, step, params.adaptive ? "adaptive" : (params.force_class == 2 ? "full" : params.force_class == 1 ? "light" : "reuse"),
+            params.algorithm == TE_ALGO_SHARED_FLOW ? (shared_dense==3?"shared-flow-palette":shared_dense==2?"shared-flow-affine":shared_dense?"shared-flow-dense":"shared-flow") : params.algorithm == TE_ALGO_LMC_GPU ? "lmc-gpu" : params.algorithm == TE_ALGO_LMC ? "lmc" : "tiles", tx, ty, pairs, step, params.adaptive ? "adaptive" : (params.force_class == 2 ? "full" : params.force_class == 1 ? "light" : "reuse"),
             profile ? " profile" : "");
     FILE* out = out_path ? npy_create(out_path, pairs * outputs, H, W) : NULL;
     FILE* json = json_path ? fopen(json_path, "w") : NULL;
@@ -236,8 +239,8 @@ int main(int argc, char** argv) {
             fwrite(st8, 32, tiles, fstat);
         }
         if (json) {
-            fprintf(json,"{\"algorithm\":%u,\"outputs\":%u,\"allocation_bytes\":%llu,\"cpu_submit_ms\":%.4f,\"cpu_total_ms\":%.4f,\"analysis_ms\":%.4f,",
-                params.algorithm,ps.outputs,(unsigned long long)te_context_memory_bytes(ctx),submit_ms,cpu_total_ms,
+            fprintf(json,"{\"algorithm\":%u,\"shared_flow_variant\":%d,\"outputs\":%u,\"allocation_bytes\":%llu,\"cpu_submit_ms\":%.4f,\"cpu_total_ms\":%.4f,\"analysis_ms\":%.4f,",
+                params.algorithm,shared_dense,ps.outputs,(unsigned long long)te_context_memory_bytes(ctx),submit_ms,cpu_total_ms,
                 ps.stage_ms[0]+ps.stage_ms[1]+ps.stage_ms[2]);
             fprintf(json, "\"pair\": %llu, \"a\": %zu, \"b\": %zu, \"timed\": %d, \"profile\": %d, \"pyramid_ms\": %.4f, "
                           "\"analyze_ms\": %.4f, \"classify_ms\": %.4f, \"scene_cut\": %u, \"promoted\": %u, "

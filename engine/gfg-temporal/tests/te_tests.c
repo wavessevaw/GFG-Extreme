@@ -516,7 +516,9 @@ static te_context* make_lmc(te_device* dev, uint32_t outputs) {
     te_context_desc d;
     te_context_desc_default(&d, W, H, outputs);
     d.host_io = 1;
-    d.params.algorithm = getenv("GFG_TEST_GPU_LMC")?TE_ALGO_LMC_GPU:TE_ALGO_LMC;
+    const char* shared=getenv("GFG_TEST_SHARED_FLOW");
+    d.params.algorithm = shared?TE_ALGO_SHARED_FLOW:getenv("GFG_TEST_GPU_LMC")?TE_ALGO_LMC_GPU:TE_ALGO_LMC;
+    if(shared)d.shared_flow_dense=atoi(shared);
     te_context* ctx = NULL;
     if (te_context_create(dev, &d, &ctx) != VK_SUCCESS) return NULL;
     return ctx;
@@ -562,7 +564,7 @@ static void test_lmc_readiness_deadline(te_device* dev) {
         te_submit next = {.slot = 0, .nonblocking = 1};
         begin = monotonic_ms();
         VkResult rc = te_submit_frame(ctx, &next);
-        int gpu_model=getenv("GFG_TEST_GPU_LMC")!=NULL;
+        int gpu_model=getenv("GFG_TEST_GPU_LMC")!=NULL || getenv("GFG_TEST_SHARED_FLOW")!=NULL;
         EXPECT((rc==VK_NOT_READY || (gpu_model && rc==VK_SUCCESS)) && monotonic_ms()-begin<100.0,
                "nonblocking submit must not wait for unavailable GPU work or a fit worker (%d)",rc);
         pthread_join(thread, NULL);
@@ -597,6 +599,7 @@ static void test_lmc_static(te_device* dev) {
         te_download_rgb(ctx, i, o);
         double q = psnr_rect(o, a, 0, 0, W, H);
         EXPECT(q > 50.0, "LMC static scene output %u PSNR %.2f dB", i, q);
+        if(getenv("GFG_TEST_SHARED_FLOW"))EXPECT(memcmp(o,a,W*H*3)==0,"GSF static pixels exact");
     }
     free(a);
     free(o);
@@ -735,6 +738,27 @@ static void test_lmc_hold(te_device* dev) {
     te_context_destroy(ctx);
 }
 
+static void test_shared_cut(te_device* dev) {
+    if(!getenv("GFG_TEST_SHARED_FLOW"))return;
+    te_context* ctx=make_lmc(dev,2);
+    EXPECT(ctx,"GSF cut context");if(!ctx)return;
+    uint8_t *a=malloc(W*H*3),*b=malloc(W*H*3),*o=malloc(W*H*3);
+    noise(a,42);noise(b,912);
+    const float ts[2]={1.0f/3,2.0f/3};
+    EXPECT(run_pair(ctx,0,a,0,ts),"GSF cut history");
+    EXPECT(run_pair(ctx,1,b,2,ts),"GSF cut pair");
+    te_pair_stats st;te_last_stats(ctx,&st);
+    EXPECT(st.scene_cut==1,"GSF unrelated noise is cut recovery");
+    for(uint32_t i=0;i<2;++i){
+        EXPECT(te_download_rgb(ctx,i,o)==VK_SUCCESS,"GSF cut output");
+        EXPECT(memcmp(o,i?b:a,W*H*3)==0,"GSF cut copies endpoint, never counts as unique synthesis");
+    }
+    EXPECT(run_pair(ctx,0,b,2,ts),"GSF post-cut static pair");
+    te_last_stats(ctx,&st);EXPECT(!st.scene_cut,"GSF cut state does not stick");
+    for(uint32_t i=0;i<2;++i){te_download_rgb(ctx,i,o);EXPECT(memcmp(o,b,W*H*3)==0,"GSF post-cut pixels exact");}
+    free(a);free(b);free(o);te_context_destroy(ctx);
+}
+
 int main(void) {
     test_scheduler();
     te_device_desc dd = {.validation = 1};
@@ -761,6 +785,7 @@ int main(void) {
     test_lmc_chroma_alias(dev);
     test_lmc_hud(dev);
     test_lmc_hold(dev);
+    test_shared_cut(dev);
     uint32_t verr = te_device_validation_errors(dev);
     te_device_destroy(dev);
     EXPECT(verr == 0, "validation errors: %u", verr);
