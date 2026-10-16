@@ -91,30 +91,61 @@ jobs:
           grep -q 'reason=unsupported-sync-mode' relay-rejected.log
           grep -q 'validation errors=0' relay-rejected.log
           if grep -E 'VALIDATION ERROR|Validation Error|VUID-' disabled-timeline-*.log mailbox-*.log shared-fd.log relay-rejected.log; then exit 1; fi
-      - name: Private package, installed GPU path, rollback and reproducible source
+      - name: Build experimental package
         run: |
           set -euo pipefail
           python3 scripts/package_native_fg.py --binary engine/gfg-native/build-te/libVkLayer_gfg_native.so --outdir "$RUNNER_TEMP/fg3-private"
+
+      - name: Verify package checksums and unpack source
+        run: |
+          set -euo pipefail
           (cd "$RUNNER_TEMP/fg3-private" && sha256sum --check SHA256SUMS.txt)
-          mkdir -p "$RUNNER_TEMP/fg3-stage" "$RUNNER_TEMP/fg3-home"
+          mkdir -p "$RUNNER_TEMP/fg3-stage"
           unzip -q "$RUNNER_TEMP"/fg3-private/*.zip -d "$RUNNER_TEMP/fg3-stage"
-          cd "$RUNNER_TEMP/fg3-stage/GFG-Native-FG"
-          sha256sum --check --status SHA256SUMS.txt
+          (cd "$RUNNER_TEMP/fg3-stage/GFG-Native-FG" && sha256sum --check SHA256SUMS.txt)
+
+      - name: Install package in isolated home
+        working-directory: ${{ runner.temp }}/fg3-stage/GFG-Native-FG
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/fg3-home"
           HOME="$RUNNER_TEMP/fg3-home" bash install.sh
-          HOME="$RUNNER_TEMP/fg3-home" "$RUNNER_TEMP/fg3-home/.local/bin/gfg-native" --off /bin/true
+
+      - name: Check disabled passthrough launcher
+        run: HOME="$RUNNER_TEMP/fg3-home" "$RUNNER_TEMP/fg3-home/.local/bin/gfg-native" --off /bin/true
+
+      - name: Check installed GPU WSI path
+        run: |
+          set -euo pipefail
           HOME="$RUNNER_TEMP/fg3-home" GFG_TEST_FRAMES=24 GFG_TEST_EXPECT_GPU=1 GFG_TEST_VALIDATION=1 GFG_NATIVE_GPU_BRIDGE_VERIFY=1 GFG_NATIVE_GPU_BRIDGE_VERIFY_EVERY=4 VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation xvfb-run -a "$RUNNER_TEMP/fg3-home/.local/bin/gfg-native" "$GITHUB_WORKSPACE/engine/gfg-native/build-te/wsi-gpu-smoke" 2>&1 | tee "$RUNNER_TEMP/fg3-private/installed.log"
-          grep -q 'algo=lmc-gpu' installed.log
-          grep -q 'validation errors=0' installed.log
-          if grep -E 'VUID-|VALIDATION ERROR' installed.log; then exit 1; fi
+          grep -q 'algo=lmc-gpu' "$RUNNER_TEMP/fg3-private/installed.log"
+          grep -q 'validation errors=0' "$RUNNER_TEMP/fg3-private/installed.log"
+          if grep -E 'VUID-|VALIDATION ERROR' "$RUNNER_TEMP/fg3-private/installed.log"; then exit 1; fi
+
+      - name: Check rollback restore
+        working-directory: ${{ runner.temp }}/fg3-stage/GFG-Native-FG
+        run: |
+          set -euo pipefail
           HOME="$RUNNER_TEMP/fg3-home" bash rollback.sh
           HOME="$RUNNER_TEMP/fg3-home" "$RUNNER_TEMP/fg3-home/.local/bin/gfg-native" /bin/true
+
+      - name: Check reinstall and uninstall
+        working-directory: ${{ runner.temp }}/fg3-stage/GFG-Native-FG
+        run: |
+          set -euo pipefail
           HOME="$RUNNER_TEMP/fg3-home" bash install.sh
           HOME="$RUNNER_TEMP/fg3-home" bash uninstall.sh
           test ! -e "$RUNNER_TEMP/fg3-home/.local/share/gfg-native/libVkLayer_gfg_native.so"
           HOME="$RUNNER_TEMP/fg3-home" "$RUNNER_TEMP/fg3-home/.local/bin/gfg-native" /bin/true
-          make -C SOURCE/engine/gfg-temporal -j2 BUILD="$RUNNER_TEMP/fg3-source-core" lib
-          make -C SOURCE/engine/gfg-native ENABLE_TE=1 BUILD="$RUNNER_TEMP/fg3-source-native" TE_LIB="$RUNNER_TEMP/fg3-source-core/libgfg-temporal.a" VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" layer
-          cmp libVkLayer_gfg_native.so "$RUNNER_TEMP/fg3-source-native/libVkLayer_gfg_native.so"
+
+      - name: Rebuild bundled Temporal source
+        run: make -C "$RUNNER_TEMP/fg3-stage/GFG-Native-FG/SOURCE/engine/gfg-temporal" -j2 BUILD="$RUNNER_TEMP/fg3-source-core" lib
+
+      - name: Rebuild bundled native source
+        run: make -C "$RUNNER_TEMP/fg3-stage/GFG-Native-FG/SOURCE/engine/gfg-native" ENABLE_TE=1 BUILD="$RUNNER_TEMP/fg3-source-native" TE_LIB="$RUNNER_TEMP/fg3-source-core/libgfg-temporal.a" VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" layer
+
+      - name: Compare rebuilt native library with package
+        run: cmp "$RUNNER_TEMP/fg3-stage/GFG-Native-FG/libVkLayer_gfg_native.so" "$RUNNER_TEMP/fg3-source-native/libVkLayer_gfg_native.so"
       - name: Retain native no-DLL compatibility bootstrap check
         run: |
           python3 scripts/build_frame_fusion.py --native-no-dll --work "$RUNNER_TEMP/gfg-native-compatibility" --headers "$RUNNER_TEMP/vkh/include"
