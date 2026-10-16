@@ -94,6 +94,8 @@ class KnownGoodTdpRecoveryTests(unittest.TestCase):
         self.assertEqual(budget._fast_raise(102.0), "move")
         self.assertEqual(budget.tdp, 10.0)
         self.assertIn("known-good", budget.last_reason)
+        self.assertEqual(budget.phase, "locked")
+        self.assertEqual(budget.good, 0)
 
     def test_autopilot_keeps_90_goal_while_known_good_tdp_recovery_is_possible(self):
         svc = GovernorService.__new__(GovernorService)
