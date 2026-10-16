@@ -25,11 +25,16 @@ Stored in the Governor's settings under ``frame_os_games``: plain JSON, per game
 from __future__ import annotations
 
 import time
+import math
 from typing import Any, Dict, List, Optional
 
 from .proof import METRICS, MIN_PAIRS, stats
 
 KEEP_PAIRS = 40
+# Old A/B results could be counted despite an unacknowledged pacer policy.
+# Invalidate their efficacy/off decisions rather than silently inheriting an
+# unverified permanent-sounding "disabled for game" state.
+AB_PROOF_SCHEMA = 2
 MIN_OFF_PAIRS = 8
 HARM_PCT = 2.0
 USELESS_GAIN_PCT = 5.0
@@ -56,6 +61,8 @@ class GameMemory:
 
     def __init__(self, record: Optional[Dict[str, Any]] = None, *, boost_policy: Optional[int] = None) -> None:
         record = record if isinstance(record, dict) else {}
+        if record and record.get("ab_proof_schema") != AB_PROOF_SCHEMA:
+            record = {**record, "pairs": {}, "pair_sessions": {}, "off": {}}
         self.boost_policy = boost_policy
         if boost_policy is not None and record.get("boost_policy") != boost_policy:
             parts = {k:record[k] if isinstance(record.get(k),dict) else {} for k in ("pairs","pair_sessions","off")}
@@ -64,7 +71,9 @@ class GameMemory:
                       "off": {k:v for k,v in parts["off"].items() if k != "boost"}}
         pairs = record.get("pairs") if isinstance(record.get("pairs"), dict) else {}
         self.pairs: Dict[str, List[float]] = {
-            m: [float(v) for v in (pairs.get(m) or []) if isinstance(v, (int, float))][-KEEP_PAIRS:]
+            m: [float(v) for v in (pairs.get(m) or [])
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
+                and math.isfinite(float(v)) and abs(float(v)) <= 10_000][-KEEP_PAIRS:]
             for m in METRICS}
         # how many sessions contributed pairs per metric (records from 1.3.0 have no count: 1)
         seen = record.get("pair_sessions") if isinstance(record.get("pair_sessions"), dict) else {}
@@ -115,7 +124,9 @@ class GameMemory:
         """Store this session's new pairs.  Nothing is switched off here: that waits for the next
         session's start.  Returns {} (kept for callers that react to switch-offs)."""
         for metric in METRICS:
-            values = [float(v) for v in new_pairs.get(metric) or [] if isinstance(v, (int, float))]
+            values = [float(v) for v in new_pairs.get(metric) or []
+                      if isinstance(v, (int, float)) and not isinstance(v, bool)
+                      and math.isfinite(float(v)) and abs(float(v)) <= 10_000]
             if not values:
                 continue
             self.pairs[metric] = (self.pairs[metric] + values)[-KEEP_PAIRS:]
@@ -130,7 +141,8 @@ class GameMemory:
                 **{m: stats(self.pairs[m]) for m in METRICS}}
 
     def to_record(self) -> Dict[str, Any]:
-        return {"pairs": {m: [round(v, 2) for v in self.pairs[m]] for m in METRICS},
+        return {"ab_proof_schema": AB_PROOF_SCHEMA,
+                "pairs": {m: [round(v, 2) for v in self.pairs[m]] for m in METRICS},
                 "pair_sessions": dict(self.pair_sessions),
                 "sessions": self.sessions, "off": dict(self.off), "updated": round(self.updated),
                 **({"boost_policy":self.boost_policy} if self.boost_policy is not None else {})}
