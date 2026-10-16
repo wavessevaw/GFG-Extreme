@@ -66,7 +66,11 @@ def source_files() -> dict[str, bytes]:
 
 def worktree_dirty(packaged: dict[str, bytes]) -> bool:
     """Ignore unrelated CI logs while rejecting source changes in the package."""
-    diff = subprocess.run(["git", "diff", "--quiet", "HEAD", "--"], cwd=ROOT)
+    diff = subprocess.run([
+        "git", "diff", "--quiet", "HEAD", "--",
+        "engine/gfg-native", "engine/gfg-temporal", "scripts/accept_report.py",
+        "scripts/package_native_fg.py", "LICENSE.md",
+    ], cwd=ROOT)
     if diff.returncode == 1:
         return True
     if diff.returncode != 0:
