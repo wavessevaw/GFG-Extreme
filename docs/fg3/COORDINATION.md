@@ -39,3 +39,22 @@ Checkpoint evidence and limitations:
 CI for this branch:
 https://github.com/wavessevaw/GFG-Extreme/actions/workflows/gfg-native-no-dll.yml
 
+## Checkpoint and reference follow-up
+
+Published checkpoint: e121fca. Native CI failed in bounded async output:
+https://github.com/wavessevaw/GFG-Extreme/actions/runs/38895664221
+The coordination post succeeded:
+https://github.com/wavessevaw/GFG-Extreme/actions/runs/38895664202
+
+Source-backed comparison is now in docs/fg3/REFERENCE_REIMPLEMENTATION.md.
+Important correction: lower MAILBOX can belong to the Gamescope WSI transport;
+a downstream FIFO override alone is not a demonstrated fix. MAKO's published
+4.5.0 source separates lower MAILBOX, compositor FIFO and per-output deadlines.
+AMD's open v1.1.4 Vulkan presenter uses distinct queues but requests one generated
+frame, so it is not a ready 3x algorithm. HDR FP16 roundtrip does not establish
+correct PQ-domain dynamic interpolation. Do not publish this checkpoint.
+
+Post-checkpoint local validation after Workgroup padding: fresh VVL cold run
+8 real / 12 synthetic / 2 skipped, zero validation errors; warm run 8/14/0,
+zero validation errors. The cold deadline drop is not hidden. These do not
+resolve the failed remote CI or physical Deck acceptance.

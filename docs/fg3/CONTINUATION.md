@@ -17,8 +17,10 @@ are not distributable Deck acceptance. Fresh validation was built at
 using Vulkan-Headers c46850864f4661461b0f6cb9922c058ffea4915e and its pinned
 dependencies. System validation 1.4.309 has an async+readback fence WSI hazard
 that did not occur under the fresh validator; the latter exposed Workgroup
-ArrayStride errors in palette/orphan shaders. Source padding fixes are present;
-rebuild core then native, validate before concluding they resolve those errors.
+ArrayStride errors in palette/orphan shaders. Source padding fixes were rebuilt: fresh validation reports zero Vulkan errors.
+Cold software run lost two outputs to the deadline policy; warm run passed 8/14/0.
+Remote e121fca CI still failed in bounded async output; its exact failure needs logs.
+Current comparison and next decisions: REFERENCE_REIMPLEMENTATION.md.
 Raw local evidence: /workspace/artifacts/gfg-async-evidence. Never upload raw
 user game/account paths. No authenticated hardware endpoint is configured.
 
