@@ -17,9 +17,9 @@ A Decky Loader plugin that coordinates the frame generator, CPU/GPU resources, r
 ![Decky](https://img.shields.io/badge/Decky%20Loader-plugin-20242e?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-20242e?style=flat-square)
 
-<img src="docs/img/card-overview.png" alt="GFG Extreme 2.1.3 user interface: Battery, Autopilot and Details" width="900">
+<img src="docs/img/card-overview.png" alt="GFG Extreme 2.1.2 user interface: Battery, Autopilot and Details" width="900">
 
-<sub>Real GFG Extreme 2.1.3 interface rendered in a browser using illustrative sample data. Not measured game performance.</sub>
+<sub>Real GFG Extreme 2.1.2 interface rendered in a browser using illustrative sample data. Not measured game performance.</sub>
 
 </div>
 
@@ -84,7 +84,7 @@ On **Stop**, game exit or a mode change, GFG attempts to restore only the contro
 
 <div align="center">
 <img src="docs/img/card-autopilot.png" alt="Autopilot's confirmed configuration and skipped trial states" width="800">
-<sub>Actual 2.1.3 Autopilot cards using illustrative measurements: a verified operating point and a deferred experiment with no hardware write.</sub>
+<sub>Actual 2.1.2 Autopilot cards using illustrative measurements: a verified operating point and a deferred experiment with no hardware write.</sub>
 </div>
 
 
@@ -157,7 +157,7 @@ Go to **Settings → Diagnostics → Check setup** to check the renderer, launch
 
 ## Status and limitations
 
-**Stable software release: 2.1.3.** Backend, frontend and mock Vulkan-layer tests, plus Decky ZIP integrity checks, pass in CI. This **does not** imply Steam Deck LCD/OLED hardware validation of dynamic GPU Clock or Half Rate Shading. Generated-frame acquisition timeouts and Frame OS Act gains need independent device testing. Allow Tearing is not automatically controlled.
+**Stable software release: 2.1.2.** Candidate 2.1.3 is being validated; its CI and Steam Deck hardware results will be reported separately. This **does not** imply Steam Deck LCD/OLED hardware validation of dynamic GPU Clock or Half Rate Shading. Generated-frame acquisition timeouts and Frame OS Act gains need independent device testing. Allow Tearing is not automatically controlled.
 
 Measured output cadence is not the same as optical frame delivery. The 60/90 target transition on OLED, visual quality with VRS and physical restore behavior must be checked in games before performance or battery claims.
 
