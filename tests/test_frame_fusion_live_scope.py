@@ -44,6 +44,26 @@ class LiveFusionScopeTests(RuntimeBase):
     def sync(self):
         asyncio.run(self.svc._sync_overlay("game", self.saved))
 
+    def test_native_opt_in_is_emitted_into_the_renderer_toml(self):
+        # This would fail in 2.1.5 even if Governor calculated a true delta:
+        # generate_toml_content_multi_profile silently dropped the field.
+        for requested in (False, True):
+            with self.subTest(requested=requested):
+                projected = self.cfg.build_governor_overlay_text(
+                    "game", {"gfg_frame_fusion": requested})
+                profile = next(p for p in tomllib.loads(projected)["profile"]
+                               if p["name"] == "game")
+                self.assertIn("gfg_frame_fusion", profile)
+                self.assertIs(profile["gfg_frame_fusion"], requested)
+                self.assertIs(tomllib.loads(projected)["profile"][0]["gfg_frame_fusion"],
+                              False, "other Saved profiles must never inherit Fusion")
+
+    def test_actual_autopilot_runtime_overlay_contains_fusion_true(self):
+        self.assertEqual(self.scope(), (True, 30))
+        # The serialized policy is distinct from the process launch env gate.
+        self.assertIn("gfg_frame_fusion = true",
+                      self.svc.overlay.path_for("game").read_text(encoding="utf-8"))
+
     def test_disabling_live_fusion_updates_busy_point_without_reverting_fps(self):
         self.assertEqual(self.scope(), (True, 30))
         rev = self.svc.overlay.read_header("game")["rev"]
