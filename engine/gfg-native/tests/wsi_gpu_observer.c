@@ -197,9 +197,12 @@ int main(void) {
         .commandPool=pool,.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY,.commandBufferCount=1};
     VkCommandBuffer cmd=VK_NULL_HANDLE; TRY(vkAllocateCommandBuffers(device,&cbai,&cmd));
     VkSemaphoreCreateInfo semci={.sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-    VkSemaphore acquired=VK_NULL_HANDLE, ready=VK_NULL_HANDLE;
+    VkSemaphore acquired=VK_NULL_HANDLE;
+    VkSemaphore *ready=calloc(image_count,sizeof(*ready));REQUIRE(ready);
     TRY(vkCreateSemaphore(device,&semci,NULL,&acquired));
-    TRY(vkCreateSemaphore(device,&semci,NULL,&ready));
+    /* Render completion fences do not retire a WSI wait. Reuse a ready
+     * semaphore only after reacquiring that same swapchain image. */
+    for(uint32_t i=0;i<image_count;++i)TRY(vkCreateSemaphore(device,&semci,NULL,&ready[i]));
     unsigned char *seen=calloc(image_count,1);REQUIRE(seen);
 
     PFN_vkQueuePresentKHR present_gipa=(PFN_vkQueuePresentKHR)
@@ -255,7 +258,7 @@ int main(void) {
         VkSubmitInfo si={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,
             .waitSemaphoreCount=1,.pWaitSemaphores=&acquired,.pWaitDstStageMask=&stage,
             .commandBufferCount=1,.pCommandBuffers=&cmd,
-            .signalSemaphoreCount=1,.pSignalSemaphores=&ready};
+            .signalSemaphoreCount=1,.pSignalSemaphores=&ready[index]};
 #ifdef GFG_NATIVE_TEST_ASYNC
         TRY(vkResetFences(device,1,&render_fence));
         TRY(vkQueueSubmit(queue,1,&si,render_fence));
@@ -263,7 +266,7 @@ int main(void) {
         TRY(vkQueueSubmit(queue,1,&si,VK_NULL_HANDLE));
 #endif
         VkPresentInfoKHR pi={.sType=VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-            .waitSemaphoreCount=1,.pWaitSemaphores=&ready,
+            .waitSemaphoreCount=1,.pWaitSemaphores=&ready[index],
             .swapchainCount=1,.pSwapchains=&swapchain,.pImageIndices=&index};
 #ifdef GFG_NATIVE_TEST_RESUME
         if(frame==1) REQUIRE(setenv("GFG_NATIVE_GPU","0",1)==0);
@@ -295,7 +298,8 @@ int main(void) {
 #ifdef GFG_NATIVE_TEST_GPU_OBSERVER
     REQUIRE(observer_finish());
 #endif
-    vkDestroySemaphore(device,ready,NULL);
+    for(uint32_t i=0;i<image_count;++i)vkDestroySemaphore(device,ready[i],NULL);
+    free(ready);
     vkDestroySemaphore(device,acquired,NULL);
     vkDestroyCommandPool(device,pool,NULL);
     free(images);
