@@ -47,7 +47,7 @@ typedef struct {
     uint32_t algorithm;        /* TE_ALGO_TILES, TE_ALGO_LMC (CPU fit), TE_ALGO_LMC_GPU */
 } te_params;
 
-enum { TE_ALGO_TILES = 0, TE_ALGO_LMC = 1, TE_ALGO_LMC_GPU = 2 };
+enum { TE_ALGO_TILES = 0, TE_ALGO_LMC = 1, TE_ALGO_LMC_GPU = 2, TE_ALGO_SHARED_FLOW = 3 };
 #define TE_LMC_TIERS 3
 
 void te_params_default(te_params* params);

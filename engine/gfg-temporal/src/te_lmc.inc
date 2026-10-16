@@ -14,7 +14,7 @@
 
 enum {
     LMC_PREP, LMC_DOWN, LMC_SEARCH, LMC_LAYERS, LMC_FIELD, LMC_MASKED, LMC_ORPHAN, LMC_SELECT,
-    LMC_COMPOSE, LMC_GPU_HYP, LMC_GPU_IRLS, LMC_GPU_PALETTE, LMC_PIPES
+    LMC_COMPOSE, LMC_GPU_HYP, LMC_GPU_IRLS, LMC_GPU_PALETTE, LMC_SF_PREPARE, LMC_SF_COMPOSE, LMC_PIPES
 };
 
 typedef struct {
@@ -67,6 +67,7 @@ struct te_lmc {
     VkPipeline search[LMC_LEVELS + 1][2];  /* block search specialised per level (1..4) and grid */
     int have_temporal;
     int gpu_fit;
+    int shared_flow;
     unsigned fit_sync_ok;
     /* motion model on the CPU (te_lmc_fit.c), fitted on this pair's vectors: the analysis is two
        submissions.  The first (pyramid, block search, block statistics) ends with a copy of the
@@ -269,7 +270,8 @@ static VkResult lmc_create(te_context* ctx) {
     struct te_lmc* m = calloc(1, sizeof *m);
     if (!m) return fail(VK_ERROR_OUT_OF_HOST_MEMORY, "out of memory");
     ctx->lmc = m;
-    m->gpu_fit=ctx->desc.params.algorithm==TE_ALGO_LMC_GPU;
+    m->shared_flow=ctx->desc.params.algorithm==TE_ALGO_SHARED_FLOW;
+    m->gpu_fit=ctx->desc.params.algorithm==TE_ALGO_LMC_GPU || m->shared_flow;
     if(pthread_mutex_init(&m->fit_lock,NULL)) return VK_ERROR_INITIALIZATION_FAILED;
     m->fit_sync_ok|=1;
     if(pthread_cond_init(&m->fit_cond,NULL)) return VK_ERROR_INITIALIZATION_FAILED;
@@ -307,7 +309,7 @@ static VkResult lmc_create(te_context* ctx) {
         for (int l = 0; l <= LMC_LEVELS; ++l)
             LTRY(image_create(dev, &m->luma[s][l], m->lw[l], m->lh[l], VK_FORMAT_R32_SFLOAT, su, -1, 0));
         LTRY(image_create(dev, &m->half[s], m->w2, m->h2, VK_FORMAT_R16G16B16A16_SFLOAT, su, -1, 0));
-        LTRY(image_create(dev, &m->field[s], m->w2, m->h2, VK_FORMAT_R16G16B16A16_SFLOAT, su, -1, 0));
+        LTRY(image_create(dev, &m->field[s], m->shared_flow?1:m->w2, m->shared_flow?1:m->h2, VK_FORMAT_R16G16B16A16_SFLOAT, su, -1, 0));
     }
     LTRY(image_create(dev, &m->hud, W, H, VK_FORMAT_R32_UINT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                       -1, 0));
@@ -323,8 +325,8 @@ static VkResult lmc_create(te_context* ctx) {
     /* live flags, ordered list, 3 counters, dense list (4 words per entry, 16-byte aligned start) */
     LTRY(buffer_create(dev, &m->layers, LMC_LY_LIVE + (VkDeviceSize)(((2 * m->n1 + 6) & ~3u) + 4 * m->n1) * 4, bu, 0));
     LTRY(buffer_create(dev, &m->globals, LMC_G_SIZE, bu, 0));
-    LTRY(buffer_create(dev, &m->masked, (VkDeviceSize)(W / 4) * (H / 4) * 16, bu, 0));
-    LTRY(buffer_create(dev, &m->sel, (VkDeviceSize)m->w2 * m->h2 * 16, bu, 0));
+    LTRY(buffer_create(dev, &m->masked, m->shared_flow?16:(VkDeviceSize)(W / 4) * (H / 4) * 16, bu, 0));
+    LTRY(buffer_create(dev, &m->sel, m->shared_flow?16:(VkDeviceSize)m->w2 * m->h2 * 16, bu, 0));
 
     lmc_ubo u;
     memset(&u, 0, sizeof u);
@@ -455,12 +457,17 @@ static VkResult lmc_create(te_context* ctx) {
         [LMC_SELECT] = {te_spv_lmc_select, sizeof te_spv_lmc_select},
         [LMC_COMPOSE] = {ctx->desc.output_fp16 ? te_spv_lmc_compose_fp16 : te_spv_lmc_compose,
                          ctx->desc.output_fp16 ? sizeof te_spv_lmc_compose_fp16 : sizeof te_spv_lmc_compose},
+        [LMC_SF_PREPARE] = {te_spv_lmc_sf_prepare, sizeof te_spv_lmc_sf_prepare},
+        [LMC_SF_COMPOSE] = {ctx->desc.output_fp16?te_spv_lmc_sf_compose_fp16:te_spv_lmc_sf_compose,
+                           ctx->desc.output_fp16?sizeof te_spv_lmc_sf_compose_fp16:sizeof te_spv_lmc_sf_compose},
         [LMC_GPU_HYP] = {te_spv_lmc_hyp, sizeof te_spv_lmc_hyp},
         [LMC_GPU_IRLS] = {te_spv_lmc_irls, sizeof te_spv_lmc_irls},
         [LMC_GPU_PALETTE] = {te_spv_lmc_palette, sizeof te_spv_lmc_palette},
     };
     for (int i = 0; i < LMC_PIPES; ++i) {
-        if (i >= LMC_GPU_HYP && !m->gpu_fit) continue;
+        if(i>=LMC_SF_PREPARE && !m->shared_flow)continue;
+        if(m->shared_flow && i!=LMC_PREP && i!=LMC_DOWN && i!=LMC_SEARCH && i<LMC_SF_PREPARE)continue;
+        if (i >= LMC_GPU_HYP && i<LMC_SF_PREPARE && !m->gpu_fit) continue;
         if (i == LMC_SEARCH) continue;  /* specialised per level and grid below */
         VkShaderModuleCreateInfo smci = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
                                          .codeSize = src[i].size, .pCode = src[i].code};
@@ -629,7 +636,7 @@ static void lmc_search_grid(te_context* ctx, VkCommandBuffer cb, int grid, int t
         uint32_t g = groups(m->bw[l] * m->bh[l], 64);
         int t = (grid == 1 || temporal_ok) ? 1 : 0;
         for (int k = 0; k < n; ++k) {
-            lmc_push_c(ctx, cb, 0.0f, l, grid, pass[k], t | io[k]);
+            lmc_push_c(ctx, cb, 0.0f, l, grid, pass[k], t | io[k] | (m->shared_flow?16:0));
             vkCmdDispatch(cb, g, 1, 1);
             compute_barrier(cb);
         }
@@ -730,6 +737,25 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
     else
         lmc_search_grid(ctx, cb, 1, 1, 2);
     LMC_TS(1 + TE_LMC_SEARCH_A);
+    if(m->shared_flow) {
+        // One compact confidence/refinement phase for both output times.
+        LMC_TS(1+TE_LMC_LAYERS);
+        vkCmdWriteTimestamp(cb,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,slot->queries,2);
+        LMC_TS(1+TE_LMC_FIT_WAIT);
+        vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_SF_PREPARE]);
+        for(int g=0;g<2;++g) {
+            if(g)compute_barrier(cb);
+            lmc_push_c(ctx,cb,0,1,g,0,0);vkCmdDispatch(cb,groups(m->n1,64),1,1);
+        }
+        compute_barrier(cb);
+        lmc_push_c(ctx,cb,0,1,0,2,0);vkCmdDispatch(cb,groups(m->n1,64),1,1);
+        compute_barrier(cb);
+        LMC_TS(1+TE_LMC_FIELD);LMC_TS(1+TE_LMC_MASKED);
+        LMC_TS(1+TE_LMC_ORPHAN);LMC_TS(1+TE_LMC_FIELD2);
+        m->have_temporal=1;
+        vkCmdWriteTimestamp(cb,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,slot->queries,3);
+        return;
+    }
     /* block statistics for the CPU motion model (usable blocks, HUD blocks, motion
        votes); the planes and the palette themselves are fitted on the CPU */
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_LAYERS]);
@@ -853,14 +879,14 @@ static void lmc_record_output(te_context* ctx, te_slot* slot, const te_submit* s
     VkDescriptorSet sets[2] = {m->set0[par], m->set1[i]};
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->layout, 0, 2, sets, 0, NULL);
     float t = hold ? 1.0f : s->timestamps[i];
-    if (!hold) {
+    if (!hold && !m->shared_flow) {
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_SELECT]);
         lmc_push_c(ctx, cb, t, 0, 0, 0, 0);
         vkCmdDispatch(cb, groups(m->w2, 8), groups(m->h2, 8), 1);
         compute_barrier(cb);
     }
     vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, slot->queries, q + 1);
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_COMPOSE]);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[m->shared_flow?LMC_SF_COMPOSE:LMC_COMPOSE]);
     lmc_push_c(ctx, cb, t, 0, 0, 0, hold ? 1 : 0);
     vkCmdDispatch(cb, groups(ctx->desc.width, 8), groups(ctx->desc.height, 8), 1);
     barrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
@@ -875,7 +901,7 @@ static void lmc_record_output(te_context* ctx, te_slot* slot, const te_submit* s
     }
     /* telemetry: layer count + shares and orphan counts into the readback header */
     VkBufferCopy c1 = {0, (VkDeviceSize)TE_GLOBALS_HEADER * i, 4};
-    vkCmdCopyBuffer(cb, m->layers.buf, slot->readback.buf, 1, &c1);
+    vkCmdCopyBuffer(cb, m->shared_flow?m->globals.buf:m->layers.buf, slot->readback.buf, 1, &c1);
     VkBufferCopy c2 = {LMC_G_ORPHANS, (VkDeviceSize)TE_GLOBALS_HEADER * i + 4, 8};
     vkCmdCopyBuffer(cb, m->globals.buf, slot->readback.buf, 1, &c2);
     barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_HOST_BIT,
