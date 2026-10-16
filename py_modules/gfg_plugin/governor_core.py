@@ -1240,9 +1240,16 @@ class BudgetController:
             self.held.append((now, float(self.tdp)))
 
     def _work_tdp(self, now: float) -> Optional[float]:
-        """The last level the game held at a binding cap: where it goes back after a menu or a pause."""
-        recent = [w for t, w in self.held if now - t < self.WORK_MEMORY_S]
-        return recent[-1] if recent else None
+        """Highest recently proven workload TDP, not the latest economy setting.
+
+        The held list records healthy operating points at a binding cap. During
+        a deliberate down-search, newer entries are intentionally cheaper and
+        must not overwrite the known-good recovery point. Keep the highest
+        proven level within the bounded memory horizon so a heavier scene can
+        recover watts before changing the frame-generation target.
+        """
+        recent = [float(w) for t, w in self.held if now - t < self.WORK_MEMORY_S]
+        return max(recent) if recent else None
 
     def fast_check(self, now: float, real_median: Optional[float], draw_w: Optional[float]) -> str:
         """Called every loop iteration with the last few seconds of real FPS.
@@ -1279,32 +1286,40 @@ class BudgetController:
 
     def _fast_raise(self, now: float) -> str:
         if self.probe in ("down", "economy") and self.last_good is not None:
-            # The lower level did not hold: back to the one that did, at once.
+            # The lower level did not hold. Restore the last known-good point,
+            # and recover previously proven workload watts. A down-search must
+            # not erase that memory one 1 W step at a time.
             if self.probe == "down":
                 self._note_floor_failure(now)
             else:
                 self.rejected[self.point.key] = now
                 self._note_failure(self.point, now)
-            idx, tdp = self.last_good
+            idx, last_good_tdp = self.last_good
+            remembered_tdp = self._work_tdp(now)
+            target_tdp = max(float(last_good_tdp or 0.0), float(remembered_tdp or 0.0))
+            # Fast recovery restores proven normal workload watts, but never
+            # bypasses the controller's normal ceiling or device/user cap.
+            target_tdp = min(target_tdp, self.normal_max_w)
             from_phase = self.phase
             self.probe = None
-            self._move("probe-failed:starved", idx=idx, tdp=tdp)
+            self._move("economy-recovery:restore-known-good", idx=idx, tdp=target_tdp)
             if from_phase == "search_down":
                 self.phase = "upgrade"
                 self.good = self.HEALTHY_WINDOWS - 1
             else:
-                if from_phase == "probe":  # same back-off as a failed window (_unhealthy)
+                if from_phase == "probe":
                     if self.recover is not None:
                         self.recover_interval = min(self.recover_interval * 2.0, self.RECOVER_MAX_S)
                     else:
                         self.reprobe_interval = min(self.reprobe_interval * 2.0, self.REPROBE_MAX_S)
-                self._lock(now, "probe-failed:starved")
+                self._lock(now, "economy-recovery:restore-known-good")
             self.fast_at, self.starved_checks = now, 0
             return "move"
-        ceiling = self.ideal_max_w
+        remembered_tdp = self._work_tdp(now)
+        ceiling = min(max(self.ideal_max_w, float(remembered_tdp or 0.0)), self.normal_max_w)
         if self.tdp >= ceiling - 1e-6:
-            return "hold"   # past the ideal budget the slow path spends multipliers first
-        target = max(self._work_tdp(now) or 0.0, self.tdp + self.FAST_STEP_W)
+            return "hold"
+        target = max(float(remembered_tdp or 0.0), self.tdp + self.FAST_STEP_W)
         target = min(target, ceiling)
         self.probe = None
         self._move("fast-raise:starved", tdp=target)
