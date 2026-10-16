@@ -57,6 +57,7 @@ KEEP_PAIRS = 40
 MIN_OFF_PAIRS = 8
 USELESS_PCT = 1.0
 RECHECK_SESSIONS = 8
+SPLIT_MEMORY_SCHEMA = 2   # old clock-only A/B samples have no real-frame integrity gate
 # A/B comparisons must preserve real frames, not only increase GPU MHz/W.
 AB_REAL_FLOOR = 0.97
 AB_MAX_REAL_REGRESSION = 0.02   # capped versus uncapped, same target and watts
@@ -340,6 +341,12 @@ class SplitMemory:
 
     def __init__(self, record: Optional[Dict[str, Any]] = None) -> None:
         record = record if isinstance(record, dict) else {}
+        if record.get("schema") != SPLIT_MEMORY_SCHEMA:
+            # Pre-2.1.5 records were allowed to remember a level after ten
+            # seconds and to disable the feature using GPU MHz/W even when
+            # real cadence had collapsed. Do not trust those pairs/cooldowns
+            # under the corrected real-frame-safe evidence contract.
+            record = {}
         self.level = int(record.get("level") or 0) if _ok(record.get("level")) else 0
         self.pairs = [float(v) for v in (record.get("pairs") or []) if _ok(v)][-KEEP_PAIRS:]
         self.pair_sessions = int(record.get("pair_sessions") or 0) if _ok(record.get("pair_sessions")) else 0
@@ -392,5 +399,6 @@ class SplitMemory:
         return changed
 
     def to_record(self) -> Dict[str, Any]:
-        return {"level": self.level, "pairs": [round(v, 2) for v in self.pairs],
+        return {"schema": SPLIT_MEMORY_SCHEMA, "level": self.level,
+                "pairs": [round(v, 2) for v in self.pairs],
                 "pair_sessions": self.pair_sessions, "sessions": self.sessions, "off": self.off}
