@@ -8,10 +8,27 @@ I read the PR and its latest owner task (`issuecomment-6205050293`, 2026-10-16).
 It requests a reproducible installable **experimental test package**, package
 integrity and provenance, a tested exact rollback/uninstall path, full CI, and
 one-command local diagnostics. It explicitly rejects public release status or
-software-only evidence as hardware acceptance. The branch now includes the
-package/diagnostic changes and CI artifact upload for pushes to this branch;
-there is no artifact URL or green remote CI claim until that Actions run
-completes.
+software-only evidence as hardware acceptance.
+
+## Published package and CI checkpoint — 2026-10-16
+
+The first package-upload attempt failed because generated Vulkan validation
+log names contained `:`, which GitHub Actions refuses in artifact paths.
+Commit `26c66b57921ab571c0c178c7b03dd71de363f2e1` normalizes layer-order log
+filenames while preserving their contents. The [push run](https://github.com/wavessevaw/GFG-Extreme/actions/runs/38837568874)
+passed all build, WSI, synchronization, package, install, rollback, uninstall,
+source-rebuild, no-DLL and upload steps. The same-commit [PR run](https://github.com/wavessevaw/GFG-Extreme/actions/runs/38837576059)
+passed its checks; artifact upload is intentionally push-only.
+
+The push run contains the seven-day **internal experimental** artifact
+`GFG-Native-FG-experimental-26c66b57921ab571c0c178c7b03dd71de363f2e1`
+(489 KB; Actions artifact SHA-256
+`6d8d6b8db5dfe3ecb94d5247c323feeb5dc7498892556b180274e2051ab5342a`). It
+includes the installable package and software validation logs. Its logs and
+manifest explicitly label the llvmpipe environment; they do not measure Steam
+Deck scanout or performance. This closes the package-CI upload issue only.
+Issue #132 remains NOT DELIVERED pending the mandatory OLED, cadence, quality,
+latency, power, dynamic-play and stability evidence.
 
 The same-device Vulkan path is the default; the known host-relay path that
 triggered `VUID-vkQueuePresentKHR-pWaitSemaphores-03268` is removed. Shared-fd
