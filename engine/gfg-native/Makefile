@@ -33,6 +33,15 @@ frame-clock: $(BUILD)/frame-clock
 	$(BUILD)/frame-clock
 .PHONY: frame-clock
 
+# WSI-shaped virtual app source. No loader interception or real Deck install.
+$(BUILD)/virtual-wsi-facade: tests/virtual_wsi_facade.c src/virtual_wsi_facade.h src/virtual_source.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I$(VULKAN_HEADERS) -o $@ tests/virtual_wsi_facade.c
+
+virtual-wsi-facade: $(BUILD)/virtual-wsi-facade
+	$(BUILD)/virtual-wsi-facade
+.PHONY: virtual-wsi-facade
+
 # Virtual app swapchain source ownership (FREE -> ACQUIRED -> COPYING -> FREE)
 # is a hard precondition to returning an application image after snapshotting.
 $(BUILD)/virtual-source: tests/virtual_source.c src/virtual_source.h
