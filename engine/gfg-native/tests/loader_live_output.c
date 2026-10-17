@@ -185,6 +185,10 @@ int main(void) {
     const int paced_30_60=getenv("GFG_NATIVE_TEST_PACED_30_60")!=NULL;
     const int paced_45_90=getenv("GFG_NATIVE_TEST_PACED_45_90")!=NULL;
     const int paced_source=paced_30_60||paced_45_90;
+    /* Gamescope WSI may present directly without populating X11 backing
+     * pixels. Do not treat XCB GetImage black as a Vulkan output failure.
+     * Crucially, do NOT label GPU-submit-only evidence as visible pixels. */
+    const int gamescope_observer=getenv("GFG_NATIVE_TEST_GAME_MODE")!=NULL;
     const int sustained=getenv("GFG_NATIVE_TEST_SUSTAINED")!=NULL;
     const uint32_t frame_count=sustained?120u:8u;
     const uint32_t source_hz=paced_45_90?45u:30u;
@@ -288,7 +292,7 @@ int main(void) {
         /* X11 must expose the inserted A|B frame before the real B.
          * The synthetic GPU composite is unique: left pixel from A,
          * right pixel from B. A mere duplicate present cannot pass. */
-        if(interleave && frame>1) {
+        if(interleave && frame>1 && !gamescope_observer) {
             REQUIRE(last_level>=0 && last_level!=expected);
             uint64_t middle_latency=0;
             REQUIRE(gfg_x11_wait_visible_pair(x,window,extent.width,extent.height,
@@ -313,11 +317,13 @@ int main(void) {
                     frame,last_level,expected,(unsigned long long)(middle_latency/1000));
         }
         uint64_t latency=0;
-        REQUIRE(gfg_x11_wait_visible_pair(x,window,extent.width,extent.height,
-                expected,expected,1500000000ull,&latency));
+        if(!gamescope_observer) {
+            REQUIRE(gfg_x11_wait_visible_pair(x,window,extent.width,extent.height,
+                    expected,expected,1500000000ull,&latency));
+        }
         ++visible;
         ++output_visible;
-        if(paced_source) {
+        if(paced_source && !gamescope_observer) {
             const uint64_t observed=gfg_pacer_monotonic_ns();
             REQUIRE(observed);
             if(x11_last_ns && output_visible>=3) {
@@ -331,10 +337,23 @@ int main(void) {
         }
         last_level=expected;
         seen[index]=1;
-        fprintf(stderr,"GSF_LOADER_LIVE_APP frame=%u virtual_present=1 x11_visible=1 latency_us=%llu\\n",
-            frame,(unsigned long long)(latency/1000));
+        if(gamescope_observer)
+            fprintf(stderr,
+                "GSF_GAMESCOPE_APP original_submit=%u vk_present_accepted=1 x11_pixels=UNOBSERVABLE oled_scanout=UNVERIFIED\n",
+                frame);
+        else
+            fprintf(stderr,"GSF_LOADER_LIVE_APP frame=%u virtual_present=1 x11_visible=1 latency_us=%llu\\n",
+                frame,(unsigned long long)(latency/1000));
     }
     REQUIRE(visible==frame_count);
+    if(gamescope_observer) {
+        /* We verified API submission only. Intermediate frames are scheduled
+         * in the layer's worker, not sampled through the X11 backing store.
+         * The outer script checks final worker present counts separately. */
+        fprintf(stderr,
+            "GSF_GAMESCOPE_SUBMIT source_originals=%u expected_diagnostic_intermediates=%u x11_readback=bypassed reason=GAMESCOPE_WSI oled_scanout=UNVERIFIED PASS\n",
+            frame_count,interleave?frame_count-1u:0u);
+    } else {
     REQUIRE(!interleave || intermediate_visible==frame_count-1u);
     REQUIRE(!interleave || output_visible==2u*frame_count-1u);
     if(interleave)
@@ -363,19 +382,33 @@ int main(void) {
                 source_hz,output_hz,frame_count,visible,intermediate_visible,
                 output_visible);
     }
+    }
     TRY(vkDeviceWaitIdle(device));
+    if(gamescope_observer) {
+        /* Keep the actual Gamescope surface on screen for a short camera
+         * observation period; do not alter pacing between video frames. */
+        const struct timespec hold={.tv_sec=2,.tv_nsec=0};
+        nanosleep(&hold,NULL);
+        fprintf(stderr,"GSF_GAMESCOPE_CAPTURE_WINDOW hold_after_submit_ms=2000 oled_scanout=UNVERIFIED\n");
+    }
     vkDestroyFence(device,rendering,NULL);
     vkDestroySemaphore(device,image_ready,NULL);
     vkDestroySemaphore(device,render_done,NULL);
     vkDestroyCommandPool(device,pool,NULL);
     vkDestroySwapchainKHR(device,virtual_handle,NULL);
-    fprintf(stderr,"GSF_LOADER_LIVE_APP %u GPU-rendered real source frames visible through one output WSI PASS\\n",
+    if(gamescope_observer)
+        fprintf(stderr,"GSF_GAMESCOPE_APP_TERMINAL originals=%u api_submission=PASS physical_scanout=UNVERIFIED\n",frame_count);
+    else
+        fprintf(stderr,"GSF_LOADER_LIVE_APP %u GPU-rendered real source frames visible through one output WSI PASS\\n",
             frame_count);
 
     vkDestroyDevice(device,NULL);
     vkDestroySurfaceKHR(instance,surface,NULL);
     vkDestroyInstance(instance,NULL);
     xcb_destroy_window(x,window);xcb_disconnect(x);
-    puts("GSF loader-installed virtual Acquire->Render->Present->X11 compositor PASS (not Deck)");
+    if(gamescope_observer)
+        puts("GSF Gamescope API submission test completed; X11 pixel visibility and OLED scanout UNVERIFIED");
+    else
+        puts("GSF loader-installed virtual Acquire->Render->Present->X11 compositor PASS (not Deck)");
     return 0;
 }
