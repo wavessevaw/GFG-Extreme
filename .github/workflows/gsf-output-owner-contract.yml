@@ -17,6 +17,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Native output-owner proof at O2 with warnings as errors
         run: make -C engine/gfg-native output-owner
+      - name: Virtual Vulkan WSI acquire, get-images, present and retire contract
+        run: make -C engine/gfg-native virtual-wsi-facade
+      - name: WSI facade undefined behavior sanitizer
+        run: |
+          cc -std=c11 -g -O1 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+            engine/gfg-native/tests/virtual_wsi_facade.c -o /tmp/gfg-virtual-wsi-ubsan
+          /tmp/gfg-virtual-wsi-ubsan
       - name: Virtual source image ownership under O2 and warnings-as-errors
         run: make -C engine/gfg-native virtual-source
       - name: Virtual source state machine undefined behavior sanitizer
