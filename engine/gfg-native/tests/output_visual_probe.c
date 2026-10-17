@@ -207,6 +207,37 @@ int main(void) {
         probe_pixel=mapped;
     }
 
+    /* This is the actual output ownership boundary of the stage-1 probe:
+     * three GPU images belong to our producer, NONE belong to the game's
+     * swapchain. The single WSI swapchain receives a copy of their contents.
+     * Real and TEST-synthetic images are identically represented. */
+    VkImage producer[3]={VK_NULL_HANDLE,VK_NULL_HANDLE,VK_NULL_HANDLE};
+    VkDeviceMemory producer_memory[3]={VK_NULL_HANDLE,VK_NULL_HANDLE,VK_NULL_HANDLE};
+    unsigned producer_ready[3]={0,0,0};
+    VkPhysicalDeviceMemoryProperties device_memory;
+    vkGetPhysicalDeviceMemoryProperties(physical,&device_memory);
+    for(unsigned k=0;k<3;k++){
+        VkImageCreateInfo ici={.sType=VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType=VK_IMAGE_TYPE_2D,.format=color.format,
+            .extent={ext.width,ext.height,1},.mipLevels=1,.arrayLayers=1,
+            .samples=VK_SAMPLE_COUNT_1_BIT,.tiling=VK_IMAGE_TILING_OPTIMAL,
+            .usage=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            .sharingMode=VK_SHARING_MODE_EXCLUSIVE,.initialLayout=VK_IMAGE_LAYOUT_UNDEFINED};
+        TRY(vkCreateImage(device,&ici,NULL,&producer[k]));
+        VkMemoryRequirements req;vkGetImageMemoryRequirements(device,producer[k],&req);
+        uint32_t type=UINT32_MAX;
+        for(uint32_t j=0;j<device_memory.memoryTypeCount;j++)
+            if((req.memoryTypeBits&(1u<<j)) &&
+                (device_memory.memoryTypes[j].propertyFlags&VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)){
+                type=j;break;
+            }
+        REQUIRE(type!=UINT32_MAX);
+        VkMemoryAllocateInfo ma={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize=req.size,.memoryTypeIndex=type};
+        TRY(vkAllocateMemory(device,&ma,NULL,&producer_memory[k]));
+        TRY(vkBindImageMemory(device,producer[k],producer_memory[k],0));
+    }
+
     PFN_vkQueuePresentKHR present_gipa=(PFN_vkQueuePresentKHR)
         vkGetInstanceProcAddr(instance,"vkQueuePresentKHR");
     PFN_vkQueuePresentKHR present_gdpa=(PFN_vkQueuePresentKHR)
@@ -243,7 +274,33 @@ int main(void) {
             role==0u?0.95f:0.08f,role==1u?0.95f:0.08f,
             role==2u?0.95f:0.08f,1.0f}};
         VkImageSubresourceRange range={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
-        vkCmdClearColorImage(cmd,images[index],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&clear,1,&range);
+        if(!producer_ready[role]){
+            VkImageMemoryBarrier init={.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .srcAccessMask=0,.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,
+                .oldLayout=VK_IMAGE_LAYOUT_UNDEFINED,
+                .newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+                .image=producer[role],.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1}};
+            vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&init);
+            vkCmdClearColorImage(cmd,producer[role],
+                                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&clear,1,&range);
+            init.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+            init.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
+            init.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            init.newLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&init);
+            producer_ready[role]=1;
+        }
+        /* One GPU copy into the sole output swapchain, independent of the
+         * source image's lifetime and independent of source acquisition. */
+        VkImageCopy full={.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
+            .dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
+            .extent={ext.width,ext.height,1}};
+        vkCmdCopyImage(cmd,producer[role],VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            images[index],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&full);
         if(verify_pixels) {
             VkImageMemoryBarrier tosrc=pre;
             tosrc.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -303,6 +360,10 @@ int main(void) {
                       (long)((delay_ms%1000u)*1000000u)};nanosleep(&pause,NULL); }
     }
     free(seen);
+    for(unsigned i=0;i<3;++i){
+        vkDestroyImage(device,producer[i],NULL);
+        vkFreeMemory(device,producer_memory[i],NULL);
+    }
     if(verify_pixels){
         vkUnmapMemory(device,probe_memory);
         vkDestroyBuffer(device,probe_buffer,NULL);
@@ -318,6 +379,6 @@ int main(void) {
     vkDestroySurfaceKHR(instance,surface,NULL);
     vkDestroyInstance(instance,NULL);
     xcb_destroy_window(xc,window);xcb_disconnect(xc);
-    puts("GSF FOE visual probe: A(red)->midpoint(green diagnostic)->B(blue) via ONE Vulkan swapchain WSI PASS (not actual OLED scanout or generated game content)");
+    puts("GSF FOE probe: THREE owned offscreen GPU images -> ONE WSI swapchain; real A(red)->TEST mid(green)->real B(blue), no game capture or OLED scanout claim");
     return 0;
 }
