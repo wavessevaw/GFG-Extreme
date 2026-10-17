@@ -250,7 +250,7 @@ int main(void) {
         if(!*end && n>=3 && n<=2000)total=(uint32_t)n; }
     if(interval && *interval){ char *end;unsigned long n=strtoul(interval,&end,10);
         if(!*end && n<=500)delay_ms=(uint32_t)n; }
-    fprintf(stderr,"[foe-probe] single_output_owner=1 real_pixels=red/blue midpoint_pixels=GREEN_DIAGNOSTIC only_WSI_not_scanout frames=%u delay_ms=%u\\n",total,delay_ms);
+    fprintf(stderr,"[foe-probe] single_output_owner=1 real_pixels=red/blue midpoint_pixels=GREEN_DIAGNOSTIC only_WSI_not_scanout frames=%u delay_ms=%u\n",total,delay_ms);
     for(uint32_t frame=0;frame<total;frame++) {
         uint32_t index=UINT32_MAX;
         TRY(vkAcquireNextImageKHR(device,swapchain,UINT64_MAX,acquired,VK_NULL_HANDLE,&index));
@@ -353,7 +353,7 @@ int main(void) {
         }
         seen[index]=1;
         if(frame<9 || (frame%90u)==0u)
-            fprintf(stderr,"[foe-probe] WSI_accept frame=%u role=%s color=%s\\n",
+            fprintf(stderr,"[foe-probe] WSI_accept frame=%u role=%s color=%s\n",
                     frame,role==0?"REAL_A":role==1?"TEST_MIDPOINT":"REAL_B",
                     role==0?"red":role==1?"green":"blue");
         if(delay_ms){ struct timespec pause={(time_t)(delay_ms/1000u),
