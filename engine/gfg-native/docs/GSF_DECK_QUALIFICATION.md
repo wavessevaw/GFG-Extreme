@@ -4,6 +4,31 @@
 
 This kit is an **isolated experiment only**. It is not a stable GFG release, a Decky plugin, a Proton game patch, or a system Vulkan layer installation.
 
+## Hardware blocking finding: SteamOS Gaming Mode (17 October 2026)
+
+Three device-side runs at 13:42:36, 13:42:40 and 13:42:45 UTC
+**did not reach their first frame**. The layer correctly refused to create
+an incompatible virtual swapchain:
+`GSF_LOADER_OWNER_REJECT reason=unknown-pnext pnext_type=1000275002`.
+That exact structure is the known
+`VkSwapchainPresentModesCreateInfoEXT/KHR`
+(`VK_EXT/KHR_swapchain_maintenance1`); Gamescope supplies it when it forces
+driver-visible MAILBOX presentation.
+
+**Mandatory design separation:** do not request FIFO from the real Gamescope
+driver swapchain. Gamescope's own FIFO scheduling is layered above a
+driver-visible MAILBOX swapchain. For the experimental virtual source,
+the private offscreen images use a FIFO logical schedule with NO WSI pNext,
+while the *sole* real driver swapchain must preserve Gamescope's original
+MAILBOX mode and its exact, validated maintenance1 pNext payload.
+
+Only a **single known `VkSwapchainPresentModesCreateInfoEXT` node**, with
+one MAILBOX mode and no unknown chain tail, may be adapted. Other pNext
+nodes, flags, HDR or mode lists remain fail-closed. A software CI pass
+does **not** qualify physical Gamescope OLED scanout. Do not deploy a
+new test artifact until CI verifies a real Vulkan Loader device with
+maintenance1 enabled and this exact pNext structure.
+
 ## What the kit contains
 
 The successful `GSF Output Owner Contract (experimental)` GitHub Actions workflow uploads one downloadable artifact named `gsf-output-deck-test-kit-<commit SHA>`. Its unpacked directory contains:
