@@ -43,6 +43,17 @@ virtual-layouts: $(BUILD)/virtual-layouts
 	$(BUILD)/virtual-layouts
 .PHONY: virtual-layouts
 
+# The actual native layer's GIPA/GDPA interception routes controlled
+# virtual GetSwapchainImages/Acquire/Present (not direct facade calls).
+# Built only with the explicit TEST macro; production layer unaffected.
+$(BUILD)/output-layer-dispatch: tests/output_layer_dispatch.c src/layer.c src/virtual_wsi_facade.h src/virtual_source.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Wno-unused-function -pthread -I$(VULKAN_HEADERS) -o $@ tests/output_layer_dispatch.c
+
+output-layer-dispatch: $(BUILD)/output-layer-dispatch
+	$(BUILD)/output-layer-dispatch
+.PHONY: output-layer-dispatch
+
 # WSI-shaped virtual app source. No loader interception or real Deck install.
 $(BUILD)/virtual-wsi-facade: tests/virtual_wsi_facade.c src/virtual_wsi_facade.h src/virtual_source.h
 	mkdir -p $(BUILD)
