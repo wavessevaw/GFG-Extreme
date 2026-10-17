@@ -33,6 +33,16 @@ frame-clock: $(BUILD)/frame-clock
 	$(BUILD)/frame-clock
 .PHONY: frame-clock
 
+# Virtual app swapchain source ownership (FREE -> ACQUIRED -> COPYING -> FREE)
+# is a hard precondition to returning an application image after snapshotting.
+$(BUILD)/virtual-source: tests/virtual_source.c src/virtual_source.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/virtual_source.c
+
+virtual-source: $(BUILD)/virtual-source
+	$(BUILD)/virtual-source
+.PHONY: virtual-source
+
 # Transport-neutral proof that an exclusively owned output surface can
 # schedule one real/interpolated stream without dropping real frames.
 # This is NOT a Steam Deck scanout or Vulkan swapchain test.
@@ -151,7 +161,7 @@ wsi-smoke-te:
 # Test-only one-surface Vulkan WSI path: input frames are not independently
 # sent to WSI. Real + synthetic tickets go to one final output queue.
 # Validates transport in lavapipe, NOT physical OLED scanout.
-$(BUILD)/owned-wsi-smoke: tests/wsi_gpu_observer.c src/output_owner.h
+$(BUILD)/owned-wsi-smoke: tests/wsi_gpu_observer.c src/output_owner.h src/virtual_source.h tests/owned_source_transport.h
 	@test -f $(VULKAN_HEADERS)/vulkan/vulkan_xcb.h || { echo "Vulkan XCB headers required"; exit 1; }
 	mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -DGFG_NATIVE_TEST_SMALL -DGFG_NATIVE_TEST_ASYNC -DGFG_NATIVE_TEST_OWNED_WSI -DVK_USE_PLATFORM_XCB_KHR -I$(VULKAN_HEADERS) -o $@ $< -lvulkan -lxcb -ldl
