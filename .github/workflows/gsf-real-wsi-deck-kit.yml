@@ -38,7 +38,11 @@ jobs:
           set -euo pipefail
           install -m 755 engine/gfg-native/scripts/real-wsi-game-launch.sh \
             engine/gfg-native/build-real-wsi/real-wsi-game-launch.sh
-          VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
+          # Lavapipe shares CPU with CI and can miss synthetic deadlines:
+          # test lifetime/bridge integrity, count real output and require at
+          # least one actual generated present, but record expected drops.
+          GFG_TEST_ALLOW_SKIPS=1 \
+            VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
             xvfb-run -a -s '-screen 0 1280x800x24' \
             bash engine/gfg-native/build-real-wsi/real-wsi-game-launch.sh --smoke --mode=2 \
             > /tmp/real-wsi-launcher.out 2>&1 || {
@@ -59,6 +63,9 @@ jobs:
           grep 'GSF_REAL_WSI_GATE gpu_requested=1 gpu_capable=1' "$logdir/game.log"
           grep 'GSF_REAL_WSI_GPU_BRIDGE_CREATE active=1' "$logdir/game.log"
           grep 'real frames GPU bridge WSI smoke PASS' "$logdir/game.log"
+          grep -E 'gpu stats bridges=1 .*real=24 synthetic=[1-9][0-9]* .*errors=0' "$logdir/game.log"
+          grep -q 'GSF_REAL_WSI_PREFLIGHT_OK' "$logdir/../launcher-preflight.log"
+          echo 'Lavapipe may miss synthetic deadlines under CPU pressure; check skipped count'
           echo "GSF_REAL_WSI_CHILD_LAUNCHER=PASS on older Vulkan Loader"
       - name: Preserve early Steam startup preflight failure in persistent log
         run: |
