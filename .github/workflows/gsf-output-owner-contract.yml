@@ -26,3 +26,16 @@ jobs:
           test -f engine/gfg-native/src/output_owner_queue.h
           test -f engine/gfg-native/tests/output_owner_queue.c
           grep -q "NO Vulkan consumer" engine/gfg-native/tests/output_owner_queue.c
+      - name: Install Mesa Vulkan software WSI and Xvfb
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libvulkan-dev libxcb1-dev libvulkan1 mesa-vulkan-drivers xvfb xauth
+      - name: Compile and present identifiable probe frames through real Vulkan WSI
+        run: |
+          make -C engine/gfg-native output-visual-probe
+          GFG_FOE_VISUAL_FRAMES=9 GFG_FOE_VISUAL_INTERVAL_MS=0 \
+            xvfb-run -a engine/gfg-native/build/output-visual-probe 2>&1 | tee /tmp/foe-wsi-probe.txt
+          test "$(grep -c 'WSI_accept frame=' /tmp/foe-wsi-probe.txt)" -eq 9
+          grep -q 'frame=0 role=REAL_A color=red' /tmp/foe-wsi-probe.txt
+          grep -q 'frame=1 role=TEST_MIDPOINT color=green' /tmp/foe-wsi-probe.txt
+          grep -q 'frame=2 role=REAL_B color=blue' /tmp/foe-wsi-probe.txt
