@@ -561,8 +561,8 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
             .destroy_image=(PFN_vkDestroyImage)gdpa(*out,"vkDestroyImage"),
             .get_image_requirements=(PFN_vkGetImageMemoryRequirements)
                 gdpa(*out,"vkGetImageMemoryRequirements"),
-            .get_memory_properties=(PFN_vkGetPhysicalDeviceMemoryProperties)
-                gipa(VK_NULL_HANDLE,"vkGetPhysicalDeviceMemoryProperties"),
+            /* Resolved below from the instance's exact next-layer GIPA. */
+            .get_memory_properties=NULL,
             .allocate_memory=(PFN_vkAllocateMemory)gdpa(*out,"vkAllocateMemory"),
             .free_memory=(PFN_vkFreeMemory)gdpa(*out,"vkFreeMemory"),
             .bind_image_memory=(PFN_vkBindImageMemory)gdpa(*out,"vkBindImageMemory")
@@ -600,6 +600,13 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
         if (i->key == dispatch_key(phys)) {
             d->instance = i; break;
         }
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    if(native_env_is_1("GFG_NATIVE_TEST_LOADER_CREATE_PROBE") && d->instance)
+        d->test_proxy_ops.get_memory_properties =
+            (PFN_vkGetPhysicalDeviceMemoryProperties)
+            d->instance->gipa(d->instance->handle,
+                              "vkGetPhysicalDeviceMemoryProperties");
+#endif
     d->next = devices;
     devices = d;
     pthread_mutex_unlock(&map_lock);
