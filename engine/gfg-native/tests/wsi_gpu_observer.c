@@ -217,12 +217,14 @@ int main(void) {
 #ifdef GFG_NATIVE_TEST_ASYNC
     VkFenceCreateInfo render_fci={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,.flags=VK_FENCE_CREATE_SIGNALED_BIT};
     VkFence render_fence;TRY(vkCreateFence(device,&render_fci,NULL,&render_fence));
+#ifndef GFG_NATIVE_TEST_OWNED_WSI
     struct timespec deadline;clock_gettime(CLOCK_MONOTONIC,&deadline);
     const char *hz_env=getenv("GFG_NATIVE_TEST_SOURCE_HZ");
     unsigned source_hz=hz_env?(unsigned)strtoul(hz_env,NULL,10):30;
     REQUIRE(source_hz>=1 && source_hz<=240);
     const long source_period=1000000000l/source_hz;
     fprintf(stderr,"test source cadence_hz=%u clock=CLOCK_MONOTONIC catchup=disabled\n",source_hz);
+#endif
     const char *count_env=getenv("GFG_NATIVE_TEST_FRAMES");
     uint32_t frame_count=count_env?(uint32_t)strtoul(count_env,NULL,10):300;
     REQUIRE(frame_count>0 && frame_count<=100000);
