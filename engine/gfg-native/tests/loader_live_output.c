@@ -10,6 +10,7 @@
 #include <vulkan/vulkan_xcb.h>
 #include "../src/offscreen_source_pool.h"
 #include "x11_output_probe.h"
+#include "../src/output_frame_pacer.h"
 #include <xcb/xcb.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -162,9 +163,27 @@ int main(void) {
     TRY(vkCreateFence(device,&fc,NULL,&rendering));
     unsigned char seen[GFG_OFFSCREEN_MAX_IMAGES]={0};
     const int interleave=getenv("GFG_NATIVE_TEST_OUTPUT_INTERLEAVE")!=NULL;
+    const int paced_source=getenv("GFG_NATIVE_TEST_PACED_30_60")!=NULL;
+    REQUIRE(!paced_source || interleave);
     uint32_t visible=0, intermediate_visible=0, output_visible=0;
     int last_level=-1;
+    const uint64_t source_start=gfg_pacer_monotonic_ns();
+    REQUIRE(source_start);
+    uint64_t x11_last_ns=0,x11_interval_total_ns=0;
+    uint64_t x11_interval_min_ns=UINT64_MAX,x11_interval_max_ns=0;
+    unsigned x11_interval_count=0;
     for(uint32_t frame=1;frame<=8;frame++) {
+        if(paced_source && frame>1) {
+            /* Actual app submits one original every 33.33ms independently
+             * of the Output Engine's 16.67ms PRESENT pacing. */
+            const uint64_t due=source_start+(uint64_t)(frame-1u)*33333333ull;
+            const struct timespec deadline=gfg_pacer_to_time(due);
+            int err=0;
+            do {err=clock_nanosleep(CLOCK_MONOTONIC,TIMER_ABSTIME,
+                                    &deadline,NULL);}
+            while(err==EINTR);
+            REQUIRE(err==0);
+        }
         uint32_t index=UINT32_MAX;
         TRY(vkAcquireNextImageKHR(device,virtual_handle,UINT64_MAX,
                                   image_ready,VK_NULL_HANDLE,&index));
@@ -231,6 +250,20 @@ int main(void) {
                     last_level,expected,1500000000ull,&middle_latency));
             ++intermediate_visible;
             ++output_visible;
+            if(paced_source) {
+                const uint64_t observed=gfg_pacer_monotonic_ns();
+                REQUIRE(observed);
+                /* Warm-up A->first split naturally spans one SOURCE
+                 * interval. All subsequent source/insert gaps are timed. */
+                if(x11_last_ns && output_visible>=3) {
+                    const uint64_t gap=observed-x11_last_ns;
+                    x11_interval_total_ns+=gap;
+                    if(gap<x11_interval_min_ns)x11_interval_min_ns=gap;
+                    if(gap>x11_interval_max_ns)x11_interval_max_ns=gap;
+                    ++x11_interval_count;
+                }
+                x11_last_ns=observed;
+            }
             fprintf(stderr,"GSF_LOADER_SPLIT_APP frame=%u left=%d right=%d x11_visible=1 latency_us=%llu\n",
                     frame,last_level,expected,(unsigned long long)(middle_latency/1000));
         }
@@ -239,6 +272,18 @@ int main(void) {
                 expected,expected,1500000000ull,&latency));
         ++visible;
         ++output_visible;
+        if(paced_source) {
+            const uint64_t observed=gfg_pacer_monotonic_ns();
+            REQUIRE(observed);
+            if(x11_last_ns && output_visible>=3) {
+                const uint64_t gap=observed-x11_last_ns;
+                x11_interval_total_ns+=gap;
+                if(gap<x11_interval_min_ns)x11_interval_min_ns=gap;
+                if(gap>x11_interval_max_ns)x11_interval_max_ns=gap;
+                ++x11_interval_count;
+            }
+            x11_last_ns=observed;
+        }
         last_level=expected;
         seen[index]=1;
         fprintf(stderr,"GSF_LOADER_LIVE_APP frame=%u virtual_present=1 x11_visible=1 latency_us=%llu\\n",
@@ -250,6 +295,21 @@ int main(void) {
     if(interleave)
         fprintf(stderr,"GSF_LOADER_SPLIT_APP output_visible=%u original=%u intermediate=%u x11_distinct_pixels=1 PASS\n",
             output_visible,visible,intermediate_visible);
+    if(paced_source) {
+        REQUIRE(x11_interval_count==13u);
+        const uint64_t mean_us=x11_interval_total_ns/x11_interval_count/1000u;
+        const uint64_t min_us=x11_interval_min_ns/1000u;
+        const uint64_t max_us=x11_interval_max_ns/1000u;
+        fprintf(stderr,"GSF_PACED_30_TO_60_X11 visible=15 source_hz=30 target_hz=60 samples=%u mean_us=%llu min_us=%llu max_us=%llu\n",
+            x11_interval_count,(unsigned long long)mean_us,
+            (unsigned long long)min_us,(unsigned long long)max_us);
+        /* Software Xvfb, not physical 60Hz scanout. Use broad acceptance
+         * for CI scheduling noise, but disallow the old 35ms intermediate
+         * exposure and implausible zero-spacing duplicate Presents. */
+        REQUIRE(mean_us>=9000 && mean_us<=27000);
+        REQUIRE(min_us>=5000 && max_us<=50000);
+        fprintf(stderr,"GSF_PACED_30_TO_60_X11 paced_source=8 originals=8 intermediate=7 visible=15 app_to_worker_distinct_frames=1 PASS\n");
+    }
     TRY(vkDeviceWaitIdle(device));
     vkDestroyFence(device,rendering,NULL);
     vkDestroySemaphore(device,image_ready,NULL);
