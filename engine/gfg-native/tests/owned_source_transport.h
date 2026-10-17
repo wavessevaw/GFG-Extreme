@@ -15,9 +15,11 @@
 typedef struct {
     VkDevice d;
     VkExtent2D size;
-    VkImage frames[2];
+    VkImage frames[2]; /* independent GSF history snapshots */
     VkDeviceMemory mem[2];
-    uint64_t ids[2];
+    VkImage game_frames[2]; /* virtual game-acquired render targets */
+    VkDeviceMemory game_mem[2];
+    uint64_t ids[2], game_ids[2];
     VkBuffer readback;
     VkDeviceMemory readback_mem;
     uint8_t *mapped;
@@ -37,7 +39,11 @@ static int gfg_source_probe_create(gfg_source_probe *p,
     p->bytes=(VkDeviceSize)size.width*size.height*4;
     VkPhysicalDeviceMemoryProperties mem_props;
     vkGetPhysicalDeviceMemoryProperties(phys,&mem_props);
-    for(unsigned i=0;i<2;i++) {
+    for(unsigned i=0;i<4;i++) {
+        /* Four allocations: two images for the application and two
+         * separate images for GSF history. Never alias their memory. */
+        VkImage *image=i<2?&p->frames[i]:&p->game_frames[i-2];
+        VkDeviceMemory *allocation=i<2?&p->mem[i]:&p->game_mem[i-2];
         VkImageCreateInfo ci={.sType=VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
           .imageType=VK_IMAGE_TYPE_2D,.format=format,
           .extent={size.width,size.height,1},.mipLevels=1,.arrayLayers=1,
@@ -45,16 +51,16 @@ static int gfg_source_probe_create(gfg_source_probe *p,
           .usage=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT,
           .sharingMode=VK_SHARING_MODE_EXCLUSIVE,
           .initialLayout=VK_IMAGE_LAYOUT_UNDEFINED};
-        if(vkCreateImage(device,&ci,NULL,&p->frames[i])!=VK_SUCCESS)return 0;
-        VkMemoryRequirements req;vkGetImageMemoryRequirements(device,p->frames[i],&req);
+        if(vkCreateImage(device,&ci,NULL,image)!=VK_SUCCESS)return 0;
+        VkMemoryRequirements req;vkGetImageMemoryRequirements(device,*image,&req);
         uint32_t type=gfg_src_mem_type(&mem_props,req.memoryTypeBits,
                                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         if(type==UINT32_MAX)type=gfg_src_mem_type(&mem_props,req.memoryTypeBits,0);
         if(type==UINT32_MAX)return 0;
         VkMemoryAllocateInfo a={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
                  .allocationSize=req.size,.memoryTypeIndex=type};
-        if(vkAllocateMemory(device,&a,NULL,&p->mem[i])!=VK_SUCCESS ||
-           vkBindImageMemory(device,p->frames[i],p->mem[i],0)!=VK_SUCCESS)return 0;
+        if(vkAllocateMemory(device,&a,NULL,allocation)!=VK_SUCCESS ||
+           vkBindImageMemory(device,*image,*allocation,0)!=VK_SUCCESS)return 0;
     }
     VkBufferCreateInfo bc={.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size=p->bytes,.usage=VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -79,6 +85,8 @@ static void gfg_source_probe_destroy(gfg_source_probe *p) {
     for(unsigned i=0;i<2;i++) {
         if(p->frames[i])vkDestroyImage(p->d,p->frames[i],NULL);
         if(p->mem[i])vkFreeMemory(p->d,p->mem[i],NULL);
+        if(p->game_frames[i])vkDestroyImage(p->d,p->game_frames[i],NULL);
+        if(p->game_mem[i])vkFreeMemory(p->d,p->game_mem[i],NULL);
     }
 }
 static VkImageMemoryBarrier gfg_src_barrier(VkImage img,VkImageLayout from,
@@ -94,18 +102,17 @@ static VkImageMemoryBarrier gfg_src_barrier(VkImage img,VkImageLayout from,
 static float gfg_source_level(uint64_t id) {
     return 0.15f+0.11f*(float)(id%5u);
 }
-/* Source snapshots are captured on the GPU once per unique ID and retained
- * in a two-image ring until the next pair is admitted. */
-static void gfg_source_capture(gfg_source_probe *p,VkCommandBuffer cmd,uint64_t id) {
+/* 1. Game command buffer renders into its OWN offscreen image. */
+static void gfg_source_record_game(gfg_source_probe *p,VkCommandBuffer cmd,
+                                   uint64_t id) {
     const unsigned slot=(unsigned)(id&1u);
-    if(p->ids[slot]==id)return;
-    VkImage image=p->frames[slot];
+    VkImage image=p->game_frames[slot];
     VkImageMemoryBarrier pre=gfg_src_barrier(image,
-        p->ids[slot]?VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:VK_IMAGE_LAYOUT_UNDEFINED,
+        p->game_ids[slot]?VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:VK_IMAGE_LAYOUT_UNDEFINED,
         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        p->ids[slot]?VK_ACCESS_TRANSFER_READ_BIT:0,
+        p->game_ids[slot]?VK_ACCESS_TRANSFER_READ_BIT:0,
         VK_ACCESS_TRANSFER_WRITE_BIT);
-    vkCmdPipelineBarrier(cmd,p->ids[slot]?VK_PIPELINE_STAGE_TRANSFER_BIT:
+    vkCmdPipelineBarrier(cmd,p->game_ids[slot]?VK_PIPELINE_STAGE_TRANSFER_BIT:
         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
         0,0,NULL,0,NULL,1,&pre);
     const float level=gfg_source_level(id);
@@ -113,6 +120,34 @@ static void gfg_source_capture(gfg_source_probe *p,VkCommandBuffer cmd,uint64_t 
     VkImageSubresourceRange range={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
     vkCmdClearColorImage(cmd,image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&c,1,&range);
     VkImageMemoryBarrier post=gfg_src_barrier(image,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT);
+    vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,
+          VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&post);
+    p->game_ids[slot]=id;
+}
+/* 2. GSF capture command buffer waits for the game's render fence before
+ * copying the finished app image into an INDEPENDENT history allocation.
+ * Once this transfer completes the game slot can be reacquired/reused.
+ * The output stage must never read game_frames[]. */
+static void gfg_source_record_snapshot(gfg_source_probe *p,VkCommandBuffer cmd,
+                                        uint64_t id) {
+    const unsigned slot=(unsigned)(id&1u);
+    VkImage target=p->frames[slot];
+    VkImageMemoryBarrier pre=gfg_src_barrier(target,
+        p->ids[slot]?VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        p->ids[slot]?VK_ACCESS_TRANSFER_READ_BIT:0,
+        VK_ACCESS_TRANSFER_WRITE_BIT);
+    vkCmdPipelineBarrier(cmd,p->ids[slot]?VK_PIPELINE_STAGE_TRANSFER_BIT:
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0,0,NULL,0,NULL,1,&pre);
+    VkImageCopy region={.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
+        .dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
+        .extent={p->size.width,p->size.height,1}};
+    vkCmdCopyImage(cmd,p->game_frames[slot],VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        target,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&region);
+    VkImageMemoryBarrier post=gfg_src_barrier(target,
         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT);
     vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,
