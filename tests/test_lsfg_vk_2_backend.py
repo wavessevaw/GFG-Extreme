@@ -136,7 +136,7 @@ printf 'VALUES:%s/%s/%s/%s/%s/%s/%s/%s/%s' "$LSFGVK_ENV" "$LSFGVK_MULTIPLIER" "$
             (manifest_dir / "VkLayer_LSFGVK_frame_generation.json").write_text("{}")
             available = subprocess.run(["bash","-c",probe],
                                        env=env,capture_output=True,text=True,check=True)
-            self.assertIn("VK_LAYER_LSFGVK_frame_generation",available.stdout)
+            self.assertNotIn("VK_LAYER_LSFGVK_frame_generation", available.stdout)
             self.assertIn(str(manifest_dir),available.stdout)
             # Installed manifest alone is NOT enough: no model => fail closed.
             self.assertTrue(available.stdout.strip().endswith(":1:unset"))
@@ -146,6 +146,7 @@ printf 'VALUES:%s/%s/%s/%s/%s/%s/%s/%s/%s' "$LSFGVK_ENV" "$LSFGVK_MULTIPLIER" "$
             configured = subprocess.run(["bash","-c",probe],
                                         env=env,capture_output=True,text=True,check=True)
             self.assertIn(str(manifest_dir),configured.stdout)
+            self.assertIn("VK_LAYER_LSFGVK_frame_generation",configured.stdout)
             self.assertTrue(configured.stdout.strip().endswith(":unset:unset"))
 
 if __name__=="__main__":
