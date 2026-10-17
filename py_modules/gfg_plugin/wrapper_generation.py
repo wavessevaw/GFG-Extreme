@@ -409,8 +409,8 @@ def lsfg_vk_2_profile_lines(config: ConfigurationData) -> list[str]:
     or forces a second native FG Vulkan layer into the same process.
     """
     multiplier = int(config.get("multiplier", 2))
-    if multiplier not in (2, 3):
-        multiplier = 2  # UI only offers x2/x3 for the external LSFG profile.
+    if not 2 <= multiplier <= 5:
+        multiplier = 2  # GFG's validated fixed-multiplier range.
     flow = float(config.get("flow_scale", 0.8))
     dll = str(config.get("lsfg_vk_2_dll_path", "")).strip()
     if dll and (not dll.startswith("/") or "\\n" in dll or "\\r" in dll):
