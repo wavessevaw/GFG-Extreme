@@ -162,6 +162,9 @@ run_phase() {
       VK_INSTANCE_LAYERS=
       VK_LAYER_PATH="$SELF_DIR"
     )
+    if [[ "$MODE" == gaming ]]; then
+      client_env+=( GFG_NATIVE_TEST_GAME_MODE=1 )
+    fi
   fi
   log="$RUN_DIR/${label}.log"
   printf 'GSF_DECK_KIT_PHASE=%s start (hard timeout 30s)\n' "$label"
