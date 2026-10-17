@@ -33,6 +33,16 @@ frame-clock: $(BUILD)/frame-clock
 	$(BUILD)/frame-clock
 .PHONY: frame-clock
 
+# Convert game swapchain PRESENT layout requests without touching the
+# true compositor swapchain, including Vulkan sync2 and renderpasses.
+$(BUILD)/virtual-layouts: tests/virtual_layouts.c src/virtual_layouts.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I$(VULKAN_HEADERS) -o $@ tests/virtual_layouts.c
+
+virtual-layouts: $(BUILD)/virtual-layouts
+	$(BUILD)/virtual-layouts
+.PHONY: virtual-layouts
+
 # WSI-shaped virtual app source. No loader interception or real Deck install.
 $(BUILD)/virtual-wsi-facade: tests/virtual_wsi_facade.c src/virtual_wsi_facade.h src/virtual_source.h
 	mkdir -p $(BUILD)
@@ -170,7 +180,7 @@ wsi-smoke-te:
 # Test-only one-surface Vulkan WSI path: input frames are not independently
 # sent to WSI. Real + synthetic tickets go to one final output queue.
 # Validates transport in lavapipe, NOT physical OLED scanout.
-$(BUILD)/owned-wsi-smoke: tests/wsi_gpu_observer.c src/output_owner.h src/virtual_source.h tests/owned_source_transport.h
+$(BUILD)/owned-wsi-smoke: tests/wsi_gpu_observer.c src/output_owner.h src/virtual_source.h tests/owned_source_transport.h src/virtual_layouts.h src/virtual_wsi_facade.h
 	@test -f $(VULKAN_HEADERS)/vulkan/vulkan_xcb.h || { echo "Vulkan XCB headers required"; exit 1; }
 	mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -DGFG_NATIVE_TEST_SMALL -DGFG_NATIVE_TEST_ASYNC -DGFG_NATIVE_TEST_OWNED_WSI -DVK_USE_PLATFORM_XCB_KHR -I$(VULKAN_HEADERS) -o $@ $< -lvulkan -lxcb -ldl
