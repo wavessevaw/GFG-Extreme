@@ -32,6 +32,18 @@ $(BUILD)/frame-clock: tests/frame_clock.c src/frame_clock.h
 frame-clock: $(BUILD)/frame-clock
 	$(BUILD)/frame-clock
 .PHONY: frame-clock
+
+# Transport-neutral proof that an exclusively owned output surface can
+# schedule one real/interpolated stream without dropping real frames.
+# This is NOT a Steam Deck scanout or Vulkan swapchain test.
+$(BUILD)/output-owner: tests/output_owner.c src/output_owner.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/output_owner.c
+
+output-owner: $(BUILD)/output-owner
+	$(BUILD)/output-owner
+.PHONY: output-owner
+
 layer: $(BUILD)/libVkLayer_gfg_native.so $(BUILD)/VkLayer_gfg_native.json
 
 $(BUILD)/libVkLayer_gfg_native.so: $(NATIVE_SOURCES) $(NATIVE_HEADERS) $(NATIVE_DEPS)
