@@ -349,6 +349,7 @@ int main(void) {
     const uint64_t input_step_ns=1000000000ull/source_hz;
     uint64_t capture_ns=1000000000ull;
     uint32_t output_calls=0, x11_observed=0;
+    uint64_t x11_latency_sum_ns=0,x11_latency_max_ns=0;
     const int observe_x11=getenv("GFG_OWNER_TEST_X11_SCANOUT")!=NULL;
     uint64_t owner_first_due=0,owner_host_epoch=0;
     for(uint32_t source_id=1;source_id<=frame_count;++source_id) {
@@ -519,8 +520,12 @@ int main(void) {
             const int expected_left=(int)(gfg_source_level(ticket.from_id)*255.0f+0.5f);
             const int expected_right=(int)(gfg_source_level(
                 ticket.kind==GFG_OWNER_SYNTHETIC?ticket.to_id:ticket.from_id)*255.0f+0.5f);
+            uint64_t visible_after_ns=0;
             REQUIRE(gfg_x11_wait_visible_pair(xc,window,ext.width,ext.height,
-                expected_left,expected_right,250000000ull));
+                expected_left,expected_right,250000000ull,&visible_after_ns));
+            x11_latency_sum_ns+=visible_after_ns;
+            if(visible_after_ns>x11_latency_max_ns)
+                x11_latency_max_ns=visible_after_ns;
             ++x11_observed;
         }
         fprintf(stderr,"GSF OUTPUT WSI handoff=%u kind=%s pair=%llu:%llu due_ns=%llu acknowledged=1 physical_scanout=unverified\n",
@@ -563,9 +568,14 @@ int main(void) {
     REQUIRE(output_calls==owner.real_count+owner.synthetic_count);
     REQUIRE(owner.error_count==0);
     REQUIRE(!observe_x11 || x11_observed==output_calls);
-    if(observe_x11)fprintf(stderr,"GSF X11 compositor visible ordered frames=%u real=%llu intermediate=%llu PASS (not OLED)\n",
-        x11_observed,(unsigned long long)owner.real_count,
-        (unsigned long long)owner.synthetic_count);
+    if(observe_x11) {
+        fprintf(stderr,"GSF X11 compositor visible ordered frames=%u real=%llu intermediate=%llu PASS (not OLED)\n",
+            x11_observed,(unsigned long long)owner.real_count,
+            (unsigned long long)owner.synthetic_count);
+        fprintf(stderr,"GSF X11 visibility after WSI: mean_us=%llu max_us=%llu samples=%u (not physical scanout)\n",
+            (unsigned long long)(x11_latency_sum_ns/x11_observed/1000u),
+            (unsigned long long)(x11_latency_max_ns/1000u),x11_observed);
+    }
     REQUIRE(source_probe.verified_real==frame_count);
     REQUIRE(source_probe.verified_synthetic==owner.synthetic_count);
     REQUIRE((gap_at==0 || gap_at>frame_count) || owner.gap_count==1);
