@@ -1,6 +1,14 @@
-# GFG Extreme 2.1.6 + GSF LAB.2 (экспериментальная сборка)
+# GFG Extreme 2.1.6 + GSF LAB.3 (экспериментальная сборка)
 
 **Это самостоятельная проверочная сборка, а не релиз и не подтверждение запуска на Steam Deck.**
+
+## Защита для Gaming Mode (17 октября 2026)
+
+Три независимых архива Gaming Mode: The Witcher 3 использует 10-битный swapchain VK_FORMAT_A2B10G10R10_UNORM_PACK32 (1280x800) и завершается после фатальной ошибки Vulkan Loader `vkGetPhysicalDeviceFormatProperties: Invalid physicalDevice`. Desktop Mode использует 8-битный формат 44, GSF там работает.
+
+**LAB.3 НЕ подтверждает работу GSF x2 с 10-битным Gamescope.** Добавлен безопасный обход: при активном VK_LAYER_FROG_gamescope_wsi_x86_64 и packed-10 swapchain GSF оставляет исходный swapchain игры без изменений и работает в режиме REAL-ONLY (без генерации). В журнале будет `gamescope-packed10-physical-dispatch-unverified`.
+
+Это защита от падения, а не полноценное решение проблемы physicalDevice. Для теста FG в Gaming Mode требуется отдельно добиться 8-битного swapchain, например через отключение HDR, если это изменит формат. Физический OLED scanout остаётся не проверен.
 
 ## Что исправлено по реальной телеметрии Steam Deck
 - Новая исходная реализация планировщика Vulkan GSF: распределяет промежуточные кадры по доступным 90-Гц слотам вместо безусловного требования отображать середину исходного интервала. При 60 реальных FPS и 90 Гц целевой **предел допуска** составляет около 30 синтетических WSI-передач в секунду, а не 60; при 42 реальных FPS возможно до 42 дополнительных слотов.
@@ -12,7 +20,7 @@
 
 ## Что внутри
 - Полный официальный пакет **2.1.6** со всеми тремя MAKO Flatpak, GFG Shell, Frame Fusion, Frame OS/HUD, Governor, Frontend и исходной конфигурацией.
-- Отдельно добавленный независимый Vulkan Layer GSF из нового исходного коммита **internal.11** (SHA-256 сверяется при сборке).
+- Отдельно добавленный независимый Vulkan Layer GSF из нового исходного коммита **internal.12** (SHA-256 сверяется при сборке).
 - Скрипт `bin/gfg-native/gfg-gsf-lab.sh`, включающий GSF **только по явному запросу**. Установка этого ZIP сама по себе НЕ устанавливает Vulkan Layer глобально и НЕ активирует генерацию GSF.
 - Важное ограничение: UI стабильного GFG 2.1.6 не получил новый переключатель GSF. Переключение только через параметры запуска Steam для одной игры.
 
@@ -74,5 +82,5 @@ bash "$HOME/homebrew/plugins/GFG-Extreme/bin/gfg-native/rollback.sh"
 ## Provenance
 
 Stable: GFG Extreme `v2.1.6`, официальный GitHub Release.
-GSF: `0.0.0-fg3-internal.11`, исходный коммит `77045d39a3d02661e2fb2f9d456f3a5e9549b402`.
-LAB revision: `2.1.6-gsf.lab2`. GitHub Actions ZIP + SHA256SUMS, без публикации стабильного релиза.
+GSF: `0.0.0-fg3-internal.12`, исходный коммит `bc74a20f99e1ca5ba18a8870c81c56e8a79d6dda`.
+LAB revision: `2.1.6-gsf.lab3`. GitHub Actions ZIP + SHA256SUMS, без публикации стабильного релиза.
