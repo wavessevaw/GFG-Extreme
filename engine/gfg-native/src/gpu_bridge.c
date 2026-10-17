@@ -1393,10 +1393,20 @@ static int present_synthetic(gfg_gpu_fg *fg, ring_slot *rs, int k, int output_in
      * Never block an app acquire while holding that same swapchain lock. Give
      * waiting output priority over a new app acquire; share one real-period budget. */
     const double acquire_end = fg->output_wsi ? target_us : now_us();
+    /* In the direct real-WSI path, a zero-timeout acquire can miss a free
+     * image between vblanks even if generation has finished. Wait a bounded
+     * slice of this frame's source budget, never UINT64_MAX as that could
+     * stall a misbehaving Gamescope indefinitely. The async worker retains
+     * its separate nonblocking deadline/poll logic. */
+    const uint64_t source_period = gfg_gpu_fg_source_period_ns(fg);
+    const uint64_t acquire_budget_ns = fg->output_wsi ? 0 :
+        (source_period / fg->multiplier < 8000000ull
+            ? source_period / fg->multiplier : 8000000ull);
     if (fg->output_wsi) atomic_store(&fg->waiting_image, 1);
     for (;;) {
         if (fg->output_wsi) pthread_mutex_lock(fg->output_wsi);
-        r = fg->AcquireNextImageKHR(fg->device, fg->swapchain, 0, rs->acquire_sem[k],
+        r = fg->AcquireNextImageKHR(fg->device, fg->swapchain,
+                                    acquire_budget_ns, rs->acquire_sem[k],
                                    VK_NULL_HANDLE, &img);
         if (fg->output_wsi) pthread_mutex_unlock(fg->output_wsi);
         if ((r != VK_NOT_READY && r != VK_TIMEOUT) || !fg->output_wsi || now_us() >= acquire_end) break;

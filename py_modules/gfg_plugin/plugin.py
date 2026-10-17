@@ -578,6 +578,10 @@ class Plugin:
         """
         return await asyncio.to_thread(self.dll_detection_service.check_lossless_scaling_dll)
 
+    async def check_lsfg_vk_dll(self) -> DllDetectionResponse:
+        """Find the installed LSFG-VK 2.x resource without distributing it."""
+        return await asyncio.to_thread(self.dll_detection_service.check_lsfg_vk_dll)
+
     async def check_scaling_model(
         self, dll: str, method: str, sharpness: float,
     ) -> ModelStatusResponse:

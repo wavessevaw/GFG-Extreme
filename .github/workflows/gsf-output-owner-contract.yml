@@ -3,10 +3,12 @@ on:
   push:
     branches:
       - experiment/gsf-output-owner-contract-20261017
+      - experiment/gsf-real-wsi-direct-owner-20261017
   pull_request:
     branches:
       - fix/gsf-borrowed-physical-dispatch-20261017
       - experiment/gsf-output-owner-contract-20261017
+      - experiment/gsf-offscreen-source-pool-20261017
   workflow_dispatch:
 permissions:
   contents: read
@@ -59,6 +61,18 @@ jobs:
           grep -q 'gfg_test_gamescope_prepare_pair' engine/gfg-native/src/layer.c
           grep -q 'GSF_LOADER_OWNER_REJECT' engine/gfg-native/src/layer.c
           echo 'MAILBOX bridge opt-in and fail-closed safety contract PASS'
+      - name: Direct real-swapchain insertion policy independent of virtual WSI
+        run: |
+          set -euo pipefail
+          cc -std=c11 -Wall -Wextra -Werror -O2 -I"$RUNNER_TEMP/vkh/include" \
+            engine/gfg-native/tests/real_wsi_direct_policy.c -o /tmp/gsf-real-wsi-direct-policy
+          /tmp/gsf-real-wsi-direct-policy
+          grep -q 'GSF_REAL_WSI_GATE gpu_requested=' engine/gfg-native/src/layer.c
+          grep -q 'GSF_REAL_WSI_GPU_BRIDGE_CREATE' engine/gfg-native/src/layer.c
+          grep -q 'gfg_real_wsi_extra_images' engine/gfg-native/src/layer.c
+          grep -q 'fifo-mode-list-incompatible-or-unknown-chain' engine/gfg-native/src/layer.c
+          echo 'Direct real WSI negotiation and image headroom PASS'
+
       - name: Steam Deck WSI SUBOPTIMAL acquire and present regression
         run: |
           set -euo pipefail
