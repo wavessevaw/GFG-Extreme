@@ -988,7 +988,7 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
         const char *buffer=getenv("GFG_NATIVE_OUTPUT_BUFFER_TICKS");
         if(buffer && buffer[0]>='0' && buffer[0]<='3' && !buffer[1])
             fg->clock.buffer_ticks=(unsigned)(buffer[0]-'0');
-        fprintf(stderr,"[gfg-native] gsf_output_buffer ticks=%u max_ticks=3 delay_at_90hz_ms=%.3f policy=bounded-ordered-WSI physical_scanout=unverified\\n",
+        fprintf(stderr,"[gfg-native] gsf_output_buffer ticks=%u max_ticks=3 delay_at_90hz_ms=%.3f policy=bounded-ordered-WSI physical_scanout=unverified\n",
             fg->clock.buffer_ticks,(double)fg->clock.buffer_ticks*(1000.0/90.0));
     }
     const char *rate=getenv("GFG_NATIVE_OUTPUT_HZ");
