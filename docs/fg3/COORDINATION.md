@@ -1,30 +1,28 @@
 <!-- codex-fg3-coordination -->
 
-## User-authorized prerelease — internal.10, verification in progress
+## User-authorized prerelease — final internal.10 candidate
 
-The owner reports internal.9 launches successfully and explicitly requests a
-GitHub prerelease with checks. This is a launch report, not physical90 evidence.
-Source **65539beae067b06987162a626003a1bf79fbff1c** produces the internal.10
-archives. The GPU ELF is byte-identical to internal.9 (7ddc744f...); only launcher
-mode selection changed. Decky Off now wins over an inherited conflicting
-XDG_CONFIG_HOME; explicit MODE/MODE_FILE and standalone XDG settings still work.
-The previous ZIP fails that same extracted-package regression; internal.10 passes.
+Owner reports internal.9 launch works and requests a checked GitHub prerelease.
+This is a launch report, not measured physical90. Final source **db04b3dfb5dbe3e2dac66761de7e397b1315b0fc**.
+The first unpublished .10 candidate failed remote WRITE_AFTER_WRITE validation
+(run38992642512): compute writes to temporal predictor were not available to
+its transfer overwrite. Destination TRANSFER_WRITE is now included in the
+existing barrier. This is a synchronization correction; algorithm/shaders stay
+unchanged. Decky Off also now wins over conflicting inherited XDG_CONFIG_HOME,
+while explicit MODE/MODE_FILE and standalone XDG settings remain supported.
 
-Local evidence: 1410 backend tests (1 skip),48 native tests,123 browser screens,
-14 extracted-package checks. Included-source identity and checksum staging pass;
-a corrupted release ZIP is rejected. Full pipeline/HDR evidence from internal.9
-covers the unchanged GPU code. Fresh remote pipeline/HDR/archive checks are
-required by .github/workflows/gsf-prerelease.yml before publication.
+Final artifacts are GFG-Extreme-2.1.5-gsf.10.zip and native internal_10.zip,
+with SHA256SUMS.txt. The previous preparation's .10 ZIPs were never tagged or
+released; their exact blobs remain in Git history. Final production ELF hash:
+4ab805fc97eaff7b04869e3ec8be92a31e54b9a504557b8d89b48d128ff64c62.
 
-Tag reserved for publication: v2.1.5-gsf.10. Branch verification does not publish;
-a tag push runs the same verification before its separate contents:write job.
-No stable release/main merge or modification of the latest stable is authorized.
-Release notes: PRERELEASE_2_1_5_GSF_10.ru.md. Asset/evidence identities are in
-artifacts/SHA256SUMS.txt and evidence/prerelease-internal_10.json.
-Remaining cut, physical output, game GPU cost, HDR quality and latency/power
-limitations remain explicit. Do not claim publication until the release and
-its uploaded assets have actually been observed and verified.
-
+Local1410 backend (1skip),48 native,123 UI,17 pipeline,7HDR/legacy and14 exact
+ZIP checks pass. Production loads with actual glibc2.31 and rebuilds byte-identically
+from its included source. Old9 fails the XDG Off negative control. Final evidence:
+evidence/prerelease-internal_10.json and ZIP. Remote repeat checks are required
+before tag v2.1.5-gsf.10 can publish. Branch verification alone does not publish.
+No stable/latest change or main merge. Remaining cut, real-game GPU cost,
+physical90, HDR quality and latency/power acceptance stay open.
 
 ## G1-before-G2 implemented — internal.9 experiment
 

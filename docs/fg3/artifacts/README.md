@@ -2,7 +2,7 @@
 
 Use GFG-Extreme-2.1.5-gsf.10.zip for Decky or
 GFG-Native-FG-v0_0_0-fg3-internal_10.zip for the standalone native component.
-GPU ELF is identical to internal.9. This fixes Decky Off with conflicting
+This fixes predictor compute-to-transfer ordering and Decky Off with conflicting
 inherited XDG_CONFIG_HOME. The owner reports internal.9 launches; no measured
 physical90 claim follows. See ../PRERELEASE_2_1_5_GSF_10.ru.md and
 ../evidence/prerelease-internal_10.json. Verify SHA256SUMS.txt.
