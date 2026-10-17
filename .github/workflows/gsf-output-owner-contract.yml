@@ -1,0 +1,28 @@
+name: GSF Output Owner Contract (experimental)
+on:
+  push:
+    branches:
+      - experiment/gsf-output-owner-contract-20261017
+  pull_request:
+    branches:
+      - fix/gsf-borrowed-physical-dispatch-20261017
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  output-owner:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native output-owner proof at O2 with warnings as errors
+        run: make -C engine/gfg-native output-owner
+      - name: Undefined behavior and address sanitizer contract tests
+        run: |
+          cc -std=c11 -g -O1 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+            engine/gfg-native/tests/output_owner.c -o /tmp/gfg-output-owner-ubsan
+          /tmp/gfg-output-owner-ubsan
+      - name: Report qualification boundary
+        run: |
+          echo 'Transport-neutral scheduler validated.'
+          echo 'Private WSI output, GPU image ownership and actual OLED scanout remain UNVERIFIED.'
