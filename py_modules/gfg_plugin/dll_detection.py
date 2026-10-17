@@ -127,6 +127,71 @@ class DllDetectionService(BaseService):
         finally:
             self._model_lock.release()
 
+    def check_lsfg_vk_2(self, dll_path: str = "") -> dict:
+        """Read-only availability of a locally installed 2.x layer and resource.
+
+        A legacy Lossless.dll is *not* lsfg-vk.dll. No binary is copied, parsed
+        into GFG assets, downloaded, or executed by this detector.
+        """
+        filename = "VkLayer_LSFGVK_frame_generation.json"
+        roots = (
+            self.user_home / ".local/share/vulkan/implicit_layer.d",
+            self.user_home / ".local/share/vulkan/explicit_layer.d",
+            Path("/usr/share/vulkan/implicit_layer.d"),
+            Path("/usr/local/share/vulkan/implicit_layer.d"),
+            Path("/etc/vulkan/implicit_layer.d"),
+        )
+        manifest = None
+        library = None
+        for root in roots:
+            candidate = root / filename
+            try:
+                if not candidate.is_file():
+                    continue
+                layer = json.loads(candidate.read_text(encoding="utf-8"))["layer"]
+                if (layer.get("name") != "VK_LAYER_LSFGVK_frame_generation"
+                        or str(layer.get("implementation_version")) != "2"):
+                    continue
+                lib = Path(layer["library_path"])
+                if not lib.is_absolute():
+                    lib = root / lib
+                if not lib.is_file():
+                    continue
+                manifest = str(candidate)
+                library = str(lib)
+                break
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+        requested = str(dll_path).strip() or os.getenv("GFG_LSFG_DLL_PATH", "").strip()
+        dll_candidates = []
+        if requested:
+            provided = Path(requested).expanduser()
+            if provided.name.lower() in ("lossless.dll", "losslessscaling.dll"):
+                provided = provided.with_name("lsfg-vk.dll")
+            dll_candidates.append(provided)
+        else:
+            for root in self._get_steam_library_paths():
+                dll_candidates.append(
+                    Path(root) / STEAM_COMMON_PATH / "lsfg-vk.dll")
+            default = self.user_home / ".local/share/Steam" / STEAM_COMMON_PATH / "lsfg-vk.dll"
+            dll_candidates.append(default)
+        dll = None
+        for candidate in dll_candidates:
+            try:
+                if candidate.is_file() and candidate.stat().st_size:
+                    dll = str(candidate)
+                    break
+            except OSError:
+                continue
+        ready = bool(manifest and dll)
+        reason = None if ready else (
+            "LSFG-VK 2.0 Vulkan layer not installed" if not manifest
+            else "lsfg-vk.dll not found; install it in the Lossless Scaling Steam folder "
+                 "or set an explicit DLL path")
+        return {"ready": ready, "reason": reason,
+                "manifest": manifest, "layer_library": library, "dll": dll,
+                "hardware_verified": False}
+
     def check_lossless_scaling_dll(self) -> DllDetectionResponse:
         """Check if Lossless Scaling DLL is available at the expected paths
 
