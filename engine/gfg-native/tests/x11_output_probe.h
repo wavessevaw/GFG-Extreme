@@ -39,7 +39,8 @@ static inline int gfg_x11_sample_pixel(xcb_connection_t *c,
 }
 static inline int gfg_x11_wait_visible_pair(xcb_connection_t *c,
              xcb_drawable_t window,uint32_t width,uint32_t height,
-             int expected_left,int expected_right,uint64_t timeout_ns) {
+             int expected_left,int expected_right,uint64_t timeout_ns,
+             uint64_t *observed_after_ns) {
     const uint64_t start=gfg_x11_monotonic_ns();
     int left=-1,right=-1;
     const struct timespec delay={.tv_sec=0,.tv_nsec=2000000L};
@@ -48,8 +49,11 @@ static inline int gfg_x11_wait_visible_pair(xcb_connection_t *c,
                         (int16_t)(height/2),&left) &&
            gfg_x11_sample_pixel(c,window,(int16_t)(3*width/4),
                         (int16_t)(height/2),&right) &&
-           abs(left-expected_left)<=5 && abs(right-expected_right)<=5)
+           abs(left-expected_left)<=5 && abs(right-expected_right)<=5) {
+            if(observed_after_ns)*observed_after_ns=
+                gfg_x11_monotonic_ns()-start;
             return 1;
+        }
         nanosleep(&delay,NULL);
     }
     fprintf(stderr,"GSF X11 output-pixels TIMEOUT left=%d/%d right=%d/%d\n",
