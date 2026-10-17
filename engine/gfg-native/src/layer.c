@@ -20,6 +20,7 @@
 #ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
 #include "virtual_wsi_facade.h"
 #include "output_proxy_bootstrap.h"
+#include "test_loader_output_runtime.h"
 #include "virtual_layouts.h"
 #endif
 #ifdef GFG_NATIVE_WITH_TE
@@ -83,6 +84,7 @@ typedef struct native_swapchain {
     gfg_output_proxy *test_proxy; /* heap-owned app proxy in TEST builds */
     gfg_offscreen_dispatch test_proxy_ops;
     PFN_vkDestroySwapchainKHR test_proxy_destroy;
+    gfg_test_loader_runtime *test_runtime;
 #endif
 } native_swapchain;
 
@@ -104,6 +106,8 @@ typedef struct native_device {
     gfg_vwsi_acquire_signal test_proxy_signal;
     gfg_vwsi_copy_submit test_proxy_copy;
     void *test_proxy_user;
+    VkQueue test_loader_queue;
+    uint32_t test_loader_family;
     PFN_vkCmdPipelineBarrier cmd_barrier;
     PFN_vkCmdPipelineBarrier2 cmd_barrier2;
     PFN_vkCmdPipelineBarrier2KHR cmd_barrier2_khr;
@@ -552,7 +556,8 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     d->get_images = (PFN_vkGetSwapchainImagesKHR)
         gdpa(*out, "vkGetSwapchainImagesKHR");
 #ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
-    if(native_env_is_1("GFG_NATIVE_TEST_LOADER_CREATE_PROBE")) {
+    if(native_env_is_1("GFG_NATIVE_TEST_LOADER_CREATE_PROBE") ||
+       native_env_is_1("GFG_NATIVE_TEST_LOADER_LIVE_OUTPUT")) {
         /* Acquire only the DOWNSTREAM functions for the exact device and
          * instance chains. Never query a borrowed physical device through
          * the loader-global vkGetPhysicalDeviceMemoryProperties symbol. */
@@ -567,8 +572,20 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
             .free_memory=(PFN_vkFreeMemory)gdpa(*out,"vkFreeMemory"),
             .bind_image_memory=(PFN_vkBindImageMemory)gdpa(*out,"vkBindImageMemory")
         };
-        d->test_proxy_signal=native_probe_no_acquire;
-        d->test_proxy_copy=native_probe_no_capture;
+        if(native_env_is_1("GFG_NATIVE_TEST_LOADER_LIVE_OUTPUT")) {
+            d->test_proxy_signal=gfg_test_live_acquire;
+            d->test_proxy_copy=gfg_test_live_capture;
+            if(ci && ci->queueCreateInfoCount && ci->pQueueCreateInfos &&
+               ci->pQueueCreateInfos[0].queueCount) {
+                d->test_loader_family=ci->pQueueCreateInfos[0].queueFamilyIndex;
+                if(d->get_queue)
+                    d->get_queue(d->handle,d->test_loader_family,0,
+                                 &d->test_loader_queue);
+            }
+        } else {
+            d->test_proxy_signal=native_probe_no_acquire;
+            d->test_proxy_copy=native_probe_no_capture;
+        }
     }
 #endif
 #ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
@@ -950,6 +967,11 @@ static int native_cmp_double(const void *a, const void *b) {
 }
 static void native_swapchain_free(native_swapchain *sc) {
 #ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    if (sc->test_runtime) {
+        gfg_test_live_destroy(sc->test_runtime);
+        free(sc->test_runtime);
+        sc->test_runtime=NULL;
+    }
     if (sc->test_proxy) {
         gfg_output_proxy_destroy(sc->test_proxy,sc->test_proxy_destroy,
                                  &sc->test_proxy_ops);
@@ -1169,12 +1191,19 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
             !gfg_offscreen_unsupported(ci)) {
             gfg_output_proxy *proxy=calloc(1,sizeof(*proxy));
             native_swapchain *entry=calloc(1,sizeof(*entry));
-            if(proxy && entry) {
+            const int live=native_env_is_1("GFG_NATIVE_TEST_LOADER_LIVE_OUTPUT");
+            gfg_test_loader_runtime *runtime=live?calloc(1,sizeof(*runtime)):NULL;
+            if(proxy && entry && (!live || (runtime && d->test_loader_queue))) {
+                d->test_proxy_user=live?(void*)runtime:d->test_proxy_user;
                 VkResult vr=gfg_output_proxy_create(proxy,device,d->physical,ci,
                             d->create_swapchain,d->destroy_swapchain,
                             &d->test_proxy_ops,d->test_proxy_user,
                             d->test_proxy_signal,d->test_proxy_copy);
+                if(vr==VK_SUCCESS && live)
+                    vr=gfg_test_live_init(runtime,device,d->test_loader_queue,
+                            d->test_loader_family,proxy,d->test_proxy_ops,ci);
                 if(vr==VK_SUCCESS) {
+                    entry->test_runtime=runtime;
                     entry->handle=gfg_output_proxy_app_handle(proxy);
                     entry->virtual_app=&proxy->app;
                     entry->test_proxy=proxy;
@@ -1194,10 +1223,20 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
                     if(native_env_is_1("GFG_NATIVE_TEST_LOADER_CREATE_PROBE"))
                         fprintf(stderr,"GSF_LOADER_CREATE_PROBE virtual_image_count=%u one_real_output_wsi=1 GPU_memory_allocated=1 PASS\n",
                                 proxy->source.count);
+                    if(live)
+                        fprintf(stderr,"GSF_LOADER_LIVE_INIT virtual_images=%u one_real_output=1 GPU_worker=1\n",
+                                proxy->source.count);
 #endif
                     return VK_SUCCESS;
                 }
             }
+            if(runtime) {
+                gfg_test_live_destroy(runtime);
+                free(runtime);
+                d->test_proxy_user=NULL;
+            }
+            if(proxy)gfg_output_proxy_destroy(proxy,d->destroy_swapchain,
+                                              &d->test_proxy_ops);
             free(entry);free(proxy);
             /* On any failure, forward the original app create unchanged. */
         }
