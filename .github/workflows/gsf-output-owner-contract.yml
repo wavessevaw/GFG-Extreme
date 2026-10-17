@@ -187,6 +187,7 @@ jobs:
             xvfb-run -a -s '-screen 0 1024x768x24' \
             engine/gfg-native/build/owned-wsi-real-layer > "$log" 2>&1 || { cat "$log"; exit 1; }
           grep 'GSF slow-fence source stays COPYING after every virtual Present, deferred retirement=8 PASS' "$log"
+          grep 'GSF GPU output submitted BEFORE worker source release=' "$log"
           grep 'GSF async capture worker GPU fence waits=8 presents=8 app_thread_gpu_waits=0 PASS' "$log"
           if grep -E 'Validation Error|VUID-|UNASSIGNED-.*ERROR' "$log"; then
             cat "$log"; exit 1
