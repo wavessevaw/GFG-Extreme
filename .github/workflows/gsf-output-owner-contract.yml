@@ -36,6 +36,10 @@ jobs:
       - name: WSI real-only priority when 60Hz source competes for 90Hz slots
         run: |
           GFG_NATIVE_TEST_FRAMES=10 GFG_OWNER_TEST_OUTPUT_HZ=90 GFG_OWNER_TEST_SOURCE_HZ=60 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke
+      - name: Reuse one game image while retaining two separate GSF history images
+        run: |
+          set -euo pipefail
+          GFG_NATIVE_TEST_FRAMES=14 GFG_OWNER_TEST_APP_IMAGES=1 GFG_OWNER_TEST_OUTPUT_HZ=60 GFG_OWNER_TEST_SOURCE_HZ=30 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke
       - name: Vulkan validation for GPU-copy and real-only WSI transport
         run: |
           set -euo pipefail
