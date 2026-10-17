@@ -421,6 +421,7 @@ int main(void) {
         capture_ctx.async=&async_capture;
     }
     uint32_t source_submissions=0,game_images_released=0,early_returns=0;
+    uint32_t output_submitted_before_release=0;
 #endif
 
     PFN_vkQueuePresentKHR present_gipa=(PFN_vkQueuePresentKHR)
@@ -538,9 +539,10 @@ int main(void) {
                 REQUIRE(still_copying);
                 ++early_returns;
             }
-            /* Output-test CPU waits for its history copy before readback.
-             * This does NOT occur in application virtual Present. */
-            TRY(gfg_async_capture_wait_ticket(&async_capture,virtual_ticket));
+            /* The GPU snapshot copy is queued before GPU output work on
+             * the SAME VkQueue. Do not block on this fence before submitting
+             * the output copy: command-buffer transfer barriers provide
+             * visibility. Output readback still waits for its own fence. */
         } else {
             TRY(vkWaitForFences(device,1,&snapshot_fence,VK_TRUE,UINT64_MAX));
             TRY(gfg_vwsi_retire(virtual_wsi,acquired_app_image,virtual_ticket,1));
@@ -551,12 +553,13 @@ int main(void) {
         REQUIRE(source_probe.mem[history_slot]!=source_probe.game_mem[app_slot]);
         REQUIRE(source_probe.game_ids[app_slot]==source_id);
         REQUIRE(source_probe.ids[history_slot]==source_id);
-        /* At this exact point the game source image may be reused.
-         * The independent GSF history stays pinned until output consumes it. */
-        ++game_images_released;
+        /* On async mode source reuse is NOT yet authorised here. Copy
+         * retirement remains owned by the GPU worker, independently of
+         * queueing the output images. */
+        if(!use_async_capture)++game_images_released;
         ++source_submissions;
-        fprintf(stderr,"GSF SOURCE render id=%u game_swapchain_virtual=1 history_copy_ready=1 game_image_released=1 original_WSI_presents=0\n",
-                source_id);
+        fprintf(stderr,"GSF SOURCE render id=%u game_swapchain_virtual=1 history_copy_submitted=1 game_image_released=%d original_WSI_presents=0\n",
+                source_id,!use_async_capture);
         gfg_owner_ticket owned[3];
         if(source_id==gap_at)capture_ns+=836000000ull;
         const uint64_t gpu_ready_ns=(drop_every && source_id%drop_every==0u)?
@@ -642,6 +645,12 @@ int main(void) {
 #ifdef GFG_NATIVE_TEST_ASYNC
         TRY(vkResetFences(device,1,&render_fence));
         TRY(vkQueueSubmit(queue,1,&si,render_fence));
+        if(use_async_capture) {
+            pthread_mutex_lock(&async_capture.lock);
+            if(async_capture.retired<virtual_ticket)
+                ++output_submitted_before_release;
+            pthread_mutex_unlock(&async_capture.lock);
+        }
 #else
         TRY(vkQueueSubmit(queue,1,&si,VK_NULL_HANDLE));
 #endif
@@ -700,6 +709,14 @@ int main(void) {
         seen[index]=1;
     }
 #ifdef GFG_NATIVE_TEST_OWNED_WSI
+        /* Output has already been submitted to the GPU (and test-verified).
+         * Only now wait for the worker to retire the old source image before
+         * advancing the source loop. Production must use a fully GPU-driven
+         * output owner instead of this source-loop test dependency. */
+        if(use_async_capture) {
+            TRY(gfg_async_capture_wait_ticket(&async_capture,virtual_ticket));
+            ++game_images_released;
+        }
     }
     REQUIRE(owner.real_count==frame_count);
     REQUIRE(source_submissions==frame_count);
@@ -724,8 +741,11 @@ int main(void) {
         REQUIRE(async_capture.submit_failures==0);
         if(delayed_capture) {
             REQUIRE(early_returns==frame_count);
+            REQUIRE(output_submitted_before_release>0);
             fprintf(stderr,"GSF slow-fence source stays COPYING after every virtual Present, deferred retirement=%u PASS\\n",
                 early_returns);
+            fprintf(stderr,"GSF GPU output submitted BEFORE worker source release=%u, same-queue order PASS\\n",
+                output_submitted_before_release);
         }
         fprintf(stderr,"GSF async capture worker GPU fence waits=%llu presents=%llu app_thread_gpu_waits=%llu PASS\\n",
             (unsigned long long)async_capture.worker_gpu_waits,
