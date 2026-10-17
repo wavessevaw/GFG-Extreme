@@ -18,6 +18,8 @@ The successful `GSF Output Owner Contract (experimental)` GitHub Actions workflo
 
 The binary is built on an Ubuntu x86_64 Actions runner, not on an actual Deck. SteamOS ABI, installed libraries and Vulkan Loader compatibility are **not guaranteed**. The launcher checks library resolution and refuses to run when it cannot load the binary. Never overwrite SteamOS libraries to work around an incompatibility.
 
+GitHub Actions ZIP download removes Unix executable permissions. After checking the SHA256 hashes, `--check` restores the executable bit **only to the local copied `loader-live-output` binary** within the unpacked, user-writable kit directory. No system files are modified.
+
 ## Running on Steam Deck
 
 1. Download the kit from the successful GitHub Actions run linked to PR #154 and unpack it to a **user-writable** directory (for example `/home/deck/gsf-output-test/`).
