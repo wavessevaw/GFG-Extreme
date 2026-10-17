@@ -1199,17 +1199,24 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
          * FIFO ownership, so ONLY in explicit test-only Gaming mode
          * request FIFO again from the downstream output swapchain.
          * This does not prove Gamescope's physical present ordering. */
-        VkSwapchainCreateInfoKHR owned_ci=*ci;
-        const int gamescope_mailbox_adapt=gfg_test_gamescope_normalize_fifo(
+        VkSwapchainCreateInfoKHR owned_ci=*ci,real_ci=*ci;
+        const char *pair_reason=NULL;
+        const int gamescope_mailbox_adapt=gfg_test_gamescope_prepare_pair(
             ci,owner_live,native_env_is_1("GFG_NATIVE_TEST_GAME_MODE"),
-            &owned_ci);
-        if(gamescope_mailbox_adapt)
+            &owned_ci,&real_ci,&pair_reason);
+        if(gamescope_mailbox_adapt==1) {
             fprintf(stderr,
-                "GSF_GAMESCOPE_MAILBOX_ADAPT intercepted=%d output_requested=%d test_only=1 physical_present_mode=UNVERIFIED\n",
-                (int)ci->presentMode,(int)owned_ci.presentMode);
+                "GSF_GAMESCOPE_WSI_PAIR virtual_mode=%d real_mode=%d"
+                " real_pnext_type=%d preserved=1 test_only=1 oled_scanout=UNVERIFIED\n",
+                (int)owned_ci.presentMode,(int)real_ci.presentMode,
+                real_ci.pNext?
+                  (int)((const VkBaseInStructure *)real_ci.pNext)->sType:-1);
+        }
         const VkSwapchainCreateInfoKHR *virtual_ci=
-            gamescope_mailbox_adapt?&owned_ci:ci;
+            gamescope_mailbox_adapt==1?&owned_ci:ci;
         const char *unsupported=gfg_offscreen_unsupported(virtual_ci);
+        if(gamescope_mailbox_adapt<0)
+            unsupported=pair_reason?pair_reason:"invalid-gamescope-swapchain-chain";
         const int have_callbacks=d->test_proxy_signal && d->test_proxy_copy;
         const int have_dispatch=gfg_offscreen_dispatch_complete(&d->test_proxy_ops);
         if(owner_live &&
@@ -1237,7 +1244,8 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
             gfg_test_loader_runtime *runtime=live?calloc(1,sizeof(*runtime)):NULL;
             if(proxy && entry && (!live || (runtime && d->test_loader_queue))) {
                 d->test_proxy_user=live?(void*)runtime:d->test_proxy_user;
-                VkResult vr=gfg_output_proxy_create(proxy,device,d->physical,virtual_ci,
+                VkResult vr=gfg_output_proxy_create_ex(proxy,device,d->physical,
+                            virtual_ci,&real_ci,
                             d->create_swapchain,d->destroy_swapchain,
                             &d->test_proxy_ops,d->test_proxy_user,
                             d->test_proxy_signal,d->test_proxy_copy);
