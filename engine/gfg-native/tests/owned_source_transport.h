@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../src/virtual_layouts.h"
 
 typedef struct {
     VkDevice d;
@@ -26,6 +27,7 @@ typedef struct {
     uint8_t *mapped;
     VkDeviceSize bytes;
     unsigned verified_real,verified_synthetic;
+    uint64_t virtual_present_old_rewrites,virtual_present_new_rewrites;
 } gfg_source_probe;
 static uint32_t gfg_src_mem_type(const VkPhysicalDeviceMemoryProperties *m,
                                   uint32_t bits,VkMemoryPropertyFlags flags) {
@@ -109,11 +111,17 @@ static void gfg_source_record_game(gfg_source_probe *p,VkCommandBuffer cmd,
                                    uint64_t id) {
     const unsigned slot=(unsigned)(id%p->app_image_count);
     VkImage image=p->game_frames[slot];
-    VkImageMemoryBarrier pre=gfg_src_barrier(image,
-        p->game_ids[slot]?VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:VK_IMAGE_LAYOUT_UNDEFINED,
+    /* A real game regards the returned virtual image as a swapchain image.
+     * Rewrites of PRESENT_SRC happen before the ICD observes this command. */
+    gfg_virtual_layout_map layout_map={.images=p->game_frames,
+                                        .count=p->app_image_count};
+    VkImageMemoryBarrier requested_pre=gfg_src_barrier(image,
+        p->game_ids[slot]?VK_IMAGE_LAYOUT_PRESENT_SRC_KHR:VK_IMAGE_LAYOUT_UNDEFINED,
         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         p->game_ids[slot]?VK_ACCESS_TRANSFER_READ_BIT:0,
         VK_ACCESS_TRANSFER_WRITE_BIT);
+    VkImageMemoryBarrier pre={0};
+    gfg_vlayout_legacy(&layout_map,&requested_pre,&pre);
     vkCmdPipelineBarrier(cmd,p->game_ids[slot]?VK_PIPELINE_STAGE_TRANSFER_BIT:
         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
         0,0,NULL,0,NULL,1,&pre);
@@ -121,11 +129,15 @@ static void gfg_source_record_game(gfg_source_probe *p,VkCommandBuffer cmd,
     VkClearColorValue c={.float32={level,level,level,1.0f}};
     VkImageSubresourceRange range={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
     vkCmdClearColorImage(cmd,image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&c,1,&range);
-    VkImageMemoryBarrier post=gfg_src_barrier(image,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    VkImageMemoryBarrier requested_post=gfg_src_barrier(image,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
         VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT);
+    VkImageMemoryBarrier post={0};
+    gfg_vlayout_legacy(&layout_map,&requested_post,&post);
     vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,
           VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&post);
+    p->virtual_present_old_rewrites+=layout_map.translated_old;
+    p->virtual_present_new_rewrites+=layout_map.translated_new;
     p->game_ids[slot]=id;
 }
 /* 2. GSF capture command buffer waits for the game's render fence before
