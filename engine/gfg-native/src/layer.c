@@ -1202,6 +1202,10 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
                 if(vr==VK_SUCCESS && live)
                     vr=gfg_test_live_init(runtime,device,d->test_loader_queue,
                             d->test_loader_family,proxy,d->test_proxy_ops,ci);
+                if(vr!=VK_SUCCESS && live)
+                    fprintf(stderr,"GSF_LOADER_LIVE_FAILURE runtime_init=%d queue=%p GPU_source_count=%u output_present=%d\\n",
+                            (int)vr,(void*)d->test_loader_queue,proxy->source.count,
+                            proxy->output!=VK_NULL_HANDLE);
                 if(vr==VK_SUCCESS) {
                     entry->test_runtime=runtime;
                     entry->handle=gfg_output_proxy_app_handle(proxy);
@@ -1230,6 +1234,9 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
                     return VK_SUCCESS;
                 }
             }
+            if(live && (!runtime || !d->test_loader_queue))
+                fprintf(stderr,"GSF_LOADER_LIVE_FAILURE missing_queue_or_memory queue=%p runtime=%p\\n",
+                        (void*)d->test_loader_queue,(void*)runtime);
             if(runtime) {
                 gfg_test_live_destroy(runtime);
                 free(runtime);
@@ -1238,7 +1245,8 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
             if(proxy)gfg_output_proxy_destroy(proxy,d->destroy_swapchain,
                                               &d->test_proxy_ops);
             free(entry);free(proxy);
-            /* On any failure, forward the original app create unchanged. */
+            if(live)return VK_ERROR_INITIALIZATION_FAILED;
+            /* The ordinary unsupported path forwards the original WSI. */
         }
     }
 #endif
