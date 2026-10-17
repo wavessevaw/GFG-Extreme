@@ -1,0 +1,62 @@
+{
+  "scope": "native GSF prerelease: exact archives, launch-mode correction, prior identical GPU engine; physical90 not measured",
+  "source_commit": "65539beae067b06987162a626003a1bf79fbff1c",
+  "version": "2.1.5-gsf.10",
+  "component_sha256": "2677b6c9045b087c0ccd273442792356c0637d822f53362f02d80c1728712676",
+  "decky_sha256": "98c7fa6d3b469544073a44c58642ffcabd1eeec150786b5c3b139647982b9128",
+  "elf_sha256": "7ddc744f42c5956fb33100977cea2884d8ded2fea2beea2c4597b4ac88771b30",
+  "checks": [
+    "archive-checksums-executable-modes-and-build-identity",
+    "backend-startup",
+    "startup-off-actual-wsi",
+    "backend-2",
+    "installed-x2",
+    "backend-3",
+    "installed-x3",
+    "explicit-off-inherited-layer-actual-wsi",
+    "unavailable-diagnostics-actual-wsi",
+    "missing-component-actual-wsi",
+    "installed-x3-g1-before-g2-submission-and-x2-unchanged",
+    "two-local-pair-reports-and-retired-status-cleanup",
+    "first-install-rollback",
+    "rollback-off-actual-wsi"
+  ],
+  "passed": true,
+  "hardware_acceptance": "NOT TESTED",
+  "physical_displayed_fps": null,
+  "tag": "v2.1.5-gsf.10",
+  "backend": {
+    "tests": 1410,
+    "skipped": 1,
+    "passed": true,
+    "python": "3.13",
+    "inherited_XDG_CONFIG_HOME": true
+  },
+  "frontend": {
+    "screens": 123,
+    "passed": true
+  },
+  "native_python": {
+    "tests": 48,
+    "passed": true
+  },
+  "gpu_engine_unchanged_from": "7e8a9660a0c40e00275f87f0977c0758e6f3ebe3",
+  "gpu_elf_byte_identical_to_internal_9": true,
+  "owner_report": {
+    "date": "2026-10-17",
+    "timezone": "Asia/Vladivostok",
+    "reported_previous_version": "2.1.5-gsf.9",
+    "reported_launch_working": true,
+    "measured_physical_displayed_fps": null
+  },
+  "negative_control": {
+    "internal_9_conflicting_XDG_Off": "reproduced FAIL",
+    "internal_10_same_check": "PASS"
+  },
+  "prior_pipeline_evidence": "deferred-g2-internal_9.json:17 pipeline/7HDR checks on unchanged GPU code; new remote run required before release",
+  "remaining": [
+    "missed renderer cut",
+    "physical 30-to-90 OLED unmeasured",
+    "real-game GPU contention/cost, HDR quality, input latency and power unmeasured"
+  ]
+}

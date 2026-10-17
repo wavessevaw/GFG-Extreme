@@ -49,6 +49,11 @@ def main():
             validation_error=failed_validation,deferred_pairs=len(deferred),g1_before_g2_submit=len(ordered),canceled_g2=len(canceled)))
         (a.out/'acceptance.json').write_text(json.dumps(report,indent=2)+'\n')
         print(name,'PASS' if passed else 'FAIL',flush=True)
+        if not passed:
+            # Public job annotations retain the actual assertion/validation
+            # failure even when log downloads require a separate API session.
+            details=json.dumps(report['checks'][-1])+'\n'+log[-5500:]
+            print('::error title=GSF '+name+'::'+details.replace('%','%25').replace('\r','%0D').replace('\n','%0A'),flush=True)
     run('core-gsf',[core/'te-tests'],dict(VK_LAYER_PATH=validation,VK_INSTANCE_LAYERS='VK_LAYER_KHRONOS_validation',GFG_TEST_SHARED_FLOW='4'),['183 checks, 0 failures'])
     run('borrowed-gsf',[native/'borrowed-device'],dict(VK_LAYER_PATH=validation,VK_INSTANCE_LAYERS='VK_LAYER_KHRONOS_validation',GFG_TEST_GSF='1'),['device lifetime PASS'])
     env=dict(GFG_NATIVE_FG='1',GFG_NATIVE_GPU_BRIDGE='1',GFG_NATIVE_ASYNC='1',GFG_NATIVE_GPU_SYNC='same-device',
