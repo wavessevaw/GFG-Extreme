@@ -6,6 +6,7 @@ on:
   pull_request:
     branches:
       - fix/gsf-borrowed-physical-dispatch-20261017
+      - experiment/gsf-output-owner-contract-20261017
   workflow_dispatch:
 permissions:
   contents: read
