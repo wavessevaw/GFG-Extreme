@@ -166,10 +166,13 @@ int main(void) {
     const int paced_30_60=getenv("GFG_NATIVE_TEST_PACED_30_60")!=NULL;
     const int paced_45_90=getenv("GFG_NATIVE_TEST_PACED_45_90")!=NULL;
     const int paced_source=paced_30_60||paced_45_90;
+    const int sustained=getenv("GFG_NATIVE_TEST_SUSTAINED")!=NULL;
+    const uint32_t frame_count=sustained?120u:8u;
     const uint32_t source_hz=paced_45_90?45u:30u;
     const uint32_t output_hz=paced_45_90?90u:60u;
     REQUIRE(!paced_source || interleave);
     REQUIRE(!(paced_30_60 && paced_45_90));
+    REQUIRE(!sustained || paced_source);
     uint32_t visible=0, intermediate_visible=0, output_visible=0;
     int last_level=-1;
     const uint64_t source_start=gfg_pacer_monotonic_ns();
@@ -177,7 +180,7 @@ int main(void) {
     uint64_t x11_last_ns=0,x11_interval_total_ns=0;
     uint64_t x11_interval_min_ns=UINT64_MAX,x11_interval_max_ns=0;
     unsigned x11_interval_count=0;
-    for(uint32_t frame=1;frame<=8;frame++) {
+    for(uint32_t frame=1;frame<=frame_count;frame++) {
         if(paced_source && frame>1) {
             /* Input app and independent Output Engine run separate
              * monotonic clocks at either 30/60 or 45/90 Hz. */
@@ -295,19 +298,19 @@ int main(void) {
         fprintf(stderr,"GSF_LOADER_LIVE_APP frame=%u virtual_present=1 x11_visible=1 latency_us=%llu\\n",
             frame,(unsigned long long)(latency/1000));
     }
-    REQUIRE(visible==8);
-    REQUIRE(!interleave || intermediate_visible==7);
-    REQUIRE(!interleave || output_visible==15);
+    REQUIRE(visible==frame_count);
+    REQUIRE(!interleave || intermediate_visible==frame_count-1u);
+    REQUIRE(!interleave || output_visible==2u*frame_count-1u);
     if(interleave)
         fprintf(stderr,"GSF_LOADER_SPLIT_APP output_visible=%u original=%u intermediate=%u x11_distinct_pixels=1 PASS\n",
             output_visible,visible,intermediate_visible);
     if(paced_source) {
-        REQUIRE(x11_interval_count==13u);
+        REQUIRE(x11_interval_count==2u*frame_count-3u);
         const uint64_t mean_us=x11_interval_total_ns/x11_interval_count/1000u;
         const uint64_t min_us=x11_interval_min_ns/1000u;
         const uint64_t max_us=x11_interval_max_ns/1000u;
-        fprintf(stderr,"GSF_PACED_%u_TO_%u_X11 visible=15 source_hz=%u target_hz=%u samples=%u mean_us=%llu min_us=%llu max_us=%llu\n",
-            source_hz,output_hz,source_hz,output_hz,
+        fprintf(stderr,"GSF_PACED_%u_TO_%u_X11 visible=%u source_hz=%u target_hz=%u samples=%u mean_us=%llu min_us=%llu max_us=%llu\n",
+            source_hz,output_hz,output_visible,source_hz,output_hz,
             x11_interval_count,(unsigned long long)mean_us,
             (unsigned long long)min_us,(unsigned long long)max_us);
         /* Software Xvfb, not physical 60Hz scanout. Use broad acceptance
@@ -320,8 +323,9 @@ int main(void) {
             REQUIRE(mean_us>=9000 && mean_us<=27000);
             REQUIRE(min_us>=5000 && max_us<=50000);
         }
-        fprintf(stderr,"GSF_PACED_%u_TO_%u_X11 paced_source=8 originals=8 intermediate=7 visible=15 app_to_worker_distinct_frames=1 PASS\n",
-                source_hz,output_hz);
+        fprintf(stderr,"GSF_PACED_%u_TO_%u_X11 paced_source=%u originals=%u intermediate=%u visible=%u app_to_worker_distinct_frames=1 PASS\n",
+                source_hz,output_hz,frame_count,visible,intermediate_visible,
+                output_visible);
     }
     TRY(vkDeviceWaitIdle(device));
     vkDestroyFence(device,rendering,NULL);
@@ -329,7 +333,8 @@ int main(void) {
     vkDestroySemaphore(device,render_done,NULL);
     vkDestroyCommandPool(device,pool,NULL);
     vkDestroySwapchainKHR(device,virtual_handle,NULL);
-    fprintf(stderr,"GSF_LOADER_LIVE_APP 8 GPU-rendered real source frames visible through one output WSI PASS\\n");
+    fprintf(stderr,"GSF_LOADER_LIVE_APP %u GPU-rendered real source frames visible through one output WSI PASS\\n",
+            frame_count);
 
     vkDestroyDevice(device,NULL);
     vkDestroySurfaceKHR(instance,surface,NULL);
