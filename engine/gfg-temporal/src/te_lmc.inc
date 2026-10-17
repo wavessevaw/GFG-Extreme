@@ -899,9 +899,11 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
         lmc_push_c(ctx, cb, 0.0f, 1, g, 1, 0);
         vkCmdDispatch(cb, groups(m->bw[1], 2), groups(m->bh[1], 2), 1);
     }
+    /* SF_PREPARE can write temporal[]. The following copy overwrites that
+     * buffer; include transfer writes as well as the vector transfer read. */
     barrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
-            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
     LMC_TS(1 + TE_LMC_FIELD2);
 #undef LMC_TS
     /* the B field of this pair is the next pair's temporal predictor */
