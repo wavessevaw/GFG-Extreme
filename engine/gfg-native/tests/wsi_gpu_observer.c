@@ -214,6 +214,8 @@ int main(void) {
     REQUIRE(ext.width>=8 && (ext.width%2)==0);
     gfg_source_probe source_probe;
     REQUIRE(gfg_source_probe_create(&source_probe,physical,device,ext,color.format));
+    const char *app_images=getenv("GFG_OWNER_TEST_APP_IMAGES");
+    if(app_images && !strcmp(app_images,"1"))source_probe.app_image_count=1;
     /* Independent source renderer submits into OFFSCREEN VkImages.
      * They never reach vkQueuePresentKHR: the later output WSI owns it.
      * The separate fence protects source image write/overwrite lifetime. */
@@ -316,8 +318,12 @@ int main(void) {
             .commandBufferCount=1,.pCommandBuffers=&snapshot_command};
         TRY(vkQueueSubmit(queue,1,&copy_submit,snapshot_fence));
         TRY(vkWaitForFences(device,1,&snapshot_fence,VK_TRUE,UINT64_MAX));
-        REQUIRE(source_probe.frames[source_id&1u]!=source_probe.game_frames[source_id&1u]);
-        REQUIRE(source_probe.mem[source_id&1u]!=source_probe.game_mem[source_id&1u]);
+        const unsigned history_slot=(unsigned)(source_id&1u);
+        const unsigned app_slot=(unsigned)(source_id%source_probe.app_image_count);
+        REQUIRE(source_probe.frames[history_slot]!=source_probe.game_frames[app_slot]);
+        REQUIRE(source_probe.mem[history_slot]!=source_probe.game_mem[app_slot]);
+        REQUIRE(source_probe.game_ids[app_slot]==source_id);
+        REQUIRE(source_probe.ids[history_slot]==source_id);
         /* At this exact point the game source image may be reused.
          * The independent GSF history stays pinned until output consumes it. */
         ++game_images_released;
@@ -459,6 +465,8 @@ int main(void) {
     REQUIRE(owner.real_count==frame_count);
     REQUIRE(source_submissions==frame_count);
     REQUIRE(game_images_released==frame_count);
+    fprintf(stderr,"GSF virtual app source buffers=%u history_buffers=2 render_release_count=%u PASS\n",
+        source_probe.app_image_count,game_images_released);
     REQUIRE(owner.synthetic_count==source_probe.verified_synthetic);
     REQUIRE(output_calls==owner.real_count+owner.synthetic_count);
     REQUIRE(owner.error_count==0);
