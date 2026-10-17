@@ -138,7 +138,11 @@ export GFG_NATIVE_GPU_BRIDGE=1
 export GFG_NATIVE_GPU_SYNC=same-device
 export GFG_NATIVE_FORCE_FIFO=1
 export GFG_NATIVE_MODE="$MODE"
-export GFG_NATIVE_ASYNC=1
+# LSFG-VK style: for hardware qualification keep original and generated
+# real-swapchain acquire/present on the caller's serial presentation path.
+# The asynchronous output worker uses a second thread with additional WSI
+# lifetime requirements not required for first physical scanout.
+export GFG_NATIVE_ASYNC=0
 export GFG_NATIVE_REAL_WSI_PROBE=1
 export GFG_NATIVE_TRACE=1
 export GFG_NATIVE_ALGO=tiles
