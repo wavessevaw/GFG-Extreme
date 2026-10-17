@@ -1,5 +1,31 @@
 <!-- codex-fg3-coordination -->
 
+## User-authorized prerelease — internal.10, verification in progress
+
+The owner reports internal.9 launches successfully and explicitly requests a
+GitHub prerelease with checks. This is a launch report, not physical90 evidence.
+Source **65539beae067b06987162a626003a1bf79fbff1c** produces the internal.10
+archives. The GPU ELF is byte-identical to internal.9 (7ddc744f...); only launcher
+mode selection changed. Decky Off now wins over an inherited conflicting
+XDG_CONFIG_HOME; explicit MODE/MODE_FILE and standalone XDG settings still work.
+The previous ZIP fails that same extracted-package regression; internal.10 passes.
+
+Local evidence: 1410 backend tests (1 skip),48 native tests,123 browser screens,
+14 extracted-package checks. Included-source identity and checksum staging pass;
+a corrupted release ZIP is rejected. Full pipeline/HDR evidence from internal.9
+covers the unchanged GPU code. Fresh remote pipeline/HDR/archive checks are
+required by .github/workflows/gsf-prerelease.yml before publication.
+
+Tag reserved for publication: v2.1.5-gsf.10. Branch verification does not publish;
+a tag push runs the same verification before its separate contents:write job.
+No stable release/main merge or modification of the latest stable is authorized.
+Release notes: PRERELEASE_2_1_5_GSF_10.ru.md. Asset/evidence identities are in
+artifacts/SHA256SUMS.txt and evidence/prerelease-internal_10.json.
+Remaining cut, physical output, game GPU cost, HDR quality and latency/power
+limitations remain explicit. Do not claim publication until the release and
+its uploaded assets have actually been observed and verified.
+
+
 ## G1-before-G2 implemented — internal.9 experiment
 
 Source **7e8a9660a0c40e00275f87f0977c0758e6f3ebe3**; fast-forward published to both PR133 head and integration.

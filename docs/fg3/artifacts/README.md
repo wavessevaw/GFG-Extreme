@@ -1,3 +1,19 @@
+# 2.1.5-gsf.10 — prerelease candidate, GitHub checks in progress
+
+Use GFG-Extreme-2.1.5-gsf.10.zip for Decky or
+GFG-Native-FG-v0_0_0-fg3-internal_10.zip for the standalone native component.
+GPU ELF is identical to internal.9. This fixes Decky Off with conflicting
+inherited XDG_CONFIG_HOME. The owner reports internal.9 launches; no measured
+physical90 claim follows. See ../PRERELEASE_2_1_5_GSF_10.ru.md and
+../evidence/prerelease-internal_10.json. Verify SHA256SUMS.txt.
+
+The GitHub prerelease is published only after the dedicated remote checks pass;
+these committed ZIPs alone do not establish that publication has happened.
+
+---
+
+## Previous internal.9 experiment
+
 # 2.1.5-gsf.9 — latest experimental package, hardware NOT TESTED
 
 Source: 7e8a9660a0c40e00275f87f0977c0758e6f3ebe3, PR #133.

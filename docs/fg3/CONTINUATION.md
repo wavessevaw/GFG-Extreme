@@ -1,3 +1,20 @@
+# Latest request: publish checked Native GSF prerelease
+
+Owner reports internal.9 launch works and requests GitHub pre-release with checks.
+Internal.10 source65539be fixes inherited-XDG overriding Decky Off; same GPU ELF.
+Local1410 backend (1 skip)/48 native/123 UI/14 exact-ZIP checks pass. Old9 fails
+same XDG Off regression. Do not alter the already tested immutable .10 archives.
+Use scripts/prepare_gsf_prerelease.py to verify/stage them. Reserved new tag is
+v2.1.5-gsf.10; no main merge/stable/latest change. Remote branch verification
+runs before tag publication; the tag workflow gates publishing on repeat backend,
+UI,17 pipeline,6HDR and14 exact archive checks. Verify actual uploaded assets.
+API is Forbidden in the cloud; Git HTTPS push and public GitHub HTML work.
+Read remote run annotations via the public run/job pages, not invented CI results.
+Known physical90/cost/quality/cut acceptance remains open; owner launch report
+does not establish those metrics. COORDINATION.md records publication status.
+
+---
+
 # Active checkpoint: 2.1.5-gsf.9, launch recovery, HDR PQ and deferred G2
 
 The latest owner request is autonomous repair after every game exits, including
