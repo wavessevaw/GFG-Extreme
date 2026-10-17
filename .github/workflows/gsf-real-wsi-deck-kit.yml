@@ -85,7 +85,9 @@ jobs:
           GFG direct REAL swapchain experimental game test.
           Build source: PR #155, branch experiment/gsf-real-wsi-direct-owner-20261017.
           No stable release, no virtual WSI hooks. Source GPU bridge + TE compute + LMC.
-          Extract to /home/deck/gsf-real-wsi/.
+          Extract tar.gz to /home/deck/gsf-real-wsi/ preserving executable permissions:
+             mkdir -p /home/deck/gsf-real-wsi
+             tar -xzf gsf-real-wsi-game-kit.tar.gz -C /home/deck/gsf-real-wsi --strip-components=1
           Desktop: bash /home/deck/gsf-real-wsi/real-wsi-game-launch.sh --check
           Optional Deck Gaming Mode Non-Steam test shortcut /usr/bin/bash:
              "/home/deck/gsf-real-wsi/real-wsi-game-launch.sh" --smoke --mode=2
@@ -111,11 +113,14 @@ jobs:
             echo "GSF_DIRECT_REAL_WSI_3X_SOFTWARE=FAIL_UNVERIFIED" >> "$kit/CI_STATUS.txt"
           fi
           echo "OLED_SCANOUT=UNVERIFIED" >> "$kit/CI_STATUS.txt"
+          # GitHub's automatic artifact ZIP discards executable permissions.
+          # Wrap the kit in tar.gz so the Deck launcher and smoke ELF stay executable.
+          tar -czf "$RUNNER_TEMP/gsf-real-wsi-game-kit.tar.gz" -C "$RUNNER_TEMP" gsf-real-wsi-game-kit
       - name: Upload standalone full GFG real WSI game kit
         uses: actions/upload-artifact@v4
         with:
           name: gsf-direct-real-wsi-game-kit-${{ github.sha }}
-          path: ${{ runner.temp }}/gsf-real-wsi-game-kit/
+          path: ${{ runner.temp }}/gsf-real-wsi-game-kit.tar.gz
           if-no-files-found: error
           retention-days: 7
       - name: Qualify software result honestly
