@@ -66,6 +66,7 @@ jobs:
           log="$(mktemp)"
           GFG_OWNER_TEST_X11_SCANOUT=1 GFG_NATIVE_TEST_FRAMES=10 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke > "$log" 2>&1 || { cat "$log"; exit 1; }
           grep 'GSF X11 compositor visible ordered frames=19 real=10 intermediate=9 PASS' "$log"
+          grep 'GSF X11 visibility after WSI:' "$log"
           echo 'X11 display server pixel sequence (not physical OLED) PASS'
       - name: GPU snapshot WSI with 836ms loading gap, 27Hz source, 90Hz output and GPU drops
         run: |
