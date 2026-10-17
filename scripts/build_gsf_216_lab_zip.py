@@ -13,9 +13,9 @@ from pathlib import Path
 
 BASE = "GFG-Extreme/"
 NATIVE = "GFG-Native-FG/"
-VERSION = "2.1.6-gsf.lab3"
-NATIVE_VERSION = "0.0.0-fg3-internal.12"
-EXPECTED_SOURCE = "bc74a20f99e1ca5ba18a8870c81c56e8a79d6dda"
+VERSION = "2.1.6-gsf.lab4"
+NATIVE_VERSION = "0.0.0-fg3-internal.13"
+EXPECTED_SOURCE = "5c4a829dc7e1e91da507d87494689d3f20a02929"
 ROOT = Path(__file__).resolve().parents[1]
 
 
