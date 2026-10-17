@@ -61,6 +61,15 @@ jobs:
         run: |
           set -euo pipefail
           GFG_NATIVE_TEST_FRAMES=14 GFG_OWNER_TEST_APP_IMAGES=1 GFG_OWNER_TEST_OUTPUT_HZ=60 GFG_OWNER_TEST_SOURCE_HZ=30 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke
+      - name: Sustained virtual game WSI output 120 real frames with source reuse, pause and CPU/GPU synchronization
+        run: |
+          set -euo pipefail
+          log="$(mktemp)"
+          GFG_NATIVE_TEST_FRAMES=120 GFG_OWNER_TEST_APP_IMAGES=1 GFG_OWNER_TEST_SOURCE_HZ=30 GFG_OWNER_TEST_OUTPUT_HZ=60 GFG_OWNER_TEST_GAP_AT=61 GFG_OWNER_TEST_GPU_DROP_EVERY=7 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke > "$log" 2>&1
+          grep 'GSF virtual app source buffers=1 history_buffers=2 render_release_count=120 PASS' "$log"
+          grep 'GSF virtual PRESENT layouts old=119 new=120 downstream_present_layout_on_offscreen=0 PASS' "$log"
+          grep 'GSF GPU source snapshots copied and readback verified: real=120' "$log"
+          echo 'Sustained isolated GPU source -> WSI output PASS'
       - name: Vulkan validation for GPU-copy and real-only WSI transport
         run: |
           set -euo pipefail
