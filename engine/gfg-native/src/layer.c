@@ -17,6 +17,9 @@
 #include <vulkan/vulkan.h>
 #include <vulkan/vk_layer.h>
 #include "swapchain_chain.h"
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+#include "virtual_wsi_facade.h"
+#endif
 #ifdef GFG_NATIVE_WITH_TE
 #include "cpu_bridge.h"
 #include "gpu_bridge.h"
@@ -73,6 +76,9 @@ typedef struct native_swapchain {
     const char *path; /* "gpu", "cpu" or "none": which transport handled presents */
     double *present_us; /* GFG_NATIVE_TIMING=1: CPU time per app present */
     uint32_t present_samples;
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    gfg_virtual_wsi *virtual_app; /* only in isolated test builds */
+#endif
 } native_swapchain;
 
 typedef struct native_device {
@@ -1214,6 +1220,27 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
     return VK_SUCCESS;
 }
 
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+static gfg_virtual_wsi *native_test_find_virtual(native_device *d,VkSwapchainKHR h) {
+    if(!d)return NULL;
+    gfg_virtual_wsi *found=NULL;
+    pthread_mutex_lock(&d->lock);
+    for(native_swapchain *sc=d->swapchains;sc;sc=sc->next) {
+        if(sc->handle==h && sc->virtual_app) {found=sc->virtual_app;break;}
+    }
+    pthread_mutex_unlock(&d->lock);
+    return found;
+}
+static VKAPI_ATTR VkResult VKAPI_CALL
+native_GetSwapchainImagesKHR(VkDevice device,VkSwapchainKHR h,
+                            uint32_t *count,VkImage *images) {
+    native_device *d=find_device(dispatch_key(device));
+    if(!d||!d->get_images)return VK_ERROR_INITIALIZATION_FAILED;
+    gfg_virtual_wsi *v=native_test_find_virtual(d,h);
+    return v?gfg_vwsi_get_images(v,h,count,images):
+             d->get_images(device,h,count,images);
+}
+#endif
 static VKAPI_ATTR void VKAPI_CALL
 native_DestroySwapchainKHR(VkDevice device, VkSwapchainKHR sc,
     const VkAllocationCallbacks *alloc) {
@@ -1307,6 +1334,10 @@ native_AcquireNextImageKHR(VkDevice device, VkSwapchainKHR swapchain,
         uint64_t timeout, VkSemaphore semaphore, VkFence fence, uint32_t *index) {
     native_device *d = find_device(dispatch_key(device));
     if (!d || !d->acquire) return VK_ERROR_INITIALIZATION_FAILED;
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    gfg_virtual_wsi *v=native_test_find_virtual(d,swapchain);
+    if(v)return gfg_vwsi_acquire(v,swapchain,timeout,semaphore,fence,index);
+#endif
     VkResult result;
 #ifdef GFG_NATIVE_WITH_TE
     gfg_output *output = native_find_output(d,swapchain);
@@ -1330,6 +1361,10 @@ native_AcquireNextImage2KHR(VkDevice device, const VkAcquireNextImageInfoKHR *in
         uint32_t *index) {
     native_device *d = find_device(dispatch_key(device));
     if (!d || !d->acquire2) return VK_ERROR_INITIALIZATION_FAILED;
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    gfg_virtual_wsi *v=info?native_test_find_virtual(d,info->swapchain):NULL;
+    if(v)return gfg_vwsi_acquire2(v,info,index);
+#endif
     VkResult result;
 #ifdef GFG_NATIVE_WITH_TE
     gfg_output *output = info ? native_find_output(d,info->swapchain) : NULL;
@@ -1643,6 +1678,9 @@ native_gdpa(VkDevice device, const char *symbol) {
     if (d->get_queue2) HOOK(GetDeviceQueue2);
     if (d->create_swapchain) HOOK(CreateSwapchainKHR);
     if (d->destroy_swapchain) HOOK(DestroySwapchainKHR);
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    if(d->get_images) HOOK(GetSwapchainImagesKHR);
+#endif
     if (d->present) HOOK(QueuePresentKHR);
     if (d->acquire) HOOK(AcquireNextImageKHR);
     if (d->acquire2) HOOK(AcquireNextImage2KHR);
@@ -1702,6 +1740,10 @@ native_gipa(VkInstance instance, const char *symbol) {
         return (PFN_vkVoidFunction)native_CreateSwapchainKHR;
     if (!strcmp(symbol, "vkDestroySwapchainKHR"))
         return (PFN_vkVoidFunction)native_DestroySwapchainKHR;
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    if (!strcmp(symbol, "vkGetSwapchainImagesKHR"))
+        return (PFN_vkVoidFunction)native_GetSwapchainImagesKHR;
+#endif
     if (!strcmp(symbol, "vkQueuePresentKHR"))
         return (PFN_vkVoidFunction)native_QueuePresentKHR;
     if (!strcmp(symbol, "vkAcquireNextImageKHR"))
