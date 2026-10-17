@@ -16,6 +16,7 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <string.h>
+#include <time.h>
 #include "virtual_wsi_facade.h"
 
 typedef void (*gfg_async_copy_record)(void *user,VkCommandBuffer cmd,uint64_t ticket);
@@ -39,6 +40,7 @@ typedef struct {
     uint32_t pending[GFG_VIRTUAL_MAX_IMAGES],head,tail,queued;
     uint64_t submitted,retired,worker_gpu_waits,submit_failures;
     uint64_t app_gpu_waits; /* contractual invariant: always zero */
+    uint32_t test_delayed_retire_ms; /* fault injection, not normal pacing */
     VkResult failure;
     pthread_mutex_t lock;
     pthread_cond_t changed;
@@ -62,6 +64,13 @@ static inline void *gfg_async_capture_worker(void *opaque) {
         pthread_mutex_unlock(&a->lock);
         /* Only the retirement worker blocks on GPU completion. */
         VkResult result=vkWaitForFences(a->device,1,&fence,VK_TRUE,UINT64_MAX);
+        if(result==VK_SUCCESS && a->test_delayed_retire_ms) {
+            const struct timespec delay={
+                .tv_sec=(time_t)(a->test_delayed_retire_ms/1000u),
+                .tv_nsec=(long)(a->test_delayed_retire_ms%1000u)*1000000L
+            };
+            nanosleep(&delay,NULL);
+        }
         if(result==VK_SUCCESS)
             result=gfg_vwsi_retire(a->virtual_app,idx,ticket,1);
         pthread_mutex_lock(&a->lock);
