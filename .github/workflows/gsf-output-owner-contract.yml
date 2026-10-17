@@ -329,6 +329,45 @@ jobs:
             exit 1
           fi
           echo 'Owned-output Vulkan validation CLEAN'
+      - name: Verify safe SteamOS launcher and package isolated hardware qualification kit
+        run: |
+          set -euo pipefail
+          bash -n engine/gfg-native/scripts/deck-output-test.sh
+          kit="$RUNNER_TEMP/gsf-output-deck-kit"
+          mkdir -p "$kit"
+          install -m 644 engine/gfg-native/build/loader-probe/libVkLayer_gfg_native.so "$kit/libVkLayer_gfg_native.so"
+          install -m 644 engine/gfg-native/build/loader-probe/VkLayer_gfg_native.json "$kit/VkLayer_gfg_native.json"
+          install -m 755 engine/gfg-native/build/loader-live-output "$kit/loader-live-output"
+          install -m 644 engine/gfg-native/scripts/deck-output-test.sh "$kit/deck-output-test.sh"
+          install -m 644 engine/gfg-native/docs/GSF_DECK_QUALIFICATION.md "$kit/GSF_DECK_QUALIFICATION.md"
+          {
+            echo "repository=wavessevaw/GFG-Extreme"
+            echo "head_sha=$GITHUB_SHA"
+            echo "qualification=HARDWARE_UNVERIFIED"
+            echo "test_layer=GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS"
+            echo "ci_platform=ubuntu-22.04_x86_64"
+            echo "intermediate=GPU_AB_SPLIT_NOT_LMC"
+            echo "no_system_install=true"
+          } > "$kit/BUILD_INFO.txt"
+          (
+            cd "$kit"
+            sha256sum libVkLayer_gfg_native.so VkLayer_gfg_native.json loader-live-output deck-output-test.sh GSF_DECK_QUALIFICATION.md BUILD_INFO.txt > SHA256SUMS
+          )
+          bash "$kit/deck-output-test.sh" --check
+          if bash "$kit/deck-output-test.sh" > /tmp/gsf-deck-kit-requires-explicit-opt-in.log 2>&1; then
+            echo "Safety gate FAIL: Deck launcher accepted an unspecified --run"
+            exit 1
+          fi
+          grep 'Pass --check or --run explicitly' /tmp/gsf-deck-kit-requires-explicit-opt-in.log
+          echo 'Isolated opt-in Deck test kit prepared. No actual Deck GPU/OLED hardware was tested.'
+      - name: Upload opt-in SteamOS qualification kit (NOT a release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: gsf-output-deck-test-kit-${{ github.sha }}
+          path: ${{ runner.temp }}/gsf-output-deck-kit/
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Report qualification boundary
         run: |
           echo 'Transport-neutral scheduler validated.'
