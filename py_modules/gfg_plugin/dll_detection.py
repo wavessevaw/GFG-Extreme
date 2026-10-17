@@ -127,6 +127,55 @@ class DllDetectionService(BaseService):
         finally:
             self._model_lock.release()
 
+    def check_lsfg_vk_dll(self) -> DllDetectionResponse:
+        """Locate the user's original LSFG-VK 2.x resource, without copying it.
+
+        LSFG-VK 2.x uses lsfg-vk.dll, not the older Lossless.dll name.
+        This is file discovery ONLY, not a model compatibility/rights check.
+        """
+        configured = os.getenv("GFG_LSFG_DLL_PATH", "").strip()
+        candidates: list[tuple[Path, str]] = []
+        if configured:
+            selected = Path(configured).expanduser()
+            if selected.name.lower() in ("lossless.dll", "losslessscaling.dll"):
+                selected = selected.with_name("lsfg-vk.dll")
+            candidates.append((selected, "GFG_LSFG_DLL_PATH"))
+        else:
+            original = self.check_lossless_scaling_dll()
+            if original.get("path"):
+                candidates.append((Path(original["path"]).with_name("lsfg-vk.dll"),
+                                   "Lossless Scaling installation"))
+            roots = [
+                self.user_home / ".local/share/Steam",
+                self.user_home / ".steam/steam",
+                self.user_home / ".steam/debian-installation",
+                self.user_home / ".var/app/com.valvesoftware.Steam/.local/share/Steam",
+            ]
+            data_dir = os.getenv(ENV_XDG_DATA_HOME, "").strip()
+            if data_dir:
+                roots.append(Path(data_dir) / "Steam")
+            roots.extend(Path(p) for p in self._get_steam_library_paths())
+            for root in roots:
+                candidates.append((root / STEAM_COMMON_PATH / "lsfg-vk.dll",
+                                   "Steam library"))
+        seen: set[str] = set()
+        for candidate, source in candidates:
+            name = str(candidate)
+            if name in seen:
+                continue
+            seen.add(name)
+            try:
+                if candidate.is_file() and candidate.stat().st_size > 0:
+                    return {"detected": True, "path": name, "source": source,
+                            "message": None, "error": None}
+            except OSError:
+                continue
+        return {
+            "detected": False, "path": None, "source": None,
+            "message": "Missing lsfg-vk.dll: an older Lossless.dll alone "
+                       "is not a 2.x LSFG resource", "error": None,
+        }
+
     def check_lossless_scaling_dll(self) -> DllDetectionResponse:
         """Check if Lossless Scaling DLL is available at the expected paths
 
