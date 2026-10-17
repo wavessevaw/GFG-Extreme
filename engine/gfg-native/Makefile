@@ -42,6 +42,16 @@ offscreen-source-pool: $(BUILD)/offscreen-source-pool
 	$(BUILD)/offscreen-source-pool
 .PHONY: offscreen-source-pool
 
+# Exercise the actual test-only native vkCreateSwapchainKHR entrypoint, which
+# allocates offscreen GPU source images and one private downstream WSI.
+$(BUILD)/output-proxy-layer-create: tests/output_proxy_layer_create.c src/layer.c src/output_proxy_bootstrap.h src/offscreen_source_pool.h src/virtual_wsi_facade.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Wno-unused-function -pthread -I$(VULKAN_HEADERS) -o $@ tests/output_proxy_layer_create.c
+
+output-proxy-layer-create: $(BUILD)/output-proxy-layer-create
+	$(BUILD)/output-proxy-layer-create
+.PHONY: output-proxy-layer-create
+
 # Convert game swapchain PRESENT layout requests without touching the
 # true compositor swapchain, including Vulkan sync2 and renderpasses.
 $(BUILD)/virtual-layouts: tests/virtual_layouts.c src/virtual_layouts.h
