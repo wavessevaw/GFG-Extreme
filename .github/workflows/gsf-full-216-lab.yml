@@ -33,7 +33,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: wavessevaw/GFG-Extreme
-          ref: 5c4a829dc7e1e91da507d87494689d3f20a02929
+          ref: 070ece29ab9bf936c39fc63dc0c6fb2902456af1
           path: upstream-gsf
           persist-credentials: false
 
@@ -57,7 +57,7 @@ jobs:
           with zipfile.ZipFile(path) as z:
               assert z.testzip() is None
               m=json.loads(z.read('GFG-Native-FG/MANIFEST.json'))
-              assert m['source_commit']=='5c4a829dc7e1e91da507d87494689d3f20a02929'
+              assert m['source_commit']=='070ece29ab9bf936c39fc63dc0c6fb2902456af1'
               assert m['source_worktree_dirty'] is False
               assert m['hardware_acceptance'] is False
           PY
