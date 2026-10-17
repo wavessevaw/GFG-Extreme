@@ -12,16 +12,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../src/virtual_layouts.h"
+#include "../src/offscreen_source_pool.h"
 
 typedef struct {
     VkDevice d;
     VkExtent2D size;
     VkImage frames[2]; /* independent GSF history snapshots */
     VkDeviceMemory mem[2];
-    VkImage game_frames[2]; /* virtual game-acquired render targets */
-    VkDeviceMemory game_mem[2];
+    VkImage game_frames[GFG_OFFSCREEN_MAX_IMAGES]; /* virtual game render targets */
+    VkDeviceMemory game_mem[GFG_OFFSCREEN_MAX_IMAGES];
+    int external_game_images; /* owned by output proxy, never double-freed */
     unsigned app_image_count; /* 1 or 2: independent of GSF history count */
-    uint64_t ids[2], game_ids[2];
+    uint64_t ids[2], game_ids[GFG_OFFSCREEN_MAX_IMAGES];
     VkBuffer readback;
     VkDeviceMemory readback_mem;
     uint8_t *mapped;
@@ -89,9 +91,32 @@ static void gfg_source_probe_destroy(gfg_source_probe *p) {
     for(unsigned i=0;i<2;i++) {
         if(p->frames[i])vkDestroyImage(p->d,p->frames[i],NULL);
         if(p->mem[i])vkFreeMemory(p->d,p->mem[i],NULL);
+    }
+    if(!p->external_game_images)for(unsigned i=0;i<GFG_OFFSCREEN_MAX_IMAGES;i++) {
         if(p->game_frames[i])vkDestroyImage(p->d,p->game_frames[i],NULL);
         if(p->game_mem[i])vkFreeMemory(p->d,p->game_mem[i],NULL);
     }
+}
+/* The real Vulkan-backed proxy now owns the app frames, replacing only
+ * the test-created app targets. History and readback remain independent. */
+static int gfg_source_probe_adopt_app_pool(gfg_source_probe *p,
+                                     const gfg_offscreen_source_pool *pool) {
+    if(!p || !pool || !pool->count ||
+       pool->count>GFG_OFFSCREEN_MAX_IMAGES || p->external_game_images ||
+       p->verified_real || p->verified_synthetic)return 0;
+    for(unsigned i=0;i<2;i++) {
+        if(p->game_frames[i])vkDestroyImage(p->d,p->game_frames[i],NULL);
+        if(p->game_mem[i])vkFreeMemory(p->d,p->game_mem[i],NULL);
+    }
+    memset(p->game_frames,0,sizeof(p->game_frames));
+    memset(p->game_mem,0,sizeof(p->game_mem));
+    for(unsigned i=0;i<pool->count;++i) {
+        p->game_frames[i]=pool->images[i];
+        p->game_mem[i]=pool->memory[i];
+    }
+    p->app_image_count=pool->count;
+    p->external_game_images=1;
+    return 1;
 }
 static VkImageMemoryBarrier gfg_src_barrier(VkImage img,VkImageLayout from,
                  VkImageLayout to,VkAccessFlags before,VkAccessFlags after) {

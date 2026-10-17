@@ -19,6 +19,9 @@
 #include "swapchain_chain.h"
 #ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
 #include "virtual_wsi_facade.h"
+#include "output_proxy_bootstrap.h"
+#include "test_loader_output_runtime.h"
+#include "test_gamescope_swapchain_policy.h"
 #include "virtual_layouts.h"
 #endif
 #ifdef GFG_NATIVE_WITH_TE
@@ -79,6 +82,10 @@ typedef struct native_swapchain {
     uint32_t present_samples;
 #ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
     gfg_virtual_wsi *virtual_app; /* only in isolated test builds */
+    gfg_output_proxy *test_proxy; /* heap-owned app proxy in TEST builds */
+    gfg_offscreen_dispatch test_proxy_ops;
+    PFN_vkDestroySwapchainKHR test_proxy_destroy;
+    gfg_test_loader_runtime *test_runtime;
 #endif
 } native_swapchain;
 
@@ -96,6 +103,12 @@ typedef struct native_device {
     PFN_vkQueuePresentKHR present;
     PFN_vkGetSwapchainImagesKHR get_images;
 #ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    gfg_offscreen_dispatch test_proxy_ops;
+    gfg_vwsi_acquire_signal test_proxy_signal;
+    gfg_vwsi_copy_submit test_proxy_copy;
+    void *test_proxy_user;
+    VkQueue test_loader_queue;
+    uint32_t test_loader_family;
     PFN_vkCmdPipelineBarrier cmd_barrier;
     PFN_vkCmdPipelineBarrier2 cmd_barrier2;
     PFN_vkCmdPipelineBarrier2KHR cmd_barrier2_khr;
@@ -449,6 +462,20 @@ static VkResult native_create_device_with_fallback(PFN_vkCreateDevice next,
     return result;
 }
 
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+/* Loader-driven create-only probe. Acquire/Present MUST NOT succeed in
+ * this mode; it validates real app -> loader -> layer -> Vulkan GPU
+ * resource allocation, not video output or game compatibility. */
+static VkResult native_probe_no_acquire(void *user, VkSemaphore sem,VkFence fence) {
+    (void)user;(void)sem;(void)fence;return VK_ERROR_FEATURE_NOT_PRESENT;
+}
+static VkResult native_probe_no_capture(void *user,uint32_t idx,uint64_t token,
+        uint32_t waits,const VkSemaphore *sems) {
+    (void)user;(void)idx;(void)token;(void)waits;(void)sems;
+    return VK_ERROR_FEATURE_NOT_PRESENT;
+}
+#endif
+
 static VKAPI_ATTR VkResult VKAPI_CALL
 native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     const VkAllocationCallbacks *alloc, VkDevice *out) {
@@ -530,6 +557,39 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     d->get_images = (PFN_vkGetSwapchainImagesKHR)
         gdpa(*out, "vkGetSwapchainImagesKHR");
 #ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    if(native_env_is_1("GFG_NATIVE_TEST_LOADER_CREATE_PROBE") ||
+       native_env_is_1("GFG_NATIVE_TEST_LOADER_LIVE_OUTPUT")) {
+        /* Acquire only the DOWNSTREAM functions for the exact device and
+         * instance chains. Never query a borrowed physical device through
+         * the loader-global vkGetPhysicalDeviceMemoryProperties symbol. */
+        d->test_proxy_ops=(gfg_offscreen_dispatch){
+            .create_image=(PFN_vkCreateImage)gdpa(*out,"vkCreateImage"),
+            .destroy_image=(PFN_vkDestroyImage)gdpa(*out,"vkDestroyImage"),
+            .get_image_requirements=(PFN_vkGetImageMemoryRequirements)
+                gdpa(*out,"vkGetImageMemoryRequirements"),
+            /* Resolved below from the instance's exact next-layer GIPA. */
+            .get_memory_properties=NULL,
+            .allocate_memory=(PFN_vkAllocateMemory)gdpa(*out,"vkAllocateMemory"),
+            .free_memory=(PFN_vkFreeMemory)gdpa(*out,"vkFreeMemory"),
+            .bind_image_memory=(PFN_vkBindImageMemory)gdpa(*out,"vkBindImageMemory")
+        };
+        if(native_env_is_1("GFG_NATIVE_TEST_LOADER_LIVE_OUTPUT")) {
+            d->test_proxy_signal=gfg_test_live_acquire;
+            d->test_proxy_copy=gfg_test_live_capture;
+            if(ci && ci->queueCreateInfoCount && ci->pQueueCreateInfos &&
+               ci->pQueueCreateInfos[0].queueCount) {
+                d->test_loader_family=ci->pQueueCreateInfos[0].queueFamilyIndex;
+                if(d->get_queue)
+                    d->get_queue(d->handle,d->test_loader_family,0,
+                                 &d->test_loader_queue);
+            }
+        } else {
+            d->test_proxy_signal=native_probe_no_acquire;
+            d->test_proxy_copy=native_probe_no_capture;
+        }
+    }
+#endif
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
     d->cmd_barrier = (PFN_vkCmdPipelineBarrier)gdpa(*out, "vkCmdPipelineBarrier");
     d->cmd_barrier2 = (PFN_vkCmdPipelineBarrier2)gdpa(*out, "vkCmdPipelineBarrier2");
     d->cmd_barrier2_khr = (PFN_vkCmdPipelineBarrier2KHR)gdpa(*out, "vkCmdPipelineBarrier2KHR");
@@ -558,6 +618,14 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
         if (i->key == dispatch_key(phys)) {
             d->instance = i; break;
         }
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    if((native_env_is_1("GFG_NATIVE_TEST_LOADER_CREATE_PROBE") ||
+        native_env_is_1("GFG_NATIVE_TEST_LOADER_LIVE_OUTPUT")) && d->instance)
+        d->test_proxy_ops.get_memory_properties =
+            (PFN_vkGetPhysicalDeviceMemoryProperties)
+            d->instance->gipa(d->instance->handle,
+                              "vkGetPhysicalDeviceMemoryProperties");
+#endif
     d->next = devices;
     devices = d;
     pthread_mutex_unlock(&map_lock);
@@ -900,6 +968,19 @@ static int native_cmp_double(const void *a, const void *b) {
     return x < y ? -1 : x > y;
 }
 static void native_swapchain_free(native_swapchain *sc) {
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    if (sc->test_runtime) {
+        gfg_test_live_destroy(sc->test_runtime);
+        free(sc->test_runtime);
+        sc->test_runtime=NULL;
+    }
+    if (sc->test_proxy) {
+        gfg_output_proxy_destroy(sc->test_proxy,sc->test_proxy_destroy,
+                                 &sc->test_proxy_ops);
+        free(sc->test_proxy);
+        sc->test_proxy=NULL;
+    }
+#endif
     if (sc->present_us && sc->present_samples > 2) {
         /* the first two presents carry one-time bridge creation; excluded */
         const uint32_t n = sc->present_samples - 2;
@@ -1091,6 +1172,134 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
     native_device *d = find_device(dispatch_key(device));
     if (!d || !d->create_swapchain || !ci || !out)
         return VK_ERROR_INITIALIZATION_FAILED;
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    /* The app asks us to create its source WSI, and ONLY the internally
+     * owned output is sent to downstream Vulkan. This entire branch is
+     * absent from normal GFG builds: its callbacks currently exist only
+     * in an isolated test harness, not a real game/Deck pipeline. */
+    if (native_env_is_1("GFG_NATIVE_TEST_PROXY_CREATE")) {
+        if (ci->oldSwapchain) {
+            int old_is_virtual=0;
+            pthread_mutex_lock(&d->lock);
+            for(native_swapchain *scan=d->swapchains;scan;scan=scan->next)
+                if(scan->handle==ci->oldSwapchain && scan->test_proxy)
+                    old_is_virtual=1;
+            pthread_mutex_unlock(&d->lock);
+            /* NEVER leak virtual handle to downstream oldSwapchain WSI. */
+            if(old_is_virtual)return VK_ERROR_OUT_OF_DATE_KHR;
+        }
+        /* CRITICAL: Gamescope may inject swapchain pNext metadata that
+         * this experimental virtual WSI does not yet implement. Never
+         * silently fall through to ordinary real WSI and falsely report
+         * inserted frames when the user explicitly requests live output. */
+        const int owner_live=native_env_is_1("GFG_NATIVE_TEST_LOADER_LIVE_OUTPUT");
+        /* In SteamOS Gaming Mode a higher-priority Gamescope WSI layer
+         * can convert the synthetic app's FIFO create to MAILBOX before
+         * our test layer sees it. The offscreen source requires ordered
+         * FIFO ownership, so ONLY in explicit test-only Gaming mode
+         * request FIFO again from the downstream output swapchain.
+         * This does not prove Gamescope's physical present ordering. */
+        VkSwapchainCreateInfoKHR owned_ci=*ci,real_ci=*ci;
+        const char *pair_reason=NULL;
+        const int gamescope_mailbox_adapt=gfg_test_gamescope_prepare_pair(
+            ci,owner_live,native_env_is_1("GFG_NATIVE_TEST_GAME_MODE"),
+            &owned_ci,&real_ci,&pair_reason);
+        if(gamescope_mailbox_adapt==1) {
+            fprintf(stderr,
+                "GSF_GAMESCOPE_WSI_PAIR virtual_mode=%d real_mode=%d"
+                " real_pnext_type=%d preserved=1 test_only=1 oled_scanout=UNVERIFIED\n",
+                (int)owned_ci.presentMode,(int)real_ci.presentMode,
+                real_ci.pNext?
+                  (int)((const VkBaseInStructure *)real_ci.pNext)->sType:-1);
+        }
+        const VkSwapchainCreateInfoKHR *virtual_ci=
+            gamescope_mailbox_adapt==1?&owned_ci:ci;
+        const char *unsupported=gfg_offscreen_unsupported(virtual_ci);
+        if(gamescope_mailbox_adapt<0)
+            unsupported=pair_reason?pair_reason:"invalid-gamescope-swapchain-chain";
+        const int have_callbacks=d->test_proxy_signal && d->test_proxy_copy;
+        const int have_dispatch=gfg_offscreen_dispatch_complete(&d->test_proxy_ops);
+        if(owner_live &&
+           (unsupported || !have_callbacks || !have_dispatch ||
+            native_env_is_1("GFG_NATIVE_TEST_FORCE_PROXY_REJECT"))) {
+            const VkBaseInStructure *next=(const VkBaseInStructure *)ci->pNext;
+            fprintf(stderr,
+                "GSF_LOADER_OWNER_REJECT reason=%s callbacks=%d dispatch=%d"
+                " pnext_type=%d flags=0x%x format=%d colorspace=%d"
+                " image_usage=0x%x present_mode=%d min_images=%u"
+                " fail_closed=1 real_wsi_fallback=0\n",
+                unsupported?unsupported:
+                (!have_callbacks?"missing-acquire-copy-callback":
+                 (!have_dispatch?"missing-gpu-dispatch":"injected-regression")),
+                have_callbacks,have_dispatch,next?(int)next->sType:-1,
+                (unsigned)ci->flags,(int)ci->imageFormat,
+                (int)ci->imageColorSpace,(unsigned)ci->imageUsage,
+                (int)ci->presentMode,ci->minImageCount);
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+        if (have_callbacks && have_dispatch && !unsupported) {
+            gfg_output_proxy *proxy=calloc(1,sizeof(*proxy));
+            native_swapchain *entry=calloc(1,sizeof(*entry));
+            const int live=native_env_is_1("GFG_NATIVE_TEST_LOADER_LIVE_OUTPUT");
+            gfg_test_loader_runtime *runtime=live?calloc(1,sizeof(*runtime)):NULL;
+            if(proxy && entry && (!live || (runtime && d->test_loader_queue))) {
+                d->test_proxy_user=live?(void*)runtime:d->test_proxy_user;
+                VkResult vr=gfg_output_proxy_create_ex(proxy,device,d->physical,
+                            virtual_ci,&real_ci,
+                            d->create_swapchain,d->destroy_swapchain,
+                            &d->test_proxy_ops,d->test_proxy_user,
+                            d->test_proxy_signal,d->test_proxy_copy);
+                if(vr==VK_SUCCESS && live)
+                    vr=gfg_test_live_init(runtime,device,d->test_loader_queue,
+                            d->test_loader_family,proxy,d->test_proxy_ops,virtual_ci);
+                if(vr!=VK_SUCCESS && live)
+                    fprintf(stderr,"GSF_LOADER_LIVE_FAILURE runtime_init=%d queue=%p GPU_source_count=%u output_present=%d\\n",
+                            (int)vr,(void*)d->test_loader_queue,proxy->source.count,
+                            proxy->output!=VK_NULL_HANDLE);
+                if(vr==VK_SUCCESS) {
+                    entry->test_runtime=runtime;
+                    entry->handle=gfg_output_proxy_app_handle(proxy);
+                    entry->virtual_app=&proxy->app;
+                    entry->test_proxy=proxy;
+                    entry->test_proxy_ops=d->test_proxy_ops;
+                    entry->test_proxy_destroy=d->destroy_swapchain;
+                    entry->format=virtual_ci->imageFormat;
+                    entry->color_space=virtual_ci->imageColorSpace;
+                    entry->extent=virtual_ci->imageExtent;
+#ifdef GFG_NATIVE_WITH_TE
+                    if(pthread_mutex_init(&entry->output_wsi,NULL))abort();
+#endif
+                    pthread_mutex_lock(&d->lock);
+                    entry->next=d->swapchains;d->swapchains=entry;
+                    pthread_mutex_unlock(&d->lock);
+                    *out=entry->handle;
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+                    if(native_env_is_1("GFG_NATIVE_TEST_LOADER_CREATE_PROBE"))
+                        fprintf(stderr,"GSF_LOADER_CREATE_PROBE virtual_image_count=%u one_real_output_wsi=1 GPU_memory_allocated=1 PASS\n",
+                                proxy->source.count);
+                    if(live)
+                        fprintf(stderr,"GSF_LOADER_LIVE_INIT virtual_images=%u one_real_output=1 GPU_worker=1\n",
+                                proxy->source.count);
+#endif
+                    return VK_SUCCESS;
+                }
+            }
+            if(live && (!runtime || !d->test_loader_queue))
+                fprintf(stderr,"GSF_LOADER_LIVE_FAILURE missing_queue_or_memory queue=%p runtime=%p\\n",
+                        (void*)d->test_loader_queue,(void*)runtime);
+            if(runtime) {
+                gfg_test_live_destroy(runtime);
+                free(runtime);
+                d->test_proxy_user=NULL;
+            }
+            if(proxy)gfg_output_proxy_destroy(proxy,d->destroy_swapchain,
+                                              &d->test_proxy_ops);
+            free(entry);free(proxy);
+            if(live)return VK_ERROR_INITIALIZATION_FAILED;
+            /* The ordinary unsupported path forwards the original WSI. */
+        }
+    }
+#endif
 #ifdef GFG_NATIVE_WITH_TE
     /* A successful create retires oldSwapchain immediately. Finish its jobs
      * before it becomes illegal to acquire the pending generated images. */
@@ -1175,6 +1384,11 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
         result = d->create_swapchain(device, ci, alloc, out);
     }
     if (result != VK_SUCCESS) return result;
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    if(native_env_is_1("GFG_NATIVE_TEST_LOADER_CREATE_PROBE"))
+        fprintf(stderr,"GSF_LOADER_CREATE_PROBE passthrough_real_wsi=1 reason=%s\n",
+                reason?reason:"not-eligible");
+#endif
     native_swapchain *sc = calloc(1, sizeof(*sc));
     if (!sc) {
         // The swapchain is valid, but native recording is unavailable.
@@ -1340,7 +1554,19 @@ native_DestroySwapchainKHR(VkDevice device, VkSwapchainKHR sc,
      * The controlled test harness owns actual image allocation/teardown. */
     gfg_virtual_wsi *virtual_app=native_test_find_virtual(d,sc);
     if(virtual_app) {
-        gfg_vwsi_close(virtual_app);
+        native_swapchain *owned=NULL;
+        pthread_mutex_lock(&d->lock);
+        for(native_swapchain **p=&d->swapchains;*p;p=&(*p)->next) {
+            if((*p)->handle==sc && (*p)->test_proxy) {
+                owned=*p;*p=owned->next;break;
+            }
+        }
+        pthread_mutex_unlock(&d->lock);
+        if(owned) {
+            /* Test harness guarantees that no API calls or GPU commands
+             * remain in flight when destroying this source. */
+            native_swapchain_free(owned);
+        } else gfg_vwsi_close(virtual_app);
         return;
     }
 #endif
