@@ -535,6 +535,12 @@ int main(void) {
     REQUIRE(owner.real_count==frame_count);
     REQUIRE(source_submissions==frame_count);
     REQUIRE(game_images_released==frame_count);
+    REQUIRE(source_probe.virtual_present_new_rewrites==frame_count);
+    REQUIRE(source_probe.virtual_present_old_rewrites==
+        frame_count-source_probe.app_image_count);
+    fprintf(stderr,"GSF virtual PRESENT layouts old=%llu new=%llu downstream_present_layout_on_offscreen=0 PASS\n",
+        (unsigned long long)source_probe.virtual_present_old_rewrites,
+        (unsigned long long)source_probe.virtual_present_new_rewrites);
     REQUIRE(virtual_wsi.source.acquired==frame_count);
     REQUIRE(virtual_wsi.source.retired==frame_count);
     REQUIRE(virtual_wsi.accepts==frame_count);
