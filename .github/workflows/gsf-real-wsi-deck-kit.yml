@@ -1,0 +1,101 @@
+name: GSF Direct Real WSI Deck Kit (experimental)
+on:
+  push:
+    branches:
+      - experiment/gsf-real-wsi-direct-owner-20261017
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-real-wsi-kit:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native Vulkan shader build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libvulkan-dev libxcb1-dev mesa-vulkan-drivers glslang-tools spirv-tools xvfb
+      - name: Fetch matching Vulkan-Headers for the GFG layer
+        run: git clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
+      - name: Build actual GFG Temporal Engine (including LMC shaders)
+        run: |
+          make -C engine/gfg-temporal lib
+          test -s engine/gfg-temporal/build/libgfg-temporal.a
+      - name: Build FULL real game GPU bridge (not virtual owner test layer)
+        run: |
+          set -euo pipefail
+          make -C engine/gfg-native ENABLE_TE=1 BUILD=build-real-wsi VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" \
+            layer build-real-wsi/wsi-gpu-smoke
+          test -s engine/gfg-native/build-real-wsi/libVkLayer_gfg_native.so
+          test -s engine/gfg-native/build-real-wsi/wsi-gpu-smoke
+          readelf -h engine/gfg-native/build-real-wsi/libVkLayer_gfg_native.so | grep -q 'DYN (Shared object file)'
+      - name: Real WSI GPU bridge software integration (lavapipe + Xvfb, NOT Steam Deck)
+        id: integration
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_FORCE_FIFO=1 \
+            GFG_NATIVE_ASYNC=1 GFG_NATIVE_MODE=2 GFG_NATIVE_REAL_WSI_PROBE=1 \
+            GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_FRAMES=24 \
+            VK_INSTANCE_LAYERS=VK_LAYER_GFG_native \
+            VK_LAYER_PATH="$PWD/engine/gfg-native/build-real-wsi:/usr/share/vulkan/explicit_layer.d" \
+            VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
+            xvfb-run -a -s '-screen 0 1280x800x24' \
+              engine/gfg-native/build-real-wsi/wsi-gpu-smoke > /tmp/real-wsi-integration.log 2>&1 || {
+                cat /tmp/real-wsi-integration.log
+                exit 1
+              }
+          grep 'GSF_REAL_WSI_GATE gpu_requested=1 gpu_capable=1' /tmp/real-wsi-integration.log
+          grep 'GSF_REAL_WSI_GPU_BRIDGE_CREATE active=1' /tmp/real-wsi-integration.log
+          grep 'real WSI' /tmp/real-wsi-integration.log
+      - name: Package child-process-only Deck launcher and actual GPU bridge
+        run: |
+          set -euo pipefail
+          kit="$RUNNER_TEMP/gsf-real-wsi-game-kit"
+          mkdir -p "$kit"
+          install -m 755 engine/gfg-native/scripts/real-wsi-game-launch.sh "$kit/real-wsi-game-launch.sh"
+          install -m 644 engine/gfg-native/build-real-wsi/libVkLayer_gfg_native.so "$kit/libVkLayer_gfg_native.so"
+          install -m 644 engine/gfg-native/build-real-wsi/VkLayer_gfg_native.json "$kit/VkLayer_gfg_native.json"
+          install -m 755 engine/gfg-native/build-real-wsi/wsi-gpu-smoke "$kit/wsi-gpu-smoke"
+          cat > "$kit/README.txt" <<'README'
+          GFG direct REAL swapchain experimental game test.
+          Build source: PR #155, branch experiment/gsf-real-wsi-direct-owner-20261017.
+          No stable release, no virtual WSI hooks. Source GPU bridge + TE compute + LMC.
+          Extract to /home/deck/gsf-real-wsi/.
+          Desktop: bash /home/deck/gsf-real-wsi/real-wsi-game-launch.sh --check
+          Optional Deck Gaming Mode Non-Steam test shortcut /usr/bin/bash:
+             "/home/deck/gsf-real-wsi/real-wsi-game-launch.sh" --smoke --mode=2
+          For an existing Vulkan or Proton game, put in its Steam Launch Options:
+             "/home/deck/gsf-real-wsi/real-wsi-game-launch.sh" --mode=2 -- %command%
+          Start with 2x; 3x is exploratory. Check ~/GFG-Real-WSI-Tests logs.
+          Do not inject system-wide; do not modify SteamOS, Gamescope, or Decky.
+          Real physical OLED frame generation is UNVERIFIED until external evidence.
+          Experimental layer can be incompatible with individual Proton games.
+          Ubuntu 22.04 x86_64 build is NOT a verified Steam Deck binary.
+          README
+          (cd "$kit" && sha256sum libVkLayer_gfg_native.so VkLayer_gfg_native.json wsi-gpu-smoke real-wsi-game-launch.sh README.txt > SHA256SUMS)
+          bash "$kit/real-wsi-game-launch.sh" --check
+          printf 'GITHUB_RUN_ID=%s\nSOURCE_SHA=%s\n' "$GITHUB_RUN_ID" "$GITHUB_SHA" > "$kit/BUILD_INFO.txt"
+          if [[ "${{ steps.integration.outcome }}" == success ]]; then
+            echo "GSF_DIRECT_REAL_WSI_CI_SOFTWARE=PASS" > "$kit/CI_STATUS.txt"
+          else
+            echo "GSF_DIRECT_REAL_WSI_CI_SOFTWARE=FAIL_UNVERIFIED" > "$kit/CI_STATUS.txt"
+          fi
+          echo "OLED_SCANOUT=UNVERIFIED" >> "$kit/CI_STATUS.txt"
+      - name: Upload standalone full GFG real WSI game kit
+        uses: actions/upload-artifact@v4
+        with:
+          name: gsf-direct-real-wsi-game-kit-${{ github.sha }}
+          path: ${{ runner.temp }}/gsf-real-wsi-game-kit/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Qualify software result honestly
+        run: |
+          if [[ "${{ steps.integration.outcome }}" != success ]]; then
+            echo "::warning::Direct real WSI GPU software integration FAILED. Artifact is diagnostic, not a demonstrated FG path."
+            echo 'GSF_DIRECT_REAL_WSI_CI_SOFTWARE=FAIL_UNVERIFIED' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'GSF_DIRECT_REAL_WSI_CI_SOFTWARE=PASS (lavapipe/Xvfb only)' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo 'GSF_DIRECT_REAL_WSI_OLED_SCANOUT=UNVERIFIED' >> "$GITHUB_STEP_SUMMARY"
