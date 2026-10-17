@@ -263,7 +263,9 @@ int main(void) {
         .bind_image_memory=vkBindImageMemory
     };
     gfg_output_proxy *active_proxy=&proxy;
+#ifdef GFG_NATIVE_TEST_LAYER_PROXY_REAL
     VkSwapchainKHR app_layer_handle=VK_NULL_HANDLE;
+#endif
     if(real_proxy) {
         REQUIRE(cycles==1 && !previous_swapchain);
         const VkImageUsageFlags required=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|
