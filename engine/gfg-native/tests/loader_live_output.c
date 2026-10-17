@@ -31,10 +31,26 @@ int main(void) {
     const xcb_setup_t *setup=xcb_get_setup(x);
     xcb_screen_t *screen=xcb_setup_roots_iterator(setup).data;
     REQUIRE(screen);
+    /* CI keeps a 96x64 window. An opt-in Deck test can create a window
+     * sized to the actual 1280x800 internal display (without root/system
+     * settings), allowing a human to see split frames on screen. */
+    uint16_t demo_w=96,demo_h=64;
+    const char *w_env=getenv("GFG_NATIVE_TEST_WINDOW_WIDTH");
+    const char *h_env=getenv("GFG_NATIVE_TEST_WINDOW_HEIGHT");
+    if(w_env || h_env) {
+        REQUIRE(w_env && h_env);
+        char *w_end=NULL,*h_end=NULL;
+        const unsigned long w=strtoul(w_env,&w_end,10);
+        const unsigned long h=strtoul(h_env,&h_end,10);
+        REQUIRE(w_env!=w_end && h_env!=h_end &&
+                w_end && !*w_end && h_end && !*h_end);
+        REQUIRE(w>=64 && w<=1920 && !(w&1u) && h>=64 && h<=1200);
+        demo_w=(uint16_t)w;demo_h=(uint16_t)h;
+    }
     const xcb_window_t window=xcb_generate_id(x);
     const uint32_t attributes[1]={screen->black_pixel};
     xcb_create_window(x,XCB_COPY_FROM_PARENT,window,screen->root,
-        0,0,96,64,0,XCB_WINDOW_CLASS_INPUT_OUTPUT,
+        0,0,demo_w,demo_h,0,XCB_WINDOW_CLASS_INPUT_OUTPUT,
         screen->root_visual,XCB_CW_BACK_PIXEL,attributes);
     xcb_map_window(x,window);
     REQUIRE(xcb_flush(x)>0);
@@ -52,6 +68,8 @@ int main(void) {
         .connection=x,.window=window};
     VkSurfaceKHR surface=VK_NULL_HANDLE;
     TRY(vkCreateXcbSurfaceKHR(instance,&xc,NULL,&surface));
+    fprintf(stderr,"GSF_DECK_PROBE_WINDOW width=%u height=%u live_loader_test=1\n",
+            demo_w,demo_h);
 
     uint32_t phys_count=0;TRY(vkEnumeratePhysicalDevices(instance,&phys_count,NULL));
     REQUIRE(phys_count && phys_count<64);
@@ -108,7 +126,7 @@ int main(void) {
     REQUIRE(count<=GFG_OFFSCREEN_MAX_IMAGES);
     REQUIRE(!caps.maxImageCount || count<=caps.maxImageCount);
     VkExtent2D extent=caps.currentExtent;
-    if(extent.width==UINT32_MAX)extent=(VkExtent2D){96,64};
+    if(extent.width==UINT32_MAX)extent=(VkExtent2D){demo_w,demo_h};
     VkSwapchainCreateInfoKHR ci={.sType=VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .surface=surface,.minImageCount=count,
         .imageFormat=fmt.format,.imageColorSpace=fmt.colorSpace,
