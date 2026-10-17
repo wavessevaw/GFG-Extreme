@@ -1242,6 +1242,84 @@ static gfg_virtual_wsi *native_test_find_virtual(native_device *d,VkSwapchainKHR
     pthread_mutex_unlock(&d->lock);
     return found;
 }
+/* Return a private, TEST-ONLY registration for one offscreen game image.
+ * Never globally rewrite PRESENT on a real compositor output image. */
+static gfg_virtual_wsi *native_test_find_virtual_image(native_device *d,VkImage img) {
+    if(!d || !img)return NULL;
+    gfg_virtual_wsi *found=NULL;
+    pthread_mutex_lock(&d->lock);
+    for(native_swapchain *sc=d->swapchains;sc;sc=sc->next) {
+        if(!sc->virtual_app)continue;
+        gfg_virtual_wsi *v=sc->virtual_app;
+        for(unsigned i=0;i<v->source.count;++i) {
+            if(v->images[i]==img) {found=v;break;}
+        }
+        if(found)break;
+    }
+    pthread_mutex_unlock(&d->lock);
+    return found;
+}
+static void native_test_translate_image_barrier(native_device *d,
+                                                 VkImageMemoryBarrier *b) {
+    gfg_virtual_wsi *v=native_test_find_virtual_image(d,b->image);
+    if(!v)return;
+    gfg_virtual_layout_map map={.images=v->images,.count=v->source.count};
+    b->oldLayout=gfg_vlayout_rewrite(&map,b->image,b->oldLayout,0);
+    b->newLayout=gfg_vlayout_rewrite(&map,b->image,b->newLayout,1);
+}
+static void native_test_translate_image_barrier2(native_device *d,
+                                                  VkImageMemoryBarrier2 *b) {
+    gfg_virtual_wsi *v=native_test_find_virtual_image(d,b->image);
+    if(!v)return;
+    gfg_virtual_layout_map map={.images=v->images,.count=v->source.count};
+    b->oldLayout=gfg_vlayout_rewrite(&map,b->image,b->oldLayout,0);
+    b->newLayout=gfg_vlayout_rewrite(&map,b->image,b->newLayout,1);
+}
+static VKAPI_ATTR void VKAPI_CALL
+native_CmdPipelineBarrier(VkCommandBuffer cmd,VkPipelineStageFlags src,
+        VkPipelineStageFlags dst,VkDependencyFlags flags,
+        uint32_t nmem,const VkMemoryBarrier *mem,
+        uint32_t nbuf,const VkBufferMemoryBarrier *buf,
+        uint32_t nimg,const VkImageMemoryBarrier *img) {
+    native_device *d=find_device(dispatch_key(cmd));
+    if(!d || !d->cmd_barrier)return;
+    if(!nimg || !img) {
+        d->cmd_barrier(cmd,src,dst,flags,nmem,mem,nbuf,buf,nimg,img);return;
+    }
+    if(nimg>SIZE_MAX/sizeof(*img))return;
+    VkImageMemoryBarrier *owned=malloc((size_t)nimg*sizeof(*owned));
+    if(!owned)return;
+    memcpy(owned,img,(size_t)nimg*sizeof(*owned));
+    for(uint32_t i=0;i<nimg;++i)native_test_translate_image_barrier(d,&owned[i]);
+    d->cmd_barrier(cmd,src,dst,flags,nmem,mem,nbuf,buf,nimg,owned);
+    free(owned);
+}
+static void native_test_cmd_barrier2(VkCommandBuffer cmd,
+                                      const VkDependencyInfo *info,int is_khr) {
+    native_device *d=find_device(dispatch_key(cmd));
+    if(!d || (!d->cmd_barrier2 && !d->cmd_barrier2_khr) || !info)return;
+    const uint32_t n=info->imageMemoryBarrierCount;
+    if(n && (!info->pImageMemoryBarriers ||
+             n>SIZE_MAX/sizeof(VkImageMemoryBarrier2)))return;
+    VkImageMemoryBarrier2 *owned=n?malloc((size_t)n*sizeof(*owned)):NULL;
+    if(n && !owned)return;
+    if(n)memcpy(owned,info->pImageMemoryBarriers,(size_t)n*sizeof(*owned));
+    for(uint32_t i=0;i<n;++i)native_test_translate_image_barrier2(d,&owned[i]);
+    VkDependencyInfo copy=*info;
+    if(n)copy.pImageMemoryBarriers=owned;
+    if(is_khr && d->cmd_barrier2_khr)d->cmd_barrier2_khr(cmd,&copy);
+    else if(d->cmd_barrier2)d->cmd_barrier2(cmd,&copy);
+    else d->cmd_barrier2_khr(cmd,&copy);
+    free(owned);
+}
+static VKAPI_ATTR void VKAPI_CALL
+native_CmdPipelineBarrier2(VkCommandBuffer cmd,const VkDependencyInfo *info) {
+    native_test_cmd_barrier2(cmd,info,0);
+}
+static VKAPI_ATTR void VKAPI_CALL
+native_CmdPipelineBarrier2KHR(VkCommandBuffer cmd,const VkDependencyInfo *info) {
+    native_test_cmd_barrier2(cmd,info,1);
+}
 static VKAPI_ATTR VkResult VKAPI_CALL
 native_GetSwapchainImagesKHR(VkDevice device,VkSwapchainKHR h,
                             uint32_t *count,VkImage *images) {
@@ -1700,6 +1778,9 @@ native_gdpa(VkDevice device, const char *symbol) {
     if (d->destroy_swapchain) HOOK(DestroySwapchainKHR);
 #ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
     if(d->get_images) HOOK(GetSwapchainImagesKHR);
+    if(d->cmd_barrier) HOOK(CmdPipelineBarrier);
+    if(d->cmd_barrier2) HOOK(CmdPipelineBarrier2);
+    if(d->cmd_barrier2_khr) HOOK(CmdPipelineBarrier2KHR);
 #endif
     if (d->present) HOOK(QueuePresentKHR);
     if (d->acquire) HOOK(AcquireNextImageKHR);
@@ -1763,6 +1844,12 @@ native_gipa(VkInstance instance, const char *symbol) {
 #ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
     if (!strcmp(symbol, "vkGetSwapchainImagesKHR"))
         return (PFN_vkVoidFunction)native_GetSwapchainImagesKHR;
+    if (!strcmp(symbol, "vkCmdPipelineBarrier"))
+        return (PFN_vkVoidFunction)native_CmdPipelineBarrier;
+    if (!strcmp(symbol, "vkCmdPipelineBarrier2"))
+        return (PFN_vkVoidFunction)native_CmdPipelineBarrier2;
+    if (!strcmp(symbol, "vkCmdPipelineBarrier2KHR"))
+        return (PFN_vkVoidFunction)native_CmdPipelineBarrier2KHR;
 #endif
     if (!strcmp(symbol, "vkQueuePresentKHR"))
         return (PFN_vkVoidFunction)native_QueuePresentKHR;
