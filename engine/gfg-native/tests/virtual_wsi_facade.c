@@ -98,7 +98,12 @@ static void unsupported_present_must_not_consume_waits(void) {
     gpu.fail_acquire=1;
     assert(gfg_vwsi_acquire(&v,handle,0,fake_semaphore(31),VK_NULL_HANDLE,&image)==VK_ERROR_DEVICE_LOST);
     gpu.fail_acquire=0;
-    assert(gfg_vwsi_acquire(&v,handle,0,fake_semaphore(32),VK_NULL_HANDLE,&image)==VK_SUCCESS);
+    VkAcquireNextImageInfoKHR acquire2={.sType=VK_STRUCTURE_TYPE_ACQUIRE_NEXT_IMAGE_INFO_KHR,
+        .swapchain=handle,.timeout=0,.semaphore=fake_semaphore(32),.deviceMask=1};
+    acquire2.deviceMask=0;
+    assert(gfg_vwsi_acquire2(&v,&acquire2,&image)==VK_ERROR_INITIALIZATION_FAILED);
+    acquire2.deviceMask=1;
+    assert(gfg_vwsi_acquire2(&v,&acquire2,&image)==VK_SUCCESS);
     VkSemaphore wait=fake_semaphore(42);VkResult result=VK_ERROR_UNKNOWN;
     VkPresentInfoKHR p={.sType=VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount=1,.pWaitSemaphores=&wait,
