@@ -88,13 +88,13 @@ jobs:
             /bin/sh -c 'test -z "${GFG_NATIVE_FG:-}" && printf "GSF_NO_GFG_BYPASS_PASS\\n"' \
             > /tmp/gfg-safe-bypass.log 2>&1
           grep GSF_NO_GFG_BYPASS_PASS /tmp/gfg-safe-bypass.log
-      - name: Real WSI GPU bridge software integration (lavapipe + Xvfb, NOT Steam Deck)
+      - name: SYNCHRONOUS direct real WSI 2x (lavapipe, not Steam Deck)
         id: integration
         continue-on-error: true
         run: |
           set -euo pipefail
           GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_FORCE_FIFO=1 \
-            GFG_NATIVE_ASYNC=1 GFG_NATIVE_MODE=2 GFG_NATIVE_REAL_WSI_PROBE=1 \
+            GFG_NATIVE_ASYNC=0 GFG_NATIVE_MODE=2 GFG_NATIVE_REAL_WSI_PROBE=1 \
             GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_FRAMES=24 \
             VK_INSTANCE_LAYERS=VK_LAYER_GFG_native \
             VK_LAYER_PATH="$PWD/engine/gfg-native/build-real-wsi:/usr/share/vulkan/explicit_layer.d" \
@@ -107,13 +107,13 @@ jobs:
           grep 'GSF_REAL_WSI_GATE gpu_requested=1 gpu_capable=1' /tmp/real-wsi-integration.log
           grep 'GSF_REAL_WSI_GPU_BRIDGE_CREATE active=1' /tmp/real-wsi-integration.log
           grep 'real WSI' /tmp/real-wsi-integration.log
-      - name: Real WSI 3x GPU bridge integration (+3 image headroom)
+      - name: SYNCHRONOUS direct real WSI 3x (+3 image headroom)
         id: integration3
         continue-on-error: true
         run: |
           set -euo pipefail
           GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_FORCE_FIFO=1 \
-            GFG_NATIVE_ASYNC=1 GFG_NATIVE_MODE=3 GFG_NATIVE_REAL_WSI_PROBE=1 \
+            GFG_NATIVE_ASYNC=0 GFG_NATIVE_MODE=3 GFG_NATIVE_REAL_WSI_PROBE=1 \
             GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_FRAMES=24 \
             VK_INSTANCE_LAYERS=VK_LAYER_GFG_native \
             VK_LAYER_PATH="$PWD/engine/gfg-native/build-real-wsi:/usr/share/vulkan/explicit_layer.d" \
@@ -137,7 +137,7 @@ jobs:
           install -m 644 engine/gfg-native/build-real-wsi/VkLayer_gfg_native.json "$kit/VkLayer_gfg_native.json"
           install -m 755 engine/gfg-native/build-real-wsi/wsi-gpu-smoke "$kit/wsi-gpu-smoke"
           cat > "$kit/README.txt" <<'README'
-          GFG direct REAL swapchain experimental game test.
+          GFG direct REAL swapchain experimental game test.\n          Uses synchronous direct acquire/copy/present of intermediates; no GFG async output worker.
           Build source: PR #155, branch experiment/gsf-real-wsi-direct-owner-20261017.
           No stable release, no virtual WSI hooks. Source GPU bridge + TE compute + LMC.
           Extract tar.gz to /home/deck/gsf-real-wsi/ preserving executable permissions:
