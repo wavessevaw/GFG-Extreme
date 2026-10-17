@@ -44,7 +44,7 @@ jobs:
         run: make -C engine/gfg-native virtual-wsi-facade
       - name: WSI facade undefined behavior sanitizer
         run: |
-          cc -std=c11 -g -O1 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+          cc -std=c11 -g -O1 -Wall -Wextra -Werror -pthread -fsanitize=undefined -fno-sanitize-recover=all \
             engine/gfg-native/tests/virtual_wsi_facade.c -o /tmp/gfg-virtual-wsi-ubsan
           /tmp/gfg-virtual-wsi-ubsan
       - name: Compile and run PRIVATE one-surface Vulkan WSI smoke (lavapipe)
