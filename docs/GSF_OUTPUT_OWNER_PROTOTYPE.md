@@ -104,6 +104,49 @@ prove a capture interface exists before relying on an external
 window-capture design; a Vulkan layer that retains the original GPU
 source image is the current known integration path.
 
+## Additional Gamescope verification (October 2026)
+
+Official [Gamescope compositor README](https://github.com/ValveSoftware/gamescope)
+explains that embedded SteamOS can **direct-flip** game buffers through
+DRM/KMS, and may composite with async Vulkan compute when needed. Merely
+drawing a fullscreen overlay does not control scanout or make a stable
+frame-generation output owner. Official
+[Gamescope PipeWire implementation](https://github.com/ValveSoftware/gamescope/blob/master/src/pipewire.cpp)
+exposes a PipeWire `Video/Source` node (potentially with DMA-BUF). It is
+a compositor **output** capture: using it for GSF game-only input can
+capture the generated output itself, creating a feedback loop; it also
+requires frame-accurate timestamps and proof of supported node access
+in the embedded Deck session. The
+[Gamescope control protocol](https://github.com/ValveSoftware/gamescope/blob/master/protocol/gamescope-control.xml)
+has one-shot `take_screenshot` operations, not an authenticated
+high-rate per-game frame capture protocol.
+
+[MAKO's WSI isolation guide](https://github.com/eugeniosegala/MAKO/blob/main/engine/docs/WSI-ISOLATION.md)
+states Gamescope the compositor and the optional Gamescope WSI Vulkan
+layer are distinct, and notes layer-ordering and FROG WSI interaction.
+This must be considered when connecting the private owner to a real
+application, but disabling a WSI layer does **not** by itself make a
+private output surface or prove GPU scheduling.
+
+**Decision:** keep the original game's Vulkan Layer as the known
+GPU source-capture location, but move *all visible output* to a
+separate verified WSI surface. That requires: a valid way to return
+original `VkAcquireNextImageKHR` images to game use without displaying
+them; a private surface visible in Gamescope with game focus/input
+preserved; cross-device/image-semaphore lifetime; no capture-recursion;
+and experimental pixel/scanout verification. A hidden/unpresented
+game-swapchain is **not** automatically safe because its acquired
+images may never be returned to the WSI and the game will stall.
+
+This branch's GPU test creates two offscreen **mock source images** in
+one Vulkan device (never submitted to WSI), captures their contents,
+copies real source images into one output swapchain, and sends
+a split A/B composite instead of motion interpolation. GPU buffer
+readback verifies actual pixels for both kinds. CI also checks long
+pauses, GPU misses and real-only priority at different refresh rates.
+The mock source is NOT a live game's swapchain and the split A/B
+image is NOT a working temporal generator.
+
 ### Not yet implemented / hard merge gate
 
 1. Private output swapchain/surface in SteamOS Gaming Mode (Gamescope), with
