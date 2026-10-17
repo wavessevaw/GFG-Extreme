@@ -29,7 +29,7 @@ jobs:
       - name: Compile and run PRIVATE one-surface Vulkan WSI smoke (lavapipe)
         run: |
           make -C engine/gfg-native build/owned-wsi-smoke
-          VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke
+          GFG_NATIVE_TEST_FRAMES=10 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke
       - name: Report qualification boundary
         run: |
           echo 'Transport-neutral scheduler validated.'
