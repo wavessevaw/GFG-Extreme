@@ -46,6 +46,43 @@ int main(void) {
     REQUIRE(gfg_offscreen_unsupported(&candidate));
     REQUIRE(!gfg_test_gamescope_normalize_fifo(NULL,1,1,&candidate));
     REQUIRE(!gfg_test_gamescope_normalize_fifo(&original,1,1,NULL));
-    puts("GSF_GAMESCOPE_MAILBOX_POLICY only_gaming_live_adapter=1 FIFO_source=1 unsupported_pnext_hdr_flags_rejected=1 PASS");
+    /* Exact Steam Deck Gamescope-injected
+     * VkSwapchainPresentModesCreateInfoEXT sType=1000275002 with
+     * [MAILBOX] is accepted for REAL driver WSI only. */
+    VkPresentModeKHR supported[]={VK_PRESENT_MODE_MAILBOX_KHR};
+    const VkSwapchainPresentModesCreateInfoEXT maintenance={
+        .sType=VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODES_CREATE_INFO_EXT,
+        .presentModeCount=1,.pPresentModes=supported
+    };
+    VkSwapchainCreateInfoKHR enriched=original;
+    enriched.pNext=&maintenance;
+    VkSwapchainCreateInfoKHR source={0},output={0};
+    const char *reason=NULL;
+    REQUIRE(gfg_test_gamescope_prepare_pair(&enriched,1,1,&source,&output,&reason)==1);
+    REQUIRE(reason==NULL);
+    REQUIRE(source.pNext==NULL && source.presentMode==VK_PRESENT_MODE_FIFO_KHR);
+    REQUIRE(output.pNext==&maintenance && output.presentMode==VK_PRESENT_MODE_MAILBOX_KHR);
+    REQUIRE(gfg_offscreen_unsupported(&source)==NULL);
+    REQUIRE(gfg_offscreen_unsupported(&output)!=NULL);
+    REQUIRE(gfg_test_gamescope_prepare_pair(&enriched,1,0,&source,&output,&reason)==0);
+    REQUIRE(source.pNext==&maintenance);
+    REQUIRE(gfg_test_gamescope_prepare_pair(&enriched,0,1,&source,&output,&reason)==0);
+    REQUIRE(source.pNext==&maintenance);
+    VkSwapchainPresentModesCreateInfoEXT incompatible=maintenance;
+    VkPresentModeKHR other[]={VK_PRESENT_MODE_FIFO_KHR};
+    incompatible.pPresentModes=other;
+    enriched.pNext=&incompatible;
+    REQUIRE(gfg_test_gamescope_prepare_pair(&enriched,1,1,&source,&output,&reason)==-1);
+    REQUIRE(reason!=NULL);
+    VkBaseInStructure unknown_tail={.sType=(VkStructureType)0x7ffffffe,.pNext=NULL};
+    incompatible.pPresentModes=supported;
+    incompatible.pNext=&unknown_tail;
+    REQUIRE(gfg_test_gamescope_prepare_pair(&enriched,1,1,&source,&output,&reason)==-1);
+    enriched.pNext=&unknown_tail;
+    REQUIRE(gfg_test_gamescope_prepare_pair(&enriched,1,1,&source,&output,&reason)==-1);
+    enriched.pNext=NULL;
+    REQUIRE(gfg_test_gamescope_prepare_pair(&enriched,1,1,&source,&output,&reason)==1);
+    REQUIRE(source.pNext==NULL && output.pNext==NULL);
+    puts("GSF_GAMESCOPE_MAILBOX_POLICY only_gaming_live_adapter=1 FIFO_source=1 pnext_1000275002_preserved_in_real_mailbox=1 unknown_chain_rejected=1 PASS");
     return 0;
 }
