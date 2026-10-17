@@ -58,6 +58,11 @@ printf 'VALUES:%s/%s/%s/%s/%s/%s/%s/%s/%s' "$LSFGVK_ENV" "$LSFGVK_MULTIPLIER" "$
         r = subprocess.run(["bash","-c",script],capture_output=True,text=True,check=True)
         self.assertIn("VALUES:1/3/0.7/1/1/vsync/0/1/1",r.stdout)
 
+    def test_extended_multiplier_x5(self):
+        cfg = ConfigurationManager.validate_config({"fg_backend": "lsfg_vk_2",
+            "multiplier": 5})
+        self.assertIn("export LSFGVK_MULTIPLIER=5", fg_backend_lines(cfg))
+
     def test_only_lsfg_backend_requests_lsfg_layer(self):
         for name in ("gfg","optiscaler","native","off"):
             cfg = ConfigurationManager.validate_config({"fg_backend":name})
