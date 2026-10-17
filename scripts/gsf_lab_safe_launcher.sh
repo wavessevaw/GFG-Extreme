@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Experimental GSF lab launcher. Does not activate merely because ZIP installed.
 set -euo pipefail
-here="$(CDPATH= cd -- "$(dirname -- "\${BASH_SOURCE[0]}")" && pwd)"
-home="\${HOME:?HOME is required}"
+here="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+home="${HOME:?HOME is required}"
 installed="$home/.local/share/gfg-native"
 launcher="$home/.local/bin/gfg-native"
-mode="\${1:---off}"
+mode="${1:---off}"
 shift || :
 if [[ "$mode" == --install ]]; then
     [[ $# -eq 0 ]] || { printf 'Usage: gfg-gsf-lab.sh --install\n' >&2; exit 2; }
@@ -20,8 +20,8 @@ case "$mode" in
         ;;
 esac
 diagnose=0
-if [[ "\${1:-}" == --diagnose ]]; then diagnose=1; shift; fi
-if [[ "\${1:-}" == -- ]]; then shift; fi
+if [[ "${1:-}" == --diagnose ]]; then diagnose=1; shift; fi
+if [[ "${1:-}" == -- ]]; then shift; fi
 [[ $# -ge 1 ]] || { printf 'GSF: game command missing\n' >&2; exit 2; }
 
 # A strict bypass for safe baseline, missing component or unsupported platform.
@@ -36,12 +36,12 @@ passthrough() {
     for var in VK_INSTANCE_LAYERS VK_LOADER_LAYERS_ENABLE; do
         [[ -v "$var" ]] || continue
         if [[ "$var" == VK_INSTANCE_LAYERS ]]; then sep=:; else sep=,; fi
-        value="\${!var}"
+        value="${!var}"
         joined=
         IFS="$sep" read -ra fields <<< "$value"
-        for item in "\${fields[@]}"; do
+        for item in "${fields[@]}"; do
             [[ -n "$item" && "$item" != VK_LAYER_GFG_native ]] || continue
-            joined+="\${joined:+$sep}$item"
+            joined+="${joined:+$sep}$item"
         done
         if [[ -n "$joined" ]]; then export "$var=$joined"; else unset "$var"; fi
     done
