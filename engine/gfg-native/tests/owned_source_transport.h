@@ -153,7 +153,7 @@ static void gfg_source_record_output(gfg_source_probe *p,VkCommandBuffer cmd,
         .bufferImageHeight=0,.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
         .imageExtent={p->size.width,p->size.height,1}};
     vkCmdCopyImageToBuffer(cmd,dst,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-        p->readback,VK_IMAGE_LAYOUT_TRANSFER_DST_BIT,1,&region);
+        p->readback,1,&region);
     VkBufferMemoryBarrier host={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
         .srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,
         .dstAccessMask=VK_ACCESS_HOST_READ_BIT,
