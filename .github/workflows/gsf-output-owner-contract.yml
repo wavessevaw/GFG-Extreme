@@ -40,6 +40,13 @@ jobs:
           cc -std=c11 -g -O1 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
             engine/gfg-native/tests/virtual_layouts.c -o /tmp/gfg-virtual-layouts-ubsan
           /tmp/gfg-virtual-layouts-ubsan
+      - name: Controlled actual Vulkan Layer GIPA and GDPA output-owner dispatch
+        run: make -C engine/gfg-native output-layer-dispatch
+      - name: Source versus output layer dispatch UBSan
+        run: |
+          cc -std=c11 -g -O1 -Wall -Wextra -Wno-unused-function -pthread -fsanitize=undefined -fno-sanitize-recover=all \
+            engine/gfg-native/tests/output_layer_dispatch.c -o /tmp/gfg-output-layer-ubsan
+          /tmp/gfg-output-layer-ubsan
       - name: Virtual Vulkan WSI acquire, get-images, present and retire contract
         run: make -C engine/gfg-native virtual-wsi-facade
       - name: WSI facade undefined behavior sanitizer
