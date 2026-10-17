@@ -74,18 +74,22 @@ mkdir -p "$RUN"
 printf 'mode=%s\nop=%s\nprogram=%q\ndisplay=%s\nwayland=%s\n' \
   "$MODE" "$OP" "${ARGS[0]}" "${DISPLAY:-unset}" "${WAYLAND_DISPLAY:-unset}" > "$RUN/metadata.txt"
 printf 'GSF_REAL_WSI_KIT_LOG_DIR=%s\n' "$RUN" >&2
-# Preserve Steam/Proton explicit and implicit layers. A forced
-# VK_LAYER_PATH/VK_INSTANCE_LAYERS override can break Gamescope, overlay
-# and 32-bit Proton processes before vkCreateSwapchainKHR is reached.
-# This manifest has enable_environment GFG_NATIVE_FG, so discover it
-# as an opt-in implicit layer rather than forcing an explicit layer name.
-if [[ -n "${VK_IMPLICIT_LAYER_PATH:-}" ]]; then
-  export VK_IMPLICIT_LAYER_PATH="$SCRIPT_DIR:$VK_IMPLICIT_LAYER_PATH"
-  printf 'GSF_REAL_WSI_LAYER_PATH existing_implicit_override_extended=1\n' >> "$RUN/metadata.txt"
+# Preserve the Steam/Proton explicit layer search paths.
+# VK_LAYER_PATH overrides ALL default explicit-layer paths: never set it
+# from scratch. VK_ADD_LAYER_PATH is the standard non-destructive option.
+# The old implicit-only attempt was NOT loaded on CI's loader, so require
+# an explicit layer name for this verified 64-bit experimental test.
+if [[ -n "${VK_LAYER_PATH:-}" ]]; then
+  export VK_LAYER_PATH="$SCRIPT_DIR:$VK_LAYER_PATH"
+  printf 'GSF_REAL_WSI_LAYER_PATH existing_explicit_override_extended=1\n' >> "$RUN/metadata.txt"
 else
-  export VK_ADD_IMPLICIT_LAYER_PATH="$SCRIPT_DIR${VK_ADD_IMPLICIT_LAYER_PATH:+:$VK_ADD_IMPLICIT_LAYER_PATH}"
-  printf 'GSF_REAL_WSI_LAYER_PATH added_implicit=1\n' >> "$RUN/metadata.txt"
+  export VK_ADD_LAYER_PATH="$SCRIPT_DIR${VK_ADD_LAYER_PATH:+:$VK_ADD_LAYER_PATH}"
+  printf 'GSF_REAL_WSI_LAYER_PATH added_explicit=1\n' >> "$RUN/metadata.txt"
 fi
+case ":${VK_INSTANCE_LAYERS:-}:" in
+  *:VK_LAYER_GFG_native:*) ;;
+  *) export VK_INSTANCE_LAYERS="${VK_INSTANCE_LAYERS:+$VK_INSTANCE_LAYERS:}VK_LAYER_GFG_native" ;;
+esac
 export GFG_NATIVE_FG=1
 export GFG_NATIVE_GPU_BRIDGE=1
 export GFG_NATIVE_GPU_SYNC=same-device
