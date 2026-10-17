@@ -227,6 +227,12 @@ int main(void) {
         .flags=VK_FENCE_CREATE_SIGNALED_BIT};
     TRY(vkCreateFence(device,&source_fci,NULL,&source_fence));
     TRY(vkCreateFence(device,&source_fci,NULL,&snapshot_fence));
+    /* The game GPU submission signals this binary semaphore; bridge-copy
+     * submission waits on it. This is not an application CPU wait. */
+    VkSemaphore source_ready=VK_NULL_HANDLE;
+    const VkSemaphoreCreateInfo source_semci={
+        .sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+    TRY(vkCreateSemaphore(device,&source_semci,NULL,&source_ready));
     uint32_t source_submissions=0,game_images_released=0;
 #endif
 
@@ -291,19 +297,22 @@ int main(void) {
         TRY(vkEndCommandBuffer(source_command));
         TRY(vkResetFences(device,1,&source_fence));
         const VkSubmitInfo source_submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .commandBufferCount=1,.pCommandBuffers=&source_command};
+            .commandBufferCount=1,.pCommandBuffers=&source_command,
+            .signalSemaphoreCount=1,.pSignalSemaphores=&source_ready};
         TRY(vkQueueSubmit(queue,1,&source_submit,source_fence));
-        /* Game-owned render must complete before bridge snapshots it.
-         * This explicit fence wait is the test-only dependency; a real
-         * transport should use a GPU semaphore and avoid CPU roundtrips. */
-        TRY(vkWaitForFences(device,1,&source_fence,VK_TRUE,UINT64_MAX));
+        /* No CPU wait between game rendering and source capture. The
+         * snapshot GPU submission consumes source_ready and waits for the
+         * producer's image writes to become available to transfer reads. */
         TRY(vkWaitForFences(device,1,&snapshot_fence,VK_TRUE,UINT64_MAX));
         TRY(vkResetCommandBuffer(snapshot_command,0));
         TRY(vkBeginCommandBuffer(snapshot_command,&source_begin));
         gfg_source_record_snapshot(&source_probe,snapshot_command,source_id);
         TRY(vkEndCommandBuffer(snapshot_command));
         TRY(vkResetFences(device,1,&snapshot_fence));
+        const VkPipelineStageFlags snapshot_wait_stage=VK_PIPELINE_STAGE_TRANSFER_BIT;
         const VkSubmitInfo copy_submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .waitSemaphoreCount=1,.pWaitSemaphores=&source_ready,
+            .pWaitDstStageMask=&snapshot_wait_stage,
             .commandBufferCount=1,.pCommandBuffers=&snapshot_command};
         TRY(vkQueueSubmit(queue,1,&copy_submit,snapshot_fence));
         TRY(vkWaitForFences(device,1,&snapshot_fence,VK_TRUE,UINT64_MAX));
@@ -461,6 +470,7 @@ int main(void) {
     gfg_source_probe_destroy(&source_probe);
     vkDestroyFence(device,source_fence,NULL);
     vkDestroyFence(device,snapshot_fence,NULL);
+    vkDestroySemaphore(device,source_ready,NULL);
     fprintf(stderr,
         "GSF private-output WSI: real=%llu synthetic=%llu total=%u one_surface=1 API_ORDER=PASS physical_scanout=unverified\n",
         (unsigned long long)owner.real_count,
