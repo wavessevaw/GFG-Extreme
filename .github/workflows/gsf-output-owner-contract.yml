@@ -399,7 +399,7 @@ jobs:
             engine/gfg-native/build/loader-live-output > "$log" 2>&1 || { cat "$log"; exit 1; }
           cat "$log"
           grep 'GSF_TEST_APP_MAILBOX requested=1 surface_supported=1' "$log"
-          grep 'GSF_GAMESCOPE_MAILBOX_ADAPT intercepted=1 output_requested=2' "$log"
+          grep 'GSF_GAMESCOPE_WSI_PAIR virtual_mode=2 real_mode=1 real_pnext_type=-1 preserved=1' "$log"
           grep 'GSF_LOADER_LIVE_INIT virtual_images=3 one_real_output=1 GPU_worker=1' "$log"
           grep 'GSF_OUTPUT_PACER rate=90 emitted=15 originals=8 intermediate=7' "$log"
           grep 'GSF_GAMESCOPE_SUBMIT source_originals=8 expected_diagnostic_intermediates=7' "$log"
