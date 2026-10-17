@@ -3,6 +3,9 @@ on:
   push:
     branches:
       - experiment/gsf-real-wsi-direct-owner-20261017
+  pull_request:
+    branches:
+      - experiment/gsf-offscreen-source-pool-20261017
   workflow_dispatch:
 permissions:
   contents: read
