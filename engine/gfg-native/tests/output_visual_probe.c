@@ -117,6 +117,9 @@ int main(void) {
     VkSurfaceCapabilitiesKHR caps;
     TRY(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical,surface,&caps));
     REQUIRE(caps.supportedUsageFlags&VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+    const int verify_pixels=getenv("GFG_FOE_VISUAL_VERIFY") &&
+        !strcmp(getenv("GFG_FOE_VISUAL_VERIFY"),"1");
+    if(verify_pixels) REQUIRE(caps.supportedUsageFlags&VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
     VkExtent2D ext=caps.currentExtent;
     if(ext.width==UINT32_MAX) {
         ext.width=between(TEST_WIDTH,caps.minImageExtent.width,caps.maxImageExtent.width);
@@ -135,14 +138,16 @@ int main(void) {
     for(uint32_t i=0;i<nformats;i++)if(formats[i].format==wanted)
         {color=formats[i];found=1;break;}
     free(formats);
-    if(srgb) REQUIRE(found);
+    if(srgb || verify_pixels) REQUIRE(found);
     if(srgb)fprintf(stderr,"GFG native: WSI SRGB format=%d selected\n",(int)color.format);
     uint32_t minimum=caps.minImageCount<2?2:caps.minImageCount;
     if(caps.maxImageCount && minimum>caps.maxImageCount) minimum=caps.maxImageCount;
     VkSwapchainCreateInfoKHR swci={.sType=VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .surface=surface,.minImageCount=minimum,.imageFormat=color.format,
         .imageColorSpace=color.colorSpace,.imageExtent=ext,.imageArrayLayers=1,
-        .imageUsage=VK_IMAGE_USAGE_TRANSFER_DST_BIT,.imageSharingMode=VK_SHARING_MODE_EXCLUSIVE,
+        .imageUsage=VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+            (verify_pixels?VK_IMAGE_USAGE_TRANSFER_SRC_BIT:0u),
+        .imageSharingMode=VK_SHARING_MODE_EXCLUSIVE,
         .preTransform=caps.currentTransform,.compositeAlpha=VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
         .presentMode=VK_PRESENT_MODE_FIFO_KHR,.clipped=VK_TRUE};
     if (!(caps.supportedCompositeAlpha&VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)) {
@@ -169,6 +174,38 @@ int main(void) {
     TRY(vkCreateSemaphore(device,&semci,NULL,&acquired));
     TRY(vkCreateSemaphore(device,&semci,NULL,&ready));
     unsigned char *seen=calloc(image_count,1);REQUIRE(seen);
+    /* Read back one pixel of the ACTUAL GPU-cleared WSI image before present.
+     * This proves pixel payloads reach the Vulkan output images, unlike an
+     * FPS/queue counter; it still cannot prove physical scanout. */
+    VkBuffer probe_buffer=VK_NULL_HANDLE;
+    VkDeviceMemory probe_memory=VK_NULL_HANDLE;
+    unsigned char *probe_pixel=NULL;
+    if(verify_pixels){
+        VkBufferCreateInfo bci={.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size=4,.usage=VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            .sharingMode=VK_SHARING_MODE_EXCLUSIVE};
+        TRY(vkCreateBuffer(device,&bci,NULL,&probe_buffer));
+        VkMemoryRequirements req;
+        vkGetBufferMemoryRequirements(device,probe_buffer,&req);
+        VkPhysicalDeviceMemoryProperties mem;
+        vkGetPhysicalDeviceMemoryProperties(physical,&mem);
+        uint32_t memory_type=UINT32_MAX;
+        for(uint32_t i=0;i<mem.memoryTypeCount;i++)
+            if((req.memoryTypeBits&(1u<<i)) &&
+              (mem.memoryTypes[i].propertyFlags &
+                (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
+                (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)){
+                memory_type=i;break;
+            }
+        REQUIRE(memory_type!=UINT32_MAX);
+        VkMemoryAllocateInfo mai={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize=req.size,.memoryTypeIndex=memory_type};
+        TRY(vkAllocateMemory(device,&mai,NULL,&probe_memory));
+        TRY(vkBindBufferMemory(device,probe_buffer,probe_memory,0));
+        void *mapped=NULL;
+        TRY(vkMapMemory(device,probe_memory,0,4,0,&mapped));
+        probe_pixel=mapped;
+    }
 
     PFN_vkQueuePresentKHR present_gipa=(PFN_vkQueuePresentKHR)
         vkGetInstanceProcAddr(instance,"vkQueuePresentKHR");
@@ -207,10 +244,32 @@ int main(void) {
             role==2u?0.95f:0.08f,1.0f}};
         VkImageSubresourceRange range={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
         vkCmdClearColorImage(cmd,images[index],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&clear,1,&range);
+        if(verify_pixels) {
+            VkImageMemoryBarrier tosrc=pre;
+            tosrc.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+            tosrc.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
+            tosrc.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            tosrc.newLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&tosrc);
+            VkBufferImageCopy region={.bufferOffset=0,.bufferRowLength=0,
+                .bufferImageHeight=0,.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
+                .imageOffset={0,0,0},.imageExtent={1,1,1}};
+            vkCmdCopyImageToBuffer(cmd,images[index],VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                   probe_buffer,1,&region);
+            VkBufferMemoryBarrier host={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                .srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,
+                .dstAccessMask=VK_ACCESS_HOST_READ_BIT,
+                .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+                .buffer=probe_buffer,.offset=0,.size=4};
+            vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_HOST_BIT,0,0,NULL,1,&host,0,NULL);
+        }
         VkImageMemoryBarrier post=pre;
-        post.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+        post.srcAccessMask=verify_pixels?VK_ACCESS_TRANSFER_READ_BIT:VK_ACCESS_TRANSFER_WRITE_BIT;
         post.dstAccessMask=0;
-        post.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        post.oldLayout=verify_pixels?VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         post.newLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
         vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,
             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,0,0,NULL,0,NULL,1,&post);
@@ -227,6 +286,14 @@ int main(void) {
         if(frame%2==0) TRY(present_gipa(queue,&pi));
         else TRY(present_gdpa(queue,&pi));
         TRY(vkQueueWaitIdle(queue));
+        if(verify_pixels){
+            /* Expected BGRA byte ordering; assert dominant channel of
+             * the colored TEST pixels, not success from WSI alone. */
+            const unsigned dominant=role==0?2u:role==1?1u:0u;
+            REQUIRE(probe_pixel[dominant]>=220u);
+            REQUIRE(probe_pixel[(dominant+1u)%3u]<=65u);
+            REQUIRE(probe_pixel[(dominant+2u)%3u]<=65u);
+        }
         seen[index]=1;
         if(frame<9 || (frame%90u)==0u)
             fprintf(stderr,"[foe-probe] WSI_accept frame=%u role=%s color=%s\\n",
@@ -236,6 +303,12 @@ int main(void) {
                       (long)((delay_ms%1000u)*1000000u)};nanosleep(&pause,NULL); }
     }
     free(seen);
+    if(verify_pixels){
+        vkUnmapMemory(device,probe_memory);
+        vkDestroyBuffer(device,probe_buffer,NULL);
+        vkFreeMemory(device,probe_memory,NULL);
+        puts("[foe-probe] GPU PIXEL READBACK: ALL REAL/MID/REAL TEST PATTERNS VERIFIED");
+    }
     vkDestroySemaphore(device,ready,NULL);
     vkDestroySemaphore(device,acquired,NULL);
     vkDestroyCommandPool(device,pool,NULL);
