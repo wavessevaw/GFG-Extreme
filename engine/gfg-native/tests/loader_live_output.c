@@ -16,6 +16,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define REQUIRE(x) do { if (!(x)) { \
     fprintf(stderr,"GSF loader probe assertion: %s line %d\\n",#x,__LINE__); \
@@ -99,10 +100,41 @@ int main(void) {
     const float priority=1.0f;
     VkDeviceQueueCreateInfo queue_info={.sType=VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
         .queueFamilyIndex=family,.queueCount=1,.pQueuePriorities=&priority};
-    const char *device_extensions[]={"VK_KHR_swapchain"};
+    const int test_maintenance1=getenv("GFG_NATIVE_TEST_INJECT_MAINTENANCE1")!=NULL;
+    const char *device_extensions[]={"VK_KHR_swapchain",
+                                     VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME};
+    VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT maintenance_feature={
+        .sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT,
+        .swapchainMaintenance1=VK_TRUE};
     VkDeviceCreateInfo dc={.sType=VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .queueCreateInfoCount=1,.pQueueCreateInfos=&queue_info,
-        .enabledExtensionCount=1,.ppEnabledExtensionNames=device_extensions};
+        .enabledExtensionCount=test_maintenance1?2u:1u,
+        .ppEnabledExtensionNames=device_extensions};
+    if(test_maintenance1) {
+        uint32_t extensions=0;
+        TRY(vkEnumerateDeviceExtensionProperties(physical,NULL,&extensions,NULL));
+        REQUIRE(extensions>0&&extensions<2048);
+        VkExtensionProperties *ep=calloc(extensions,sizeof(*ep));
+        REQUIRE(ep);
+        TRY(vkEnumerateDeviceExtensionProperties(physical,NULL,&extensions,ep));
+        int found=0;
+        for(uint32_t k=0;k<extensions;k++)
+            if(!strcmp(ep[k].extensionName,
+                       VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME))
+                found=1;
+        free(ep);
+        REQUIRE(found);
+        VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT supported={
+            .sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT};
+        VkPhysicalDeviceFeatures2 f2={
+            .sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+            .pNext=&supported};
+        vkGetPhysicalDeviceFeatures2(physical,&f2);
+        REQUIRE(supported.swapchainMaintenance1);
+        dc.pNext=&maintenance_feature;
+        fprintf(stderr,
+                "GSF_TEST_APP_MAINTENANCE1 extension_enabled=1 feature_enabled=1\n");
+    }
     VkDevice device=VK_NULL_HANDLE;
     TRY(vkCreateDevice(physical,&dc,NULL,&device));
     VkSurfaceCapabilitiesKHR caps={0};
@@ -156,6 +188,16 @@ int main(void) {
         REQUIRE(mailbox_supported);
         ci.presentMode=VK_PRESENT_MODE_MAILBOX_KHR;
         fprintf(stderr,"GSF_TEST_APP_MAILBOX requested=1 surface_supported=1\n");
+    }
+    VkPresentModeKHR maintenance_mode=VK_PRESENT_MODE_MAILBOX_KHR;
+    const VkSwapchainPresentModesCreateInfoEXT maintenance_ci={
+        .sType=VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODES_CREATE_INFO_EXT,
+        .presentModeCount=1,.pPresentModes=&maintenance_mode};
+    if(test_maintenance1) {
+        REQUIRE(ci.presentMode==VK_PRESENT_MODE_MAILBOX_KHR);
+        ci.pNext=&maintenance_ci;
+        fprintf(stderr,
+           "GSF_TEST_APP_MAINTENANCE1 injected_pnext=1000275002 allowed_mailbox=1\n");
     }
     VkSwapchainKHR virtual_handle=VK_NULL_HANDLE;
     TRY(vkCreateSwapchainKHR(device,&ci,NULL,&virtual_handle));
