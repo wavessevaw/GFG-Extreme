@@ -119,12 +119,18 @@ static void gfg_source_capture(gfg_source_probe *p,VkCommandBuffer cmd,uint64_t 
           VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&post);
     p->ids[slot]=id;
 }
-/* Writes actual copied GPU source pixels to the ONE output swapchain image.
- * Intermediate test marker is a split A/B composition (not actual FG). */
+/* The SOURCE has its own submission, preceding owner presentation.
+ * Never invent/render source data from inside the output present path. */
+static int gfg_source_snapshot_ready(const gfg_source_probe *p,
+                                      uint64_t a,uint64_t b) {
+    return a && b && p->ids[a&1u]==a && p->ids[b&1u]==b;
+}
+/* Writes previously rendered GPU source pixels to the ONE output swapchain.
+ * Intermediate test marker is split A/B composition (not real FG).
+ * Caller must wait for its source capture fence or establish a GPU
+ * semaphore dependency before submitting this output. */
 static void gfg_source_record_output(gfg_source_probe *p,VkCommandBuffer cmd,
                 VkImage dst,uint64_t a,uint64_t b,int synthetic) {
-    gfg_source_capture(p,cmd,a);
-    if(a!=b)gfg_source_capture(p,cmd,b);
     if(synthetic) {
         const uint32_t left=p->size.width/2;
         VkImageCopy copy={.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
