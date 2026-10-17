@@ -14,7 +14,8 @@ permissions:
   contents: read
 concurrency:
   group: gsf-prerelease-${{ github.ref }}
-  cancel-in-progress: false
+  # Superseded branch candidates cannot publish. Retain an in-flight tag release.
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
 jobs:
   verify:
     runs-on: ubuntu-22.04
