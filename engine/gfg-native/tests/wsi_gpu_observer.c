@@ -15,7 +15,7 @@
 #include <xcb/xcb.h>
 #ifdef GFG_NATIVE_TEST_OWNED_WSI
 #include "../src/output_owner.h"
-#include "../src/virtual_source.h"
+#include "../src/virtual_wsi_facade.h"
 #include "owned_source_transport.h"
 #endif
 #ifdef GFG_NATIVE_TEST_GPU_OBSERVER
@@ -53,6 +53,54 @@ static uint32_t between(uint32_t x,uint32_t low,uint32_t high) {
     if(x<low) return low;
     return x>high?high:x;
 }
+
+#ifdef GFG_NATIVE_TEST_OWNED_WSI
+/* Vulkan-backed callback bridge: the virtual source has API-shaped image
+ * enumeration/acquire/present operations, while the ONLY physical WSI
+ * swapchain remains the output XCB surface below. */
+typedef struct {
+    VkDevice device;
+    VkQueue queue;
+    VkCommandBuffer copy_cmd;
+    VkFence copy_fence;
+    gfg_source_probe *source;
+} gfg_vwsi_gpu_context;
+static VkResult vwsi_acquire_signal(void *arg,VkSemaphore signal,VkFence fence) {
+    gfg_vwsi_gpu_context *ctx=arg;
+    /* Vulkan binary semaphore acquire completion must be signalled on GPU.
+     * Empty queue submit is allowed: do not host signal it. */
+    const VkSubmitInfo submission={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .signalSemaphoreCount=signal?1u:0u,
+        .pSignalSemaphores=signal?&signal:NULL};
+    return vkQueueSubmit(ctx->queue,1,&submission,fence);
+}
+static VkResult vwsi_submit_capture(void *arg,uint32_t app_index,uint64_t token,
+                  uint32_t wait_count,const VkSemaphore *waits) {
+    gfg_vwsi_gpu_context *ctx=arg;
+    if(!token||app_index!=token%ctx->source->app_image_count ||
+       wait_count>16 || (wait_count && !waits))
+        return VK_ERROR_INITIALIZATION_FAILED;
+    VkResult r=vkWaitForFences(ctx->device,1,&ctx->copy_fence,VK_TRUE,UINT64_MAX);
+    if(r!=VK_SUCCESS)return r;
+    r=vkResetCommandBuffer(ctx->copy_cmd,0);
+    if(r!=VK_SUCCESS)return r;
+    VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    r=vkBeginCommandBuffer(ctx->copy_cmd,&begin);
+    if(r!=VK_SUCCESS)return r;
+    gfg_source_record_snapshot(ctx->source,ctx->copy_cmd,token);
+    r=vkEndCommandBuffer(ctx->copy_cmd);
+    if(r!=VK_SUCCESS)return r;
+    r=vkResetFences(ctx->device,1,&ctx->copy_fence);
+    if(r!=VK_SUCCESS)return r;
+    VkPipelineStageFlags stages[16];
+    for(uint32_t i=0;i<wait_count;++i)stages[i]=VK_PIPELINE_STAGE_TRANSFER_BIT;
+    const VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .waitSemaphoreCount=wait_count,.pWaitSemaphores=waits,
+        .pWaitDstStageMask=wait_count?stages:NULL,
+        .commandBufferCount=1,.pCommandBuffers=&ctx->copy_cmd};
+    return vkQueueSubmit(ctx->queue,1,&submit,ctx->copy_fence);
+}
+#endif
 
 int main(void) {
     int screen_no=0;
