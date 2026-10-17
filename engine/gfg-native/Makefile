@@ -64,7 +64,7 @@ $(BUILD)/owned-wsi-real-layer: tests/wsi_gpu_observer.c src/layer.c src/output_p
 # untouched. Only a create-only virtual app swapchain is supported.
 $(BUILD)/loader-probe/libVkLayer_gfg_native.so: src/layer.c src/output_proxy_bootstrap.h src/offscreen_source_pool.h src/virtual_wsi_facade.h
 	mkdir -p $(BUILD)/loader-probe
-	$(CC) $(CFLAGS) -Wno-unused-function -fvisibility=hidden -pthread -DGFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS -I$(VULKAN_HEADERS) -shared -Wl,-z,defs -o $@ src/layer.c -ldl
+	$(CC) $(CFLAGS) -Wno-unused-function -fvisibility=hidden -pthread -DGFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS -I$(VULKAN_HEADERS) -shared -Wl,-z,defs -o $@ src/layer.c -ldl -lvulkan
 
 $(BUILD)/loader-probe/VkLayer_gfg_native.json: VkLayer_gfg_native.json
 	mkdir -p $(BUILD)/loader-probe
