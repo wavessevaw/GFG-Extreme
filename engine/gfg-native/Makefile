@@ -154,7 +154,7 @@ wsi-smoke-te:
 $(BUILD)/owned-wsi-smoke: tests/wsi_gpu_observer.c src/output_owner.h
 	@test -f $(VULKAN_HEADERS)/vulkan/vulkan_xcb.h || { echo "Vulkan XCB headers required"; exit 1; }
 	mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -DGFG_NATIVE_TEST_SMALL -DGFG_NATIVE_TEST_OWNED_WSI -DVK_USE_PLATFORM_XCB_KHR -I$(VULKAN_HEADERS) -o $@ $< -lvulkan -lxcb -ldl
+	$(CC) $(CFLAGS) -DGFG_NATIVE_TEST_SMALL -DGFG_NATIVE_TEST_ASYNC -DGFG_NATIVE_TEST_OWNED_WSI -DVK_USE_PLATFORM_XCB_KHR -I$(VULKAN_HEADERS) -o $@ $< -lvulkan -lxcb -ldl
 
 owned-wsi-smoke: $(BUILD)/owned-wsi-smoke
 	$(BUILD)/owned-wsi-smoke
