@@ -139,7 +139,7 @@ def main():
     ]:
         path = BASE + "py_modules/gfg_plugin/" + name
         old = plugin[path].decode("utf-8")
-        new, count = re.subn(r'^' + variable + r' = "2\.1\.6"$',
+        new, count = re.subn(r'^' + variable + r' = "2\.1\.6"(?=\s|$)',
                              variable + ' = "' + VERSION + '"',
                              old, count=1, flags=re.M)
         ensure(count == 1, "cannot update " + name + " version")
