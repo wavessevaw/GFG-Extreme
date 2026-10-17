@@ -23,6 +23,10 @@ diagnose=0
 if [[ "${1:-}" == --diagnose ]]; then diagnose=1; shift; fi
 if [[ "${1:-}" == -- ]]; then shift; fi
 [[ $# -ge 1 ]] || { printf 'GSF: game command missing\n' >&2; exit 2; }
+if [[ "$1" == '%command%' ]]; then
+    printf 'GSF: Steam did not expand %%command%%; use the game Launch Options, not Konsole.\n' >&2
+    exit 2
+fi
 
 # A strict bypass for safe baseline, missing component or unsupported platform.
 # It strips only GFG Native, preserving Steam and other Vulkan layers.

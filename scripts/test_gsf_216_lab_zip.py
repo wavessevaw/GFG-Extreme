@@ -64,6 +64,12 @@ def main():
         plugin = dest / "GFG-Extreme"
         wrapper = plugin / "bin/gfg-native/gfg-gsf-lab.sh"
         assert wrapper.is_file() and os.access(wrapper, os.X_OK)
+        # An unexpanded placeholder must never create a fake Vulkan failure.
+        env_placeholder = dict(os.environ, HOME=str(root / "home"))
+        for mode in ("--off", "--x2", "--x3"):
+            rejected = run(["bash", str(wrapper), mode, "%command%"],
+                           env_placeholder, result=2)
+            assert "did not expand" in rejected.stderr
         native = plugin / "bin/gfg-native"
         manifest = json.loads((native / "MANIFEST.json").read_text())
         env = dict(os.environ)
