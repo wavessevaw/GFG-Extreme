@@ -1335,6 +1335,15 @@ native_DestroySwapchainKHR(VkDevice device, VkSwapchainKHR sc,
     const VkAllocationCallbacks *alloc) {
     native_device *d = find_device(dispatch_key(device));
     if (!d || !d->destroy_swapchain) return;
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    /* Fake virtual swapchain handles NEVER reach a real WSI destroy.
+     * The controlled test harness owns actual image allocation/teardown. */
+    gfg_virtual_wsi *virtual_app=native_test_find_virtual(d,sc);
+    if(virtual_app) {
+        gfg_vwsi_close(virtual_app);
+        return;
+    }
+#endif
     pthread_mutex_lock(&d->lock);
     for (native_swapchain **p = &d->swapchains; *p; p = &(*p)->next)
         if ((*p)->handle == sc) {
@@ -1484,9 +1493,18 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
     native_device *d = find_device(dispatch_key(queue));
     if (!d || !d->present) return VK_ERROR_INITIALIZATION_FAILED;
 #ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
-    if(info && info->swapchainCount==1 && info->pSwapchains) {
-        gfg_virtual_wsi *virtual_app=native_test_find_virtual(d,info->pSwapchains[0]);
+    if(info && info->swapchainCount && info->pSwapchains) {
+        gfg_virtual_wsi *virtual_app=NULL;
+        for(uint32_t i=0;i<info->swapchainCount;++i) {
+            virtual_app=native_test_find_virtual(d,info->pSwapchains[i]);
+            if(virtual_app)break;
+        }
         if(virtual_app) {
+            /* A mixed app+output or multi-app present cannot be forwarded
+             * downstream: the fake handle would crash the Vulkan driver.
+             * Fail before consuming *any* application wait semaphore. */
+            if(info->swapchainCount!=1)
+                return VK_ERROR_FEATURE_NOT_PRESENT;
             uint64_t token=0;
             return gfg_vwsi_present(virtual_app,info,&token);
         }
