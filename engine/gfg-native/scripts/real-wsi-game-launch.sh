@@ -7,7 +7,14 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MODE=2
 OP=run
 ARGS=()
-fail() { printf 'GSF_REAL_WSI_KIT_ERROR %s\n' "$*" >&2; exit 2; }
+PRECHECK_LOG=""
+fail() {
+  printf 'GSF_REAL_WSI_KIT_ERROR %s\n' "$*" >&2
+  if [[ -n "$PRECHECK_LOG" ]]; then
+    printf '%s GSF_REAL_WSI_KIT_ERROR %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$PRECHECK_LOG" || true
+  fi
+  exit 2
+}
 usage() {
 cat <<'HELP'
 GFG Experimental Direct Real WSI (not stable)
@@ -42,6 +49,16 @@ if [[ "$MODE" == off && "$OP" != check && "$OP" != smoke ]]; then
   printf 'GSF_REAL_WSI_BYPASS launcher=1 no_vulkan_override=1\n' >&2
   exec "${ARGS[@]}"
 fi
+# Start diagnostic logging BEFORE any ELF/checksum/payload check.
+# A failed early preflight must not disappear when invoked from Steam.
+ROOT="${HOME:-/home/deck}/GFG-Real-WSI-Tests"
+if mkdir -p "$ROOT" 2>/dev/null; then
+  PRECHECK_LOG="$ROOT/launcher-preflight.log"
+  printf '%s GSF_REAL_WSI_PREFLIGHT_START op=%s mode=%s script=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$OP" "$MODE" "$SCRIPT_DIR" >> "$PRECHECK_LOG" || true
+else
+  printf 'GSF_REAL_WSI_KIT_WARNING cannot-create-log-root %s\n' "$ROOT" >&2
+fi
 [[ "$(uname -m)" == x86_64 ]] || fail "x86_64 required"
 for f in libVkLayer_gfg_native.so VkLayer_gfg_native.json; do
   [[ -r "$SCRIPT_DIR/$f" ]] || fail "missing $f"
@@ -60,6 +77,10 @@ if command -v ldd >/dev/null 2>&1; then
   fi
 fi
 printf 'GSF_REAL_WSI_KIT_CHECK_OK arch=x86_64 mode=%s native_real_swapchain=1\n' "$MODE"
+if [[ -n "$PRECHECK_LOG" ]]; then
+  printf '%s GSF_REAL_WSI_PREFLIGHT_OK mode=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$MODE" >> "$PRECHECK_LOG" || true
+fi
 [[ "$OP" == check ]] && exit 0
 if [[ "$OP" == smoke ]]; then
   [[ -x "$SCRIPT_DIR/wsi-gpu-smoke" ]] || fail "missing smoke program"
@@ -67,7 +88,6 @@ if [[ "$OP" == smoke ]]; then
 fi
 (( ${#ARGS[@]} > 0 )) || fail "provide a game after -- or use --smoke"
 # Vulkan (Wayland) games may not require DISPLAY; do not block them.
-ROOT="${HOME:-/home/deck}/GFG-Real-WSI-Tests"
 mkdir -p "$ROOT"
 RUN="$ROOT/$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir -p "$RUN"
