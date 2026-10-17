@@ -551,9 +551,12 @@ int main(void) {
     REQUIRE((gap_at==0 || gap_at>frame_count) || owner.gap_count==1);
     fprintf(stderr,"GSF GPU source snapshots copied and readback verified: real=%u A/B_composites=%u PASS\\n",
         source_probe.verified_real,source_probe.verified_synthetic);
+    gfg_vwsi_close(&virtual_wsi);
     gfg_source_probe_destroy(&source_probe);
     vkDestroyFence(device,source_fence,NULL);
     vkDestroyFence(device,snapshot_fence,NULL);
+    vkDestroySemaphore(device,source_ready,NULL);
+    vkDestroySemaphore(device,app_image_acquired,NULL);
     fprintf(stderr,
         "GSF private-output WSI: real=%llu synthetic=%llu total=%u one_surface=1 API_ORDER=PASS physical_scanout=unverified\n",
         (unsigned long long)owner.real_count,
