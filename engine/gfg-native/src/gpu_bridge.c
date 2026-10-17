@@ -976,7 +976,21 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
         if(!fg->telemetry)fprintf(stderr,"[gfg-native] telemetry unavailable errno=%d\n",errno);
     }
     cd.shared_flow_dense=cd.params.algorithm==TE_ALGO_SHARED_FLOW?4:0;
-    if(cd.params.algorithm==TE_ALGO_SHARED_FLOW)fg->clock.period_ns=1000000000ull/90;
+    if(cd.params.algorithm==TE_ALGO_SHARED_FLOW) {
+        fg->clock.period_ns=1000000000ull/90;
+        /* GSF interpolates between two ALREADY RENDERED real frames. With
+         * immediate output the first usable slot can expire before its GPU
+         * and WSI submission. Buffer only the output side by two refresh
+         * slots (~22 ms at 90 Hz), shifting synthetic and real deadlines
+         * together. This trades latency for reliable WSI admission.
+         * Lab override 0..3; other algorithms retain their timing. */
+        fg->clock.buffer_ticks=2;
+        const char *buffer=getenv("GFG_NATIVE_OUTPUT_BUFFER_TICKS");
+        if(buffer && buffer[0]>='0' && buffer[0]<='3' && !buffer[1])
+            fg->clock.buffer_ticks=(unsigned)(buffer[0]-'0');
+        fprintf(stderr,"[gfg-native] gsf_output_buffer ticks=%u max_ticks=3 delay_at_90hz_ms=%.3f policy=bounded-ordered-WSI physical_scanout=unverified\\n",
+            fg->clock.buffer_ticks,(double)fg->clock.buffer_ticks*(1000.0/90.0));
+    }
     const char *rate=getenv("GFG_NATIVE_OUTPUT_HZ");
     if(rate && cd.params.algorithm==TE_ALGO_SHARED_FLOW) {
         char *end=NULL;long hz=strtol(rate,&end,10);
