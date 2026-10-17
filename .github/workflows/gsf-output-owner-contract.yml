@@ -50,6 +50,13 @@ jobs:
           /tmp/gfg-virtual-layouts-ubsan
       - name: Fetch up-to-date Vulkan-Headers for native layer ABI
         run: git clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
+      - name: Native test-only intercepted vkCreateSwapchainKHR and owned output source images
+        run: make -C engine/gfg-native VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" output-proxy-layer-create
+      - name: Intercepted virtual swapchain creation sanitizer
+        run: |
+          cc -std=c11 -g -O1 -Wall -Wextra -Wno-unused-function -pthread -I"$RUNNER_TEMP/vkh/include" -fsanitize=undefined -fno-sanitize-recover=all \
+            engine/gfg-native/tests/output_proxy_layer_create.c -o /tmp/gfg-proxy-layer-ubsan
+          /tmp/gfg-proxy-layer-ubsan
       - name: Controlled actual Vulkan Layer GIPA and GDPA output-owner dispatch
         run: make -C engine/gfg-native VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" output-layer-dispatch
       - name: Source versus output layer dispatch UBSan
