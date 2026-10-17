@@ -3,10 +3,15 @@
  * calls. It verifies acquire signalled, source-present redirected into
  * snapshot and original image returned without output WSI involvement.
  */
+#define _POSIX_C_SOURCE 200809L
 #include "../src/virtual_wsi_facade.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <time.h>
+#include <sched.h>
 typedef struct {
     uint64_t signalled,captured,consumed,fail_acquire,fail_copy;
     uint32_t last_index;
@@ -80,6 +85,7 @@ static void no_reused_source_before_gpu_copy(void) {
     assert(gfg_virtual_all_idle(&v.source));
     gfg_vwsi_close(&v);
     assert(gfg_vwsi_acquire(&v,handle,0,fake_semaphore(4),VK_NULL_HANDLE,&c)==VK_ERROR_OUT_OF_DATE_KHR);
+    gfg_vwsi_fini(&v);
     puts("virtual WSI: two acquired, copy-fence gated release, exact wait ownership PASS");
 }
 static void unsupported_present_must_not_consume_waits(void) {
@@ -108,10 +114,77 @@ static void unsupported_present_must_not_consume_waits(void) {
     assert(gfg_vwsi_acquire(&v,handle,0,fake_semaphore(33),VK_NULL_HANDLE,&image)==VK_NOT_READY);
     assert(gfg_virtual_cancel_acquire(&v.source,image)==0);
     gfg_vwsi_close(&v);
+    gfg_vwsi_fini(&v);
     puts("virtual WSI: no semaphore replay, unsupported pNext refuses safely PASS");
+}
+typedef struct {
+    gfg_virtual_wsi *v;
+    VkSwapchainKHR handle;
+    atomic_int started;
+    uint64_t timeout;
+    VkResult result;
+    uint32_t index;
+    uint64_t elapsed_ns;
+} waiter;
+static uint64_t mono_ns(void) {
+    struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);
+    return (uint64_t)t.tv_sec*1000000000ull+(uint64_t)t.tv_nsec;
+}
+static void *acquire_thread(void *opaque) {
+    waiter *w=opaque;
+    atomic_store(&w->started,1);
+    uint64_t begin=mono_ns();
+    w->result=gfg_vwsi_acquire(w->v,w->handle,w->timeout,
+                    fake_semaphore(900),VK_NULL_HANDLE,&w->index);
+    w->elapsed_ns=mono_ns()-begin;
+    return NULL;
+}
+static void await_thread_entry(waiter *w) {
+    while(!atomic_load(&w->started))sched_yield();
+    const struct timespec brief={.tv_sec=0,.tv_nsec=25000000L};
+    nanosleep(&brief,NULL);
+}
+static void blocking_acquire_and_close(void) {
+    gfg_virtual_wsi v;fake_gpu gpu={0};
+    VkImage image=fake_image(0x810);
+    const VkSwapchainKHR handle=fake_swapchain(0x820);
+    assert(gfg_vwsi_init(&v,handle,&image,1,VK_FORMAT_B8G8R8A8_UNORM,
+        (VkExtent2D){96,64},&gpu,acquire_gpu,copy_gpu)==VK_SUCCESS);
+    uint32_t acquired=0;
+    assert(gfg_vwsi_acquire(&v,handle,0,fake_semaphore(40),VK_NULL_HANDLE,&acquired)==VK_SUCCESS);
+    VkSemaphore wait_sem=fake_semaphore(41);uint64_t ticket=0;
+    VkPresentInfoKHR p={.sType=VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+      .waitSemaphoreCount=1,.pWaitSemaphores=&wait_sem,
+      .swapchainCount=1,.pSwapchains=&handle,.pImageIndices=&acquired};
+    assert(gfg_vwsi_present(&v,&p,&ticket)==VK_SUCCESS);
+    waiter w={.v=&v,.handle=handle,.timeout=UINT64_MAX};
+    atomic_init(&w.started,0);
+    pthread_t thread;assert(pthread_create(&thread,NULL,acquire_thread,&w)==0);
+    await_thread_entry(&w);
+    assert(gfg_vwsi_retire(&v,acquired,ticket,1)==VK_SUCCESS);
+    assert(pthread_join(thread,NULL)==0);
+    assert(w.result==VK_SUCCESS && w.index==acquired);
+    assert(w.elapsed_ns>=10000000ull && w.elapsed_ns<2000000000ull);
+    gfg_vwsi_close(&v);gfg_vwsi_fini(&v);
+    puts("virtual WSI: UINT64_MAX acquire blocks and wakes after copy fence PASS");
+
+    /* Closing a swapchain must wake *all* indefinite acquire waiters. */
+    assert(gfg_vwsi_init(&v,handle,&image,1,VK_FORMAT_B8G8R8A8_UNORM,
+        (VkExtent2D){96,64},&gpu,acquire_gpu,copy_gpu)==VK_SUCCESS);
+    assert(gfg_vwsi_acquire(&v,handle,0,fake_semaphore(42),VK_NULL_HANDLE,&acquired)==VK_SUCCESS);
+    waiter closing={.v=&v,.handle=handle,.timeout=UINT64_MAX};
+    atomic_init(&closing.started,0);
+    assert(pthread_create(&thread,NULL,acquire_thread,&closing)==0);
+    await_thread_entry(&closing);
+    gfg_vwsi_close(&v);
+    assert(pthread_join(thread,NULL)==0);
+    assert(closing.result==VK_ERROR_OUT_OF_DATE_KHR);
+    gfg_vwsi_fini(&v);
+    puts("virtual WSI: closing swapchain wakes blocked app acquire PASS");
 }
 int main(void) {
     no_reused_source_before_gpu_copy();
     unsupported_present_must_not_consume_waits();
+    blocking_acquire_and_close();
     return 0;
 }
