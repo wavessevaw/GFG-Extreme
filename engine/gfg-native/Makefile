@@ -46,7 +46,7 @@ offscreen-source-pool: $(BUILD)/offscreen-source-pool
 # allocates offscreen GPU source images and one private downstream WSI.
 $(BUILD)/output-proxy-layer-create: tests/output_proxy_layer_create.c src/layer.c src/output_proxy_bootstrap.h src/offscreen_source_pool.h src/virtual_wsi_facade.h
 	mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -Wno-unused-function -pthread -I$(VULKAN_HEADERS) -o $@ tests/output_proxy_layer_create.c
+	$(CC) $(CFLAGS) -Wno-unused-function -g -fno-omit-frame-pointer -fsanitize=address,undefined -pthread -I$(VULKAN_HEADERS) -o $@ tests/output_proxy_layer_create.c
 
 output-proxy-layer-create: $(BUILD)/output-proxy-layer-create
 	$(BUILD)/output-proxy-layer-create
