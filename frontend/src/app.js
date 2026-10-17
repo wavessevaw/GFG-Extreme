@@ -47,6 +47,7 @@ const rpc = {
   journal: safeCallable("get_config_journal"),
   restoreJournal: safeCallable("restore_config_journal_entry"),
   checkInstalled: safeCallable("check_mako_installed"),
+  lsfgVk2Status: safeCallable("check_lsfg_vk_2"),
   install: safeCallable("install_mako"),
   uninstall: safeCallable("uninstall_mako"),
   fpStatus: safeCallable("check_flatpak_extension_status"),
@@ -951,15 +952,48 @@ function GovernorPage({ s, back, profile, refresh }) {
 function FgPage({ back, cfg, patch }) {
   const be = (cfg && cfg.fg_backend) || "gfg";
   const mult = (cfg && cfg.multiplier) || 2;
+  const lsfg = be === "lsfg_vk_2";
+  const [externalStatus, setExternalStatus] = useState(null);
+  const [modelPath, setModelPath] = useState((cfg && cfg.lsfg_vk_2_dll_path) || "");
+  useEffect(() => { setModelPath((cfg && cfg.lsfg_vk_2_dll_path) || ""); }, [cfg && cfg.lsfg_vk_2_dll_path]);
+  useEffect(() => {
+    if (!lsfg) return;
+    let cancelled = false;
+    rpc.lsfgVk2Status().then((v) => { if (!cancelled) setExternalStatus(v); })
+      .catch(() => { if (!cancelled) setExternalStatus({ ready: false, reason: "status-unavailable" }); });
+    return () => { cancelled = true; };
+  }, [lsfg]);
   return h(Page, { title: "Frame Generation", onBack: back },
-    h("div", { className: "sec" }, "BACKEND"),
-    h(Seg, { value: be, options: [["gfg", "GFG Engine"], ["optiscaler", "OptiScaler"], ["native", "In-game"], ["off", "Off"]], onChange: (v) => patch({ fg_backend: v }) }),
-    h(Note, { quiet: true }, { gfg: "GFG Engine makes the extra frames. This is the only mode the Governor controls.", optiscaler: "The game's OptiScaler makes the frames. GFG only watches.", native: "The game's own frame generation (DLSS/FSR) is used. GFG only watches.", off: "No frame generation from GFG." }[be]),
+    h("div", { className: "sec" }, "GENERATOR BACKEND"),
+    h(Seg, { value: be, options: [["gfg", "GFG Engine"], ["lsfg_vk_2", "LSFG-VK 2.0"], ["optiscaler", "OptiScaler"], ["native", "In-game"], ["off", "Off"]], onChange: (v) => patch({ fg_backend: v }) }),
+    h(Note, { quiet: true }, { gfg: "GFG Engine makes the extra frames. This is the only mode the Governor controls.", lsfg_vk_2: "LSFG-VK 2.0 generates frames using your own installed Vulkan layer and LSFG resources. GFG manages the launch and observes; restart the game to apply.", optiscaler: "The game's OptiScaler makes the frames. GFG only watches.", native: "The game's own frame generation (DLSS/FSR) is used. GFG only watches.", off: "No frame generation from GFG." }[be]),
     be === "gfg" ? h("div", null,
       h("div", { className: "sec" }, "SAVED MULTIPLIER"),
       h(Seg, { value: String(mult), options: [["2", "×2"], ["3", "×3"]], onChange: (v) => patch({ multiplier: Number(v) }) }),
-      h(Note, { quiet: true }, "Used when the Governor is off. With the Governor on, it picks ×1 to ×3 itself (up to ×3.75 only when needed, ×4 as a last resort) and never changes this value.")) :
-      h(Note, { quiet: true }, "External backend: GFG observes only and does not change it."));
+      h(Note, { quiet: true }, "Used when the Governor is off. With the Governor on, it picks ×1 to ×3 itself (up to ×3.75 only when needed, ×4 as a last resort) and never changes this value.")) : null,
+    lsfg ? h("div", null,
+      h("div", { className: "sec" }, "INSTALLED LSFG-VK 2.0"),
+      externalStatus ? h(Note, { quiet: true },
+        externalStatus.ready ? "Vulkan layer and LSFG resource found. Restart the game to activate."
+        : "Not ready: " + (externalStatus.reason || "Install LSFG-VK 2.0 and the matching lsfg-vk.dll. No proprietary binaries are included.")) :
+        h(Note, { quiet: true }, "Checking your local LSFG-VK installation…"),
+      h("div", { className: "sec" }, "MULTIPLIER"),
+      h(Seg, { value: String(mult), options: [["2", "×2"], ["3", "×3"]], onChange: (v) => patch({ multiplier: Number(v) }) }),
+      h("div", { className: "sec" }, "FLOW SCALE"),
+      h(Seg, { value: String(Number(cfg.flow_scale || 0.8)), options: [["0.5", "50%"], ["0.7", "70%"], ["0.8", "80%"], ["1", "100%"]], onChange: (v) => patch({ flow_scale: Number(v) }) }),
+      h(Note, { quiet: true }, "Higher is sharper motion estimation but uses more GPU time."),
+      h("div", { className: "list" },
+        h(Toggle, { on: !!cfg.performance_mode, title: "Performance model", sub: "Lighter model, fewer GPU operations.", onChange: (v) => patch({ performance_mode: v }) }),
+        h(Toggle, { on: cfg.lsfg_vk_2_allow_fp16 !== false, title: "FP16", sub: "Use half precision if supported by LSFG-VK.", onChange: (v) => patch({ lsfg_vk_2_allow_fp16: v }) }),
+        h(Toggle, { on: cfg.lsfg_vk_2_override_present_mode !== false, title: "Override present mode (FIFO)", sub: "LSFG-VK 2.0 default; may help cadence through Gamescope.", onChange: (v) => patch({ lsfg_vk_2_override_present_mode: v }) }),
+        h(Toggle, { on: !!cfg.lsfg_vk_2_preserve_swapchain_image_count, title: "Preserve swapchain image count", sub: "Compatibility option for games with strict image-count limits.", onChange: (v) => patch({ lsfg_vk_2_preserve_swapchain_image_count: v }) })),
+      h("div", { className: "sec" }, "LSFG-VK DLL PATH · OPTIONAL"),
+      h("input", { type: "text", value: modelPath, placeholder: "Automatic search in Steam libraries", style: { width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 8, background: "var(--gp-panel, #222a35)", color: "inherit", border: "1px solid #566070" },
+        onChange: (e) => setModelPath(e.target.value),
+        onBlur: () => { if (modelPath !== (cfg.lsfg_vk_2_dll_path || "")) patch({ lsfg_vk_2_dll_path: modelPath }); },
+        onKeyDown: (e) => { if (e.key === "Enter") e.currentTarget.blur(); } }),
+      h(Note, { quiet: true }, "Leave empty to use LSFG-VK's Steam-library discovery. You must already own the required resources; GFG never redistributes them.")) :
+      be !== "gfg" ? h(Note, { quiet: true }, "External backend: GFG observes only and does not change it.") : null);
 }
 
 function ScalingPage({ s, back, profile, refresh }) {
@@ -1058,7 +1092,7 @@ function SettingsPage({ back, go, profile, s }) {
       h(Row, { icon: "hud", title: "In-game overlay", sub: "FPS, ×N, TDP while playing", onClick: () => go("hud") }),
       h(Row, { icon: "user", title: "Profile", value: profileLabel(profile || "Default"), onClick: () => go("profiles") }),
       h(Row, { icon: "play", title: "Launch command", sub: "Copy it into the game's Steam launch options", onClick: () => go("launch") }),
-      h(Row, { icon: "layers", title: "Frame generation backend", sub: "GFG Engine, OptiScaler, in-game", onClick: () => go("fg") }),
+      h(Row, { icon: "layers", title: "Frame generation backend", sub: "GFG Engine, LSFG-VK 2.0, OptiScaler, in-game", onClick: () => go("fg") }),
       h(Row, { icon: "scale", title: "Scaling", sub: "Render scale for extra headroom", onClick: () => go("scaling") }),
       h(Row, { icon: "filter", title: "Filters", sub: "Sharpening, anti-aliasing, color looks", onClick: () => go("filters") })),
     h(FlowControl, { s }),
