@@ -52,6 +52,13 @@ output-proxy-layer-create: $(BUILD)/output-proxy-layer-create
 	$(BUILD)/output-proxy-layer-create
 .PHONY: output-proxy-layer-create
 
+# Real Vulkan driver plus TEST-registered actual native layer dispatch.
+# Source images and the single output WSI are GPU-backed; the Vulkan
+# loader is NOT installing the layer for an external game.
+$(BUILD)/owned-wsi-real-layer: tests/wsi_gpu_observer.c src/layer.c src/output_proxy_bootstrap.h src/offscreen_source_pool.h tests/owned_source_transport.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Wno-unused-function -pthread -DGFG_NATIVE_TEST_SMALL -DGFG_NATIVE_TEST_ASYNC -DGFG_NATIVE_TEST_OWNED_WSI -DGFG_NATIVE_TEST_LAYER_PROXY_REAL -DVK_USE_PLATFORM_XCB_KHR -I$(VULKAN_HEADERS) -o $@ tests/wsi_gpu_observer.c -lvulkan -lxcb -ldl
+
 # Convert game swapchain PRESENT layout requests without touching the
 # true compositor swapchain, including Vulkan sync2 and renderpasses.
 $(BUILD)/virtual-layouts: tests/virtual_layouts.c src/virtual_layouts.h
