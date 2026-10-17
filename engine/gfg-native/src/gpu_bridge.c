@@ -983,8 +983,10 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
          * and WSI submission. Buffer only the output side by two refresh
          * slots (~22 ms at 90 Hz), shifting synthetic and real deadlines
          * together. This trades latency for reliable WSI admission.
-         * Lab override 0..3; other algorithms retain their timing. */
-        fg->clock.buffer_ticks=2;
+         * Default enabled for x2 only while GPU regression checks validate
+         * the x3 output ordering separately. Lab override 0..3, with zero
+         * retaining baseline timing for other generator modes. */
+        fg->clock.buffer_ticks=fg->multiplier==2 ? 2u : 0u;
         const char *buffer=getenv("GFG_NATIVE_OUTPUT_BUFFER_TICKS");
         if(buffer && buffer[0]>='0' && buffer[0]<='3' && !buffer[1])
             fg->clock.buffer_ticks=(unsigned)(buffer[0]-'0');
