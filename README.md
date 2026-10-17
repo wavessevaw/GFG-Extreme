@@ -127,6 +127,14 @@ GFG Extreme 2.1.6 includes the earlier Governor work, alongside the Autopilot:
 <img src="docs/img/card-filters.png" alt="Shader filters" width="740">
 </div>
 
+### LSFG-VK 2.0 external generator
+
+**Generator Backend → LSFG-VK 2.0** uses a separately installed LSFG-VK 2.x Vulkan layer and the licensed `lsfg-vk.dll` from your own Lossless Scaling installation. This is an **external backend**: GFG handles per-game selection and settings, while the external LSFG-VK layer generates and presents the frames. No LSFG binary, proprietary shader or model resource is included or redistributed in GFG.
+
+GFG exposes 2×/3×, Flow Scale (25–100%), Performance mode, FP16, FIFO present override, swapchain image-count compatibility, and an optional absolute DLL path. The backend is active only for games launched with the normal GFG Steam launch wrapper after a restart. GFG's own FG, Temporal Engine and native output are disabled for that game's LSFG-VK session. If the layer or the model cannot be found, GFG leaves the game without that generator rather than injecting a broken external Vulkan layer.
+
+Installation presence is not a guarantee of compatibility with every Proton game or Gamescope version. LSFG-VK 2.0's independent runtime performance on Steam Deck has not been verified as part of this integration.
+
 ## Installation
 
 Requires [Decky Loader](https://decky.xyz/) and [Lossless Scaling on Steam](https://store.steampowered.com/app/993090/Lossless_Scaling/) for the supported GFG generation setup.
