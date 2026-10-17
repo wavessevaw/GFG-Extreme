@@ -49,6 +49,11 @@ class NativeGsfTests(unittest.TestCase):
         root.mkdir(parents=True)
         (root / 'VkLayer_gfg_native.json').write_text('{}')
         (root / 'libVkLayer_gfg_native.so').write_bytes(b'launcher selection fixture')
+        # Installed runtime exposes only Vulkan JSON/ELF in the loader scan dir.
+        layer_dir = root / 'vulkan-layers'
+        layer_dir.mkdir()
+        (layer_dir / 'VkLayer_gfg_native.json').write_text('{}')
+        (layer_dir / 'libVkLayer_gfg_native.so').symlink_to('../libVkLayer_gfg_native.so')
 
     def test_default_off_and_marker_validation(self):
         self.assertEqual(native_gsf.requested(self.runtime), 'off')
