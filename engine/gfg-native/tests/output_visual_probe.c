@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * GSF Frame Output Engine standalone pixel/WSI probe.
  * Red A -> green simulated midpoint -> blue B, driven through one owned
