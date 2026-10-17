@@ -9,6 +9,7 @@
 #define VK_USE_PLATFORM_XCB_KHR
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_xcb.h>
+#include "../src/offscreen_source_pool.h"
 #include <xcb/xcb.h>
 #include <stdint.h>
 #include <stdio.h>
