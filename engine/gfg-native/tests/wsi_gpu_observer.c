@@ -413,12 +413,14 @@ int main(void) {
 #endif
     gfg_async_capture async_capture={0};
     const int use_async_capture=getenv("GFG_OWNER_TEST_ASYNC_RETIRE")!=NULL;
+    const int delayed_capture=getenv("GFG_OWNER_TEST_DELAYED_RETIRE")!=NULL;
     if(use_async_capture) {
         TRY(gfg_async_capture_init(&async_capture,virtual_wsi,device,queue,
                                    family,vwsi_record_async_copy,&source_probe));
+        if(delayed_capture)async_capture.test_delayed_retire_ms=40u;
         capture_ctx.async=&async_capture;
     }
-    uint32_t source_submissions=0,game_images_released=0;
+    uint32_t source_submissions=0,game_images_released=0,early_returns=0;
 #endif
 
     PFN_vkQueuePresentKHR present_gipa=(PFN_vkQueuePresentKHR)
@@ -525,9 +527,19 @@ int main(void) {
         TRY(gfg_vwsi_present(virtual_wsi,&source_present,&virtual_ticket));
         REQUIRE(virtual_result==VK_SUCCESS && virtual_ticket);
         if(use_async_capture) {
-            /* Application Present returned without waiting on its copy
-             * fence. The output-test side waits for history verification;
-             * future device output must depend on GPU timeline instead. */
+            /* Fault-injected worker retirement is delayed by 40ms after GPU
+             * completion. The app's virtual Present must return while the
+             * source image remains COPYING, before the worker frees it. */
+            if(delayed_capture) {
+                pthread_mutex_lock(&virtual_wsi->mutex);
+                int still_copying=virtual_wsi->source.state[acquired_app_image] ==
+                                  GFG_VIRTUAL_COPYING;
+                pthread_mutex_unlock(&virtual_wsi->mutex);
+                REQUIRE(still_copying);
+                ++early_returns;
+            }
+            /* Output-test CPU waits for its history copy before readback.
+             * This does NOT occur in application virtual Present. */
             TRY(gfg_async_capture_wait_ticket(&async_capture,virtual_ticket));
         } else {
             TRY(vkWaitForFences(device,1,&snapshot_fence,VK_TRUE,UINT64_MAX));
@@ -710,6 +722,11 @@ int main(void) {
         REQUIRE(async_capture.worker_gpu_waits==frame_count);
         REQUIRE(async_capture.app_gpu_waits==0);
         REQUIRE(async_capture.submit_failures==0);
+        if(delayed_capture) {
+            REQUIRE(early_returns==frame_count);
+            fprintf(stderr,"GSF slow-fence source stays COPYING after every virtual Present, deferred retirement=%u PASS\\n",
+                early_returns);
+        }
         fprintf(stderr,"GSF async capture worker GPU fence waits=%llu presents=%llu app_thread_gpu_waits=%llu PASS\\n",
             (unsigned long long)async_capture.worker_gpu_waits,
             (unsigned long long)async_capture.submitted,
