@@ -823,6 +823,7 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         "unset GFG_FRAME_OS_ENABLE GFG_FRAME_OS_MODE GFG_FRAME_OS_REAL_HZ GFG_FRAME_OS_TICK_SHAPING GFG_FRAME_OS_PACING",
         "export DISABLE_GFG_FRAME_OS=1",
         'unset gfg_frame_os_marker',
+        'if [ "${gfg_lsfg_vk_2_backend:-0}" = 1 ]; then gfg_frame_os=0; fi',
         # Ring HUD: the GFG HUD layer copies the Governor's ring bitmap into every shown frame.
         f'gfg_hud_marker={shlex.quote(str(context.runtime_state_dir / "hud-rings.enabled"))}',
         "gfg_hud=0",
@@ -1124,6 +1125,16 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         '    done',
         '    if [ -n "$gfg_lsfg_manifest_dir" ]; then',
         '        mako_implicit_layer_path="$mako_implicit_layer_path:$gfg_lsfg_manifest_dir"',
+        '        # Restore system implicit layers, including Gamescope WSI.',
+        '        for gfg_lsfg_system_dir in "/usr/share/vulkan/implicit_layer.d" '
+        '"/usr/local/share/vulkan/implicit_layer.d" "/etc/vulkan/implicit_layer.d"; do',
+        '            if [ -d "$gfg_lsfg_system_dir" ]; then',
+        '                case ":$mako_implicit_layer_path:" in',
+        '                    *":$gfg_lsfg_system_dir:"*) ;;',
+        '                    *) mako_implicit_layer_path="$mako_implicit_layer_path:$gfg_lsfg_system_dir" ;;',
+        '                esac',
+        '            fi',
+        '        done',
         '        if [ -z "$gfg_lsfg_vk_2_explicit_dll" ]; then',
         '            for gfg_lsfg_candidate in '
         '"${XDG_DATA_HOME:-$HOME/.local/share}/Steam/steamapps/common/Lossless Scaling/lsfg-vk.dll" '
@@ -1153,7 +1164,7 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         '        export DISABLE_LSFGVK=1',
         '        printf "%s\\n" "GFG LSFG-VK 2.0: Vulkan layer manifest not installed; game remains unmodified" >&2',
         '    fi',
-        '    unset gfg_lsfg_dir gfg_lsfg_manifest_dir gfg_lsfg_candidate gfg_lsfg_vk_2_explicit_dll',
+        '    unset gfg_lsfg_dir gfg_lsfg_system_dir gfg_lsfg_manifest_dir gfg_lsfg_candidate gfg_lsfg_vk_2_explicit_dll',
         'else',
         '    unset LSFGVK_ENV LSFGVK_MULTIPLIER LSFGVK_FLOW_SCALE LSFGVK_PERFORMANCE_MODE',
         '    unset LSFGVK_NO_FP16 LSFGVK_PACING_MODE LSFGVK_OVERRIDE_PRESENT_MODE',
