@@ -137,9 +137,14 @@ class DllDetectionService(BaseService):
         candidates: list[tuple[Path, str]] = []
         if configured:
             selected = Path(configured).expanduser()
-            if selected.name.lower() in ("lossless.dll", "losslessscaling.dll"):
-                selected = selected.with_name("lsfg-vk.dll")
-            candidates.append((selected, "GFG_LSFG_DLL_PATH"))
+            # A folder is the install location, not the resource itself.
+            # Still authoritative: do not scan Steam if this path is wrong.
+            if selected.is_dir():
+                candidates.append((selected / "lsfg-vk.dll", "GFG_LSFG_DLL_PATH"))
+            else:
+                if selected.name.lower() in ("lossless.dll", "losslessscaling.dll"):
+                    selected = selected.with_name("lsfg-vk.dll")
+                candidates.append((selected, "GFG_LSFG_DLL_PATH"))
         else:
             original = self.check_lossless_scaling_dll()
             if original.get("path"):

@@ -60,6 +60,33 @@ class LsfgVkDllDiscoveryTests(unittest.TestCase):
         with patch.dict(os.environ, {"GFG_LSFG_DLL_PATH": str(loc / "Lossless.dll")}):
             self.assertFalse(self.detector.check_lsfg_vk_dll()["detected"])
 
+    def test_explicit_directory_finds_only_the_2x_resource(self):
+        loc = self.home / "Lossless Scaling"
+        loc.mkdir()
+        (loc / "Lossless.dll").write_bytes(b"MZ legacy")
+        resource = loc / "lsfg-vk.dll"
+        resource.write_bytes(b"MZ model")
+        with patch.dict(os.environ, {"GFG_LSFG_DLL_PATH": str(loc)}):
+            status = self.detector.check_lsfg_vk_dll()
+        self.assertTrue(status["detected"])
+        self.assertEqual(status["path"], str(resource))
+        self.assertEqual(status["source"], "GFG_LSFG_DLL_PATH")
+        resource.unlink()
+        with patch.dict(os.environ, {"GFG_LSFG_DLL_PATH": str(loc)}):
+            status = self.detector.check_lsfg_vk_dll()
+        self.assertFalse(status["detected"])
+        self.assertIsNone(status["path"])
+
+    def test_explicit_2x_file_is_not_remapped(self):
+        loc = self.home / "custom"
+        loc.mkdir()
+        resource = loc / "lsfg-vk.dll"
+        resource.write_bytes(b"MZ model")
+        with patch.dict(os.environ, {"GFG_LSFG_DLL_PATH": str(resource)}):
+            status = self.detector.check_lsfg_vk_dll()
+        self.assertEqual(status["path"], str(resource))
+        self.assertEqual(status["source"], "GFG_LSFG_DLL_PATH")
+
     def test_secondary_steam_library_and_case_correct_name(self):
         sd = self.home / "secondary-library"
         loc = sd / "steamapps/common/Lossless Scaling"
