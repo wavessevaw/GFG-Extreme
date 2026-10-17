@@ -63,6 +63,13 @@ done
   sha256sum -c SHA256SUMS
 ) || fail "Checksum mismatch: abort before loading any code"
 [[ -r "$SELF_DIR/libVkLayer_gfg_native.so" ]] || fail "Layer not readable"
+# GitHub Actions ZIPs normalize file permissions to 0644. Restore only the
+# execute bit of our checksum-verified local test binary; never touch SteamOS,
+# system Vulkan layers, Decky or Steam files.
+if [[ ! -x "$SELF_DIR/loader-live-output" ]]; then
+  chmod u+x -- "$SELF_DIR/loader-live-output" || \
+    fail "Cannot mark local test binary executable; unpack into a user-writable directory"
+fi
 [[ -x "$SELF_DIR/loader-live-output" ]] || fail "Test app not executable"
 # Verify ELF architecture and linked libraries, never modify the OS.
 if command -v ldd >/dev/null; then
