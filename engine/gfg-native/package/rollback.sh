@@ -15,6 +15,20 @@ for name in libVkLayer_gfg_native.so VkLayer_gfg_native.json diagnose.sh accept_
     rm -f "$target/$name"
   fi
 done
+# The loader directory is separate from provenance metadata. Restore it exactly
+# (or remove only the two files we created when the previous version had none).
+mkdir -p "$target/vulkan-layers"
+for name in VkLayer_gfg_native.json libVkLayer_gfg_native.so; do
+  previous="$backup/vulkan-layers/$name"
+  current="$target/vulkan-layers/$name"
+  if [[ -e "$previous" || -L "$previous" ]]; then
+    cp -Pp "$previous" "$current.restore"
+    mv -f "$current.restore" "$current"
+  else
+    rm -f "$current"
+  fi
+done
+rmdir "$target/vulkan-layers" 2>/dev/null || :
 if [[ -f "$backup/gfg-native" ]]; then
   cp -p "$backup/gfg-native" "$bin/gfg-native.restore"
   mv -f "$bin/gfg-native.restore" "$bin/gfg-native"
