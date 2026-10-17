@@ -19,6 +19,7 @@
 #include "swapchain_chain.h"
 #ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
 #include "virtual_wsi_facade.h"
+#include "virtual_layouts.h"
 #endif
 #ifdef GFG_NATIVE_WITH_TE
 #include "cpu_bridge.h"
@@ -94,6 +95,11 @@ typedef struct native_device {
     PFN_vkDestroySwapchainKHR destroy_swapchain;
     PFN_vkQueuePresentKHR present;
     PFN_vkGetSwapchainImagesKHR get_images;
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    PFN_vkCmdPipelineBarrier cmd_barrier;
+    PFN_vkCmdPipelineBarrier2 cmd_barrier2;
+    PFN_vkCmdPipelineBarrier2KHR cmd_barrier2_khr;
+#endif
     PFN_vkAcquireNextImageKHR acquire;
     PFN_vkAcquireNextImage2KHR acquire2;
     PFN_vkQueueSubmit submit;
@@ -523,6 +529,11 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
         gdpa(*out, "vkQueuePresentKHR");
     d->get_images = (PFN_vkGetSwapchainImagesKHR)
         gdpa(*out, "vkGetSwapchainImagesKHR");
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    d->cmd_barrier = (PFN_vkCmdPipelineBarrier)gdpa(*out, "vkCmdPipelineBarrier");
+    d->cmd_barrier2 = (PFN_vkCmdPipelineBarrier2)gdpa(*out, "vkCmdPipelineBarrier2");
+    d->cmd_barrier2_khr = (PFN_vkCmdPipelineBarrier2KHR)gdpa(*out, "vkCmdPipelineBarrier2KHR");
+#endif
     d->acquire = (PFN_vkAcquireNextImageKHR)
         gdpa(*out, "vkAcquireNextImageKHR");
     d->wait_present = (PFN_vkWaitForPresentKHR)gdpa(*out, "vkWaitForPresentKHR");
