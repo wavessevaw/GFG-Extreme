@@ -33,26 +33,26 @@ jobs:
           test -s engine/gfg-native/build-real-wsi/libVkLayer_gfg_native.so
           test -s engine/gfg-native/build-real-wsi/wsi-gpu-smoke
           readelf -h engine/gfg-native/build-real-wsi/libVkLayer_gfg_native.so | grep -q 'DYN (Shared object file)'
-      - name: Additive explicit-layer loader (preserves Proton default layers)
+      - name: Exercise exact Steam Deck launcher against older Vulkan Loader
         run: |
           set -euo pipefail
-          # Check the Steam launch design: use additive VK_ADD_LAYER_PATH,
-          # preserve installed layer search paths; explicitly opt into GFG.
-          GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_FORCE_FIFO=1 \
-            GFG_NATIVE_ASYNC=1 GFG_NATIVE_MODE=2 GFG_NATIVE_REAL_WSI_PROBE=1 \
-            GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_FRAMES=8 \
-            VK_ADD_LAYER_PATH="$PWD/engine/gfg-native/build-real-wsi" \
-            VK_INSTANCE_LAYERS=VK_LAYER_GFG_native \
-            VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
+          install -m 755 engine/gfg-native/scripts/real-wsi-game-launch.sh \
+            engine/gfg-native/build-real-wsi/real-wsi-game-launch.sh
+          VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
             xvfb-run -a -s '-screen 0 1280x800x24' \
-              engine/gfg-native/build-real-wsi/wsi-gpu-smoke > /tmp/real-wsi-additive.log 2>&1 || {
-                cat /tmp/real-wsi-additive.log
-                exit 1
-              }
-          grep 'GSF_REAL_WSI_GATE gpu_requested=1 gpu_capable=1' /tmp/real-wsi-additive.log
-          grep 'GSF_REAL_WSI_GPU_BRIDGE_CREATE active=1' /tmp/real-wsi-additive.log
-          grep 'real frames GPU bridge WSI smoke PASS' /tmp/real-wsi-additive.log
-          echo "GSF_REAL_WSI_ADDITIVE_EXPLICIT_LOADER=PASS"
+            bash engine/gfg-native/build-real-wsi/real-wsi-game-launch.sh --smoke --mode=2 \
+            > /tmp/real-wsi-launcher.out 2>&1 || {
+              cat /tmp/real-wsi-launcher.out
+              exit 1
+            }
+          cat /tmp/real-wsi-launcher.out
+          grep 'GSF_REAL_WSI_KIT_FINISHED exit=0' /tmp/real-wsi-launcher.out
+          logdir="$(sed -n 's/.*GSF_REAL_WSI_KIT_LOG_DIR=//p' /tmp/real-wsi-launcher.out | tail -1)"
+          test -f "$logdir/game.log"
+          grep 'GSF_REAL_WSI_GATE gpu_requested=1 gpu_capable=1' "$logdir/game.log"
+          grep 'GSF_REAL_WSI_GPU_BRIDGE_CREATE active=1' "$logdir/game.log"
+          grep 'real frames GPU bridge WSI smoke PASS' "$logdir/game.log"
+          echo "GSF_REAL_WSI_CHILD_LAUNCHER=PASS on older Vulkan Loader"
       - name: Child launcher bypass does not require Vulkan or GFG files
         run: |
           set -euo pipefail
@@ -123,8 +123,9 @@ jobs:
              "/home/deck/gsf-real-wsi/real-wsi-game-launch.sh" --mode=2 -- %command%
           Safe launch without injecting GFG (use if the game exits at startup):
              "/home/deck/gsf-real-wsi/real-wsi-game-launch.sh" --mode=off -- %command%
-          Launcher uses VK_ADD_LAYER_PATH and appends GFG to existing VK_INSTANCE_LAYERS,
-          keeping Steam/Proton/Gamescope default layer discovery intact.
+          Launcher reconstructs the usual Vulkan explicit layer XDG search paths and
+          retains existing Steam VK_LAYER_PATH/VK_INSTANCE_LAYERS rather than
+          wiping them (including older Vulkan Loaders without VK_ADD_LAYER_PATH).
           Note: this is a 64-bit-only Vulkan layer; 32-bit games are not qualified.
           Start with 2x; 3x is exploratory. Check ~/GFG-Real-WSI-Tests logs.
           Do not inject system-wide; do not modify SteamOS, Gamescope, or Decky.
