@@ -8,6 +8,7 @@
 #include <assert.h>
 #include <stdio.h>
 static unsigned downstream_images,downstream_acquires,downstream_presents;
+static unsigned barrier_legacy_calls,barrier_sync2_calls,barrier_sync2_khr_calls;
 static uint64_t last_snapshot_ticket;
 static unsigned last_snapshot_image;
 static unsigned acquire_signalled,game_wait_consumed;
@@ -36,6 +37,28 @@ static VkResult VKAPI_CALL stub_present(VkQueue q,const VkPresentInfoKHR *p) {
     (void)q;assert(p&&p->swapchainCount==1&&p->pSwapchains[0]==output_handle);
     ++downstream_presents;return VK_SUCCESS;
 }
+static void VKAPI_CALL stub_barrier(VkCommandBuffer cmd,
+        VkPipelineStageFlags src,VkPipelineStageFlags dst,VkDependencyFlags flags,
+        uint32_t nmem,const VkMemoryBarrier *mem,
+        uint32_t nbuf,const VkBufferMemoryBarrier *buf,
+        uint32_t nimg,const VkImageMemoryBarrier *img) {
+    (void)cmd;(void)src;(void)dst;(void)flags;(void)nmem;
+    (void)mem;(void)nbuf;(void)buf;
+    assert(nimg==2 && img);
+    assert(img[0].newLayout==VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    assert(img[1].newLayout==VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    ++barrier_legacy_calls;
+}
+static void VKAPI_CALL stub_barrier2(VkCommandBuffer cmd,const VkDependencyInfo *info) {
+    (void)cmd;assert(info&&info->imageMemoryBarrierCount==2);
+    assert(info->pImageMemoryBarriers[0].newLayout==VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    assert(info->pImageMemoryBarriers[1].newLayout==VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    ++barrier_sync2_calls;
+}
+static void VKAPI_CALL stub_barrier2_khr(VkCommandBuffer cmd,const VkDependencyInfo *info) {
+    stub_barrier2(cmd,info);
+    ++barrier_sync2_khr_calls;
+}
 static VkResult stub_signal(void *u,VkSemaphore sem,VkFence fence) {
     (void)u;assert(sem||fence);++acquire_signalled;return VK_SUCCESS;
 }
@@ -53,6 +76,9 @@ int main(void) {
     d.key=key;d.handle=device;d.get_images=stub_get_images;
     d.acquire=stub_acquire;d.acquire2=stub_acquire2;
     d.present=stub_present;
+    d.cmd_barrier=stub_barrier;
+    d.cmd_barrier2=stub_barrier2;
+    d.cmd_barrier2_khr=stub_barrier2_khr;
     assert(!pthread_mutex_init(&d.lock,NULL));
     assert(!pthread_mutex_init(&d.queue_lock,NULL));
     devices=&d;
@@ -77,6 +103,17 @@ int main(void) {
     PFN_vkQueuePresentKHR present=(PFN_vkQueuePresentKHR)
         native_gdpa(device,"vkQueuePresentKHR");
     assert(get_images&&acquire&&acquire2&&present);
+    PFN_vkCmdPipelineBarrier barrier=(PFN_vkCmdPipelineBarrier)
+        native_gdpa(device,"vkCmdPipelineBarrier");
+    PFN_vkCmdPipelineBarrier2 barrier2=(PFN_vkCmdPipelineBarrier2)
+        native_gdpa(device,"vkCmdPipelineBarrier2");
+    PFN_vkCmdPipelineBarrier2KHR barrier2_khr=(PFN_vkCmdPipelineBarrier2KHR)
+        native_gdpa(device,"vkCmdPipelineBarrier2KHR");
+    assert(barrier&&barrier2&&barrier2_khr);
+    assert(native_gipa((VkInstance)&key,"vkCmdPipelineBarrier")==
+           (PFN_vkVoidFunction)barrier);
+    assert(native_gipa((VkInstance)&key,"vkCmdPipelineBarrier2")==
+           (PFN_vkVoidFunction)barrier2);
     assert(native_gipa((VkInstance)&key,"vkGetSwapchainImagesKHR")==
            (PFN_vkVoidFunction)get_images);
     assert(native_gipa((VkInstance)&key,"vkAcquireNextImageKHR")==
@@ -89,6 +126,36 @@ int main(void) {
     assert(get_images(device,app_handle,&count,images)==VK_SUCCESS);
     assert(images[0]==app_images[0]&&images[1]==app_images[1]);
     assert(downstream_images==0);
+
+    /* The game's PRESENT barrier must become transfer-src for virtual
+     * textures while the compositor's *real* output PRESENT is untouched.
+     * App-provided command structs must remain immutable. */
+    VkImageMemoryBarrier game_and_output[2]={
+        {.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+         .image=app_images[0],.oldLayout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+         .newLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR},
+        {.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+         .image=(VkImage)(uintptr_t)0xFAFE,
+         .oldLayout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+         .newLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR}
+    };
+    barrier((VkCommandBuffer)&key,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,2,game_and_output);
+    assert(barrier_legacy_calls==1);
+    assert(game_and_output[0].newLayout==VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    VkImageMemoryBarrier2 game_sync2[2]={
+        {.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+         .image=app_images[0],.newLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR},
+        {.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+         .image=(VkImage)(uintptr_t)0xFAFE,
+         .newLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR}
+    };
+    VkDependencyInfo dependency={.sType=VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .imageMemoryBarrierCount=2,.pImageMemoryBarriers=game_sync2};
+    barrier2((VkCommandBuffer)&key,&dependency);
+    barrier2_khr((VkCommandBuffer)&key,&dependency);
+    assert(barrier_sync2_calls==2 && barrier_sync2_khr_calls==1);
+    assert(game_sync2[0].newLayout==VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
     uint32_t a=999,b=999,c=999;
     VkSemaphore acquire_sem=(VkSemaphore)(uintptr_t)0xFA10;
