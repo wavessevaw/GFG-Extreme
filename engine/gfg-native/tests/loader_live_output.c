@@ -161,7 +161,9 @@ int main(void) {
     VkFence rendering=VK_NULL_HANDLE;
     TRY(vkCreateFence(device,&fc,NULL,&rendering));
     unsigned char seen[GFG_OFFSCREEN_MAX_IMAGES]={0};
-    uint32_t visible=0;
+    const int interleave=getenv("GFG_NATIVE_TEST_OUTPUT_INTERLEAVE")!=NULL;
+    uint32_t visible=0, intermediate_visible=0, output_visible=0;
+    int last_level=-1;
     for(uint32_t frame=1;frame<=8;frame++) {
         uint32_t index=UINT32_MAX;
         TRY(vkAcquireNextImageKHR(device,virtual_handle,UINT64_MAX,
@@ -219,15 +221,35 @@ int main(void) {
         TRY(vkQueuePresentKHR(queue,&present));
         REQUIRE(single==VK_SUCCESS);
         const int expected=(int)(level*255.f+0.5f);
+        /* X11 must expose the inserted A|B frame before the real B.
+         * The synthetic GPU composite is unique: left pixel from A,
+         * right pixel from B. A mere duplicate present cannot pass. */
+        if(interleave && frame>1) {
+            REQUIRE(last_level>=0 && last_level!=expected);
+            uint64_t middle_latency=0;
+            REQUIRE(gfg_x11_wait_visible_pair(x,window,extent.width,extent.height,
+                    last_level,expected,1500000000ull,&middle_latency));
+            ++intermediate_visible;
+            ++output_visible;
+            fprintf(stderr,"GSF_LOADER_SPLIT_APP frame=%u left=%d right=%d x11_visible=1 latency_us=%llu\n",
+                    frame,last_level,expected,(unsigned long long)(middle_latency/1000));
+        }
         uint64_t latency=0;
         REQUIRE(gfg_x11_wait_visible_pair(x,window,extent.width,extent.height,
                 expected,expected,1500000000ull,&latency));
         ++visible;
+        ++output_visible;
+        last_level=expected;
         seen[index]=1;
         fprintf(stderr,"GSF_LOADER_LIVE_APP frame=%u virtual_present=1 x11_visible=1 latency_us=%llu\\n",
             frame,(unsigned long long)(latency/1000));
     }
     REQUIRE(visible==8);
+    REQUIRE(!interleave || intermediate_visible==7);
+    REQUIRE(!interleave || output_visible==15);
+    if(interleave)
+        fprintf(stderr,"GSF_LOADER_SPLIT_APP output_visible=%u original=%u intermediate=%u x11_distinct_pixels=1 PASS\n",
+            output_visible,visible,intermediate_visible);
     TRY(vkDeviceWaitIdle(device));
     vkDestroyFence(device,rendering,NULL);
     vkDestroySemaphore(device,image_ready,NULL);
