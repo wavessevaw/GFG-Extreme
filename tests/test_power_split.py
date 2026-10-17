@@ -93,11 +93,11 @@ class PowerSplitTests(unittest.TestCase):
         run(s, 200, top=30.0)
         self.assertEqual(s.level, 0)
 
-    def test_remembered_level_is_the_first_stop(self):
+    def test_remembered_level_is_rechecked_one_step_at_a_time(self):
         s = ps.PowerSplit(LADDER)
         s.start_level = 3
         run(s, ps.STEP_GAP_S + 1, top=20.0)
-        self.assertEqual(s.level, 3)
+        self.assertEqual(s.level, 1, "past-session CPU headroom is not current evidence")
 
     def test_ab_pairs_measure_gpu_clock_per_watt(self):
         s = ps.PowerSplit(LADDER)
@@ -133,7 +133,7 @@ class SplitMemoryTests(unittest.TestCase):
             m.record(split)
         self.assertTrue(m.start_session())
         self.assertTrue(m.ruled_out)
-        self.assertEqual(m.level, 2)
+        self.assertEqual(m.level, 0, "unproved CPU caps must not be remembered")
         for _ in range(ps.RECHECK_SESSIONS - 1):
             self.assertTrue(m.start_session(), "off for RECHECK_SESSIONS sessions")
         self.assertFalse(m.start_session())
@@ -149,9 +149,18 @@ class SplitMemoryTests(unittest.TestCase):
         self.assertFalse(m.start_session())
 
     def test_damaged_record_loads(self):
-        m = ps.SplitMemory({"level": "x", "pairs": [1.0, float("nan"), "y"], "off": None, "sessions": None})
+        m = ps.SplitMemory({"schema": ps.SPLIT_MEMORY_SCHEMA,
+                            "level": "x", "pairs": [1.0, float("nan"), "y"],
+                            "off": None, "sessions": None})
         self.assertEqual((m.level, m.pairs, m.sessions), (0, [1.0], 0))
         self.assertEqual(ps.SplitMemory(json.loads(json.dumps(m.to_record()))).pairs, [1.0])
+
+    def test_old_session_memory_cannot_disable_corrected_split(self):
+        stale = ps.SplitMemory({"level": 4, "pairs": [-5.0] * 20,
+                                "pair_sessions": 4, "sessions": 100, "off": 100})
+        self.assertEqual((stale.level, stale.pairs, stale.sessions, stale.off), (0, [], 0, None))
+        self.assertFalse(stale.start_session())
+        self.assertEqual(stale.to_record()["schema"], ps.SPLIT_MEMORY_SCHEMA)
 
 
 class CpuFreqActuatorTests(unittest.TestCase):

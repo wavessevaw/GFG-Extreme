@@ -173,7 +173,7 @@ class DefaultsAndScopeTests(unittest.TestCase):
             await s._apply_budget_tdp('game')
             await s._wait_governor(.35)
         asyncio.run(scenario())
-        self.assertEqual(s.power.writes,[14,10])
+        self.assertEqual(s.power.writes,[10])
 
 
 if __name__=='__main__':unittest.main()

@@ -10,11 +10,11 @@
 #define LMC_MAX_LAYERS 3
 #define LMC_PALETTE 4
 #define LMC_HYPS 128
-#define LMC_BINDINGS 36
+#define LMC_BINDINGS 39
 
 enum {
     LMC_PREP, LMC_DOWN, LMC_SEARCH, LMC_LAYERS, LMC_FIELD, LMC_MASKED, LMC_ORPHAN, LMC_SELECT,
-    LMC_COMPOSE, LMC_PIPES
+    LMC_COMPOSE, LMC_GPU_HYP, LMC_GPU_IRLS, LMC_GPU_PALETTE, LMC_SF_PREPARE, LMC_SF_COMPOSE, LMC_SF_MODEL, LMC_PIPES
 };
 
 typedef struct {
@@ -57,7 +57,7 @@ struct te_lmc {
     uint32_t ocap;              /* orphan blocks searched per grid */
     uint32_t lw[LMC_LEVELS + 1], lh[LMC_LEVELS + 1], bw[LMC_LEVELS + 1], bh[LMC_LEVELS + 1];
     uint32_t off[LMC_LEVELS + 1];
-    te_image luma[2][LMC_LEVELS + 1], half[2], hud, field[2];
+    te_image luma[2][LMC_LEVELS + 1], half[2], hud, field[2], linear[2];
     te_buffer params, vec[2], scratch, temporal, layers, globals, orph[2], masked, sel;
     VkDescriptorSetLayout dsl;
     VkPipelineLayout layout;
@@ -66,6 +66,10 @@ struct te_lmc {
     VkPipeline pipe[LMC_PIPES];
     VkPipeline search[LMC_LEVELS + 1][2];  /* block search specialised per level (1..4) and grid */
     int have_temporal;
+    int gpu_fit;
+    int shared_flow;
+    int compact_flow;
+    unsigned fit_sync_ok;
     /* motion model on the CPU (te_lmc_fit.c), fitted on this pair's vectors: the analysis is two
        submissions.  The first (pyramid, block search, block statistics) ends with a copy of the
        level-1 B vectors, usable flags and motion votes to fitrb and signals fit_tl = 2k + 1; the
@@ -112,6 +116,7 @@ static double lmc_now_ms(void) {
 /* one fit: pair seq k of ring slot rs (its first submission signals 2k + 1) */
 static void lmc_fit_job(struct te_lmc* m, te_slot* slot, int rs, uint64_t k, uint32_t gen) {
     te_device* dev = m->dev;
+    select_device(dev);
     uint64_t want = 2 * k + 1;
     VkSemaphoreWaitInfo wi = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, .semaphoreCount = 1,
                               .pSemaphores = &m->fit_tl, .pValues = &want};
@@ -266,6 +271,20 @@ static VkResult lmc_create(te_context* ctx) {
     struct te_lmc* m = calloc(1, sizeof *m);
     if (!m) return fail(VK_ERROR_OUT_OF_HOST_MEMORY, "out of memory");
     ctx->lmc = m;
+    m->shared_flow=ctx->desc.params.algorithm==TE_ALGO_SHARED_FLOW;
+    m->compact_flow=m->shared_flow && !ctx->desc.shared_flow_dense;
+    m->gpu_fit=ctx->desc.params.algorithm==TE_ALGO_LMC_GPU || m->shared_flow;
+    if(pthread_mutex_init(&m->fit_lock,NULL)) return VK_ERROR_INITIALIZATION_FAILED;
+    m->fit_sync_ok|=1;
+    if(pthread_cond_init(&m->fit_cond,NULL)) return VK_ERROR_INITIALIZATION_FAILED;
+    m->fit_sync_ok|=2;
+    pthread_condattr_t attr;
+    pthread_condattr_init(&attr);
+    pthread_condattr_setclock(&attr,CLOCK_MONOTONIC);
+    int cond_error=pthread_cond_init(&m->fit_done,&attr);
+    pthread_condattr_destroy(&attr);
+    if(cond_error) return VK_ERROR_INITIALIZATION_FAILED;
+    m->fit_sync_ok|=4;
     uint32_t W = ctx->desc.width, H = ctx->desc.height;
     m->w2 = W / 2;
     m->h2 = H / 2;
@@ -292,7 +311,9 @@ static VkResult lmc_create(te_context* ctx) {
         for (int l = 0; l <= LMC_LEVELS; ++l)
             LTRY(image_create(dev, &m->luma[s][l], m->lw[l], m->lh[l], VK_FORMAT_R32_SFLOAT, su, -1, 0));
         LTRY(image_create(dev, &m->half[s], m->w2, m->h2, VK_FORMAT_R16G16B16A16_SFLOAT, su, -1, 0));
-        LTRY(image_create(dev, &m->field[s], m->w2, m->h2, VK_FORMAT_R16G16B16A16_SFLOAT, su, -1, 0));
+        LTRY(image_create(dev, &m->field[s], m->compact_flow?1:m->w2, m->compact_flow?1:m->h2, VK_FORMAT_R16G16B16A16_SFLOAT, su, -1, 0));
+        if(ctx->desc.color_transfer==TE_TRANSFER_PQ)
+            LTRY(image_create(dev,&m->linear[s],W,H,VK_FORMAT_R16G16B16A16_SFLOAT,su,-1,0));
     }
     LTRY(image_create(dev, &m->hud, W, H, VK_FORMAT_R32_UINT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                       -1, 0));
@@ -308,8 +329,8 @@ static VkResult lmc_create(te_context* ctx) {
     /* live flags, ordered list, 3 counters, dense list (4 words per entry, 16-byte aligned start) */
     LTRY(buffer_create(dev, &m->layers, LMC_LY_LIVE + (VkDeviceSize)(((2 * m->n1 + 6) & ~3u) + 4 * m->n1) * 4, bu, 0));
     LTRY(buffer_create(dev, &m->globals, LMC_G_SIZE, bu, 0));
-    LTRY(buffer_create(dev, &m->masked, (VkDeviceSize)(W / 4) * (H / 4) * 16, bu, 0));
-    LTRY(buffer_create(dev, &m->sel, (VkDeviceSize)m->w2 * m->h2 * 16, bu, 0));
+    LTRY(buffer_create(dev, &m->masked, m->compact_flow?16:(VkDeviceSize)(W / 4) * (H / 4) * 16, bu, 0));
+    LTRY(buffer_create(dev, &m->sel, m->compact_flow?16:(VkDeviceSize)m->w2 * m->h2 * 16, bu, 0));
 
     lmc_ubo u;
     memset(&u, 0, sizeof u);
@@ -326,6 +347,7 @@ static VkResult lmc_create(te_context* ctx) {
     u.pen_update = 0.004f; u.smooth = 0.002f; u.margin = 0.06f; u.tol_px = 0.75f;
     u.still = 2.0f / 255.0f; u.orphan_resid = 0.15f; u.orphan_share = 0.08f; u.orphan_max_cost = 0.08f;
     u.coarse_r = 10; u.propagate = 2; u.hud_pairs = 6; u.orphan_r = 112;
+    u.pad1=ctx->desc.output_bgra;
     u.min_layer_share = 0.10f; u.ransac_iters = LMC_HYPS;
     m->ocap = LMC_ORPHAN_CAP;
     const char* cap = getenv("GFG_LMC_ORPHAN_CAP");
@@ -337,17 +359,18 @@ static VkResult lmc_create(te_context* ctx) {
     memcpy(m->params.map, &u, sizeof u);
 
     /* descriptor layout: see lmc_common.glsl / lmc_store.glsl */
+    const uint32_t bindings=ctx->desc.color_transfer==TE_TRANSFER_PQ?39u:36u;
     VkDescriptorSetLayoutBinding b[LMC_BINDINGS];
-    for (uint32_t i = 0; i < LMC_BINDINGS; ++i) {
+    for (uint32_t i = 0; i < bindings; ++i) {
         VkDescriptorType t = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         if (i == 0) t = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        else if (i <= 12 || i == 18 || i == 19 || i == 28 || i == 29) t = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        else if ((i >= 13 && i <= 17) || i == 20 || i == 21 || i == 34 || i == 35) t = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        else if (i <= 12 || i == 18 || i == 19 || i == 28 || i == 29 || i==36 || i==37) t = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        else if ((i >= 13 && i <= 17) || i == 20 || i == 21 || i == 34 || i == 35 || i==38) t = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         b[i] = (VkDescriptorSetLayoutBinding){.binding = i, .descriptorType = t, .descriptorCount = 1,
                                               .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT};
     }
     VkDescriptorSetLayoutCreateInfo li = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-                                          .bindingCount = LMC_BINDINGS, .pBindings = b};
+                                          .bindingCount = bindings, .pBindings = b};
     CHECK(vkCreateDescriptorSetLayout(d, &li, NULL, &m->dsl), "vkCreateDescriptorSetLayout(lmc)");
     VkDescriptorSetLayout sets[2] = {m->dsl, ctx->dsl1};
     VkPushConstantRange pcr = {VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(lmc_push)};
@@ -357,7 +380,7 @@ static VkResult lmc_create(te_context* ctx) {
     VkDescriptorPoolSize ps[4] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2},
                                   {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * 18},
                                   {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * 12},
-                                  {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * 9 + TE_MAX_OUTPUTS}};
+                                  {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * 10 + TE_MAX_OUTPUTS}};
     VkDescriptorPoolCreateInfo dpi = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
                                       .maxSets = 2 + TE_MAX_OUTPUTS, .poolSizeCount = 4, .pPoolSizes = ps};
     CHECK(vkCreateDescriptorPool(d, &dpi, NULL, &m->pool), "vkCreateDescriptorPool(lmc)");
@@ -406,10 +429,13 @@ static VkResult lmc_create(te_context* ctx) {
         BUF(33, m->sel);
         STOR(34, m->field[0].view);
         STOR(35, m->field[1].view);
+        if(ctx->desc.color_transfer==TE_TRANSFER_PQ) {
+            SAMP(36,m->linear[a].view);SAMP(37,m->linear[bb].view);STOR(38,m->linear[bb].view);
+        }
 #undef SAMP
 #undef STOR
 #undef BUF
-        for (uint32_t i = 0; i < LMC_BINDINGS; ++i) {
+        for (uint32_t i = 0; i < bindings; ++i) {
             w[i] = (VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = m->set0[par],
                                           .dstBinding = i, .descriptorCount = 1, .descriptorType = b[i].descriptorType};
             if (b[i].descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
@@ -418,7 +444,7 @@ static VkResult lmc_create(te_context* ctx) {
             else
                 w[i].pImageInfo = &im[i];
         }
-        vkUpdateDescriptorSets(d, LMC_BINDINGS, w, 0, NULL);
+        vkUpdateDescriptorSets(d, bindings, w, 0, NULL);
     }
     for (uint32_t i = 0; i < ctx->desc.outputs; ++i) {
         VkDescriptorImageInfo di = {VK_NULL_HANDLE, ctx->dst[i].view, VK_IMAGE_LAYOUT_GENERAL};
@@ -429,7 +455,8 @@ static VkResult lmc_create(te_context* ctx) {
     }
 
     struct { const uint32_t* code; size_t size; } src[LMC_PIPES] = {
-        [LMC_PREP] = {te_spv_lmc_prep, sizeof te_spv_lmc_prep},
+        [LMC_PREP] = {ctx->desc.color_transfer==TE_TRANSFER_PQ?te_spv_lmc_prep_pq:te_spv_lmc_prep,
+                       ctx->desc.color_transfer==TE_TRANSFER_PQ?sizeof te_spv_lmc_prep_pq:sizeof te_spv_lmc_prep},
         [LMC_DOWN] = {te_spv_lmc_down, sizeof te_spv_lmc_down},
         [LMC_SEARCH] = {te_spv_lmc_search, sizeof te_spv_lmc_search},
         [LMC_LAYERS] = {te_spv_lmc_layers, sizeof te_spv_lmc_layers},
@@ -437,9 +464,27 @@ static VkResult lmc_create(te_context* ctx) {
         [LMC_MASKED] = {te_spv_lmc_masked, sizeof te_spv_lmc_masked},
         [LMC_ORPHAN] = {te_spv_lmc_orphan, sizeof te_spv_lmc_orphan},
         [LMC_SELECT] = {te_spv_lmc_select, sizeof te_spv_lmc_select},
-        [LMC_COMPOSE] = {te_spv_lmc_compose, sizeof te_spv_lmc_compose},
+        [LMC_COMPOSE] = {ctx->desc.output_fp16 ? te_spv_lmc_compose_fp16 : te_spv_lmc_compose,
+                         ctx->desc.output_fp16 ? sizeof te_spv_lmc_compose_fp16 : sizeof te_spv_lmc_compose},
+        [LMC_SF_PREPARE] = {te_spv_lmc_sf_prepare, sizeof te_spv_lmc_sf_prepare},
+        [LMC_SF_MODEL] = {te_spv_lmc_sf_model, sizeof te_spv_lmc_sf_model},
+        [LMC_SF_COMPOSE] = {ctx->desc.output_fp16?te_spv_lmc_sf_compose_fp16:te_spv_lmc_sf_compose,
+                           ctx->desc.output_fp16?sizeof te_spv_lmc_sf_compose_fp16:sizeof te_spv_lmc_sf_compose},
+        [LMC_GPU_HYP] = {te_spv_lmc_hyp, sizeof te_spv_lmc_hyp},
+        [LMC_GPU_IRLS] = {te_spv_lmc_irls, sizeof te_spv_lmc_irls},
+        [LMC_GPU_PALETTE] = {te_spv_lmc_palette, sizeof te_spv_lmc_palette},
     };
+    if(ctx->desc.color_transfer==TE_TRANSFER_PQ) {
+        src[LMC_COMPOSE].code=te_spv_lmc_compose_pq;src[LMC_COMPOSE].size=sizeof te_spv_lmc_compose_pq;
+        src[LMC_SF_COMPOSE].code=te_spv_lmc_sf_compose_pq;src[LMC_SF_COMPOSE].size=sizeof te_spv_lmc_sf_compose_pq;
+    }
     for (int i = 0; i < LMC_PIPES; ++i) {
+        if(i==LMC_SF_MODEL && ctx->desc.shared_flow_dense<2)continue;
+        if(i==LMC_SF_COMPOSE && !m->compact_flow)continue;
+        if(i>=LMC_SF_PREPARE && !m->shared_flow)continue;
+        if(m->shared_flow && i>=LMC_GPU_HYP && i<LMC_SF_PREPARE && ctx->desc.shared_flow_dense!=4 && !(i==LMC_GPU_PALETTE && ctx->desc.shared_flow_dense==3))continue;
+        if(m->compact_flow && i!=LMC_PREP && i!=LMC_DOWN && i!=LMC_SEARCH && i<LMC_SF_PREPARE)continue;
+        if (i >= LMC_GPU_HYP && i<LMC_SF_PREPARE && !m->gpu_fit) continue;
         if (i == LMC_SEARCH) continue;  /* specialised per level and grid below */
         VkShaderModuleCreateInfo smci = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
                                          .codeSize = src[i].size, .pCode = src[i].code};
@@ -476,6 +521,7 @@ static VkResult lmc_create(te_context* ctx) {
         vkDestroyShaderModule(d, mod, NULL);
         if (r != VK_SUCCESS) return fail(r, "vkCreateComputePipelines(lmc search) failed (%d)", r);
     }
+    if(!m->gpu_fit){
     for (int k = 0; k < TE_RING; ++k) {
         LTRY(buffer_create(dev, &m->fitrb[k], LMC_FITRB_SIZE(m->n1), VK_BUFFER_USAGE_TRANSFER_DST_BIT, 1));
         LTRY(buffer_create(dev, &m->stage[k], LMC_STAGE_SIZE, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 1));
@@ -491,15 +537,9 @@ static VkResult lmc_create(te_context* ctx) {
     m->job_hudb = malloc(m->n1);
     if (!m->fit_work || !m->job_vec || !m->job_usable || !m->job_hudb)
         return fail(VK_ERROR_OUT_OF_HOST_MEMORY, "out of memory (lmc fit)");
-    pthread_mutex_init(&m->fit_lock, NULL);
-    pthread_cond_init(&m->fit_cond, NULL);
-    pthread_condattr_t attr;
-    pthread_condattr_init(&attr);
-    pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
-    pthread_cond_init(&m->fit_done, &attr);
-    pthread_condattr_destroy(&attr);
     m->fit_thread_ok = pthread_create(&m->fit_thread, NULL, lmc_fit_main, m) == 0;
     if (!m->fit_thread_ok) return fail(VK_ERROR_INITIALIZATION_FAILED, "cannot start the LMC fit thread");
+    }
 #undef LTRY
     return VK_SUCCESS;
 }
@@ -517,11 +557,9 @@ static void lmc_destroy(te_context* ctx) {
         pthread_mutex_unlock(&m->fit_lock);
         pthread_join(m->fit_thread, NULL);
     }
-    if (m->fit_work) {
-        pthread_mutex_destroy(&m->fit_lock);
-        pthread_cond_destroy(&m->fit_cond);
-        pthread_cond_destroy(&m->fit_done);
-    }
+    if(m->fit_sync_ok&1) pthread_mutex_destroy(&m->fit_lock);
+    if(m->fit_sync_ok&2) pthread_cond_destroy(&m->fit_cond);
+    if(m->fit_sync_ok&4) pthread_cond_destroy(&m->fit_done);
     if (m->fit_tl) vkDestroySemaphore(d, m->fit_tl, NULL);
     te_lmc_fit_free(m->fit_work);
     free(m->job_vec);
@@ -543,6 +581,7 @@ static void lmc_destroy(te_context* ctx) {
         for (int l = 0; l <= LMC_LEVELS; ++l) image_destroy(dev, &m->luma[s][l]);
         image_destroy(dev, &m->half[s]);
         image_destroy(dev, &m->field[s]);
+        image_destroy(dev, &m->linear[s]);
         buffer_destroy(dev, &m->vec[s]);
         buffer_destroy(dev, &m->orph[s]);
     }
@@ -560,15 +599,16 @@ static void lmc_destroy(te_context* ctx) {
 
 static void lmc_record_init(te_context* ctx, VkCommandBuffer cb) {
     struct te_lmc* m = ctx->lmc;
-    te_image* all[2 * (LMC_LEVELS + 1) + 5];
+    te_image* all[2 * (LMC_LEVELS + 1) + 7];
     uint32_t n = 0;
     for (int s = 0; s < 2; ++s) {
         for (int l = 0; l <= LMC_LEVELS; ++l) all[n++] = &m->luma[s][l];
         all[n++] = &m->half[s];
         all[n++] = &m->field[s];
+        if(m->linear[s].img)all[n++] = &m->linear[s];
     }
     all[n++] = &m->hud;
-    VkImageMemoryBarrier b[2 * (LMC_LEVELS + 1) + 5];
+    VkImageMemoryBarrier b[2 * (LMC_LEVELS + 1) + 7];
     for (uint32_t i = 0; i < n; ++i)
         b[i] = (VkImageMemoryBarrier){.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                                       .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT |
@@ -615,7 +655,7 @@ static void lmc_search_grid(te_context* ctx, VkCommandBuffer cb, int grid, int t
         uint32_t g = groups(m->bw[l] * m->bh[l], 64);
         int t = (grid == 1 || temporal_ok) ? 1 : 0;
         for (int k = 0; k < n; ++k) {
-            lmc_push_c(ctx, cb, 0.0f, l, grid, pass[k], t | io[k]);
+            lmc_push_c(ctx, cb, 0.0f, l, grid, pass[k], t | io[k] | (m->compact_flow?16:m->shared_flow?32:0));
             vkCmdDispatch(cb, g, 1, 1);
             compute_barrier(cb);
         }
@@ -672,6 +712,7 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
         pthread_mutex_unlock(&m->fit_lock);
         lmc_fill(cb, &m->layers, 0, 4, 0);                    /* layer_count */
         lmc_fill(cb, &m->globals, 4, 4, 0);                   /* moving */
+        if(m->shared_flow){lmc_fill(cb,&m->globals,0,4,0);lmc_fill(cb,&m->globals,88,12,0);}
         if (ctx->frames > 0) {
             VkClearColorValue zero = {{0, 0, 0, 0}};
             VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
@@ -682,12 +723,14 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
         lmc_fill(cb, &m->layers, LMC_LY_LIVE + 4u * 2u * m->n1, 12, 0);  /* list length, total, stop */
         lmc_fill(cb, &m->globals, 8, 4, 0);                                /* moving votes */
         lmc_fill(cb, &m->globals, LMC_G_ORPHANS, 8, 0);                    /* orphan counts */
+        if(m->shared_flow)lmc_fill(cb,&m->globals,92,4,0); /* keep previous cut for search */
         lmc_fill(cb, &m->globals, LMC_G_OHIST, LMC_G_OCLEAR, 0);           /* orphan selection */
         lmc_transfer_barrier(cb);
     }
+    if(m->shared_flow){lmc_fill(cb,&m->globals,100,4,0);lmc_transfer_barrier(cb);}
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->layout, 0, 1, &m->set0[par], 0, NULL);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_PREP]);
-    lmc_push_c(ctx, cb, 0.0f, 0, 0, 0, generate ? 0 : 1);
+    lmc_push_c(ctx, cb, 0.0f, 0, 0, 0, (generate?0:1)|(m->shared_flow?2:0));
     vkCmdDispatch(cb, groups(W, 8), groups(H, 8), 1);
     compute_barrier(cb);
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_DOWN]);
@@ -716,13 +759,69 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
     else
         lmc_search_grid(ctx, cb, 1, 1, 2);
     LMC_TS(1 + TE_LMC_SEARCH_A);
+    if(m->compact_flow) {
+        // One compact confidence/refinement phase for both output times.
+        LMC_TS(1+TE_LMC_LAYERS);
+        vkCmdWriteTimestamp(cb,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,slot->queries,2);
+        LMC_TS(1+TE_LMC_FIT_WAIT);
+        vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_SF_PREPARE]);
+        for(int g=0;g<2;++g) {
+            if(g)compute_barrier(cb);
+            lmc_push_c(ctx,cb,0,1,g,0,0);vkCmdDispatch(cb,groups(m->n1,64),1,1);
+        }
+        compute_barrier(cb);
+        lmc_push_c(ctx,cb,0,1,0,2,0);vkCmdDispatch(cb,groups(m->n1,64),1,1);
+        compute_barrier(cb);
+        LMC_TS(1+TE_LMC_FIELD);LMC_TS(1+TE_LMC_MASKED);
+        LMC_TS(1+TE_LMC_ORPHAN);LMC_TS(1+TE_LMC_FIELD2);
+        m->have_temporal=1;
+        vkCmdWriteTimestamp(cb,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,slot->queries,3);
+        return;
+    }
     /* block statistics for the CPU motion model (usable blocks, HUD blocks, motion
        votes); the planes and the palette themselves are fitted on the CPU */
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_LAYERS]);
-    lmc_push_c(ctx, cb, 0.0f, 1, 0, 0, 0);
+    lmc_push_c(ctx, cb, 0.0f, 1, 0, 0, (m->gpu_fit?1:0)|(m->shared_flow?16:0));
     vkCmdDispatch(cb, m->n1, 1, 1);   /* one workgroup per block */
     compute_barrier(cb);
     LMC_TS(1 + TE_LMC_LAYERS);
+    if(m->shared_flow) {
+        vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_SF_PREPARE]);
+        lmc_push_c(ctx,cb,0,1,0,3,0);vkCmdDispatch(cb,1,1,1);compute_barrier(cb);
+        if(ctx->desc.shared_flow_dense>=2) {
+            vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_SF_MODEL]);
+            vkCmdDispatch(cb,1,1,1);compute_barrier(cb);
+        }
+        if(ctx->desc.shared_flow_dense==4) {
+            vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_SF_PREPARE]);
+            lmc_push_c(ctx,cb,0,1,0,4,0);vkCmdDispatch(cb,1,1,1);compute_barrier(cb);
+            for(int layer=0;layer<LMC_MAX_LAYERS;++layer){
+                vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_GPU_IRLS]);
+                lmc_push_c(ctx,cb,0,1,0,1,32);vkCmdDispatch(cb,1,1,1);compute_barrier(cb);
+                vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_GPU_HYP]);
+                lmc_push_c(ctx,cb,0,1,0,2,32);vkCmdDispatch(cb,LMC_HYPS+LMC_MAX_LAYERS,1,1);compute_barrier(cb);
+                vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_GPU_IRLS]);
+                lmc_push_c(ctx,cb,0,1,0,3,32);vkCmdDispatch(cb,1,1,1);compute_barrier(cb);
+            }
+        }
+        if(ctx->desc.shared_flow_dense>=3){
+            vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_GPU_PALETTE]);
+            lmc_push_c(ctx,cb,0,1,0,0,0);vkCmdDispatch(cb,1,1,1);compute_barrier(cb);
+        }
+        vkCmdWriteTimestamp(cb,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,slot->queries,2);
+    } else if(m->gpu_fit){
+        for(int layer=0;layer<LMC_MAX_LAYERS;++layer){
+            vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_GPU_IRLS]);
+            lmc_push_c(ctx,cb,0,1,0,1,0);vkCmdDispatch(cb,1,1,1);compute_barrier(cb);
+            vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_GPU_HYP]);
+            lmc_push_c(ctx,cb,0,1,0,2,0);vkCmdDispatch(cb,LMC_HYPS+LMC_MAX_LAYERS,1,1);compute_barrier(cb);
+            vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_GPU_IRLS]);
+            lmc_push_c(ctx,cb,0,1,0,3,0);vkCmdDispatch(cb,1,1,1);compute_barrier(cb);
+        }
+        vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,m->pipe[LMC_GPU_PALETTE]);
+        lmc_push_c(ctx,cb,0,1,0,0,0);vkCmdDispatch(cb,1,1,1);compute_barrier(cb);
+        vkCmdWriteTimestamp(cb,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,slot->queries,2);
+    } else {
     /* the input of the CPU motion model: vectors (+ HUD flag in w), usable flags, votes */
     int rs = (int)(slot - ctx->ring);
     barrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -751,6 +850,7 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
     VkBufferCopy mg[2] = {{LMC_STAGE_HEAD, 0, 8}, {LMC_STAGE_PAL, 16, 16u * LMC_PALETTE}};
     vkCmdCopyBuffer(cb, m->stage[rs].buf, m->globals.buf, 2, mg);
     lmc_transfer_barrier(cb);
+    }
     LMC_TS(1 + TE_LMC_FIT_WAIT);   /* end of the wait for the CPU fit (not GPU work) */
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->layout, 0, 1, &m->set0[par], 0, NULL);
     /* per-pixel fields, orphan objects, fields again next to orphans */
@@ -799,9 +899,11 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
         lmc_push_c(ctx, cb, 0.0f, 1, g, 1, 0);
         vkCmdDispatch(cb, groups(m->bw[1], 2), groups(m->bh[1], 2), 1);
     }
+    /* SF_PREPARE can write temporal[]. The following copy overwrites that
+     * buffer; include transfer writes as well as the vector transfer read. */
     barrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
-            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
     LMC_TS(1 + TE_LMC_FIELD2);
 #undef LMC_TS
     /* the B field of this pair is the next pair's temporal predictor */
@@ -811,7 +913,7 @@ static void lmc_record_analysis(te_context* ctx, te_slot* slot, const te_submit*
     barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
     vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, slot->queries, 3);
-    vkEndCommandBuffer(cb);
+    if(!m->gpu_fit) vkEndCommandBuffer(cb);
 }
 
 static void lmc_record_output(te_context* ctx, te_slot* slot, const te_submit* s, uint32_t i, int hold) {
@@ -825,15 +927,15 @@ static void lmc_record_output(te_context* ctx, te_slot* slot, const te_submit* s
     VkDescriptorSet sets[2] = {m->set0[par], m->set1[i]};
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->layout, 0, 2, sets, 0, NULL);
     float t = hold ? 1.0f : s->timestamps[i];
-    if (!hold) {
+    if (!hold && !m->compact_flow) {
         vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_SELECT]);
         lmc_push_c(ctx, cb, t, 0, 0, 0, 0);
         vkCmdDispatch(cb, groups(m->w2, 8), groups(m->h2, 8), 1);
         compute_barrier(cb);
     }
     vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, slot->queries, q + 1);
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[LMC_COMPOSE]);
-    lmc_push_c(ctx, cb, t, 0, 0, 0, hold ? 1 : 0);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe[m->compact_flow?LMC_SF_COMPOSE:LMC_COMPOSE]);
+    lmc_push_c(ctx, cb, t, 0, 0, 0, (hold ? 1 : 0)|(m->shared_flow&&!m->compact_flow?16:0));
     vkCmdDispatch(cb, groups(ctx->desc.width, 8), groups(ctx->desc.height, 8), 1);
     barrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -848,6 +950,13 @@ static void lmc_record_output(te_context* ctx, te_slot* slot, const te_submit* s
     /* telemetry: layer count + shares and orphan counts into the readback header */
     VkBufferCopy c1 = {0, (VkDeviceSize)TE_GLOBALS_HEADER * i, 4};
     vkCmdCopyBuffer(cb, m->layers.buf, slot->readback.buf, 1, &c1);
+    if(m->shared_flow) {
+        VkBufferCopy state[4]={{m->compact_flow?0:88,(VkDeviceSize)TE_GLOBALS_HEADER*i+12,4},
+                              {96,(VkDeviceSize)TE_GLOBALS_HEADER*i+16,4},
+                              {92,(VkDeviceSize)TE_GLOBALS_HEADER*i+20,4},
+                              {100,(VkDeviceSize)TE_GLOBALS_HEADER*i+24,4}};
+        vkCmdCopyBuffer(cb,m->globals.buf,slot->readback.buf,4,state);
+    }
     VkBufferCopy c2 = {LMC_G_ORPHANS, (VkDeviceSize)TE_GLOBALS_HEADER * i + 4, 8};
     vkCmdCopyBuffer(cb, m->globals.buf, slot->readback.buf, 1, &c2);
     barrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_HOST_BIT,

@@ -27,7 +27,8 @@ API_VERSION = 1
 DISCOVERY_RELATIVE = Path(".local/state/gfg-extreme/shell-bridge.json")
 MAX_LINE = 16 * 1024
 SHELL_MODES = ("budget", "balanced", "quality", "autopilot")
-SHELL_FEATURES = ("continuous_boost",)
+SHELL_FEATURES = ("boost", "touch_boost", "latency", "continuous_boost")
+SHELL_PREFERENCES = ("auto", "battery", "smoothness")
 
 
 def _num(value: Any) -> Optional[float]:
@@ -79,6 +80,11 @@ def compact_status(status: Dict[str, Any]) -> Dict[str, Any]:
             "minutes_left": battery.get("minutes_left") if isinstance(battery.get("minutes_left"), int) else None,
         },
         "frame_fusion": {"setting": fusion.get("setting_enabled") is True, "state": str(fusion.get("state") or "")},
+        "boost": features.get("boost") is not False,
+        "touch_boost": features.get("touch_boost") is not False,
+        "latency": features.get("latency") is not False,
+        "preference": str(status.get("autopilot_preference") or "auto"),
+        "hud": (status.get("hud") or {}).get("enabled") is True if isinstance(status.get("hud"), dict) else False,
         "continuous_boost": features.get("continuous_boost") is True,
     }
 
@@ -102,6 +108,9 @@ class ShellBridge:
             "set_mode": self._set_mode,
             "set_frame_fusion": self._set_frame_fusion,
             "set_feature": self._set_feature,
+            "set_enabled": self._set_enabled,
+            "set_preference": self._set_preference,
+            "set_hud": self._set_hud,
         }
 
     @property
@@ -239,3 +248,30 @@ class ShellBridge:
         if not profile:
             return {"success": False, "error": "no-profile"}
         return await self.plugin.set_governor_frame_os_feature(profile, feature, enabled)
+
+    async def _set_enabled(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        enabled = params.get("enabled")
+        if type(enabled) is not bool:
+            return {"success": False, "error": "bad-params"}
+        profile = await self._current_profile(params)
+        if not profile:
+            return {"success": False, "error": "no-profile"}
+        return await self.plugin.set_governor_enabled(profile, enabled)
+
+    async def _set_preference(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        preference = str(params.get("preference") or "")
+        if preference not in SHELL_PREFERENCES:
+            return {"success": False, "error": "preference-not-allowed"}
+        profile = await self._current_profile(params)
+        if not profile:
+            return {"success": False, "error": "no-profile"}
+        return await self.plugin.set_governor_autopilot_preference(profile, preference)
+
+    async def _set_hud(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        enabled = params.get("enabled")
+        if type(enabled) is not bool:
+            return {"success": False, "error": "bad-params"}
+        profile = await self._current_profile(params)
+        if not profile:
+            return {"success": False, "error": "no-profile"}
+        return await self.plugin.set_governor_hud(profile, enabled)

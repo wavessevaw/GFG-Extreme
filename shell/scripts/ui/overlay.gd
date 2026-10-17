@@ -84,6 +84,11 @@ static func _collect(n: Node, out: Array) -> void:
 			_collect(c, out)
 
 
+## L1 / R1 while the overlay is open (dir -1 / +1). Overlays with tabs override it.
+func on_tab(_dir: int) -> void:
+	pass
+
+
 ## Returns true when the event was a direction and focus was moved (or kept) inside.
 func navigate(event: InputEvent) -> bool:
 	var dir := Vector2.ZERO

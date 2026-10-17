@@ -129,10 +129,6 @@ window.__state = ${JSON.stringify(state)};
 window.__cfg = ${JSON.stringify(extra.cfg || { fg_backend: "gfg", multiplier: 2, })};
 var callable = (n) => async (...a) => ({ get_governor_status: () => window.__state, get_profiles: () => ({ profiles: ["Default", "Sample Game", "Another Game"], current_profile: "Sample Game" }),
   get_profile_config: () => ({ config: window.__cfg }), get_pipeline_inspector: () => ({ saved: { fg_backend: "gfg", multiplier: 2, scaling: "off" }, effective: { fg_backend: "gfg", multiplier: 2, scaling: "off" }, actual: { renderer: "loaded", multiplier: 2, ...(window.__state.__actual || {}) } }),
-  get_theme_status: () => ({ success: true, installed: !!window.__themeInstalled, current: !!window.__themeInstalled, path: "/home/deck/homebrew/themes/GFG Extreme" }),
-  install_gfg_theme: () => { window.__themeCalls = (window.__themeCalls || 0) + 1;
-    if (window.__state.__themeFail) return { success: false, error: "Theme folder is read-only" };
-    window.__themeInstalled = true; return { success: true, message: "Installed. In CSS Loader, reload themes and enable GFG Extreme." }; },
   get_shell_status: () => ({ success: true, packaged: true, packaged_version: "0.1.0", installed: !!window.__shellInstalled, installed_version: window.__shellInstalled ? "0.1.0" : "", update_available: false, path: "/home/deck/.local/share/gfg-shell/app/gfg-shell.sh", start_dir: "/home/deck/.local/share/gfg-shell/app", shortcut_appid: window.__shellShortcut || null, progress: { busy: false } }),
   install_gfg_shell: () => { window.__shellInstalls = (window.__shellInstalls || 0) + 1; if (window.__state.__shellFail) return { success: false, error: "Godot download failed its SHA-256 check" }; window.__shellInstalled = true; return { success: true, version: "0.1.0" }; },
   set_shell_shortcut: (id) => { window.__shellShortcut = id; return { success: true }; },
@@ -157,6 +153,7 @@ var callable = (n) => async (...a) => ({ get_governor_status: () => window.__sta
     return { success: true, features };
   },
   set_governor_frame_os_ab: (enabled) => { (window.__abSets = window.__abSets || []).push(enabled); return { success: true, ab: !!enabled }; },
+  set_native_gsf: (mode) => { (window.__nativeGsfSets = window.__nativeGsfSets || []).push(mode); return window.__state.__nativeInstallFail ? { success: false, error: "native-launcher-not-ready-after-install" } : { success: true, mode, relaunch_required: true }; },
   set_governor_temporal_engine: (mode, consent) => { (window.__teSets = window.__teSets || []).push([mode, consent]); return mode === "experimental" && !consent ? { success: false, error: "consent-required" } : { success: true, mode, relaunch_required: true }; },
   set_governor_frame_fusion: (enabled) => { (window.__fusionSets = window.__fusionSets || []).push(enabled); return window.__state.__fusionFail ? { success: false, error: "Could not save Frame Fusion" } : { success: true, enabled }; },
   set_governor_frame_os_act_unlock: (enabled) => { (window.__actUnlocks = window.__actUnlocks || []).push(enabled); return { success: true, act_unlocked: !!enabled }; },

@@ -57,6 +57,13 @@ KEEP_PAIRS = 40
 MIN_OFF_PAIRS = 8
 USELESS_PCT = 1.0
 RECHECK_SESSIONS = 8
+SPLIT_MEMORY_SCHEMA = 2   # old clock-only A/B samples have no real-frame integrity gate
+# A/B comparisons must preserve real frames, not only increase GPU MHz/W.
+AB_REAL_FLOOR = 0.97
+AB_MAX_REAL_REGRESSION = 0.02   # capped versus uncapped, same target and watts
+AB_MAX_CAP_DRIFT = 0.08         # two capped windows must describe one stable scene
+AB_LOCAL_PAIRS = 4
+AB_LOCAL_CONFIDENCE = 0.95
 
 
 @dataclass
@@ -72,7 +79,7 @@ class Sample:
 
 
 def _ok(v: Any) -> bool:
-    return isinstance(v, (int, float)) and math.isfinite(float(v))
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(float(v))
 
 
 def levels_khz(max_khz: int, min_khz: int = 0) -> List[int]:
@@ -144,6 +151,22 @@ class PowerSplit:
             self.phase, self.reason = "off", ("not-eligible" if self.enabled else "switched-off")
             self.next_at = None
             return self.cap_khz
+        if not s.steady:
+            # A TDP or operating-point trial is not evidence about CPU split.
+            # The active CPU cap must not be carried into a second experiment.
+            # Preserve the more precise frame-deficit reason if the FPS collapsed
+            # before or during that transition.
+            short = (_ok(s.real_fps) and _ok(s.target_real) and s.target_real > 0
+                     and s.real_fps < DIP_FPS * s.target_real)
+            reason = "real-frames-short" if short else "governor-transition"
+            self._abort_ab()
+            if self.level:
+                self._move(now, 0, reason)
+                self.next_at = now + COOLDOWN_S
+            else:
+                self.next_at = max(self.next_at or now, now + STEP_GAP_S)
+            self.phase, self.reason = "free", reason
+            return self.cap_khz
         if self.next_at is None:
             self.next_at = now + STEP_GAP_S          # let the game settle at its point first
             self.phase, self.reason = "free", "settling"
@@ -177,36 +200,38 @@ class PowerSplit:
         if self.level == 0 and self.ab_phase is None:
             return False
         settled = now - self.since >= PROBE_SETTLE_S
-        dip = settled and _ok(s.real_fps) and s.real_fps < DIP_FPS * s.target_real
+        missing = settled and (not _ok(s.real_fps) or not _ok(s.top_core_pct)
+                               or not _ok(s.target_real) or s.target_real <= 0)
+        dip = settled and _ok(s.real_fps) and _ok(s.target_real) and s.target_real > 0 and s.real_fps < DIP_FPS * s.target_real
         busy = _ok(s.top_core_pct) and s.top_core_pct >= CPU_HIGH
-        if not (dip or busy):
+        if not (dip or busy or missing):
             return False
         self._abort_ab()
         level = self.level
         if busy and (dip or self.phase == "probe"):
             self.failed[level] = now + FAIL_TTL_S
-        target = 0 if dip else level - 1
-        self._move(now, target, "real-frames-short" if dip else "cpu-busy")
-        self.phase, self.reason = ("free" if target == 0 else "hold"), ("real-frames-short" if dip else "cpu-busy")
+        target = 0 if (dip or missing) else level - 1
+        reason = "telemetry-unavailable" if missing else "real-frames-short" if dip else "cpu-busy"
+        self._move(now, target, reason)
+        self.phase, self.reason = ("free" if target == 0 else "hold"), reason
         self.next_at = now + COOLDOWN_S
         return True
 
     def _next_level(self, now: float, s: Sample) -> Optional[int]:
         if self.level + 1 >= len(self.ladder):
             return None
-        if not (_ok(s.real_fps) and s.real_fps >= HOLD_FPS * s.target_real):
+        if not s.steady or not (_ok(s.target_real) and s.target_real > 0
+                                and _ok(s.real_fps) and s.real_fps >= HOLD_FPS * s.target_real):
             return None
         gpu_bound = _ok(s.gpu_busy_pct) and s.gpu_busy_pct >= GPU_BOUND
         power_bound = _ok(s.draw_w) and _ok(s.tdp_w) and s.tdp_w > 0 and s.draw_w >= POWER_BOUND * s.tdp_w
         if not (gpu_bound or power_bound):
             return None
-        # a remembered level is the first stop when this session has not been there yet
+        # Even a previously successful level is never jumped to directly:
+        # the game, background CPU load and power budget can change between
+        # sessions. A single rung must prove itself again under current load.
         nxt = self.level + 1
-        if self.level == 0 and self.start_level > 1 and not self.failed:
-            nxt = min(self.start_level, len(self.ladder) - 1)
-        while nxt > self.level and self.failed.get(nxt, -1e9) > now:
-            nxt -= 1
-        if nxt <= self.level:
+        if self.failed.get(nxt, -1e9) > now:
             return None
         if not _ok(s.top_core_pct):
             return None
@@ -232,12 +257,13 @@ class PowerSplit:
 
     def _ab_start(self, now: float, s: Sample) -> None:
         self.ab_phase = "before"
-        self._ab.update({"window": _Window(now), "tdp": s.tdp_w, "level": self.level, "means": {}})
+        self._ab.update({"window": _Window(now), "tdp": s.tdp_w, "level": self.level,
+                         "target_real": s.target_real, "means": {}})
 
     def _ab_step(self, now: float, dt: float, s: Sample) -> None:
         ab = self._ab
-        if s.tdp_w != ab["tdp"] or self.level != ab["level"]:
-            self._abort_ab()                      # the Governor moved the watts: no fair comparison
+        if s.tdp_w != ab["tdp"] or self.level != ab["level"] or s.target_real != ab["target_real"]:
+            self._abort_ab()                      # the Governor moved watts/cadence: no fair comparison
             return
         window: _Window = ab["window"]
         settle = 0.0 if self.ab_phase == "before" else AB_SETTLE_S
@@ -245,12 +271,14 @@ class PowerSplit:
             window.add(dt, mhz=s.gpu_mhz, draw=s.draw_w, real=s.real_fps)
         if now - window.start < settle + AB_WINDOW_S:
             return
-        mhz, draw = window.mean("mhz"), window.mean("draw")
-        if mhz is None or draw is None:
+        mhz, draw, real = window.mean("mhz"), window.mean("draw"), window.mean("real")
+        # Invalid/missing real FPS cannot prove an energy win. Reject A/B
+        # windows that observed an overloaded game even if GPU clock improved.
+        if (mhz is None or draw is None or real is None or
+                real < AB_REAL_FLOOR * ab["target_real"]):
             self._abort_ab()
             return
-        ab["means"][self.ab_phase] = {"eff": mhz / draw, "draw": draw, "mhz": mhz,
-                                      "real": window.mean("real") or 0.0}
+        ab["means"][self.ab_phase] = {"eff": mhz / draw, "draw": draw, "mhz": mhz, "real": real}
         nxt = {"before": "control", "control": "after"}.get(self.ab_phase)
         if nxt is not None:
             self.ab_phase, ab["window"] = nxt, _Window(now)
@@ -260,6 +288,15 @@ class PowerSplit:
         m = ab["means"]
         free = m["control"]
         capped = {k: (m["before"][k] + m["after"][k]) / 2.0 for k in ("eff", "draw", "mhz", "real")}
+        # An A-B-A with a scene cut or CPU-limited capped interval is not
+        # comparable even when the overall FPS average looks plausible.
+        capped_consistent = (abs(m["before"]["eff"] - m["after"]["eff"]) /
+                             max(m["before"]["eff"], m["after"]["eff"]) <= AB_MAX_CAP_DRIFT)
+        real_safe = (capped["real"] + max(0.5, AB_MAX_REAL_REGRESSION * free["real"])
+                     >= free["real"])
+        if not capped_consistent or not real_safe:
+            self._abort_ab()
+            return
         self.pairs.append({
             "gain": round(100.0 * (capped["eff"] - free["eff"]) / free["eff"], 2),
             "draw": round(100.0 * (free["draw"] - capped["draw"]) / free["draw"], 2),
@@ -270,6 +307,17 @@ class PowerSplit:
         self.ab_phase = None
         ab["done_at"] = now
         self.since = now
+        # Don't leave a power-ineffective cap on for the rest of a long game.
+        # Use several *matched* pairs at this very CPU level rather than
+        # single noisy measurements or historic data from another scene.
+        local = [p["gain"] for p in self.pairs if p["khz"] == self.ladder[self.level]]
+        if len(local) >= AB_LOCAL_PAIRS:
+            confidence = stats(local[-AB_LOCAL_PAIRS:], confidence=AB_LOCAL_CONFIDENCE)
+            if confidence["high"] is not None and confidence["high"] < USELESS_PCT:
+                self.failed[self.level] = now + FAIL_TTL_S
+                self._move(now, 0, "split-no-measured-benefit")
+                self.phase, self.reason = "free", "split-no-measured-benefit"
+                self.next_at = now + COOLDOWN_S
 
     def _abort_ab(self) -> None:
         if self.ab_phase is not None:
@@ -293,6 +341,12 @@ class SplitMemory:
 
     def __init__(self, record: Optional[Dict[str, Any]] = None) -> None:
         record = record if isinstance(record, dict) else {}
+        if record.get("schema") != SPLIT_MEMORY_SCHEMA:
+            # Pre-2.1.5 records were allowed to remember a level after ten
+            # seconds and to disable the feature using GPU MHz/W even when
+            # real cadence had collapsed. Do not trust those pairs/cooldowns
+            # under the corrected real-frame-safe evidence contract.
+            record = {}
         self.level = int(record.get("level") or 0) if _ok(record.get("level")) else 0
         self.pairs = [float(v) for v in (record.get("pairs") or []) if _ok(v)][-KEEP_PAIRS:]
         self.pair_sessions = int(record.get("pair_sessions") or 0) if _ok(record.get("pair_sessions")) else 0
@@ -332,11 +386,19 @@ class SplitMemory:
                 self._added = True
                 self.pair_sessions += 1
             changed = True
-        if split.best_level and split.best_level != self.level:
+        # A held level is not necessarily useful. Cache it only after
+        # same-level comparisons show repeatable energy/GPU efficiency gain
+        # with real-frame protection. Never promote an unmeasured CPU cap.
+        by_level = [p["gain"] for p in split.pairs if p.get("khz") == (
+            split.ladder[split.best_level] if split.best_level < len(split.ladder) else None)]
+        confirmed = stats(by_level, confidence=0.95) if len(by_level) >= 3 else {}
+        if (split.best_level and split.best_level != self.level
+                and confirmed.get("low") is not None and confirmed["low"] > USELESS_PCT):
             self.level = split.best_level
             changed = True
         return changed
 
     def to_record(self) -> Dict[str, Any]:
-        return {"level": self.level, "pairs": [round(v, 2) for v in self.pairs],
+        return {"schema": SPLIT_MEMORY_SCHEMA, "level": self.level,
+                "pairs": [round(v, 2) for v in self.pairs],
                 "pair_sessions": self.pair_sessions, "sessions": self.sessions, "off": self.off}

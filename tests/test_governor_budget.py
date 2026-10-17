@@ -124,13 +124,15 @@ class BudgetGuardTests(unittest.TestCase):
         self.assertEqual(first_change, ("30x3", 8.0, "guard"))
         self.assertEqual((ctl.point.key, ctl.tdp, ctl.phase), ("30x3", 8.0, "locked"))
 
-    def test_above_ideal_tier_deeper_multiplier_comes_before_watts(self):
+    def test_above_ideal_tier_watts_come_before_ratios_above_x3(self):
+        """2.1.2 policy: x3.25 .. x3.75 only when no point up to x3 reaches the goal."""
         ctl, game, now = self.locked(fpw=2.8)  # 30 real needs 10.7 W -> 11 W
         self.assertEqual((ctl.point.key, ctl.tdp), ("30x3", 11.0))
         game.scene = 0.9
         now, trace = run(ctl, game, now, 12)
         first_change = next(t for t in trace if t[:2] != ("30x3", 11.0))
-        self.assertEqual(first_change, ("28x3.25", 11.0, "guard"))
+        self.assertEqual(first_change, ("30x3", 12.0, "guard"))
+        self.assertFalse(any(float(k.split("x")[1]) > 3 for k, _, _ in trace if "x" in k and k[0].isdigit()))
 
     def test_heavier_scene_at_higher_quality_drops_quality_before_watts(self):
         ctl, game, now = self.locked(fpw=8.0)
@@ -410,10 +412,11 @@ class FastRaiseTests(unittest.TestCase):
             ctl.fast_check(now + i, 30.0, 7.0)
         self.assertEqual(ctl.tdp, 9.0)
 
-    def test_work_level_is_the_last_level_used_not_the_peak(self):
+    def test_work_level_recovers_highest_recent_proven_level(self):
+        """Economy down-search must not erase a recent known-good recovery point."""
         ctl = BudgetController(target_output_fps=90, now=0.0, min_tdp_w=3, max_tdp_w=20)
-        ctl.held = [(0.0, 11.0), (100.0, 8.0)]
-        self.assertEqual(ctl._work_tdp(200.0), 8.0)
+        ctl.held = [(190.0, 11.0), (195.0, 8.0)]
+        self.assertEqual(ctl._work_tdp(200.0), 11.0)
 
     def test_without_a_draw_sensor_probes_stay_rare(self):
         ctl, now = self.locked_at_10()
@@ -458,8 +461,11 @@ class VerdictTests(unittest.TestCase):
         self.assertTrue(window_verdict(self.summary(), self.P).healthy)
 
     def test_single_threshold_and_pacing(self):
-        self.assertFalse(window_verdict(self.summary(real_p5=28), self.P).healthy)
+        self.assertFalse(window_verdict(self.summary(real_p5=27), self.P).healthy)
         self.assertTrue(window_verdict(self.summary(real_p5=28.6), self.P).healthy)
+        # within 8 % of the goal (28 real x3 = 84 on 90) the point holds
+        self.assertTrue(window_verdict(self.summary(real_p5=28, output=84), self.P).healthy)
+        self.assertFalse(window_verdict(self.summary(real_p5=28, output=82), self.P).healthy)
         self.assertTrue(window_verdict(self.summary(misses=1), self.P).healthy)
         self.assertFalse(window_verdict(self.summary(misses=2), self.P).healthy)
         self.assertFalse(window_verdict(self.summary(hard=1), self.P).healthy)
@@ -947,8 +953,9 @@ class RequestFallbackTests(unittest.TestCase):
         ctl.probe = "up"
         ctl._move("testing-fewer-generated-frames", idx=ctl.idx + 1)
         failed = ctl.point.key                                 # 33x2.75
-        ctl.request_failed(10.0, "delivered-deeper-ratio", {"real": 28.0, "output": 90.0})
-        self.assertEqual(ctl.point.key, "28x3.25")
+        # 26 real: no point up to x3 reaches 92 % of the goal (26 x 3 = 78), so x3.5 is legitimate
+        ctl.request_failed(10.0, "delivered-deeper-ratio", {"real": 26.0, "output": 90.0})
+        self.assertEqual(ctl.point.key, "26x3.5")
         ctl.request_failed(40.0, "confirmation-timeout")
         self.assertEqual(ctl.point.key, live)
         self.assertNotEqual(ctl.point.key, failed)

@@ -143,11 +143,45 @@ jobs:
           git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/fusion-vkh"
           python3 scripts/build_frame_fusion.py --work "$RUNNER_TEMP/fusion" --headers "$RUNNER_TEMP/fusion-vkh/include"
 
+      - name: Godot runtime for the shell bundle (pinned, sha256-checked)
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          . shell/tools/godot.env
+          mkdir -p "$RUNNER_TEMP/godot"
+          curl -fsSL -o "$RUNNER_TEMP/godot/godot.zip" "$GODOT_URL"
+          echo "$GODOT_SHA256  $RUNNER_TEMP/godot/godot.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/godot/godot.zip" -d "$RUNNER_TEMP/godot"
+          echo "GODOT=$RUNNER_TEMP/godot/$GODOT_BIN" >> "$GITHUB_ENV"
+
+      - name: GFG Shell tests
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          set -o pipefail
+          python3 -m pip install --quiet pillow
+          "$GODOT" --headless --path shell --import > "$RUNNER_TEMP/import.log" 2>&1 || true
+          if grep -E "SCRIPT ERROR|Parse Error|Compile Error" "$RUNNER_TEMP/import.log"; then exit 1; fi
+          python3 shell/tools/make_fake_steam.py "$RUNNER_TEMP/fake" --art
+          GFG_SHELL_LOG_DIR="$RUNNER_TEMP/logs" "$GODOT" --headless --path shell -s res://tests/run_tests.gd -- --fixture="$RUNNER_TEMP/fake" 2>&1 | tee "$RUNNER_TEMP/tests.log"
+          if grep -q "SCRIPT ERROR" "$RUNNER_TEMP/tests.log"; then exit 1; fi
+          GFG_SHELL_DRY_POWER=1 GFG_SHELL_LOG_DIR="$RUNNER_TEMP/logs" GFG_SHELL_STEAM_ROOT="$RUNNER_TEMP/fake/Steam" HOME="$RUNNER_TEMP/navhome" \
+            "$GODOT" --headless --path shell -s res://tests/ui_nav.gd 2>&1 | tee "$RUNNER_TEMP/nav.log"
+          if grep -q "SCRIPT ERROR" "$RUNNER_TEMP/nav.log"; then exit 1; fi
+
       - name: Build zip
         if: steps.version.outputs.exists == 'false'
         run: |
           git -c advice.detachedHead=false clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
           FRAME_FUSION_BUILD="$RUNNER_TEMP/fusion/build" VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" scripts/build_release.sh "${{ steps.version.outputs.version }}" payloads out
+
+      - name: GFG Shell bundled in the Decky zip
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          zip="out/GFG-Extreme-v${version//./_}.zip"
+          for f in gfg-shell.pck gfg-shell.sh godot.json VERSION licenses/GODOT-LICENSE.txt; do
+            unzip -Z1 "$zip" | grep -Fx "GFG-Extreme/bin/gfg-shell/$f"
+          done
+          if unzip -Z1 "$zip" | grep -q '^GFG-Extreme/shell/'; then echo "::error::shell sources leaked into the zip"; exit 1; fi
 
       - name: Verify Frame OS and Rings HUD packaged in Decky zip
         if: steps.version.outputs.exists == 'false'

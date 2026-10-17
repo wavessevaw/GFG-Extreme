@@ -15,7 +15,6 @@ from pathlib import Path
 
 import decky
 
-from .theme_installer import ThemeInstaller
 from .installation import InstallationService
 from .dll_detection import DllDetectionService
 from .configuration import ConfigurationService
@@ -62,10 +61,8 @@ class Plugin:
 
     def __init__(self):
         """Initialize the plugin with all necessary services"""
-        self.theme_installer = ThemeInstaller(Path(decky.DECKY_USER_HOME))
         from .shell_installer import ShellInstaller
         self.shell_installer = ShellInstaller(Path(decky.DECKY_USER_HOME))
-        self._theme_install_lock = asyncio.Lock()
         self.installation_service = InstallationService()
         self.dll_detection_service = DllDetectionService()
         self.configuration_service = ConfigurationService()
@@ -854,6 +851,10 @@ class Plugin:
         """Opt-in Fusion Core; the generated launcher reads it at the next start."""
         return await asyncio.to_thread(self.governor_service.set_frame_fusion, enabled)
 
+    async def set_native_gsf(self, mode: str = "off") -> Dict[str, Any]:
+        """Independent native GPU generator preference; applies at game restart."""
+        return await asyncio.to_thread(self.governor_service.set_native_gsf, mode)
+
     async def set_governor_temporal_engine(self, mode: str = "off", consent: bool = False) -> Dict[str, Any]:
         """Experimental GFG Temporal Engine launch mode (off/observe/shadow/experimental)."""
         return await asyncio.to_thread(self.governor_service.set_temporal_engine, mode, consent)
@@ -1420,6 +1421,12 @@ class Plugin:
         Any initialization code should go here.
         """
         decky.logger.info("GFG Extreme loaded")
+        # The independent native launcher must exist before the UI advertises
+        # its Steam command. Staging leaves the requested mode unchanged/off.
+        # It also works when the legacy optional renderer is incompatible.
+        native_stage = await asyncio.to_thread(self.governor_service.prepare_native_gsf)
+        if not native_stage.get("success"):
+            decky.logger.warning("Native GSF launcher unavailable: %s", native_stage.get("error"))
         try:
             _host, host_supported, host_error = (
                 await asyncio.to_thread(
@@ -1541,7 +1548,7 @@ class Plugin:
 
         await self.governor_service.start()
         await self._start_shell_bridge()
-        decky.logger.info("GFG Extreme 2.1.2-te.8 started")
+        decky.logger.info("GFG Extreme 2.1.5 started")
 
     async def _start_shell_bridge(self) -> None:
         """GFG Shell's local link (read status + allow-listed Governor settings)."""
@@ -1646,14 +1653,6 @@ class Plugin:
 
     async def set_governor_auto_flow(self, enabled: bool) -> Dict[str, Any]:
         return self.governor_service.set_auto_flow(enabled)
-
-    async def get_theme_status(self) -> Dict[str, Any]:
-        async with self._theme_install_lock:
-            return await asyncio.to_thread(self.theme_installer.status)
-
-    async def install_gfg_theme(self) -> Dict[str, Any]:
-        async with self._theme_install_lock:
-            return await asyncio.to_thread(self.theme_installer.install)
 
     async def get_shell_status(self) -> Dict[str, Any]:
         """GFG Shell: packaged/installed versions, launcher path, remembered Steam shortcut."""

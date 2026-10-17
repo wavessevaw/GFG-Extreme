@@ -100,6 +100,9 @@ func _rebuild() -> void:
 		var c := GameCard.make(g, Vector2(156, 234), "grid")
 		c.chosen.connect(app.open_game)
 		c.focused.connect(_show_hero)
+		var k := cards.size()
+		var n := list.size()
+		c.focused.connect(func(_g): app.parallax(-1.0 + 2.0 * float(k) / maxf(1.0, float(n - 1))))
 		cards.append(c)
 	_row_box.add_child(card_row(cards, 236, 20))
 	_show_hero(list[0])
@@ -108,6 +111,8 @@ func _rebuild() -> void:
 func _show_hero(g: Dictionary) -> void:
 	if g.is_empty():
 		return
+	if _hero_game.get("id") != g.get("id") and is_inside_tree():
+		_reveal()
 	_hero_game = g
 	var recent := Shell.recent_games(1)
 	_kicker.text = ("Продолжить игру" if (not recent.is_empty() and recent[0].id == g.id) else "Недавно играли").to_upper()
@@ -131,6 +136,19 @@ func _show_hero(g: Dictionary) -> void:
 				# the box follows the logo's drawn height: the buttons sit right under it
 				var hs := minf(LOGO_MAX.y, LOGO_MAX.x * float(t.get_height()) / maxf(1.0, float(t.get_width())))
 				_logo_box.custom_minimum_size.y = hs + 30.0)
+
+
+## The title rises into place when the hero game changes.
+func _reveal() -> void:
+	_logo_box.modulate.a = 0.0
+	_logo.position.y = 26.0
+	_title.position.y = 34.0
+	var t := create_tween().set_parallel(true)
+	t.tween_property(_logo_box, "modulate:a", 1.0, 0.28)
+	t.tween_property(_logo, "position:y", 14.0, 0.42).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	t.tween_property(_title, "position:y", 22.0, 0.42).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	_sub.modulate.a = 0.0
+	t.tween_property(_sub, "modulate:a", 1.0, 0.3).set_delay(0.08)
 
 
 func _activate(g: Dictionary) -> void:

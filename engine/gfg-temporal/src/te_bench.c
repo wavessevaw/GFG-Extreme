@@ -82,8 +82,9 @@ static FILE* npy_create(const char* path, size_t n, size_t h, size_t w) {
 
 static void usage(void) {
     fprintf(stderr,
-            "usage: te-bench --frames seq.npy [--start S] [--pairs N] [--step K] [--crop WxH]\n"
-            "                [--algo tiles|lmc] [--tier 0..2] [--mode adaptive|full|light|reuse] [--tile 8|16|32] [--levels L] [--range R]\n"
+            "usage: te-bench --frames seq.npy [--start S] [--pairs N] [--step K] [--outputs N] [--crop WxH]\n"
+            "                [--algo tiles|lmc|lmc-gpu|gsf|shared-flow|shared-flow-dense|shared-flow-affine|shared-flow-palette]\n"
+            "                [--tier 0..2] [--mode adaptive|full|light|reuse] [--tile 8|16|32] [--levels L] [--range R]\n"
             "                [--light-thr X] [--probe N] [--profile] [--out gen.npy] [--json stats.jsonl]\n"
             "                [--analysis DIR] [--device NAME] [--validation] [--no-download]\n");
 }
@@ -98,6 +99,7 @@ int main(int argc, char** argv) {
     const char *frames_path = NULL, *out_path = NULL, *json_path = NULL, *analysis_dir = NULL, *device = NULL;
     size_t start = 0, pairs = 0, step = 3, cw = 0, ch = 0;
     int profile = 0, validation = 0, download = 1, tier = 0;
+    uint32_t outputs=0;int shared_dense=0;
     te_params params;
     te_params_default(&params);
     for (int i = 1; i < argc; ++i) {
@@ -106,6 +108,7 @@ int main(int argc, char** argv) {
 #define ARG(name) (strcmp(a, name) == 0 && v && (++i, 1))
         if (ARG("--frames")) frames_path = v;
         else if (ARG("--start")) start = strtoul(v, NULL, 10);
+        else if (ARG("--outputs")) outputs=(uint32_t)strtoul(v,NULL,10);
         else if (ARG("--pairs")) pairs = strtoul(v, NULL, 10);
         else if (ARG("--step")) step = strtoul(v, NULL, 10);
         else if (ARG("--crop")) {
@@ -119,7 +122,13 @@ int main(int argc, char** argv) {
                 else { usage(); return 2; }
             }
         } else if (ARG("--algo")) {
-            if (strcmp(v, "lmc") == 0) params.algorithm = TE_ALGO_LMC;
+            if (strcmp(v,"gsf")==0){params.algorithm=TE_ALGO_SHARED_FLOW;shared_dense=4;}
+            else if (strcmp(v,"shared-flow-palette")==0){params.algorithm=TE_ALGO_SHARED_FLOW;shared_dense=3;}
+            else if (strcmp(v,"shared-flow-affine")==0){params.algorithm=TE_ALGO_SHARED_FLOW;shared_dense=2;}
+            else if (strcmp(v,"shared-flow-dense")==0){params.algorithm=TE_ALGO_SHARED_FLOW;shared_dense=1;}
+            else if (strcmp(v,"shared-flow")==0) params.algorithm=TE_ALGO_SHARED_FLOW;
+            else if (strcmp(v,"lmc-gpu")==0) params.algorithm=TE_ALGO_LMC_GPU;
+            else if (strcmp(v, "lmc") == 0) params.algorithm = TE_ALGO_LMC;
             else if (strcmp(v, "tiles") == 0) params.algorithm = TE_ALGO_TILES;
             else { usage(); return 2; }
         } else if (ARG("--tile")) params.tile = (uint32_t)strtoul(v, NULL, 10);
@@ -139,6 +148,8 @@ int main(int argc, char** argv) {
 #undef ARG
     }
     if (!frames_path || step < 2 || step - 1 > TE_MAX_OUTPUTS) { usage(); return 2; }
+    if(!outputs)outputs=(uint32_t)(step-1);
+    if(outputs>step-1){usage();return 2;}
     npy_frames seq;
     int rc = npy_open(frames_path, &seq);
     if (rc) {
@@ -157,8 +168,8 @@ int main(int argc, char** argv) {
         return 3;
     }
     te_context_desc cd;
-    te_context_desc_default(&cd, (uint32_t)W, (uint32_t)H, (uint32_t)(step - 1));
-    cd.params = params;
+    te_context_desc_default(&cd, (uint32_t)W, (uint32_t)H, outputs);
+    cd.params = params;cd.shared_flow_dense=shared_dense;
     cd.profile = profile;
     cd.host_io = 1;
     te_context* ctx;
@@ -170,9 +181,9 @@ int main(int argc, char** argv) {
     uint32_t tx, ty;
     uint32_t tiles = te_tile_count(ctx, &tx, &ty);
     fprintf(stderr, "te-bench: %s %zux%zu algo %s tiles %ux%u pairs %zu step %zu mode %s%s\n", te_device_name(dev), W, H,
-            params.algorithm == TE_ALGO_LMC ? "lmc" : "tiles", tx, ty, pairs, step, params.adaptive ? "adaptive" : (params.force_class == 2 ? "full" : params.force_class == 1 ? "light" : "reuse"),
+            params.algorithm == TE_ALGO_SHARED_FLOW ? (shared_dense==4?"gsf":shared_dense==3?"shared-flow-palette":shared_dense==2?"shared-flow-affine":shared_dense?"shared-flow-dense":"shared-flow") : params.algorithm == TE_ALGO_LMC_GPU ? "lmc-gpu" : params.algorithm == TE_ALGO_LMC ? "lmc" : "tiles", tx, ty, pairs, step, params.adaptive ? "adaptive" : (params.force_class == 2 ? "full" : params.force_class == 1 ? "light" : "reuse"),
             profile ? " profile" : "");
-    FILE* out = out_path ? npy_create(out_path, pairs * (step - 1), H, W) : NULL;
+    FILE* out = out_path ? npy_create(out_path, pairs * outputs, H, W) : NULL;
     FILE* json = json_path ? fopen(json_path, "w") : NULL;
     FILE *fvec = NULL, *fcls = NULL, *fstat = NULL;
     if (analysis_dir) {
@@ -187,7 +198,7 @@ int main(int argc, char** argv) {
         snprintf(p, sizeof p, "%s/meta.json", analysis_dir);
         FILE* m = fopen(p, "w");
         if (m) {
-            fprintf(m, "{\"tiles_x\": %u, \"tiles_y\": %u, \"pairs\": %zu, \"outputs\": %zu}\n", tx, ty, pairs, step - 1);
+            fprintf(m, "{\"tiles_x\": %u, \"tiles_y\": %u, \"pairs\": %zu, \"outputs\": %u}\n", tx, ty, pairs, outputs);
             fclose(m);
         }
     }
@@ -204,10 +215,13 @@ int main(int argc, char** argv) {
         for (size_t y = 0; y < H; ++y) memcpy(rgb + y * W * 3, frame + y * seq.width * 3, W * 3);
         uint32_t slot = (uint32_t)(k % 2);
         if (te_upload_rgb(ctx, slot, rgb) != VK_SUCCESS) { status = 4; break; }
-        te_submit s = {.slot = slot, .count = k ? (uint32_t)(step - 1) : 0, .download = download, .lmc_tier = tier};
-        for (size_t j = 1; j < step; ++j) s.timestamps[j - 1] = (float)j / (float)step;
+        te_submit s = {.slot = slot, .count = k ? outputs : 0, .download = download, .lmc_tier = tier};
+        for (size_t j = 1; j <= outputs; ++j) s.timestamps[j - 1] = (float)j / (float)step;
         double t0 = now_ms();
-        if (te_submit_frame(ctx, &s) != VK_SUCCESS || te_wait_idle(ctx) != VK_SUCCESS) { status = 4; break; }
+        if (te_submit_frame(ctx, &s) != VK_SUCCESS) { status = 4; break; }
+        double submit_ms=now_ms()-t0;
+        if(te_wait_idle(ctx)!=VK_SUCCESS){status=4;break;}
+        double cpu_total_ms=now_ms()-t0;
         if (k) wall += now_ms() - t0;
         if (!k) continue;
         te_pair_stats ps;
@@ -226,7 +240,11 @@ int main(int argc, char** argv) {
             fwrite(st8, 32, tiles, fstat);
         }
         if (json) {
-            fprintf(json, "{\"pair\": %llu, \"a\": %zu, \"b\": %zu, \"timed\": %d, \"profile\": %d, \"pyramid_ms\": %.4f, "
+            fprintf(json,"{\"algorithm\":%u,\"shared_flow_variant\":%d,\"model_fallback\":%d,\"cut_bad_blocks\":%u,\"cut_total_blocks\":%u,\"outputs\":%u,\"allocation_bytes\":%llu,\"cpu_submit_ms\":%.4f,\"cpu_total_ms\":%.4f,\"analysis_ms\":%.4f,",
+                params.algorithm,shared_dense,ps.shared_flow_fallback,ps.shared_flow_cut_bad_blocks,
+                (unsigned)((W/8)*(H/8)),ps.outputs,(unsigned long long)te_context_memory_bytes(ctx),submit_ms,cpu_total_ms,
+                ps.stage_ms[0]+ps.stage_ms[1]+ps.stage_ms[2]);
+            fprintf(json, "\"pair\": %llu, \"a\": %zu, \"b\": %zu, \"timed\": %d, \"profile\": %d, \"pyramid_ms\": %.4f, "
                           "\"analyze_ms\": %.4f, \"classify_ms\": %.4f, \"scene_cut\": %u, \"promoted\": %u, "
                           "\"confidence\": %.4f, \"tiles\": %u",
                     (unsigned long long)ps.pair, idx - step, idx, ps.timed, profile, ps.stage_ms[TE_STAGE_PYRAMID],
@@ -237,7 +255,7 @@ int main(int argc, char** argv) {
                                                                "field", "masked", "orphan", "field2"};
                 fprintf(json, ", \"lmc_ms\": {");
                 for (int k = 0; k < TE_LMC_PROF_COUNT; ++k)
-                    fprintf(json, "%s\"%s\": %.4f", k ? ", " : "", names[k], ps.lmc_ms[k]);
+                    fprintf(json, "%s\"%s\": %.4f", k ? ", " : "", ps.shared_flow && k==TE_LMC_FIT_WAIT?"pair_control":ps.model_gpu && k==TE_LMC_FIT_WAIT?"gpu_model":names[k], ps.lmc_ms[k]);
                 fprintf(json, "}, \"cpu_fit_ms\": %.4f, \"first_ready_ms\": %.4f, \"pair_ready_ms\": %.4f, "
                               "\"lmc_counts\": [%u, %u, %u]", ps.lmc_fit_ms, ps.ready_ms[0],
                         ps.ready_ms[ps.outputs - 1], ps.tiles[0][0], ps.tiles[0][1], ps.tiles[0][2]);

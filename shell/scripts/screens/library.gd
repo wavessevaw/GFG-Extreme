@@ -4,6 +4,11 @@ extends Screen
 
 const FILTERS := [["all", "Все"], ["installed", "Установлено"], ["favorites", "Избранное"], ["nonsteam", "Не Steam"]]
 const COLS := 6
+## Cards built at once, then per frame: with owned-but-not-installed games a library can
+## hold a thousand or more titles, and building every card in one frame froze the Deck
+## for seconds on each filter change.
+const FIRST_CARDS := 36
+const CARDS_PER_FRAME := 12
 
 var _seg: HBoxContainer
 var _grid: GridContainer
@@ -11,6 +16,8 @@ var _count: Label
 var _search: Button
 var _scroll: ScrollContainer
 var _filter := "all"
+var _pending: Array = []   # games whose cards are still to be added
+var _build_gen := 0
 
 
 func _ready() -> void:
@@ -104,13 +111,31 @@ func _rebuild() -> void:
 		c.queue_free()
 	var list := Shell.filtered_games(_filter, str(Shell.settings.get("sort", "name")))
 	_count.text = "%d игр" % list.size()
-	for g in list:
+	_pending = list.duplicate()
+	_build_gen += 1
+	_add_cards(FIRST_CARDS)
+	if list.is_empty():
+		_grid.add_child(UI.label("Здесь пока пусто", 18, UI.TEXT_DIM))
+	elif not _pending.is_empty():
+		_fill_rest(_build_gen)
+
+
+func _add_cards(n: int) -> void:
+	for i in mini(n, _pending.size()):
+		var g: Dictionary = _pending.pop_front()
 		var c := GameCard.make(g, Vector2(176, 264), "grid")
 		c.focused.connect(_ambient)
 		c.chosen.connect(app.open_game)
 		_grid.add_child(c)
-	if list.is_empty():
-		_grid.add_child(UI.label("Здесь пока пусто", 18, UI.TEXT_DIM))
+
+
+## The rest of the grid, a few cards per frame; a newer rebuild cancels it.
+func _fill_rest(gen: int) -> void:
+	while not _pending.is_empty():
+		await get_tree().process_frame
+		if gen != _build_gen or not is_inside_tree():
+			return
+		_add_cards(CARDS_PER_FRAME)
 
 
 func focus_default() -> void:

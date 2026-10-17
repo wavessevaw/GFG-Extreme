@@ -95,19 +95,75 @@ static func summary() -> Dictionary:
 		"godot": Engine.get_version_info().string}
 
 
-static func volume_pct() -> int:
-	var out := []
-	if OS.execute("wpctl", ["get-volume", "@DEFAULT_AUDIO_SINK@"], out) != 0 or out.is_empty():
+## Audio goes through PipeWire's own tools. Steam starts the Shell with its runtime's
+## LD_LIBRARY_PATH / LD_PRELOAD (overlay), which can break system binaries, so they run
+## under `env -u` with a clean library path. wpctl first, pactl (pipewire-pulse) as fallback.
+static var _audio_tool := ""
+
+
+static func _audio(tool: String, args: Array, out: Array = []) -> int:
+	var full := ["-u", "LD_PRELOAD", "-u", "LD_LIBRARY_PATH", tool] + args
+	var code := OS.execute("/usr/bin/env", PackedStringArray(full), out, true)
+	if code != 0:
+		Log.info("audio", "%s %s -> exit %d %s" % [tool, " ".join(args), code,
+			str(out[0]).strip_edges().left(160) if out.size() > 0 else ""])
+	return code
+
+
+## wpctl prints "Volume: 0.45 [MUTED]"; pactl prints "... / 45% / ..." per channel.
+static func parse_volume(tool: String, text: String) -> int:
+	# stderr is mixed in (ld.so warnings about Steam's overlay preload): find the value line
+	if tool == "wpctl":
+		for line in text.split("\n"):
+			var parts := line.strip_edges().split(" ", false)
+			if parts.size() >= 2 and parts[0] == "Volume:" and parts[1].is_valid_float():
+				return clampi(int(round(float(parts[1]) * 100.0)), 0, 150)
 		return -1
-	var parts := (out[0] as String).split(" ", false)  # "Volume: 0.45 [MUTED]"
-	if parts.size() >= 2 and parts[1].is_valid_float():
-		return int(round(float(parts[1]) * 100.0))
+	var re := RegEx.create_from_string("(\\d+)%")
+	var m := re.search(text)
+	return clampi(int(m.get_string(1)), 0, 150) if m != null else -1
+
+
+static func volume_pct() -> int:
+	for tool in ([_audio_tool] if _audio_tool != "" else ["wpctl", "pactl"]):
+		var out := []
+		var args := ["get-volume", "@DEFAULT_AUDIO_SINK@"] if tool == "wpctl" else ["get-sink-volume", "@DEFAULT_SINK@"]
+		if _audio(tool, args, out) == 0 and not out.is_empty():
+			var v := parse_volume(tool, str(out[0]))
+			if v >= 0:
+				_audio_tool = tool
+				return v
+	_audio_tool = ""
 	return -1
 
 
+static func set_volume_pct(pct: int) -> bool:
+	pct = clampi(pct, 0, 100)
+	var tools := [_audio_tool] if _audio_tool != "" else ["wpctl", "pactl"]
+	for tool in tools:
+		var ok := false
+		if tool == "wpctl":
+			var frac := "%.2f" % (pct / 100.0)
+			ok = _audio("wpctl", ["set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", frac]) == 0 \
+				or _audio("wpctl", ["set-volume", "@DEFAULT_AUDIO_SINK@", frac]) == 0  # wpctl before -l
+			if ok and pct > 0:
+				_audio("wpctl", ["set-mute", "@DEFAULT_AUDIO_SINK@", "0"])
+		else:
+			ok = _audio("pactl", ["set-sink-volume", "@DEFAULT_SINK@", "%d%%" % pct]) == 0
+			if ok and pct > 0:
+				_audio("pactl", ["set-sink-mute", "@DEFAULT_SINK@", "0"])
+		if ok:
+			_audio_tool = tool
+			Log.info("audio", "volume %d%% via %s" % [pct, tool])
+			return true
+	Log.info("audio", "volume %d%%: no audio tool worked" % pct)
+	return false
+
+
 static func change_volume(step_pct: int) -> void:
-	var arg := "%d%%%s" % [abs(step_pct), "+" if step_pct > 0 else "-"]
-	OS.execute("wpctl", ["set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", arg], [])
+	var v := volume_pct()
+	if v >= 0:
+		set_volume_pct(v + step_pct)
 
 
 ## action: suspend | reboot | poweroff. Goes through logind like the stock power menu.
@@ -143,10 +199,6 @@ static func set_brightness_pct(pct: int) -> bool:
 	var code := OS.execute(helper, [base + "/brightness", str(raw)], [])
 	Log.info("system", "brightness %d%% -> %d (exit %d)" % [pct, raw, code])
 	return code == 0
-
-
-static func set_volume_pct(pct: int) -> void:
-	OS.execute("wpctl", ["set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", "%.2f" % (clampi(pct, 0, 100) / 100.0)], [])
 
 
 static func wifi_name() -> String:

@@ -5,7 +5,10 @@
 // occlusion-aware blend (reference: full_executor).
 #include "common.glsl"
 layout(local_size_x = 8, local_size_y = 8) in;
-layout(set = 1, binding = 0, rgba8) uniform writeonly image2D dst;
+#ifndef OUTPUT_FMT
+#define OUTPUT_FMT rgba8
+#endif
+layout(set = 1, binding = 0, OUTPUT_FMT) uniform writeonly image2D dst;
 
 const ivec2 NB[9] = ivec2[9](ivec2(0, 0), ivec2(0, -1), ivec2(0, 1), ivec2(-1, 0), ivec2(1, 0),
                              ivec2(-1, -1), ivec2(1, -1), ivec2(-1, 1), ivec2(1, 1));
@@ -30,7 +33,7 @@ void shade(ivec2 p, vec2 v, float t) {
     float w = smoothstep(P.occ_lo, P.occ_hi, d);
     vec3 blend = a * (1.0 - t) + b * t;
     vec3 near = t < 0.5 ? a : b;
-    imageStore(dst, p, vec4(blend + (near - blend) * w, 1.0));
+    imageStore(dst, p, output_color(vec4(blend + (near - blend) * w, 1.0)));
 }
 
 vec2 candidate(int k, ivec2 ct, vec2 vs) { return k < 9 ? tile_vector(0, ct + NB[k]) : vs; }

@@ -38,6 +38,8 @@ class View:
     shading_available: bool = False
     shading_consent: bool = False
     shading_enabled: bool = False
+    # Telemetry is live, but the window after the last settings change is still too short.
+    settling: bool = False
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,12 @@ def decide(view: View) -> Decision:
         return Decision(action, reason, tool, effect, confidence, message, real, output)
 
     if not view.fresh or real is None or output is None or view.samples < 5:
+        if view.settling:
+            # Every TDP / overlay / CPU-cap write restarts the baseline window. Those first
+            # seconds are not lost telemetry (field log 2.1.1 showed the PAUSE message after
+            # nearly every change): hold and measure.
+            return done("HOLD", "measuring-after-change", "none", "hold",
+                        "Measuring the new setting.")
         return done("PAUSE", "telemetry-not-fresh", "none", "none",
                     "Lost reliable telemetry. Optimization is paused.")
     temp = _num(view.temp_c)
@@ -162,7 +170,7 @@ class TargetPolicy:
 
     def update(self, display_hz, real_fps, output_fps, preference, fresh,
                *, sample_seq=None, first_sample_seq=None, span_s=None, now=None,
-               allow_reduction=True) -> int:
+               allow_reduction=True, loading_transition=False) -> int:
         # now/seq are passed by Governor in production; the optional arguments
         # keep this pure policy usable from independent unit tests.
         if now is None:
@@ -206,14 +214,26 @@ class TargetPolicy:
             self.pending_n = 0
             return self.target
 
+        # A collapsed, non-generating stream is a loading/transition signal, not
+        # evidence that the player's steady-state target should be halved. The
+        # sample sequence above is still consumed so the same window cannot be
+        # counted again when gameplay resumes.
+        if loading_transition:
+            self.pending = None
+            self.pending_n = 0
+            return self.target
+
         if self.target == hz:
             struggling = real < 28 or output < hz * 0.85
             # The lower goal must divide the panel's refresh: the Governor never changes the
             # refresh rate, and 60 FPS on a fixed 90 Hz panel holds frames for 1, 2, 1, 2 scanouts
             # (11 / 22 ms judder).  45 FPS holds every frame for exactly two.
+            # Auto must defend the requested display goal. A brief dip below 28
+            # real FPS is not consent to halve output from 90 to 45 FPS: the
+            # renderer may still deliver ~80-90 generated frames. Only the
+            # explicitly battery-oriented preference may request this tradeoff.
             want = (self.lower_goal(hz) if hz == 90 and struggling
-                    and ((preference == "battery") or (preference == "auto" and real < 28))
-                    else hz)
+                    and preference == "battery" else hz)
         else:
             # At a 60 FPS cap the measured output need not reach 90, even if
             # the game now has headroom. Trial an upgrade only after sustained

@@ -2,12 +2,15 @@
 ## Autopilot card (switch + Battery / Balanced / Quality) and a library card.
 extends Screen
 
-const MODES := [["budget", "Battery"], ["balanced", "Balanced"], ["quality", "Quality"]]
+const MODES := [["budget", "Battery", "battery"], ["balanced", "Balanced", "gauge"], ["quality", "Quality", "star"], ["autopilot", "Auto", ""]]
+const WOLF := preload("res://assets/gfg_wolf.png")
 
 var game: Dictionary = {}
 var _logo: TextureRect
 var _logo_box: Control
-const TITLE_BOX := 120.0
+## Title area: the name (or logo) plus a clear gap above the Play button and its glow.
+const TITLE_GAP := 30.0
+const TITLE_BOX := 74.0 + TITLE_GAP
 const LOGO_MAX := Vector2(560, 130)
 var _name: Label
 var _play: Button
@@ -39,12 +42,13 @@ func _ready() -> void:
 	_logo = TextureRect.new()
 	_logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
-	_logo.position = Vector2(0, 6)
+	_logo.position = Vector2(0, 0)
 	_logo.size = LOGO_MAX
 	logo_box.add_child(_logo)
-	_name = UI.label("", 58, UI.TEXT, "bold")
-	_name.position = Vector2(0, 18)
-	_name.size = Vector2(1100, 90)
+	_name = UI.label("", 54, UI.TEXT, "bold")
+	_name.position = Vector2(0, 0)
+	_name.size = Vector2(1100, 74)
+	_name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	logo_box.add_child(_name)
 	var actions := UI.hbox(14)
@@ -82,6 +86,13 @@ func _ready() -> void:
 	am.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	am.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_auto_row.add_child(am)
+	var wolf := TextureRect.new()
+	wolf.texture = WOLF
+	wolf.custom_minimum_size = Vector2(34, 34)
+	wolf.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	wolf.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	wolf.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ah.add_child(wolf)
 	ah.add_child(UI.label("GFG", 24, UI.TEXT, "bold"))
 	ah.add_child(UI.label("Autopilot", 24, UI.TEXT, "medium"))
 	ah.add_child(UI.spacer())
@@ -90,22 +101,42 @@ func _ready() -> void:
 	av.add_child(_auto_row)
 	_auto_desc = UI.label("", 14, UI.TEXT_DIM, "regular")
 	av.add_child(UI.margin(_auto_desc, 8, 0, 8, 0))
-	var segp := UI.panel(Color(0, 0, 0, 0.35), 4, 12)
-	_seg = UI.hbox(4)
-	segp.add_child(_seg)
+	# modes as tiles: icon on top, name under it; Auto carries the wolf
+	_seg = UI.hbox(10)
 	for m in MODES:
 		var b := Button.new()
-		b.text = m[1]
 		b.focus_mode = Control.FOCUS_ALL
-		b.custom_minimum_size = Vector2(0, 48)
+		b.custom_minimum_size = Vector2(0, 78)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.add_theme_font_override("font", UI.font("semibold"))
-		b.add_theme_font_size_override("font_size", 17)
-		b.add_theme_stylebox_override("focus", UI.focus_box(UI.TEXT, 10))
+		b.add_theme_stylebox_override("focus", UI.focus_box(UI.TEXT, 14))
 		b.set_meta("mode", m[0])
+		b.set_meta("icon", m[2])
 		b.pressed.connect(_set_mode.bind(m[0]))
+		var col := UI.vbox(6)
+		col.alignment = BoxContainer.ALIGNMENT_CENTER
+		col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		col.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		var ic: Control
+		if m[2] == "":
+			var w := TextureRect.new()
+			w.texture = WOLF
+			w.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			w.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			ic = w
+		else:
+			ic = GIcon.make(m[2], 24, UI.TEXT_DIM)
+		ic.name = "Icon"
+		ic.custom_minimum_size = Vector2(26, 26)
+		ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		col.add_child(ic)
+		var l := UI.label(m[1], 16, UI.TEXT_DIM, "semibold")
+		l.name = "Name"
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		col.add_child(l)
+		b.add_child(col)
 		_seg.add_child(b)
-	av.add_child(segp)
+	av.add_child(_seg)
 	cards.add_child(ap)
 	# library card
 	var lc := UI.panel(Color(0.07, 0.07, 0.09, 0.94), 12, 16)
@@ -156,7 +187,7 @@ func enter(args: Dictionary = {}) -> void:
 			_logo.texture = t
 			_name.visible = false
 			# the box follows the logo's drawn height: the buttons sit right under it
-			_logo_box.custom_minimum_size.y = 18.0 + minf(LOGO_MAX.y,
+			_logo_box.custom_minimum_size.y = TITLE_GAP + minf(LOGO_MAX.y,
 				LOGO_MAX.x * float(t.get_height()) / maxf(1.0, float(t.get_width()))))
 	_refresh()
 
@@ -190,11 +221,19 @@ func _refresh_modes() -> void:
 	_auto_row.disabled = not on
 	for b in _seg.get_children():
 		b.disabled = not on
-		var active: bool = on and b.get_meta("mode") == (mode if mode != "autopilot" else "")
-		var sb := UI.box(UI.RED if active else Color(0, 0, 0, 0), Color.TRANSPARENT, 10, 12)
-		for st in ["normal", "hover", "pressed", "disabled"]:
+		var active: bool = on and b.get_meta("mode") == mode
+		var sb := UI.box(Color(UI.RED, 0.20) if active else Color(1, 1, 1, 0.035),
+			UI.RED if active else Color(1, 1, 1, 0.07), 14)
+		sb.set_border_width_all(2 if active else 1)
+		for st in ["normal", "pressed", "disabled"]:
 			b.add_theme_stylebox_override(st, sb)
-		b.add_theme_color_override("font_color", UI.TEXT if active else UI.TEXT_DIM)
+		b.add_theme_stylebox_override("hover", sb if active else UI.box(Color(1, 1, 1, 0.06), Color(1, 1, 1, 0.1), 14))
+		b.modulate.a = 1.0 if on else 0.5
+		var lab: Label = b.get_child(0).get_node("Name")
+		lab.add_theme_color_override("font_color", UI.TEXT if active else UI.TEXT_DIM)
+		var ic = b.get_child(0).get_node("Icon")
+		if ic is GIcon:
+			ic.set_icon(b.get_meta("icon"), UI.RED.lightened(0.25) if active else UI.TEXT_DIM)
 	if not on:
 		_auto_desc.text = "GFG Extreme не подключён. Игра запускается как обычно."
 	elif mode == "autopilot":

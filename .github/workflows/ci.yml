@@ -17,9 +17,21 @@ jobs:
         with:
           node-version: "22"
       - name: Backend tests
+        id: backend
         run: |
+          set -o pipefail
           python3 scripts/check_generated_config.py
-          python3 -m unittest discover -s tests -p 'test_*.py'
+          python3 -m unittest discover -s tests -p 'test_*.py' 2>&1 | tee backend-tests.log
+      - name: Expose failing backend assertions in the job annotation
+        if: failure() && steps.backend.outcome == 'failure'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('backend-tests.log')
+          text=p.read_text(errors='replace')[-9000:] if p.exists() else 'Backend stopped before the unit-test log was written; inspect generated config.'
+          text=text.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+          print('::error title=Backend failure details::'+text)
+          PY
       - name: Frame OS engine tests (scheduler, control channel, layer on the mock Vulkan driver)
         run: |
           VULKAN_DEPS="$RUNNER_TEMP/vk" engine/gfg-pacer/tests/setup_vulkan_deps.sh

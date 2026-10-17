@@ -10,22 +10,22 @@
 
 A Decky Loader plugin that coordinates the frame generator, CPU/GPU resources, rendering workload and power limits. Autopilot observes each game and chooses measurable, reversible adjustments rather than changing only TDP.
 
-[**Download 2.1.1**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v2.1.1) · [Install](#installation) · [Autopilot](#autopilot) · [Diagnostics](#diagnostics)
+[**Download 2.1.5**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v2.1.5) · [Install](#installation) · [Autopilot](#autopilot) · [Diagnostics](#diagnostics)
 
 ![Release](https://img.shields.io/github/v/release/wavessevaw/GFG-Extreme?style=flat-square&color=fb0d00&label=release)
 ![Steam Deck](https://img.shields.io/badge/Steam%20Deck-OLED%20%7C%20LCD-20242e?style=flat-square)
 ![Decky](https://img.shields.io/badge/Decky%20Loader-plugin-20242e?style=flat-square)
 ![License](https://img.shields.io/badge/license-GPL--3.0-20242e?style=flat-square)
 
-<img src="docs/img/card-overview.png" alt="GFG Extreme 2.1.1 user interface: Battery, Autopilot and Details" width="900">
+<img src="docs/img/card-overview.png" alt="GFG Extreme 2.1.2 user interface: Battery, Autopilot and Details" width="900">
 
-<sub>Real GFG Extreme 2.1.1 interface rendered in a browser using illustrative sample data. Not measured game performance.</sub>
+<sub>Real GFG Extreme 2.1.2 interface rendered in a browser using illustrative sample data. Not measured game performance.</sub>
 
 </div>
 
 ## Autopilot
 
-**Autopilot in GFG Extreme 2.1.1 is not an automatic TDP slider.** It is an orchestration mode that balances frame pacing, genuinely rendered frames, generated output, visual workload, APU power and temperature. Watts are only one of its tools.
+**Autopilot in GFG Extreme 2.1.5 is not an automatic TDP slider.** It is an orchestration mode that balances frame pacing, genuinely rendered frames, generated output, visual workload, APU power and temperature. Watts are only one of its tools.
 
 The existing Governor handles a *rendering operating point*: the required real-frame cadence, generation multiplier, and available power. **Autopilot sits above the Governor.** It inspects the game, selects a promising type of intervention, reserves that resource for an isolated trial, and checks whether the result was worthwhile. It avoids adjusting several unrelated knobs simultaneously and then pretending to know which one helped.
 
@@ -34,7 +34,7 @@ The existing Governor handles a *rendering operating point*: the required real-f
 | Resource / tool | Purpose | What actually changes |
 | --- | --- | --- |
 | **Target FPS** | Choose an achievable output goal rather than endlessly chasing unreachable 90 FPS | On a 90 Hz display, may provisionally lower the software output target to 60 using fresh, non-overlapping evidence windows, then cautiously retry 90 |
-| **Frame generation** | Balance the share of real and generated frames | Via Governor, selects operating points and multipliers typically from ×1 to ×3.75, with ×4 reserved for emergency fallback |
+| **Frame generation** | Balance the share of real and generated frames | Via Governor, selects operating points and multipliers from ×1 to ×3; ×3.25–×3.75 only when needed, ×4 reserved for emergency fallback. Within 8 % of the FPS target counts as on target |
 | **APU power / TDP** | Preserve cadence at lower energy or help a heavier scene | Governor searches, confirms and rolls back power limits. Repeated failing lower-power steps can be blocked for up to 30 minutes |
 | **Steam GPU Clock** | Test whether the GPU ceiling is unhelpful when the CPU appears to be the bottleneck | Attempts one downward GPU clock-ceiling step via SteamOSManager, confirms read-back and checks fresh performance data |
 | **CPU/GPU power split** | Reallocate shared APU headroom toward a busy GPU | The separate Smart Power Split module may trial a CPU maximum-frequency cap with measured rollback; Autopilot coordinates pauses to prevent conflicting resource trials |
@@ -58,7 +58,7 @@ Smart Power Split, Flow Scale, Frame OS Act and compatible shading trials defaul
 
 Imagine a Steam Deck OLED set to 90 Hz. The game consistently renders **30 real FPS**, while generation produces approximately **90 output FPS** at **×3**. Autopilot does not automatically increase TDP just because the GPU is 99% busy. If that operating point is confirmed and useful, it can keep the current settings and consider an efficiency check later.
 
-In a tougher scene, real-frame delivery begins to fall. Governor can alter its generation operating point or the power limit. Under the right policy and after several independent windows, Autopilot may choose a **60 output FPS** goal rather than repeatedly missing 90, then attempt recovery later. This is a **software target change**, not a guarantee of evenly paced 60 FPS on a physical 90 Hz panel. Display cadence still needs device testing.
+In a tougher scene, real-frame delivery begins to fall. Governor can alter its generation operating point or power limit. **Auto keeps a 90 Hz display goal rather than implicitly dropping it to 45 FPS on low Real FPS.** The explicitly selected **Battery** preference may deliberately choose a **45 output FPS** goal and later retry 90. A 60 FPS goal is used only on the Deck LCD and on an external display. Deep emergency ratios above ×3 are temporary: Governor periodically attempts to restore the normal real-frame cadence, with rollback when unsuccessful. Display cadence still needs device testing.
 
 If the GPU appears shader-limited, Autopilot can consider Half Rate Shading, when **Try Half Rate Shading** is enabled. When evidence does not identify a helpful action, it waits.
 
@@ -84,7 +84,7 @@ On **Stop**, game exit or a mode change, GFG attempts to restore only the contro
 
 <div align="center">
 <img src="docs/img/card-autopilot.png" alt="Autopilot's confirmed configuration and skipped trial states" width="800">
-<sub>Actual 2.1.1 Autopilot cards using illustrative measurements: a verified operating point and a deferred experiment with no hardware write.</sub>
+<sub>Actual 2.1.2 Autopilot cards using illustrative measurements: a verified operating point and a deferred experiment with no hardware write.</sub>
 </div>
 
 
@@ -94,8 +94,8 @@ On **Stop**, game exit or a mode change, GFG attempts to restore only the contro
 
 | Mode | Priority | How it works |
 | --- | --- | --- |
-| **Battery** | Efficiency | Searches lower TDP first; normal ratios up to ×3.75 (24 real at 90 Hz, 16 at 60 Hz) |
-| **Balanced** | Consistency | Starts near 12 W; opens ratios through ×3.75 when needed to preserve output |
+| **Battery** | Efficiency | Searches lower TDP first; ratios up to ×3; ×3.25–×3.75 only when needed |
+| **Balanced** | Consistency | Starts near 12 W; ratios up to ×3; ×3.25–×3.75 only when needed to preserve output |
 | **Quality** | Real-frame quality | Prefers fewer generated frames, considers quarter steps through ×3.75, then looks for watt savings |
 | **Autopilot** | Whole-system orchestration | Coordinates output targets, frame generation, power, GPU Clock, compatible rendering trials and independent CPU/Flow modules |
 
@@ -112,13 +112,14 @@ The optional Vulkan rings overlay shows output and real FPS, TDP, and additional
 
 ## Other features
 
-GFG Extreme 2.1.1 still includes the earlier Governor work, alongside the Autopilot:
+GFG Extreme 2.1.5 includes the earlier Governor work, alongside the Autopilot:
 
 - **Per-game profiles**, remembered viable operating points and explicit reset of learned game data.
 - **Smart CPU/GPU power split**, which can trial a CPU cap in a GPU-bound game and restore it if measured performance worsens. Available only where the OS permits safe control.
 - **Frame OS** offers Observe, Shadow and Act; Autopilot defaults to Act. The Act path has not been proven to improve each game; it can yield or roll back when unstable.
 - **vkBasalt filters** for sharpening, anti-aliasing and color looks; game restarts may be required for initial layer loading.
 - **Session summaries and Diagnostics**, including recent FPS/frametime/power estimates, reasons for Governor decisions and exportable logs.
+- **GFG Shell 0.4** (optional): a controller-first Gaming Mode front-end built with Godot, installed and launched from the plugin. Steam stays the game client. It shows the whole Steam library, including owned games that are not installed, and has Quick settings with GFG rings and switches. See [docs/GFG_SHELL.md](docs/GFG_SHELL.md).
 
 <div align="center">
 <img src="docs/img/card-power-split.png" alt="CPU/GPU power split details" width="390">
@@ -130,7 +131,7 @@ GFG Extreme 2.1.1 still includes the earlier Governor work, alongside the Autopi
 
 Requires [Decky Loader](https://decky.xyz/) and [Lossless Scaling on Steam](https://store.steampowered.com/app/993090/Lossless_Scaling/) for the supported GFG generation setup.
 
-1. Download [**GFG-Extreme-v2_1_1.zip**](https://github.com/wavessevaw/GFG-Extreme/releases/download/v2.1.1/GFG-Extreme-v2_1_1.zip). Use Decky's **Install from zip** feature and approve the requested permissions for supported power controls.
+1. Download [**GFG-Extreme-v2_1_5.zip**](https://github.com/wavessevaw/GFG-Extreme/releases/download/v2.1.5/GFG-Extreme-v2_1_5.zip). Use Decky's **Install from zip** feature and approve the requested permissions for supported power controls.
 2. Open GFG Extreme and select **Install engine** if it is not installed.
 3. For a Steam game, open **Properties → Launch Options** and add:
 
@@ -156,11 +157,11 @@ Go to **Settings → Diagnostics → Check setup** to check the renderer, launch
 
 ## Status and limitations
 
-**Stable software release: 2.1.1.** Backend, frontend and mock Vulkan-layer tests, plus Decky ZIP integrity checks, pass in CI. This **does not** imply Steam Deck LCD/OLED hardware validation of dynamic GPU Clock or Half Rate Shading. Generated-frame acquisition timeouts and Frame OS Act gains need independent device testing. Allow Tearing is not automatically controlled.
+**Software release: 2.1.5.** Version 2.1.4 preserved the 90 FPS Auto goal and single-owner hardware TDP budget. Version 2.1.5 adds bounded real-frame quality recovery from the ×4 emergency ratio, with regression tests. Automated software validation does not establish improved frame rate or latency on a physical Steam Deck. This **does not** imply Steam Deck LCD/OLED hardware validation of dynamic GPU Clock or Half Rate Shading. Generated-frame acquisition timeouts and Frame OS Act gains need independent device testing. Allow Tearing is not automatically controlled.
 
 Measured output cadence is not the same as optical frame delivery. The 60/90 target transition on OLED, visual quality with VRS and physical restore behavior must be checked in games before performance or battery claims.
 
-[Official release notes](RELEASE_DESCRIPTION_V2_1_1.md) · [Known limitations](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md) · [Autopilot acceptance](docs/AUTOPILOT_ACCEPTANCE.md)
+[Official release notes](RELEASE_DESCRIPTION_V2_1_5.md) · [Known limitations](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md) · [Autopilot acceptance](docs/AUTOPILOT_ACCEPTANCE.md)
 
 <details>
 <summary><b>Developers and documentation</b></summary>
@@ -186,7 +187,7 @@ GPL-3.0-or-later · [License](LICENSE.md) · [Third-party notices](THIRD_PARTY_N
 
 ## Frame Fusion and short Boost
 
-Stable 2.1.1 includes both [Fusion Core and Native Fusion](docs/FRAME_FUSION.md), plus [short Boost and right-stick touch](docs/STICK_TOUCH_BOOST.md). **Fusion and Boost run only in Autopilot.** Their switches, frame timing, Stall Shield and compatible shading trials default on; explicit saved off choices remain off. The normal Battery, Balanced and Quality paths do not execute Fusion or Boost.
+Stable 2.1.5 includes both [Fusion Core and Native Fusion](docs/FRAME_FUSION.md), plus [short Boost and right-stick touch](docs/STICK_TOUCH_BOOST.md). **Fusion and Boost run only in Autopilot.** Their switches, frame timing, Stall Shield and compatible shading trials default on; explicit saved off choices remain off. The normal Battery, Balanced and Quality paths do not execute Fusion or Boost.
 
 Fusion can avoid a compatible scaler-input transfer or the native BGRA conversion. Steam Deck field logs confirm the native path executes; they do not establish an overall FPS, energy or input-latency gain. Incompatible formats and resource failures retain the existing path. Leaving Autopilot closes the shortcuts immediately; private history replacement follows the renderer's bounded transition.
 
@@ -194,6 +195,6 @@ With Continuous Boost off, Short Boost requests a **500 ms pulse on right-stick 
 
 **Continuous Boost** is an optional Autopilot switch, off by default. It holds the higher real-frame cadence without the 1.5-second pulse limit and can use more power. Menus, heat, ineffective delivery and power-search guards still pause it.
 
-The built-in profile is shown as **stable** in Profiles. Its existing persisted identifier is retained so saved profiles and Steam launch commands continue to work. Users moving from the 2.1.1/2.2.0 previews should install the stable ZIP explicitly; the stable version number is deliberately 2.1.1.
+The built-in profile is shown as **stable** in Profiles. Its existing persisted identifier is retained so saved profiles and Steam launch commands continue to work. Users of the 2.1.2 test builds (Temporal Engine, GFG Shell, Native FG) should install the stable 2.1.5 ZIP explicitly.
 
 <div align="center"><img src="docs/img/card-profile.png" alt="Profiles with the built-in stable profile" width="390"></div>

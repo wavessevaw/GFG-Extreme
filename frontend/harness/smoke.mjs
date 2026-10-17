@@ -8,23 +8,27 @@ const cases = [
   ["fusion-observed", ["Settings", "Diagnostics"], ["direct processing path has been used", "Power benefit is not measured yet"]],
   ["fusion-restart", ["Settings", "Diagnostics"], ["Restart the game to apply your choice"]],
   ["fusion-unsupported", ["Settings", "Diagnostics"], ["current engine has no Fusion support", "native 64-bit games only"]],
-  ["home-idle-oled", [], ["RUN", "90", "TARGET FPS", "Ready", "Steam Deck OLED"]],
-  ["home-measuring", [], ["STOP", "Measuring", "ASSESSING"]],
-  ["home-locked-oled", [], ["STOP", "Locked in", "45", "x2".replace("x", "×"), "MEDIUM", "TDP NOW", "2h05 left"]],
-  ["home-locked-lcd", [], ["Steam Deck LCD", "Saving power", "ASSESSING"]],
+  ["home-idle-oled", [], ["START", "90", "TARGET FPS", "Ready", "Steam Deck OLED"]],
+  ["home-measuring", [], ["STOP", "Measuring"]],
+  ["home-measuring", ["Details"], ["GFG EFFORT", "ASSESSING"]],
+  ["home-locked-oled", [], ["STOP", "Locked in", "45", "x2".replace("x", "×"), "POWER", "2:05"]],
+  ["home-locked-oled", ["Details"], ["GFG EFFORT", "MEDIUM"]],
+  ["home-locked-lcd", [], ["Steam Deck LCD", "Saving power"]],
   ["home-relaunch-dock", [], ["Restart the game", "Dock"]],
   ["home-paused-relaunch", [], ["Restart the game"]],
   ["home-no-tdp", [], ["No TDP access"]],
-  ["home-locked-oled", ["Details"], ["Details", "HEALTH", "Frametime p95 / p99", "24.5 / 31.2 ms", "×1 to ×3.75, steps of 0.25", "never modified"]],
-  ["home-budget-oled", [], ["Adapting · 9 W", "Ideal: 11 W or less", "EASY"]],
+  ["home-locked-oled", ["Details"], ["Details", "HEALTH", "Frametime p95 / p99", "24.5 / 31.2 ms", "×1 to ×3, steps of 0.25; up to ×3.75 only when needed", "never modified"]],
+  ["home-budget-oled", [], ["Adapting · 9 W", "Ideal: 11 W or less"]],
+  ["home-budget-oled", ["Details"], ["EASY"]],
   ["home-budget-oled", ["Details"], ["BATTERY", "TDP target", "9 W", "Ideal (≤ 11 W)", "Lowest stable TDP", "15 W max (this Deck's maximum)"]],
   ["home-power-split", ["Details"], ["CPU / GPU POWER SPLIT", "CPU capped at 2.4 GHz · the GPU gets the watts", "+7.4% GPU clock/W · 6 A/B", "+7.9% GPU clock, −0.4% draw", "Smart power split"]],
   ["home-power-split-short", ["Details"], ["Full CPU speed · real frames came first", "Not measured yet"]],
   ["home-warm-start", [], ["Adapting · 8 W", "Started from what worked last time."]],
   ["home-warm-start", ["Details"], ["Remembered from last session"]],
   ["home-budget-oled", ["Details"], ["Searched from scratch"]],
-  ["home-balanced", [], ["Balanced", "Uses ratios up to ×3.75"]],
-  ["home-balanced", ["Details"], ["×1 to ×3.75, steps of 0.25", "12–13 W start"]],
+  ["home-balanced", [], ["Balanced"]],
+  ["home-balanced", ["Details"], ["Uses ratios up to ×3; ×3.25–×3.75 only when needed"]],
+  ["home-balanced", ["Details"], ["×1 to ×3, steps of 0.25; up to ×3.75 only when needed", "12–13 W start"]],
   ["log-saved", ["Settings", "Diagnostics"], ["Saved: /home/deck/Desktop/GFG-Extreme-log-1.zip", "WHAT THE LOG SHOWS", "No renderer diagnostics were written"]],
   ["home-idle-oled", ["Settings", "Diagnostics", "Check setup"], ["Everything GFG needs is in place (3 checks)", "✓ launch wrapper installed"]],
   ["setup-bad", ["Settings", "Diagnostics", "Check setup"], ["2 of 3 checks failed", "NEEDS ATTENTION", "✗ host MangoHud Vulkan layer present", "cannot appear", "Turn the overlay on in Settings"]],
@@ -32,30 +36,30 @@ const cases = [
   ["budget-memory", ["Details"], ["Verifying", "×3 — the engine chose it", "Engine allows", "up to ×3", "Recently failed", "×2.75 at ≤10 W"]],
   ["home-loading", [], ["Waiting for the game to draw frames"]],
   ["home-testing", [], ["Testing ×2.75", "a few seconds"]],
-  ["home-last-session", [], ["LAST SESSION", "42 min", "FPS avg", "Real avg", "TDP avg", "11W", "Your limit", "15 W", "~4.4 W under your limit on average", "83 °C · warm 12% of the time", "Stutter", "3% of the time"]],
+  ["home-last-session", ["Details"], ["LAST SESSION", "42 min", "FPS avg", "Real avg", "TDP avg", "11W", "Your limit", "15 W", "~4.4 W under your limit on average", "83 °C · warm 12% of the time", "Stutter", "3% of the time"]],
   ["home-cooling", [], ["Cooling · 8 W", "only tries lower watts"]],
   ["home-cooling", ["Details"], ["Heat", "on hold until the APU cools", "Lower resolution", "Scale-ready launch"]],
   ["home-history", ["Details"], ["RECENT SESSIONS", "29 min · Battery", "90 FPS · 10.7 W · 77 °C", "12 min · Quality", "88 FPS · 19.4 W"]],
-  ["home-saving", [], ["SAVING", "6 W under your 15 W limit"]],
-  ["home-effort-reason", [], ["GFG EFFORT", "HARD", "x3 required"]],
-  ["home-frame-os-act", [], ["FRAME OS", "BOOST", "−47%", "+50%", "0%", "Response", "Frames", "Energy"]],
-  ["home-frame-os-act", [], ["Measured in game: Response ×5 · Frames ×3"]],
-  ["home-frame-os-learned", [], ["Boost off here: no real-frame gain measured"]],
+  ["home-saving", [], ["6 W under your limit"]],
+  ["home-effort-reason", ["Details"], ["GFG EFFORT", "HARD", "x3 required"]],
+  ["home-frame-os-act", ["Details"], ["FRAME OS", "BOOST", "−47%", "+50%", "0%", "Response", "Frames", "Energy"]],
+  ["home-frame-os-act", ["Details"], ["Measured in game: Response ×5 · Frames ×3"]],
+  ["home-frame-os-learned", ["Details"], ["Boost off here: no real-frame gain measured"]],
   ["home-frame-os-learned", ["Settings", "Diagnostics"], ["THIS GAME", "no gain · off (5 A/B)", "helps (12 A/B)"]],
   ["home-frame-os-act", ["Settings", "Diagnostics"], ["A/B check in Act", "Response (A/B)", "+47% (39…55) · 5 pairs", "Energy (A/B)", "+12% · 1 pair", "THIS GAME", "Sessions with Act", "helps (5 A/B)", "helps (9 A/B)", "learning (1 A/B)"]],
-  ["home-frame-os-rest", [], ["FRAME OS", "REST", "—"]],
-  ["home-frame-os-observe", [], ["FRAME OS", "ESTIMATE", "−44%", "+50%", "—"]],
-  ["home-frame-os-early", [], ["FRAME OS", "Response", "—"]],
+  ["home-frame-os-rest", ["Details"], ["FRAME OS", "REST", "—"]],
+  ["home-frame-os-observe", ["Details"], ["FRAME OS", "ESTIMATE", "−44%", "+50%", "—"]],
+  ["home-frame-os-early", ["Details"], ["FRAME OS", "Response", "—"]],
   ["frame-os-no-layer", ["Settings", "Diagnostics"], ["FRAME OS (EXPERIMENTAL)", "Frame OS layer not installed: this build does not include the Frame OS layer."]],
-  ["home-last-session-mixed", [], ["LAST SESSION", "Modes", "Battery 18m · Balanced 13m", "Energy saved", "~2.3 Wh measured · ~14 min more battery", "Frame OS", "calm 20m · boost 6m · rest 4m", "Response", "−41%", "+12%", "—"]],
+  ["home-last-session-mixed", ["Details"], ["LAST SESSION", "Modes", "Battery 18m · Balanced 13m", "Energy saved", "~2.3 Wh measured · ~14 min more battery", "Frame OS", "calm 20m · boost 6m · rest 4m", "Response", "−41%", "+12%", "—"]],
   ["home-last-session-mixed", ["Details"], ["RECENT SESSIONS", "31 min · Battery 18m · Balanced 13m"]],
   ["home-idle-oled", ["Settings", "Diagnostics"], ["Reset what GFG learned for Sample Game", "Starts the next search from scratch"]],
   ["home-idle-oled", ["Settings", "Diagnostics", "Reset what GFG learned for Sample Game"], ["Tap again to forget", "remembered for Sample Game", "This cannot be undone"]],
   ["home-paused-external-tdp", [], ["changed outside GFG", "In Battery and Balanced modes GFG takes it back"]],
   ["home-no-model-game", ["Settings", "Diagnostics"], ["Reset what GFG learned for this game", "No game identified yet"]],
   ["home-cap-ignored", [], ["TDP limit overridden", "17.4 W", "another tool"]],
-  ["home-quality-oled", ["Details"], ["×1 to ×3.75, steps of 0.25", "never above your own"]],
-  ["home-quality-oled", [], ["keeps your render resolution", "fewest generated frames that hold"]],
+  ["home-quality-oled", ["Details"], ["×1 to ×3, steps of 0.25; up to ×3.75 only when needed", "never above your own"]],
+  ["home-quality-oled", ["Details"], ["keeps your render resolution", "fewest generated frames that hold"]],
   ["home-locked-oled", ["Settings", "Frame generation backend"], ["BACKEND", "GFG", "OptiScaler"]],
   ["home-locked-oled", ["Settings", "Scaling"], ["Scale-ready launch"]],
   ["home-locked-oled", ["Settings", "In-game overlay"], ["Show overlay in game", "STYLE", "Rings", "Text", "Rings refresh once a second", "Minimal", "Detailed", "Bottom left"]],
@@ -63,19 +67,19 @@ const cases = [
   ["home-locked-oled", ["Settings", "System"], ["ENGINE", "Installed", "Runtime 24.08", "Heroic"]],
   ["home-locked-oled", ["Settings", "All settings"], ["scaling_factor", "allow_fp16"]],
   ["home-locked-oled", ["Settings", "Diagnostics", "Journal"], ["Journal"]],
-  ["home-idle-oled", [], ["MODE", "Battery", "Quality", "Details", "Settings"]],
+  ["home-idle-oled", [], ["Battery", "Quality", "Auto", "Fine-tune", "Details", "Settings"]],
   ["home-relaunch-dock", [], ["START THE GAME WITH THIS LAUNCH OPTION", "Copy launch command"]],
   ["home-paused-relaunch", [], ["Something wrong? Record a log"]],
   ["home-idle-oled", ["Settings"], ["GFG Extreme 1.0.0"]],
   ["home-idle-oled", ["Settings", "Launch command"], ["Copy launch command", "Launch Options"]],
   ["home-idle-oled", ["Settings", "Diagnostics"], ["RECORD A LOG", "Record log", "FRAME OS (EXPERIMENTAL)", "Observe"]],
-  ["home-locked-oled", [], ["FILTERS", "Vivid", "HDR look", "Fine-tune ›"]],
+  ["home-locked-oled", [], ["FILTER", "Vivid", "Sharp"]],
   ["home-locked-oled", ["Settings", "Filters"], ["Shader filters", "LOOKS", "SHARPENING", "ANTI-ALIASING", "EFFECTS · NONE", "Film Grain"]],
   ["home-extreme", [], ["BETA / EXPERIMENTAL", "not recommended for regular play", "BETA", "Extreme · 15 W", "▲ ON", "Limit 15 W · render 80% · sharpen 0.30", "Gain vs Balanced: not measured yet", "EXTREME BOOSTERS", "3 / 9 ACTIVE", "Upscale + sharpen", "80% · sharpen 0.30", "CPU capped at 2.4 GHz", "No safe Steam API yet", "Stock fan control stays", "Not applied: untested risk", "Sharpening", "EXTREME"]],
   ["home-extreme", ["Details"], ["EXTREME", "Power limit", "15 W · stock limit", "1024×640 → 1280×800", "0.30 (engine confirmed)", "not measured (needs an A-B-A check)", "the whole limit: 15 W or your lower one, never above"]],
   ["home-extreme-verify", [], ["Extreme · checking", "Render 90% counts only once the engine shows", "Checking render 90%", "Limit 15 W"]],
   ["home-extreme-restart", [], ["Extreme · 12 W", "your own 12 W limit (never raised)", "Restart the game once to enable"]],
-  ["home-extreme-offer", [], ["MODE", "Autopilot", "Battery"]],
+  ["home-extreme-offer", [], ["Auto", "Battery"]],
   ["home-scale-ignored", ["Details"], ["Lower resolution", "Off · this game always renders at full size"]],
   ["home-scale-ignored", ["Settings", "Scaling"], ["This game sets its own render size", "has no effect here"]],
   ["home-extreme", [], ["80% · sharpen 0.30"]],
@@ -89,19 +93,14 @@ for (const [state, nav, expected] of cases) {
   for (const e of page.__errors) { failed++; console.error(`FAIL ${state}: page error ${e}`); }
   await page.close();
 }
-// Tapping the ring cycles the hero layout: side (default) -> half-ring -> big ring -> smaller ring -> side.
+// 2.1.2: one hero — the FPS ring with the wolf, and three small rings under it.
 {
   const page = await openPage(browser, STATES["home-locked-oled"]);
-  const layout = () => page.evaluate(() => {
-    const e = document.querySelector(".hero");
-    return e.querySelector(".hero-side") ? "side" : e.querySelector(".arc") ? "arc" : e.querySelector(".ring.compact") ? "compact" : "classic";
-  });
-  const seen = [await layout()];
-  for (let i = 0; i < 4; i++) { await page.locator(".herotap").first().click(); await page.waitForTimeout(80); seen.push(await layout()); }
-  if (seen.join(",") !== "side,arc,classic,compact,side") { failed++; console.error(`FAIL hero tap cycle: ${seen.join(",")}`); }
-  for (const e of page.__errors) { failed++; console.error(`FAIL hero cycle: page error ${e}`); }
+  const r = await page.evaluate(() => ({ ring: !!document.querySelector(".hero .ring2 .wolfimg"), minis: document.querySelectorAll(".bg3 .mring").length }));
+  if (!r.ring || r.minis !== 3) { failed++; console.error(`FAIL hero rings: ${JSON.stringify(r)}`); }
+  for (const e of page.__errors) { failed++; console.error(`FAIL hero rings: page error ${e}`); }
   await page.close();
-  cases.push(["hero-cycle"]);
+  cases.push(["hero-rings"]);
 }
 // One tap on a look writes the filter fields (and turns the vkBasalt layer on).
 {
@@ -143,7 +142,7 @@ for (const [state, nav, expected] of cases) {
 }
 // A session above the user's limit (or from an older plugin) never shows a negative saving.
 {
-  const page = await openPage(browser, STATES["home-last-session-above-limit"]);
+  const page = await openPage(browser, STATES["home-last-session-above-limit"], ["Details"]);
   const text = await page.evaluate(() => document.body.innerText);
   if (!text.includes("LAST SESSION")) { failed++; console.error(`FAIL above-limit session not shown`); }
   for (const bad of ["-2.1", "Energy saved", "under your limit on average"]) if (text.includes(bad)) { failed++; console.error(`FAIL above-limit session shows "${bad}"`); }
@@ -192,25 +191,20 @@ for (const [state, nav, expected] of cases) {
   await page.close();
   cases.push(["forget-model-confirm"]);
 }
-// Extreme: the wolf sits inside the main ring in every hero layout, and only in Extreme.
+// The wolf sits inside the FPS ring in every mode (2.1.2).
 {
-  const page = await openPage(browser, STATES["home-extreme"]);
-  for (let i = 0; i < 4; i++) {
-    const wolf = await page.evaluate(() => !!document.querySelector(".hero .num.wolf img.wolfimg"));
-    if (!wolf) { failed++; console.error(`FAIL extreme wolf missing in hero layout ${i}`); }
-    await page.locator(".herotap").first().click(); await page.waitForTimeout(80);
+  for (const st of ["home-extreme", "home-balanced", "home-idle-oled"]) {
+    const page = await openPage(browser, STATES[st]);
+    if (!(await page.evaluate(() => !!document.querySelector(".hero .num.wolf img.wolfimg")))) { failed++; console.error(`FAIL wolf missing in ${st}`); }
+    for (const e of page.__errors) { failed++; console.error(`FAIL wolf ${st}: page error ${e}`); }
+    await page.close();
   }
-  for (const e of page.__errors) { failed++; console.error(`FAIL extreme wolf: page error ${e}`); }
-  await page.close();
-  const other = await openPage(browser, STATES["home-balanced"]);
-  if (await other.evaluate(() => !!document.querySelector(".hero .wolfimg"))) { failed++; console.error("FAIL wolf shown outside Extreme"); }
-  await other.close();
-  cases.push(["extreme-wolf"]);
+  cases.push(["wolf-in-ring"]);
 }
 // Autopilot replaces Extreme in the selector and does not ask the Act question.
 {
   const page = await openPage(browser, STATES["home-extreme-consent"]);
-  await page.getByText("Autopilot", { exact: true }).first().click();
+  await page.getByText("Auto", { exact: true }).first().click();
   await page.waitForTimeout(150);
   const r = await page.evaluate(() => ({ modes: window.__modes || [], consents: window.__consents || [] }));
   if (JSON.stringify(r.modes) !== JSON.stringify(["autopilot"])) { failed++; console.error(`FAIL autopilot switch: ${JSON.stringify(r)}`); }
@@ -259,7 +253,7 @@ for (const [state, nav, expected] of cases) {
 {
   for (const [slow, fast, expected] of [[15,15,"25%"],[12,12,"40%"],[12.75,12.75,"36%"],[12,20,"0%"],[null,null,"—"]]) {
     const state = { ...STATES["home-frame-os-act"], battery: { percent: 72 }, power: { observed_tdp_w: slow, observed_fast_w: fast, maximum_tdp_w: 30, gamescope_max_tdp_w: 20 } };
-    const page = await openPage(browser, state);
+    const page = await openPage(browser, state, ["Details"]);
     const data = await page.evaluate(() => {
       const ring = [...document.querySelectorAll(".fos .mini")].find(e => e.querySelector(".mlab").textContent === "Energy");
       return { text: ring.querySelector(".mnum").textContent, offset: Number(ring.querySelector("circle:last-child").getAttribute("stroke-dashoffset")) };
@@ -285,7 +279,7 @@ for (const [state, nav, expected] of cases) {
   for (const [charge, maximum, expectedText] of [[100,20,"25%"],[50,20,"25%"],[25,20,"25%"],[0,20,"25%"],[null,20,"25%"],[72,null,"—"]]) {
     const state = { ...STATES["home-frame-os-act"], battery: { percent: charge },
       power: { observed_tdp_w: 15, observed_fast_w: 15, gamescope_max_tdp_w: maximum } };
-    const page = await openPage(browser, state);
+    const page = await openPage(browser, state, ["Details"]);
     const data = await page.evaluate(() => {
       const ring = [...document.querySelectorAll(".fos .mini")].find(e => e.querySelector(".mlab").textContent === "Energy");
       const circles = ring.querySelectorAll("circle");
@@ -302,19 +296,16 @@ for (const [state, nav, expected] of cases) {
   }
   cases.push(["energy-battery-colour-and-unknown-limits"]);
 }
-// Installation succeeds or fails visibly; copying is distinct from enabling CSS Loader.
-for (const fail of [false, true]) {
-  const page = await openPage(browser, { ...STATES["home-extreme"], __themeFail: fail }, ["Settings", "GFG theme"]);
-  await page.getByText("Install theme", { exact: true }).click();
-  await page.waitForTimeout(150);
-  const text = fail ? "Theme folder is read-only" : "Installed and up to date";
-  if (!(await page.getByText(text, { exact: true }).count()) ||
-      await page.evaluate(() => window.__themeCalls) !== 1) {
-    failed++; console.error("FAIL theme installer " + text);
+// GFG Theme (CSS Loader) was retired in 2.1.2: Settings must not offer it any more.
+{
+  const page = await openPage(browser, STATES["home-extreme"], ["Settings"]);
+  if (!(await page.getByText("GFG Shell", { exact: true }).count()) ||
+      await page.getByText("GFG theme", { exact: true }).count()) {
+    failed++; console.error("FAIL retired GFG theme still offered in Settings");
   }
-  for (const error of page.__errors) { failed++; console.error("FAIL theme: " + error); }
+  for (const error of page.__errors) { failed++; console.error("FAIL settings: " + error); }
   await page.close();
-  cases.push(["theme-installer-" + (fail ? "error" : "success")]);
+  cases.push(["theme-retired"]);
 }
 // GFG Shell: install from the plugin, then launch through a Steam shortcut created once.
 for (const fail of [false, true]) {
@@ -379,7 +370,7 @@ for (const processing_path of ["native-input", "spatial-input"]) {
 }
 for (const diagnostics of [false, true]) for (const fail of [false, true]) {
   const state = { ...STATES["home-autopilot"], __featureFail: fail };
-  const page = await openPage(browser, state, diagnostics ? ["Settings", "Diagnostics"] : []);
+  const page = await openPage(browser, state, diagnostics ? ["Settings", "Diagnostics"] : ["Fine-tune"]);
   const row = page.locator(".row").filter({ has: page.getByText("Stick touch Boost", { exact: true }) }).first();
   if (!(await row.locator(".tog.on").count())) { failed++; console.error("FAIL stick touch default off"); }
   await row.click(); await page.waitForTimeout(150);
@@ -391,7 +382,7 @@ for (const diagnostics of [false, true]) for (const fail of [false, true]) {
   await page.close(); cases.push(["stick-touch-" + (diagnostics ? "diagnostics" : "home") + (fail ? "-error" : "-saved")]);
 }
 for (const diagnostics of [false, true]) for (const fail of [false, true]) {
-  const page = await openPage(browser, { ...STATES["home-autopilot"], __featureFail: fail }, diagnostics ? ["Settings", "Diagnostics"] : []);
+  const page = await openPage(browser, { ...STATES["home-autopilot"], __featureFail: fail }, diagnostics ? ["Settings", "Diagnostics"] : ["Fine-tune"]);
   const row = page.locator(".row").filter({ has: page.getByText("Continuous Boost", { exact: true }) }).first();
   if (await row.locator(".tog.on").count()) { failed++; console.error("FAIL continuous Boost default on"); }
   await row.click(); await page.waitForTimeout(150);
@@ -417,6 +408,34 @@ for (const mode of ["budget","balanced","quality","extreme"]) {
   const page = await openPage(browser,STATES["home-autopilot"],["Settings","Profile"]);
   if (!(await page.getByText("stable",{exact:true}).count())) {failed++;console.error("FAIL stable profile label");}
   await page.close();cases.push(["stable-profile-label"]);
+}
+{
+  const page = await openPage(browser, { ...STATES["home-idle-oled"], native_gsf: { requested_mode: "off", installed: true, contexts: [] } }, ["Settings", "Diagnostics"]);
+  await page.getByText("×3", { exact: true }).click();
+  const sets = await page.evaluate(() => window.__nativeGsfSets || []);
+  if (sets.join(",") !== "3" || !(await page.getByText("Restart the game to apply.", { exact: true }).count())) {
+    failed++; console.error("FAIL independent native GSF mode RPC/restart feedback");
+  }
+  await page.close();cases.push(["native-gsf-mode"]);
+}
+{
+  const command = "/home/deck/.local/bin/gfg-native %command%";
+  const page = await openPage(browser, { ...STATES["home-idle-oled"], native_gsf: { requested_mode: "off", installed: true, launcher_ready: true, launch_command: command, component_version: "0.0.0-fg3-internal.7", contexts: [] } }, ["Settings", "Diagnostics"]);
+  if (!(await page.getByText("Steam launch option: " + command, { exact: true }).count()) ||
+      !(await page.getByText("Native build: 0.0.0-fg3-internal.7", { exact: true }).count())) {
+    failed++; console.error("FAIL native installation identity/launch option");
+  }
+  await page.close(); cases.push(["native-gsf-installed"]);
+}
+{
+  const page = await openPage(browser, { ...STATES["home-idle-oled"], __nativeInstallFail: true, native_gsf: { requested_mode: "off", installed: false, contexts: [] } }, ["Settings", "Diagnostics"]);
+  await page.getByText("×3", { exact: true }).click();
+  if (!(await page.getByText("Native generator unavailable: native-launcher-not-ready-after-install", { exact: true }).count()) ||
+      await page.getByText("Restart the game to apply.", { exact: true }).count() ||
+      await page.getByText(/Steam launch option:/).count()) {
+    failed++; console.error("FAIL unavailable native launcher incorrectly advertised");
+  }
+  await page.close(); cases.push(["native-gsf-install-failure"]);
 }
 await browser.close();
 console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);

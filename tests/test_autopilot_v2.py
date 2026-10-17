@@ -121,7 +121,7 @@ class HoldAndTargetTests(unittest.TestCase):
     def test_fixed_display_goal_survives_low_fps_stale_windows_and_old_fallback(self):
         policy = TargetPolicy()
         for _ in range(4):
-            policy.update(90, 15, 45, "auto", True)
+            policy.update(90, 15, 45, "battery", True)
         self.assertEqual(policy.target, 45)
         for preference in ("auto", "battery", "smoothness"):
             for fresh in (False, True):
@@ -141,7 +141,7 @@ class HoldAndTargetTests(unittest.TestCase):
     def test_the_display_target_does_not_flap(self):
         policy = TargetPolicy()
         def observe(real, output, first, last, now):
-            return policy.update(90, real, output, "auto", True,
+            return policy.update(90, real, output, "battery", True,
                                  sample_seq=last, first_sample_seq=first, span_s=4, now=now)
         self.assertEqual(observe(45, 90, 1, 10, 0), 90)
         self.assertEqual(observe(20, 40, 11, 20, 10), 90)
@@ -350,6 +350,7 @@ class GoalAndPauseTests(unittest.TestCase):
             svc = fixture.svc
             svc._settings.setdefault("profiles", {}).setdefault("game", {})["enabled"] = True
             svc.set_mode("game", "autopilot")
+            svc._autopilot_preference = lambda profile: "battery"  # explicit opt-in to half-refresh goal
             svc._budget = BudgetController(target_output_fps=90, now=0.0)
             now = {"value": 0}
             svc._clock = lambda: now["value"]
