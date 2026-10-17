@@ -354,6 +354,12 @@ jobs:
             sha256sum libVkLayer_gfg_native.so VkLayer_gfg_native.json loader-live-output deck-output-test.sh GSF_DECK_QUALIFICATION.md BUILD_INFO.txt > SHA256SUMS
           )
           bash "$kit/deck-output-test.sh" --check
+          # Simulate the 0644 executable permission caused by downloading
+          # GitHub's ZIP artifact. The launcher may correct ONLY its own
+          # checksum-verified binary inside this disposable test directory.
+          chmod 0644 "$kit/loader-live-output"
+          bash "$kit/deck-output-test.sh" --check
+          test -x "$kit/loader-live-output"
           if bash "$kit/deck-output-test.sh" > /tmp/gsf-deck-kit-requires-explicit-opt-in.log 2>&1; then
             echo "Safety gate FAIL: Deck launcher accepted an unspecified --run"
             exit 1
