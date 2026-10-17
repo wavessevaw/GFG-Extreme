@@ -1,9 +1,9 @@
-name: Experimental full-size GSF LAB 2.1.6
+name: Experimental GSF LAB2 2.1.6 cadence fix
 
 on:
   push:
     branches:
-      - experiment/gsf-full-2.1.6-lab1
+      - experiment/gsf-full-2.1.6-lab2-scheduler-fix
   workflow_dispatch:
 
 permissions:
@@ -26,15 +26,38 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Retrieve the exact audited GSF binary from Codex source
+      - name: Checkout exact fixed GSF source (do not use old internal.10 binary)
         uses: actions/checkout@v4
         with:
           repository: wavessevaw/GFG-Extreme
-          ref: e93a05e39cd49775ae308cc1f84f53f0d1e9f4eb
+          ref: 77045d39a3d02661e2fb2f9d456f3a5e9549b402
           path: upstream-gsf
-          sparse-checkout: docs/fg3/artifacts/GFG-Native-FG-v0_0_0-fg3-internal_10.zip
-          sparse-checkout-cone-mode: false
           persist-credentials: false
+
+      - name: Build independent internal.11 native Vulkan layer from pinned source
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y g++-12 gcc-12 make cmake libvulkan-dev glslang-tools spirv-tools
+          git clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
+          make -C upstream-gsf/engine/gfg-temporal -j2 all lib
+          make -C upstream-gsf/engine/gfg-native ENABLE_TE=1 BUILD=build-te \
+            VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" layer frame-clock
+          (cd upstream-gsf && python3 scripts/package_native_fg.py \
+            --binary engine/gfg-native/build-te/libVkLayer_gfg_native.so \
+            --version 0.0.0-fg3-internal.11 \
+            --outdir "$GITHUB_WORKSPACE/upstream-native")
+          (cd upstream-native && sha256sum --check SHA256SUMS.txt)
+          python3 - <<'PY'
+          import json, zipfile
+          path='upstream-native/GFG-Native-FG-v0_0_0-fg3-internal_11.zip'
+          with zipfile.ZipFile(path) as z:
+              assert z.testzip() is None
+              m=json.loads(z.read('GFG-Native-FG/MANIFEST.json'))
+              assert m['source_commit']=='77045d39a3d02661e2fb2f9d456f3a5e9549b402'
+              assert m['source_worktree_dirty'] is False
+              assert m['hardware_acceptance'] is False
+          PY
 
       - name: Download official v2.1.6 release (all full Decky payloads)
         run: |
@@ -52,30 +75,30 @@ jobs:
           set -euo pipefail
           python3 scripts/build_gsf_216_lab_zip.py \
             --stable upstream-stable/GFG-Extreme-v2_1_6.zip \
-            --native upstream-gsf/docs/fg3/artifacts/GFG-Native-FG-v0_0_0-fg3-internal_10.zip \
+            --native upstream-native/GFG-Native-FG-v0_0_0-fg3-internal_11.zip \
             --out lab-artifacts
           (cd lab-artifacts && sha256sum --check SHA256SUMS.txt)
           python3 scripts/check_release_archive.py \
-            lab-artifacts/GFG-Extreme-2.1.6-gsf.lab1.zip 2.1.6-gsf.lab1
+            lab-artifacts/GFG-Extreme-2.1.6-gsf.lab2.zip 2.1.6-gsf.lab2
 
       - name: Test the exact installed lab ZIP without a real Steam process
         run: |
           set -euo pipefail
           python3 scripts/test_gsf_216_lab_zip.py \
-            lab-artifacts/GFG-Extreme-2.1.6-gsf.lab1.zip
+            lab-artifacts/GFG-Extreme-2.1.6-gsf.lab2.zip
 
       - name: Show package comparison
         run: |
           set -euo pipefail
-          ls -lh upstream-stable/GFG-Extreme-v2_1_6.zip lab-artifacts/GFG-Extreme-2.1.6-gsf.lab1.zip
+          ls -lh upstream-stable/GFG-Extreme-v2_1_6.zip lab-artifacts/GFG-Extreme-2.1.6-gsf.lab2.zip
           cat lab-artifacts/SHA256SUMS.txt
 
       - name: Publish only as short-lived GitHub Actions artifact, NOT stable Release
         uses: actions/upload-artifact@v4
         with:
-          name: GFG-Extreme-2.1.6-GSF-LAB1-FULL
+          name: GFG-Extreme-2.1.6-GSF-LAB2-FULL
           path: |
-            lab-artifacts/GFG-Extreme-2.1.6-gsf.lab1.zip
+            lab-artifacts/GFG-Extreme-2.1.6-gsf.lab2.zip
             lab-artifacts/SHA256SUMS.txt
           compression-level: 0
           if-no-files-found: error
