@@ -199,6 +199,33 @@ transfers and thread-safe semaphore retirement. Fail closed on any
 unsupported shape, retaining the original game's valid WSI path.
 No real-game compatibility claims are authorized yet.
 
+### Virtual WSI ABI and bounded acquire semantics
+
+`src/virtual_wsi_facade.h` now models the app-facing shape of
+`vkGetSwapchainImagesKHR`, `vkAcquireNextImageKHR`,
+`vkAcquireNextImage2KHR` (single-device subset), and
+`vkQueuePresentKHR`. It never forwards virtual handles to the ICD.
+Acquire signals the app's Vulkan binary semaphore/fence through a
+GPU queue callback. Present consumes game-render waits **once** in
+the snapshot submission, then the game source image is released after
+copy completion. Duplicate releases, unsupported pNext and failed
+copy submissions fail closed.
+
+With a busy source image and a nonzero timeout, an actual Vulkan game
+expects Acquire to **wait** until it is released: the facade uses a
+CLOCK_MONOTONIC conditional variable, supports finite timeout and
+UINT64_MAX waits, and wakes blocked threads when GPU retirement completes
+or the swapchain closes. This **requires an independent retirement
+worker** for live asynchronous operation. The controlled Vulkan test
+explicitly waits on the copy fence and retires the image; this is
+not yet a fully asynchronous real-game presentation path. Unit tests
+exercise threaded wake-up and closure; success requires CI to pass.
+
+**No production Vulkan layer hooks** currently route real game calls
+through this facade. Not all Vulkan extensions or device groups are
+supported; do not silently enable the experimental route in the
+2.1.6 plugin.
+
 ### Not yet implemented / hard merge gate
 
 1. Private output swapchain/surface in SteamOS Gaming Mode (Gamescope), with
