@@ -558,6 +558,7 @@ int main(void) {
     fprintf(stderr,"GSF GPU source snapshots copied and readback verified: real=%u A/B_composites=%u PASS\\n",
         source_probe.verified_real,source_probe.verified_synthetic);
     gfg_vwsi_close(&virtual_wsi);
+    gfg_vwsi_fini(&virtual_wsi);
     gfg_source_probe_destroy(&source_probe);
     vkDestroyFence(device,source_fence,NULL);
     vkDestroyFence(device,snapshot_fence,NULL);
