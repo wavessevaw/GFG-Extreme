@@ -10,6 +10,7 @@
 #include <vulkan/vulkan_xcb.h>
 #include "../src/offscreen_source_pool.h"
 #include "x11_output_probe.h"
+#include "test_wsi_results.h"
 #include "../src/output_frame_pacer.h"
 #include <xcb/xcb.h>
 #include <stdint.h>
@@ -212,8 +213,15 @@ int main(void) {
             REQUIRE(err==0);
         }
         uint32_t index=UINT32_MAX;
-        TRY(vkAcquireNextImageKHR(device,virtual_handle,UINT64_MAX,
-                                  image_ready,VK_NULL_HANDLE,&index));
+        VkResult acquired=vkAcquireNextImageKHR(device,virtual_handle,
+                                  UINT64_MAX,image_ready,VK_NULL_HANDLE,&index);
+        if(!gfg_test_wsi_result_usable(acquired)) {
+            fprintf(stderr,"GSF_DECK_WSI acquire_unusable=%d frame=%u recreate_required=%d\n",
+                (int)acquired,frame,gfg_test_wsi_recreate_required(acquired));
+            return 1;
+        }
+        if(acquired==VK_SUBOPTIMAL_KHR)
+            fprintf(stderr,"GSF_DECK_WSI acquire_suboptimal_usable=1 frame=%u\n",frame);
         REQUIRE(index<images_count);
         TRY(vkWaitForFences(device,1,&rendering,VK_TRUE,UINT64_MAX));
         TRY(vkResetCommandBuffer(cmd,0));
@@ -264,8 +272,18 @@ int main(void) {
             .waitSemaphoreCount=1,.pWaitSemaphores=&render_done,
             .swapchainCount=1,.pSwapchains=&virtual_handle,
             .pImageIndices=&index,.pResults=&single};
-        TRY(vkQueuePresentKHR(queue,&present));
-        REQUIRE(single==VK_SUCCESS);
+        VkResult presented=vkQueuePresentKHR(queue,&present);
+        if(!gfg_test_wsi_result_usable(presented) ||
+           !gfg_test_wsi_result_usable(single)) {
+            fprintf(stderr,
+                "GSF_DECK_WSI present_unusable=%d per_swapchain=%d frame=%u recreate_required=%d\n",
+                (int)presented,(int)single,frame,
+                gfg_test_wsi_recreate_required(presented) ||
+                gfg_test_wsi_recreate_required(single));
+            return 1;
+        }
+        if(presented==VK_SUBOPTIMAL_KHR || single==VK_SUBOPTIMAL_KHR)
+            fprintf(stderr,"GSF_DECK_WSI present_suboptimal_usable=1 frame=%u\n",frame);
         const int expected=(int)(level*255.f+0.5f);
         /* X11 must expose the inserted A|B frame before the real B.
          * The synthetic GPU composite is unique: left pixel from A,
