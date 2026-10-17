@@ -19,6 +19,7 @@
 #include "swapchain_chain.h"
 #ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
 #include "virtual_wsi_facade.h"
+#include "output_proxy_bootstrap.h"
 #include "virtual_layouts.h"
 #endif
 #ifdef GFG_NATIVE_WITH_TE
@@ -79,6 +80,9 @@ typedef struct native_swapchain {
     uint32_t present_samples;
 #ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
     gfg_virtual_wsi *virtual_app; /* only in isolated test builds */
+    gfg_output_proxy *test_proxy; /* heap-owned app proxy in TEST builds */
+    gfg_offscreen_dispatch test_proxy_ops;
+    PFN_vkDestroySwapchainKHR test_proxy_destroy;
 #endif
 } native_swapchain;
 
@@ -96,6 +100,10 @@ typedef struct native_device {
     PFN_vkQueuePresentKHR present;
     PFN_vkGetSwapchainImagesKHR get_images;
 #ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    gfg_offscreen_dispatch test_proxy_ops;
+    gfg_vwsi_acquire_signal test_proxy_signal;
+    gfg_vwsi_copy_submit test_proxy_copy;
+    void *test_proxy_user;
     PFN_vkCmdPipelineBarrier cmd_barrier;
     PFN_vkCmdPipelineBarrier2 cmd_barrier2;
     PFN_vkCmdPipelineBarrier2KHR cmd_barrier2_khr;
@@ -900,6 +908,14 @@ static int native_cmp_double(const void *a, const void *b) {
     return x < y ? -1 : x > y;
 }
 static void native_swapchain_free(native_swapchain *sc) {
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    if (sc->test_proxy) {
+        gfg_output_proxy_destroy(sc->test_proxy,sc->test_proxy_destroy,
+                                 &sc->test_proxy_ops);
+        free(sc->test_proxy);
+        sc->test_proxy=NULL;
+    }
+#endif
     if (sc->present_us && sc->present_samples > 2) {
         /* the first two presents carry one-time bridge creation; excluded */
         const uint32_t n = sc->present_samples - 2;
@@ -1091,6 +1107,56 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
     native_device *d = find_device(dispatch_key(device));
     if (!d || !d->create_swapchain || !ci || !out)
         return VK_ERROR_INITIALIZATION_FAILED;
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    /* The app asks us to create its source WSI, and ONLY the internally
+     * owned output is sent to downstream Vulkan. This entire branch is
+     * absent from normal GFG builds: its callbacks currently exist only
+     * in an isolated test harness, not a real game/Deck pipeline. */
+    if (native_env_is_1("GFG_NATIVE_TEST_PROXY_CREATE")) {
+        if (ci->oldSwapchain) {
+            int old_is_virtual=0;
+            pthread_mutex_lock(&d->lock);
+            for(native_swapchain *scan=d->swapchains;scan;scan=scan->next)
+                if(scan->handle==ci->oldSwapchain && scan->test_proxy)
+                    old_is_virtual=1;
+            pthread_mutex_unlock(&d->lock);
+            /* NEVER leak virtual handle to downstream oldSwapchain WSI. */
+            if(old_is_virtual)return VK_ERROR_OUT_OF_DATE_KHR;
+        }
+        if (d->test_proxy_signal && d->test_proxy_copy &&
+            gfg_offscreen_dispatch_complete(&d->test_proxy_ops) &&
+            !gfg_offscreen_unsupported(ci)) {
+            gfg_output_proxy *proxy=calloc(1,sizeof(*proxy));
+            native_swapchain *entry=calloc(1,sizeof(*entry));
+            if(proxy && entry) {
+                VkResult vr=gfg_output_proxy_create(proxy,device,d->physical,ci,
+                            d->create_swapchain,d->destroy_swapchain,
+                            &d->test_proxy_ops,d->test_proxy_user,
+                            d->test_proxy_signal,d->test_proxy_copy);
+                if(vr==VK_SUCCESS) {
+                    entry->handle=gfg_output_proxy_app_handle(proxy);
+                    entry->virtual_app=&proxy->app;
+                    entry->test_proxy=proxy;
+                    entry->test_proxy_ops=d->test_proxy_ops;
+                    entry->test_proxy_destroy=d->destroy_swapchain;
+                    entry->format=ci->imageFormat;
+                    entry->color_space=ci->imageColorSpace;
+                    entry->extent=ci->imageExtent;
+#ifdef GFG_NATIVE_WITH_TE
+                    if(pthread_mutex_init(&entry->output_wsi,NULL))abort();
+#endif
+                    pthread_mutex_lock(&d->lock);
+                    entry->next=d->swapchains;d->swapchains=entry;
+                    pthread_mutex_unlock(&d->lock);
+                    *out=entry->handle;
+                    return VK_SUCCESS;
+                }
+            }
+            free(entry);free(proxy);
+            /* On any failure, forward the original app create unchanged. */
+        }
+    }
+#endif
 #ifdef GFG_NATIVE_WITH_TE
     /* A successful create retires oldSwapchain immediately. Finish its jobs
      * before it becomes illegal to acquire the pending generated images. */
@@ -1340,7 +1406,19 @@ native_DestroySwapchainKHR(VkDevice device, VkSwapchainKHR sc,
      * The controlled test harness owns actual image allocation/teardown. */
     gfg_virtual_wsi *virtual_app=native_test_find_virtual(d,sc);
     if(virtual_app) {
-        gfg_vwsi_close(virtual_app);
+        native_swapchain *owned=NULL;
+        pthread_mutex_lock(&d->lock);
+        for(native_swapchain **p=&d->swapchains;*p;p=&(*p)->next) {
+            if((*p)->handle==sc && (*p)->test_proxy) {
+                owned=*p;*p=owned->next;break;
+            }
+        }
+        pthread_mutex_unlock(&d->lock);
+        if(owned) {
+            /* Test harness guarantees that no API calls or GPU commands
+             * remain in flight when destroying this source. */
+            native_swapchain_free(owned);
+        } else gfg_vwsi_close(virtual_app);
         return;
     }
 #endif
