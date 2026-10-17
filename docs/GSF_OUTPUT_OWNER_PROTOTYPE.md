@@ -226,6 +226,43 @@ through this facade. Not all Vulkan extensions or device groups are
 supported; do not silently enable the experimental route in the
 2.1.6 plugin.
 
+### Experimental Vulkan Loader interception (isolated test build)
+
+Under the compile-time-only switch
+`GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS`, the existing
+`src/layer.c` exposes virtual source interception via **both**
+`vkGetDeviceProcAddr` and `vkGetInstanceProcAddr`:
+
+* `vkGetSwapchainImagesKHR` returns app-visible offscreen VkImages.
+* `vkAcquireNextImageKHR` and `vkAcquireNextImage2KHR` honor
+  virtual image acquisition and GPU-signalled semaphores.
+* `vkQueuePresentKHR` **redirects** app virtual presents to
+  snapshot capture; the real output WSI is still passed through.
+* `vkDestroySwapchainKHR` prevents fake virtual handles from being
+  forwarded to downstream WSI; mixed app-virtual/output WSI presents
+  are rejected **before** consuming any app semaphore.
+* `vkCmdPipelineBarrier`, `vkCmdPipelineBarrier2`, and
+  `vkCmdPipelineBarrier2KHR` rewrite PRESENT layouts **only** when
+  the VkImage belongs to the registered virtual source; app-supplied
+  commands are copied and never mutated in place. The actual downstream
+  compositor image is never rewritten.
+
+`tests/output_layer_dispatch.c` exercises this **actual native layer
+code** with two injected fake swapchain registrations and a downstream
+stub driver, including GIPA/GDPA identity, app source versus real
+output separation, image ownership, barrier dispatch, mixed-present
+rejection, and destruction. It is a stronger interface test than
+calling `virtual_wsi_facade.h` directly but **still lacks a
+real game's vkCreateSwapchainKHR interception and image allocation**.
+Production builds do not define this macro.
+
+Pinned Vulkan-Headers **v1.4.365** are required to compile the
+existing full native layer (old distribution headers omit the latest
+present-id2/present-wait2 and other extension types). Use the
+specialized Actions workflow as source of truth for compiler and
+UBSan results. The experimental code must remain disabled if any
+check fails.
+
 ### Not yet implemented / hard merge gate
 
 1. Private output swapchain/surface in SteamOS Gaming Mode (Gamescope), with
