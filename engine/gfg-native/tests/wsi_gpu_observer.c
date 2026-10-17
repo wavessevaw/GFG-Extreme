@@ -15,6 +15,7 @@
 #include <xcb/xcb.h>
 #ifdef GFG_NATIVE_TEST_OWNED_WSI
 #include "../src/output_owner.h"
+#include "owned_source_transport.h"
 #endif
 #ifdef GFG_NATIVE_TEST_GPU_OBSERVER
 #include "gpu_observer.h"
@@ -154,7 +155,7 @@ int main(void) {
         .surface=surface,.minImageCount=minimum,.imageFormat=color.format,
         .imageColorSpace=color.colorSpace,.imageExtent=ext,.imageArrayLayers=1,
         .imageUsage=VK_IMAGE_USAGE_TRANSFER_DST_BIT
-#ifdef GFG_NATIVE_TEST_GPU_OBSERVER
+#if defined(GFG_NATIVE_TEST_GPU_OBSERVER) || defined(GFG_NATIVE_TEST_OWNED_WSI)
             | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
 #endif
         ,.imageSharingMode=VK_SHARING_MODE_EXCLUSIVE,
@@ -208,6 +209,12 @@ int main(void) {
      * semaphore only after reacquiring that same swapchain image. */
     for(uint32_t i=0;i<image_count;++i)TRY(vkCreateSemaphore(device,&semci,NULL,&ready[i]));
     unsigned char *seen=calloc(image_count,1);REQUIRE(seen);
+#ifdef GFG_NATIVE_TEST_OWNED_WSI
+    REQUIRE(caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+    REQUIRE(ext.width>=8 && (ext.width%2)==0);
+    gfg_source_probe source_probe;
+    REQUIRE(gfg_source_probe_create(&source_probe,physical,device,ext,color.format));
+#endif
 
     PFN_vkQueuePresentKHR present_gipa=(PFN_vkQueuePresentKHR)
         vkGetInstanceProcAddr(instance,"vkQueuePresentKHR");
@@ -294,17 +301,13 @@ int main(void) {
         vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
             VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&pre);
 #ifdef GFG_NATIVE_TEST_OWNED_WSI
-        /* Pattern encodes source IDs in distinct channels: generated
-         * output is a deterministic half-way colour, not a duplicate. */
-        float previous=0.12f+0.12f*(float)(ticket.from_id%5u);
-        float next=0.12f+0.12f*(float)(ticket.to_id%5u);
-        float tint=ticket.kind==GFG_OWNER_REAL?previous:(previous+next)*0.5f;
-        VkClearColorValue clear={.float32={tint,
-            ticket.kind==GFG_OWNER_SYNTHETIC?0.75f:0.15f,
-            0.9f-tint,1.0f}};
+        /* Real frames: GPU copy from captured OFFSCREEN source image.
+         * Synthetic test frames: left and right halves of the two source
+         * images, proving BOTH snapshots and no direct source WSI present. */
+        gfg_source_record_output(&source_probe,cmd,images[index],
+            ticket.from_id,ticket.to_id,ticket.kind==GFG_OWNER_SYNTHETIC);
 #else
         VkClearColorValue clear={.float32={0.20f+0.05f*(frame%4),0.2f,0.80f-0.05f*(frame%4),1}};
-#endif
         if(getenv("GFG_NATIVE_TEST_DUPLICATE"))clear=(VkClearColorValue){.float32={0.25f,0.2f,0.75f,1}};
         if(getenv("GFG_NATIVE_TEST_CUT")) {
             float value=frame%2?.9f:.1f;
@@ -319,6 +322,7 @@ int main(void) {
         post.newLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
         vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,
             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,0,0,NULL,0,NULL,1,&post);
+#endif
         TRY(vkEndCommandBuffer(cmd));
         VkPipelineStageFlags stage=VK_PIPELINE_STAGE_TRANSFER_BIT;
         VkSubmitInfo si={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -330,6 +334,14 @@ int main(void) {
         TRY(vkQueueSubmit(queue,1,&si,render_fence));
 #else
         TRY(vkQueueSubmit(queue,1,&si,VK_NULL_HANDLE));
+#endif
+#ifdef GFG_NATIVE_TEST_OWNED_WSI
+        /* Before WSI accepts an image, assert its GPU pixels reflect the
+         * real A/B image IDs, not the number of submitted VkPresents.
+         * This fence is intentionally test-only, not a release pacing loop. */
+        TRY(vkWaitForFences(device,1,&render_fence,VK_TRUE,UINT64_MAX));
+        REQUIRE(gfg_source_verify(&source_probe,ticket.from_id,ticket.to_id,
+            ticket.kind==GFG_OWNER_SYNTHETIC));
 #endif
         VkPresentInfoKHR pi={.sType=VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
             .waitSemaphoreCount=1,.pWaitSemaphores=&ready[index],
@@ -371,6 +383,11 @@ int main(void) {
     REQUIRE(owner.synthetic_count==frame_count-1);
     REQUIRE(output_calls==frame_count*2-1);
     REQUIRE(owner.error_count==0);
+    REQUIRE(source_probe.verified_real==frame_count);
+    REQUIRE(source_probe.verified_synthetic==frame_count-1);
+    fprintf(stderr,"GSF GPU source snapshots copied and readback verified: real=%u A/B_composites=%u PASS\\n",
+        source_probe.verified_real,source_probe.verified_synthetic);
+    gfg_source_probe_destroy(&source_probe);
     fprintf(stderr,
         "GSF private-output WSI: real=%llu synthetic=%llu total=%u one_surface=1 API_ORDER=PASS physical_scanout=unverified\n",
         (unsigned long long)owner.real_count,
