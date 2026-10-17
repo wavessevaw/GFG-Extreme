@@ -32,11 +32,11 @@ GitHub Actions ZIP download removes Unix executable permissions. After checking 
    bash /home/deck/gsf-output-test/deck-output-test.sh --run --mode=nested --phase=both --frames=120
    ```
    This does **not** prove direct OLED DRM scanout, because it runs a nested compositor.
-4. For the primary **Gaming Mode** experiment, add a **Non-Steam Game** pointing to `/usr/bin/bash`. Set Launch Options to the script in the unpacked kit, followed by `--run --mode=direct --phase=both --frames=120`, for example:
+4. For the primary **Gaming Mode** experiment, add a **Non-Steam Game** pointing to `/usr/bin/bash`. Set Launch Options to the script in the unpacked kit. **Use `--mode=gaming`**, not `--mode=direct`. Recommended **output-only** experiment avoids Steam focus changes between two short-lived test windows:
    ```text
-   "/home/deck/gsf-output-test/deck-output-test.sh" --run --mode=direct --phase=both --frames=120
+   "/home/deck/gsf-output-test/deck-output-test.sh" --run --mode=gaming --phase=output --frames=120
    ```
-   Gaming Mode is expected to supply its own `DISPLAY` for XWayland. The script **never starts, terminates, restarts, replaces or reconfigures** the embedded Gamescope.
+   The `--mode=gaming` option is deliberately separate from Desktop `--mode=direct`. In Gaming Mode, Gamescope WSI presents Vulkan images through the compositor without necessarily populating the X11 window backing pixels. The old XCB GetImage test returned `0/66` and falsely aborted. The new mode **does not attempt X11 pixel validation**; it checks real Vulkan app submissions, layer creation and independent output-worker real WSI present counts instead. These are **SUBMISSION** checks only: `software_visible_frames=UNVERIFIED_GAMESCOPE_WSI` and `physical_oled_scanout=UNVERIFIED` remain mandatory until external-camera evidence. The test holds the final output window for two additional seconds to aid camera observation. Gaming Mode must supply `DISPLAY`. The script **never starts, terminates, restarts, replaces or reconfigures** the embedded Gamescope.
 5. If Gaming Mode does not provide `DISPLAY`, the preflight refuses to run. This is a missing prerequisite, **not** permission to modify OS service units, force environment variables system-wide or bypass the guard.
 
 No `sudo` and no read-only root filesystem changes. A failed run returns control to Steam; `timeout` limits the child test to 30 seconds. The launcher does not touch installed games or the Decky plugin.
@@ -45,11 +45,18 @@ No `sudo` and no read-only root filesystem changes. A failed run returns control
 
 The baseline phase displays **8 originals** through ordinary Vulkan WSI without loading GFG. The output phase supplies **120 originals at 45Hz** and instructs the isolated layer to emit **119 separate GPU A/B split markers** at a nominal 90Hz via **one** real downstream output WSI. The app's image content cycles through distinguishable grayscale levels; a split frame has two different halves.
 
-Software evidence requires all of:
+**Desktop Mode software evidence** requires all of:
 - `GSF_LOADER_LIVE_INIT ... one_real_output=1` (no silent normal-WSI fallback);
 - `GSF_LOADER_SPLIT_APP output_visible=239 original=120 intermediate=119 ... PASS`;
 - `GSF_OUTPUT_PACER rate=90 emitted=239 originals=120 intermediate=119`;
 - no Vulkan validation errors, crash, hang or unexpected exit.
+
+**Gaming Mode `--mode=gaming` evidence** has different labels and meaning:
+- `GSF_GAMESCOPE_SUBMIT source_originals=120 expected_diagnostic_intermediates=119 x11_readback=bypassed ... PASS`: app's Vulkan source loop was submitted without attempting invalid XCB readback;
+- `GSF_LOADER_LIVE_INIT virtual_images=...`: actual virtual WSI and output path intercepted;
+- `GSF_OUTPUT_PACER rate=90 emitted=239 originals=120 intermediate=119`: output worker submitted real downstream WSI presents;
+- `GSF_DECK_KIT_GAMESCOPE_SUBMIT_PASS physical_scanout=UNVERIFIED` in the launcher.
+These **do not** prove physical scanout, correct GPU output pixels or 90Hz OLED refresh. Baseline `--phase=both` is optional but can make Steam refocus between processes; prefer `--phase=output` after a successful Desktop baseline.
 
 **Physical OLED validation is separate.** Record the actual built-in panel with an external phone/camera in high-frame-rate mode, showing the baseline and experiment and ideally the SteamOS refresh-rate setting. Review the video for truly visible split frames in the correct order and record the panel's refresh mode. A Steam screenshot, Gamescope log, X11 GetImage result, or a success marker **cannot** on its own establish 90Hz physical scanout, correct latency or a Proton game's frame-generation performance.
 
