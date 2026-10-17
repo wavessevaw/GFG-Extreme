@@ -76,6 +76,7 @@ jobs:
       - name: Loader-installed GFG layer keeps ordered real output WSI visible
         run: |
           set -euo pipefail
+          make -C engine/gfg-native build/owned-wsi-smoke
           log="$(mktemp)"
           GFG_NATIVE_FG=1 GFG_NATIVE_TRACE=1 GFG_NATIVE_TEST_PROXY_CREATE=0 \
             GFG_OWNER_TEST_X11_SCANOUT=1 GFG_NATIVE_TEST_FRAMES=10 \
