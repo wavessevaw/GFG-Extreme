@@ -17,13 +17,16 @@ GFG Output Engine: experimental Deck hardware qualification
 
   bash deck-output-test.sh --check
   bash deck-output-test.sh --run --mode=direct --phase=both --frames=120
+  bash deck-output-test.sh --run --mode=gaming --phase=output --frames=120
   bash deck-output-test.sh --run --mode=nested --phase=both --frames=120
 
 --check               Verify the bundle, linked libraries and checksums only.
 --run                 Explicitly permit running an isolated test client.
---mode=direct         Run under the existing DISPLAY/XWayland session. For
-                      Gaming Mode use this as a Non-Steam app; do not replace
-                      the SteamOS system Gamescope session.
+--mode=direct         Desktop X11/XWayland: verify pixels using XCB GetImage.
+--mode=gaming         SteamOS Gaming Mode: skip INVALID XCB backing readback
+                      under Gamescope WSI, track GPU/Vulkan output submissions
+                      separately as UNVERIFIED on physical OLED. Use this
+                      mode as the Non-Steam Game; no system modifications.
 --mode=nested         Launch a *new* nested gamescope in Desktop Mode; only
                       the client (never Gamescope) receives the test layer.
 --phase=both          Unmodified Vulkan baseline (8 frames), then output.
@@ -41,6 +44,7 @@ for arg in "$@"; do
     --check) ACTION=check;;
     --run) ACTION=run;;
     --mode=direct) MODE=direct;;
+    --mode=gaming) MODE=gaming;;
     --mode=nested) MODE=nested;;
     --phase=both) PHASE=both;;
     --phase=output) PHASE=output;;
@@ -123,6 +127,11 @@ common=(
   GFG_NATIVE_TEST_WINDOW_HEIGHT="$WINDOW_HEIGHT"
   GFG_NATIVE_TEST_PACED_45_90=1
 )
+if [[ "$MODE" == gaming ]]; then
+  # Gamescope WSI's Vulkan image need not be readable via XCB GetImage.
+  # Preserve the hardware/physical scanout UNKNOWN qualification.
+  common+=( GFG_NATIVE_TEST_GAME_MODE=1 )
+fi
 run_phase() {
   local phase="$1" label log rc
   label="baseline"
@@ -135,6 +144,9 @@ run_phase() {
       VK_INSTANCE_LAYERS=VK_LAYER_GFG_native
       VK_LAYER_PATH="$SELF_DIR"
     )
+    if [[ "$MODE" == gaming ]]; then
+      client_env+=( GFG_NATIVE_TEST_GAME_MODE=1 )
+    fi
     if [[ "$FRAMES" == 120 ]]; then
       client_env+=( GFG_NATIVE_TEST_SUSTAINED=1 )
     fi
@@ -162,7 +174,7 @@ run_phase() {
     -u GFG_NATIVE_FG -u GFG_NATIVE_TEST_LOADER_LIVE_OUTPUT
     -u GFG_NATIVE_TEST_PROXY_CREATE -u GFG_NATIVE_TEST_OUTPUT_INTERLEAVE
     -u GFG_NATIVE_TEST_SUSTAINED -u GFG_NATIVE_TEST_PACED_45_90
-    -u GFG_NATIVE_TEST_PACED_30_60
+    -u GFG_NATIVE_TEST_PACED_30_60 -u GFG_NATIVE_TEST_GAME_MODE
   )
   set +e
   if [[ "$MODE" == nested ]]; then
@@ -182,20 +194,38 @@ run_phase() {
     return 1
   fi
   if [[ "$phase" == output ]]; then
-    if [[ "$FRAMES" == 120 ]]; then
-      grep -q 'GSF_LOADER_SPLIT_APP output_visible=239 original=120 intermediate=119 x11_distinct_pixels=1 PASS' "$log" \
-        || fail "239-frame X11 verification marker missing (see $log)"
-    else
-      grep -q 'GSF_LOADER_SPLIT_APP output_visible=15 original=8 intermediate=7 x11_distinct_pixels=1 PASS' "$log" \
-        || fail "15-frame X11 verification marker missing (see $log)"
-    fi
     grep -q 'GSF_LOADER_LIVE_INIT virtual_images=' "$log" \
       || fail "No virtual-Wsi layer; ordinary passthrough is NOT an output pass"
-    grep -q 'GSF_OUTPUT_PACER rate=90 emitted=' "$log" \
-      || fail "Output pacing evidence missing"
+    if [[ "$MODE" == gaming ]]; then
+      local expected=$FRAMES
+      local intermediate=$((FRAMES-1))
+      local total=$((FRAMES*2-1))
+      grep -q "GSF_GAMESCOPE_SUBMIT source_originals=${expected} expected_diagnostic_intermediates=${intermediate} x11_readback=bypassed" "$log" \
+        || fail "Gamescope application did not complete Vulkan submissions"
+      grep -q "GSF_OUTPUT_PACER rate=90 emitted=${total} originals=${expected} intermediate=${intermediate}" "$log" \
+        || fail "Gamescope output worker did not submit all expected Vulkan presents"
+      if grep -q 'x11_distinct_pixels=1 PASS' "$log"; then
+        fail "Gamescope mode falsely reported verified X11 pixels"
+      fi
+    else
+      if [[ "$FRAMES" == 120 ]]; then
+        grep -q 'GSF_LOADER_SPLIT_APP output_visible=239 original=120 intermediate=119 x11_distinct_pixels=1 PASS' "$log" \
+          || fail "239-frame X11 verification marker missing (see $log)"
+      else
+        grep -q 'GSF_LOADER_SPLIT_APP output_visible=15 original=8 intermediate=7 x11_distinct_pixels=1 PASS' "$log" \
+          || fail "15-frame X11 verification marker missing (see $log)"
+      fi
+      grep -q 'GSF_OUTPUT_PACER rate=90 emitted=' "$log" \
+        || fail "Output pacing evidence missing"
+    fi
   else
-    grep -q 'GSF_LOADER_LIVE_APP 8 GPU-rendered real source frames visible through one output WSI PASS' "$log" \
-      || fail "Baseline X11 GPU original frames not observed"
+    if [[ "$MODE" == gaming ]]; then
+      grep -q 'GSF_GAMESCOPE_APP_TERMINAL originals=8 api_submission=PASS physical_scanout=UNVERIFIED' "$log" \
+        || fail "Baseline Gaming Mode Vulkan submission did not complete"
+    else
+      grep -q 'GSF_LOADER_LIVE_APP 8 GPU-rendered real source frames visible through one output WSI PASS' "$log" \
+        || fail "Baseline X11 GPU original frames not observed"
+    fi
     if grep -q 'GSF_LOADER_LIVE_INIT' "$log"; then
       fail "Experimental layer leaked into baseline. Not a valid comparison"
     fi
@@ -203,18 +233,31 @@ run_phase() {
   if grep -E 'Validation Error|VUID-|UNASSIGNED-.*ERROR' "$log" > "$RUN_DIR/${label}-validation-errors.txt"; then
     fail "Vulkan validation error in $label (see logs)"
   fi
-  printf 'GSF_DECK_KIT_PHASE=%s SOFTWARE_EVIDENCE_PASS log=%s\n' "$label" "$log"
+  if [[ "$MODE" == gaming ]]; then
+    printf 'GSF_DECK_KIT_PHASE=%s VULKAN_SUBMISSIONS_PASS physical_scanout=UNVERIFIED log=%s\n' "$label" "$log"
+  else
+    printf 'GSF_DECK_KIT_PHASE=%s SOFTWARE_EVIDENCE_PASS log=%s\n' "$label" "$log"
+  fi
 }
 if [[ "$PHASE" == both ]]; then
   run_phase baseline
 fi
 run_phase output
 {
-  printf 'software_visible_frames=verified\n'
+  if [[ "$MODE" == gaming ]]; then
+    printf 'software_visible_frames=UNVERIFIED_GAMESCOPE_WSI\n'
+    printf 'gpu_output_submissions=checked\n'
+  else
+    printf 'software_visible_frames=verified_by_X11_backing_image\n'
+  fi
   printf 'physical_oled_scanout=UNVERIFIED\n'
   printf 'intermediate_type=GPU_AB_DIAGNOSTIC_NOT_LMC\n'
   printf 'real_game_proton=UNVERIFIED\n'
 } > "$RUN_DIR/QUALIFICATION_STATUS.txt"
-printf 'GSF_DECK_KIT_SOFTWARE_PASS output=%s\n' "$RUN_DIR"
+if [[ "$MODE" == gaming ]]; then
+  printf 'GSF_DECK_KIT_GAMESCOPE_SUBMIT_PASS physical_scanout=UNVERIFIED output=%s\n' "$RUN_DIR"
+else
+  printf 'GSF_DECK_KIT_SOFTWARE_PASS output=%s\n' "$RUN_DIR"
+fi
 printf 'Physical OLED proof requires external-camera video of this session.\n'
 printf 'No system Vulkan layer was installed. Stopping this process disables the test.\n'
