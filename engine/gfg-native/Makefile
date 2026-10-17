@@ -32,6 +32,16 @@ $(BUILD)/frame-clock: tests/frame_clock.c src/frame_clock.h
 frame-clock: $(BUILD)/frame-clock
 	$(BUILD)/frame-clock
 .PHONY: frame-clock
+
+# Independent ownership/ordering contract. Compiles without Vulkan runtime.
+# Passing this is NOT proof of a functioning game/GSF swapchain adapter.
+$(BUILD)/output-owner-contract: tests/output_owner_queue.c src/output_owner_queue.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/output_owner_queue.c
+
+output-owner-contract: $(BUILD)/output-owner-contract
+	$(BUILD)/output-owner-contract
+.PHONY: output-owner-contract
 layer: $(BUILD)/libVkLayer_gfg_native.so $(BUILD)/VkLayer_gfg_native.json
 
 $(BUILD)/libVkLayer_gfg_native.so: $(NATIVE_SOURCES) $(NATIVE_HEADERS) $(NATIVE_DEPS)
