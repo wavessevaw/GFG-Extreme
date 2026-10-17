@@ -143,6 +143,10 @@ int main(void) {
     devices=&d;
     assert(!setenv("GFG_NATIVE_TEST_PROXY_CREATE","1",1));
 
+    /* Device dispatch advertises only entrypoints actually supported by
+     * the lower layer. Install test stubs BEFORE resolving API functions. */
+    d.acquire=(PFN_vkAcquireNextImageKHR)(uintptr_t)1;
+    d.present=(PFN_vkQueuePresentKHR)(uintptr_t)1;
     /* Obtain the API from the actual layer resolver, NOT by calling helper
      * directly. It creates one real output + three separate source images. */
     PFN_vkCreateSwapchainKHR create=(PFN_vkCreateSwapchainKHR)
@@ -156,8 +160,6 @@ int main(void) {
     PFN_vkQueuePresentKHR present=(PFN_vkQueuePresentKHR)
         native_gdpa(d.handle,"vkQueuePresentKHR");
     assert(create&&destroy&&get_images&&acquire&&present);
-    d.acquire=(PFN_vkAcquireNextImageKHR)(uintptr_t)1;
-    d.present=(PFN_vkQueuePresentKHR)(uintptr_t)1;
     VkSwapchainCreateInfoKHR ci=app_request();
     VkSwapchainKHR virtual_handle=VK_NULL_HANDLE;
     assert(create(d.handle,&ci,NULL,&virtual_handle)==VK_SUCCESS);
