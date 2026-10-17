@@ -80,6 +80,12 @@ loader-proxy-create: $(BUILD)/loader-proxy-create $(BUILD)/loader-probe/libVkLay
 	  VK_INSTANCE_LAYERS=VK_LAYER_GFG_native $(BUILD)/loader-proxy-create
 .PHONY: loader-proxy-create
 
+# Loader-installed live GPU proof: application's normal Acquire/Render/Present
+# is intercepted by the isolated layer, worker presents through one real WSI.
+$(BUILD)/loader-live-output: tests/loader_live_output.c tests/x11_output_probe.h src/offscreen_source_pool.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DVK_USE_PLATFORM_XCB_KHR -I$(VULKAN_HEADERS) -o $@ tests/loader_live_output.c -lvulkan -lxcb
+
 # Convert game swapchain PRESENT layout requests without touching the
 # true compositor swapchain, including Vulkan sync2 and renderpasses.
 $(BUILD)/virtual-layouts: tests/virtual_layouts.c src/virtual_layouts.h
