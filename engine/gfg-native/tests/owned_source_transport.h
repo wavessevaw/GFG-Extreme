@@ -19,6 +19,7 @@ typedef struct {
     VkDeviceMemory mem[2];
     VkImage game_frames[2]; /* virtual game-acquired render targets */
     VkDeviceMemory game_mem[2];
+    unsigned app_image_count; /* 1 or 2: independent of GSF history count */
     uint64_t ids[2], game_ids[2];
     VkBuffer readback;
     VkDeviceMemory readback_mem;
@@ -36,6 +37,7 @@ static uint32_t gfg_src_mem_type(const VkPhysicalDeviceMemoryProperties *m,
 static int gfg_source_probe_create(gfg_source_probe *p,
         VkPhysicalDevice phys,VkDevice device,VkExtent2D size,VkFormat format) {
     memset(p,0,sizeof(*p));p->d=device;p->size=size;
+    p->app_image_count=2;
     p->bytes=(VkDeviceSize)size.width*size.height*4;
     VkPhysicalDeviceMemoryProperties mem_props;
     vkGetPhysicalDeviceMemoryProperties(phys,&mem_props);
@@ -105,7 +107,7 @@ static float gfg_source_level(uint64_t id) {
 /* 1. Game command buffer renders into its OWN offscreen image. */
 static void gfg_source_record_game(gfg_source_probe *p,VkCommandBuffer cmd,
                                    uint64_t id) {
-    const unsigned slot=(unsigned)(id&1u);
+    const unsigned slot=(unsigned)(id%p->app_image_count);
     VkImage image=p->game_frames[slot];
     VkImageMemoryBarrier pre=gfg_src_barrier(image,
         p->game_ids[slot]?VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:VK_IMAGE_LAYOUT_UNDEFINED,
@@ -133,6 +135,7 @@ static void gfg_source_record_game(gfg_source_probe *p,VkCommandBuffer cmd,
 static void gfg_source_record_snapshot(gfg_source_probe *p,VkCommandBuffer cmd,
                                         uint64_t id) {
     const unsigned slot=(unsigned)(id&1u);
+    const unsigned app_slot=(unsigned)(id%p->app_image_count);
     VkImage target=p->frames[slot];
     VkImageMemoryBarrier pre=gfg_src_barrier(target,
         p->ids[slot]?VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:VK_IMAGE_LAYOUT_UNDEFINED,
@@ -145,7 +148,7 @@ static void gfg_source_record_snapshot(gfg_source_probe *p,VkCommandBuffer cmd,
     VkImageCopy region={.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
         .dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
         .extent={p->size.width,p->size.height,1}};
-    vkCmdCopyImage(cmd,p->game_frames[slot],VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    vkCmdCopyImage(cmd,p->game_frames[app_slot],VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         target,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&region);
     VkImageMemoryBarrier post=gfg_src_barrier(target,
         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
