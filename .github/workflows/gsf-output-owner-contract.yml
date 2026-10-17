@@ -50,6 +50,15 @@ jobs:
           /tmp/gfg-virtual-layouts-ubsan
       - name: Fetch up-to-date Vulkan-Headers for native layer ABI
         run: git clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
+      - name: Steam Deck WSI SUBOPTIMAL acquire and present regression
+        run: |
+          set -euo pipefail
+          cc -std=c11 -Wall -Wextra -Werror -O2 -I"$RUNNER_TEMP/vkh/include" \
+            engine/gfg-native/tests/test_wsi_results.c -o /tmp/gsf-wsi-results
+          /tmp/gsf-wsi-results
+          grep -q 'gfg_test_wsi_result_usable' engine/gfg-native/tests/loader_live_output.c
+          echo 'Deck WSI suboptimal regression PASS'
+
       - name: Real Vulkan Loader installed GFG experimental create-only proxy
         run: |
           set -euo pipefail
