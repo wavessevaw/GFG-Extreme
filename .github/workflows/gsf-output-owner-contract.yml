@@ -135,6 +135,27 @@ jobs:
           fi
           echo 'Vulkan Loader game input 8 -> X11-visible 15 distinct real plus A/B GPU frames, one output WSI PASS (not LMC/Deck)'
 
+      - name: Paced 30Hz Vulkan source to 60Hz OUTPUT with 15 independent X11 frame samples
+        run: |
+          set -euo pipefail
+          log="$(mktemp)"
+          GFG_NATIVE_FG=1 GFG_NATIVE_TEST_LOADER_LIVE_OUTPUT=1 \
+            GFG_NATIVE_TEST_PROXY_CREATE=1 GFG_NATIVE_TEST_OUTPUT_INTERLEAVE=1 \
+            GFG_NATIVE_TEST_PACED_30_60=1 GFG_NATIVE_TRACE=1 \
+            VK_LAYER_PATH="$PWD/engine/gfg-native/build/loader-probe:/usr/share/vulkan/explicit_layer.d" \
+            VK_INSTANCE_LAYERS=VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation \
+            VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
+            xvfb-run -a -s '-screen 0 1024x768x24' \
+            engine/gfg-native/build/loader-live-output > "$log" 2>&1 || { cat "$log"; exit 1; }
+          cat "$log"
+          grep 'GSF_PACED_30_TO_60_X11 paced_source=8 originals=8 intermediate=7 visible=15 app_to_worker_distinct_frames=1 PASS' "$log"
+          grep 'GSF_OUTPUT_PACER rate=60 emitted=15 originals=8 intermediate=7' "$log"
+          grep 'GSF_LOADER_SPLIT_APP output_visible=15 original=8 intermediate=7 x11_distinct_pixels=1 PASS' "$log"
+          if grep -E 'Validation Error|VUID-|UNASSIGNED-.*ERROR' "$log"; then
+            cat "$log"; exit 1
+          fi
+          echo 'Paced 30Hz source -> approx 60Hz output Xvfb ordering validated; NOT DRM 60Hz, Deck or LMC'
+
       - name: Native test-only intercepted vkCreateSwapchainKHR and owned output source images
         run: make -C engine/gfg-native VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" output-proxy-layer-create
       - name: Intercepted virtual swapchain creation sanitizer
