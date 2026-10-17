@@ -56,7 +56,7 @@ jobs:
           cc -std=c11 -Wall -Wextra -Werror -O2 -I"$RUNNER_TEMP/vkh/include" \
             engine/gfg-native/tests/test_gamescope_mailbox_policy.c -o /tmp/gsf-gamescope-mailbox-policy
           /tmp/gsf-gamescope-mailbox-policy
-          grep -q 'gfg_test_gamescope_normalize_fifo' engine/gfg-native/src/layer.c
+          grep -q 'gfg_test_gamescope_prepare_pair' engine/gfg-native/src/layer.c
           grep -q 'GSF_LOADER_OWNER_REJECT' engine/gfg-native/src/layer.c
           echo 'MAILBOX bridge opt-in and fail-closed safety contract PASS'
       - name: Steam Deck WSI SUBOPTIMAL acquire and present regression
