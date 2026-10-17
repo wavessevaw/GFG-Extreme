@@ -22,6 +22,16 @@ jobs:
           cc -std=c11 -g -O1 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
             engine/gfg-native/tests/output_owner.c -o /tmp/gfg-output-owner-ubsan
           /tmp/gfg-output-owner-ubsan
+      - name: Install software Vulkan WSI test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libvulkan-dev libxcb1-dev mesa-vulkan-drivers xvfb
+      - name: Compile and run PRIVATE one-surface Vulkan WSI smoke (lavapipe)
+        run: |
+          make -C engine/gfg-native build/owned-wsi-smoke
+          VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \\
+            xvfb-run -a -s '-screen 0 1024x768x24' \\
+            engine/gfg-native/build/owned-wsi-smoke
       - name: Report qualification boundary
         run: |
           echo 'Transport-neutral scheduler validated.'
