@@ -7,7 +7,7 @@
 #include "../src/layer.c"
 #include <assert.h>
 #include <stdio.h>
-static unsigned downstream_images,downstream_acquires,downstream_presents;
+static unsigned downstream_images,downstream_acquires,downstream_presents,downstream_destroys;
 static unsigned barrier_legacy_calls,barrier_sync2_calls,barrier_sync2_khr_calls;
 static uint64_t last_snapshot_ticket;
 static unsigned last_snapshot_image;
@@ -32,6 +32,9 @@ static VkResult VKAPI_CALL stub_acquire(VkDevice d,VkSwapchainKHR sc,
 static VkResult VKAPI_CALL stub_acquire2(VkDevice d,
                  const VkAcquireNextImageInfoKHR *a,uint32_t *index) {
     return stub_acquire(d,a->swapchain,a->timeout,a->semaphore,a->fence,index);
+}
+static void VKAPI_CALL stub_destroy(VkDevice d,VkSwapchainKHR h,const VkAllocationCallbacks *a) {
+    (void)d;(void)a;assert(h==output_handle);++downstream_destroys;
 }
 static VkResult VKAPI_CALL stub_present(VkQueue q,const VkPresentInfoKHR *p) {
     (void)q;assert(p&&p->swapchainCount==1&&p->pSwapchains[0]==output_handle);
@@ -75,7 +78,7 @@ int main(void) {
     native_device d={0};
     d.key=key;d.handle=device;d.get_images=stub_get_images;
     d.acquire=stub_acquire;d.acquire2=stub_acquire2;
-    d.present=stub_present;
+    d.present=stub_present;d.destroy_swapchain=stub_destroy;
     d.cmd_barrier=stub_barrier;
     d.cmd_barrier2=stub_barrier2;
     d.cmd_barrier2_khr=stub_barrier2_khr;
@@ -191,7 +194,22 @@ int main(void) {
     assert(present(queue,&p)==VK_SUCCESS&&downstream_presents==1);
     assert(game_wait_consumed==1); /* never consume waits a second time */
 
-    gfg_vwsi_close(&virtual);gfg_vwsi_fini(&virtual);
+    /* Mixed virtual+real present must never leak a fake handle to lower WSI. */
+    VkSwapchainKHR mixed[]={app_handle,output_handle};
+    uint32_t idxs[]={a,0};
+    VkPresentInfoKHR bad={.sType=VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        .waitSemaphoreCount=1,.pWaitSemaphores=&gpu_done,
+        .swapchainCount=2,.pSwapchains=mixed,.pImageIndices=idxs};
+    assert(present(queue,&bad)==VK_ERROR_FEATURE_NOT_PRESENT);
+    assert(game_wait_consumed==1&&downstream_presents==1);
+
+    PFN_vkDestroySwapchainKHR destroy=(PFN_vkDestroySwapchainKHR)
+        native_gdpa(device,"vkDestroySwapchainKHR");
+    assert(destroy);
+    destroy(device,app_handle,NULL);
+    assert(downstream_destroys==0);
+    assert(acquire(device,app_handle,0,acquire_sem,VK_NULL_HANDLE,&c)==VK_ERROR_OUT_OF_DATE_KHR);
+    gfg_vwsi_fini(&virtual);
     devices=NULL;pthread_mutex_destroy(&d.lock);pthread_mutex_destroy(&d.queue_lock);
     puts("GFG test layer: GIPA/GDPA->GetImages/Acquire/Acquire2/Present virtual source, separate output PASS");
     return 0;
