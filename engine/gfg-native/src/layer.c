@@ -1117,11 +1117,6 @@ static int native_copy_usage_ready(VkImageUsageFlags usage) {
     return (usage & wanted) == wanted;
 }
 
-static int native_can_add_two_images(uint32_t minimum, uint32_t maximum) {
-    return minimum <= UINT32_MAX - 2u &&
-        (maximum == 0 || (maximum >= minimum && maximum - minimum >= 2));
-}
-
 static int native_copy_bridge_requested(const native_device *d) {
     if (native_env_is_1("GFG_NATIVE_GPU_BRIDGE")) return d->gpu_capable;
 #ifdef GFG_NATIVE_WITH_CPU_BRIDGE
@@ -1322,7 +1317,8 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
     const int ordinary_mode = ci->presentMode == VK_PRESENT_MODE_MAILBOX_KHR ||
         ci->presentMode == VK_PRESENT_MODE_IMMEDIATE_KHR || ci->presentMode == VK_PRESENT_MODE_FIFO_RELAXED_KHR;
     int mode_copy_ok = 1;
-    if (d->async_output && ordinary_mode && native_env_is_1("GFG_NATIVE_FORCE_FIFO"))
+    if (ordinary_mode && native_env_is_1("GFG_NATIVE_FORCE_FIFO") &&
+        native_env_is_1("GFG_NATIVE_GPU_BRIDGE") && d->gpu_capable)
         mode_copy_ok = gfg_create_fifo(&create_copy,&extended);
     VkSurfaceCapabilitiesKHR caps = {0};
     if (!d->instance || !d->instance->enabled) {
@@ -1330,7 +1326,7 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
     } else if (!native_copy_bridge_requested(d)) {
         reason = "frame-bridge-unavailable";
     } else if (!mode_copy_ok) {
-        reason = "cannot-copy-fifo-create-chain";
+        reason = "fifo-mode-list-incompatible-or-unknown-chain";
     } else if ((reason = native_ineligible_reason(&extended)) != NULL) {
         /* Keep the original WSI path untouched on unsupported shapes. */
     } else if (native_copy_usage_ready(ci->imageUsage)) {
@@ -1356,22 +1352,36 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
             reason = "extended-usage-ready";
         }
     }
+    const uint32_t spare_images=gfg_real_wsi_extra_images(getenv("GFG_NATIVE_MODE"));
     if (candidate) {
-        /* Two synthetic presents per real frame need two spare images
-         * beyond what the game keeps acquired (B3). The game still sees the
-         * real count from vkGetSwapchainImagesKHR and indexes what it acquires. */
+        /* Reserve one held original plus one real WSI image per generated
+         * output: +2 for 2x, +3 for 3x. No virtual app-facing swapchain. */
         if (!caps_queried && d->instance->surface_caps) {
             caps_queried = 1;
             caps_result = d->instance->surface_caps(d->physical, ci->surface, &caps);
         }
-        if (caps_queried && caps_result == VK_SUCCESS &&
-                !native_can_add_two_images(ci->minImageCount, caps.maxImageCount)) {
+        if (!gfg_real_wsi_can_extend(ci->minImageCount,
+                caps_queried && caps_result==VK_SUCCESS ? caps.maxImageCount : 0,
+                spare_images)) {
             candidate = 0;
             reason = "insufficient-image-count-cap";
         } else {
-            const uint32_t wanted_images = ci->minImageCount + 2u;
+            const uint32_t wanted_images = ci->minImageCount + spare_images;
             if (wanted_images > extended.minImageCount) extended.minImageCount = wanted_images;
         }
+    }
+    if (native_env_is_1("GFG_NATIVE_REAL_WSI_PROBE")) {
+        const VkBaseInStructure *head=(const VkBaseInStructure *)ci->pNext;
+        fprintf(stderr,"GSF_REAL_WSI_GATE gpu_requested=%d gpu_capable=%d async=%d"
+                " fifo_requested=%d original_mode=%d effective_mode=%d"
+                " original_pnext=%d image_count_requested=%u spare=%u"
+                " real_swapchain=1 virtual_swapchain=0 candidate=%d reason=%s\n",
+                native_env_is_1("GFG_NATIVE_GPU_BRIDGE"),d->gpu_capable,
+                d->async_output,native_env_is_1("GFG_NATIVE_FORCE_FIFO"),
+                (int)ci->presentMode,(int)extended.presentMode,
+                head?(int)head->sType:-1,
+                candidate?extended.minImageCount:ci->minImageCount,
+                spare_images,candidate,reason?reason:"none");
     }
     VkResult result = d->create_swapchain(device, candidate ? &extended : ci,
                                            alloc, out);
@@ -1383,6 +1393,12 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
         *out = VK_NULL_HANDLE;
         result = d->create_swapchain(device, ci, alloc, out);
     }
+    if (native_env_is_1("GFG_NATIVE_REAL_WSI_PROBE"))
+        fprintf(stderr,"GSF_REAL_WSI_CREATE result=%d active_candidate=%d"
+                " original_mode=%d mode_sent_downstream=%d"
+                " source_real_swapchain=1 synthetic_insertions=UNVERIFIED\n",
+                (int)result,candidate,(int)ci->presentMode,
+                candidate?(int)extended.presentMode:(int)ci->presentMode);
     if (result != VK_SUCCESS) return result;
 #ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
     if(native_env_is_1("GFG_NATIVE_TEST_LOADER_CREATE_PROBE"))
@@ -1788,6 +1804,13 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
                         .family = q->family, .semaphore_fd = d->semaphore_fd, .display_timing=d->display_timing,
                         .set_loader_data = d->set_loader_data};
                     sc->gpu = gfg_gpu_fg_create(&gi);
+                    if (native_env_is_1("GFG_NATIVE_REAL_WSI_PROBE"))
+                        fprintf(stderr,"GSF_REAL_WSI_GPU_BRIDGE_CREATE"
+                                " active=%d real_swapchain=1 mode=%d"
+                                " async=%d requested_multiplier=%s\n",
+                                sc->gpu!=NULL,(int)sc->present_mode,
+                                d->async_output,getenv("GFG_NATIVE_MODE")?
+                                  getenv("GFG_NATIVE_MODE"):"3");
                     if (sc->gpu) {
 #ifdef GFG_NATIVE_TEST_OBSERVE_LAYER
                         uint32_t n=sc->image_count;
