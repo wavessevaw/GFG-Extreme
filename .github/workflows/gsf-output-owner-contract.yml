@@ -33,9 +33,10 @@ jobs:
       - name: Compile and present identifiable probe frames through real Vulkan WSI
         run: |
           make -C engine/gfg-native output-visual-probe
-          GFG_FOE_VISUAL_FRAMES=9 GFG_FOE_VISUAL_INTERVAL_MS=0 \
+          GFG_FOE_VISUAL_VERIFY=1 GFG_FOE_VISUAL_FRAMES=9 GFG_FOE_VISUAL_INTERVAL_MS=0 \
             xvfb-run -a engine/gfg-native/build/output-visual-probe 2>&1 | tee /tmp/foe-wsi-probe.txt
           test "$(grep -c 'WSI_accept frame=' /tmp/foe-wsi-probe.txt)" -eq 9
           grep -q 'frame=0 role=REAL_A color=red' /tmp/foe-wsi-probe.txt
           grep -q 'frame=1 role=TEST_MIDPOINT color=green' /tmp/foe-wsi-probe.txt
           grep -q 'frame=2 role=REAL_B color=blue' /tmp/foe-wsi-probe.txt
+          grep -q 'GPU PIXEL READBACK: ALL REAL/MID/REAL TEST PATTERNS VERIFIED' /tmp/foe-wsi-probe.txt
