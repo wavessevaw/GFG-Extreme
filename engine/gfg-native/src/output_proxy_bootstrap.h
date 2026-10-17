@@ -45,16 +45,18 @@ static inline void gfg_output_proxy_destroy(gfg_output_proxy *p,
  * an image, and it never escapes to real WSI. The caller must allocate 'p'
  * in stable memory (not relocate it) until all app references are retired.
  * Failure leaves no output swapchain or source image alive. */
-static inline VkResult gfg_output_proxy_create(gfg_output_proxy *p,
+static inline VkResult gfg_output_proxy_create_ex(gfg_output_proxy *p,
         VkDevice device, VkPhysicalDevice physical,
         const VkSwapchainCreateInfoKHR *original,
+        const VkSwapchainCreateInfoKHR *downstream_info,
         PFN_vkCreateSwapchainKHR create_output,
         PFN_vkDestroySwapchainKHR destroy_output,
         const gfg_offscreen_dispatch *dispatch,
         void *callback_user,
         gfg_vwsi_acquire_signal acquire_signal,
         gfg_vwsi_copy_submit submit_capture) {
-    if (!p || !device || !physical || !original || !create_output ||
+    if (!p || !device || !physical || !original || !downstream_info ||
+        !create_output ||
         !destroy_output || !gfg_offscreen_dispatch_complete(dispatch) ||
         !acquire_signal || !submit_capture)
         return VK_ERROR_INITIALIZATION_FAILED;
@@ -67,7 +69,10 @@ static inline VkResult gfg_output_proxy_create(gfg_output_proxy *p,
     /* Only the real WSI is created downstream. It is never separately
      * presented by the application. Transfer DST is mandatory for output
      * ownership; if unsupported, fall back to the unmodified game path. */
-    VkSwapchainCreateInfoKHR real = *original;
+    /* Do not mutate the driver's Gamescope maintenance1 mode chain.
+     * The virtual app source and real compositor-facing WSI can have
+     * distinct present modes because they are separate Vulkan resources. */
+    VkSwapchainCreateInfoKHR real = *downstream_info;
     real.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     p->device = device;
     p->physical = physical;
@@ -89,6 +94,22 @@ static inline VkResult gfg_output_proxy_create(gfg_output_proxy *p,
 rollback:
     gfg_output_proxy_destroy(p,destroy_output,dispatch);
     return result;
+}
+
+/* Old entrypoint for all pre-existing Desktop/create-only test users.
+ * No runtime WSI contract is changed without an explicit downstream_info. */
+static inline VkResult gfg_output_proxy_create(gfg_output_proxy *p,
+        VkDevice device, VkPhysicalDevice physical,
+        const VkSwapchainCreateInfoKHR *original,
+        PFN_vkCreateSwapchainKHR create_output,
+        PFN_vkDestroySwapchainKHR destroy_output,
+        const gfg_offscreen_dispatch *dispatch,
+        void *callback_user,
+        gfg_vwsi_acquire_signal acquire_signal,
+        gfg_vwsi_copy_submit submit_capture) {
+    return gfg_output_proxy_create_ex(p,device,physical,original,original,
+        create_output,destroy_output,dispatch,callback_user,
+        acquire_signal,submit_capture);
 }
 
 static inline VkSwapchainKHR gfg_output_proxy_app_handle(
