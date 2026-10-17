@@ -50,6 +50,15 @@ jobs:
           /tmp/gfg-virtual-layouts-ubsan
       - name: Fetch up-to-date Vulkan-Headers for native layer ABI
         run: git clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
+      - name: Gamescope MAILBOX source restored to test-only FIFO output without relaxing other safeguards
+        run: |
+          set -euo pipefail
+          cc -std=c11 -Wall -Wextra -Werror -O2 -I"$RUNNER_TEMP/vkh/include" \
+            engine/gfg-native/tests/test_gamescope_mailbox_policy.c -o /tmp/gsf-gamescope-mailbox-policy
+          /tmp/gsf-gamescope-mailbox-policy
+          grep -q 'gfg_test_gamescope_normalize_fifo' engine/gfg-native/src/layer.c
+          grep -q 'GSF_LOADER_OWNER_REJECT' engine/gfg-native/src/layer.c
+          echo 'MAILBOX bridge opt-in and fail-closed safety contract PASS'
       - name: Steam Deck WSI SUBOPTIMAL acquire and present regression
         run: |
           set -euo pipefail
