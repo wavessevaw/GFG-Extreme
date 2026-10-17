@@ -163,8 +163,13 @@ int main(void) {
     TRY(vkCreateFence(device,&fc,NULL,&rendering));
     unsigned char seen[GFG_OFFSCREEN_MAX_IMAGES]={0};
     const int interleave=getenv("GFG_NATIVE_TEST_OUTPUT_INTERLEAVE")!=NULL;
-    const int paced_source=getenv("GFG_NATIVE_TEST_PACED_30_60")!=NULL;
+    const int paced_30_60=getenv("GFG_NATIVE_TEST_PACED_30_60")!=NULL;
+    const int paced_45_90=getenv("GFG_NATIVE_TEST_PACED_45_90")!=NULL;
+    const int paced_source=paced_30_60||paced_45_90;
+    const uint32_t source_hz=paced_45_90?45u:30u;
+    const uint32_t output_hz=paced_45_90?90u:60u;
     REQUIRE(!paced_source || interleave);
+    REQUIRE(!(paced_30_60 && paced_45_90));
     uint32_t visible=0, intermediate_visible=0, output_visible=0;
     int last_level=-1;
     const uint64_t source_start=gfg_pacer_monotonic_ns();
@@ -174,9 +179,10 @@ int main(void) {
     unsigned x11_interval_count=0;
     for(uint32_t frame=1;frame<=8;frame++) {
         if(paced_source && frame>1) {
-            /* Actual app submits one original every 33.33ms independently
-             * of the Output Engine's 16.67ms PRESENT pacing. */
-            const uint64_t due=source_start+(uint64_t)(frame-1u)*33333333ull;
+            /* Input app and independent Output Engine run separate
+             * monotonic clocks at either 30/60 or 45/90 Hz. */
+            const uint64_t due=source_start+
+                 (uint64_t)(frame-1u)*1000000000ull/source_hz;
             const struct timespec deadline=gfg_pacer_to_time(due);
             int err=0;
             do {err=clock_nanosleep(CLOCK_MONOTONIC,TIMER_ABSTIME,
@@ -300,15 +306,22 @@ int main(void) {
         const uint64_t mean_us=x11_interval_total_ns/x11_interval_count/1000u;
         const uint64_t min_us=x11_interval_min_ns/1000u;
         const uint64_t max_us=x11_interval_max_ns/1000u;
-        fprintf(stderr,"GSF_PACED_30_TO_60_X11 visible=15 source_hz=30 target_hz=60 samples=%u mean_us=%llu min_us=%llu max_us=%llu\n",
+        fprintf(stderr,"GSF_PACED_%u_TO_%u_X11 visible=15 source_hz=%u target_hz=%u samples=%u mean_us=%llu min_us=%llu max_us=%llu\n",
+            source_hz,output_hz,source_hz,output_hz,
             x11_interval_count,(unsigned long long)mean_us,
             (unsigned long long)min_us,(unsigned long long)max_us);
         /* Software Xvfb, not physical 60Hz scanout. Use broad acceptance
          * for CI scheduling noise, but disallow the old 35ms intermediate
          * exposure and implausible zero-spacing duplicate Presents. */
-        REQUIRE(mean_us>=9000 && mean_us<=27000);
-        REQUIRE(min_us>=5000 && max_us<=50000);
-        fprintf(stderr,"GSF_PACED_30_TO_60_X11 paced_source=8 originals=8 intermediate=7 visible=15 app_to_worker_distinct_frames=1 PASS\n");
+        if(paced_45_90) {
+            REQUIRE(mean_us>=5500 && mean_us<=20000);
+            REQUIRE(min_us>=3000 && max_us<=35000);
+        } else {
+            REQUIRE(mean_us>=9000 && mean_us<=27000);
+            REQUIRE(min_us>=5000 && max_us<=50000);
+        }
+        fprintf(stderr,"GSF_PACED_%u_TO_%u_X11 paced_source=8 originals=8 intermediate=7 visible=15 app_to_worker_distinct_frames=1 PASS\n",
+                source_hz,output_hz);
     }
     TRY(vkDeviceWaitIdle(device));
     vkDestroyFence(device,rendering,NULL);
