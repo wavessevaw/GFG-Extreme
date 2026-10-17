@@ -128,7 +128,7 @@ int main(void) {
                "GSF_TEST_APP_MAINTENANCE1_DRIVER_UNAVAILABLE"
                " lavapipe_cannot_validate_real_pnext=1"
                " policy_unit_test_required=1 physical_deck=UNVERIFIED\n");
-            return 0; /* explicitly skipped, never an integration PASS */
+            return 77; /* SKIP: wrapper CI must recognize this exact exit code. */
         }
         VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT supported={
             .sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT};
