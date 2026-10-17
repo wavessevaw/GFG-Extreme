@@ -14,6 +14,12 @@ if (( $# < 1 )); then
   printf 'Usage: gfg-native [--off] [--diagnose] <game-command> [args...]\n' >&2
   exit 2
 fi
+# A literal Steam placeholder is NOT an executable and must not be counted as
+# a Vulkan startup failure or recorded as a partially launched game.
+if [[ "$1" == '%command%' ]]; then
+  printf 'GSF: Steam did not expand %%command%%. Set this launcher in the game Steam Launch Options, not Konsole.\n' >&2
+  exit 2
+fi
 # Bypass before reading settings or invoking any optional helper. Steam/Proton
 # may inherit our activation variables from a parent process or another wrapper.
 passthrough() {
@@ -54,10 +60,12 @@ fi
 mode=${mode:-3} # invoking this explicit launcher opts in; plugin defaults off
 case "$mode" in off|2|3) ;; *) mode=off; printf 'GFG: invalid native mode, using real-only.\n' >&2 ;; esac
 if [[ "$mode" == off ]] || \
-   [[ ! -r "$root/VkLayer_gfg_native.json" || ! -r "$root/libVkLayer_gfg_native.so" ]]; then
+   [[ ! -r "$root/vulkan-layers/VkLayer_gfg_native.json" || ! -r "$root/libVkLayer_gfg_native.so" ]]; then
   passthrough "$@"
 fi
-export VK_LAYER_PATH="$root${VK_LAYER_PATH:+:$VK_LAYER_PATH}"
+# Only Vulkan layer JSON manifests may be scanned. Keeping MANIFEST.json in
+# VK_LAYER_PATH breaks Steam pressure-vessel's Vulkan loader inspection.
+export VK_LAYER_PATH="$root/vulkan-layers${VK_LAYER_PATH:+:$VK_LAYER_PATH}"
 case ":${VK_INSTANCE_LAYERS:-}:" in
   *:VK_LAYER_GFG_native:*) ;;
   *) export VK_INSTANCE_LAYERS="VK_LAYER_GFG_native${VK_INSTANCE_LAYERS:+:$VK_INSTANCE_LAYERS}" ;;
