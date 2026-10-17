@@ -17,6 +17,7 @@
 #include "../src/output_owner.h"
 #include "../src/virtual_wsi_facade.h"
 #include "owned_source_transport.h"
+#include "x11_output_probe.h"
 #endif
 #ifdef GFG_NATIVE_TEST_GPU_OBSERVER
 #include "gpu_observer.h"
@@ -347,7 +348,8 @@ int main(void) {
     gfg_owner_init(&owner,1000000000ull/refresh_hz,1000000000ull/20);
     const uint64_t input_step_ns=1000000000ull/source_hz;
     uint64_t capture_ns=1000000000ull;
-    uint32_t output_calls=0;
+    uint32_t output_calls=0, x11_observed=0;
+    const int observe_x11=getenv("GFG_OWNER_TEST_X11_SCANOUT")!=NULL;
     uint64_t owner_first_due=0,owner_host_epoch=0;
     for(uint32_t source_id=1;source_id<=frame_count;++source_id) {
         unsigned acquired_app_image=UINT32_MAX;
@@ -513,6 +515,14 @@ int main(void) {
         else TRY(present_gdpa(queue,&pi));
 #endif
 #ifdef GFG_NATIVE_TEST_OWNED_WSI
+        if(observe_x11) {
+            const int expected_left=(int)(gfg_source_level(ticket.from_id)*255.0f+0.5f);
+            const int expected_right=(int)(gfg_source_level(
+                ticket.kind==GFG_OWNER_SYNTHETIC?ticket.to_id:ticket.from_id)*255.0f+0.5f);
+            REQUIRE(gfg_x11_wait_visible_pair(xc,window,ext.width,ext.height,
+                expected_left,expected_right,250000000ull));
+            ++x11_observed;
+        }
         fprintf(stderr,"GSF OUTPUT WSI handoff=%u kind=%s pair=%llu:%llu due_ns=%llu acknowledged=1 physical_scanout=unverified\n",
             output_calls,ticket.kind==GFG_OWNER_REAL?"real":"intermediate",
             (unsigned long long)ticket.from_id,(unsigned long long)ticket.to_id,
@@ -552,6 +562,10 @@ int main(void) {
     REQUIRE(owner.synthetic_count==source_probe.verified_synthetic);
     REQUIRE(output_calls==owner.real_count+owner.synthetic_count);
     REQUIRE(owner.error_count==0);
+    REQUIRE(!observe_x11 || x11_observed==output_calls);
+    if(observe_x11)fprintf(stderr,"GSF X11 compositor visible ordered frames=%u real=%llu intermediate=%llu PASS (not OLED)\n",
+        x11_observed,(unsigned long long)owner.real_count,
+        (unsigned long long)owner.synthetic_count);
     REQUIRE(source_probe.verified_real==frame_count);
     REQUIRE(source_probe.verified_synthetic==owner.synthetic_count);
     REQUIRE((gap_at==0 || gap_at>frame_count) || owner.gap_count==1);
