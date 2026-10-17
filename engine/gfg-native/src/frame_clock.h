@@ -11,11 +11,18 @@ typedef struct {
     uint64_t period_ns, real_ns, resyncs;
     uint64_t source_ns, interval_ns, target_ns[3];
     uint64_t grid_origin_ns, grid_period_ns, real_slot;
+    unsigned buffer_ticks; /* deliberate output latency in refresh intervals; 0..3 */
     unsigned mask, discontinuity, overspeed;
 } gfg_frame_clock;
 static inline void gfg_frame_clock_pair(gfg_frame_clock *c,uint64_t source,unsigned multiplier) {
     if (!c->period_ns || (multiplier!=2 && multiplier!=3)) return;
     const uint64_t p=c->period_ns;
+    /* This is a deliberate end-to-end output buffer, not speculative FPS.
+     * A synthetic in-between frame can only be rendered AFTER the newer
+     * real frame arrives. Delaying presentation shifts the display lattice
+     * forward so the GPU and WSI have room to submit A, A-half, B in order.
+     * A bounded integer number of refresh ticks prevents drift. */
+    const uint64_t lag=p*(c->buffer_ticks<=3?c->buffer_ticks:3u);
     const uint64_t previous_source=c->source_ns;
     uint64_t dt=previous_source && source>previous_source?source-previous_source:0;
     uint64_t gap=6*p;
@@ -43,7 +50,7 @@ static inline void gfg_frame_clock_pair(gfg_frame_clock *c,uint64_t source,unsig
     }
     c->overspeed=0;
     if(!c->grid_origin_ns) {
-        c->grid_origin_ns=source+dt;
+        c->grid_origin_ns=source+dt+lag;
         c->real_slot=0;c->target_ns[2]=c->grid_origin_ns;
         c->real_ns=c->grid_origin_ns;
         return; /* First/gap frame establishes history, no synthetic output. */
@@ -54,9 +61,9 @@ static inline void gfg_frame_clock_pair(gfg_frame_clock *c,uint64_t source,unsig
     if(next_slot<=c->real_slot)next_slot=c->real_slot+1;
     const uint64_t target=c->grid_origin_ns+next_slot*p;
     /* Source-rate transitions must not produce unbounded pacing waits. */
-    if(target>source+2*dt || target<source || target<c->real_ns+p) {
+    if(target>source+2*dt+lag || target<source || target<c->real_ns+p) {
         ++c->resyncs;c->discontinuity=1;
-        c->grid_origin_ns=source+dt;c->real_slot=0;
+        c->grid_origin_ns=source+dt+lag;c->real_slot=0;
         c->target_ns[2]=c->real_ns=c->grid_origin_ns;
         return;
     }
