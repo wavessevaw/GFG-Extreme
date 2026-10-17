@@ -21,6 +21,10 @@ GFG_FRAME_FUSION = "gfg_frame_fusion"
 FRAME_GENERATION_ENABLED = "frame_generation_enabled"
 AUTOMATIC_DOCK_MODE = "automatic_dock_mode"
 FG_BACKEND = "fg_backend"
+LSFG_VK_2_DLL_PATH = "lsfg_vk_2_dll_path"
+LSFG_VK_2_ALLOW_FP16 = "lsfg_vk_2_allow_fp16"
+LSFG_VK_2_OVERRIDE_PRESENT_MODE = "lsfg_vk_2_override_present_mode"
+LSFG_VK_2_PRESERVE_SWAPCHAIN_IMAGE_COUNT = "lsfg_vk_2_preserve_swapchain_image_count"
 OPTISCALER_PROXY = "optiscaler_proxy"
 FRAME_GENERATION_REFRESH_THRESHOLD = "frame_generation_refresh_threshold"
 BASE_FPS_CAP = "base_fps_cap"
@@ -69,6 +73,10 @@ class ConfigurationData(TypedDict):
     frame_generation_enabled: bool
     automatic_dock_mode: bool
     fg_backend: str
+    lsfg_vk_2_dll_path: str
+    lsfg_vk_2_allow_fp16: bool
+    lsfg_vk_2_override_present_mode: bool
+    lsfg_vk_2_preserve_swapchain_image_count: bool
     optiscaler_proxy: str
     frame_generation_refresh_threshold: int
     base_fps_cap: int
@@ -117,6 +125,10 @@ class ConfigurationPatch(TypedDict, total=False):
     frame_generation_enabled: bool
     automatic_dock_mode: bool
     fg_backend: str
+    lsfg_vk_2_dll_path: str
+    lsfg_vk_2_allow_fp16: bool
+    lsfg_vk_2_override_present_mode: bool
+    lsfg_vk_2_preserve_swapchain_image_count: bool
     optiscaler_proxy: str
     frame_generation_refresh_threshold: int
     base_fps_cap: int
@@ -155,6 +167,10 @@ class WrapperSettingsData(TypedDict):
     """Schema fields generated from shared_config.py."""
     automatic_dock_mode: bool
     fg_backend: str
+    lsfg_vk_2_dll_path: str
+    lsfg_vk_2_allow_fp16: bool
+    lsfg_vk_2_override_present_mode: bool
+    lsfg_vk_2_preserve_swapchain_image_count: bool
     optiscaler_proxy: str
     disable_mako: bool
     disable_hdr_exposure: bool
@@ -202,4 +218,4 @@ def get_script_generation_logic():
     return generate_script_lines
 
 
-ALL_FIELDS = ['dll', 'allow_fp16', 'scaling_enabled', 'scaling_method', 'scaling_factor', 'scaling_supersampling', 'scaling_sharpness', 'frame_generation_provisioned', 'gfg_frame_fusion', 'frame_generation_enabled', 'automatic_dock_mode', 'fg_backend', 'optiscaler_proxy', 'frame_generation_refresh_threshold', 'base_fps_cap', 'multiplier', 'adaptive', 'adaptive_auto_base_fps_cap', 'adaptive_fractional_real_frame_priority', 'target_fps', 'adaptive_max_multiplier', 'adaptive_stable_cadence', 'gamescope_vrr_mode', 'dynamic_cadence_recovery', 'dynamic_cadence_probe_interval_seconds', 'ultra_performance', 'flow_scale', 'performance_mode', 'pacing', 'active_in', 'gpu', 'disable_mako', 'disable_hdr_exposure', 'gamescope_wsi_compatibility', 'swapchain_image_count_compatibility', 'external_vulkan_layer', 'vkbasalt_sharpening', 'vkbasalt_sharpness', 'vkbasalt_dls_denoise', 'vkbasalt_antialiasing', 'vkbasalt_shader', 'disable_steamdeck_mode', 'enable_zink', 'force_alsa_audio']
+ALL_FIELDS = ['dll', 'allow_fp16', 'scaling_enabled', 'scaling_method', 'scaling_factor', 'scaling_supersampling', 'scaling_sharpness', 'frame_generation_provisioned', 'gfg_frame_fusion', 'frame_generation_enabled', 'automatic_dock_mode', 'fg_backend', 'lsfg_vk_2_dll_path', 'lsfg_vk_2_allow_fp16', 'lsfg_vk_2_override_present_mode', 'lsfg_vk_2_preserve_swapchain_image_count', 'optiscaler_proxy', 'frame_generation_refresh_threshold', 'base_fps_cap', 'multiplier', 'adaptive', 'adaptive_auto_base_fps_cap', 'adaptive_fractional_real_frame_priority', 'target_fps', 'adaptive_max_multiplier', 'adaptive_stable_cadence', 'gamescope_vrr_mode', 'dynamic_cadence_recovery', 'dynamic_cadence_probe_interval_seconds', 'ultra_performance', 'flow_scale', 'performance_mode', 'pacing', 'active_in', 'gpu', 'disable_mako', 'disable_hdr_exposure', 'gamescope_wsi_compatibility', 'swapchain_image_count_compatibility', 'external_vulkan_layer', 'vkbasalt_sharpening', 'vkbasalt_sharpness', 'vkbasalt_dls_denoise', 'vkbasalt_antialiasing', 'vkbasalt_shader', 'disable_steamdeck_mode', 'enable_zink', 'force_alsa_audio']

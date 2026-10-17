@@ -125,6 +125,14 @@ Smart Power Split, Flow Scale, Frame OS Act и поддерживаемые пр
 <img src="docs/img/card-filters.png" alt="Графические фильтры" width="740">
 </div>
 
+### Внешний генератор LSFG-VK 2.0
+
+В меню **Generator Backend → LSFG-VK 2.0** можно выбрать установленный отдельно Vulkan-слой LSFG-VK 2.x. Для него нужен собственный лицензионный ресурс `lsfg-vk.dll` из установленной Lossless Scaling. GFG не содержит и не распространяет DLL, шейдеры или вычислительную модель LSFG.
+
+Доступны множители 2×–5×, Flow Scale от 25% до 100%, режим Performance, FP16, FIFO, сохранение количества изображений swapchain и необязательный путь к DLL. Параметры применяются при следующем запуске игры через обычный GFG wrapper. При выборе LSFG-VK собственные FG и Output GFG для этой игры отключаются. Если внешний компонент не найден, запуск генератора блокируется, чтобы избежать ошибки Vulkan.
+
+Наличие установленного слоя не гарантирует совместимость с каждой игрой Proton и Gamescope: аппаратная проверка этой интеграции на Steam Deck ещё не проведена.
+
 ## Установка
 
 Нужны [Decky Loader](https://decky.xyz/) и [Lossless Scaling в Steam](https://store.steampowered.com/app/993090/Lossless_Scaling/) для поддерживаемой схемы генерации GFG.

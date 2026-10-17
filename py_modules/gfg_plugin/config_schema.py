@@ -322,6 +322,12 @@ class ConfigurationManager:
                 ", ".join(repr(value) for value in FG_BACKEND_VALUES)
             )
         validated["fg_backend"] = fg_backend
+        model_path = validated["lsfg_vk_2_dll_path"].strip()
+        if model_path and (not model_path.startswith("/") or
+                           "\\n" in model_path or "\\r" in model_path or
+                           len(model_path) > 4096):
+            raise ValueError("lsfg_vk_2_dll_path must be empty or an absolute local file path")
+        validated["lsfg_vk_2_dll_path"] = model_path
 
         optiscaler_proxy = validated["optiscaler_proxy"].strip().lower()
         if optiscaler_proxy.endswith(".dll"):
