@@ -24,6 +24,19 @@ static inline int gfg_create_fifo(gfg_create_chain *copy, VkSwapchainCreateInfoK
     for(;n && at<16;n=n->pNext,++at)
         if(n->sType==VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODES_CREATE_INFO_EXT) {target=at;break;}
     if(n && at==16) return 0;
+    /* If a lower Gamescope WSI layer already constrained the REAL driver
+     * swapchain to MAILBOX, advertising FIFO here would violate its own
+     * VkSwapchainPresentModesCreateInfoEXT contract. Do not override it.
+     * FIFO is only a legal layer-facing request BEFORE such rewriting. */
+    if(target!=16) {
+        const VkSwapchainPresentModesCreateInfoEXT *modes=
+            (const VkSwapchainPresentModesCreateInfoEXT *)n;
+        int has_fifo=0;
+        if(!modes->presentModeCount || !modes->pPresentModes)return 0;
+        for(uint32_t i=0;i<modes->presentModeCount;i++)
+            if(modes->pPresentModes[i]==VK_PRESENT_MODE_FIFO_KHR)has_fifo=1;
+        if(!has_fifo)return 0;
+    }
     copy->fifo=VK_PRESENT_MODE_FIFO_KHR;
     if(target!=16) {
         n=ci->pNext;
@@ -50,5 +63,15 @@ static inline int gfg_create_fifo(gfg_create_chain *copy, VkSwapchainCreateInfoK
     }
     ci->presentMode=VK_PRESENT_MODE_FIFO_KHR;
     return 1;
+}
+/* One delayed original plus (multiplier - 1) synthetic outputs need
+ * multiplier spare real WSI images. Do not hard-code +2 for 3x. */
+static inline uint32_t gfg_real_wsi_extra_images(const char *mode) {
+    return mode && !strcmp(mode,"2") ? 2u : 3u;
+}
+static inline int gfg_real_wsi_can_extend(uint32_t minimum,uint32_t maximum,
+                                           uint32_t extra) {
+    return extra && minimum<=UINT32_MAX-extra &&
+        (maximum==0 || (maximum>=minimum && maximum-minimum>=extra));
 }
 #endif
