@@ -4,20 +4,29 @@ Status: **research branch, stage 0 contract implemented**, not a playable releas
 Stable GFG remains untouched. No GPU frame-generation or physical OLED scanout
 claim is supported by the present stage.
 
-## Why LAB.1–LAB.4 failed
+## Existing-agent prior art reviewed
 
-The game and the Vulkan layer shared the same real swapchain. The layer
-intercepted `vkQueuePresentKHR`, called a bounded async worker and tried to
-add synthetic acquisitions/presents to the swapchain owned by the game.
-When WSI `Present` was blocked for many milliseconds, the game could not
-reacquire an image promptly. A larger timing buffer in LAB.4 made it worse,
-not better. The counter of synthetic WSI presents does not mean a smooth
-displayed stream. The original user test experienced stuttering.
+**IMPORTANT ARCHITECTURAL CORRECTION:** Read
+[PRIOR_ART_REVIEW.md](PRIOR_ART_REVIEW.md) **before** treating this research
+prototype as an approved architecture. The agent already source-audited
+MAKO and LSFG in `codex/native-fg-research`; original Windows Lossless
+Scaling binary capture/output was explicitly **NOT** reverse engineered.
+Windows DXGI/WGC capture is distinct from MAKO's Vulkan Present interception.
 
-By contrast a HUD only draws over the compositor's already chosen real
-frame; it does not become the owner of final frame sequencing.
+## Evidence from LAB.1–LAB.4
 
-## Required pipeline
+The game and the Vulkan layer shared a swapchain. LAB.4 added 22ms buffering,
+increased source presentation delay/backpressure and stuttered. This
+supports a transport/synchronization regression, but **does not prove
+that a shared swapchain is intrinsically unworkable**. The source-verified
+MAKO architecture successfully uses ordered synthetic/real WSI present
+inside a single Vulkan layer with Gamescope WSI isolation and bounded
+admission. Screen scanout is unverified for our implementation.
+
+A HUD only draws over a previously selected compositor frame, so it
+cannot itself replace the final output transport.
+
+## Candidate experimental proxy-swapchain pipeline (NOT approved)
 
 ```text
 game render GPU  --> private offscreen game images (PROXY SWAPCHAIN)
@@ -35,14 +44,15 @@ game render GPU  --> private offscreen game images (PROXY SWAPCHAIN)
                               displayed scanout
 ```
 
-**Key isolation:** The game must not hold the compositor's output
-swapchain image while GSF computes/paces. Thus an ordinary wrapper around
-`vkQueuePresentKHR` of an existing real game swapchain is NOT sufficient.
-A production solution must virtualize the game's swapchain or integrate with
-the compositor. The proxy path needs independent real Vulkan render images
-with valid memory, image usage, format/color space, queue ownership,
-external sync and known recreation semantics. The compositor surface gets its
-own independent acquired images.
+**Candidate isolation hypothesis, not a fact about Windows LSFG:**
+A private proxy swapchain plus an independent output swapchain MAY prevent
+the game's source-image acquisition from being blocked by delayed output.
+However, MAKO demonstrates a separate already-implemented path: existing
+game Vulkan swapchain, owned source-copy and destination GPU images, FIFO
+injected WSI output and Gamescope WSI isolation. We **must compare both**
+and validate image lifetime, latency and correctness before selecting.
+The proxy alternative requires full Vulkan surface/swapchain API semantics;
+neither prototype nor its tests prove that integration.
 
 The test queue uses numeric `surface_id` tokens representing offscreen,
 already-owned image objects; it intentionally cannot retain real application
@@ -76,6 +86,17 @@ Never count a packet as displayed merely because it was scheduled.
 10. Unsupported games or WSI shapes bypass FOE and retain normal output.
     This requires a tested fallback, never an automatic destructive swapchain
     modification.
+
+### Before selecting this design
+
+- Read the preexisting capture/WSI investigation in
+  [PRIOR_ART_REVIEW.md](PRIOR_ART_REVIEW.md).
+- Verify MAKO's source-preserving WSI isolation and
+  `OrderedSdr` delivery against Gamescope. Do not write a virtual
+  game swapchain if a proven ordinary Vulkan layer path suffices.
+- Compare capture latency, GPU work submission, source-image retention
+  and real-frame pacing of both candidates. No architectural claims
+  without the same replay and actual hardware timings.
 
 ### Important Vulkan implementation questions (stage 1 blockers)
 
