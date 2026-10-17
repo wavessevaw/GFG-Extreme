@@ -148,6 +148,18 @@ wsi-smoke-te:
 	VK_INSTANCE_LAYERS=VK_LAYER_GFG_native VK_LAYER_PATH="$(abspath build-cpu)" \
 	build-cpu/wsi-smoke
 
+# Test-only one-surface Vulkan WSI path: input frames are not independently
+# sent to WSI. Real + synthetic tickets go to one final output queue.
+# Validates transport in lavapipe, NOT physical OLED scanout.
+$(BUILD)/owned-wsi-smoke: tests/wsi_gpu_observer.c src/output_owner.h
+	@test -f $(VULKAN_HEADERS)/vulkan/vulkan_xcb.h || { echo "Vulkan XCB headers required"; exit 1; }
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DGFG_NATIVE_TEST_SMALL -DGFG_NATIVE_TEST_OWNED_WSI -DVK_USE_PLATFORM_XCB_KHR -I$(VULKAN_HEADERS) -o $@ $< -lvulkan -lxcb -ldl
+
+owned-wsi-smoke: $(BUILD)/owned-wsi-smoke
+	$(BUILD)/owned-wsi-smoke
+.PHONY: owned-wsi-smoke
+
 $(BUILD)/wsi-gpu-smoke: tests/wsi_gpu_smoke.c
 	@test -f $(VULKAN_HEADERS)/vulkan/vulkan_xcb.h || { echo "Vulkan XCB headers required"; exit 1; }
 	mkdir -p $(BUILD)
