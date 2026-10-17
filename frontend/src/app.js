@@ -978,7 +978,7 @@ function FgPage({ back, cfg, patch }) {
         : "Not ready: " + (externalStatus.reason || "Install LSFG-VK 2.0 and the matching lsfg-vk.dll. No proprietary binaries are included.")) :
         h(Note, { quiet: true }, "Checking your local LSFG-VK installation…"),
       h("div", { className: "sec" }, "MULTIPLIER"),
-      h(Seg, { value: String(mult), options: [["2", "×2"], ["3", "×3"]], onChange: (v) => patch({ multiplier: Number(v) }) }),
+      h(Seg, { value: String(mult), options: [["2", "×2"], ["3", "×3"], ["4", "×4"], ["5", "×5"]], onChange: (v) => patch({ multiplier: Number(v) }) }),
       h("div", { className: "sec" }, "FLOW SCALE"),
       h(Seg, { value: String(Number(cfg.flow_scale || 0.8)), options: [["0.5", "50%"], ["0.7", "70%"], ["0.8", "80%"], ["1", "100%"]], onChange: (v) => patch({ flow_scale: Number(v) }) }),
       h("input", { type: "range", min: 0.25, max: 1, step: 0.05, value: Number(cfg.flow_scale || 0.8), style: { width: "100%" }, onChange: (e) => patch({ flow_scale: Number(e.target.value) }) }),
