@@ -18,6 +18,7 @@
 #include "../src/virtual_wsi_facade.h"
 #include "../src/output_proxy_bootstrap.h"
 #include "owned_source_transport.h"
+#include "../src/async_capture_retire.h"
 #include "x11_output_probe.h"
 #ifdef GFG_NATIVE_TEST_LAYER_PROXY_REAL
 #define GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
@@ -70,7 +71,11 @@ typedef struct {
     VkCommandBuffer copy_cmd;
     VkFence copy_fence;
     gfg_source_probe *source;
+    gfg_async_capture *async;
 } gfg_vwsi_gpu_context;
+static void vwsi_record_async_copy(void *user,VkCommandBuffer cmd,uint64_t ticket) {
+    gfg_source_record_snapshot((gfg_source_probe *)user,cmd,ticket);
+}
 static VkResult vwsi_acquire_signal(void *arg,VkSemaphore signal,VkFence fence) {
     gfg_vwsi_gpu_context *ctx=arg;
     /* Vulkan binary semaphore acquire completion must be signalled on GPU.
@@ -86,6 +91,9 @@ static VkResult vwsi_submit_capture(void *arg,uint32_t app_index,uint64_t token,
     if(!token||app_index!=token%ctx->source->app_image_count ||
        wait_count>16 || (wait_count && !waits))
         return VK_ERROR_INITIALIZATION_FAILED;
+    if(ctx->async)
+        return gfg_async_capture_submit(ctx->async,app_index,token,
+                                        wait_count,waits);
     VkResult r=vkWaitForFences(ctx->device,1,&ctx->copy_fence,VK_TRUE,UINT64_MAX);
     if(r!=VK_SUCCESS)return r;
     r=vkResetCommandBuffer(ctx->copy_cmd,0);
@@ -403,6 +411,13 @@ int main(void) {
             REQUIRE(via_layer[i]==app_handles[i]);
     }
 #endif
+    gfg_async_capture async_capture={0};
+    const int use_async_capture=getenv("GFG_OWNER_TEST_ASYNC_RETIRE")!=NULL;
+    if(use_async_capture) {
+        TRY(gfg_async_capture_init(&async_capture,virtual_wsi,device,queue,
+                                   family,vwsi_record_async_copy,&source_probe));
+        capture_ctx.async=&async_capture;
+    }
     uint32_t source_submissions=0,game_images_released=0;
 #endif
 
@@ -509,8 +524,15 @@ int main(void) {
 #endif
         TRY(gfg_vwsi_present(virtual_wsi,&source_present,&virtual_ticket));
         REQUIRE(virtual_result==VK_SUCCESS && virtual_ticket);
-        TRY(vkWaitForFences(device,1,&snapshot_fence,VK_TRUE,UINT64_MAX));
-        TRY(gfg_vwsi_retire(virtual_wsi,acquired_app_image,virtual_ticket,1));
+        if(use_async_capture) {
+            /* Application Present returned without waiting on its copy
+             * fence. The output-test side waits for history verification;
+             * future device output must depend on GPU timeline instead. */
+            TRY(gfg_async_capture_wait_ticket(&async_capture,virtual_ticket));
+        } else {
+            TRY(vkWaitForFences(device,1,&snapshot_fence,VK_TRUE,UINT64_MAX));
+            TRY(gfg_vwsi_retire(virtual_wsi,acquired_app_image,virtual_ticket,1));
+        }
         const unsigned history_slot=(unsigned)(source_id&1u);
         const unsigned app_slot=(unsigned)(source_id%source_probe.app_image_count);
         REQUIRE(source_probe.frames[history_slot]!=source_probe.game_frames[app_slot]);
@@ -682,6 +704,17 @@ int main(void) {
     REQUIRE(virtual_wsi->copy_retirements==frame_count);
     REQUIRE(gfg_virtual_all_idle(&virtual_wsi->source));
     REQUIRE(!virtual_wsi->source.invalid && !virtual_wsi->incorrect);
+    if(use_async_capture) {
+        REQUIRE(async_capture.submitted==frame_count);
+        REQUIRE(async_capture.retired==frame_count);
+        REQUIRE(async_capture.worker_gpu_waits==frame_count);
+        REQUIRE(async_capture.app_gpu_waits==0);
+        REQUIRE(async_capture.submit_failures==0);
+        fprintf(stderr,"GSF async capture worker GPU fence waits=%llu presents=%llu app_thread_gpu_waits=%llu PASS\\n",
+            (unsigned long long)async_capture.worker_gpu_waits,
+            (unsigned long long)async_capture.submitted,
+            (unsigned long long)async_capture.app_gpu_waits);
+    }
     fprintf(stderr,"GSF virtual app source buffers=%u history_buffers=2 render_release_count=%u PASS\n",
         source_probe.app_image_count,game_images_released);
     REQUIRE(owner.synthetic_count==source_probe.verified_synthetic);
@@ -701,6 +734,7 @@ int main(void) {
     REQUIRE((gap_at==0 || gap_at>frame_count) || owner.gap_count==1);
     fprintf(stderr,"GSF GPU source snapshots copied and readback verified: real=%u A/B_composites=%u PASS\\n",
         source_probe.verified_real,source_probe.verified_synthetic);
+    if(use_async_capture)gfg_async_capture_cleanup(&async_capture);
     if(!real_proxy) {
         gfg_vwsi_close(virtual_wsi);
         gfg_vwsi_fini(virtual_wsi);
