@@ -1,5 +1,36 @@
 <!-- codex-fg3-coordination -->
 
+## G1-before-G2 implemented — internal.9 experiment
+
+Source **7e8a9660a0c40e00275f87f0977c0758e6f3ebe3**; fast-forward published to both PR133 head and integration.
+Artifacts: `docs/fg3/artifacts/GFG-Extreme-2.1.5-gsf.9.zip` and
+`GFG-Native-FG-v0_0_0-fg3-internal_9.zip`; SHA256SUMS.txt beside them.
+Evidence: `docs/fg3/evidence/deferred-g2-internal_9.json` and ZIP.
+
+The bridge now submits G2 only after G1 copy and lower QueuePresent return,
+removing its previous self-imposed G1 dependency on G2 compute. It cancels
+unsubmitted G2 on detected cut/duplicate/expired deadline and retires the final
+signal/fence without reconstruction. Failed G2 submissions wait only the known
+G1 timeline during cleanup, never an unsubmitted final fence. x2 is unchanged.
+No separate GPU queue, physical timing or measured Deck speedup is claimed.
+
+Borrowed-device test proves G1 pixels are readable while G2 is unsubmitted,
+then checks resume, cancel accounting/control, poll/idle/destroy and injected
+G2 submission failure. 17 pipeline checks pass in both layer orders, including
+G1-before-G2 telemetry and cut/duplicate cancellation. 7 HDR/legacy checks,
+47 native Python tests and native contracts pass. 14 checks against the actual
+extracted ZIP pass, including installed production ELF x3 ordering and x2.
+Actual glibc2.31 load and byte-identical included-source rebuild pass.
+The previous full backend/UI results are retained as prior checkpoint evidence,
+not rerun or misreported as hardware acceptance for this C change.
+
+Remaining barriers: missed renderer cut; shared app queue game contention and
+HDR cost/quality; no authenticated Deck or /dev/dri for Gamescope/DRM/OLED
+physical30-to-90, latency/power or all-games-fixed acceptance. Owner crash cause
+remains unconfirmed on-device. Product task stays OPEN. No stable release/main
+push or additional architecture/PSNR research was undertaken.
+
+
 ## HDR PQ correction implemented — internal.8 experiment
 
 Source **43658e884d67326183d3fce749840053a0c1cebe**.

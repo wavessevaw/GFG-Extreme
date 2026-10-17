@@ -1,3 +1,30 @@
+# 2.1.5-gsf.9 — latest experimental package, hardware NOT TESTED
+
+Source: 7e8a9660a0c40e00275f87f0977c0758e6f3ebe3, PR #133.
+Use **GFG-Extreme-2.1.5-gsf.9.zip** for Decky or
+**GFG-Native-FG-v0_0_0-fg3-internal_9.zip** for the standalone component.
+Includes all launch recovery and HDR PQ fixes from internal.7/.8.
+
+G1 is copied/presented before G2 is submitted to the shared application queue.
+Unneeded G2 reconstruction is canceled after a detected cut, duplicate or
+expired deadline; final signals/fences still retire. Failed G2 submissions
+cannot leave teardown waiting an unsent fence. x2 keeps its midpoint path.
+
+17 pipeline checks, 7 HDR/legacy checks, 47 native Python tests and 14 actual
+extracted-package checks pass. Production loads under actual glibc2.31 and
+rebuilds byte-identically from included source. See ../DEFERRED_G2.md and
+../evidence/deferred-g2-internal_9.json (raw results in matching evidence ZIP).
+Verify SHA256SUMS.txt.
+
+**Physical 30-to-90 OLED, real-game compatibility/cost/quality/latency: NOT TESTED.**
+No connected Deck is available. The owner's all-game crash cause is not proven
+on-device. The known missed renderer cut and game queue contention remain open.
+This is an experimental package, not completed hardware acceptance.
+
+---
+
+## Previous HDR PQ package (superseded by internal.9)
+
 # 2.1.5-gsf.8 — latest experimental package, hardware NOT TESTED
 
 Source: 43658e884d67326183d3fce749840053a0c1cebe, PR #133.
