@@ -68,7 +68,8 @@ static inline int gfg_virtual_release(gfg_virtual_source *v,
 }
 static inline int gfg_virtual_cancel_acquire(gfg_virtual_source *v,unsigned index) {
     if(!v||index>=v->count || v->state[index]!=GFG_VIRTUAL_ACQUIRED) {
-        if(v)++v->invalid;return 0;
+        if(v) ++v->invalid;
+        return 0;
     }
     v->state[index]=GFG_VIRTUAL_FREE;return 1;
 }
