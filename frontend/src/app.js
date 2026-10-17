@@ -962,7 +962,7 @@ function FgPage({ back, cfg, patch }) {
     rpc.lsfgVk2Status().then((v) => { if (!cancelled) setExternalStatus(v); })
       .catch(() => { if (!cancelled) setExternalStatus({ ready: false, reason: "status-unavailable" }); });
     return () => { cancelled = true; };
-  }, [lsfg]);
+  }, [lsfg, cfg && cfg.lsfg_vk_2_dll_path]);
   return h(Page, { title: "Frame Generation", onBack: back },
     h("div", { className: "sec" }, "GENERATOR BACKEND"),
     h(Seg, { value: be, options: [["gfg", "GFG Engine"], ["lsfg_vk_2", "LSFG-VK 2.0"], ["optiscaler", "OptiScaler"], ["native", "In-game"], ["off", "Off"]], onChange: (v) => patch({ fg_backend: v }) }),
@@ -981,7 +981,8 @@ function FgPage({ back, cfg, patch }) {
       h(Seg, { value: String(mult), options: [["2", "×2"], ["3", "×3"]], onChange: (v) => patch({ multiplier: Number(v) }) }),
       h("div", { className: "sec" }, "FLOW SCALE"),
       h(Seg, { value: String(Number(cfg.flow_scale || 0.8)), options: [["0.5", "50%"], ["0.7", "70%"], ["0.8", "80%"], ["1", "100%"]], onChange: (v) => patch({ flow_scale: Number(v) }) }),
-      h(Note, { quiet: true }, "Higher is sharper motion estimation but uses more GPU time."),
+      h("input", { type: "range", min: 0.25, max: 1, step: 0.05, value: Number(cfg.flow_scale || 0.8), style: { width: "100%" }, onChange: (e) => patch({ flow_scale: Number(e.target.value) }) }),
+      h(Note, { quiet: true }, "Motion flow resolution: " + Math.round(Number(cfg.flow_scale || 0.8) * 100) + "%. LSFG-VK supports 25–100%; lower values reduce GPU work."),
       h("div", { className: "list" },
         h(Toggle, { on: !!cfg.performance_mode, title: "Performance model", sub: "Lighter model, fewer GPU operations.", onChange: (v) => patch({ performance_mode: v }) }),
         h(Toggle, { on: cfg.lsfg_vk_2_allow_fp16 !== false, title: "FP16", sub: "Use half precision if supported by LSFG-VK.", onChange: (v) => patch({ lsfg_vk_2_allow_fp16: v }) }),
