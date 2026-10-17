@@ -597,12 +597,12 @@ int main(void) {
     fprintf(stderr,"GSF virtual PRESENT layouts old=%llu new=%llu downstream_present_layout_on_offscreen=0 PASS\n",
         (unsigned long long)source_probe.virtual_present_old_rewrites,
         (unsigned long long)source_probe.virtual_present_new_rewrites);
-    REQUIRE(virtual_wsi.source.acquired==frame_count);
-    REQUIRE(virtual_wsi.source.retired==frame_count);
-    REQUIRE(virtual_wsi.accepts==frame_count);
-    REQUIRE(virtual_wsi.copy_retirements==frame_count);
-    REQUIRE(gfg_virtual_all_idle(virtual_wsi.source));
-    REQUIRE(!virtual_wsi.source.invalid && !virtual_wsi.incorrect);
+    REQUIRE(virtual_wsi->source.acquired==frame_count);
+    REQUIRE(virtual_wsi->source.retired==frame_count);
+    REQUIRE(virtual_wsi->accepts==frame_count);
+    REQUIRE(virtual_wsi->copy_retirements==frame_count);
+    REQUIRE(gfg_virtual_all_idle(&virtual_wsi->source));
+    REQUIRE(!virtual_wsi->source.invalid && !virtual_wsi->incorrect);
     fprintf(stderr,"GSF virtual app source buffers=%u history_buffers=2 render_release_count=%u PASS\n",
         source_probe.app_image_count,game_images_released);
     REQUIRE(owner.synthetic_count==source_probe.verified_synthetic);
