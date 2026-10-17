@@ -20,6 +20,9 @@
 #include "virtual_wsi_facade.h"
 
 typedef void (*gfg_async_copy_record)(void *user,VkCommandBuffer cmd,uint64_t ticket);
+/* Optional second stage: one output WSI copy/present, owned by retirement
+ * worker. Source slot stays unavailable until this callback completes. */
+typedef VkResult (*gfg_async_copy_complete)(void *user,uint32_t image,uint64_t ticket);
 
 typedef struct {
     VkCommandBuffer command;
@@ -34,6 +37,7 @@ typedef struct {
     VkQueue queue;
     VkCommandPool pool;
     gfg_async_copy_record record;
+    gfg_async_copy_complete complete;
     void *user;
     uint32_t count;
     gfg_async_capture_slot slots[GFG_VIRTUAL_MAX_IMAGES];
@@ -71,6 +75,8 @@ static inline void *gfg_async_capture_worker(void *opaque) {
             };
             nanosleep(&delay,NULL);
         }
+        if(result==VK_SUCCESS && a->complete)
+            result=a->complete(a->user,idx,ticket);
         if(result==VK_SUCCESS)
             result=gfg_vwsi_retire(a->virtual_app,idx,ticket,1);
         pthread_mutex_lock(&a->lock);
