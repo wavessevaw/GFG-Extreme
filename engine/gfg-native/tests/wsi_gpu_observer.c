@@ -214,6 +214,16 @@ int main(void) {
     REQUIRE(ext.width>=8 && (ext.width%2)==0);
     gfg_source_probe source_probe;
     REQUIRE(gfg_source_probe_create(&source_probe,physical,device,ext,color.format));
+    /* Independent source renderer submits into OFFSCREEN VkImages.
+     * They never reach vkQueuePresentKHR: the later output WSI owns it.
+     * The separate fence protects source image write/overwrite lifetime. */
+    VkCommandBuffer source_command=VK_NULL_HANDLE;
+    TRY(vkAllocateCommandBuffers(device,&cbai,&source_command));
+    VkFence source_fence=VK_NULL_HANDLE;
+    const VkFenceCreateInfo source_fci={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .flags=VK_FENCE_CREATE_SIGNALED_BIT};
+    TRY(vkCreateFence(device,&source_fci,NULL,&source_fence));
+    uint32_t source_submissions=0;
 #endif
 
     PFN_vkQueuePresentKHR present_gipa=(PFN_vkQueuePresentKHR)
@@ -263,6 +273,26 @@ int main(void) {
     uint32_t output_calls=0;
     uint64_t owner_first_due=0,owner_host_epoch=0;
     for(uint32_t source_id=1;source_id<=frame_count;++source_id) {
+        /* Emulate a game presenting to a VIRTUAL offscreen swapchain:
+         * submit its real image on GPU first, before any scheduler/WSI work.
+         * The app frame's fence is retired before the source can be reused.
+         * The same GPU queue is used to avoid unsupported cross-queue waits
+         * in this first ownership prototype. */
+        TRY(vkWaitForFences(device,1,&source_fence,VK_TRUE,UINT64_MAX));
+        TRY(vkResetCommandBuffer(source_command,0));
+        const VkCommandBufferBeginInfo source_begin={
+            .sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        TRY(vkBeginCommandBuffer(source_command,&source_begin));
+        gfg_source_capture(&source_probe,source_command,source_id);
+        TRY(vkEndCommandBuffer(source_command));
+        TRY(vkResetFences(device,1,&source_fence));
+        const VkSubmitInfo source_submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount=1,.pCommandBuffers=&source_command};
+        TRY(vkQueueSubmit(queue,1,&source_submit,source_fence));
+        TRY(vkWaitForFences(device,1,&source_fence,VK_TRUE,UINT64_MAX));
+        ++source_submissions;
+        fprintf(stderr,"GSF SOURCE render id=%u offscreen=1 source_submit=%u original_WSI_presents=0\n",
+                source_id,source_submissions);
         gfg_owner_ticket owned[3];
         if(source_id==gap_at)capture_ns+=836000000ull;
         const uint64_t gpu_ready_ns=(drop_every && source_id%drop_every==0u)?
@@ -318,6 +348,8 @@ int main(void) {
         /* Real frames: GPU copy from captured OFFSCREEN source image.
          * Synthetic test frames: left and right halves of the two source
          * images, proving BOTH snapshots and no direct source WSI present. */
+        REQUIRE(gfg_source_snapshot_ready(&source_probe,
+                                           ticket.from_id,ticket.to_id));
         gfg_source_record_output(&source_probe,cmd,images[index],
             ticket.from_id,ticket.to_id,ticket.kind==GFG_OWNER_SYNTHETIC);
 #else
@@ -394,6 +426,7 @@ int main(void) {
 #ifdef GFG_NATIVE_TEST_OWNED_WSI
     }
     REQUIRE(owner.real_count==frame_count);
+    REQUIRE(source_submissions==frame_count);
     REQUIRE(owner.synthetic_count==source_probe.verified_synthetic);
     REQUIRE(output_calls==owner.real_count+owner.synthetic_count);
     REQUIRE(owner.error_count==0);
@@ -403,6 +436,7 @@ int main(void) {
     fprintf(stderr,"GSF GPU source snapshots copied and readback verified: real=%u A/B_composites=%u PASS\\n",
         source_probe.verified_real,source_probe.verified_synthetic);
     gfg_source_probe_destroy(&source_probe);
+    vkDestroyFence(device,source_fence,NULL);
     fprintf(stderr,
         "GSF private-output WSI: real=%llu synthetic=%llu total=%u one_surface=1 API_ORDER=PASS physical_scanout=unverified\n",
         (unsigned long long)owner.real_count,
