@@ -21,6 +21,7 @@
 #include "virtual_wsi_facade.h"
 #include "output_proxy_bootstrap.h"
 #include "test_loader_output_runtime.h"
+#include "test_gamescope_swapchain_policy.h"
 #include "virtual_layouts.h"
 #endif
 #ifdef GFG_NATIVE_WITH_TE
@@ -1198,16 +1199,14 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
          * FIFO ownership, so ONLY in explicit test-only Gaming mode
          * request FIFO again from the downstream output swapchain.
          * This does not prove Gamescope's physical present ordering. */
-        const int gamescope_mailbox_adapt=owner_live &&
-            native_env_is_1("GFG_NATIVE_TEST_GAME_MODE") &&
-            ci->presentMode==VK_PRESENT_MODE_MAILBOX_KHR;
         VkSwapchainCreateInfoKHR owned_ci=*ci;
-        if(gamescope_mailbox_adapt) {
-            owned_ci.presentMode=VK_PRESENT_MODE_FIFO_KHR;
+        const int gamescope_mailbox_adapt=gfg_test_gamescope_normalize_fifo(
+            ci,owner_live,native_env_is_1("GFG_NATIVE_TEST_GAME_MODE"),
+            &owned_ci);
+        if(gamescope_mailbox_adapt)
             fprintf(stderr,
                 "GSF_GAMESCOPE_MAILBOX_ADAPT intercepted=%d output_requested=%d test_only=1 physical_present_mode=UNVERIFIED\n",
                 (int)ci->presentMode,(int)owned_ci.presentMode);
-        }
         const VkSwapchainCreateInfoKHR *virtual_ci=
             gamescope_mailbox_adapt?&owned_ci:ci;
         const char *unsupported=gfg_offscreen_unsupported(virtual_ci);
