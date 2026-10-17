@@ -218,12 +218,16 @@ int main(void) {
      * They never reach vkQueuePresentKHR: the later output WSI owns it.
      * The separate fence protects source image write/overwrite lifetime. */
     VkCommandBuffer source_command=VK_NULL_HANDLE;
+    VkCommandBuffer snapshot_command=VK_NULL_HANDLE;
     TRY(vkAllocateCommandBuffers(device,&cbai,&source_command));
+    TRY(vkAllocateCommandBuffers(device,&cbai,&snapshot_command));
     VkFence source_fence=VK_NULL_HANDLE;
+    VkFence snapshot_fence=VK_NULL_HANDLE;
     const VkFenceCreateInfo source_fci={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
         .flags=VK_FENCE_CREATE_SIGNALED_BIT};
     TRY(vkCreateFence(device,&source_fci,NULL,&source_fence));
-    uint32_t source_submissions=0;
+    TRY(vkCreateFence(device,&source_fci,NULL,&snapshot_fence));
+    uint32_t source_submissions=0,game_images_released=0;
 #endif
 
     PFN_vkQueuePresentKHR present_gipa=(PFN_vkQueuePresentKHR)
@@ -283,16 +287,34 @@ int main(void) {
         const VkCommandBufferBeginInfo source_begin={
             .sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         TRY(vkBeginCommandBuffer(source_command,&source_begin));
-        gfg_source_capture(&source_probe,source_command,source_id);
+        gfg_source_record_game(&source_probe,source_command,source_id);
         TRY(vkEndCommandBuffer(source_command));
         TRY(vkResetFences(device,1,&source_fence));
         const VkSubmitInfo source_submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,
             .commandBufferCount=1,.pCommandBuffers=&source_command};
         TRY(vkQueueSubmit(queue,1,&source_submit,source_fence));
+        /* Game-owned render must complete before bridge snapshots it.
+         * This explicit fence wait is the test-only dependency; a real
+         * transport should use a GPU semaphore and avoid CPU roundtrips. */
         TRY(vkWaitForFences(device,1,&source_fence,VK_TRUE,UINT64_MAX));
+        TRY(vkWaitForFences(device,1,&snapshot_fence,VK_TRUE,UINT64_MAX));
+        TRY(vkResetCommandBuffer(snapshot_command,0));
+        TRY(vkBeginCommandBuffer(snapshot_command,&source_begin));
+        gfg_source_record_snapshot(&source_probe,snapshot_command,source_id);
+        TRY(vkEndCommandBuffer(snapshot_command));
+        TRY(vkResetFences(device,1,&snapshot_fence));
+        const VkSubmitInfo copy_submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount=1,.pCommandBuffers=&snapshot_command};
+        TRY(vkQueueSubmit(queue,1,&copy_submit,snapshot_fence));
+        TRY(vkWaitForFences(device,1,&snapshot_fence,VK_TRUE,UINT64_MAX));
+        REQUIRE(source_probe.frames[source_id&1u]!=source_probe.game_frames[source_id&1u]);
+        REQUIRE(source_probe.mem[source_id&1u]!=source_probe.game_mem[source_id&1u]);
+        /* At this exact point the game source image may be reused.
+         * The independent GSF history stays pinned until output consumes it. */
+        ++game_images_released;
         ++source_submissions;
-        fprintf(stderr,"GSF SOURCE render id=%u offscreen=1 source_submit=%u original_WSI_presents=0\n",
-                source_id,source_submissions);
+        fprintf(stderr,"GSF SOURCE render id=%u game_swapchain_virtual=1 history_copy_ready=1 game_image_released=1 original_WSI_presents=0\n",
+                source_id);
         gfg_owner_ticket owned[3];
         if(source_id==gap_at)capture_ns+=836000000ull;
         const uint64_t gpu_ready_ns=(drop_every && source_id%drop_every==0u)?
@@ -427,6 +449,7 @@ int main(void) {
     }
     REQUIRE(owner.real_count==frame_count);
     REQUIRE(source_submissions==frame_count);
+    REQUIRE(game_images_released==frame_count);
     REQUIRE(owner.synthetic_count==source_probe.verified_synthetic);
     REQUIRE(output_calls==owner.real_count+owner.synthetic_count);
     REQUIRE(owner.error_count==0);
@@ -437,6 +460,7 @@ int main(void) {
         source_probe.verified_real,source_probe.verified_synthetic);
     gfg_source_probe_destroy(&source_probe);
     vkDestroyFence(device,source_fence,NULL);
+    vkDestroyFence(device,snapshot_fence,NULL);
     fprintf(stderr,
         "GSF private-output WSI: real=%llu synthetic=%llu total=%u one_surface=1 API_ORDER=PASS physical_scanout=unverified\n",
         (unsigned long long)owner.real_count,
