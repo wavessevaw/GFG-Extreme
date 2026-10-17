@@ -718,7 +718,7 @@ class Plugin:
             "optiscaler_dir": "",
             "optiscaler_detection": "",
             "optiscaler_status": "not-evaluated" if backend == "optiscaler" else "not-applicable",
-            "renderer_required": bool(
+            "renderer_required": backend != "lsfg_vk_2" and bool(
                 effective.get("frame_generation_provisioned", False)
                 or effective.get("scaling_enabled", False)
                 or config.get("external_vulkan_layer") == "vkbasalt"
@@ -726,6 +726,12 @@ class Plugin:
             "scaling": bool(config.get("scaling_enabled", False)),
             "shaders": config.get("external_vulkan_layer") == "vkbasalt",
         }
+        if backend == "lsfg_vk_2":
+            status["lsfg_vk_2"] = await asyncio.to_thread(
+                self.dll_detection_service.check_lsfg_vk_2,
+                str(config.get("lsfg_vk_2_dll_path", "")),
+            )
+            return status
         if backend != "optiscaler":
             return status
 
