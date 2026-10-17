@@ -138,6 +138,18 @@ static inline VkResult gfg_vwsi_acquire(gfg_virtual_wsi *v,
     }
     *index=idx;return VK_SUCCESS;
 }
+/* vkAcquireNextImage2KHR is used by some Vulkan games and device-group
+ * wrappers. This single-GPU prototype accepts only deviceMask == 1 and
+ * no opaque pNext; other requests must be handled by the original WSI. */
+static inline VkResult gfg_vwsi_acquire2(gfg_virtual_wsi *v,
+        const VkAcquireNextImageInfoKHR *info,uint32_t *index) {
+    if(!info || info->sType!=VK_STRUCTURE_TYPE_ACQUIRE_NEXT_IMAGE_INFO_KHR ||
+       info->pNext || info->deviceMask!=1u)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    return gfg_vwsi_acquire(v,info->swapchain,info->timeout,
+                            info->semaphore,info->fence,index);
+}
+
 /* Present is redirected to the CAPTURE queue, NOT the output swapchain.
  * The callback MUST submit a GPU copy waiting on the game's real render
  * semaphore(s). A successful callback owns those waits exactly once and
