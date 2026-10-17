@@ -570,6 +570,15 @@ class Plugin:
         """
         return await asyncio.to_thread(self.installation_service.uninstall)
 
+    async def check_lsfg_vk_2(self) -> Dict[str, Any]:
+        """Check external LSFG-VK 2.0 Vulkan layer and locally owned model."""
+        response = await asyncio.to_thread(self.configuration_service.get_config)
+        config = response.get("config", {}) if response.get("success") else {}
+        return await asyncio.to_thread(
+            self.dll_detection_service.check_lsfg_vk_2,
+            str(config.get("lsfg_vk_2_dll_path", "")),
+        )
+
     async def check_lossless_scaling_dll(self) -> DllDetectionResponse:
         """Check if Lossless Scaling DLL is available at the expected paths
 
