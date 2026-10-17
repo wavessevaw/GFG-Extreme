@@ -962,6 +962,22 @@ static int native_supported_sdr8_format(VkFormat format) {
            format == VK_FORMAT_B8G8R8A8_SRGB;
 }
 
+/* Deck OLED / Gamescope field logs (2026-10-17): the FROG WSI layer
+ * supplies a packed-10 swapchain. Native's first present invokes
+ * vkGetPhysicalDeviceFormatProperties via a lower instance dispatcher,
+ * which provokes the loader's fatal Invalid physicalDevice trampoline.
+ * Until physical-device handle provenance is fixed and tested *under the
+ * actual Gamescope WSI stack*, leave this swapchain EXACTLY as the game
+ * requested. No extra images, no generator, no format-property queries.
+ * A safe real-frame fallback is preferable to aborting the game process.
+ */
+static int native_gamescope_packed10_unsafe(const VkSwapchainCreateInfoKHR *ci) {
+    const char *layers = getenv("VK_INSTANCE_LAYERS");
+    return layers && strstr(layers, "VK_LAYER_FROG_gamescope_wsi_x86_64") &&
+        (ci->imageFormat == VK_FORMAT_A2B10G10R10_UNORM_PACK32 ||
+         ci->imageFormat == VK_FORMAT_A2R10G10B10_UNORM_PACK32);
+}
+
 static const char *native_ineligible_reason(const VkSwapchainCreateInfoKHR *ci) {
     /* These two flags select the game's presentation-ID and wait protocol.
      * They do NOT request protected memory or a different image layout.
@@ -972,6 +988,8 @@ static const char *native_ineligible_reason(const VkSwapchainCreateInfoKHR *ci) 
         VK_SWAPCHAIN_CREATE_PRESENT_WAIT_2_BIT_KHR;
     if (ci->flags & ~present_protocol)
         return "unsupported-swapchain-flags";
+    if (native_gamescope_packed10_unsafe(ci))
+        return "gamescope-packed10-physical-dispatch-unverified";
     /* Gamescope's embedded WSI implements MAILBOX directly at the driver and
      * FIFO in its own per-vblank commit queue. MAILBOX can discard G1/G2; do
      * not claim 3x output unless the app requested the ordered FIFO contract. */
