@@ -12,6 +12,11 @@ if [[ $# -eq 0 ]]; then
   exit 2
 fi
 
+if [[ "$1" == '%command%' ]]; then
+  printf 'GSF diagnosis aborted: literal %%command%%, Steam command expansion did not occur.\n' >&2
+  exit 2
+fi
+
 capture_unavailable() {
   printf 'GFG: diagnostic capture unavailable; starting the game without capture.\n' >&2
   exec "$@"
