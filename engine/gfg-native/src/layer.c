@@ -618,7 +618,8 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
             d->instance = i; break;
         }
 #ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
-    if(native_env_is_1("GFG_NATIVE_TEST_LOADER_CREATE_PROBE") && d->instance)
+    if((native_env_is_1("GFG_NATIVE_TEST_LOADER_CREATE_PROBE") ||
+        native_env_is_1("GFG_NATIVE_TEST_LOADER_LIVE_OUTPUT")) && d->instance)
         d->test_proxy_ops.get_memory_properties =
             (PFN_vkGetPhysicalDeviceMemoryProperties)
             d->instance->gipa(d->instance->handle,
