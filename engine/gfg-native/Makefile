@@ -46,7 +46,7 @@ virtual-layouts: $(BUILD)/virtual-layouts
 # WSI-shaped virtual app source. No loader interception or real Deck install.
 $(BUILD)/virtual-wsi-facade: tests/virtual_wsi_facade.c src/virtual_wsi_facade.h src/virtual_source.h
 	mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -I$(VULKAN_HEADERS) -o $@ tests/virtual_wsi_facade.c
+	$(CC) $(CFLAGS) -pthread -I$(VULKAN_HEADERS) -o $@ tests/virtual_wsi_facade.c
 
 virtual-wsi-facade: $(BUILD)/virtual-wsi-facade
 	$(BUILD)/virtual-wsi-facade
@@ -183,7 +183,7 @@ wsi-smoke-te:
 $(BUILD)/owned-wsi-smoke: tests/wsi_gpu_observer.c src/output_owner.h src/virtual_source.h tests/owned_source_transport.h src/virtual_layouts.h src/virtual_wsi_facade.h
 	@test -f $(VULKAN_HEADERS)/vulkan/vulkan_xcb.h || { echo "Vulkan XCB headers required"; exit 1; }
 	mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -DGFG_NATIVE_TEST_SMALL -DGFG_NATIVE_TEST_ASYNC -DGFG_NATIVE_TEST_OWNED_WSI -DVK_USE_PLATFORM_XCB_KHR -I$(VULKAN_HEADERS) -o $@ $< -lvulkan -lxcb -ldl
+	$(CC) $(CFLAGS) -pthread -DGFG_NATIVE_TEST_SMALL -DGFG_NATIVE_TEST_ASYNC -DGFG_NATIVE_TEST_OWNED_WSI -DVK_USE_PLATFORM_XCB_KHR -I$(VULKAN_HEADERS) -o $@ $< -lvulkan -lxcb -ldl
 
 owned-wsi-smoke: $(BUILD)/owned-wsi-smoke
 	$(BUILD)/owned-wsi-smoke
