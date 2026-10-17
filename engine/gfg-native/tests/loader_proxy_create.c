@@ -6,7 +6,9 @@
  * That requires a separate, unimplemented asynchronous runtime.
  */
 #define _POSIX_C_SOURCE 200809L
+#ifndef VK_USE_PLATFORM_XCB_KHR
 #define VK_USE_PLATFORM_XCB_KHR
+#endif
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_xcb.h>
 #include "../src/offscreen_source_pool.h"
