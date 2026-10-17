@@ -63,6 +63,21 @@ int main(void) {
     ci.imageColorSpace=VK_COLOR_SPACE_HDR10_ST2084_EXT;ci.imageFormat=VK_FORMAT_B8G8R8A8_UNORM;
     assert(!strcmp(native_ineligible_reason(&ci),"unsupported-pq-format"));
     ci.imageColorSpace=VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;ci.imageFormat=VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+    /* Exactly the 2026-10-17 Gamescope/OLED crash scenario: packed 10-bit
+     * WSI must NOT proceed into GSF's invalid physical-device query. */
+    setenv("VK_INSTANCE_LAYERS","VK_LAYER_GFG_native:VK_LAYER_FROG_gamescope_wsi_x86_64",1);
+    assert(native_gamescope_packed10_unsafe(&ci));
+    assert(!strcmp(native_ineligible_reason(&ci), "gamescope-packed10-physical-dispatch-unverified"));
+    ci.imageFormat=VK_FORMAT_A2R10G10B10_UNORM_PACK32;
+    assert(native_gamescope_packed10_unsafe(&ci));
+    assert(!strcmp(native_ineligible_reason(&ci), "gamescope-packed10-physical-dispatch-unverified"));
+    ci.imageFormat=VK_FORMAT_B8G8R8A8_UNORM;
+    assert(!native_gamescope_packed10_unsafe(&ci));
+    assert(native_ineligible_reason(&ci)==NULL);
+    unsetenv("VK_INSTANCE_LAYERS");
+    ci.imageFormat=VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+    assert(native_ineligible_reason(&ci)==NULL);
+
     VkPresentModeKHR mailbox=VK_PRESENT_MODE_MAILBOX_KHR;
     const VkSwapchainPresentModesCreateInfoEXT modes={.sType=VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODES_CREATE_INFO_EXT,
         .presentModeCount=1,.pPresentModes=&mailbox};
