@@ -51,6 +51,13 @@ jobs:
         run: |
           make -C engine/gfg-native build/owned-wsi-smoke
           GFG_NATIVE_TEST_FRAMES=10 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke
+      - name: Verify ACTUAL X11 displayed pixel sequence after Vulkan WSI handoff
+        run: |
+          set -euo pipefail
+          log="$(mktemp)"
+          GFG_OWNER_TEST_X11_SCANOUT=1 GFG_NATIVE_TEST_FRAMES=10 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke > "$log" 2>&1 || { cat "$log"; exit 1; }
+          grep 'GSF X11 compositor visible ordered frames=19 real=10 intermediate=9 PASS' "$log"
+          echo 'X11 display server pixel sequence (not physical OLED) PASS'
       - name: GPU snapshot WSI with 836ms loading gap, 27Hz source, 90Hz output and GPU drops
         run: |
           GFG_NATIVE_TEST_FRAMES=12 GFG_OWNER_TEST_OUTPUT_HZ=90 GFG_OWNER_TEST_SOURCE_HZ=27 GFG_OWNER_TEST_GAP_AT=7 GFG_OWNER_TEST_GPU_DROP_EVERY=3 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke
