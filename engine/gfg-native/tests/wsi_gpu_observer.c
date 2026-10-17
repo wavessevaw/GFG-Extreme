@@ -645,12 +645,14 @@ int main(void) {
 #ifdef GFG_NATIVE_TEST_ASYNC
         TRY(vkResetFences(device,1,&render_fence));
         TRY(vkQueueSubmit(queue,1,&si,render_fence));
+#ifdef GFG_NATIVE_TEST_OWNED_WSI
         if(use_async_capture) {
             pthread_mutex_lock(&async_capture.lock);
             if(async_capture.retired<virtual_ticket)
                 ++output_submitted_before_release;
             pthread_mutex_unlock(&async_capture.lock);
         }
+#endif
 #else
         TRY(vkQueueSubmit(queue,1,&si,VK_NULL_HANDLE));
 #endif
