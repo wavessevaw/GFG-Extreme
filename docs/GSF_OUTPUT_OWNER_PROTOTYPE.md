@@ -147,6 +147,58 @@ pauses, GPU misses and real-only priority at different refresh rates.
 The mock source is NOT a live game's swapchain and the split A/B
 image is NOT a working temporal generator.
 
+## Game-facing Vulkan WSI contract (next integration milestone)
+
+**Opt-in software prototype on this branch, not attached to shipped
+`libVkLayer_gfg_native.so`.** A virtual-source facade now models
+`vkGetSwapchainImagesKHR` count/query/`VK_INCOMPLETE`, app acquire,
+acquire-semaphore GPU signalling, app present with game render semaphore
+consumed **exactly once** by a GPU snapshot submission, and release of
+the game image after its copy fence retires. Unsupported `pNext` chains
+are refused before consuming game semaphores; if copy submission fails
+after semaphore ownership may have moved, the image stays quarantined
+rather than replaying waits. The facade never submits the virtual
+swapchain's handle to the Vulkan ICD.
+
+The full Vulkan lavapipe test connects those API-shaped operations
+to real GPU queue submits and an actual XCB WSI swapchain. It tests
+the same game VkImage being reused every frame while GSF separately
+retains two history images. The *only* `vkQueuePresentKHR` downstream
+goes to the compositor output swapchain. This is closer to a game,
+but the producer remains a controlled mock rather than a third-party
+application; no layer hooks have been enabled.
+
+**Important surface choice:** the visible owner can create its real
+downstream swapchain against the **game's existing `VkSurfaceKHR`**;
+it does not inherently need a second window or a private foreign
+surface. The game could receive a virtual `VkSwapchainKHR` and
+offscreen `VkImage` handles while the owner uses the original surface
+for the *only* displayed output. No gamescope overlay priority games,
+screencopy protocol or separate focus window would be required.
+However, this is an integration proposal and does **not** yet work
+with arbitrary games.
+
+**Major compatibility blocker:** regular Vulkan swapchain apps put
+their image into `VK_IMAGE_LAYOUT_PRESENT_SRC_KHR` before present,
+whereas ordinary offscreen VkImages cannot be presented. See the
+[Khronos image layout specification](https://docs.vulkan.org/refpages/latest/refpages/source/VkImageLayout.html).
+`src/virtual_layouts.h` is a narrow pure translator for **registered
+virtual images only**: it maps PRESENT layouts to TRANSFER_SRC in
+legacy and Sync2 image barriers and includes renderpass attachment
+mapping behind an explicit exclusively-virtual gate. The software GPU
+producer deliberately requests a PRESENT layout; the helper rewrites
+it **before** submission to lavapipe. The real output swapchain's
+PRESENT layout remains untouched.
+
+This does NOT amount to hooking every app command: a real implementation
+must handle `vkCmdPipelineBarrier`, `vkCmdPipelineBarrier2`/KHR,
+`vkCreateRenderPass`/2, attachment/image-view/framebuffer provenance,
+dynamic rendering, multi-swapchain calls, present-id/fence extension
+chains, HDR10 output, window resize/`oldSwapchain`, image ownership
+transfers and thread-safe semaphore retirement. Fail closed on any
+unsupported shape, retaining the original game's valid WSI path.
+No real-game compatibility claims are authorized yet.
+
 ### Not yet implemented / hard merge gate
 
 1. Private output swapchain/surface in SteamOS Gaming Mode (Gamescope), with
