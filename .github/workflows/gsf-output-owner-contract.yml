@@ -25,7 +25,7 @@ jobs:
       - name: Install software Vulkan WSI test dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libvulkan-dev libxcb1-dev mesa-vulkan-drivers xvfb
+          sudo apt-get install -y -qq libvulkan-dev libxcb1-dev mesa-vulkan-drivers vulkan-validationlayers xvfb
       - name: Compile and run PRIVATE one-surface Vulkan WSI smoke (lavapipe)
         run: |
           make -C engine/gfg-native build/owned-wsi-smoke
@@ -36,6 +36,17 @@ jobs:
       - name: WSI real-only priority when 60Hz source competes for 90Hz slots
         run: |
           GFG_NATIVE_TEST_FRAMES=10 GFG_OWNER_TEST_OUTPUT_HZ=90 GFG_OWNER_TEST_SOURCE_HZ=60 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke
+      - name: Vulkan validation for GPU-copy and real-only WSI transport
+        run: |
+          set -euo pipefail
+          test -f /usr/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json
+          log="$(mktemp)"
+          GFG_NATIVE_TEST_FRAMES=8 VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke 2>&1 | tee "$log"
+          if grep -E 'Validation Error|VUID-|UNASSIGNED-.*ERROR' "$log"; then
+            echo 'GPU owned-output Vulkan validation FAILED'
+            exit 1
+          fi
+          echo 'Owned-output Vulkan validation CLEAN'
       - name: Report qualification boundary
         run: |
           echo 'Transport-neutral scheduler validated.'
