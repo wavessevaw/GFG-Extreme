@@ -12,6 +12,9 @@
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_xcb.h>
 #include <xcb/xcb.h>
+#ifdef GFG_NATIVE_TEST_OWNED_WSI
+#include "../src/output_owner.h"
+#endif
 #ifdef GFG_NATIVE_TEST_GPU_OBSERVER
 #include "gpu_observer.h"
 #endif
@@ -229,7 +232,25 @@ int main(void) {
     REQUIRE(observer_start(instance,physical,device,queue,swapchain,ext,color.format,
         images,image_count,family,present_gdpa));
 #endif
+#ifdef GFG_NATIVE_TEST_OWNED_WSI
+    /* Emulate an independent game source feeding a PRIVATE compositor
+     * output swapchain. The original real input is never sent to WSI from
+     * a second path. This is WSI output transport smoke, not game capture. */
+    gfg_output_owner owner;
+    gfg_owner_init(&owner,1000000000ull/60,1000000000ull/20);
+    uint64_t capture_ns=1000000000ull;
+    uint32_t output_calls=0;
+    for(uint32_t source_id=1;source_id<=frame_count;++source_id) {
+        gfg_owner_ticket owned[3];
+        const size_t planned=gfg_owner_capture(&owner,source_id,
+            capture_ns,capture_ns+4000000ull,1,owned);
+        capture_ns+=1000000000ull/30;
+        for(size_t slot=0;slot<planned;++slot) {
+        const uint32_t frame=output_calls++;
+        const gfg_owner_ticket ticket=owned[slot];
+#else
     for(uint32_t frame=0;frame<frame_count;frame++) {
+#endif
 #ifdef GFG_NATIVE_TEST_ASYNC
         TRY(vkWaitForFences(device,1,&render_fence,VK_TRUE,UINT64_MAX));
 #endif
@@ -248,7 +269,18 @@ int main(void) {
             .subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1}};
         vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
             VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&pre);
+#ifdef GFG_NATIVE_TEST_OWNED_WSI
+        /* Pattern encodes source IDs in distinct channels: generated
+         * output is a deterministic half-way colour, not a duplicate. */
+        float previous=0.12f+0.12f*(float)(ticket.from_id%5u);
+        float next=0.12f+0.12f*(float)(ticket.to_id%5u);
+        float tint=ticket.kind==GFG_OWNER_REAL?previous:(previous+next)*0.5f;
+        VkClearColorValue clear={.float32={tint,
+            ticket.kind==GFG_OWNER_SYNTHETIC?0.75f:0.15f,
+            0.9f-tint,1.0f}};
+#else
         VkClearColorValue clear={.float32={0.20f+0.05f*(frame%4),0.2f,0.80f-0.05f*(frame%4),1}};
+#endif
         if(getenv("GFG_NATIVE_TEST_DUPLICATE"))clear=(VkClearColorValue){.float32={0.25f,0.2f,0.75f,1}};
         if(getenv("GFG_NATIVE_TEST_CUT")) {
             float value=frame%2?.9f:.1f;
@@ -301,6 +333,17 @@ int main(void) {
 #endif
         seen[index]=1;
     }
+#ifdef GFG_NATIVE_TEST_OWNED_WSI
+    }
+    REQUIRE(owner.real_count==frame_count);
+    REQUIRE(owner.synthetic_count==frame_count-1);
+    REQUIRE(output_calls==frame_count*2-1);
+    REQUIRE(owner.error_count==0);
+    fprintf(stderr,
+        "GSF private-output WSI: real=%llu synthetic=%llu total=%u one_surface=1 API_ORDER=PASS physical_scanout=unverified\\n",
+        (unsigned long long)owner.real_count,
+        (unsigned long long)owner.synthetic_count,output_calls);
+#endif
     free(seen);
 #ifdef GFG_NATIVE_TEST_ASYNC
     TRY(vkQueueWaitIdle(queue)); /* teardown only */
