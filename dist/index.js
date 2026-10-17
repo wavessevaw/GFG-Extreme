@@ -1556,7 +1556,7 @@ function FgPage({ back, cfg, patch }) {
     return () => {
       cancelled = true;
     };
-  }, [lsfg]);
+  }, [lsfg, cfg && cfg.lsfg_vk_2_dll_path]);
   return h(
     Page,
     { title: "Frame Generation", onBack: back },
@@ -1583,7 +1583,8 @@ function FgPage({ back, cfg, patch }) {
       h(Seg, { value: String(mult), options: [["2", "\xD72"], ["3", "\xD73"]], onChange: (v) => patch({ multiplier: Number(v) }) }),
       h("div", { className: "sec" }, "FLOW SCALE"),
       h(Seg, { value: String(Number(cfg.flow_scale || 0.8)), options: [["0.5", "50%"], ["0.7", "70%"], ["0.8", "80%"], ["1", "100%"]], onChange: (v) => patch({ flow_scale: Number(v) }) }),
-      h(Note, { quiet: true }, "Higher is sharper motion estimation but uses more GPU time."),
+      h("input", { type: "range", min: 0.25, max: 1, step: 0.05, value: Number(cfg.flow_scale || 0.8), style: { width: "100%" }, onChange: (e) => patch({ flow_scale: Number(e.target.value) }) }),
+      h(Note, { quiet: true }, "Motion flow resolution: " + Math.round(Number(cfg.flow_scale || 0.8) * 100) + "%. LSFG-VK supports 25\u2013100%; lower values reduce GPU work."),
       h(
         "div",
         { className: "list" },
