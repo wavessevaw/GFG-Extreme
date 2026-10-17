@@ -16,6 +16,7 @@
 #ifdef GFG_NATIVE_TEST_OWNED_WSI
 #include "../src/output_owner.h"
 #include "../src/virtual_wsi_facade.h"
+#include "../src/output_proxy_bootstrap.h"
 #include "owned_source_transport.h"
 #include "x11_output_probe.h"
 #endif
@@ -236,7 +237,40 @@ int main(void) {
         }
         swci.oldSwapchain=previous_swapchain;
     VkSwapchainKHR swapchain=VK_NULL_HANDLE;
+#ifdef GFG_NATIVE_TEST_OWNED_WSI
+    const int real_proxy=getenv("GFG_OWNER_TEST_PROXY_REAL_DEVICE")!=NULL;
+    /* A real driver now creates the only display WSI; the app's source
+     * textures are independently allocated via Vulkan memory dispatch.
+     * The virtual game handle NEVER reaches the driver. */
+    gfg_output_proxy proxy={0};
+    gfg_vwsi_gpu_context capture_ctx={0};
+    gfg_offscreen_dispatch proxy_dispatch={
+        .create_image=vkCreateImage,.destroy_image=vkDestroyImage,
+        .get_image_requirements=vkGetImageMemoryRequirements,
+        .get_memory_properties=vkGetPhysicalDeviceMemoryProperties,
+        .allocate_memory=vkAllocateMemory,.free_memory=vkFreeMemory,
+        .bind_image_memory=vkBindImageMemory
+    };
+    if(real_proxy) {
+        REQUIRE(cycles==1 && !previous_swapchain);
+        const VkImageUsageFlags required=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|
+             VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        REQUIRE((caps.supportedUsageFlags & required)==required);
+        VkSwapchainCreateInfoKHR app_ci=swci;
+        app_ci.imageUsage |= required;
+        TRY(gfg_output_proxy_create(&proxy,device,physical,&app_ci,
+            vkCreateSwapchainKHR,vkDestroySwapchainKHR,&proxy_dispatch,
+            &capture_ctx,vwsi_acquire_signal,vwsi_submit_capture));
+        swapchain=proxy.output;
+        REQUIRE(gfg_output_proxy_app_handle(&proxy)!=VK_NULL_HANDLE);
+        fprintf(stderr,"GSF PROXY real Vulkan driver output WSI=1 app_images=%u owned_by_proxy=1\n",
+            proxy.source.count);
+    } else {
+        TRY(vkCreateSwapchainKHR(device,&swci,NULL,&swapchain));
+    }
+#else
     TRY(vkCreateSwapchainKHR(device,&swci,NULL,&swapchain));
+#endif
     if(previous_swapchain) vkDestroySwapchainKHR(device,previous_swapchain,NULL);
 
     uint32_t image_count=0;
@@ -264,8 +298,12 @@ int main(void) {
     REQUIRE(ext.width>=8 && (ext.width%2)==0);
     gfg_source_probe source_probe;
     REQUIRE(gfg_source_probe_create(&source_probe,physical,device,ext,color.format));
-    const char *app_images=getenv("GFG_OWNER_TEST_APP_IMAGES");
-    if(app_images && !strcmp(app_images,"1"))source_probe.app_image_count=1;
+    if(real_proxy) {
+        REQUIRE(gfg_source_probe_adopt_app_pool(&source_probe,&proxy.source));
+    } else {
+        const char *app_images=getenv("GFG_OWNER_TEST_APP_IMAGES");
+        if(app_images && !strcmp(app_images,"1"))source_probe.app_image_count=1;
+    }
     /* Independent source renderer submits into OFFSCREEN VkImages.
      * They never reach vkQueuePresentKHR: the later output WSI owns it.
      * The separate fence protects source image write/overwrite lifetime. */
@@ -289,17 +327,20 @@ int main(void) {
     TRY(vkCreateSemaphore(device,&source_semci,NULL,&app_image_acquired));
     /* Virtual swapchain handle is NEVER passed to the loader or downstream
      * WSI: it belongs exclusively to the virtual app-source facade. */
-    VkSwapchainKHR app_swapchain=(VkSwapchainKHR)(uintptr_t)0x600FEEDu;
-    gfg_vwsi_gpu_context capture_ctx={.device=device,.queue=queue,
+    VkSwapchainKHR app_swapchain=real_proxy?
+        gfg_output_proxy_app_handle(&proxy):
+        (VkSwapchainKHR)(uintptr_t)0x600FEEDu;
+    capture_ctx=(gfg_vwsi_gpu_context){.device=device,.queue=queue,
         .copy_cmd=snapshot_command,.copy_fence=snapshot_fence,
         .source=&source_probe};
-    gfg_virtual_wsi virtual_wsi;
-    REQUIRE(gfg_vwsi_init(&virtual_wsi,app_swapchain,source_probe.game_frames,
-        source_probe.app_image_count,color.format,ext,&capture_ctx,
-        vwsi_acquire_signal,vwsi_submit_capture)==VK_SUCCESS);
+    gfg_virtual_wsi local_virtual_wsi={0};
+    gfg_virtual_wsi *virtual_wsi=real_proxy?&proxy.app:&local_virtual_wsi;
+    if(!real_proxy)REQUIRE(gfg_vwsi_init(virtual_wsi,app_swapchain,
+        source_probe.game_frames,source_probe.app_image_count,color.format,
+        ext,&capture_ctx,vwsi_acquire_signal,vwsi_submit_capture)==VK_SUCCESS);
     VkImage app_handles[GFG_VIRTUAL_MAX_IMAGES]={0};
     uint32_t app_image_count=GFG_VIRTUAL_MAX_IMAGES;
-    TRY(gfg_vwsi_get_images(&virtual_wsi,app_swapchain,&app_image_count,app_handles));
+    TRY(gfg_vwsi_get_images(virtual_wsi,app_swapchain,&app_image_count,app_handles));
     REQUIRE(app_image_count==source_probe.app_image_count);
     uint32_t source_submissions=0,game_images_released=0;
 #endif
@@ -354,7 +395,7 @@ int main(void) {
     uint64_t owner_first_due=0,owner_host_epoch=0;
     for(uint32_t source_id=1;source_id<=frame_count;++source_id) {
         unsigned acquired_app_image=UINT32_MAX;
-        TRY(gfg_vwsi_acquire(&virtual_wsi,app_swapchain,UINT64_MAX,
+        TRY(gfg_vwsi_acquire(virtual_wsi,app_swapchain,UINT64_MAX,
                             app_image_acquired,VK_NULL_HANDLE,&acquired_app_image));
         REQUIRE(acquired_app_image==source_id%source_probe.app_image_count);
         REQUIRE(app_handles[acquired_app_image]==source_probe.game_frames[acquired_app_image]);
@@ -387,10 +428,10 @@ int main(void) {
             .waitSemaphoreCount=1,.pWaitSemaphores=&source_ready,
             .swapchainCount=1,.pSwapchains=&app_swapchain,
             .pImageIndices=&acquired_app_image,.pResults=&virtual_result};
-        TRY(gfg_vwsi_present(&virtual_wsi,&source_present,&virtual_ticket));
+        TRY(gfg_vwsi_present(virtual_wsi,&source_present,&virtual_ticket));
         REQUIRE(virtual_result==VK_SUCCESS);
         TRY(vkWaitForFences(device,1,&snapshot_fence,VK_TRUE,UINT64_MAX));
-        TRY(gfg_vwsi_retire(&virtual_wsi,acquired_app_image,virtual_ticket,1));
+        TRY(gfg_vwsi_retire(virtual_wsi,acquired_app_image,virtual_ticket,1));
         const unsigned history_slot=(unsigned)(source_id&1u);
         const unsigned app_slot=(unsigned)(source_id%source_probe.app_image_count);
         REQUIRE(source_probe.frames[history_slot]!=source_probe.game_frames[app_slot]);
@@ -560,7 +601,7 @@ int main(void) {
     REQUIRE(virtual_wsi.source.retired==frame_count);
     REQUIRE(virtual_wsi.accepts==frame_count);
     REQUIRE(virtual_wsi.copy_retirements==frame_count);
-    REQUIRE(gfg_virtual_all_idle(&virtual_wsi.source));
+    REQUIRE(gfg_virtual_all_idle(virtual_wsi.source));
     REQUIRE(!virtual_wsi.source.invalid && !virtual_wsi.incorrect);
     fprintf(stderr,"GSF virtual app source buffers=%u history_buffers=2 render_release_count=%u PASS\n",
         source_probe.app_image_count,game_images_released);
@@ -581,8 +622,10 @@ int main(void) {
     REQUIRE((gap_at==0 || gap_at>frame_count) || owner.gap_count==1);
     fprintf(stderr,"GSF GPU source snapshots copied and readback verified: real=%u A/B_composites=%u PASS\\n",
         source_probe.verified_real,source_probe.verified_synthetic);
-    gfg_vwsi_close(&virtual_wsi);
-    gfg_vwsi_fini(&virtual_wsi);
+    if(!real_proxy) {
+        gfg_vwsi_close(virtual_wsi);
+        gfg_vwsi_fini(virtual_wsi);
+    }
     gfg_source_probe_destroy(&source_probe);
     vkDestroyFence(device,source_fence,NULL);
     vkDestroyFence(device,snapshot_fence,NULL);
@@ -606,6 +649,17 @@ int main(void) {
     vkDestroySemaphore(device,acquired,NULL);
     vkDestroyCommandPool(device,pool,NULL);
     free(images);
+#ifdef GFG_NATIVE_TEST_OWNED_WSI
+    if(real_proxy) {
+        /* Present WSI has finished consuming the final app output and
+         * snapshot history is already retired. Teardown is the only idle. */
+        TRY(vkQueueWaitIdle(queue));
+        gfg_output_proxy_destroy(&proxy,vkDestroySwapchainKHR,&proxy_dispatch);
+        REQUIRE(proxy.output==VK_NULL_HANDLE && !proxy.source.count);
+        fprintf(stderr,"GSF PROXY real driver separate app/out WSI teardown PASS\n");
+        swapchain=VK_NULL_HANDLE;
+    }
+#endif
     previous_swapchain=swapchain;
     total_frames+=frame_count;
     }
