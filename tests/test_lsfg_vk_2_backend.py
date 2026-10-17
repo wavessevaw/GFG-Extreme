@@ -18,7 +18,8 @@ decky.DECKY_USER_HOME = "/tmp/gfg-lsfg-test"
 sys.modules.setdefault("decky", decky)
 
 from gfg_plugin.config_schema import ConfigurationManager
-from gfg_plugin.wrapper_generation import script_configuration_lines, fg_backend_lines
+from gfg_plugin.wrapper_generation import (script_configuration_lines, fg_backend_lines,
+    layer_environment_lines, WrapperGenerationContext)
 from gfg_plugin.dll_detection import DllDetectionService
 
 
@@ -95,6 +96,49 @@ printf 'VALUES:%s/%s/%s/%s/%s/%s/%s/%s/%s' "$LSFGVK_ENV" "$LSFGVK_MULTIPLIER" "$
                 result=d.check_lsfg_vk_2()
             self.assertFalse(result["ready"])
             self.assertIsNone(result["dll"])
+
+    def test_selected_backend_only_activates_installed_implicit_layer(self):
+        with tempfile.TemporaryDirectory(prefix="gfg-lsfg-wsi-") as td:
+            home = Path(td)
+            root = home / "tmp"
+            ctx = WrapperGenerationContext(
+                wrapper_format_marker="# x", host_compatibility_marker="# y",
+                diagnostics_default_marker="# z", config_dir=root / "config",
+                config_file_path=root / "conf.toml", runtime_state_dir=root / "runtime-state",
+                local_share_dir=root / "share", renderer_bin_dir=root / "renderer",
+                user_vulkan_layer_dir=root / "layers", spatial_scaling_layer_dir=root / "scaling",
+                gamescope_wsi_compatibility_dir=root / "wsi", mangohud_layer_dir=root / "mango",
+                vkbasalt_layer_dir=root / "vkbasalt", vkbasalt_global_config_path=root / "vkBasalt.conf",
+                vkbasalt_profile_config_dir=root / "vkprofiles", flatpak_implicit_layer_dir="/tmp/flatpak",
+                gamescope_wsi_manifest_filename_64="wsi.json", spatial_scaling_manifest_filename_64="spatial.json",
+                mangohud_manifest_filename_64="mango.json", mangohud_manifest_filename_32="mango32.json",
+                vkbasalt_manifest_filename_64="vkb.json", vkbasalt_manifest_filename_32="vkb32.json",
+                armada_device_env=root / "device", armada_game_launch=root / "launcher",
+            )
+            lines = layer_environment_lines(ctx)
+            start = next(i for i,line in enumerate(lines) if
+                         line == 'if [ "${gfg_lsfg_vk_2_backend:-0}" = 1 ]; then')
+            end = lines.index("unset gfg_lsfg_vk_2_backend", start)
+            fragment = "\n".join(lines[start:end+1])
+            probe = ('mako_implicit_layer_path=/tmp/gfg-layer\n'
+                     'gfg_lsfg_vk_2_backend=1\n'
+                     'export DISABLE_LSFGVK=1\n'
+                     'export GFG_NATIVE_FG=1\n' + fragment + '\n'
+                     'printf "RESULT:%s:%s:%s:%s\\n" '
+                     '"${VK_INSTANCE_LAYERS:-}" "${VK_IMPLICIT_LAYER_PATH:-$mako_implicit_layer_path}" '
+                     '"${DISABLE_LSFGVK:-unset}" "${GFG_NATIVE_FG:-unset}"\n')
+            env = {"PATH":os.environ["PATH"], "HOME":str(home)}
+            unavailable = subprocess.run(["bash","-c",probe],
+                                         env=env,capture_output=True,text=True,check=True)
+            self.assertIn("RESULT::/tmp/gfg-layer:1:unset", unavailable.stdout)
+            manifest_dir = home / ".local/share/vulkan/implicit_layer.d"
+            manifest_dir.mkdir(parents=True)
+            (manifest_dir / "VkLayer_LSFGVK_frame_generation.json").write_text("{}")
+            available = subprocess.run(["bash","-c",probe],
+                                       env=env,capture_output=True,text=True,check=True)
+            self.assertIn("VK_LAYER_LSFGVK_frame_generation",available.stdout)
+            self.assertIn(str(manifest_dir),available.stdout)
+            self.assertTrue(available.stdout.strip().endswith(":unset:unset"))
 
 if __name__=="__main__":
     unittest.main()
