@@ -1394,6 +1394,15 @@ native_QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info) {
 #endif
     native_device *d = find_device(dispatch_key(queue));
     if (!d || !d->present) return VK_ERROR_INITIALIZATION_FAILED;
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    if(info && info->swapchainCount==1 && info->pSwapchains) {
+        gfg_virtual_wsi *virtual_app=native_test_find_virtual(d,info->pSwapchains[0]);
+        if(virtual_app) {
+            uint64_t token=0;
+            return gfg_vwsi_present(virtual_app,info,&token);
+        }
+    }
+#endif
     /* Record only the game's acquired indices. The async path consumes its
      * semaphore waits before returning and owns a private metadata copy. */
     if (info && info->pImageIndices && info->pSwapchains) {
