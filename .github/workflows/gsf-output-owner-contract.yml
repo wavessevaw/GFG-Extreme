@@ -33,6 +33,13 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq libvulkan-dev libxcb1-dev mesa-vulkan-drivers vulkan-validationlayers xvfb
+      - name: Transactional offscreen Vulkan source images with simulated GPU allocation failures
+        run: make -C engine/gfg-native offscreen-source-pool
+      - name: Source VkImage/VkDeviceMemory allocation sanitizer
+        run: |
+          cc -std=c11 -g -O1 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+            engine/gfg-native/tests/offscreen_source_pool.c -o /tmp/gfg-source-pool-ubsan
+          /tmp/gfg-source-pool-ubsan
       - name: Validate virtual game PRESENT layout rewrites and isolation
         run: make -C engine/gfg-native virtual-layouts
       - name: Virtual layout rewrite undefined behavior sanitizer
