@@ -1192,7 +1192,25 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
          * silently fall through to ordinary real WSI and falsely report
          * inserted frames when the user explicitly requests live output. */
         const int owner_live=native_env_is_1("GFG_NATIVE_TEST_LOADER_LIVE_OUTPUT");
-        const char *unsupported=gfg_offscreen_unsupported(ci);
+        /* In SteamOS Gaming Mode a higher-priority Gamescope WSI layer
+         * can convert the synthetic app's FIFO create to MAILBOX before
+         * our test layer sees it. The offscreen source requires ordered
+         * FIFO ownership, so ONLY in explicit test-only Gaming mode
+         * request FIFO again from the downstream output swapchain.
+         * This does not prove Gamescope's physical present ordering. */
+        const int gamescope_mailbox_adapt=owner_live &&
+            native_env_is_1("GFG_NATIVE_TEST_GAME_MODE") &&
+            ci->presentMode==VK_PRESENT_MODE_MAILBOX_KHR;
+        VkSwapchainCreateInfoKHR owned_ci=*ci;
+        if(gamescope_mailbox_adapt) {
+            owned_ci.presentMode=VK_PRESENT_MODE_FIFO_KHR;
+            fprintf(stderr,
+                "GSF_GAMESCOPE_MAILBOX_ADAPT intercepted=%d output_requested=%d test_only=1 physical_present_mode=UNVERIFIED\n",
+                (int)ci->presentMode,(int)owned_ci.presentMode);
+        }
+        const VkSwapchainCreateInfoKHR *virtual_ci=
+            gamescope_mailbox_adapt?&owned_ci:ci;
+        const char *unsupported=gfg_offscreen_unsupported(virtual_ci);
         const int have_callbacks=d->test_proxy_signal && d->test_proxy_copy;
         const int have_dispatch=gfg_offscreen_dispatch_complete(&d->test_proxy_ops);
         if(owner_live &&
@@ -1220,13 +1238,13 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
             gfg_test_loader_runtime *runtime=live?calloc(1,sizeof(*runtime)):NULL;
             if(proxy && entry && (!live || (runtime && d->test_loader_queue))) {
                 d->test_proxy_user=live?(void*)runtime:d->test_proxy_user;
-                VkResult vr=gfg_output_proxy_create(proxy,device,d->physical,ci,
+                VkResult vr=gfg_output_proxy_create(proxy,device,d->physical,virtual_ci,
                             d->create_swapchain,d->destroy_swapchain,
                             &d->test_proxy_ops,d->test_proxy_user,
                             d->test_proxy_signal,d->test_proxy_copy);
                 if(vr==VK_SUCCESS && live)
                     vr=gfg_test_live_init(runtime,device,d->test_loader_queue,
-                            d->test_loader_family,proxy,d->test_proxy_ops,ci);
+                            d->test_loader_family,proxy,d->test_proxy_ops,virtual_ci);
                 if(vr!=VK_SUCCESS && live)
                     fprintf(stderr,"GSF_LOADER_LIVE_FAILURE runtime_init=%d queue=%p GPU_source_count=%u output_present=%d\\n",
                             (int)vr,(void*)d->test_loader_queue,proxy->source.count,
@@ -1238,9 +1256,9 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
                     entry->test_proxy=proxy;
                     entry->test_proxy_ops=d->test_proxy_ops;
                     entry->test_proxy_destroy=d->destroy_swapchain;
-                    entry->format=ci->imageFormat;
-                    entry->color_space=ci->imageColorSpace;
-                    entry->extent=ci->imageExtent;
+                    entry->format=virtual_ci->imageFormat;
+                    entry->color_space=virtual_ci->imageColorSpace;
+                    entry->extent=virtual_ci->imageExtent;
 #ifdef GFG_NATIVE_WITH_TE
                     if(pthread_mutex_init(&entry->output_wsi,NULL))abort();
 #endif
