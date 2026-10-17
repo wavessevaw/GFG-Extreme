@@ -30,6 +30,12 @@ jobs:
         run: |
           make -C engine/gfg-native build/owned-wsi-smoke
           GFG_NATIVE_TEST_FRAMES=10 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke
+      - name: GPU snapshot WSI with 836ms loading gap, 27Hz source, 90Hz output and GPU drops
+        run: |
+          GFG_NATIVE_TEST_FRAMES=12 GFG_OWNER_TEST_OUTPUT_HZ=90 GFG_OWNER_TEST_SOURCE_HZ=27 GFG_OWNER_TEST_GAP_AT=7 GFG_OWNER_TEST_GPU_DROP_EVERY=3 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke
+      - name: WSI real-only priority when 60Hz source competes for 90Hz slots
+        run: |
+          GFG_NATIVE_TEST_FRAMES=10 GFG_OWNER_TEST_OUTPUT_HZ=90 GFG_OWNER_TEST_SOURCE_HZ=60 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke
       - name: Report qualification boundary
         run: |
           echo 'Transport-neutral scheduler validated.'
