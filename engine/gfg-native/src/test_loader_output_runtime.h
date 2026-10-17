@@ -245,7 +245,8 @@ static inline VkResult gfg_test_live_init(gfg_test_loader_runtime *r,
     r->device=device;r->queue=queue;r->family=family;r->proxy=proxy;
     r->memory_ops=memory_ops;
     r->interleave=getenv("GFG_NATIVE_TEST_OUTPUT_INTERLEAVE")!=NULL;
-    if(r->interleave)gfg_output_pacer_init(&r->output_pacer,60);
+    if(r->interleave)gfg_output_pacer_init(&r->output_pacer,
+        getenv("GFG_NATIVE_TEST_PACED_45_90")?90u:60u);
     if(r->interleave && (proxy->source.extent.width<2 ||
                         (proxy->source.extent.width&1u)))
         return VK_ERROR_FEATURE_NOT_PRESENT;
@@ -304,7 +305,9 @@ static inline void gfg_test_live_destroy(gfg_test_loader_runtime *r) {
     if(r->interleave && r->output_pacer.emitted) {
         const uint64_t gaps=r->output_pacer.emitted-1u;
         fprintf(stderr,
-            "GSF_OUTPUT_PACER rate=60 emitted=%llu originals=%llu intermediate=%llu min_gap_us=%llu max_gap_us=%llu mean_gap_us=%llu late_reanchors=%llu worker_only=1\n",
+            "GSF_OUTPUT_PACER rate=%llu emitted=%llu originals=%llu intermediate=%llu min_gap_us=%llu max_gap_us=%llu mean_gap_us=%llu late_reanchors=%llu worker_only=1\n",
+            (unsigned long long)(r->output_pacer.target_ns?
+                1000000000ull/r->output_pacer.target_ns:0),
             (unsigned long long)r->output_pacer.emitted,
             (unsigned long long)r->output_originals,
             (unsigned long long)r->output_intermediates,
