@@ -105,6 +105,7 @@ jobs:
             VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
             xvfb-run -a -s '-screen 0 1024x768x24' \
             engine/gfg-native/build/loader-live-output > "$log" 2>&1 || { cat "$log"; exit 1; }
+          cat "$log"
           grep 'GSF_LOADER_LIVE_INIT virtual_images=' "$log"
           grep 'GSF_LOADER_LIVE_APP 8 GPU-rendered real source frames visible through one output WSI PASS' "$log"
           if grep -E 'Validation Error|VUID-|UNASSIGNED-.*ERROR' "$log"; then
