@@ -33,6 +33,33 @@ jobs:
           test -s engine/gfg-native/build-real-wsi/libVkLayer_gfg_native.so
           test -s engine/gfg-native/build-real-wsi/wsi-gpu-smoke
           readelf -h engine/gfg-native/build-real-wsi/libVkLayer_gfg_native.so | grep -q 'DYN (Shared object file)'
+      - name: Proton-safe implicit-layer loader (no VK_LAYER_PATH override)
+        run: |
+          set -euo pipefail
+          # Check the user's exact Steam launch design: implicit layer
+          # discovery, NOT VK_INSTANCE_LAYERS or forced VK_LAYER_PATH.
+          GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_FORCE_FIFO=1 \
+            GFG_NATIVE_ASYNC=1 GFG_NATIVE_MODE=2 GFG_NATIVE_REAL_WSI_PROBE=1 \
+            GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_FRAMES=8 \
+            VK_ADD_IMPLICIT_LAYER_PATH="$PWD/engine/gfg-native/build-real-wsi" \
+            VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
+            xvfb-run -a -s '-screen 0 1280x800x24' \
+              engine/gfg-native/build-real-wsi/wsi-gpu-smoke > /tmp/real-wsi-implicit.log 2>&1 || {
+                cat /tmp/real-wsi-implicit.log
+                exit 1
+              }
+          grep 'GSF_REAL_WSI_GATE gpu_requested=1 gpu_capable=1' /tmp/real-wsi-implicit.log
+          grep 'GSF_REAL_WSI_GPU_BRIDGE_CREATE active=1' /tmp/real-wsi-implicit.log
+          grep 'real frames GPU bridge WSI smoke PASS' /tmp/real-wsi-implicit.log
+          echo "GSF_REAL_WSI_IMPLICIT_LOADER=PASS"
+      - name: Child launcher bypass does not require Vulkan or GFG files
+        run: |
+          set -euo pipefail
+          bash -n engine/gfg-native/scripts/real-wsi-game-launch.sh
+          bash engine/gfg-native/scripts/real-wsi-game-launch.sh --mode=off -- \
+            /bin/sh -c 'test -z "${GFG_NATIVE_FG:-}" && printf "GSF_NO_GFG_BYPASS_PASS\\n"' \
+            > /tmp/gfg-safe-bypass.log 2>&1
+          grep GSF_NO_GFG_BYPASS_PASS /tmp/gfg-safe-bypass.log
       - name: Real WSI GPU bridge software integration (lavapipe + Xvfb, NOT Steam Deck)
         id: integration
         continue-on-error: true
@@ -93,6 +120,10 @@ jobs:
              "/home/deck/gsf-real-wsi/real-wsi-game-launch.sh" --smoke --mode=2
           For an existing Vulkan or Proton game, put in its Steam Launch Options:
              "/home/deck/gsf-real-wsi/real-wsi-game-launch.sh" --mode=2 -- %command%
+          Safe launch without injecting GFG (use if the game exits at startup):
+             "/home/deck/gsf-real-wsi/real-wsi-game-launch.sh" --mode=off -- %command%
+          Launcher uses VK_ADD_IMPLICIT_LAYER_PATH, keeping Steam/Proton/Gamescope
+          layer discovery intact (no forced VK_LAYER_PATH / VK_INSTANCE_LAYERS).
           Start with 2x; 3x is exploratory. Check ~/GFG-Real-WSI-Tests logs.
           Do not inject system-wide; do not modify SteamOS, Gamescope, or Decky.
           Real physical OLED frame generation is UNVERIFIED until external evidence.
