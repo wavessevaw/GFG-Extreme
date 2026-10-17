@@ -457,6 +457,20 @@ static VkResult native_create_device_with_fallback(PFN_vkCreateDevice next,
     return result;
 }
 
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+/* Loader-driven create-only probe. Acquire/Present MUST NOT succeed in
+ * this mode; it validates real app -> loader -> layer -> Vulkan GPU
+ * resource allocation, not video output or game compatibility. */
+static VkResult native_probe_no_acquire(void *user, VkSemaphore sem,VkFence fence) {
+    (void)user;(void)sem;(void)fence;return VK_ERROR_FEATURE_NOT_PRESENT;
+}
+static VkResult native_probe_no_capture(void *user,uint32_t idx,uint64_t token,
+        uint32_t waits,const VkSemaphore *sems) {
+    (void)user;(void)idx;(void)token;(void)waits;(void)sems;
+    return VK_ERROR_FEATURE_NOT_PRESENT;
+}
+#endif
+
 static VKAPI_ATTR VkResult VKAPI_CALL
 native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
     const VkAllocationCallbacks *alloc, VkDevice *out) {
@@ -537,6 +551,26 @@ native_CreateDevice(VkPhysicalDevice phys, const VkDeviceCreateInfo *ci,
         gdpa(*out, "vkQueuePresentKHR");
     d->get_images = (PFN_vkGetSwapchainImagesKHR)
         gdpa(*out, "vkGetSwapchainImagesKHR");
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    if(native_env_is_1("GFG_NATIVE_TEST_LOADER_CREATE_PROBE")) {
+        /* Acquire only the DOWNSTREAM functions for the exact device and
+         * instance chains. Never query a borrowed physical device through
+         * the loader-global vkGetPhysicalDeviceMemoryProperties symbol. */
+        d->test_proxy_ops=(gfg_offscreen_dispatch){
+            .create_image=(PFN_vkCreateImage)gdpa(*out,"vkCreateImage"),
+            .destroy_image=(PFN_vkDestroyImage)gdpa(*out,"vkDestroyImage"),
+            .get_image_requirements=(PFN_vkGetImageMemoryRequirements)
+                gdpa(*out,"vkGetImageMemoryRequirements"),
+            .get_memory_properties=(PFN_vkGetPhysicalDeviceMemoryProperties)
+                gipa(VK_NULL_HANDLE,"vkGetPhysicalDeviceMemoryProperties"),
+            .allocate_memory=(PFN_vkAllocateMemory)gdpa(*out,"vkAllocateMemory"),
+            .free_memory=(PFN_vkFreeMemory)gdpa(*out,"vkFreeMemory"),
+            .bind_image_memory=(PFN_vkBindImageMemory)gdpa(*out,"vkBindImageMemory")
+        };
+        d->test_proxy_signal=native_probe_no_acquire;
+        d->test_proxy_copy=native_probe_no_capture;
+    }
+#endif
 #ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
     d->cmd_barrier = (PFN_vkCmdPipelineBarrier)gdpa(*out, "vkCmdPipelineBarrier");
     d->cmd_barrier2 = (PFN_vkCmdPipelineBarrier2)gdpa(*out, "vkCmdPipelineBarrier2");
@@ -1149,6 +1183,11 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
                     entry->next=d->swapchains;d->swapchains=entry;
                     pthread_mutex_unlock(&d->lock);
                     *out=entry->handle;
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+                    if(native_env_is_1("GFG_NATIVE_TEST_LOADER_CREATE_PROBE"))
+                        fprintf(stderr,"GSF_LOADER_CREATE_PROBE virtual_image_count=%u one_real_output_wsi=1 GPU_memory_allocated=1 PASS\n",
+                                proxy->source.count);
+#endif
                     return VK_SUCCESS;
                 }
             }
@@ -1241,6 +1280,11 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
         result = d->create_swapchain(device, ci, alloc, out);
     }
     if (result != VK_SUCCESS) return result;
+#ifdef GFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS
+    if(native_env_is_1("GFG_NATIVE_TEST_LOADER_CREATE_PROBE"))
+        fprintf(stderr,"GSF_LOADER_CREATE_PROBE passthrough_real_wsi=1 reason=%s\n",
+                reason?reason:"not-eligible");
+#endif
     native_swapchain *sc = calloc(1, sizeof(*sc));
     if (!sc) {
         // The swapchain is valid, but native recording is unavailable.
