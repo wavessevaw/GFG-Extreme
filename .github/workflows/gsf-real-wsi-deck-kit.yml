@@ -43,6 +43,13 @@ jobs:
             bash engine/gfg-native/build-real-wsi/real-wsi-game-launch.sh --smoke --mode=2 \
             > /tmp/real-wsi-launcher.out 2>&1 || {
               cat /tmp/real-wsi-launcher.out
+              logdir="$(sed -n 's/.*GSF_REAL_WSI_KIT_LOG_DIR=//p' /tmp/real-wsi-launcher.out | tail -1)"
+              if [[ -n "$logdir" && -f "$logdir/game.log" ]]; then
+                echo '=== Exact child Vulkan process failure ==='
+                tail -n 160 "$logdir/game.log"
+                echo '=== Child metadata ==='
+                cat "$logdir/metadata.txt"
+              fi
               exit 1
             }
           cat /tmp/real-wsi-launcher.out
@@ -119,7 +126,7 @@ jobs:
           kit="$RUNNER_TEMP/gsf-real-wsi-game-kit"
           mkdir -p "$kit"
           install -m 755 engine/gfg-native/scripts/real-wsi-game-launch.sh "$kit/real-wsi-game-launch.sh"
-          install -m 644 engine/gfg-native/build-real-wsi/libVkLayer_gfg_native.so "$kit/libVkLayer_gfg_native.so"
+          install -m 755 engine/gfg-native/build-real-wsi/libVkLayer_gfg_native.so "$kit/libVkLayer_gfg_native.so"
           install -m 644 engine/gfg-native/build-real-wsi/VkLayer_gfg_native.json "$kit/VkLayer_gfg_native.json"
           install -m 755 engine/gfg-native/build-real-wsi/wsi-gpu-smoke "$kit/wsi-gpu-smoke"
           cat > "$kit/README.txt" <<'README'
