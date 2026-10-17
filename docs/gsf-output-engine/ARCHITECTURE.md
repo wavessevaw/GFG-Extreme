@@ -106,6 +106,37 @@ Never count a packet as displayed merely because it was scheduled.
 - `make -C engine/gfg-native output-owner-contract`: reproducible
   C11 standalone test (no Vulkan runtime, no physical display).
 
+## Stage 1A: standalone Vulkan owned-image -> output swapchain pixel probe
+
+Source: `engine/gfg-native/tests/output_visual_probe.c`.
+This is **now implemented as a standalone real Vulkan XCB program**, with
+three separately allocated real GPU `VkImage` objects (private producer
+surfaces, colors red/green/blue). On each output, it:
+1. Acquires a WSI image from a single output swapchain.
+2. Copies the chosen private GPU image using `vkCmdCopyImage`.
+3. Optionally copies one pixel of the output swapchain image into a staging
+   buffer and verifies channel values on the CPU **before WSI present**.
+4. Submits/presents in known red (real A), green (diagnostic placeholder for
+   A-half) and blue (real B) order using that one output swapchain.
+
+CI invokes `GFG_FOE_VISUAL_VERIFY=1 GFG_FOE_VISUAL_FRAMES=9
+GFG_FOE_VISUAL_INTERVAL_MS=0 xvfb-run .../output-visual-probe`
+and checks all nine Vulkan WSI handoffs and real GPU pixel readbacks.
+
+**The green image is just a test pattern**. This is not interpolation, not
+a captured gaming frame, not integration with Gamescope, and not proof of
+physical scanout. The test deliberately does not run as an injected layer.
+Until it passes and a separate proxy-swapchain exists, old GSF output paths
+stay unchanged. Never advertise this as a playable LAB.5.
+
+Build with:
+```sh
+make -C engine/gfg-native output-owner-contract output-visual-probe
+```
+Requires a working Vulkan/XCB environment for the second binary. Default
+`output-visual-probe` opens a colored test window; set
+`GFG_FOE_VISUAL_INTERVAL_MS` and `GFG_FOE_VISUAL_FRAMES` as desired.
+
 ### Stage 1 acceptance: visual output proof, NOT frame generation
 
 Build one standalone Vulkan producer/compositor with a private source-image
