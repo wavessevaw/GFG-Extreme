@@ -346,7 +346,7 @@ int main(void) {
         else TRY(present_gdpa(queue,&pi));
 #endif
 #ifdef GFG_NATIVE_TEST_OWNED_WSI
-        fprintf(stderr,"GSF OUTPUT WSI handoff=%u kind=%s pair=%llu:%llu due_ns=%llu acknowledged=1 physical_scanout=unverified\\n",
+        fprintf(stderr,"GSF OUTPUT WSI handoff=%u kind=%s pair=%llu:%llu due_ns=%llu acknowledged=1 physical_scanout=unverified\n",
             output_calls,ticket.kind==GFG_OWNER_REAL?"real":"intermediate",
             (unsigned long long)ticket.from_id,(unsigned long long)ticket.to_id,
             (unsigned long long)ticket.due_ns);
@@ -370,7 +370,7 @@ int main(void) {
     REQUIRE(output_calls==frame_count*2-1);
     REQUIRE(owner.error_count==0);
     fprintf(stderr,
-        "GSF private-output WSI: real=%llu synthetic=%llu total=%u one_surface=1 API_ORDER=PASS physical_scanout=unverified\\n",
+        "GSF private-output WSI: real=%llu synthetic=%llu total=%u one_surface=1 API_ORDER=PASS physical_scanout=unverified\n",
         (unsigned long long)owner.real_count,
         (unsigned long long)owner.synthetic_count,output_calls);
 #endif
