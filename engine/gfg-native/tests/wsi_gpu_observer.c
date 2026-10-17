@@ -246,16 +246,30 @@ int main(void) {
     /* Emulate an independent game source feeding a PRIVATE compositor
      * output swapchain. The original real input is never sent to WSI from
      * a second path. This is WSI output transport smoke, not game capture. */
+    const char *refresh_env=getenv("GFG_OWNER_TEST_OUTPUT_HZ");
+    const char *source_env=getenv("GFG_OWNER_TEST_SOURCE_HZ");
+    const char *gap_env=getenv("GFG_OWNER_TEST_GAP_AT");
+    const char *drop_env=getenv("GFG_OWNER_TEST_GPU_DROP_EVERY");
+    const unsigned refresh_hz=refresh_env?(unsigned)strtoul(refresh_env,NULL,10):60u;
+    const unsigned source_hz=source_env?(unsigned)strtoul(source_env,NULL,10):30u;
+    const unsigned gap_at=gap_env?(unsigned)strtoul(gap_env,NULL,10):0u;
+    const unsigned drop_every=drop_env?(unsigned)strtoul(drop_env,NULL,10):0u;
+    REQUIRE(refresh_hz>=24 && refresh_hz<=240);
+    REQUIRE(source_hz>=1 && source_hz<=240);
     gfg_output_owner owner;
-    gfg_owner_init(&owner,1000000000ull/60,1000000000ull/20);
+    gfg_owner_init(&owner,1000000000ull/refresh_hz,1000000000ull/20);
+    const uint64_t input_step_ns=1000000000ull/source_hz;
     uint64_t capture_ns=1000000000ull;
     uint32_t output_calls=0;
     uint64_t owner_first_due=0,owner_host_epoch=0;
     for(uint32_t source_id=1;source_id<=frame_count;++source_id) {
         gfg_owner_ticket owned[3];
+        if(source_id==gap_at)capture_ns+=836000000ull;
+        const uint64_t gpu_ready_ns=(drop_every && source_id%drop_every==0u)?
+            capture_ns+250000000ull:capture_ns+4000000ull;
         const size_t planned=gfg_owner_capture(&owner,source_id,
-            capture_ns,capture_ns+4000000ull,1,owned);
-        capture_ns+=1000000000ull/30;
+            capture_ns,gpu_ready_ns,1,owned);
+        capture_ns+=input_step_ns;
         for(size_t slot=0;slot<planned;++slot) {
         const uint32_t frame=output_calls++;
         const gfg_owner_ticket ticket=owned[slot];
@@ -380,11 +394,12 @@ int main(void) {
 #ifdef GFG_NATIVE_TEST_OWNED_WSI
     }
     REQUIRE(owner.real_count==frame_count);
-    REQUIRE(owner.synthetic_count==frame_count-1);
-    REQUIRE(output_calls==frame_count*2-1);
+    REQUIRE(owner.synthetic_count==source_probe.verified_synthetic);
+    REQUIRE(output_calls==owner.real_count+owner.synthetic_count);
     REQUIRE(owner.error_count==0);
     REQUIRE(source_probe.verified_real==frame_count);
-    REQUIRE(source_probe.verified_synthetic==frame_count-1);
+    REQUIRE(source_probe.verified_synthetic==owner.synthetic_count);
+    REQUIRE((gap_at==0 || gap_at>frame_count) || owner.gap_count==1);
     fprintf(stderr,"GSF GPU source snapshots copied and readback verified: real=%u A/B_composites=%u PASS\\n",
         source_probe.verified_real,source_probe.verified_synthetic);
     gfg_source_probe_destroy(&source_probe);
