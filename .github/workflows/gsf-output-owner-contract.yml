@@ -407,10 +407,11 @@ jobs:
             cat "$log"; exit 1
           fi
           echo 'MAILBOX app request retained virtual-WSI owner path; downstream physical scanout still unverified'
-      - name: Real Loader maintenance1 pNext 1000275002 with preserved MAILBOX driver WSI and virtual FIFO source
+      - name: Strict maintenance1 extension test (SKIP only if lavapipe driver lacks it)
         run: |
           set -euo pipefail
           log="$(mktemp)"
+          set +e
           GFG_NATIVE_FG=1 GFG_NATIVE_TEST_LOADER_LIVE_OUTPUT=1 \
             GFG_NATIVE_TEST_PROXY_CREATE=1 GFG_NATIVE_TEST_GAME_MODE=1 \
             GFG_NATIVE_TEST_REQUEST_MAILBOX=1 GFG_NATIVE_TEST_INJECT_MAINTENANCE1=1 \
@@ -419,16 +420,36 @@ jobs:
             VK_INSTANCE_LAYERS=VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation \
             VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
             xvfb-run -a -s '-screen 0 1024x768x24' \
-            engine/gfg-native/build/loader-live-output > "$log" 2>&1 || { cat "$log"; exit 1; }
+            engine/gfg-native/build/loader-live-output > "$log" 2>&1
+          rc=$?
+          set -e
           cat "$log"
-          grep 'GSF_TEST_APP_MAINTENANCE1 injected_pnext=1000275002' "$log"
-          grep 'GSF_GAMESCOPE_WSI_PAIR virtual_mode=2 real_mode=1 real_pnext_type=1000275002 preserved=1' "$log"
-          grep 'GSF_LOADER_LIVE_INIT virtual_images=3 one_real_output=1 GPU_worker=1' "$log"
-          grep 'GSF_OUTPUT_PACER rate=90 emitted=15 originals=8 intermediate=7' "$log"
-          if grep -E 'Validation Error|VUID-|UNASSIGNED-.*ERROR' "$log"; then
-            cat "$log"; exit 1
+          if [ "$rc" -eq 77 ]; then
+            grep -q 'GSF_TEST_APP_MAINTENANCE1_DRIVER_UNAVAILABLE lavapipe_cannot_validate_real_pnext=1' "$log" || {
+              echo 'FAIL: exit 77 without exact driver-unsupported evidence'; exit 1;
+            }
+            if grep -Eq 'GSF_GAMESCOPE_WSI_PAIR|GSF_OUTPUT_PACER rate=90' "$log"; then
+              echo 'FAIL: unsupported-driver SKIP must not pretend a full WSI pass'; exit 1
+            fi
+            echo 'GSF_REAL_MAINTENANCE1_DEVICE_VALIDATION=SKIPPED driver_no_extension=1'
+            echo '::warning::Real VkSwapchainPresentModesCreateInfoEXT WSI integration SKIPPED: lavapipe lacks VK_EXT_swapchain_maintenance1. The policy unit test passed; only the actual Deck can close this gate.'
+            echo 'Real maintenance1 downstream WSI: **NOT TESTED (software driver extension unavailable)**' >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$rc" -eq 0 ]; then
+            if grep -q 'GSF_TEST_APP_MAINTENANCE1_DRIVER_UNAVAILABLE' "$log"; then
+              echo 'FAIL: refused to treat driver-not-supported marker as PASS'; exit 1
+            fi
+            grep 'GSF_TEST_APP_MAINTENANCE1 injected_pnext=1000275002' "$log"
+            grep 'GSF_GAMESCOPE_WSI_PAIR virtual_mode=2 real_mode=1 real_pnext_type=1000275002 preserved=1' "$log"
+            grep 'GSF_LOADER_LIVE_INIT virtual_images=3 one_real_output=1 GPU_worker=1' "$log"
+            grep 'GSF_OUTPUT_PACER rate=90 emitted=15 originals=8 intermediate=7' "$log"
+            echo 'GSF_REAL_MAINTENANCE1_DEVICE_VALIDATION=PASS real_driver=1'
+            echo 'Real maintenance1 downstream WSI: **PASS on supported software driver**' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "FAIL: actual maintenance1 Vulkan test exited $rc"; exit 1
           fi
-          echo 'maintenance1 physical MAILBOX protocol retained while private FIFO source delivered 15 downstream Vulkan presents; OLED still unverified'
+          if grep -E 'Validation Error|VUID-|UNASSIGNED-.*ERROR' "$log"; then
+            echo 'FAIL: validation errors in maintenance1 probe'; exit 1
+          fi
 
       - name: Gaming Mode X11-unobservable gate still performs actual Vulkan output submits
         run: |
