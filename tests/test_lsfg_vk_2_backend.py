@@ -138,7 +138,15 @@ printf 'VALUES:%s/%s/%s/%s/%s/%s/%s/%s/%s' "$LSFGVK_ENV" "$LSFGVK_MULTIPLIER" "$
                                        env=env,capture_output=True,text=True,check=True)
             self.assertIn("VK_LAYER_LSFGVK_frame_generation",available.stdout)
             self.assertIn(str(manifest_dir),available.stdout)
-            self.assertTrue(available.stdout.strip().endswith(":unset:unset"))
+            # Installed manifest alone is NOT enough: no model => fail closed.
+            self.assertTrue(available.stdout.strip().endswith(":1:unset"))
+            model = home / ".local/share/Steam/steamapps/common/Lossless Scaling/lsfg-vk.dll"
+            model.parent.mkdir(parents=True)
+            model.write_bytes(b"MZ fixture")
+            configured = subprocess.run(["bash","-c",probe],
+                                        env=env,capture_output=True,text=True,check=True)
+            self.assertIn(str(manifest_dir),configured.stdout)
+            self.assertTrue(configured.stdout.strip().endswith(":unset:unset"))
 
 if __name__=="__main__":
     unittest.main()
