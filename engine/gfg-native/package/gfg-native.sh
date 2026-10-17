@@ -40,7 +40,13 @@ passthrough() {
 }
 root="${XDG_DATA_HOME:-$HOME/.local/share}/gfg-native"
 if (( disabled )); then passthrough "$@"; fi
-mode_file="${GFG_NATIVE_MODE_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/mako-render/runtime-state/native-gsf.mode}"
+# Decky writes its marker under the resolved game user's home even when a
+# service/runtime exports another XDG_CONFIG_HOME. Keep the UI's existing Off
+# authoritative; retain the XDG location for standalone users without it.
+mode_file="${GFG_NATIVE_MODE_FILE:-$HOME/.config/mako-render/runtime-state/native-gsf.mode}"
+if [[ -z "${GFG_NATIVE_MODE_FILE:-}" && ! -r "$mode_file" && -n "${XDG_CONFIG_HOME:-}" ]]; then
+  mode_file="$XDG_CONFIG_HOME/mako-render/runtime-state/native-gsf.mode"
+fi
 mode="${GFG_NATIVE_MODE:-}"
 if [[ -z "$mode" && -r "$mode_file" ]]; then
   IFS= read -r -n 8 mode < "$mode_file" || :

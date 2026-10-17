@@ -184,5 +184,26 @@ class NativeGsfTests(unittest.TestCase):
         path.write_text(json.dumps(record))
         self.assertEqual(native_gsf.status(self.runtime, self.home)['contexts'], [])
 
+    def test_direct_launcher_keeps_decky_off_with_conflicting_inherited_xdg(self):
+        self.install_fixture()
+        native_gsf.set_mode(self.runtime, 'off', self.log)
+        external = self.home / 'external-config'
+        marker = external / 'mako-render/runtime-state/native-gsf.mode'
+        marker.parent.mkdir(parents=True)
+        marker.write_text('3\n')
+        base = {k:v for k,v in os.environ.items() if not k.startswith('GFG_NATIVE_')}
+        base.update(HOME=str(self.home), XDG_DATA_HOME=str(self.home / '.local/share'), XDG_CONFIG_HOME=str(external))
+        def launch(**extra):
+            result = subprocess.run(['bash', str(ROOT / 'engine/gfg-native/package/gfg-native.sh'), '/usr/bin/env'],
+                env=dict(base, **extra), capture_output=True, text=True, check=True)
+            return dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+        selected = launch()
+        self.assertEqual(selected.get('DISABLE_GFG_NATIVE_FG'), '1')
+        self.assertNotIn('GFG_NATIVE_GPU_BRIDGE', selected)
+        self.assertEqual(launch(GFG_NATIVE_MODE='2')['GFG_NATIVE_MODE'], '2')
+        self.assertEqual(launch(GFG_NATIVE_MODE_FILE=str(marker))['GFG_NATIVE_MODE'], '3')
+        (self.runtime / native_gsf.MARKER).unlink()
+        self.assertEqual(launch()['GFG_NATIVE_MODE'], '3')
+
 if __name__ == '__main__':
     unittest.main()

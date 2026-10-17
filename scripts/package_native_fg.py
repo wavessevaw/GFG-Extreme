@@ -255,7 +255,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--outdir", type=Path, required=True)
-    parser.add_argument("--version", default="0.0.0-fg3-internal.9")
+    parser.add_argument("--version", default="0.0.0-fg3-internal.10")
     parser.add_argument("--build-environment", help="Actual build environment; otherwise inferred from GitHub Actions or marked unattested")
     parser.add_argument("--decky-index", type=Path, help="Also build integrated Decky experiment with this freshly built frontend")
     args = parser.parse_args()

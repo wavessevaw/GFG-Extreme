@@ -122,7 +122,13 @@ def main():
     assert os.access(launcher, os.X_OK)
     library = home / '.local/share/gfg-native/libVkLayer_gfg_native.so'
     assert sha(library.read_bytes()) == manifest['elf_sha256']
-    run('startup-off-actual-wsi', [launcher, args.wsi_app], expected=['validation errors=0'])
+    foreign_config = home / 'inherited-runtime-config'
+    foreign_mode = foreign_config / 'mako-render/runtime-state/native-gsf.mode'
+    foreign_mode.parent.mkdir(parents=True)
+    foreign_mode.write_text('3\n')
+    log = run('startup-off-actual-wsi', [launcher, args.wsi_app],
+              {'XDG_CONFIG_HOME': str(foreign_config)}, expected=['validation errors=0'])
+    assert 'GPU bridge active' not in log, 'Decky Off was overridden by inherited XDG_CONFIG_HOME'
     for mode in ('2', '3'):
         backend(mode)
         extra = {'GFG_TEST_EXPECT_GPU': '1', 'GFG_TEST_CHAIN_VK12': '1',
