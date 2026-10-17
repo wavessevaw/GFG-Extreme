@@ -1286,7 +1286,7 @@ native_CmdPipelineBarrier(VkCommandBuffer cmd,VkPipelineStageFlags src,
     if(!nimg || !img) {
         d->cmd_barrier(cmd,src,dst,flags,nmem,mem,nbuf,buf,nimg,img);return;
     }
-    if(nimg>SIZE_MAX/sizeof(*img))return;
+    if(nimg && SIZE_MAX/nimg<sizeof(*img))return;
     VkImageMemoryBarrier *owned=malloc((size_t)nimg*sizeof(*owned));
     if(!owned)return;
     memcpy(owned,img,(size_t)nimg*sizeof(*owned));
@@ -1300,7 +1300,7 @@ static void native_test_cmd_barrier2(VkCommandBuffer cmd,
     if(!d || (!d->cmd_barrier2 && !d->cmd_barrier2_khr) || !info)return;
     const uint32_t n=info->imageMemoryBarrierCount;
     if(n && (!info->pImageMemoryBarriers ||
-             n>SIZE_MAX/sizeof(VkImageMemoryBarrier2)))return;
+             SIZE_MAX/n<sizeof(VkImageMemoryBarrier2)))return;
     VkImageMemoryBarrier2 *owned=n?malloc((size_t)n*sizeof(*owned)):NULL;
     if(n && !owned)return;
     if(n)memcpy(owned,info->pImageMemoryBarriers,(size_t)n*sizeof(*owned));
