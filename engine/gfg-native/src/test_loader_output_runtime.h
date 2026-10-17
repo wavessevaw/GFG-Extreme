@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Isolated TEST-ONLY Vulkan-Loader runtime for one live virtual game WSI.
  * Real GPU image capture -> independent history -> ONE compositor output WSI.
- * No intermediate generation, no Gamescope or Deck release path.
+ * Optional GPU-built A/B diagnostic intermediate, NOT optical flow or Deck.
  *
  * Calls global Vulkan entrypoints only in this isolated explicit-layer
  * executable. Normal GFG production layer never includes this header.
@@ -34,6 +34,9 @@ typedef struct {
     VkCommandBuffer output_cmd;
     VkFence output_fence;
     uint64_t output_presents;
+    uint64_t output_originals, output_intermediates;
+    uint32_t last_history_image;
+    int have_previous, interleave;
     int started;
 } gfg_test_loader_runtime;
 
@@ -108,10 +111,10 @@ static inline void gfg_test_live_record(void *user,
  * Retire source AFTER recording/submitting the sole output and handing it
  * to the real WSI. The per-app-index history slot is therefore safe to
  * overwrite after this callback returns, on this same Vulkan queue. */
-static inline VkResult gfg_test_live_output(void *user,
-        uint32_t image,uint64_t ticket) {
-    gfg_test_loader_runtime *r=user;
-    if(!r||!r->started||!ticket||image!=ticket%r->history.count)
+static inline VkResult gfg_test_live_emit(gfg_test_loader_runtime *r,
+        uint32_t image,uint32_t previous,int intermediate) {
+    if(!r||!r->started||image>=r->history.count||
+       (intermediate && previous>=r->history.count))
         return VK_ERROR_INITIALIZATION_FAILED;
     VkResult result=vkWaitForFences(r->device,1,&r->output_fence,
                                    VK_TRUE,UINT64_MAX);
@@ -133,14 +136,36 @@ static inline VkResult gfg_test_live_output(void *user,
         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,0,VK_ACCESS_TRANSFER_WRITE_BIT);
     vkCmdPipelineBarrier(r->output_cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
         VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,NULL,0,NULL,1,&pre);
-    const VkImageCopy region={
-        .srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
-        .dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
-        .extent={r->proxy->source.extent.width,r->proxy->source.extent.height,1}
-    };
-    vkCmdCopyImage(r->output_cmd,r->history.images[image],
-        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,r->output_images[out_idx],
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&region);
+    const uint32_t width=r->proxy->source.extent.width;
+    const uint32_t height=r->proxy->source.extent.height;
+    if(intermediate) {
+        /* One output VkImage composed from two *distinct* GPU history
+         * images. Left half is preceding A, right half is current B.
+         * This verifies insertion only; it is NOT optical-flow output. */
+        const VkImageCopy left={
+            .srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
+            .dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
+            .extent={width/2,height,1}
+        };
+        VkImageCopy right=left;
+        right.srcOffset.x=(int32_t)(width/2);
+        right.dstOffset.x=(int32_t)(width/2);
+        vkCmdCopyImage(r->output_cmd,r->history.images[previous],
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,r->output_images[out_idx],
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&left);
+        vkCmdCopyImage(r->output_cmd,r->history.images[image],
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,r->output_images[out_idx],
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&right);
+    } else {
+        const VkImageCopy region={
+            .srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
+            .dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1},
+            .extent={width,height,1}
+        };
+        vkCmdCopyImage(r->output_cmd,r->history.images[image],
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,r->output_images[out_idx],
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,1,&region);
+    }
     const VkImageMemoryBarrier post=gfg_test_barrier(r->output_images[out_idx],
         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
         VK_ACCESS_TRANSFER_WRITE_BIT,0);
@@ -170,11 +195,37 @@ static inline VkResult gfg_test_live_output(void *user,
     if(result!=VK_SUCCESS && result!=VK_SUBOPTIMAL_KHR)return result;
     r->seen[out_idx]=1;
     ++r->output_presents;
-    fprintf(stderr,"GSF_LOADER_LIVE source=%llu output_present=%llu one_real_wsi=1 worker=1\n",
-        (unsigned long long)ticket,(unsigned long long)r->output_presents);
+    if(intermediate)++r->output_intermediates;
+    else ++r->output_originals;
+    fprintf(stderr,"GSF_LOADER_LIVE %s output_present=%llu originals=%llu intermediate=%llu one_real_wsi=1 worker=1\n",
+        intermediate?"AB_SPLIT":"ORIGINAL",
+        (unsigned long long)r->output_presents,
+        (unsigned long long)r->output_originals,
+        (unsigned long long)r->output_intermediates);
     return VK_SUCCESS;
 }
 
+/* GPU-copy retirement worker owns output presentation. Once B arrives,
+ * output A/B marked composite BEFORE original B. Initial A is unmodified.
+ * The pause is deliberately test-only pacing to make X11 observation
+ * deterministic; real Deck pacing must use compositor feedback. */
+static inline VkResult gfg_test_live_output(void *user,
+        uint32_t image,uint64_t ticket) {
+    gfg_test_loader_runtime *r=user;
+    if(!r||!r->started||!ticket||image!=ticket%r->history.count)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    if(r->interleave && r->have_previous) {
+        VkResult result=gfg_test_live_emit(r,image,r->last_history_image,1);
+        if(result!=VK_SUCCESS)return result;
+        const struct timespec exposure={.tv_sec=0,.tv_nsec=35000000L};
+        nanosleep(&exposure,NULL);
+    }
+    VkResult result=gfg_test_live_emit(r,image,0,0);
+    if(result!=VK_SUCCESS)return result;
+    r->last_history_image=image;
+    r->have_previous=1;
+    return VK_SUCCESS;
+}
 /* Called after gfg_output_proxy_create, when both source and private output
  * swapchains exist. Test-only and intentionally supports only one graphics
  * + presentation queue family. */
@@ -186,6 +237,10 @@ static inline VkResult gfg_test_live_init(gfg_test_loader_runtime *r,
         return VK_ERROR_INITIALIZATION_FAILED;
     r->device=device;r->queue=queue;r->family=family;r->proxy=proxy;
     r->memory_ops=memory_ops;
+    r->interleave=getenv("GFG_NATIVE_TEST_OUTPUT_INTERLEAVE")!=NULL;
+    if(r->interleave && (proxy->source.extent.width<2 ||
+                        (proxy->source.extent.width&1u)))
+        return VK_ERROR_FEATURE_NOT_PRESENT;
     VkSwapchainCreateInfoKHR history_ci=*original;
     history_ci.imageUsage|=VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                            VK_IMAGE_USAGE_TRANSFER_DST_BIT;
