@@ -265,8 +265,6 @@ int main(void) {
     REQUIRE(gfg_source_probe_create(&source_probe,physical,device,ext,color.format));
     const char *app_images=getenv("GFG_OWNER_TEST_APP_IMAGES");
     if(app_images && !strcmp(app_images,"1"))source_probe.app_image_count=1;
-    gfg_virtual_source virtual_source;
-    REQUIRE(gfg_virtual_init(&virtual_source,source_probe.app_image_count));
     /* Independent source renderer submits into OFFSCREEN VkImages.
      * They never reach vkQueuePresentKHR: the later output WSI owns it.
      * The separate fence protects source image write/overwrite lifetime. */
@@ -286,6 +284,22 @@ int main(void) {
     const VkSemaphoreCreateInfo source_semci={
         .sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     TRY(vkCreateSemaphore(device,&source_semci,NULL,&source_ready));
+    VkSemaphore app_image_acquired=VK_NULL_HANDLE;
+    TRY(vkCreateSemaphore(device,&source_semci,NULL,&app_image_acquired));
+    /* Virtual swapchain handle is NEVER passed to the loader or downstream
+     * WSI: it belongs exclusively to the virtual app-source facade. */
+    VkSwapchainKHR app_swapchain=(VkSwapchainKHR)(uintptr_t)0x600FEEDu;
+    gfg_vwsi_gpu_context capture_ctx={.device=device,.queue=queue,
+        .copy_cmd=snapshot_command,.copy_fence=snapshot_fence,
+        .source=&source_probe};
+    gfg_virtual_wsi virtual_wsi;
+    REQUIRE(gfg_vwsi_init(&virtual_wsi,app_swapchain,source_probe.game_frames,
+        source_probe.app_image_count,color.format,ext,&capture_ctx,
+        vwsi_acquire_signal,vwsi_submit_capture)==VK_SUCCESS);
+    VkImage app_handles[GFG_VIRTUAL_MAX_IMAGES]={0};
+    uint32_t app_image_count=GFG_VIRTUAL_MAX_IMAGES;
+    TRY(gfg_vwsi_get_images(&virtual_wsi,app_swapchain,&app_image_count,app_handles));
+    REQUIRE(app_image_count==source_probe.app_image_count);
     uint32_t source_submissions=0,game_images_released=0;
 #endif
 
@@ -337,8 +351,10 @@ int main(void) {
     uint64_t owner_first_due=0,owner_host_epoch=0;
     for(uint32_t source_id=1;source_id<=frame_count;++source_id) {
         unsigned acquired_app_image=UINT32_MAX;
-        REQUIRE(gfg_virtual_acquire(&virtual_source,&acquired_app_image));
+        TRY(gfg_vwsi_acquire(&virtual_wsi,app_swapchain,UINT64_MAX,
+                            app_image_acquired,VK_NULL_HANDLE,&acquired_app_image));
         REQUIRE(acquired_app_image==source_id%source_probe.app_image_count);
+        REQUIRE(app_handles[acquired_app_image]==source_probe.game_frames[acquired_app_image]);
         /* Emulate a game presenting to a VIRTUAL offscreen swapchain:
          * submit its real image on GPU first, before any scheduler/WSI work.
          * The app frame's fence is retired before the source can be reused.
@@ -352,31 +368,26 @@ int main(void) {
         gfg_source_record_game(&source_probe,source_command,source_id);
         TRY(vkEndCommandBuffer(source_command));
         TRY(vkResetFences(device,1,&source_fence));
+        const VkPipelineStageFlags app_wait_stage=VK_PIPELINE_STAGE_TRANSFER_BIT;
         const VkSubmitInfo source_submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .waitSemaphoreCount=1,.pWaitSemaphores=&app_image_acquired,
+            .pWaitDstStageMask=&app_wait_stage,
             .commandBufferCount=1,.pCommandBuffers=&source_command,
             .signalSemaphoreCount=1,.pSignalSemaphores=&source_ready};
         TRY(vkQueueSubmit(queue,1,&source_submit,source_fence));
-        /* No CPU wait between game rendering and source capture. The
-         * snapshot GPU submission consumes source_ready and waits for the
-         * producer's image writes to become available to transfer reads. */
-        TRY(vkWaitForFences(device,1,&snapshot_fence,VK_TRUE,UINT64_MAX));
-        TRY(vkResetCommandBuffer(snapshot_command,0));
-        TRY(vkBeginCommandBuffer(snapshot_command,&source_begin));
-        gfg_source_record_snapshot(&source_probe,snapshot_command,source_id);
-        TRY(vkEndCommandBuffer(snapshot_command));
-        TRY(vkResetFences(device,1,&snapshot_fence));
+        /* App's vkQueuePresentKHR becomes an independent capture
+         * submission. It consumes source_ready exactly once; no app
+         * source image ever reaches the real output vkQueuePresentKHR. */
         uint64_t virtual_ticket=0;
-        REQUIRE(gfg_virtual_begin_snapshot(&virtual_source,
-                                           acquired_app_image,&virtual_ticket));
-        const VkPipelineStageFlags snapshot_wait_stage=VK_PIPELINE_STAGE_TRANSFER_BIT;
-        const VkSubmitInfo copy_submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        VkResult virtual_result=VK_ERROR_UNKNOWN;
+        VkPresentInfoKHR source_present={.sType=VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
             .waitSemaphoreCount=1,.pWaitSemaphores=&source_ready,
-            .pWaitDstStageMask=&snapshot_wait_stage,
-            .commandBufferCount=1,.pCommandBuffers=&snapshot_command};
-        TRY(vkQueueSubmit(queue,1,&copy_submit,snapshot_fence));
+            .swapchainCount=1,.pSwapchains=&app_swapchain,
+            .pImageIndices=&acquired_app_image,.pResults=&virtual_result};
+        TRY(gfg_vwsi_present(&virtual_wsi,&source_present,&virtual_ticket));
+        REQUIRE(virtual_result==VK_SUCCESS);
         TRY(vkWaitForFences(device,1,&snapshot_fence,VK_TRUE,UINT64_MAX));
-        REQUIRE(gfg_virtual_release(&virtual_source,
-                                   acquired_app_image,virtual_ticket,1));
+        TRY(gfg_vwsi_retire(&virtual_wsi,acquired_app_image,virtual_ticket,1));
         const unsigned history_slot=(unsigned)(source_id&1u);
         const unsigned app_slot=(unsigned)(source_id%source_probe.app_image_count);
         REQUIRE(source_probe.frames[history_slot]!=source_probe.game_frames[app_slot]);
@@ -524,10 +535,12 @@ int main(void) {
     REQUIRE(owner.real_count==frame_count);
     REQUIRE(source_submissions==frame_count);
     REQUIRE(game_images_released==frame_count);
-    REQUIRE(virtual_source.acquired==frame_count);
-    REQUIRE(virtual_source.retired==frame_count);
-    REQUIRE(gfg_virtual_all_idle(&virtual_source));
-    REQUIRE(!virtual_source.invalid);
+    REQUIRE(virtual_wsi.source.acquired==frame_count);
+    REQUIRE(virtual_wsi.source.retired==frame_count);
+    REQUIRE(virtual_wsi.accepts==frame_count);
+    REQUIRE(virtual_wsi.copy_retirements==frame_count);
+    REQUIRE(gfg_virtual_all_idle(&virtual_wsi.source));
+    REQUIRE(!virtual_wsi.source.invalid && !virtual_wsi.incorrect);
     fprintf(stderr,"GSF virtual app source buffers=%u history_buffers=2 render_release_count=%u PASS\n",
         source_probe.app_image_count,game_images_released);
     REQUIRE(owner.synthetic_count==source_probe.verified_synthetic);
@@ -541,7 +554,6 @@ int main(void) {
     gfg_source_probe_destroy(&source_probe);
     vkDestroyFence(device,source_fence,NULL);
     vkDestroyFence(device,snapshot_fence,NULL);
-    vkDestroySemaphore(device,source_ready,NULL);
     fprintf(stderr,
         "GSF private-output WSI: real=%llu synthetic=%llu total=%u one_surface=1 API_ORDER=PASS physical_scanout=unverified\n",
         (unsigned long long)owner.real_count,
