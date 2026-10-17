@@ -5,6 +5,7 @@ on:
       - feature/lsfg-vk-2-backend-20261018
     paths:
       - .github/workflows/lsfg2-build-ui-branch.yml
+      - frontend/src/app.js
 permissions:
   contents: write
 jobs:
