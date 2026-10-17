@@ -74,18 +74,41 @@ mkdir -p "$RUN"
 printf 'mode=%s\nop=%s\nprogram=%q\ndisplay=%s\nwayland=%s\n' \
   "$MODE" "$OP" "${ARGS[0]}" "${DISPLAY:-unset}" "${WAYLAND_DISPLAY:-unset}" > "$RUN/metadata.txt"
 printf 'GSF_REAL_WSI_KIT_LOG_DIR=%s\n' "$RUN" >&2
-# Preserve the Steam/Proton explicit layer search paths.
-# VK_LAYER_PATH overrides ALL default explicit-layer paths: never set it
-# from scratch. VK_ADD_LAYER_PATH is the standard non-destructive option.
-# The old implicit-only attempt was NOT loaded on CI's loader, so require
-# an explicit layer name for this verified 64-bit experimental test.
+# Older Linux Vulkan Loaders (Ubuntu 22.04's in CI) ignore VK_ADD_LAYER_PATH.
+# Reconstruct the normal explicit-manifest search roots rather than dropping
+# them when VK_LAYER_PATH is used. Keep inherited Steam/Proton search dirs.
+LAYER_DIRS=("$SCRIPT_DIR")
+append_path_list() {
+  local raw="$1" item
+  local -a parts
+  IFS=: read -r -a parts <<< "$raw"
+  for item in "${parts[@]}"; do [[ -z "$item" ]] || LAYER_DIRS+=("$item"); done
+}
 if [[ -n "${VK_LAYER_PATH:-}" ]]; then
-  export VK_LAYER_PATH="$SCRIPT_DIR:$VK_LAYER_PATH"
-  printf 'GSF_REAL_WSI_LAYER_PATH existing_explicit_override_extended=1\n' >> "$RUN/metadata.txt"
+  append_path_list "$VK_LAYER_PATH"
 else
-  export VK_ADD_LAYER_PATH="$SCRIPT_DIR${VK_ADD_LAYER_PATH:+:$VK_ADD_LAYER_PATH}"
-  printf 'GSF_REAL_WSI_LAYER_PATH added_explicit=1\n' >> "$RUN/metadata.txt"
+  # Search paths are taken from the Vulkan Loader's Linux XDG conventions.
+  # Steam's XDG_DATA_DIRS may include additional sandbox-managed layer dirs.
+  LAYER_DIRS+=("${XDG_CONFIG_HOME:-$HOME/.config}/vulkan/explicit_layer.d"
+               "${XDG_DATA_HOME:-$HOME/.local/share}/vulkan/explicit_layer.d"
+               "/etc/vulkan/explicit_layer.d"
+               "/usr/local/etc/vulkan/explicit_layer.d"
+               "/usr/share/vulkan/explicit_layer.d"
+               "/usr/local/share/vulkan/explicit_layer.d")
+  append_xdg_path_list() {
+    local raw="$1" item
+    local -a parts
+    IFS=: read -r -a parts <<< "$raw"
+    for item in "${parts[@]}"; do
+      [[ -z "$item" ]] || LAYER_DIRS+=("$item/vulkan/explicit_layer.d")
+    done
+  }
+  append_xdg_path_list "${XDG_CONFIG_DIRS:-/etc/xdg}"
+  append_xdg_path_list "${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+  append_path_list "${VK_ADD_LAYER_PATH:-}"
 fi
+export VK_LAYER_PATH="$(IFS=:; printf '%s' "${LAYER_DIRS[*]}")"
+printf 'GSF_REAL_WSI_LAYER_PATH compatible_explicit=1 dirs=%s\n' "$VK_LAYER_PATH" >> "$RUN/metadata.txt"
 case ":${VK_INSTANCE_LAYERS:-}:" in
   *:VK_LAYER_GFG_native:*) ;;
   *) export VK_INSTANCE_LAYERS="${VK_INSTANCE_LAYERS:+$VK_INSTANCE_LAYERS:}VK_LAYER_GFG_native" ;;
