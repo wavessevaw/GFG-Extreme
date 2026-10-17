@@ -142,6 +142,21 @@ int main(void) {
                 ci.compositeAlpha=(VkCompositeAlphaFlagBitsKHR)bit;break;
             }
 
+    if(getenv("GFG_NATIVE_TEST_REQUEST_MAILBOX")) {
+        uint32_t present_modes_count=0;
+        TRY(vkGetPhysicalDeviceSurfacePresentModesKHR(physical,surface,
+                                                      &present_modes_count,NULL));
+        REQUIRE(present_modes_count && present_modes_count<64);
+        VkPresentModeKHR modes[64]={0};
+        TRY(vkGetPhysicalDeviceSurfacePresentModesKHR(physical,surface,
+                                                      &present_modes_count,modes));
+        int mailbox_supported=0;
+        for(uint32_t i=0;i<present_modes_count;i++)
+            if(modes[i]==VK_PRESENT_MODE_MAILBOX_KHR)mailbox_supported=1;
+        REQUIRE(mailbox_supported);
+        ci.presentMode=VK_PRESENT_MODE_MAILBOX_KHR;
+        fprintf(stderr,"GSF_TEST_APP_MAILBOX requested=1 surface_supported=1\n");
+    }
     VkSwapchainKHR virtual_handle=VK_NULL_HANDLE;
     TRY(vkCreateSwapchainKHR(device,&ci,NULL,&virtual_handle));
     REQUIRE(virtual_handle);
