@@ -33,6 +33,15 @@ frame-clock: $(BUILD)/frame-clock
 	$(BUILD)/frame-clock
 .PHONY: frame-clock
 
+# Test-only VkImage source allocations; NOT wired into live swapchain create.
+$(BUILD)/offscreen-source-pool: tests/offscreen_source_pool.c src/offscreen_source_pool.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I$(VULKAN_HEADERS) -o $@ tests/offscreen_source_pool.c
+
+offscreen-source-pool: $(BUILD)/offscreen-source-pool
+	$(BUILD)/offscreen-source-pool
+.PHONY: offscreen-source-pool
+
 # Convert game swapchain PRESENT layout requests without touching the
 # true compositor swapchain, including Vulkan sync2 and renderpasses.
 $(BUILD)/virtual-layouts: tests/virtual_layouts.c src/virtual_layouts.h
