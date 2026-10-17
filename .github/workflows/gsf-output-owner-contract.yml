@@ -375,6 +375,23 @@ jobs:
           fi
           grep 'Pass --check or --run explicitly' /tmp/gsf-deck-kit-requires-explicit-opt-in.log
           echo 'Isolated opt-in Deck test kit prepared. No actual Deck GPU/OLED hardware was tested.'
+      - name: Gaming Mode X11-unobservable gate still performs actual Vulkan output submits
+        run: |
+          set -euo pipefail
+          kit="$RUNNER_TEMP/gsf-output-deck-kit"
+          log="$(mktemp)"
+          timeout 25s xvfb-run -a -s '-screen 0 1280x800x24' \
+            bash "$kit/deck-output-test.sh" --run --mode=gaming --phase=both --frames=8 \
+            > "$log" 2>&1 || { tail -n 75 "$log"; exit 1; }
+          cat "$log"
+          grep 'GSF_DECK_KIT_PHASE=baseline VULKAN_SUBMISSIONS_PASS physical_scanout=UNVERIFIED' "$log"
+          grep 'GSF_DECK_KIT_PHASE=output VULKAN_SUBMISSIONS_PASS physical_scanout=UNVERIFIED' "$log"
+          grep 'GSF_DECK_KIT_GAMESCOPE_SUBMIT_PASS physical_scanout=UNVERIFIED' "$log"
+          if grep -q 'SOFTWARE_EVIDENCE_PASS\|OLED_SCANOUT_PASS' "$log"; then
+            echo 'FAIL: Gaming mode falsely claimed visible frames/physical scanout'
+            exit 1
+          fi
+          echo 'Gaming Mode separately reports Vulkan GPU/WSI submissions, NOT XCB/OLED visibility'
       - name: Upload opt-in SteamOS qualification kit (NOT a release)
         uses: actions/upload-artifact@v4
         with:
