@@ -1,0 +1,28 @@
+name: GSF output-owner contract (experimental)
+
+on:
+  push:
+    branches:
+      - research/gsf-frame-output-owner-v0-20261017
+  pull_request:
+    branches:
+      - fix/gsf-borrowed-physical-dispatch-20261017
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and execute actual C output-owner contract
+        run: |
+          make -C engine/gfg-native output-owner-contract
+      - name: Guard against any accidental claim of real display validation
+        run: |
+          test -f engine/gfg-native/src/output_owner_queue.h
+          test -f engine/gfg-native/tests/output_owner_queue.c
+          grep -q "NO Vulkan consumer" engine/gfg-native/tests/output_owner_queue.c
