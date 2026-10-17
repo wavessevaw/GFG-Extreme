@@ -15,6 +15,7 @@
 #include <xcb/xcb.h>
 #ifdef GFG_NATIVE_TEST_OWNED_WSI
 #include "../src/output_owner.h"
+#include "../src/virtual_source.h"
 #include "owned_source_transport.h"
 #endif
 #ifdef GFG_NATIVE_TEST_GPU_OBSERVER
@@ -216,6 +217,8 @@ int main(void) {
     REQUIRE(gfg_source_probe_create(&source_probe,physical,device,ext,color.format));
     const char *app_images=getenv("GFG_OWNER_TEST_APP_IMAGES");
     if(app_images && !strcmp(app_images,"1"))source_probe.app_image_count=1;
+    gfg_virtual_source virtual_source;
+    REQUIRE(gfg_virtual_init(&virtual_source,source_probe.app_image_count));
     /* Independent source renderer submits into OFFSCREEN VkImages.
      * They never reach vkQueuePresentKHR: the later output WSI owns it.
      * The separate fence protects source image write/overwrite lifetime. */
@@ -285,6 +288,9 @@ int main(void) {
     uint32_t output_calls=0;
     uint64_t owner_first_due=0,owner_host_epoch=0;
     for(uint32_t source_id=1;source_id<=frame_count;++source_id) {
+        unsigned acquired_app_image=UINT32_MAX;
+        REQUIRE(gfg_virtual_acquire(&virtual_source,&acquired_app_image));
+        REQUIRE(acquired_app_image==source_id%source_probe.app_image_count);
         /* Emulate a game presenting to a VIRTUAL offscreen swapchain:
          * submit its real image on GPU first, before any scheduler/WSI work.
          * The app frame's fence is retired before the source can be reused.
@@ -311,6 +317,9 @@ int main(void) {
         gfg_source_record_snapshot(&source_probe,snapshot_command,source_id);
         TRY(vkEndCommandBuffer(snapshot_command));
         TRY(vkResetFences(device,1,&snapshot_fence));
+        uint64_t virtual_ticket=0;
+        REQUIRE(gfg_virtual_begin_snapshot(&virtual_source,
+                                           acquired_app_image,&virtual_ticket));
         const VkPipelineStageFlags snapshot_wait_stage=VK_PIPELINE_STAGE_TRANSFER_BIT;
         const VkSubmitInfo copy_submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,
             .waitSemaphoreCount=1,.pWaitSemaphores=&source_ready,
@@ -318,6 +327,8 @@ int main(void) {
             .commandBufferCount=1,.pCommandBuffers=&snapshot_command};
         TRY(vkQueueSubmit(queue,1,&copy_submit,snapshot_fence));
         TRY(vkWaitForFences(device,1,&snapshot_fence,VK_TRUE,UINT64_MAX));
+        REQUIRE(gfg_virtual_release(&virtual_source,
+                                   acquired_app_image,virtual_ticket,1));
         const unsigned history_slot=(unsigned)(source_id&1u);
         const unsigned app_slot=(unsigned)(source_id%source_probe.app_image_count);
         REQUIRE(source_probe.frames[history_slot]!=source_probe.game_frames[app_slot]);
@@ -465,6 +476,10 @@ int main(void) {
     REQUIRE(owner.real_count==frame_count);
     REQUIRE(source_submissions==frame_count);
     REQUIRE(game_images_released==frame_count);
+    REQUIRE(virtual_source.acquired==frame_count);
+    REQUIRE(virtual_source.retired==frame_count);
+    REQUIRE(gfg_virtual_all_idle(&virtual_source));
+    REQUIRE(!virtual_source.invalid);
     fprintf(stderr,"GSF virtual app source buffers=%u history_buffers=2 render_release_count=%u PASS\n",
         source_probe.app_image_count,game_images_released);
     REQUIRE(owner.synthetic_count==source_probe.verified_synthetic);
