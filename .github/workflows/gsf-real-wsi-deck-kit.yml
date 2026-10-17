@@ -52,6 +52,26 @@ jobs:
           grep 'GSF_REAL_WSI_GATE gpu_requested=1 gpu_capable=1' /tmp/real-wsi-integration.log
           grep 'GSF_REAL_WSI_GPU_BRIDGE_CREATE active=1' /tmp/real-wsi-integration.log
           grep 'real WSI' /tmp/real-wsi-integration.log
+      - name: Real WSI 3x GPU bridge integration (+3 image headroom)
+        id: integration3
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          GFG_NATIVE_FG=1 GFG_NATIVE_GPU_BRIDGE=1 GFG_NATIVE_FORCE_FIFO=1 \
+            GFG_NATIVE_ASYNC=1 GFG_NATIVE_MODE=3 GFG_NATIVE_REAL_WSI_PROBE=1 \
+            GFG_NATIVE_ALGO=tiles GFG_TEST_EXPECT_GPU=1 GFG_TEST_FRAMES=24 \
+            VK_INSTANCE_LAYERS=VK_LAYER_GFG_native \
+            VK_LAYER_PATH="$PWD/engine/gfg-native/build-real-wsi:/usr/share/vulkan/explicit_layer.d" \
+            VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
+            xvfb-run -a -s '-screen 0 1280x800x24' \
+              engine/gfg-native/build-real-wsi/wsi-gpu-smoke > /tmp/real-wsi-integration-3x.log 2>&1 || {
+                cat /tmp/real-wsi-integration-3x.log
+                exit 1
+              }
+          grep 'GSF_REAL_WSI_GATE gpu_requested=1 gpu_capable=1' /tmp/real-wsi-integration-3x.log
+          grep 'GSF_REAL_WSI_GPU_BRIDGE_CREATE active=1' /tmp/real-wsi-integration-3x.log
+          grep 'spare=3' /tmp/real-wsi-integration-3x.log
+          grep 'real frames GPU bridge WSI smoke PASS' /tmp/real-wsi-integration-3x.log
       - name: Package child-process-only Deck launcher and actual GPU bridge
         run: |
           set -euo pipefail
@@ -85,6 +105,11 @@ jobs:
           else
             echo "GSF_DIRECT_REAL_WSI_CI_SOFTWARE=FAIL_UNVERIFIED" > "$kit/CI_STATUS.txt"
           fi
+          if [[ "${{ steps.integration3.outcome }}" == success ]]; then
+            echo "GSF_DIRECT_REAL_WSI_3X_SOFTWARE=PASS" >> "$kit/CI_STATUS.txt"
+          else
+            echo "GSF_DIRECT_REAL_WSI_3X_SOFTWARE=FAIL_UNVERIFIED" >> "$kit/CI_STATUS.txt"
+          fi
           echo "OLED_SCANOUT=UNVERIFIED" >> "$kit/CI_STATUS.txt"
       - name: Upload standalone full GFG real WSI game kit
         uses: actions/upload-artifact@v4
@@ -100,5 +125,11 @@ jobs:
             echo 'GSF_DIRECT_REAL_WSI_CI_SOFTWARE=FAIL_UNVERIFIED' >> "$GITHUB_STEP_SUMMARY"
           else
             echo 'GSF_DIRECT_REAL_WSI_CI_SOFTWARE=PASS (lavapipe/Xvfb only)' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ "${{ steps.integration3.outcome }}" != success ]]; then
+            echo "::warning::Direct real WSI 3x software integration FAILED; 3x is not hardware qualified."
+            echo 'GSF_DIRECT_REAL_WSI_3X_SOFTWARE=FAIL_UNVERIFIED' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'GSF_DIRECT_REAL_WSI_3X_SOFTWARE=PASS (lavapipe/Xvfb only)' >> "$GITHUB_STEP_SUMMARY"
           fi
           echo 'GSF_DIRECT_REAL_WSI_OLED_SCANOUT=UNVERIFIED' >> "$GITHUB_STEP_SUMMARY"
