@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Native output-owner proof at O2 with warnings as errors
         run: make -C engine/gfg-native output-owner
-      - name: Undefined behavior and address sanitizer contract tests
+      - name: Undefined behavior sanitizer contract tests
         run: |
           cc -std=c11 -g -O1 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
             engine/gfg-native/tests/output_owner.c -o /tmp/gfg-output-owner-ubsan
@@ -29,9 +29,7 @@ jobs:
       - name: Compile and run PRIVATE one-surface Vulkan WSI smoke (lavapipe)
         run: |
           make -C engine/gfg-native build/owned-wsi-smoke
-          VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \\
-            xvfb-run -a -s '-screen 0 1024x768x24' \\
-            engine/gfg-native/build/owned-wsi-smoke
+          VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke
       - name: Report qualification boundary
         run: |
           echo 'Transport-neutral scheduler validated.'
