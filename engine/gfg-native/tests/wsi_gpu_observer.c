@@ -388,6 +388,21 @@ int main(void) {
     uint32_t app_image_count=GFG_VIRTUAL_MAX_IMAGES;
     TRY(gfg_vwsi_get_images(virtual_wsi,app_swapchain,&app_image_count,app_handles));
     REQUIRE(app_image_count==source_probe.app_image_count);
+#ifdef GFG_NATIVE_TEST_LAYER_PROXY_REAL
+    if(real_layer_proxy) {
+        PFN_vkGetSwapchainImagesKHR layer_get=(PFN_vkGetSwapchainImagesKHR)
+            native_gdpa(device,"vkGetSwapchainImagesKHR");
+        REQUIRE(layer_get);
+        uint32_t via_layer_count=0;
+        TRY(layer_get(device,app_swapchain,&via_layer_count,NULL));
+        REQUIRE(via_layer_count==app_image_count);
+        VkImage via_layer[GFG_VIRTUAL_MAX_IMAGES]={0};
+        TRY(layer_get(device,app_swapchain,&via_layer_count,via_layer));
+        REQUIRE(via_layer_count==app_image_count);
+        for(uint32_t i=0;i<via_layer_count;++i)
+            REQUIRE(via_layer[i]==app_handles[i]);
+    }
+#endif
     uint32_t source_submissions=0,game_images_released=0;
 #endif
 
