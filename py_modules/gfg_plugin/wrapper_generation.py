@@ -1107,6 +1107,10 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         '    export DISABLE_GFG_NATIVE_FG=1',
         '    export DISABLE_MAKO=1',
         '    unset DISABLE_LSFGVK',
+        '    unset LSFGVK_DLL_PATH',
+        '    case "${gfg_lsfg_vk_2_explicit_dll##*/}" in',
+        '      Lossless.dll|LosslessScaling.dll) gfg_lsfg_vk_2_explicit_dll="${gfg_lsfg_vk_2_explicit_dll%/*}/lsfg-vk.dll" ;;',
+        '    esac',
         '    gfg_lsfg_manifest_dir=""',
         '    for gfg_lsfg_dir in "${XDG_DATA_HOME:-$HOME/.local/share}/vulkan/implicit_layer.d" '
         '"$HOME/.local/share/vulkan/implicit_layer.d" '
