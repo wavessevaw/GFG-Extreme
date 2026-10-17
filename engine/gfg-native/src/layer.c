@@ -1187,9 +1187,33 @@ native_CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *ci,
             /* NEVER leak virtual handle to downstream oldSwapchain WSI. */
             if(old_is_virtual)return VK_ERROR_OUT_OF_DATE_KHR;
         }
-        if (d->test_proxy_signal && d->test_proxy_copy &&
-            gfg_offscreen_dispatch_complete(&d->test_proxy_ops) &&
-            !gfg_offscreen_unsupported(ci)) {
+        /* CRITICAL: Gamescope may inject swapchain pNext metadata that
+         * this experimental virtual WSI does not yet implement. Never
+         * silently fall through to ordinary real WSI and falsely report
+         * inserted frames when the user explicitly requests live output. */
+        const int owner_live=native_env_is_1("GFG_NATIVE_TEST_LOADER_LIVE_OUTPUT");
+        const char *unsupported=gfg_offscreen_unsupported(ci);
+        const int have_callbacks=d->test_proxy_signal && d->test_proxy_copy;
+        const int have_dispatch=gfg_offscreen_dispatch_complete(&d->test_proxy_ops);
+        if(owner_live &&
+           (unsupported || !have_callbacks || !have_dispatch ||
+            native_env_is_1("GFG_NATIVE_TEST_FORCE_PROXY_REJECT"))) {
+            const VkBaseInStructure *next=(const VkBaseInStructure *)ci->pNext;
+            fprintf(stderr,
+                "GSF_LOADER_OWNER_REJECT reason=%s callbacks=%d dispatch=%d"
+                " pnext_type=%d flags=0x%x format=%d colorspace=%d"
+                " image_usage=0x%x present_mode=%d min_images=%u"
+                " fail_closed=1 real_wsi_fallback=0\n",
+                unsupported?unsupported:
+                (!have_callbacks?"missing-acquire-copy-callback":
+                 (!have_dispatch?"missing-gpu-dispatch":"injected-regression")),
+                have_callbacks,have_dispatch,next?(int)next->sType:-1,
+                (unsigned)ci->flags,(int)ci->imageFormat,
+                (int)ci->imageColorSpace,(unsigned)ci->imageUsage,
+                (int)ci->presentMode,ci->minImageCount);
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+        if (have_callbacks && have_dispatch && !unsupported) {
             gfg_output_proxy *proxy=calloc(1,sizeof(*proxy));
             native_swapchain *entry=calloc(1,sizeof(*entry));
             const int live=native_env_is_1("GFG_NATIVE_TEST_LOADER_LIVE_OUTPUT");
