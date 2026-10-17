@@ -32,6 +32,58 @@ $(BUILD)/frame-clock: tests/frame_clock.c src/frame_clock.h
 frame-clock: $(BUILD)/frame-clock
 	$(BUILD)/frame-clock
 .PHONY: frame-clock
+
+# Convert game swapchain PRESENT layout requests without touching the
+# true compositor swapchain, including Vulkan sync2 and renderpasses.
+$(BUILD)/virtual-layouts: tests/virtual_layouts.c src/virtual_layouts.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I$(VULKAN_HEADERS) -o $@ tests/virtual_layouts.c
+
+virtual-layouts: $(BUILD)/virtual-layouts
+	$(BUILD)/virtual-layouts
+.PHONY: virtual-layouts
+
+# The actual native layer's GIPA/GDPA interception routes controlled
+# virtual GetSwapchainImages/Acquire/Present (not direct facade calls).
+# Built only with the explicit TEST macro; production layer unaffected.
+$(BUILD)/output-layer-dispatch: tests/output_layer_dispatch.c src/layer.c src/virtual_wsi_facade.h src/virtual_source.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Wno-unused-function -pthread -I$(VULKAN_HEADERS) -o $@ tests/output_layer_dispatch.c
+
+output-layer-dispatch: $(BUILD)/output-layer-dispatch
+	$(BUILD)/output-layer-dispatch
+.PHONY: output-layer-dispatch
+
+# WSI-shaped virtual app source. No loader interception or real Deck install.
+$(BUILD)/virtual-wsi-facade: tests/virtual_wsi_facade.c src/virtual_wsi_facade.h src/virtual_source.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -pthread -I$(VULKAN_HEADERS) -o $@ tests/virtual_wsi_facade.c
+
+virtual-wsi-facade: $(BUILD)/virtual-wsi-facade
+	$(BUILD)/virtual-wsi-facade
+.PHONY: virtual-wsi-facade
+
+# Virtual app swapchain source ownership (FREE -> ACQUIRED -> COPYING -> FREE)
+# is a hard precondition to returning an application image after snapshotting.
+$(BUILD)/virtual-source: tests/virtual_source.c src/virtual_source.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/virtual_source.c
+
+virtual-source: $(BUILD)/virtual-source
+	$(BUILD)/virtual-source
+.PHONY: virtual-source
+
+# Transport-neutral proof that an exclusively owned output surface can
+# schedule one real/interpolated stream without dropping real frames.
+# This is NOT a Steam Deck scanout or Vulkan swapchain test.
+$(BUILD)/output-owner: tests/output_owner.c src/output_owner.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/output_owner.c
+
+output-owner: $(BUILD)/output-owner
+	$(BUILD)/output-owner
+.PHONY: output-owner
+
 layer: $(BUILD)/libVkLayer_gfg_native.so $(BUILD)/VkLayer_gfg_native.json
 
 $(BUILD)/libVkLayer_gfg_native.so: $(NATIVE_SOURCES) $(NATIVE_HEADERS) $(NATIVE_DEPS)
@@ -135,6 +187,18 @@ wsi-smoke-te:
 	GFG_NATIVE_FG=1 GFG_NATIVE_CPU_BRIDGE=1 GFG_NATIVE_BUDGET_MS=5000 GFG_NATIVE_MAX_FRAME_MS=10000 GFG_NATIVE_ALGO=tiles GFG_NATIVE_LMC_TIER=2 GFG_LMC_ORPHAN_CAP=0 GFG_NATIVE_TRACE=1 \
 	VK_INSTANCE_LAYERS=VK_LAYER_GFG_native VK_LAYER_PATH="$(abspath build-cpu)" \
 	build-cpu/wsi-smoke
+
+# Test-only one-surface Vulkan WSI path: input frames are not independently
+# sent to WSI. Real + synthetic tickets go to one final output queue.
+# Validates transport in lavapipe, NOT physical OLED scanout.
+$(BUILD)/owned-wsi-smoke: tests/wsi_gpu_observer.c src/output_owner.h src/virtual_source.h tests/owned_source_transport.h src/virtual_layouts.h src/virtual_wsi_facade.h
+	@test -f $(VULKAN_HEADERS)/vulkan/vulkan_xcb.h || { echo "Vulkan XCB headers required"; exit 1; }
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -pthread -DGFG_NATIVE_TEST_SMALL -DGFG_NATIVE_TEST_ASYNC -DGFG_NATIVE_TEST_OWNED_WSI -DVK_USE_PLATFORM_XCB_KHR -I$(VULKAN_HEADERS) -o $@ $< -lvulkan -lxcb -ldl
+
+owned-wsi-smoke: $(BUILD)/owned-wsi-smoke
+	$(BUILD)/owned-wsi-smoke
+.PHONY: owned-wsi-smoke
 
 $(BUILD)/wsi-gpu-smoke: tests/wsi_gpu_smoke.c
 	@test -f $(VULKAN_HEADERS)/vulkan/vulkan_xcb.h || { echo "Vulkan XCB headers required"; exit 1; }

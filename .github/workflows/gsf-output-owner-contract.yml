@@ -1,0 +1,104 @@
+name: GSF Output Owner Contract (experimental)
+on:
+  push:
+    branches:
+      - experiment/gsf-output-owner-contract-20261017
+  pull_request:
+    branches:
+      - fix/gsf-borrowed-physical-dispatch-20261017
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  output-owner:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native output-owner proof at O2 with warnings as errors
+        run: make -C engine/gfg-native output-owner
+      - name: Virtual source image ownership under O2 and warnings-as-errors
+        run: make -C engine/gfg-native virtual-source
+      - name: Virtual source state machine undefined behavior sanitizer
+        run: |
+          cc -std=c11 -g -O1 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+            engine/gfg-native/tests/virtual_source.c -o /tmp/gfg-virtual-source-ubsan
+          /tmp/gfg-virtual-source-ubsan
+      - name: Undefined behavior sanitizer contract tests
+        run: |
+          cc -std=c11 -g -O1 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+            engine/gfg-native/tests/output_owner.c -o /tmp/gfg-output-owner-ubsan
+          /tmp/gfg-output-owner-ubsan
+      - name: Install software Vulkan WSI test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libvulkan-dev libxcb1-dev mesa-vulkan-drivers vulkan-validationlayers xvfb
+      - name: Validate virtual game PRESENT layout rewrites and isolation
+        run: make -C engine/gfg-native virtual-layouts
+      - name: Virtual layout rewrite undefined behavior sanitizer
+        run: |
+          cc -std=c11 -g -O1 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
+            engine/gfg-native/tests/virtual_layouts.c -o /tmp/gfg-virtual-layouts-ubsan
+          /tmp/gfg-virtual-layouts-ubsan
+      - name: Fetch up-to-date Vulkan-Headers for native layer ABI
+        run: git clone -q --depth 1 --branch v1.4.365 https://github.com/KhronosGroup/Vulkan-Headers "$RUNNER_TEMP/vkh"
+      - name: Controlled actual Vulkan Layer GIPA and GDPA output-owner dispatch
+        run: make -C engine/gfg-native VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" output-layer-dispatch
+      - name: Source versus output layer dispatch UBSan
+        run: |
+          cc -std=c11 -g -O1 -Wall -Wextra -Wno-unused-function -pthread -I"$RUNNER_TEMP/vkh/include" -fsanitize=undefined -fno-sanitize-recover=all \
+            engine/gfg-native/tests/output_layer_dispatch.c -o /tmp/gfg-output-layer-ubsan
+          /tmp/gfg-output-layer-ubsan
+      - name: Virtual Vulkan WSI acquire, get-images, present and retire contract
+        run: make -C engine/gfg-native virtual-wsi-facade
+      - name: WSI facade undefined behavior sanitizer
+        run: |
+          cc -std=c11 -g -O1 -Wall -Wextra -Werror -pthread -fsanitize=undefined -fno-sanitize-recover=all \
+            engine/gfg-native/tests/virtual_wsi_facade.c -o /tmp/gfg-virtual-wsi-ubsan
+          /tmp/gfg-virtual-wsi-ubsan
+      - name: Compile and run PRIVATE one-surface Vulkan WSI smoke (lavapipe)
+        run: |
+          make -C engine/gfg-native build/owned-wsi-smoke
+          GFG_NATIVE_TEST_FRAMES=10 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke
+      - name: Verify ACTUAL X11 displayed pixel sequence after Vulkan WSI handoff
+        run: |
+          set -euo pipefail
+          log="$(mktemp)"
+          GFG_OWNER_TEST_X11_SCANOUT=1 GFG_NATIVE_TEST_FRAMES=10 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke > "$log" 2>&1 || { cat "$log"; exit 1; }
+          grep 'GSF X11 compositor visible ordered frames=19 real=10 intermediate=9 PASS' "$log"
+          grep 'GSF X11 visibility after WSI:' "$log"
+          echo 'X11 display server pixel sequence (not physical OLED) PASS'
+      - name: GPU snapshot WSI with 836ms loading gap, 27Hz source, 90Hz output and GPU drops
+        run: |
+          GFG_NATIVE_TEST_FRAMES=12 GFG_OWNER_TEST_OUTPUT_HZ=90 GFG_OWNER_TEST_SOURCE_HZ=27 GFG_OWNER_TEST_GAP_AT=7 GFG_OWNER_TEST_GPU_DROP_EVERY=3 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke
+      - name: WSI real-only priority when 60Hz source competes for 90Hz slots
+        run: |
+          GFG_NATIVE_TEST_FRAMES=10 GFG_OWNER_TEST_OUTPUT_HZ=90 GFG_OWNER_TEST_SOURCE_HZ=60 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke
+      - name: Reuse one game image while retaining two separate GSF history images
+        run: |
+          set -euo pipefail
+          GFG_NATIVE_TEST_FRAMES=14 GFG_OWNER_TEST_APP_IMAGES=1 GFG_OWNER_TEST_OUTPUT_HZ=60 GFG_OWNER_TEST_SOURCE_HZ=30 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke
+      - name: Sustained virtual game WSI output 120 real frames with source reuse, pause and CPU/GPU synchronization
+        run: |
+          set -euo pipefail
+          log="$(mktemp)"
+          GFG_NATIVE_TEST_FRAMES=120 GFG_OWNER_TEST_APP_IMAGES=1 GFG_OWNER_TEST_SOURCE_HZ=30 GFG_OWNER_TEST_OUTPUT_HZ=60 GFG_OWNER_TEST_GAP_AT=61 GFG_OWNER_TEST_GPU_DROP_EVERY=7 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke > "$log" 2>&1
+          grep 'GSF virtual app source buffers=1 history_buffers=2 render_release_count=120 PASS' "$log"
+          grep 'GSF virtual PRESENT layouts old=119 new=120 downstream_present_layout_on_offscreen=0 PASS' "$log"
+          grep 'GSF GPU source snapshots copied and readback verified: real=120' "$log"
+          echo 'Sustained isolated GPU source -> WSI output PASS'
+      - name: Vulkan validation for GPU-copy and real-only WSI transport
+        run: |
+          set -euo pipefail
+          test -f /usr/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json
+          log="$(mktemp)"
+          GFG_NATIVE_TEST_FRAMES=8 VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke 2>&1 | tee "$log"
+          if grep -E 'Validation Error|VUID-|UNASSIGNED-.*ERROR' "$log"; then
+            echo 'GPU owned-output Vulkan validation FAILED'
+            exit 1
+          fi
+          echo 'Owned-output Vulkan validation CLEAN'
+      - name: Report qualification boundary
+        run: |
+          echo 'Transport-neutral scheduler validated.'
+          echo 'Private WSI output, GPU image ownership and actual OLED scanout remain UNVERIFIED.'
