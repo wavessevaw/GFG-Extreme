@@ -158,6 +158,24 @@ jobs:
             cat "$log"; exit 1
           fi
           echo 'Real Vulkan driver + actual native layer WSI dispatch PASS; NOT loader-installed/live game/OLED'
+      - name: Async GPU capture retirement through real driver native-layer dispatch and visible X11 output
+        run: |
+          set -euo pipefail
+          log="$(mktemp)"
+          GFG_OWNER_TEST_LAYER_PROXY_REAL_DEVICE=1 GFG_OWNER_TEST_ASYNC_RETIRE=1 \
+            GFG_OWNER_TEST_X11_SCANOUT=1 GFG_NATIVE_TEST_FRAMES=10 \
+            VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation \
+            VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
+            xvfb-run -a -s '-screen 0 1024x768x24' \
+            engine/gfg-native/build/owned-wsi-real-layer > "$log" 2>&1 || { cat "$log"; exit 1; }
+          grep 'GSF async capture worker GPU fence waits=10 presents=10 app_thread_gpu_waits=0 PASS' "$log"
+          grep 'GSF X11 compositor visible ordered frames=19 real=10 intermediate=9 PASS' "$log"
+          grep 'GSF PROXY real-driver native layer Create/GetImages/Acquire/Present/Destroy PASS' "$log"
+          if grep -E 'Validation Error|VUID-|UNASSIGNED-.*ERROR' "$log"; then
+            cat "$log"; exit 1
+          fi
+          echo 'GPU snapshot retirement via worker, no vkWaitForFences inside virtual Present PASS'
+
       - name: GPU snapshot WSI with 836ms loading gap, 27Hz source, 90Hz output and GPU drops
         run: |
           GFG_NATIVE_TEST_FRAMES=12 GFG_OWNER_TEST_OUTPUT_HZ=90 GFG_OWNER_TEST_SOURCE_HZ=27 GFG_OWNER_TEST_GAP_AT=7 GFG_OWNER_TEST_GPU_DROP_EVERY=3 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json xvfb-run -a -s '-screen 0 1024x768x24' engine/gfg-native/build/owned-wsi-smoke
