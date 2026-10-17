@@ -126,7 +126,7 @@ def package(binary: Path, outdir: Path, version: str, build_environment: str | N
     files.update(source_files())
     files["SOURCE/scripts/build_native_steam_abi.sh"] = (ROOT / "scripts/build_native_steam_abi.sh").read_bytes()
     files["SOURCE/scripts/check_hdr_pq.py"] = (ROOT / "scripts/check_hdr_pq.py").read_bytes()
-    for name in ("NATIVE_GSF_IMPLEMENTATION_1_1.md", "STEAM_ABI_BUILD.md", "HARDWARE_ACCEPTANCE_1_1.md", "HDR_PQ_RECONSTRUCTION.md"):
+    for name in ("NATIVE_GSF_IMPLEMENTATION_1_1.md", "STEAM_ABI_BUILD.md", "HARDWARE_ACCEPTANCE_1_1.md", "HDR_PQ_RECONSTRUCTION.md", "DEFERRED_G2.md"):
         files["SOURCE/docs/fg3/"+name]=(ROOT / "docs/fg3" / name).read_bytes()
     manifest = json.loads(files["VkLayer_gfg_native.json"])
     if manifest["layer"]["name"] != "VK_LAYER_GFG_native" or \
@@ -255,7 +255,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--outdir", type=Path, required=True)
-    parser.add_argument("--version", default="0.0.0-fg3-internal.8")
+    parser.add_argument("--version", default="0.0.0-fg3-internal.9")
     parser.add_argument("--build-environment", help="Actual build environment; otherwise inferred from GitHub Actions or marked unattested")
     parser.add_argument("--decky-index", type=Path, help="Also build integrated Decky experiment with this freshly built frontend")
     args = parser.parse_args()

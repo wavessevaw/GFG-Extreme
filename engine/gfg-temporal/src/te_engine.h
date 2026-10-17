@@ -124,9 +124,17 @@ typedef struct {
     int hold;                   /* cost guard: no analysis, outputs copy the new real frame */
     int lmc_tier;               /* LMC cost tier: 0 full, 1 single grid (A from B), 2 also one
                                    propagation sweep (TE_LMC_TIERS) */
+    int defer_second;           /* borrowed GPU GSF x3: queue analysis/G1 now; caller resumes G2 after G1 transport */
 } te_submit;
 
 const char* te_last_error(void);
+/* Completes a deferred G2 submission without a CPU/GPU wait; no-op otherwise.
+ * Poll/stats never resume implicitly. Blocking idle/destroy flush pending work.
+ * Caller must keep the context/source images alive and synchronize its queue. */
+VkResult te_resume_outputs(te_context* ctx);
+/* Retire an unsubmitted G2 with its final signal/fence but no reconstruction.
+ * Statistics/control then expose only G1. Safe for cut/duplicate/deadline drops. */
+VkResult te_cancel_deferred_output(te_context* ctx);
 
 VkResult te_device_create(const te_device_desc* desc, te_device** out);
 void te_device_destroy(te_device* dev);

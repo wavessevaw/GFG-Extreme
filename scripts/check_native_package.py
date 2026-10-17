@@ -148,9 +148,24 @@ def main():
         library.with_suffix('.disabled').rename(library)
     captures = list((home / '.local/state/gfg-native/diagnostics').glob('*/report.md'))
     assert len(captures) == 2
+    observed_modes = set()
     for report in captures:
         assert 'NOT ACCEPTANCE' in report.read_text()
         assert (report.parent / 'pairs.jsonl').stat().st_size > 0
+        pairs = [json.loads(line) for line in (report.parent / 'pairs.jsonl').read_text().splitlines() if line.strip()]
+        pairs = [p for p in pairs if p.get('event') == 'pair']
+        assert pairs, 'no real installed-layer pair telemetry'
+        modes = {p['multiplier'] for p in pairs}
+        assert len(modes) == 1, modes
+        observed_modes.update(modes)
+        if modes == {3}:
+            ordered = [p for p in pairs if p.get('deferred_g2') and p['wsi_accepted_ns'][0] and p.get('g2_submit_return_ns')]
+            assert ordered, 'installed x3 never handed off G1 before submitting G2'
+            assert all(p['g2_submit_return_ns'] >= p['wsi_accepted_ns'][0] for p in ordered)
+        else:
+            assert modes == {2} and not any(p.get('deferred_g2') for p in pairs)
+    assert observed_modes == {2, 3}, observed_modes
+    checks.append('installed-x3-g1-before-g2-submission-and-x2-unchanged')
     assert not list((home / '.local/state/gfg-native/status').glob('*.json'))
     checks.append('two-local-pair-reports-and-retired-status-cleanup')
     run('first-install-rollback', ['bash', component / 'rollback.sh'])

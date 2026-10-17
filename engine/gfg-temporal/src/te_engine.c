@@ -93,6 +93,9 @@ typedef struct {
     uint64_t lmc_seq;          /* LMC: the pair's fit number k (fit_tl 2k + 1, then 2k + 2) */
     double lmc_fit_ms;
     VkResult async_result;    /* the fit worker's second submission result */
+    uint64_t deferred_first;  /* submitted G1 timeline value; error cleanup must not wait an unsent fence */
+    uint64_t deferred_second;
+    int deferred_failed;
 } te_slot;
 
 struct te_device {
@@ -142,6 +145,7 @@ struct te_context {
     VkCommandPool cmdpool;
     te_slot ring[TE_RING];
     uint32_t ring_next;
+    te_slot *deferred_slot;
     VkSemaphore timeline;
     uint64_t frames;           /* real frames submitted */
     uint64_t pairs;            /* pairs with generated output */
@@ -1183,12 +1187,16 @@ void te_context_destroy(te_context* ctx) {
     select_device(ctx->dev);
     te_device* dev = ctx->dev;
     VkDevice d = dev->device;
+    (void)te_resume_outputs(ctx);
     if (ctx->lmc) lmc_drain(ctx);   /* the worker's pending submissions first */
     if (dev->borrowed) {
         /* Only our fences: never stop the application's other queues. */
         for (int i = 0; i < TE_RING; ++i)
-            if (ctx->ring[i].in_flight)
-                vkWaitForFences(d, 1, &ctx->ring[i].fence, VK_TRUE, UINT64_MAX);
+            if (ctx->ring[i].in_flight) {
+                if(ctx->ring[i].deferred_failed)
+                    (void)te_timeline_wait(ctx,ctx->ring[i].deferred_first,UINT64_MAX);
+                else vkWaitForFences(d, 1, &ctx->ring[i].fence, VK_TRUE, UINT64_MAX);
+            }
     } else {
         pthread_mutex_lock(&dev->queue_lock);
         vkDeviceWaitIdle(d);
@@ -1437,15 +1445,44 @@ static void collect(te_context* ctx, te_slot* slot) {
     slot->generated = 0;
 }
 
+static VkResult finish_deferred_output(te_context* ctx,int produce) {
+    if(!ctx)return VK_ERROR_INITIALIZATION_FAILED;
+    te_slot *slot=ctx->deferred_slot;
+    if(!slot)return VK_SUCCESS;
+    select_device(ctx->dev);
+    ctx->deferred_slot=NULL;
+    VkTimelineSemaphoreSubmitInfo timeline={.sType=VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+        .signalSemaphoreValueCount=1,.pSignalSemaphoreValues=&slot->deferred_second};
+    VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.pNext=&timeline,
+        .commandBufferCount=produce?1u:0u,.pCommandBuffers=produce?&slot->out[1]:NULL,
+        .signalSemaphoreCount=1,.pSignalSemaphores=&ctx->timeline};
+    if(!produce){slot->outputs=1;ctx->output_ready[1]=0;}
+    VkResult result=queue_submit(ctx->dev,1,&submit,slot->fence);
+    if(result!=VK_SUCCESS) {
+        /* No fence was submitted for G2. Cleanup waits only the known G1
+         * signal, not the impossible final signal/fence. */
+        slot->deferred_failed=1;slot->async_result=result;
+        return fail(result,"deferred G2 submission failed (%d)",result);
+    }
+    return VK_SUCCESS;
+}
+VkResult te_resume_outputs(te_context* ctx) { return finish_deferred_output(ctx,1); }
+VkResult te_cancel_deferred_output(te_context* ctx) { return finish_deferred_output(ctx,0); }
+
 static VkResult wait_slot(te_context* ctx, te_slot* slot, int nonblocking) {
     select_device(ctx->dev);
     if (!slot->in_flight) return VK_SUCCESS;
+    if(ctx->deferred_slot==slot) {
+        if(nonblocking)return VK_NOT_READY;
+        (void)te_resume_outputs(ctx);
+    }
     if (ctx->lmc && lmc_slot_pending(ctx, slot)) {   /* the fence is the worker's until it submits */
         if (nonblocking) return VK_NOT_READY;
         lmc_drain(ctx);
     }
     VkDevice d = ctx->dev->device;
-    VkResult r = nonblocking ? vkGetFenceStatus(d, slot->fence) : vkWaitForFences(d, 1, &slot->fence, VK_TRUE, UINT64_MAX);
+    VkResult r=slot->deferred_failed?te_timeline_wait(ctx,slot->deferred_first,nonblocking?0:UINT64_MAX):
+        nonblocking?vkGetFenceStatus(d,slot->fence):vkWaitForFences(d,1,&slot->fence,VK_TRUE,UINT64_MAX);
     if (r == VK_NOT_READY || r == VK_TIMEOUT) return VK_NOT_READY;
     if (r != VK_SUCCESS) return fail(r, "fence wait failed (%d)", r);
     if (slot->async_result != VK_SUCCESS) {
@@ -1453,7 +1490,7 @@ static VkResult wait_slot(te_context* ctx, te_slot* slot, int nonblocking) {
         slot->generated = 0;
         slot->in_flight = 0;
         vkResetFences(d, 1, &slot->fence);
-        return fail(failed, "LMC output submission failed (%d)", failed);
+        return fail(failed, "output submission failed (%d)", failed);
     }
     collect(ctx, slot);
     vkResetFences(d, 1, &slot->fence);
@@ -1488,11 +1525,16 @@ VkResult te_submit_frame(te_context* ctx, const te_submit* s) {
     if (repeat && !s->discontinuity)
         return fail(VK_ERROR_INITIALIZATION_FAILED, "source slots must alternate");
     if (s->count > ctx->desc.outputs) return fail(VK_ERROR_INITIALIZATION_FAILED, "more timestamps than outputs");
+    if(s->defer_second && (!ctx->dev->borrowed || !ctx->timeline || !s->signal_first || s->count!=2 ||
+       !ctx->lmc || !ctx->lmc->shared_flow))
+        return fail(VK_ERROR_FEATURE_NOT_PRESENT,"deferred G2 requires borrowed timeline GSF with two outputs");
     for (uint32_t i = 0; i < s->count; ++i) {
         float t = s->timestamps[i];
         if (!(t > 0.0f && t < 1.0f) || (i && !(t > s->timestamps[i - 1])))
             return fail(VK_ERROR_INITIALIZATION_FAILED, "timestamps must increase strictly inside (0, 1)");
     }
+    VkResult previous=te_resume_outputs(ctx);
+    if(previous!=VK_SUCCESS)return previous;
     /* LMC: the previous pair's second half is submitted (by the fit worker) before anything else */
     if (ctx->lmc) {
         if (s->nonblocking) {
@@ -1510,6 +1552,7 @@ VkResult te_submit_frame(te_context* ctx, const te_submit* s) {
     if (r != VK_SUCCESS) return r;
     slot->lmc_fit_ms = 0.0;
     slot->async_result = VK_SUCCESS;
+    slot->deferred_failed=0;slot->deferred_first=slot->deferred_second=0;
     VkCommandBufferBeginInfo bi = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
                                    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     vkResetCommandBuffer(slot->analysis, 0);
@@ -1588,8 +1631,12 @@ VkResult te_submit_frame(te_context* ctx, const te_submit* s) {
         if (sr != VK_SUCCESS) return fail(sr, "vkQueueSubmit(analysis) failed (%d)", sr);
         lmc_fit_enqueue(ctx, slot);
     } else {
-        sr = queue_submit(ctx->dev, n, si, slot->fence);
+        sr = queue_submit(ctx->dev,s->defer_second?2:n,si,s->defer_second?VK_NULL_HANDLE:slot->fence);
         if (sr != VK_SUCCESS) return fail(sr, "vkQueueSubmit failed (%d)", sr);
+        if(s->defer_second) {
+            slot->deferred_first=s->signal_first;slot->deferred_second=s->signal_first+1;
+            ctx->deferred_slot=slot;
+        }
     }
     for(uint32_t i=0;i<TE_MAX_OUTPUTS;++i)ctx->output_ready[i]=i<outs?s->signal_first+i:0;
     slot->in_flight = 1;
@@ -1625,6 +1672,10 @@ int te_context_idle(te_context* ctx, uint64_t timeout_ns) {
     VkDevice d = ctx->dev->device;
     struct timespec started;
     clock_gettime(CLOCK_MONOTONIC, &started);
+    if(ctx->deferred_slot) {
+        if(!timeout_ns)return 0;
+        (void)te_resume_outputs(ctx);
+    }
     for (uint32_t k = 0; k < TE_RING; ++k) {
         te_slot* slot = &ctx->ring[(ctx->ring_next + k) % TE_RING];
         if (!slot->in_flight) continue;
@@ -1644,7 +1695,8 @@ int te_context_idle(te_context* ctx, uint64_t timeout_ns) {
                 + (uint64_t)(now.tv_nsec - started.tv_nsec);
             remaining = elapsed < timeout_ns ? timeout_ns - elapsed : 0;
         }
-        VkResult r = vkWaitForFences(d, 1, &slot->fence, VK_TRUE, remaining);
+        VkResult r=slot->deferred_failed?te_timeline_wait(ctx,slot->deferred_first,remaining):
+            vkWaitForFences(d,1,&slot->fence,VK_TRUE,remaining);
         if (r != VK_SUCCESS) return 0;
         if (wait_slot(ctx, slot, 0) != VK_SUCCESS) return 0;
     }

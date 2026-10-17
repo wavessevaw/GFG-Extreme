@@ -1,4 +1,4 @@
-# Active checkpoint: current 2.1.5 base, native launch recovery and experimental x3
+# Active checkpoint: 2.1.5-gsf.9, launch recovery, HDR PQ and deferred G2
 
 The latest owner request is autonomous repair after every game exits, including
 `/home/deck/.local/bin/gfg-native --off %command%`. They are asleep and have
@@ -10,7 +10,7 @@ Do not restart architecture comparisons or promote software checks to OLED proof
 Working checkout: /workspace/GFG-Extreme-integration, codex/fg3-integration.
 PR133 head branch: claude/native-gpu-bridge. Both receive fast-forward pushes;
 never push main, force-push, create worktrees or spawn agents for this task.
-Upstream main 516b734 (2.1.5) was merged, retaining Governor quality/loading
+Upstream main 25ca625 (2.1.5, including PR140/141) was merged, retaining Governor quality/loading
 fixes. internal.6 used the stale 2.1.2-te.8 base and is WITHDRAWN.
 
 Fixed in source: consumed loader LINK_INFO on CreateDevice fallback; automatic
@@ -21,8 +21,8 @@ activation without optional helpers; launch surviving unavailable status or
 diagnostic storage; option-aware passthrough after uninstall/initial rollback.
 The exact cause of the owner's Deck exits is still unproven without device access.
 
-The experimental integrated archive is named GFG-Extreme-2.1.5-gsf.7.zip; the
-component remains 0.0.0-fg3-internal.7. See COORDINATION.md and artifacts/
+The experimental integrated archive is named GFG-Extreme-2.1.5-gsf.9.zip; the
+component is 0.0.0-fg3-internal.9. See COORDINATION.md and artifacts/
 for the final source identity/hashes, and the launch-recovery evidence. Use
 scripts/check_native_package.py to test the actual extracted backend and
 production ELF; it covers startup Off, x2/x3, read-only Vulkan12 features,
@@ -39,8 +39,10 @@ loads under actual glibc2.31. No libc is shipped. Keep exact-source rebuild proo
 Hardware blocker: no /dev/dri or authenticated Deck endpoint. Uploaded device
 ZIPs contain report.json/artifacts.json, not a connection. Physical 30→90,
 SteamOS/Gamescope, game contention, quality, latency/power and stability remain
-NOT TESTED. Known barriers include G1 copy queued after G2 compute, the missed
-renderer cut, and HDR PQ interpolation not linearized. The user request remains
+NOT TESTED. Implemented since internal.7: cached linear-nit HDR PQ reconstruction and G1
+transport before deferred G2 submission, with duplicate/cut/deadline cancellation.
+Read HDR_PQ_RECONSTRUCTION.md and DEFERRED_G2.md. Known barriers include the
+missed renderer cut and unmeasured real-game queue contention/HDR cost. The user request remains
 open; an experimental archive and passing CI are not completion criteria.
 Recovery when a Steam prefix itself fails: remove all of GFG from launch options
 (empty field or %command%). --off still requires an existing executable launcher.

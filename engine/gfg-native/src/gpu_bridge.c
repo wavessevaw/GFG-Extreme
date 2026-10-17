@@ -115,6 +115,7 @@ struct gfg_gpu_fg {
     int hdr10;
     VkColorSpaceKHR color_space;
     int linear_pq;
+    int shared_flow;
     enum { OUT_COPY, OUT_BLIT, OUT_BLIT_COPY } out_mode;
     VkImage scratch;             /* OUT_BLIT_COPY: B8G8R8A8_UNORM swizzle target */
     VkDeviceMemory scratch_memory;
@@ -951,6 +952,7 @@ gfg_gpu_fg *gfg_gpu_fg_create(const gfg_gpu_fg_create_info *info) {
     cd.params.algorithm=algorithm && !strcmp(algorithm,"lmc-gpu")?TE_ALGO_LMC_GPU:
         algorithm && !strcmp(algorithm,"lmc")?TE_ALGO_LMC:
         algorithm && !strcmp(algorithm,"gsf")?TE_ALGO_SHARED_FLOW:TE_ALGO_TILES;
+    fg->shared_flow=cd.params.algorithm==TE_ALGO_SHARED_FLOW;
     fg->multiplier=3;
     const char *multiplier=getenv("GFG_NATIVE_MODE");
     if(multiplier && !strcmp(multiplier,"2"))fg->multiplier=2;
@@ -1548,6 +1550,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     }
     fg->output_deadline_us = t0 + (double)gfg_gpu_fg_source_period_ns(fg)/1000.0;
     unsigned dispatched_outputs=0,dispatched_mask=0;
+    unsigned deferred_g2=0;uint64_t g2_submit_return_ns=0;
     double next_us = 0.0;
     STAT_ADD(real_presents, 1);
     const uint64_t frame = fg->frame++;
@@ -1668,6 +1671,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     s.nonblocking = 1;
     s.discontinuity = fg->te_frames > 0 && fg->te_gap;
     s.lmc_tier = fg->lmc_tier;
+    s.defer_second=generate && s.count==2 && fg->same_device && fg->shared_flow;
     tp = now_us();
     VkResult tr = inject_te_busy ? VK_NOT_READY : te_submit_frame(fg->context, &s);
     fg->phase_us[1] += now_us() - tp;
@@ -1675,6 +1679,7 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
     int presented = 0;
     drop_reason = have_pair && !compute_mask?DROP_RATE:DROP_HISTORY;
     if (tr == VK_SUCCESS) {
+        deferred_g2=(unsigned)s.defer_second;
         dispatched_outputs=s.count;dispatched_mask=generate?compute_mask:0;
         fg->last_te_value = v + 2;
         fg->te_slot ^= 1u;
@@ -1684,12 +1689,41 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
         if (!s.count) ++fg->history_only_submits;
         if (generate) {
             unsigned generated_index=0;
+            unsigned canceled_second=DROP_COUNT;
             for (unsigned k = 0; k < fg->multiplier-1; ++k) {
                 fg->deadline_drop=0;
+                if(k==1 && canceled_second<DROP_COUNT) {
+                    fg->slot_drop[k]=(int)canceled_second;
+                    fg->slot_detail[k]=canceled_second==DROP_CUT?"G2-not-dispatched-cut":
+                        canceled_second==DROP_DUPLICATE?"G2-not-dispatched-duplicate":
+                        canceled_second==DROP_DEADLINE?"G2-not-dispatched-deadline":"G2-not-dispatched-error";
+                    skip_outputs(fg,canceled_second,1);continue;
+                }
                 if(fg->clock.period_ns && !(fg->clock.mask&(1u<<k))) {
                     fg->slot_detail[k]="display-refresh-budget";fg->slot_drop[k]=DROP_RATE;skip_outputs(fg,DROP_RATE,1);continue;
                 }
                 int g = present_synthetic(fg, rs, (int)k, (int)generated_index++, v+2-s.count, idx, next, ids, app_chain.dynamic_mode, &next_us);
+                VkResult resumed=VK_SUCCESS;
+                if(s.defer_second && k==0) {
+                    /* QueuePresent itself may append a driver synchronization
+                     * submit. Resume G2 AFTER that call, not merely after the
+                     * G1 copy, so lower WSI cannot put G1 behind G2 again. A
+                     * skipped G1 still releases G2 to its own later deadline. */
+                    const uint64_t now=(uint64_t)(now_us()*1000.0);
+                    const uint64_t target=gfg_frame_clock_target(&fg->clock,1)-
+                        (fg->display_timing==2?fg->clock.period_ns/4:0);
+                    canceled_second=g<0?DROP_ERROR:fg->cut_drop?DROP_CUT:fg->duplicate_drop?DROP_DUPLICATE:
+                        fg->clock.period_ns && now>=target?DROP_DEADLINE:DROP_COUNT;
+                    resumed=canceled_second<DROP_COUNT?te_cancel_deferred_output(fg->context):te_resume_outputs(fg->context);
+                    if(canceled_second<DROP_COUNT){dispatched_outputs=1;dispatched_mask=1;}
+                    if(resumed==VK_SUCCESS) {
+                        if(canceled_second==DROP_COUNT)g2_submit_return_ns=(uint64_t)(now_us()*1000.0);
+                    } else {
+                        fg->disabled=1;STAT_ADD(errors,1);
+                        dispatched_outputs=1;dispatched_mask=1;
+                        fail_log(fg,"deferred G2 submit",resumed);
+                    }
+                }
                 if (g <= 0) {
                     if (g < 0) STAT_ADD(errors, 1);
                     unsigned reason=g<0?DROP_ERROR:fg->cut_drop?DROP_CUT:fg->duplicate_drop?DROP_DUPLICATE:fg->deadline_drop?DROP_DEADLINE:DROP_ACQUIRE;
@@ -1701,6 +1735,15 @@ VkResult gfg_gpu_fg_present(gfg_gpu_fg *fg, VkQueue queue, const VkPresentInfoKH
                         break;
                     }
                 } else {++presented;fg->slot_drop[k]=-1;fg->slot_detail[k]="WSI-accepted";}
+                if(resumed!=VK_SUCCESS) {
+                    for(++k;k<fg->multiplier-1;++k){fg->slot_drop[k]=DROP_ERROR;skip_outputs(fg,DROP_ERROR,1);}
+                    break;
+                }
+            }
+            /* Defensive flush if a future admission policy bypasses G1. The
+             * normal path already resumed/canceled before reaching this. */
+            if(s.defer_second && te_resume_outputs(fg->context)!=VK_SUCCESS) {
+                fg->disabled=1;STAT_ADD(errors,1);
             }
             if (fg->verify && presented == 2 && frame % fg->verify_every == 0)
                 verify_submit(fg, v, fg->te_slot ^ 1u);
@@ -1743,6 +1786,7 @@ timing:
             "\"source0_id\":%llu,\"source1_id\":%llu,\"source0_ns\":%llu,\"source1_ns\":%llu,"
             "\"admitted_ns\":%llu,\"worker_start_ns\":%llu,\"worker_end_ns\":%llu,\"interval_ns\":%llu,"
             "\"refresh_period_ns\":%llu,\"multiplier\":%u,\"planned_mask\":%u,\"dispatched_outputs\":%u,\"compute_mask\":%u,\"transport_submit_mask\":%u,\"source_discontinuity\":%u,"
+            "\"deferred_g2\":%u,\"g2_submit_return_ns\":%llu,"
             "\"target_ns\":[%llu,%llu,%llu],\"readiness_observed_ns\":[%llu,%llu],"
             "\"wsi_accepted_ns\":[%llu,%llu,%llu],\"wsi_call_ns\":[%llu,%llu,%llu],"
             "\"readiness_wait_ns\":[%llu,%llu],\"google_present_ids\":[%u,%u,%u],\"drop_detail\":[\"%s\",\"%s\"],\"cpu_phase_us\":[%.3f,%.3f,%.3f,%.3f,%.3f],\"te_sequence\":%llu,\"drop_code\":[%d,%d],\"cut\":%d,\"duplicate\":%d,\"physical_displayed\":null,\"visually_unique\":null}\n",
@@ -1751,6 +1795,7 @@ timing:
             (unsigned long long)source0,(unsigned long long)fg->source_ns,
             (unsigned long long)fg->admitted_ns,(unsigned long long)(t0*1000.0),(unsigned long long)(now_us()*1000.0),
             (unsigned long long)fg->clock.interval_ns,(unsigned long long)fg->clock.period_ns,fg->multiplier,fg->clock.mask,dispatched_outputs,dispatched_mask,fg->transport_submit_mask,fg->clock.discontinuity,
+            deferred_g2,(unsigned long long)g2_submit_return_ns,
             (unsigned long long)fg->clock.target_ns[0],(unsigned long long)fg->clock.target_ns[1],(unsigned long long)fg->clock.target_ns[2],
             (unsigned long long)fg->readiness_ns[0],(unsigned long long)fg->readiness_ns[1],
             (unsigned long long)fg->accepted_ns[0],(unsigned long long)fg->accepted_ns[1],(unsigned long long)fg->accepted_ns[2],

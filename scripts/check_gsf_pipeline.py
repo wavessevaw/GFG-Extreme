@@ -26,13 +26,27 @@ def main():
     for f in [native/'libVkLayer_gfg_native.so',core/'libgfg-temporal.a']:
         report[f.name+'_sha256']=hashlib.sha256(f.read_bytes()).hexdigest()
     def run(name,cmd,env,expected=()):
-        result=subprocess.run([str(x) for x in cmd],env=dict(base,**env),capture_output=True,text=True,timeout=180)
+        trace=(a.out/(name+'.jsonl')).resolve()
+        result=subprocess.run([str(x) for x in cmd],env=dict(base,**env,GFG_NATIVE_TELEMETRY=str(trace)),capture_output=True,text=True,timeout=180)
         log=result.stdout+result.stderr
         (a.out/(name+'.log')).write_text('command='+json.dumps([str(x) for x in cmd])+'\n'+log)
         failed_validation=bool(re.search(r'Validation Error|VALIDATION ERROR|VUID-|te validation:',log))
         passed=result.returncode==0 and not failed_validation and all(s in log for s in expected)
+        deferred=[];ordered=[];canceled=[]
+        if trace.exists():
+            pairs=[json.loads(line) for line in trace.read_text().splitlines() if line.strip()]
+            deferred=[p for p in pairs if p.get('event')=='pair' and p.get('deferred_g2')]
+            ordered=[p for p in deferred if p.get('wsi_accepted_ns',[0])[0] and p.get('g2_submit_return_ns')]
+            canceled=[p for p in deferred if p.get('dispatched_outputs')==1 and p.get('compute_mask')==1 and not p.get('g2_submit_return_ns')]
+            passed=passed and all(p['g2_submit_return_ns']>=p['wsi_accepted_ns'][0] for p in ordered)
+        if name.startswith('pixels-order-'):
+            passed=passed and bool(ordered)
+        if name.startswith(('duplicate-order-','cut-order-')):
+            passed=passed and bool(canceled)
+        if name.startswith('x2-pixels-order-'):
+            passed=passed and not deferred
         report['checks'].append(dict(name=name,passed=passed,returncode=result.returncode,
-            validation_error=failed_validation))
+            validation_error=failed_validation,deferred_pairs=len(deferred),g1_before_g2_submit=len(ordered),canceled_g2=len(canceled)))
         (a.out/'acceptance.json').write_text(json.dumps(report,indent=2)+'\n')
         print(name,'PASS' if passed else 'FAIL',flush=True)
     run('core-gsf',[core/'te-tests'],dict(VK_LAYER_PATH=validation,VK_INSTANCE_LAYERS='VK_LAYER_KHRONOS_validation',GFG_TEST_SHARED_FLOW='4'),['183 checks, 0 failures'])
