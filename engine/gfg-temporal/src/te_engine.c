@@ -105,6 +105,8 @@ struct te_device {
     te_set_device_loader_data set_loader_data;
     VkInstance instance;
     VkPhysicalDevice phys;
+    /* Borrowed handles belong to the next-layer dispatcher, not the global Vulkan loader. */
+    PFN_vkGetPhysicalDeviceFormatProperties physical_format_properties;
     VkDevice device;
     VkQueue queue;
     uint32_t qfi;
@@ -362,9 +364,14 @@ static int has_device_ext(VkPhysicalDevice phys, const char* name) {
     return found;
 }
 
-static int format_ok(VkPhysicalDevice phys, VkFormat fmt, VkFormatFeatureFlags need) {
-    VkFormatProperties fp;
-    vkGetPhysicalDeviceFormatProperties(phys, fmt, &fp);
+static int format_ok(const te_device *dev, VkFormat fmt, VkFormatFeatureFlags need) {
+    /* The loader's global physical-device trampoline ABORTS with a borrowed
+     * lower-layer handle under Gamescope. Use the matching layer dispatcher. */
+    PFN_vkGetPhysicalDeviceFormatProperties query = dev->borrowed
+        ? dev->physical_format_properties : vkGetPhysicalDeviceFormatProperties;
+    if (!query) return 0;
+    VkFormatProperties fp = {0};
+    query(dev->phys, fmt, &fp);
     return (fp.optimalTilingFeatures & need) == need;
 }
 
@@ -444,13 +451,13 @@ VkResult te_device_create(const te_device_desc* desc, te_device** out) {
         (subgroup.supportedOperations&VK_SUBGROUP_FEATURE_ARITHMETIC_BIT) && subgroup.subgroupSize>=4;
     const VkFormatFeatureFlags luma_need = VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
                                            VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
-    if (format_ok(dev->phys, VK_FORMAT_R16_SFLOAT, luma_need)) dev->luma_format = VK_FORMAT_R16_SFLOAT;
-    else if (format_ok(dev->phys, VK_FORMAT_R32_SFLOAT, luma_need)) dev->luma_format = VK_FORMAT_R32_SFLOAT;
+    if (format_ok(dev, VK_FORMAT_R16_SFLOAT, luma_need)) dev->luma_format = VK_FORMAT_R16_SFLOAT;
+    else if (format_ok(dev, VK_FORMAT_R32_SFLOAT, luma_need)) dev->luma_format = VK_FORMAT_R32_SFLOAT;
     else {
         te_device_destroy(dev);
         return fail(VK_ERROR_FORMAT_NOT_SUPPORTED, "no filterable storage format for the luma pyramid");
     }
-    if (!format_ok(dev->phys, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT |
+    if (!format_ok(dev, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT |
                    VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)) {
         te_device_destroy(dev);
         return fail(VK_ERROR_FORMAT_NOT_SUPPORTED, "RGBA8 images are not storage/filterable on this device");
@@ -561,6 +568,7 @@ VkResult te_device_borrow(VkInstance instance, PFN_vkGetInstanceProcAddr instanc
     dev->borrowed = 1;
     dev->instance = instance;
     dev->phys = physical;
+    dev->physical_format_properties = formats;
     dev->device = device;
     dev->queue = queue;
     dev->qfi = family;
@@ -974,9 +982,9 @@ static VkResult validate_desc(te_device* dev, const te_context_desc* d) {
                 !d->output_fp16 || (d->source_format != VK_FORMAT_A2B10G10R10_UNORM_PACK32 &&
                 d->source_format != VK_FORMAT_A2R10G10B10_UNORM_PACK32))
             return fail(VK_ERROR_FEATURE_NOT_PRESENT, "HDR requires GPU-only borrowed packed10 input and fp16 output");
-        if (!format_ok(dev->phys, d->source_format, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+        if (!format_ok(dev, d->source_format, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
                 VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT) ||
-                !format_ok(dev->phys, VK_FORMAT_R16G16B16A16_SFLOAT,
+                !format_ok(dev, VK_FORMAT_R16G16B16A16_SFLOAT,
                 VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
                 VK_FORMAT_FEATURE_BLIT_SRC_BIT))
             return fail(VK_ERROR_FORMAT_NOT_SUPPORTED, "GPU lacks native HDR input/output formats");
@@ -984,7 +992,7 @@ static VkResult validate_desc(te_device* dev, const te_context_desc* d) {
             if(dev->props.limits.maxPerStageDescriptorSamplers < 18 ||
                dev->props.limits.maxPerStageDescriptorSampledImages < 18)
                 return fail(VK_ERROR_FEATURE_NOT_PRESENT, "PQ reconstruction requires 18 sampled images");
-            if(!format_ok(dev->phys,VK_FORMAT_R16G16B16A16_SFLOAT,
+            if(!format_ok(dev,VK_FORMAT_R16G16B16A16_SFLOAT,
                VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT|VK_FORMAT_FEATURE_TRANSFER_DST_BIT))
                 return fail(VK_ERROR_FORMAT_NOT_SUPPORTED,"GPU lacks filterable linear HDR cache");
         }
