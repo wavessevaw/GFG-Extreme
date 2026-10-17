@@ -16,6 +16,7 @@
 #include <string.h>
 #include "output_proxy_bootstrap.h"
 #include "async_capture_retire.h"
+#include "output_frame_pacer.h"
 
 typedef struct {
     VkDevice device;
@@ -35,6 +36,7 @@ typedef struct {
     VkFence output_fence;
     uint64_t output_presents;
     uint64_t output_originals, output_intermediates;
+    gfg_output_frame_pacer output_pacer;
     uint32_t last_history_image;
     int have_previous, interleave;
     int started;
@@ -185,6 +187,11 @@ static inline VkResult gfg_test_live_emit(gfg_test_loader_runtime *r,
     };
     result=vkQueueSubmit(r->queue,1,&submit,r->output_fence);
     if(result!=VK_SUCCESS)return result;
+    /* Pace the output WORKER, not the game thread. Output frame spacing
+     * uses an absolute monotonic target. When the source arrives late,
+     * reset from actual submission, do not issue zero-gap catch-up frames. */
+    if(r->interleave && gfg_output_pacer_before_present(&r->output_pacer))
+        return VK_ERROR_INITIALIZATION_FAILED;
     const VkPresentInfoKHR present={
         .sType=VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount=1,.pWaitSemaphores=&r->ready[out_idx],
@@ -217,8 +224,8 @@ static inline VkResult gfg_test_live_output(void *user,
     if(r->interleave && r->have_previous) {
         VkResult result=gfg_test_live_emit(r,image,r->last_history_image,1);
         if(result!=VK_SUCCESS)return result;
-        const struct timespec exposure={.tv_sec=0,.tv_nsec=35000000L};
-        nanosleep(&exposure,NULL);
+        /* No fixed 35ms diagnostic exposure. The actual worker pacer
+         * spaces BOTH A/B and B output by the same target interval. */
     }
     VkResult result=gfg_test_live_emit(r,image,0,0);
     if(result!=VK_SUCCESS)return result;
@@ -238,6 +245,7 @@ static inline VkResult gfg_test_live_init(gfg_test_loader_runtime *r,
     r->device=device;r->queue=queue;r->family=family;r->proxy=proxy;
     r->memory_ops=memory_ops;
     r->interleave=getenv("GFG_NATIVE_TEST_OUTPUT_INTERLEAVE")!=NULL;
+    if(r->interleave)gfg_output_pacer_init(&r->output_pacer,60);
     if(r->interleave && (proxy->source.extent.width<2 ||
                         (proxy->source.extent.width&1u)))
         return VK_ERROR_FEATURE_NOT_PRESENT;
@@ -293,6 +301,18 @@ static inline void gfg_test_live_destroy(gfg_test_loader_runtime *r) {
     /* Worker first; in-flight capture and output WSI jobs must be retired
      * before either command pool or GPU-owned source/history images die. */
     gfg_async_capture_cleanup(&r->capture);
+    if(r->interleave && r->output_pacer.emitted) {
+        const uint64_t gaps=r->output_pacer.emitted-1u;
+        fprintf(stderr,
+            "GSF_OUTPUT_PACER rate=60 emitted=%llu originals=%llu intermediate=%llu min_gap_us=%llu max_gap_us=%llu mean_gap_us=%llu late_reanchors=%llu worker_only=1\n",
+            (unsigned long long)r->output_pacer.emitted,
+            (unsigned long long)r->output_originals,
+            (unsigned long long)r->output_intermediates,
+            (unsigned long long)(r->output_pacer.gap_min_ns/1000u),
+            (unsigned long long)(r->output_pacer.gap_max_ns/1000u),
+            (unsigned long long)(gaps?r->output_pacer.gap_sum_ns/gaps/1000u:0),
+            (unsigned long long)r->output_pacer.reanchors);
+    }
     vkDeviceWaitIdle(r->device); /* teardown only */
     if(r->output_fence)vkDestroyFence(r->device,r->output_fence,NULL);
     if(r->output_pool)vkDestroyCommandPool(r->device,r->output_pool,NULL);
