@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_xcb.h>
 #include <xcb/xcb.h>
@@ -240,6 +241,7 @@ int main(void) {
     gfg_owner_init(&owner,1000000000ull/60,1000000000ull/20);
     uint64_t capture_ns=1000000000ull;
     uint32_t output_calls=0;
+    uint64_t owner_first_due=0,owner_host_epoch=0;
     for(uint32_t source_id=1;source_id<=frame_count;++source_id) {
         gfg_owner_ticket owned[3];
         const size_t planned=gfg_owner_capture(&owner,source_id,
@@ -248,6 +250,26 @@ int main(void) {
         for(size_t slot=0;slot<planned;++slot) {
         const uint32_t frame=output_calls++;
         const gfg_owner_ticket ticket=owned[slot];
+        /* Pacing belongs exclusively to the output owner. Source frames
+         * are not paced/presented by a second WSI loop. Map simulated due
+         * timestamps to the actual CLOCK_MONOTONIC epoch once. */
+        struct timespec clock_now;
+        clock_gettime(CLOCK_MONOTONIC,&clock_now);
+        if(!owner_first_due) {
+            owner_first_due=ticket.due_ns;
+            owner_host_epoch=(uint64_t)clock_now.tv_sec*1000000000ull+
+                (uint64_t)clock_now.tv_nsec;
+        }
+        const uint64_t due=owner_host_epoch+
+            (ticket.due_ns-owner_first_due);
+        const struct timespec output_deadline={
+            .tv_sec=(time_t)(due/1000000000ull),
+            .tv_nsec=(long)(due%1000000000ull)};
+        int sleep_rc;
+        do { sleep_rc=clock_nanosleep(CLOCK_MONOTONIC,TIMER_ABSTIME,
+                                      &output_deadline,NULL); }
+        while(sleep_rc==EINTR);
+        REQUIRE(sleep_rc==0);
 #else
     for(uint32_t frame=0;frame<frame_count;frame++) {
 #endif
@@ -323,11 +345,19 @@ int main(void) {
         if(frame%2==0) TRY(present_gipa(queue,&pi));
         else TRY(present_gdpa(queue,&pi));
 #endif
+#ifdef GFG_NATIVE_TEST_OWNED_WSI
+        fprintf(stderr,"GSF OUTPUT WSI handoff=%u kind=%s pair=%llu:%llu due_ns=%llu acknowledged=1 physical_scanout=unverified\\n",
+            output_calls,ticket.kind==GFG_OWNER_REAL?"real":"intermediate",
+            (unsigned long long)ticket.from_id,(unsigned long long)ticket.to_id,
+            (unsigned long long)ticket.due_ns);
+#endif
 #ifdef GFG_NATIVE_TEST_ASYNC
+#ifndef GFG_NATIVE_TEST_OWNED_WSI
         clock_gettime(CLOCK_MONOTONIC,&deadline);
         deadline.tv_nsec+=source_period;
         if(deadline.tv_nsec>=1000000000){++deadline.tv_sec;deadline.tv_nsec-=1000000000;}
         clock_nanosleep(CLOCK_MONOTONIC,TIMER_ABSTIME,&deadline,NULL);
+#endif
 #else
         TRY(vkQueueWaitIdle(queue));
 #endif
