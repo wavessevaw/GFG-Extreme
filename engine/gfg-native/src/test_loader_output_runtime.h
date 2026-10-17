@@ -63,6 +63,14 @@ static inline VkResult gfg_test_live_acquire(void *user,
     return vkQueueSubmit(r->queue,1,&submit,fence);
 }
 
+static inline VkResult gfg_test_live_capture(void *user,
+        uint32_t image,uint64_t ticket,uint32_t count,
+        const VkSemaphore *waits) {
+    gfg_test_loader_runtime *r=user;
+    if(!r)return VK_ERROR_INITIALIZATION_FAILED;
+    return gfg_async_capture_submit(&r->capture,image,ticket,count,waits);
+}
+
 static inline void gfg_test_live_record(void *user,
         VkCommandBuffer cmd,uint64_t ticket) {
     gfg_test_loader_runtime *r=user;
