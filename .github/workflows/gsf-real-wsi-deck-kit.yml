@@ -53,6 +53,19 @@ jobs:
           grep 'GSF_REAL_WSI_GPU_BRIDGE_CREATE active=1' "$logdir/game.log"
           grep 'real frames GPU bridge WSI smoke PASS' "$logdir/game.log"
           echo "GSF_REAL_WSI_CHILD_LAUNCHER=PASS on older Vulkan Loader"
+      - name: Preserve early Steam startup preflight failure in persistent log
+        run: |
+          set -euo pipefail
+          probe_home="$RUNNER_TEMP/gfg-early-failure"
+          mkdir -p "$probe_home"
+          if HOME="$probe_home" bash engine/gfg-native/scripts/real-wsi-game-launch.sh --check > /tmp/gfg-early-failure.stdout 2>&1; then
+            echo 'Preflight must reject missing layer files' >&2
+            exit 1
+          fi
+          grep 'GSF_REAL_WSI_KIT_ERROR missing libVkLayer_gfg_native.so' /tmp/gfg-early-failure.stdout
+          test -f "$probe_home/GFG-Real-WSI-Tests/launcher-preflight.log"
+          grep 'GSF_REAL_WSI_PREFLIGHT_START' "$probe_home/GFG-Real-WSI-Tests/launcher-preflight.log"
+          grep 'GSF_REAL_WSI_KIT_ERROR missing libVkLayer_gfg_native.so' "$probe_home/GFG-Real-WSI-Tests/launcher-preflight.log"
       - name: Child launcher bypass does not require Vulkan or GFG files
         run: |
           set -euo pipefail
