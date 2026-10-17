@@ -59,6 +59,27 @@ $(BUILD)/owned-wsi-real-layer: tests/wsi_gpu_observer.c src/layer.c src/output_p
 	mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -Wno-unused-function -pthread -DGFG_NATIVE_TEST_SMALL -DGFG_NATIVE_TEST_ASYNC -DGFG_NATIVE_TEST_OWNED_WSI -DGFG_NATIVE_TEST_LAYER_PROXY_REAL -DVK_USE_PLATFORM_XCB_KHR -I$(VULKAN_HEADERS) -o $@ tests/wsi_gpu_observer.c -lvulkan -lxcb -ldl
 
+# Isolated Vulkan loader-installed PROBE. The native layer is compiled
+# with test WSI hooks but the normal installation and stable release are
+# untouched. Only a create-only virtual app swapchain is supported.
+$(BUILD)/loader-probe/libVkLayer_gfg_native.so: src/layer.c src/output_proxy_bootstrap.h src/offscreen_source_pool.h src/virtual_wsi_facade.h
+	mkdir -p $(BUILD)/loader-probe
+	$(CC) $(CFLAGS) -Wno-unused-function -fvisibility=hidden -pthread -DGFG_NATIVE_TEST_OUTPUT_OWNER_HOOKS -I$(VULKAN_HEADERS) -shared -Wl,-z,defs -o $@ src/layer.c -ldl
+
+$(BUILD)/loader-probe/VkLayer_gfg_native.json: VkLayer_gfg_native.json
+	mkdir -p $(BUILD)/loader-probe
+	cp $< $@
+
+$(BUILD)/loader-proxy-create: tests/loader_proxy_create.c src/offscreen_source_pool.h
+	mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -DVK_USE_PLATFORM_XCB_KHR -I$(VULKAN_HEADERS) -o $@ $< -lvulkan -lxcb
+
+loader-proxy-create: $(BUILD)/loader-proxy-create $(BUILD)/loader-probe/libVkLayer_gfg_native.so $(BUILD)/loader-probe/VkLayer_gfg_native.json
+	GFG_NATIVE_FG=1 GFG_NATIVE_TEST_LOADER_CREATE_PROBE=1 GFG_NATIVE_TEST_PROXY_CREATE=1 \
+	  VK_LAYER_PATH="$(abspath $(BUILD)/loader-probe):/usr/share/vulkan/explicit_layer.d" \
+	  VK_INSTANCE_LAYERS=VK_LAYER_GFG_native $(BUILD)/loader-proxy-create
+.PHONY: loader-proxy-create
+
 # Convert game swapchain PRESENT layout requests without touching the
 # true compositor swapchain, including Vulkan sync2 and renderpasses.
 $(BUILD)/virtual-layouts: tests/virtual_layouts.c src/virtual_layouts.h
