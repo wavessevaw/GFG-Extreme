@@ -92,6 +92,26 @@ jobs:
             cat "$log"; exit 1
           fi
           echo 'Vulkan Loader -> GFG layer -> single real output WSI -> X11 visible pixels PASS'
+      - name: Loader-installed actual virtual Acquire Render Present to ONE real X11 output WSI
+        run: |
+          set -euo pipefail
+          make -C engine/gfg-native VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" \
+            build/loader-live-output
+          log="$(mktemp)"
+          GFG_NATIVE_FG=1 GFG_NATIVE_TEST_LOADER_LIVE_OUTPUT=1 \
+            GFG_NATIVE_TEST_PROXY_CREATE=1 GFG_NATIVE_TRACE=1 \
+            VK_LAYER_PATH="$PWD/engine/gfg-native/build/loader-probe:/usr/share/vulkan/explicit_layer.d" \
+            VK_INSTANCE_LAYERS=VK_LAYER_GFG_native:VK_LAYER_KHRONOS_validation \
+            VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
+            xvfb-run -a -s '-screen 0 1024x768x24' \
+            engine/gfg-native/build/loader-live-output > "$log" 2>&1 || { cat "$log"; exit 1; }
+          grep 'GSF_LOADER_LIVE_INIT virtual_images=' "$log"
+          grep 'GSF_LOADER_LIVE_APP 8 GPU-rendered real source frames visible through one output WSI PASS' "$log"
+          if grep -E 'Validation Error|VUID-|UNASSIGNED-.*ERROR' "$log"; then
+            cat "$log"; exit 1
+          fi
+          echo 'Loader installed app virtual Acquire->render->Present->private output->X11 pixels PASS (not FG or OLED)'
+
       - name: Native test-only intercepted vkCreateSwapchainKHR and owned output source images
         run: make -C engine/gfg-native VULKAN_HEADERS="$RUNNER_TEMP/vkh/include" output-proxy-layer-create
       - name: Intercepted virtual swapchain creation sanitizer
