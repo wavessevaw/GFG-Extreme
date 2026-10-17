@@ -75,6 +75,35 @@ ordering, a 30FPS→60Hz case, recovery after a 836ms pause changing from
 27→38FPS at 90Hz, missing/cut GPU work, a source rate too fast to generate
 at 90Hz and single-frame flush.
 
+## Actual one-output Vulkan test added
+
+The test `tests/wsi_gpu_observer.c` has a separately compiled
+`GFG_NATIVE_TEST_OWNED_WSI` path. It constructs a dedicated Vulkan
+XCB swapchain (using one output window) under lavapipe / Xvfb; feeds
+mock source frame IDs into the output owner; clears uniquely marked real
+and intermediate full-screen images; submits them to Vulkan and calls
+`vkQueuePresentKHR` from a **single owner only**. Each accepted WSI
+handoff emits an auditable `kind/pair/due_ns` event. With
+`GFG_NATIVE_TEST_ASYNC` it uses a monotonic 60-Hz output clock and
+per-submit fences rather than forcing a GPU `QueueWaitIdle` on every
+output. The CI workflow builds both the pure planner test and this
+actual WSI smoke.
+
+This proves API-level presentation is possible with one controlled
+output surface; it does **NOT** yet take frames from a running game,
+replace the game's original swapchain or measure real OLED scanout. The
+'generated' colors in this test are deterministic synthetic test
+textures, **not** a GSF neural/motion model.
+
+**Why not assume a generic Wayland screenshot API?** Official
+[Gamescope documentation](https://github.com/ValveSoftware/gamescope)
+describes a compositing manager that may directly flip game frames over
+DRM/KMS. Its embedded SteamOS session is not necessarily exposing
+a wlroots screencopy protocol usable by ordinary clients. We must
+prove a capture interface exists before relying on an external
+window-capture design; a Vulkan layer that retains the original GPU
+source image is the current known integration path.
+
 ### Not yet implemented / hard merge gate
 
 1. Private output swapchain/surface in SteamOS Gaming Mode (Gamescope), with
