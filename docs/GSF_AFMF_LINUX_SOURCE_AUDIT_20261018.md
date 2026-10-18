@@ -131,3 +131,22 @@ At Steam Deck OLED 1280×800:
 - Vulkan swapchain maintenance 1: https://github.com/KhronosGroup/Vulkan-Docs/blob/main/proposals/VK_EXT_swapchain_maintenance1.adoc
 - GSF #154: https://github.com/wavessevaw/GFG-Extreme/pull/154
 - GSF #155: https://github.com/wavessevaw/GFG-Extreme/pull/155
+
+
+## 8. Further negative research results and protection against cargo-cult optimisation
+
+AFMF's [performance.md](https://github.com/serialexperimentslainnnn/afmf-linux/blob/bc56e5bd0e3a6c328aedef664d0d36363fb58b36/docs/performance.md) actually records several **failed optimisations**. Do not repeat them unquestioningly in GSF:
+- A second compute queue provided no gain when the entire generation workload finished before the next source frame arrived.
+- Forcing wave32 gave no measured gain; GPU-specific subgroup width needs benchmarking.
+- Replacing the search with a narrower ±4 local refinement (instead of ±8) made the coarser vectors less accurate; finer levels searched more, worsening measured time.
+- Running the scene-change divergence detector concurrently with the coarse search caused an early-return/barrier inconsistency and hung Intel GPUs. Keep correct compute synchronization even when targeting RDNA2.
+- Default direct STORAGE output could slow game rendering more than it saved on the output copy, so upstream made it opt-in.
+- The author's full benchmark at 3440×1440, RX 9070 XT, five pyramid levels / half-resolution flow quotes 560–610 µs GPU per frame; RX 7800 XT records 1,070 µs headless and 1,245 µs in-game. Treat each as **upstream measurements under those exact conditions**, not estimates for Deck.
+
+## 9. Two extra GSF audit hypotheses exposed by this comparison
+
+**H-ENV (packed10 guard activation):** `native_gamescope_packed10_unsafe` in GSF `src/layer.c` relies on a text search in **`VK_INSTANCE_LAYERS`**. A loader may activate layers implicitly via manifests or alternative loader settings, without this string. Therefore, this guard's *detection completeness* is unproven even when its specified explicit-layer case is correct. Test implicit and explicit Gamescope WSI layer activation separately. Never remove the conservative packed10 fallback while changing detection.
+
+**H-CAP (unknown surface caps):** The GSF direct-WSI candidate path can call `gfg_real_wsi_can_extend` with a zero max when the actual `vkGetPhysicalDeviceSurfaceCapabilitiesKHR` result was not available; zero correctly denotes Vulkan's *reported unlimited maximum*, but an **unknown result** is not the same fact. A candidate's first extended create has a real-driver failure fallback, yet the eligibility/log reason should distinguish `unbounded cap reported by driver` from `cap not measured`. Test both cases and ensure no extra-image assumption is treated as established when caps lookup failed.
+
+Neither hypothesis is asserted as a field-observed new crash. Both are specific inspection targets with reproducible simulation gates.
