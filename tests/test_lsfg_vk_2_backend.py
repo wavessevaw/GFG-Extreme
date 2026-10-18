@@ -125,6 +125,11 @@ printf 'VALUES:%s/%s/%s/%s/%s/%s/%s/%s/%s' "$LSFGVK_ENV" "$LSFGVK_MULTIPLIER" "$
                          line == 'if [ "${gfg_lsfg_vk_2_backend:-0}" = 1 ]; then')
             end = lines.index("unset gfg_lsfg_vk_2_backend", start)
             fragment = "\n".join(lines[start:end+1])
+            self.assertIn("unset DISABLE_GAMESCOPE_WSI", fragment)
+            self.assertIn("unset GFG_NATIVE_FG GFG_NATIVE_GPU_BRIDGE", fragment)
+            self.assertIn("export DISABLE_MAKO=1", fragment)
+            self.assertIn('VK_LAYER_GFG_native:', "\n".join(lines[:start]))
+            self.assertIn('VK_LAYER_LSFG:', "\n".join(lines[:start]))
             probe = ('mako_implicit_layer_path=/tmp/gfg-layer\n'
                      'gfg_lsfg_vk_2_backend=1\n'
                      'export DISABLE_LSFGVK=1\n'
