@@ -1,0 +1,131 @@
+name: GFG LSFG-VK2 Prerelease
+on:
+  push:
+    branches:
+      - feature/lsfg-vk-2-backend-20261018
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gfg-lsfg-vk2-prerelease
+  cancel-in-progress: false
+
+jobs:
+  prerelease:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: 2.1.7-lsfg2.rc1
+      TAG: v2.1.7-lsfg2.rc1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Validate schema, backend and full Python regression suite
+        run: |
+          set -euo pipefail
+          python3 scripts/check_generated_config.py
+          python3 -m unittest discover -s tests -p 'test_*.py'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build the actual new Generator Backend UI
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          grep -q 'LSFG-VK 2.0' dist/index.js
+          npx playwright install --with-deps chromium
+          node frontend/harness/smoke.mjs
+
+      - name: Verify stable native base archive checksum
+        run: |
+          set -euo pipefail
+          mkdir -p base
+          gh release download v2.1.6 -p GFG-Extreme-v2_1_6.zip -p SHA256SUMS.txt -D base
+          (cd base && sha256sum --check SHA256SUMS.txt)
+          unzip -tq base/GFG-Extreme-v2_1_6.zip
+
+      - name: Repack stable native payload plus THIS branch's LSFG-VK2 sources and UI
+        run: |
+          set -euo pipefail
+          mkdir -p preview out
+          unzip -q base/GFG-Extreme-v2_1_6.zip -d preview
+          test -f preview/GFG-Extreme/bin/SHA256SUMS.txt
+          test -f preview/GFG-Extreme/py_modules/gfg_plugin/plugin.py
+          python3 - <<'PY'
+          import pathlib, subprocess, shutil
+          root = pathlib.Path.cwd()
+          dest = root / "preview/GFG-Extreme"
+          names = subprocess.check_output(
+              ["git", "diff", "--name-only", "--diff-filter=ACM", "v2.1.6", "HEAD"],
+              text=True,
+          ).splitlines()
+          if not any(x == "frontend/src/app.js" for x in names):
+              raise SystemExit("LSFG UI source missing from diff")
+          if not any(x == "py_modules/gfg_plugin/wrapper_generation.py" for x in names):
+              raise SystemExit("LSFG launch code missing from diff")
+          for name in names:
+              if name.startswith(".github/") or name.startswith("dist/"):
+                  continue
+              src = root / name
+              if not src.is_file() or ".." in pathlib.PurePosixPath(name).parts:
+                  raise SystemExit("Unexpected release file " + name)
+              target = dest / name
+              target.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(src, target)
+              print("updated", name)
+          # The checked-in dist/index.js is the stable base artifact. Never ship
+          # it unchanged after adding backend UI: copy the compiled preview.
+          shutil.copy2(root/"dist/index.js", dest/"dist/index.js")
+          PY
+          grep -q 'LSFG-VK 2.0' preview/GFG-Extreme/dist/index.js
+          (cd preview && zip -qr -X "../out/GFG-Extreme-v2_1_7-lsfgvk2-rc1.zip" GFG-Extreme)
+          (cd out && sha256sum GFG-Extreme-v2_1_7-lsfgvk2-rc1.zip > SHA256SUMS.txt)
+          python3 scripts/check_release_archive.py out/GFG-Extreme-v2_1_7-lsfgvk2-rc1.zip "$VERSION"
+          python3 - <<'PY'
+          import zipfile
+          p = 'out/GFG-Extreme-v2_1_7-lsfgvk2-rc1.zip'
+          with zipfile.ZipFile(p) as z:
+              names = z.namelist()
+              for name in names:
+                  if name.endswith('/lsfg-vk.dll') or name.endswith('/Lossless.dll'):
+                      raise SystemExit('Forbidden proprietary LSFG model in GFG ZIP: '+name)
+              req = [
+                  'GFG-Extreme/dist/index.js',
+                  'GFG-Extreme/shared_config.py',
+                  'GFG-Extreme/py_modules/gfg_plugin/wrapper_generation.py',
+                  'GFG-Extreme/py_modules/gfg_plugin/dll_detection.py',
+                  'GFG-Extreme/docs/LSFG_VK2_PRERELEASE.md',
+              ]
+              for file in req:
+                  assert file in names, file
+              assert b'LSFG-VK 2.0' in z.read('GFG-Extreme/dist/index.js')
+              assert b'LSFGVK_MULTIPLIER' in z.read(req[2])
+          print('Pre-release archive, native payload and LSFG GUI verified')
+          PY
+
+      - name: Publish versioned GitHub prerelease only after verification
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --json tagName >/dev/null 2>&1; then
+            echo "::notice::A pre-release with this tag already exists; refuse to overwrite it."
+            exit 1
+          fi
+          gh release create "$TAG" out/GFG-Extreme-v2_1_7-lsfgvk2-rc1.zip out/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "GFG Extreme 2.1.7 LSFG-VK 2.0 RC1" \
+            --notes-file docs/LSFG_VK2_PRERELEASE.md
+          gh release view "$TAG" --json isPrerelease,assets,tagName --jq \
+            '.isPrerelease == true and (.assets | length) == 2' | grep -qx true
+          echo "Published $TAG with verified Decky ZIP + SHA256" >> "$GITHUB_STEP_SUMMARY"
