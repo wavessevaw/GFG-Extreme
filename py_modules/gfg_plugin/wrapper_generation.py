@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, Optional
 
 from shared_config import (
     FG_BACKEND_GFG,
+    FG_BACKEND_LSFG_VK_2,
     FG_BACKEND_OPTISCALER,
     OPTISCALER_PROXY_AUTO,
     OPTISCALER_PROXY_AUTODETECT_ORDER,
@@ -401,6 +402,34 @@ def _case_insensitive_dll_glob(name: str) -> str:
     return f"{letters}.[dD][lL][lL]"
 
 
+def lsfg_vk_2_profile_lines(config: ConfigurationData) -> list[str]:
+    """Project saved per-game GFG settings into LSFG-VK 2.0's documented env API.
+
+    The external shader engine is user-installed. GFG never rewrites its DLL
+    or forces a second native FG Vulkan layer into the same process.
+    """
+    multiplier = int(config.get("multiplier", 2))
+    if not 2 <= multiplier <= 5:
+        multiplier = 2  # GFG's validated fixed-multiplier range.
+    flow = float(config.get("flow_scale", 0.8))
+    dll = str(config.get("lsfg_vk_2_dll_path", "")).strip()
+    if dll and (not dll.startswith("/") or "\\n" in dll or "\\r" in dll):
+        dll = ""  # Disallow relative paths or newline injection.
+    return [
+        "gfg_lsfg_vk_2_backend=1",
+        "export LSFGVK_ENV=1",
+        f"export LSFGVK_MULTIPLIER={multiplier}",
+        f"export LSFGVK_FLOW_SCALE={flow:g}",
+        f"export LSFGVK_PERFORMANCE_MODE={int(bool(config.get('performance_mode', False)))}",
+        f"export LSFGVK_NO_FP16={int(not bool(config.get('lsfg_vk_2_allow_fp16', True)))}",
+        "export LSFGVK_PACING_MODE=vsync",
+        f"export LSFGVK_OVERRIDE_PRESENT_MODE={int(bool(config.get('lsfg_vk_2_override_present_mode', True)))}",
+        f"export LSFGVK_PRESERVE_SWAPCHAIN_IMAGE_COUNT={int(bool(config.get('lsfg_vk_2_preserve_swapchain_image_count', False)))}",
+        # Empty is intentional: LSFG-VK itself searches the Steam installation.
+        f"gfg_lsfg_vk_2_explicit_dll={shlex.quote(dll)}",
+    ]
+
+
 def fg_backend_lines(config: ConfigurationData, status_dir: Optional[Path] = None) -> list[str]:
     """Configure external FG ownership and optional OptiScaler proxy injection.
 
@@ -420,6 +449,8 @@ def fg_backend_lines(config: ConfigurationData, status_dir: Optional[Path] = Non
     same-proxy ``WINEDLLOVERRIDES`` entries win and are reported as a conflict.
     """
     backend = config.get("fg_backend", FG_BACKEND_GFG)
+    if backend == FG_BACKEND_LSFG_VK_2:
+        return lsfg_vk_2_profile_lines(config)
     if backend != FG_BACKEND_OPTISCALER:
         return []
     requested = config.get("optiscaler_proxy", OPTISCALER_PROXY_AUTO)
@@ -598,7 +629,7 @@ def script_configuration_lines(
     )
     lines.append(
         "mako_renderer_required="
-        f"{1 if (effective.get('frame_generation_provisioned', True) or effective.get('scaling_enabled', False) or config.get('external_vulkan_layer') == EXTERNAL_VULKAN_LAYER_VKBASALT) else 0}"
+        f"{1 if (config.get('fg_backend', FG_BACKEND_GFG) != FG_BACKEND_LSFG_VK_2 and (effective.get('frame_generation_provisioned', True) or effective.get('scaling_enabled', False) or config.get('external_vulkan_layer') == EXTERNAL_VULKAN_LAYER_VKBASALT)) else 0}"
     )
     lines.append(
         "mako_spatial_scaling_required="
@@ -792,6 +823,7 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         "unset GFG_FRAME_OS_ENABLE GFG_FRAME_OS_MODE GFG_FRAME_OS_REAL_HZ GFG_FRAME_OS_TICK_SHAPING GFG_FRAME_OS_PACING",
         "export DISABLE_GFG_FRAME_OS=1",
         'unset gfg_frame_os_marker',
+        'if [ "${gfg_lsfg_vk_2_backend:-0}" = 1 ]; then gfg_frame_os=0; fi',
         # Ring HUD: the GFG HUD layer copies the Governor's ring bitmap into every shown frame.
         f'gfg_hud_marker={shlex.quote(str(context.runtime_state_dir / "hud-rings.enabled"))}',
         "gfg_hud=0",
@@ -1067,6 +1099,77 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         "unset mako_spatial_scaling_manifest",
         "unset mako_vkbasalt_manifest",
         "unset mako_vkbasalt_manifest32",
+        # LSFG-VK 2.x is a user-installed implicit Vulkan layer. The GFG
+        # wrapper replaces VK_IMPLICIT_LAYER_PATH, so restore its manifest
+        # directory ONLY in the selected external backend. Never activate
+        # our Native GSF or both competing presentation owners together.
+        'if [ "${gfg_lsfg_vk_2_backend:-0}" = 1 ]; then',
+        '    unset GFG_NATIVE_FG GFG_NATIVE_GPU_BRIDGE GFG_NATIVE_ASYNC',
+        '    export DISABLE_GFG_NATIVE_FG=1',
+        '    export DISABLE_MAKO=1',
+        '    unset DISABLE_LSFGVK',
+        '    unset LSFGVK_DLL_PATH',
+        '    case "${gfg_lsfg_vk_2_explicit_dll##*/}" in',
+        '      Lossless.dll|LosslessScaling.dll) gfg_lsfg_vk_2_explicit_dll="${gfg_lsfg_vk_2_explicit_dll%/*}/lsfg-vk.dll" ;;',
+        '    esac',
+        '    gfg_lsfg_manifest_dir=""',
+        '    for gfg_lsfg_dir in "${XDG_DATA_HOME:-$HOME/.local/share}/vulkan/implicit_layer.d" '
+        '"$HOME/.local/share/vulkan/implicit_layer.d" '
+        '"$HOME/.local/share/vulkan/explicit_layer.d" '
+        '"/usr/local/share/vulkan/implicit_layer.d" "/usr/share/vulkan/implicit_layer.d" '
+        '"/etc/vulkan/implicit_layer.d"; do',
+        '        if [ -r "$gfg_lsfg_dir/VkLayer_LSFGVK_frame_generation.json" ]; then',
+        '            gfg_lsfg_manifest_dir="$gfg_lsfg_dir"',
+        '            break',
+        '        fi',
+        '    done',
+        '    if [ -n "$gfg_lsfg_manifest_dir" ]; then',
+        '        mako_implicit_layer_path="$mako_implicit_layer_path:$gfg_lsfg_manifest_dir"',
+        '        # Restore system implicit layers, including Gamescope WSI.',
+        '        for gfg_lsfg_system_dir in "/usr/share/vulkan/implicit_layer.d" '
+        '"/usr/local/share/vulkan/implicit_layer.d" "/etc/vulkan/implicit_layer.d"; do',
+        '            if [ -d "$gfg_lsfg_system_dir" ]; then',
+        '                case ":$mako_implicit_layer_path:" in',
+        '                    *":$gfg_lsfg_system_dir:"*) ;;',
+        '                    *) mako_implicit_layer_path="$mako_implicit_layer_path:$gfg_lsfg_system_dir" ;;',
+        '                esac',
+        '            fi',
+        '        done',
+        '        if [ -z "$gfg_lsfg_vk_2_explicit_dll" ]; then',
+        '            for gfg_lsfg_candidate in '
+        '"${XDG_DATA_HOME:-$HOME/.local/share}/Steam/steamapps/common/Lossless Scaling/lsfg-vk.dll" '
+        '"$HOME/.local/share/Steam/steamapps/common/Lossless Scaling/lsfg-vk.dll" '
+        '"$HOME/.steam/steam/steamapps/common/Lossless Scaling/lsfg-vk.dll" '
+        '"$HOME/.steam/root/steamapps/common/Lossless Scaling/lsfg-vk.dll" '
+        '/run/media/deck/*/steamapps/common/"Lossless Scaling"/lsfg-vk.dll; do',
+        '                if [ -r "$gfg_lsfg_candidate" ]; then',
+        '                    gfg_lsfg_vk_2_explicit_dll="$gfg_lsfg_candidate"',
+        '                    break',
+        '                fi',
+        '            done',
+        '        fi',
+        '        if [ -n "$gfg_lsfg_vk_2_explicit_dll" ] && [ -r "$gfg_lsfg_vk_2_explicit_dll" ]; then',
+        '            export LSFGVK_DLL_PATH="$gfg_lsfg_vk_2_explicit_dll"',
+        '            case ":${VK_INSTANCE_LAYERS:-}:" in',
+        '              *:VK_LAYER_LSFGVK_frame_generation:*) ;;',
+        '              *) export VK_INSTANCE_LAYERS="VK_LAYER_LSFGVK_frame_generation${VK_INSTANCE_LAYERS:+:$VK_INSTANCE_LAYERS}" ;;',
+        '            esac',
+        '        else',
+        '            # Fail closed: never launch LSFG with a missing proprietary shader resource.',
+        '            export DISABLE_LSFGVK=1',
+        '            printf "%s\\n" "GFG LSFG-VK 2.0: lsfg-vk.dll unavailable; game starts without LSFG" >&2',
+        '        fi',
+        '    else',
+        '        export DISABLE_LSFGVK=1',
+        '        printf "%s\\n" "GFG LSFG-VK 2.0: Vulkan layer manifest not installed; game remains unmodified" >&2',
+        '    fi',
+        '    unset gfg_lsfg_dir gfg_lsfg_system_dir gfg_lsfg_manifest_dir gfg_lsfg_candidate gfg_lsfg_vk_2_explicit_dll',
+        'else',
+        '    unset LSFGVK_ENV LSFGVK_MULTIPLIER LSFGVK_FLOW_SCALE LSFGVK_PERFORMANCE_MODE',
+        '    unset LSFGVK_NO_FP16 LSFGVK_PACING_MODE LSFGVK_OVERRIDE_PRESENT_MODE',
+        '    unset LSFGVK_PRESERVE_SWAPCHAIN_IMAGE_COUNT LSFGVK_DLL_PATH',
+        'fi',
+        'unset gfg_lsfg_vk_2_backend',
         f'export {VK_IMPLICIT_LAYER_PATH_ENV}="$mako_implicit_layer_path"',
         f"unset {VK_ADD_IMPLICIT_LAYER_PATH_ENV}",
         f"export {MAKO_CONFIG_ENV}={shlex.quote(str(context.config_file_path))}",

@@ -570,6 +570,15 @@ class Plugin:
         """
         return await asyncio.to_thread(self.installation_service.uninstall)
 
+    async def check_lsfg_vk_2(self) -> Dict[str, Any]:
+        """Check external LSFG-VK 2.0 Vulkan layer and locally owned model."""
+        response = await asyncio.to_thread(self.configuration_service.get_config)
+        config = response.get("config", {}) if response.get("success") else {}
+        return await asyncio.to_thread(
+            self.dll_detection_service.check_lsfg_vk_2,
+            str(config.get("lsfg_vk_2_dll_path", "")),
+        )
+
     async def check_lossless_scaling_dll(self) -> DllDetectionResponse:
         """Check if Lossless Scaling DLL is available at the expected paths
 
@@ -709,7 +718,7 @@ class Plugin:
             "optiscaler_dir": "",
             "optiscaler_detection": "",
             "optiscaler_status": "not-evaluated" if backend == "optiscaler" else "not-applicable",
-            "renderer_required": bool(
+            "renderer_required": backend != "lsfg_vk_2" and bool(
                 effective.get("frame_generation_provisioned", False)
                 or effective.get("scaling_enabled", False)
                 or config.get("external_vulkan_layer") == "vkbasalt"
@@ -717,6 +726,12 @@ class Plugin:
             "scaling": bool(config.get("scaling_enabled", False)),
             "shaders": config.get("external_vulkan_layer") == "vkbasalt",
         }
+        if backend == "lsfg_vk_2":
+            status["lsfg_vk_2"] = await asyncio.to_thread(
+                self.dll_detection_service.check_lsfg_vk_2,
+                str(config.get("lsfg_vk_2_dll_path", "")),
+            )
+            return status
         if backend != "optiscaler":
             return status
 

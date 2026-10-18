@@ -108,11 +108,13 @@ SCALING_METHOD_VALUES = (
 FG_BACKEND_GFG = "gfg"
 FG_BACKEND_OPTISCALER = "optiscaler"
 FG_BACKEND_NATIVE = "native"
+FG_BACKEND_LSFG_VK_2 = "lsfg_vk_2"
 FG_BACKEND_OFF = "off"
 FG_BACKEND_LEGACY_LSFG = "lsfg"
 FG_BACKEND_VALUES = (
     FG_BACKEND_GFG,
     FG_BACKEND_OPTISCALER,
+    FG_BACKEND_LSFG_VK_2,
     FG_BACKEND_NATIVE,
     FG_BACKEND_OFF,
 )
@@ -332,7 +334,35 @@ CONFIG_SCHEMA_DEF: Dict[str, ConfigFieldDefinition] = {
     "fg_backend": {
         "fieldType": ConfigFieldType.STRING,
         "default": FG_BACKEND_GFG,
-        "description": "Frame Generation owner: gfg, optiscaler, native, or off",
+        "description": "Frame Generation owner: gfg, lsfg_vk_2, optiscaler, native, or off",
+        "location": "script"
+    },
+
+    "lsfg_vk_2_dll_path": {
+        "fieldType": ConfigFieldType.STRING,
+        "default": "",
+        "description": "Optional absolute path to a locally owned LSFG-VK 2.x lsfg-vk.dll; empty searches the Steam installation",
+        "location": "script"
+    },
+
+    "lsfg_vk_2_allow_fp16": {
+        "fieldType": ConfigFieldType.BOOLEAN,
+        "default": True,
+        "description": "Allow LSFG-VK 2.x half-precision shader path when supported",
+        "location": "script"
+    },
+
+    "lsfg_vk_2_override_present_mode": {
+        "fieldType": ConfigFieldType.BOOLEAN,
+        "default": True,
+        "description": "Allow LSFG-VK 2.x to request FIFO at its Vulkan layer boundary",
+        "location": "script"
+    },
+
+    "lsfg_vk_2_preserve_swapchain_image_count": {
+        "fieldType": ConfigFieldType.BOOLEAN,
+        "default": False,
+        "description": "LSFG-VK 2.x compatibility switch: preserve original swapchain minimum image count",
         "location": "script"
     },
 
