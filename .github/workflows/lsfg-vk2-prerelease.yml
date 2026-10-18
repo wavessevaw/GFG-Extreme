@@ -95,7 +95,7 @@ jobs:
               print("updated", name)
           new_package = json.loads((dest / "package.json").read_text())
           new_package["bundled_renderer"] = bundle
-          (dest / "package.json").write_text(json.dumps(new_package, indent=2) + "\\n")
+          (dest / "package.json").write_text(json.dumps(new_package, indent=2) + chr(10))
           print("Retained stable Frame Fusion archive SHA", bundle["sha256hash"])
           # The checked-in dist/index.js is the stable base artifact. Never ship
           # it unchanged after adding backend UI: copy the compiled preview.
