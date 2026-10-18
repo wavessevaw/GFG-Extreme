@@ -783,6 +783,9 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         GAMESCOPE_WSI_LAYER_NAME_64,
         VKBASALT_LAYER_NAME_64,
         LEGACY_EXTREME_PFG_LAYER_NAME,
+        "VK_LAYER_GFG_native",
+        "VK_LAYER_LSFG",
+        "VK_LAYER_LSFGVK_frame_generation",
         FRAME_OS_LAYER_NAME,
         RING_HUD_LAYER_NAME,
     ):
@@ -836,6 +839,9 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         "unset GFG_HUD",
         "export DISABLE_GFG_HUD=1",
         'unset gfg_hud_marker',
+        # The LSFG-VK 2.0 backend owns all frame generation and presentation.
+        # Frame OS and the GFG ring compositor must not compete with it.
+        'if [ "${gfg_lsfg_vk_2_backend:-0}" = 1 ]; then gfg_hud=0; fi',
         "mako_renderer_enabled=0",
         'if [ "${mako_renderer_required:-0}" = 1 ] && '
         f'[ "${{{MAKO_LAYER_DISABLE_ENV}:-0}}" != 1 ]; then',
@@ -1104,8 +1110,10 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         # directory ONLY in the selected external backend. Never activate
         # our Native GSF or both competing presentation owners together.
         'if [ "${gfg_lsfg_vk_2_backend:-0}" = 1 ]; then',
-        '    unset GFG_NATIVE_FG GFG_NATIVE_GPU_BRIDGE GFG_NATIVE_ASYNC',
+        '    unset GFG_NATIVE_FG GFG_NATIVE_GPU_BRIDGE GFG_NATIVE_ASYNC GFG_TEMPORAL_ENGINE',
+        '    export GFG_FRAME_FUSION=0',
         '    export DISABLE_GFG_NATIVE_FG=1',
+        '    export DISABLE_LSFG=1',
         '    export DISABLE_MAKO=1',
         '    unset DISABLE_LSFGVK',
         '    unset LSFGVK_DLL_PATH',
