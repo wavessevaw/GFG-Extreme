@@ -64,9 +64,17 @@ jobs:
           test -f preview/GFG-Extreme/bin/SHA256SUMS.txt
           test -f preview/GFG-Extreme/py_modules/gfg_plugin/plugin.py
           python3 - <<'PY'
-          import pathlib, subprocess, shutil
+          import pathlib, subprocess, shutil, json
           root = pathlib.Path.cwd()
           dest = root / "preview/GFG-Extreme"
+          # The stable release generated a verified Frame Fusion native bundle
+          # after checkout. Its bundled_renderer manifest is NOT in repository
+          # package.json. Preserve that exact checksum/payload pairing when
+          # overlaying only our version and backend settings.
+          packaged = json.loads((dest / "package.json").read_text())
+          bundle = packaged.get("bundled_renderer")
+          if not bundle or not bundle.get("sha256hash"):
+              raise SystemExit("Stable Frame Fusion provenance metadata missing")
           names = subprocess.check_output(
               ["git", "diff", "--name-only", "--diff-filter=ACM", "v2.1.6", "HEAD"],
               text=True,
@@ -85,6 +93,10 @@ jobs:
               target.parent.mkdir(parents=True, exist_ok=True)
               shutil.copy2(src, target)
               print("updated", name)
+          new_package = json.loads((dest / "package.json").read_text())
+          new_package["bundled_renderer"] = bundle
+          (dest / "package.json").write_text(json.dumps(new_package, indent=2) + "\\n")
+          print("Retained stable Frame Fusion archive SHA", bundle["sha256hash"])
           # The checked-in dist/index.js is the stable base artifact. Never ship
           # it unchanged after adding backend UI: copy the compiled preview.
           shutil.copy2(root/"dist/index.js", dest/"dist/index.js")
