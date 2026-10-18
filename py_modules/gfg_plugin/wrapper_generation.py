@@ -1115,6 +1115,10 @@ def layer_environment_lines(context: WrapperGenerationContext) -> list[str]:
         '    export DISABLE_GFG_NATIVE_FG=1',
         '    export DISABLE_LSFG=1',
         '    export DISABLE_MAKO=1',
+        # An external LSFG-VK layer relies on the ordinary Gamescope WSI
+        # chain; the GFG-specific MAKO fallback disables it for other modes.
+        # Re-enable discovery only for this one external owner.
+        '    unset DISABLE_GAMESCOPE_WSI',
         '    unset DISABLE_LSFGVK',
         '    unset LSFGVK_DLL_PATH',
         '    case "${gfg_lsfg_vk_2_explicit_dll##*/}" in',
