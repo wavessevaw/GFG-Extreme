@@ -22,7 +22,7 @@ STATUS_STALE_S = 3.0
 
 
 class Control:
-    VARS = ("kfg_multiplier", "kfg_base_fps", "kfg_auto_floor", "kfg_post", "kfg_hud", "kfg_policy", "kfg_trace")
+    VARS = ("kfg_multiplier", "kfg_base_fps", "kfg_auto_floor", "kfg_post", "kfg_hud", "kfg_policy", "kfg_trace", "kfg_hdr")
 
     def __init__(self, home, plugin_dir, uid=1000, runner=subprocess.run, clock=time.time, sleep=time.sleep,
                  data=None):

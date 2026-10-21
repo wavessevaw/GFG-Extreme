@@ -42,9 +42,10 @@ class Policy:
     post: str = ""
     hud_path: str = ""
     auto_floor: int = 0  # lowest cap Auto may use; 0 = refresh / 3 (x3), 24 at 90 Hz = x3.75
+    hdr: bool = True     # generate and filter HDR games (kfg_hdr); False = they pass through
 
     def key(self) -> tuple:
-        return (self.multiplier, self.base_fps, self.post, self.hud_path, self.auto_floor)
+        return (self.multiplier, self.base_fps, self.post, self.hud_path, self.auto_floor, self.hdr)
 
 
 @dataclass
@@ -95,6 +96,7 @@ class PolicyCoordinator:
             return (int(st.get("req_multiplier", -1)) == want.multiplier
                     and int(st.get("req_base_fps", -1)) == want.base_fps
                     and int(st.get("req_auto_floor", -1)) == want.auto_floor
+                    and bool(st.get("hdr_enabled")) == want.hdr
                     and str(st.get("post", "")) == want.post)
         except (TypeError, ValueError):
             return False
@@ -134,7 +136,7 @@ class PolicyCoordinator:
         if not st.get("fresh"):
             self._set("hold", "Engine status is stale: waiting before sending anything")
             return self.snapshot()
-        if "policy" not in st or "req_auto_floor" not in st:
+        if "policy" not in st or "req_auto_floor" not in st or "hdr_enabled" not in st:
             self._set("outdated", "The running Gamescope KEDAVRA is older than GFG Extreme 3.0: reinstall the engine and reboot")
             return self.snapshot()
         want = self.wanted
@@ -203,10 +205,11 @@ class PolicyCoordinator:
         self.next_rev += 1
         self.last_apply_at = now
         try:
-            # HUD first (harmless), filters, cap, then the multiplier; the revision last, so its
+            # HUD first (harmless), HDR switch, filters, cap, then the multiplier; the revision last, so its
             # echo proves that everything before it arrived.
             if want.hud_path:
                 self.ctl.set_var("kfg_hud", want.hud_path)
+            self.ctl.set_var("kfg_hdr", 1 if want.hdr else 0)
             self.ctl.set_var("kfg_post", want.post)
             self.ctl.set_var("kfg_auto_floor", want.auto_floor)
             self.ctl.set_var("kfg_base_fps", want.base_fps)

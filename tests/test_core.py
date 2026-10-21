@@ -29,7 +29,8 @@ def engine_status(ctl, t, fresh=True, old=False):
     if not old:
         st.update({"policy": int(ctl.vars.get("kfg_policy", 0)), "req_multiplier": int(ctl.vars.get("kfg_multiplier", 0)),
                    "req_base_fps": int(ctl.vars.get("kfg_base_fps", 0)),
-                   "req_auto_floor": int(ctl.vars.get("kfg_auto_floor", 0)), "post": ctl.vars.get("kfg_post", "")})
+                   "req_auto_floor": int(ctl.vars.get("kfg_auto_floor", 0)), "post": ctl.vars.get("kfg_post", ""),
+                   "hdr_enabled": ctl.vars.get("kfg_hdr", "1") == "1"})
     return st
 
 
@@ -80,7 +81,7 @@ class PolicyTest(unittest.TestCase):
         self.c.want(self.want)
         self.assertEqual(self.tick()["state"], "applying")
         names = [n for n, _ in self.ctl.calls]
-        self.assertEqual(names, ["kfg_hud", "kfg_post", "kfg_auto_floor", "kfg_base_fps", "kfg_multiplier", "kfg_policy"])
+        self.assertEqual(names, ["kfg_hud", "kfg_hdr", "kfg_post", "kfg_auto_floor", "kfg_base_fps", "kfg_multiplier", "kfg_policy"])
         self.assertEqual(self.tick()["state"], "confirmed")
         sent = len(self.ctl.calls)
         for _ in range(5):

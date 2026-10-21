@@ -97,7 +97,7 @@ class Service:
             "at_ceiling": gov.at_ceiling(),
         })
         policy = Policy(req["multiplier"], req["base_fps"], filters.to_post(profile["filters"]),
-                        self.hud_path, req["auto_floor"])
+                        self.hud_path, req["auto_floor"], bool(data["engine"]["hdr"]))
         self.coord.want(policy)
         self.last_policy = policy
         coord = self.coord.tick(st)
@@ -158,7 +158,7 @@ class Service:
     def _engine_view(st: Dict[str, Any]) -> Dict[str, Any]:
         keys = ("engine", "fresh", "state", "multiplier", "cap_fps", "base_fps", "auto", "auto_floor",
                 "post", "post_active", "post_error", "gpu_us_avg", "gpu_post_us_avg", "last_problem",
-                "steam_ui", "width", "height", "message", "trace")
+                "steam_ui", "width", "height", "message", "trace", "transfer", "hdr_enabled", "post_hdr_limited")
         return {k: st.get(k) for k in keys if k in st}
 
     def _end_session(self, reason: str) -> None:

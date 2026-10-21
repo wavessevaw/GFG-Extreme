@@ -414,6 +414,30 @@ def user_toggles_fast() -> Dict[str, Any]:
 
 
 @scenario
+def hdr_switch() -> Dict[str, Any]:
+    """The player turns HDR generation off and on mid-game (Setup): the engine gets kfg_hdr,
+    the locked point and the TDP are kept (no new measurement, no conflict)."""
+    rig = make_rig(VGame("g", 40.0), objective="balanced")
+    seen = {}
+    ev = {
+        300: lambda r: r.settings.data["engine"].update({"hdr": False}),
+        330: lambda r: seen.update(off=r.engine.vars["kfg_hdr"], point_off=r.service.pilot.point),
+        400: lambda r: r.settings.data["engine"].update({"hdr": True}),
+    }
+    play(rig, 600, ev)
+    after = rig.timeline[300:]
+    out = {"kfg_hdr_while_off": seen.get("off"), "kfg_hdr_final": rig.engine.vars["kfg_hdr"],
+           "point_before": rig.timeline[299]["point"], "point_final": rig.timeline[-1]["point"]}
+    check(out, "kfg_hdr=0 sent while off", seen.get("off") == "0")
+    check(out, "kfg_hdr=1 back on", out["kfg_hdr_final"] == "1")
+    check(out, "point kept (no re-measure)", all(r["phase"] != "measure" for r in after)
+          and out["point_final"] == out["point_before"], f"{out['point_before']} -> {out['point_final']}")
+    check(out, "confirmed at the end, never conflict", rig.timeline[-1]["policy"] == "confirmed"
+          and all(r["policy"] != "conflict" for r in after))
+    return out
+
+
+@scenario
 def power_control_off() -> Dict[str, Any]:
     """TDP control off (player's choice): points still measured and guarded, TDP untouched."""
     rig = make_rig(VGame("g", 40.0), objective="balanced", power_enabled=False)

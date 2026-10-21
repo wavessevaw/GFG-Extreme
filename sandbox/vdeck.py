@@ -113,7 +113,7 @@ class VAuto:
 
 class VEngine:
     DEFAULTS = {"kfg_multiplier": "0", "kfg_base_fps": "0", "kfg_auto_floor": "0", "kfg_post": "",
-                "kfg_hud": "", "kfg_policy": "0", "kfg_trace": ""}
+                "kfg_hud": "", "kfg_policy": "0", "kfg_trace": "", "kfg_hdr": "1"}
 
     def __init__(self, clock: VClock, game: VGame, power: "VPower", refresh: int = 90) -> None:
         self.clock, self.game, self.power = clock, game, power
@@ -215,7 +215,8 @@ class VEngine:
         if not self.old_engine:
             st.update({"policy": self._int("kfg_policy"), "req_multiplier": mult,
                        "req_base_fps": self._int("kfg_base_fps"), "req_auto_floor": self._int("kfg_auto_floor"),
-                       "auto_floor": self.auto.levels[0] if self.auto else 0, "post": self.vars["kfg_post"]})
+                       "auto_floor": self.auto.levels[0] if self.auto else 0, "post": self.vars["kfg_post"],
+                       "hdr_enabled": self.vars["kfg_hdr"] == "1", "transfer": "sdr"})
         self.last = st
         return st
 

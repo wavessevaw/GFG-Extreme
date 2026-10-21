@@ -38,6 +38,7 @@ def defaults() -> Dict[str, Any]:
         "hud": {"enabled": True, "position": "top-left", "detail": "standard"},
         "autopilot": {"preference": "auto"},
         "power": {"enabled": True},
+        "engine": {"hdr": True},
         "telemetry": {"level": "standard"},
         "migrated_from": None,
     }
@@ -88,6 +89,8 @@ def normalize(raw: Any) -> Dict[str, Any]:
     out["autopilot"] = {"preference": ap.get("preference") if ap.get("preference") in AUTOPILOT_PREFERENCES else "auto"}
     power = raw.get("power") if isinstance(raw.get("power"), dict) else {}
     out["power"] = {"enabled": bool(power.get("enabled", True))}
+    eng = raw.get("engine") if isinstance(raw.get("engine"), dict) else {}
+    out["engine"] = {"hdr": bool(eng.get("hdr", True))}
     tel = raw.get("telemetry") if isinstance(raw.get("telemetry"), dict) else {}
     out["telemetry"] = {"level": tel.get("level") if tel.get("level") in TELEMETRY_LEVELS else "standard"}
     out["migrated_from"] = raw.get("migrated_from") if isinstance(raw.get("migrated_from"), (str, type(None))) else None
@@ -146,7 +149,7 @@ class Settings:
 
     # ---------------------------------------------------------------- globals
     def set_section(self, section: str, changes: Dict[str, Any]) -> Dict[str, Any]:
-        if section not in ("hud", "autopilot", "power", "telemetry"):
+        if section not in ("hud", "autopilot", "power", "telemetry", "engine"):
             raise KeyError(section)
         candidate = copy.deepcopy(self.data)
         candidate[section] = {**candidate[section], **changes}
