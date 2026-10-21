@@ -11,14 +11,50 @@ steps in the right order and do not fight. Hardware numbers come only from the D
              x3.75 floor, restarts, stale status, a rival tool changing convars
   VPower     slowPPT/fastPPT with the actuator API of governor_power, draw from the game's
              load, Steam's slider (an outside change)
-  VSensors   APU temperature (first order, 60 s), battery percent from draw
+  VSensors   APU temperature (first order, 60 s), battery percent from draw, busiest CPU core,
+             GPU busy and clock
+  VCpu       cpufreq sysfs in a temp directory, so Power Split runs the real CpuFreqActuator;
+             a lower CPU clock frees up to CPU_BOOST_W for the GPU (CPU and GPU share the
+             TDP) and lowers what the CPU can feed (cpu_fps x clock share)
 """
 from __future__ import annotations
 
 import math
 import random
 import statistics
+import tempfile
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
+CPU_BOOST_W = 3.0      # what the CPU's boost takes from the shared budget at full clock
+CPU_MAX_KHZ = 3_500_000
+CPU_MIN_KHZ = 1_400_000
+
+
+class VCpu:
+    """Four cpufreq policies under a temp root; ``share`` is the clock the game runs at."""
+
+    def __init__(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory(prefix="gfg-vcpu-")
+        self.root = Path(self.tmp.name)
+        for i in range(4):
+            d = self.root / f"policy{i}"
+            d.mkdir()
+            (d / "cpuinfo_max_freq").write_text(f"{CPU_MAX_KHZ}\n")
+            (d / "cpuinfo_min_freq").write_text(f"{CPU_MIN_KHZ}\n")
+            (d / "scaling_max_freq").write_text(f"{CPU_MAX_KHZ}\n")
+
+    @property
+    def share(self) -> float:
+        try:
+            return int((self.root / "policy0" / "scaling_max_freq").read_text()) / CPU_MAX_KHZ
+        except (OSError, ValueError):
+            return 1.0
+
+    def actuator(self):
+        from gfg_plugin.cpu_freq import CpuFreqActuator
+        return CpuFreqActuator(root=self.root, helper=lambda: None, access=lambda p, m: True,
+                               marker=self.root / "cpu-cap.json")
 
 
 class VClock:
@@ -31,8 +67,9 @@ class VClock:
 
 class VGame:
     def __init__(self, name: str, fps15: float, load: Optional[Callable[[float], float]] = None,
-                 app_id: int = 1245620, noise: float = 0.02, seed: int = 1) -> None:
+                 app_id: int = 1245620, noise: float = 0.02, seed: int = 1, cpu_fps: float = 200.0) -> None:
         self.name, self.fps15, self.app_id = name, fps15, app_id
+        self.cpu_fps = cpu_fps   # what the CPU can feed at full clock (high = GPU-bound game)
         self.load = load or (lambda t: 1.0)
         self.noise = noise
         self.rng = random.Random(seed)
@@ -135,6 +172,9 @@ class VEngine:
         self.cap = 0
         self.gpu_us = 1700.0
         self.over_budget_per_s = 0.0
+        self.cpu: Optional[VCpu] = None
+        self.cpu_share = 1.0
+        self.gpu_capability = 0.0
 
     # gamescopectl
     def set_var(self, name: str, value: Any) -> None:
@@ -161,8 +201,14 @@ class VEngine:
             self.rival(self)
         mult, base, floor = self._int("kfg_multiplier"), self._int("kfg_base_fps"), self._int("kfg_auto_floor")
         generating = mult != 0 and self.app_id not in (0, 769)
-        cap_power = self.power.tdp
-        capability = self.game.capability(cap_power, t, generating)
+        # CPU and GPU share the TDP: a capped CPU clock gives part of its boost back to the GPU
+        # and limits how many frames the CPU can prepare.
+        share = self.cpu.share if self.cpu else 1.0
+        freed = CPU_BOOST_W * (1.0 - share * share)
+        cap_power = self.power.tdp + 0.6 * freed
+        self.cpu_share = share
+        self.gpu_capability = self.game.capability(cap_power, t, generating)
+        capability = min(self.gpu_capability, self.game.cpu_fps * share)
         if mult == 0:
             cap = 0
             self.auto = None
@@ -181,7 +227,7 @@ class VEngine:
             self.auto = None
         rate = min(capability, cap) if cap else min(capability, self.refresh)
         self.capability, self.rate, self.cap = capability, rate, cap
-        need = self.game.watts_for(rate, t, generating)
+        need = max(2.5, self.game.watts_for(rate, t, generating) - 0.5 * freed)
         # A capped game below its TDP still boosts clocks past what it needs ("race to idle" is
         # not free): a third of the headroom is drawn. Lowering the TDP takes that away.
         self.power.draw = min(self.power.tdp, need + 0.33 * max(0.0, self.power.tdp - need))
@@ -291,7 +337,14 @@ class VSensors:
             self.battery = max(0.0, self.battery - (self.power.draw + 4.0) / 3600.0 / self.capacity_wh * 100.0)
 
     def sample(self) -> Dict[str, Any]:
-        return {"temp_c": round(self.temp, 1)}
+        out: Dict[str, Any] = {"temp_c": round(self.temp, 1)}
+        e = getattr(self, "engine", None)
+        if e is not None and e.rate > 0:
+            cpu_cap = e.game.cpu_fps * e.cpu_share
+            out["cpu_top_core_pct"] = round(min(100.0, 100.0 * e.rate / max(cpu_cap, 1e-6) * 0.95), 1)
+            out["gpu_busy_pct"] = round(min(100.0, 100.0 * e.rate / max(e.gpu_capability, 1e-6)), 1)
+            out["gpu_clock_mhz"] = round(1600.0 * min(1.0, (e.gpu_capability / max(e.game.fps15, 1e-6))) ** 0.9, 0)
+        return out
 
     def read_battery(self) -> Dict[str, Any]:
         return {"available": True, "external_power": self.external_power, "percent": round(self.battery, 1),

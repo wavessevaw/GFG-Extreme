@@ -30,6 +30,7 @@ LEARN_AFTER_S = 60.0
 STEP_DOWN_W = 1.0
 STEP_UP_W = 2.0
 SEVERE_RATIO = 0.85
+SEVERE_FLOOR_S = 180.0   # how long a clear shortfall keeps the TDP from stepping down again
 BALANCED_MARGIN_W = 1.0
 MIN_TDP_W = 4.0
 HOT_C = 90.0
@@ -81,7 +82,9 @@ class PowerGovernor:
         self.ceiling: Optional[float] = None
         self.thermal_ceiling: Optional[float] = None
         self.floor_fail: Dict[int, float] = {}  # cap -> highest TDP at which it failed
+        self.floor_hot: Dict[int, tuple] = {}   # cap -> (TDP, until): a clear shortfall, for a while
         self.lowest_ok: Optional[float] = None
+        self.held_at_tdp = False                # a window held since the last TDP write
         self.hold = False
         self.window: List[Dict[str, Any]] = []
         self.window_start = 0.0
@@ -153,6 +156,7 @@ class PowerGovernor:
             return False
         self._note("governor-tdp", watts=target, was=self.tdp, why=why)
         self.tdp = target
+        self.held_at_tdp = False
         self.changed_at = self.clock()
         self.window = []
         return True
@@ -247,31 +251,47 @@ class PowerGovernor:
         if verdict["ok"] is False:
             self.healthy_since = None
             if verdict["reason"] in ("below-cap", "pace", "gpu-budget", "ring-miss"):
-                if self.tdp < self.ceiling:
+                # Insurance: a clear shortfall goes back to full power at once.
+                severe = verdict.get("real", 0.0) < SEVERE_RATIO * self.cap
+                # A clear shortfall after this TDP has held is the scene getting heavier (the
+                # pilot steps the point down), not the TDP: it holds the TDP up for a while, not
+                # for good. Right after a step down, or twice at this TDP, it is the TDP.
+                again = self.floor_hot.get(self.cap, (0.0, 0.0))[0] >= self.tdp
+                scene = severe and self.held_at_tdp and not again
+                if self.tdp < self.ceiling and scene:
+                    self.floor_hot[self.cap] = (self.tdp, now + SEVERE_FLOOR_S)
+                elif self.tdp < self.ceiling:
                     self.floor_fail[self.cap] = max(self.floor_fail.get(self.cap, 0.0), self.tdp)
                     if self.model:
                         self.model.record_floor_failure(self.key, f"cap{self.cap}", self.tdp)
-                # Insurance: a clear shortfall goes back to full power at once.
-                severe = verdict.get("real", 0.0) < SEVERE_RATIO * self.cap
                 self._write(self.ceiling if severe else self.tdp + STEP_UP_W,
                             f"window-failed:{verdict['reason']}" + (":severe" if severe else ""))
             return
         if verdict["ok"] is not True:
             return
         self.lowest_ok = self.tdp if self.lowest_ok is None else min(self.lowest_ok, self.tdp)
+        self.held_at_tdp = True
         if self.healthy_since is None:
             self.healthy_since = now
         if not self.learned and now - self.healthy_since >= LEARN_AFTER_S and self.model:
             self.learned = bool(self.model.record(f"{self.key}|cap{self.cap}", "tdp", self.tdp))
         if self.objective == "quality":
             return
-        floor = self.floor_fail.get(self.cap, 0.0) + (1.0 if self.objective == "battery" else 1.0 + BALANCED_MARGIN_W)
+        hot_tdp, hot_until = self.floor_hot.get(self.cap, (0.0, 0.0))
+        failed = max(self.floor_fail.get(self.cap, 0.0), hot_tdp if now < hot_until else 0.0)
+        floor = failed + (1.0 if self.objective == "battery" else 1.0 + BALANCED_MARGIN_W)
         target = self.tdp - STEP_DOWN_W
         if target < floor:
             return
         if self._write(target, "window-held"):
             self.healthy_since = None
             self.learned = False
+
+    def settled(self) -> bool:
+        """Holding a point with no TDP step for two windows: other experiments (Power Split)
+        may run now without mixing into a Governor trial."""
+        return bool(self.owned and not self.paused and not self.hold and self.cap > 0
+                    and self.last.get("ok") is True and self.clock() - self.changed_at >= 2 * WINDOW_S)
 
     def at_ceiling(self) -> bool:
         """Nothing left to raise: the TDP is at its ceiling, or the Governor does not manage it."""
@@ -294,6 +314,7 @@ class PowerGovernor:
             "floor_fail_w": self.floor_fail.get(self.cap),
             "hold": self.hold,
             "at_ceiling": self.at_ceiling(),
+            "settled": self.settled(),
             "cap": self.cap,
             "window": self.last,
             "draw_w": act.get("draw_w"),

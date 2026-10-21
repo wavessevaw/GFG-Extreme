@@ -37,7 +37,7 @@ def defaults() -> Dict[str, Any]:
         "profiles": {DEFAULT_PROFILE: default_profile()},
         "hud": {"enabled": True, "position": "top-left", "detail": "standard"},
         "autopilot": {"preference": "auto"},
-        "power": {"enabled": True},
+        "power": {"enabled": True, "split": True},
         "engine": {"hdr": True},
         "telemetry": {"level": "standard"},
         "migrated_from": None,
@@ -88,7 +88,7 @@ def normalize(raw: Any) -> Dict[str, Any]:
     ap = raw.get("autopilot") if isinstance(raw.get("autopilot"), dict) else {}
     out["autopilot"] = {"preference": ap.get("preference") if ap.get("preference") in AUTOPILOT_PREFERENCES else "auto"}
     power = raw.get("power") if isinstance(raw.get("power"), dict) else {}
-    out["power"] = {"enabled": bool(power.get("enabled", True))}
+    out["power"] = {"enabled": bool(power.get("enabled", True)), "split": bool(power.get("split", True))}
     eng = raw.get("engine") if isinstance(raw.get("engine"), dict) else {}
     out["engine"] = {"hdr": bool(eng.get("hdr", True))}
     tel = raw.get("telemetry") if isinstance(raw.get("telemetry"), dict) else {}

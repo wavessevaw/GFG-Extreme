@@ -18,6 +18,7 @@ from .kedavra import hud as hudmod
 from .pilot import PointPilot
 from .policy import Policy, PolicyCoordinator
 from .session_stats import SessionStats
+from .split_control import SplitControl
 
 GAME_GRACE_S = 10.0   # the QAM or a loading screen does not end a game session
 STEAM_APP = 769
@@ -27,7 +28,8 @@ class Service:
     def __init__(self, *, settings: Any, ctl: Any, actuator: Any, model: Any, sensors: Any,
                  battery: Callable[[], Dict[str, Any]], hud: Optional[Any] = None,
                  hud_path: str = "", clock: Callable[[], float] = time.monotonic,
-                 journal: Optional[Callable[..., None]] = None, telemetry: Optional[Any] = None) -> None:
+                 journal: Optional[Callable[..., None]] = None, telemetry: Optional[Any] = None,
+                 split: Optional[SplitControl] = None) -> None:
         self.settings = settings
         self.ctl = ctl
         self.clock = clock
@@ -41,6 +43,7 @@ class Service:
         self.pilot = PointPilot(clock=clock, journal=self._j("pilot"))
         self.autopilot = Autopilot(clock=clock)
         self.governor = PowerGovernor(actuator, model, clock=clock, journal=self._j("governor"))
+        self.split = split
         self.rates = hudmod.Rates()
         self.stats = SessionStats()
         self.last_game_at = -1e9
@@ -94,7 +97,7 @@ class Service:
             "fg": profile["fg"], "base_fps": profile["base_fps"], "objective": objective,
             "refresh": refresh, "game": game, "app": self.app, "engine": st,
             "real": live.get("real"), "pace": live.get("pace"), "confirmed": confirmed,
-            "at_ceiling": gov.at_ceiling(),
+            "at_ceiling": gov.at_ceiling(), "settling": bool(self.split and self.split.settling()),
         })
         policy = Policy(req["multiplier"], req["base_fps"], filters.to_post(profile["filters"]),
                         self.hud_path, req["auto_floor"], bool(data["engine"]["hdr"]))
@@ -104,10 +107,20 @@ class Service:
 
         gov.enabled = bool(data["power"]["enabled"])
         locked = req["phase"] in ("locked", "fixed") and confirmed
+        split_status: Dict[str, Any] = {}
+        if self.split is not None:
+            gs = gov.status()
+            split_status = self.split.tick({
+                "enabled": bool(data["power"]["split"]), "game": game, "app": f"app:{self.app}",
+                "steady": bool(locked and gs.get("owned") and gov.settled()),
+                "menu": bool(st.get("steam_ui")), "point": req["point"], "real": live.get("real"),
+                "sensors": sensors, "draw_w": gs.get("draw_w"), "tdp_w": gs.get("tdp_w")})
         sample = {
             "game": game, "key": f"app:{self.app}|{refresh}", "objective": objective,
             "cap": req["point"] if locked else 0, "hold_ceiling": req["hold_ceiling"],
-            "epoch": coord["epoch"], "real": live.get("real"), "pace": live.get("pace"),
+            # A CPU clock change (Power Split) restarts the TDP windows like a new policy does.
+            "epoch": (coord["epoch"], self.split.changes if self.split else 0),
+            "real": live.get("real"), "pace": live.get("pace"),
             "over_budget": (rates or {}).get("over_budget", 0.0), "ring_miss": 0.0, "temp_c": temp,
         }
         if rates is not None and self.rates.prev is not None:
@@ -133,7 +146,8 @@ class Service:
             "time": now, "game": game, "app": self.app, "profile": profile_key, "profile_name": profile["name"],
             "fg": profile["fg"], "objective": objective, "objective_setting": profile["objective"],
             "autopilot_reason": auto_reason, "refresh": refresh, "engine": self._engine_view(st),
-            "live": live, "pilot": req, "policy": coord, "governor": g, "sensors": sensors, "power": power,
+            "live": live, "pilot": req, "policy": coord, "governor": g, "split": split_status,
+            "sensors": sensors, "power": power,
             "filters": filters.summary(profile["filters"]),
         }
         if self.telemetry is not None and game:
@@ -172,6 +186,8 @@ class Service:
         """Plugin unload: TDP back to the player's, HUD hidden, generation left as the engine runs it."""
         self._end_session("unload")
         self.governor.stop("unload")
+        if self.split is not None:
+            self.split.stop()
         if self.hud is not None:
             try:
                 self.hud.tick(False, None)

@@ -17,6 +17,7 @@ import decky  # provided by Decky Loader at runtime
 from . import filters, paths
 from .activity_log import ActivityLog
 from .coexist import Coexistence
+from .cpu_freq import CpuFreqActuator
 from .game_model import GameModelStore
 from .governor_battery import read_battery
 from .governor_power import SteamDeckPowerActuator
@@ -28,6 +29,7 @@ from .legacy_cleanup import LegacyCleanup
 from .migration import Migration
 from .service import Service
 from .settings import Settings, profile_key
+from .split_control import SplitControl
 from .steamos_tdp import SteamOSManagerTdp
 from .telemetry import Telemetry
 from .user_files import ensure_dir, home_owner, read_json, write_json_atomic
@@ -57,10 +59,15 @@ class Plugin:
         actuator = SteamDeckPowerActuator(manager=manager)
         actuator.journal = lambda kind, **f: self.log.record("power", kind, **f)
         model = GameModelStore(self.data / "game-models.json", owner=self.owner)
+        cpu = CpuFreqActuator(marker=self.runtime / "cpu-cap.json")
+        cpu.journal = lambda kind, **f: self.log.record("power", kind, **f)
+        split = SplitControl(cpu, self.data / "power-split.json", self.owner,
+                             journal=lambda kind, **f: self.log.record("split", kind, **f))
         self.service = Service(
             settings=self.settings, ctl=self.ctl, actuator=actuator, model=model, sensors=HostSensors(),
             battery=read_battery, hud=Hud(paths.HUD_PATH), hud_path=str(paths.HUD_PATH),
-            journal=lambda src, kind, **f: self.log.record(src, kind, **f), telemetry=self.telemetry)
+            journal=lambda src, kind, **f: self.log.record(src, kind, **f), telemetry=self.telemetry,
+            split=split)
         self.lock = asyncio.Lock()
         self.state: Dict[str, Any] = {}
         self.stopping = False

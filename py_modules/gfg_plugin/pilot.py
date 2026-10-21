@@ -167,7 +167,9 @@ class PointPilot:
         """Collect samples; a verdict when the window is full. Samples taken while the engine
         does not run this policy yet are not counted."""
         now = self.clock()
-        if not ctx.get("game") or not ctx.get("confirmed") or ctx.get("real") is None:
+        # "settling": Power Split is trying a CPU clock level; its own guard lifts the cap on a
+        # dip, so those seconds say nothing about the point.
+        if not ctx.get("game") or not ctx.get("confirmed") or ctx.get("real") is None or ctx.get("settling"):
             self.window, self.window_start = [], now
             return None
         self.window.append({"real": float(ctx["real"]), "pace": ctx.get("pace"),

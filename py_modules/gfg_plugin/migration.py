@@ -217,6 +217,13 @@ class Migration:
             out["hud"]["enabled"] = bool(hud.get("enabled", True))
             if hud.get("position") in HUD_CORNERS:
                 out["hud"]["position"] = hud["position"]
+        gfg = self._json("gfg-governor.json")
+        if gfg.get("power_split") is False:
+            out["power"]["split"] = False
+            report["notes"].append("Power Split stays off, as you had it in 2.x")
+        if gfg.get("power_split_games"):
+            report["notes"].append("Power Split's per-game measurements from 2.x are not used (measured "
+                                   "with MAKO's costs); it measures again on the KEDAVRA points")
         if (self.legacy / "gfg-game-models.json").exists():
             report["notes"].append("Learned TDP points from 2.x are not used (measured with MAKO's costs); "
                                    "they are in the backup, and the Governor learns again")

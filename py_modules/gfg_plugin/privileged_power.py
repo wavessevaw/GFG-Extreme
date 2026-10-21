@@ -15,6 +15,7 @@ import re
 from typing import Optional
 
 _CAP_RE = re.compile(r"^/sys/devices/[A-Za-z0-9_.:/-]+/hwmon/hwmon[0-9]+/power[0-9]+_cap$")
+_CPU_RE = re.compile(r"^/sys/devices/system/cpu/cpufreq/policy[0-9]+/scaling_max_freq$")
 
 
 def allowed_cap_path(path: str) -> Optional[str]:
@@ -24,6 +25,15 @@ def allowed_cap_path(path: str) -> Optional[str]:
     except (OSError, ValueError):
         return None
     return real if _CAP_RE.match(real) else None
+
+
+def allowed_cpu_path(path: str) -> Optional[str]:
+    """Resolved cpufreq ``scaling_max_freq`` path (Power Split), or None for anything else."""
+    try:
+        real = os.path.realpath(path)
+    except (OSError, ValueError):
+        return None
+    return real if _CPU_RE.match(real) else None
 
 
 class HelperTimeout(OSError):
