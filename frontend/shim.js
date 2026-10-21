@@ -2,7 +2,7 @@
 // @ts-ignore
 
 // Prevents it from being duplicated in output.
-const manifest = {"name":"GFG Extreme","author":"Eugenio Segala","flags":[],"api_version":1,"publish":{"tags":["installer","vulkan","gfg-extreme","framegen","lossless-scaling","scaling","shaders","vkbasalt","steam-machine"],"description":"GFG Extreme: streamlined frame generation, adaptive display sync, scaling, and shader controls for SteamOS."}};
+const manifest = {"name": "GFG Extreme", "author": "Eugenio Segala", "flags": ["root"], "api_version": 1, "publish": {"tags": ["frame-generation", "framegen", "gamescope", "kedavra", "tdp", "steam-deck", "gfg-extreme"], "description": "GFG Extreme 3.0 Independence: frame generation x2–x3.75 on its own engine (GSF Kedavra in Gamescope), Autopilot, TDP Governor, Power Split and GPU clock ceiling. No Lossless Scaling."}};
 const API_VERSION = 2;
 const internalAPIConnection = window.__DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_deckyLoaderAPIInit;
 // Initialize

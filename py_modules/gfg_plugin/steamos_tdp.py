@@ -48,7 +48,7 @@ class SteamOSManagerTdp:
         env = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "HOME", "USER", "LC_ALL")}
         env.setdefault("PATH", "/usr/bin:/bin")
         runtimes: List[str] = []
-        for value in (os.environ.get("XDG_RUNTIME_DIR"), f"/run/user/{os.getuid()}"):
+        for value in (os.environ.get("XDG_RUNTIME_DIR") if os.geteuid() != 0 else None, f"/run/user/{os.getuid()}"):
             if value and value not in runtimes:
                 runtimes.append(value)
         if self._home:
@@ -68,10 +68,24 @@ class SteamOSManagerTdp:
                 env["DBUS_SESSION_BUS_ADDRESS"] = os.environ["DBUS_SESSION_BUS_ADDRESS"]
         return env
 
+    def _user_ids(self) -> Dict[str, object]:
+        """GFG Extreme 3.0 runs as root; the session bus belongs to the desktop user, so the
+        tools run as the owner of the home directory."""
+        if os.geteuid() != 0 or not self._home:
+            return {}
+        try:
+            st = Path(self._home).stat()
+        except OSError:
+            return {}
+        if st.st_uid == 0:
+            return {}
+        return {"user": st.st_uid, "group": st.st_gid, "extra_groups": []}
+
     def _subprocess(self, args: List[str]) -> Tuple[bool, str]:
         try:
             result = subprocess.run(args, capture_output=True, text=True, timeout=self._timeout,
-                                    env=self._environment(), stdin=subprocess.DEVNULL, check=False)
+                                    env=self._environment(), stdin=subprocess.DEVNULL, check=False,
+                                    **self._user_ids())
         except subprocess.TimeoutExpired:
             return False, "timeout"
         except (OSError, ValueError) as error:

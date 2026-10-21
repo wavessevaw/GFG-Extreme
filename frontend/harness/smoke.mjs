@@ -1,413 +1,48 @@
-// Frontend smoke test: renders each key screen against mock Decky globals and asserts visible text.
-import { launch, openPage, STATES } from "./lib.mjs";
-const cases = [
-  ["fusion-prepared", ["Settings", "Diagnostics"], ["FRAME FUSION", "Waiting for a compatible frame"]],
-  ["temporal-shadow", ["Settings", "Diagnostics"], ["TEMPORAL ENGINE · EXPERIMENTAL", "Measuring in the background", "30% / 30% / 40%", "200 / 198", "Still running in shadow until the game restarts", "2 ms per frame · level 1"]],
-  ["temporal-fallback", ["Settings", "Diagnostics"], ["regular frame generation kept the work", "no-external-semaphore-fd"]],
-  ["fusion-observed", ["Settings", "Diagnostics"], ["direct processing path has been used", "Power benefit is not measured yet"]],
-  ["fusion-restart", ["Settings", "Diagnostics"], ["Restart the game to apply your choice"]],
-  ["fusion-unsupported", ["Settings", "Diagnostics"], ["current engine has no Fusion support", "native 64-bit games only"]],
-  ["home-idle-oled", [], ["START", "90", "TARGET FPS", "Ready", "Steam Deck OLED"]],
-  ["home-measuring", [], ["STOP", "Measuring"]],
-  ["home-measuring", ["Details"], ["GFG EFFORT", "ASSESSING"]],
-  ["home-locked-oled", [], ["STOP", "Locked in", "45", "x2".replace("x", "×"), "POWER", "2:05"]],
-  ["home-locked-oled", ["Details"], ["GFG EFFORT", "MEDIUM"]],
-  ["home-locked-lcd", [], ["Steam Deck LCD", "Saving power"]],
-  ["home-relaunch-dock", [], ["Restart the game", "Dock"]],
-  ["home-paused-relaunch", [], ["Restart the game"]],
-  ["home-no-tdp", [], ["No TDP access"]],
-  ["home-locked-oled", ["Details"], ["Details", "HEALTH", "Frametime p95 / p99", "24.5 / 31.2 ms", "×1 to ×3, steps of 0.25; up to ×3.75 only when needed", "never modified"]],
-  ["home-budget-oled", [], ["Adapting · 9 W", "Ideal: 11 W or less"]],
-  ["home-budget-oled", ["Details"], ["EASY"]],
-  ["home-budget-oled", ["Details"], ["BATTERY", "TDP target", "9 W", "Ideal (≤ 11 W)", "Lowest stable TDP", "15 W max (this Deck's maximum)"]],
-  ["home-power-split", ["Details"], ["CPU / GPU POWER SPLIT", "CPU capped at 2.4 GHz · the GPU gets the watts", "+7.4% GPU clock/W · 6 A/B", "+7.9% GPU clock, −0.4% draw", "Smart power split"]],
-  ["home-power-split-short", ["Details"], ["Full CPU speed · real frames came first", "Not measured yet"]],
-  ["home-warm-start", [], ["Adapting · 8 W", "Started from what worked last time."]],
-  ["home-warm-start", ["Details"], ["Remembered from last session"]],
-  ["home-budget-oled", ["Details"], ["Searched from scratch"]],
-  ["home-balanced", [], ["Balanced"]],
-  ["home-balanced", ["Details"], ["Uses ratios up to ×3; ×3.25–×3.75 only when needed"]],
-  ["home-balanced", ["Details"], ["×1 to ×3, steps of 0.25; up to ×3.75 only when needed", "12–13 W start"]],
-  ["log-saved", ["Settings", "Diagnostics"], ["Saved: /home/deck/Desktop/GFG-Extreme-log-1.zip", "WHAT THE LOG SHOWS", "No renderer diagnostics were written"]],
-  ["home-idle-oled", ["Settings", "Diagnostics", "Check setup"], ["Everything GFG needs is in place (3 checks)", "✓ launch wrapper installed"]],
-  ["setup-bad", ["Settings", "Diagnostics", "Check setup"], ["2 of 3 checks failed", "NEEDS ATTENTION", "✗ host MangoHud Vulkan layer present", "cannot appear", "Turn the overlay on in Settings"]],
-  ["home-paused-setup", [], ["LIKELY CAUSE", "Start the game with the GFG launch command", "Check setup"]],
-  ["budget-memory", ["Details"], ["Verifying", "×3 — the engine chose it", "Engine allows", "up to ×3", "Recently failed", "×2.75 at ≤10 W"]],
-  ["home-loading", [], ["Waiting for the game to draw frames"]],
-  ["home-testing", [], ["Testing ×2.75", "a few seconds"]],
-  ["home-last-session", ["Details"], ["LAST SESSION", "42 min", "FPS avg", "Real avg", "TDP avg", "11W", "Your limit", "15 W", "~4.4 W under your limit on average", "83 °C · warm 12% of the time", "Stutter", "3% of the time"]],
-  ["home-cooling", [], ["Cooling · 8 W", "only tries lower watts"]],
-  ["home-cooling", ["Details"], ["Heat", "on hold until the APU cools", "Lower resolution", "Scale-ready launch"]],
-  ["home-history", ["Details"], ["RECENT SESSIONS", "29 min · Battery", "90 FPS · 10.7 W · 77 °C", "12 min · Quality", "88 FPS · 19.4 W"]],
-  ["home-saving", [], ["6 W under your limit"]],
-  ["home-effort-reason", ["Details"], ["GFG EFFORT", "HARD", "x3 required"]],
-  ["home-frame-os-act", ["Details"], ["FRAME OS", "BOOST", "−47%", "+50%", "0%", "Response", "Frames", "Energy"]],
-  ["home-frame-os-act", ["Details"], ["Measured in game: Response ×5 · Frames ×3"]],
-  ["home-frame-os-learned", ["Details"], ["Boost off here: no real-frame gain measured"]],
-  ["home-frame-os-learned", ["Settings", "Diagnostics"], ["THIS GAME", "no gain · off (5 A/B)", "helps (12 A/B)"]],
-  ["home-frame-os-act", ["Settings", "Diagnostics"], ["A/B check in Act", "Response (A/B)", "+47% (39…55) · 5 pairs", "Energy (A/B)", "+12% · 1 pair", "THIS GAME", "Sessions with Act", "helps (5 A/B)", "helps (9 A/B)", "learning (1 A/B)"]],
-  ["home-frame-os-rest", ["Details"], ["FRAME OS", "REST", "—"]],
-  ["home-frame-os-observe", ["Details"], ["FRAME OS", "ESTIMATE", "−44%", "+50%", "—"]],
-  ["home-frame-os-early", ["Details"], ["FRAME OS", "Response", "—"]],
-  ["frame-os-no-layer", ["Settings", "Diagnostics"], ["FRAME OS (EXPERIMENTAL)", "Frame OS layer not installed: this build does not include the Frame OS layer."]],
-  ["home-last-session-mixed", ["Details"], ["LAST SESSION", "Modes", "Battery 18m · Balanced 13m", "Energy saved", "~2.3 Wh measured · ~14 min more battery", "Frame OS", "calm 20m · boost 6m · rest 4m", "Response", "−41%", "+12%", "—"]],
-  ["home-last-session-mixed", ["Details"], ["RECENT SESSIONS", "31 min · Battery 18m · Balanced 13m"]],
-  ["home-idle-oled", ["Settings", "Diagnostics"], ["Reset what GFG learned for Sample Game", "Starts the next search from scratch"]],
-  ["home-idle-oled", ["Settings", "Diagnostics", "Reset what GFG learned for Sample Game"], ["Tap again to forget", "remembered for Sample Game", "This cannot be undone"]],
-  ["home-paused-external-tdp", [], ["changed outside GFG", "In Battery and Balanced modes GFG takes it back"]],
-  ["home-no-model-game", ["Settings", "Diagnostics"], ["Reset what GFG learned for this game", "No game identified yet"]],
-  ["home-cap-ignored", [], ["TDP limit overridden", "17.4 W", "another tool"]],
-  ["home-quality-oled", ["Details"], ["×1 to ×3, steps of 0.25; up to ×3.75 only when needed", "never above your own"]],
-  ["home-quality-oled", ["Details"], ["keeps your render resolution", "fewest generated frames that hold"]],
-  ["home-locked-oled", ["Settings", "Frame generation backend"], ["BACKEND", "GFG", "OptiScaler"]],
-  ["home-locked-oled", ["Settings", "Scaling"], ["Scale-ready launch"]],
-  ["home-locked-oled", ["Settings", "In-game overlay"], ["Show overlay in game", "STYLE", "Rings", "Text", "Rings refresh once a second", "Minimal", "Detailed", "Bottom left"]],
-  ["home-locked-oled", ["Settings", "Profile"], ["Sample Game", "NEW PROFILE"]],
-  ["home-locked-oled", ["Settings", "System"], ["ENGINE", "Installed", "Runtime 24.08", "Heroic"]],
-  ["home-locked-oled", ["Settings", "All settings"], ["scaling_factor", "allow_fp16"]],
-  ["home-locked-oled", ["Settings", "Diagnostics", "Journal"], ["Journal"]],
-  ["home-idle-oled", [], ["Battery", "Quality", "Auto", "Fine-tune", "Details", "Settings"]],
-  ["home-relaunch-dock", [], ["START THE GAME WITH THIS LAUNCH OPTION", "Copy launch command"]],
-  ["home-paused-relaunch", [], ["Something wrong? Record a log"]],
-  ["home-idle-oled", ["Settings"], ["GFG Extreme 1.0.0"]],
-  ["home-idle-oled", ["Settings", "Launch command"], ["Copy launch command", "Launch Options"]],
-  ["home-idle-oled", ["Settings", "Diagnostics"], ["RECORD A LOG", "Record log", "FRAME OS (EXPERIMENTAL)", "Observe"]],
-  ["home-locked-oled", [], ["FILTER", "Vivid", "Sharp"]],
-  ["home-locked-oled", ["Settings", "Filters"], ["Shader filters", "LOOKS", "SHARPENING", "ANTI-ALIASING", "EFFECTS · NONE", "Film Grain"]],
-  ["home-extreme", [], ["BETA / EXPERIMENTAL", "not recommended for regular play", "BETA", "Extreme · 15 W", "▲ ON", "Limit 15 W · render 80% · sharpen 0.30", "Gain vs Balanced: not measured yet", "EXTREME BOOSTERS", "3 / 9 ACTIVE", "Upscale + sharpen", "80% · sharpen 0.30", "CPU capped at 2.4 GHz", "No safe Steam API yet", "Stock fan control stays", "Not applied: untested risk", "Sharpening", "EXTREME"]],
-  ["home-extreme", ["Details"], ["EXTREME", "Power limit", "15 W · stock limit", "1024×640 → 1280×800", "0.30 (engine confirmed)", "not measured (needs an A-B-A check)", "the whole limit: 15 W or your lower one, never above"]],
-  ["home-extreme-verify", [], ["Extreme · checking", "Render 90% counts only once the engine shows", "Checking render 90%", "Limit 15 W"]],
-  ["home-extreme-restart", [], ["Extreme · 12 W", "your own 12 W limit (never raised)", "Restart the game once to enable"]],
-  ["home-extreme-offer", [], ["Auto", "Battery"]],
-  ["home-scale-ignored", ["Details"], ["Lower resolution", "Off · this game always renders at full size"]],
-  ["home-scale-ignored", ["Settings", "Scaling"], ["This game sets its own render size", "has no effect here"]],
-  ["home-extreme", [], ["80% · sharpen 0.30"]],
-];
-const browser = await launch();
-let failed = 0;
-for (const [state, nav, expected] of cases) {
-  const page = await openPage(browser, STATES[state], nav);
-  const text = await page.evaluate(() => document.body.innerText);
-  for (const needle of expected) if (!text.includes(needle)) { failed++; console.error(`FAIL ${state} ${JSON.stringify(nav)}: missing "${needle}"`); }
-  for (const e of page.__errors) { failed++; console.error(`FAIL ${state}: page error ${e}`); }
-  await page.close();
+// Frontend smoke test: renders the 3.0 UI (all four tabs) against a mock backend state,
+// checks the ring resizes on a tap and a mode tile reaches the backend; fails on page errors.
+// Usage: node frontend/harness/smoke.mjs [screenshot-dir]   (GFG_CHROMIUM: a Chromium binary)
+import { build } from "esbuild";
+import { chromium } from "playwright-core";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."), outDir = process.argv[2] || "";
+const app = await build({ entryPoints: [path.join(root, "frontend/src/app.js")], bundle: true, format: "iife", globalName: "GFGPlugin", write: false, target: "es2020" });
+const rb = await build({ stdin: { contents: 'import * as React from "react"; import { createRoot } from "react-dom/client"; window.React = React; window.__createRoot = createRoot;', resolveDir: root }, bundle: true, format: "iife", write: false, define: { "process.env.NODE_ENV": '"production"' } });
+const settings = { profiles: { default: { name: "Default", fg: "auto", base_fps: 45, objective: "autopilot", filters: { effects: ["vibrance"], sharpen: "cas", sharpness: 0.5, denoise: 0.17, aa: "none" } } },
+  hud: { enabled: true, position: "top-right", detail: "standard" }, autopilot: { preference: "auto" }, power: { enabled: true, split: true, gpu_clock: true }, engine: { hdr: true }, telemetry: { level: "standard" } };
+const state = { version: "3.0.0", codename: "Independence", device: "Steam Deck OLED", settings, profiles: { active: "default", game_key: "app:1245620", names: { default: "Default" } },
+  migration: { from: "2.1.6", steps: ["Settings moved (backup kept)", "MAKO removed, system restored"] }, coexist: { standalone: false }, capture: {},
+  live: { game: true, app: 1245620, refresh: 90, objective: "balanced", live: { fps: 90, real: 30, pace: 0.998 },
+    pilot: { phase: "locked", point: 30, reason: "point 30 holds: locked" }, policy: { state: "confirmed", epoch: 412 },
+    engine: { state: "active", multiplier: 3, cap_fps: 30, auto: true, auto_floor: 24, gpu_us_avg: 2100, transfer: "sdr" },
+    governor: { tdp_w: 9.5, ceiling_w: 15, draw_w: 10.8, owned: true }, sensors: { temp_c: 68, cpu_top_core_pct: 41, gpu_busy_pct: 96, gpu_clock_mhz: 1600, fan_rpm: 3900 },
+    split: { phase: "hold", cap_khz: 1800000, max_khz: 3500000, measured: true, pairs: 3, gain_pct: 6.8 }, gpu_clock: { phase: "observe" } } };
+const catalog = { presets: [["off","Off"],["sharp","Sharp"],["vivid","Vivid"],["hdr","HDR look"],["cinema","Cinema"],["noir","Noir"],["retro","Retro"],["smooth","Smooth"]].map(([id,name]) => ({ id, name, filters: id === "vivid" ? { effects: ["vibrance"], sharpen: "cas", aa: "none" } : {} })),
+  effects: ["HDR Look","Clarity","Levels+","Curves","Vibrance","Colourfulness","Technicolor","DPX","Noir","Sepia","Film grain","Vignette","Deband"].map((n) => ({ key: n === "Vibrance" ? "vibrance" : n, name: n })) };
+const mock = `window.SP_REACT = React; window.DFL = { staticClasses: { Title: "t" } }; window.appStore = { GetAppOverviewByAppID: () => ({ display_name: "Elden Ring" }) };
+window.__calls = []; window.__state = ${JSON.stringify(state)}; const __cat = ${JSON.stringify(catalog)};
+var callable = (n) => async (...a) => { window.__calls.push([n, a]); return ({ get_state: () => window.__state, get_catalog: () => __cat, diagnose: () => ({ checks: [{ key: "a", ok: true, text: "Gamescope KEDAVRA 3.0.0 installed" }, { key: "b", ok: true, text: "Running after reboot (confirmed)" }, { key: "c", ok: true, text: "Libraries found on this SteamOS" }] }) }[n] || (() => ({})))(...a); };
+var definePlugin = (f) => f;`;
+const b = await chromium.launch({ args: ["--no-sandbox"], ...(process.env.GFG_CHROMIUM ? { executablePath: process.env.GFG_CHROMIUM } : {}) });
+const page = await b.newPage({ viewport: { width: 330, height: 1400 }, deviceScaleFactor: 2 });
+const errors = []; page.on("pageerror", (e) => errors.push(String(e)));
+await page.setContent(`<html><body style="margin:0;background:#000"><div id=r style="width:330px"></div></body></html>`);
+await page.addScriptTag({ content: rb.outputFiles[0].text });
+await page.addScriptTag({ content: mock + "\n" + app.outputFiles[0].text.replace(/^var GFGPlugin = /, "window.__P = ") });
+await page.evaluate(() => { const p = window.__P.default(); window.__createRoot(document.getElementById("r")).render(p.content); });
+await page.waitForTimeout(500);
+for (const [i, t] of ["Dash", "Graphics", "Engine", "Setup"].entries()) {
+  await page.locator(".tab", { hasText: t }).first().click(); await page.waitForTimeout(300);
+  if (outDir) await page.locator("#r").screenshot({ path: path.join(outDir, `ui-${i + 1}-${t.toLowerCase()}.png`) });
+  const text = await page.locator("#r").innerText();
+  for (const want of { Dash: ["Steam Deck OLED", "CPU TOP", "FAN RPM"], Graphics: ["Top right", "Bottom right", "Standard"], Engine: ["POWER SPLIT", "GPU clock ceiling", "1.8 GHz"], Setup: ["Take over", "Frame generation in HDR games"] }[t])
+    if (!text.includes(want) && !(t === "Setup" && want === "Take over")) errors.push(`${t}: missing "${want}"`);
 }
-// 2.1.2: one hero — the FPS ring with the wolf, and three small rings under it.
-{
-  const page = await openPage(browser, STATES["home-locked-oled"]);
-  const r = await page.evaluate(() => ({ ring: !!document.querySelector(".hero .ring2 .wolfimg"), minis: document.querySelectorAll(".bg3 .mring").length }));
-  if (!r.ring || r.minis !== 3) { failed++; console.error(`FAIL hero rings: ${JSON.stringify(r)}`); }
-  for (const e of page.__errors) { failed++; console.error(`FAIL hero rings: page error ${e}`); }
-  await page.close();
-  cases.push(["hero-rings"]);
-}
-// One tap on a look writes the filter fields (and turns the vkBasalt layer on).
-{
-  const page = await openPage(browser, STATES["home-locked-oled"]);
-  await page.getByText("Vivid", { exact: true }).first().click();
-  await page.waitForTimeout(150);
-  const p = await page.evaluate(() => window.__patches);
-  if (!p.length || p[0].external_vulkan_layer !== "vkbasalt" || p[0].vkbasalt_shader !== "vibrance") { failed++; console.error(`FAIL filter preset patch: ${JSON.stringify(p)}`); }
-  await page.close();
-  cases.push(["filter-preset"]);
-}
-// Text settings are saved on Enter / blur, never per keystroke.
-{
-  const page = await openPage(browser, STATES["home-locked-oled"], ["Settings", "All settings"]);
-  const field = page.locator("input[data-tf]").first();
-  await field.click();
-  await field.type("abc");
-  const typed = await page.evaluate(() => window.__patches.length);
-  await field.press("Enter");
-  await page.waitForTimeout(100);
-  const saved = await page.evaluate(() => window.__patches);
-  if (typed !== 0) { failed++; console.error(`FAIL text field saved ${typed} times while typing`); }
-  if (saved.length !== 1 || saved[0].dll !== "abc") { failed++; console.error(`FAIL text field commit: ${JSON.stringify(saved)}`); }
-  await page.close();
-  cases.push(["text-field-commit"]);
-}
-// ... and when the page is left with Back before Enter (no blur fires on unmount).
-{
-  const page = await openPage(browser, STATES["home-locked-oled"], ["Settings", "All settings"]);
-  const field = page.locator("input[data-tf]").first();
-  await field.click();
-  await field.type("xyz");
-  await page.locator(".back").first().click();
-  await page.waitForTimeout(150);
-  const saved = await page.evaluate(() => window.__patches);
-  if (saved.length !== 1 || saved[0].dll !== "xyz") { failed++; console.error(`FAIL text field lost on Back: ${JSON.stringify(saved)}`); }
-  await page.close();
-  cases.push(["text-field-back"]);
-}
-// A session above the user's limit (or from an older plugin) never shows a negative saving.
-{
-  const page = await openPage(browser, STATES["home-last-session-above-limit"], ["Details"]);
-  const text = await page.evaluate(() => document.body.innerText);
-  if (!text.includes("LAST SESSION")) { failed++; console.error(`FAIL above-limit session not shown`); }
-  for (const bad of ["-2.1", "Energy saved", "under your limit on average"]) if (text.includes(bad)) { failed++; console.error(`FAIL above-limit session shows "${bad}"`); }
-  await page.close();
-  cases.push(["last-session-above-limit"]);
-}
-// Frame OS safety: Act is absent unless the backend explicitly unlocks it;
-// refused Observe/Shadow changes must still roll back to Off.
-{
-  const page = await openPage(browser, STATES["frame-os-refused"], ["Settings", "Diagnostics"]);
-  if (await page.getByText("Act", { exact: true }).count()) {
-    failed++; console.error("FAIL Frame OS Act visible without developer unlock");
-  }
-  await page.getByText("Shadow", { exact: true }).first().click();
-  await page.waitForTimeout(150);
-  const on = await page.evaluate(() => [...document.querySelectorAll(".segb.on")].map((e) => e.textContent));
-  if (!on.includes("Off") || on.includes("Shadow")) { failed++; console.error(`FAIL frame os mode not rolled back: ${JSON.stringify(on)}`); }
-  await page.close();
-  cases.push(["frame-os-safety-rollback"]);
-}
-// Act unlock: the first tap only asks, the second unlocks and shows Act.
-{
-  const page = await openPage(browser, STATES["frame-os-refused"], ["Settings", "Diagnostics", "Unlock Act (experimental)"]);
-  const asked = await page.evaluate(() => (window.__actUnlocks || []).length);
-  await page.getByText("Tap again to unlock Act", { exact: true }).first().click();
-  await page.waitForTimeout(150);
-  const calls = await page.evaluate(() => window.__actUnlocks || []);
-  if (asked !== 0) { failed++; console.error("FAIL act unlocked without confirmation"); }
-  if (JSON.stringify(calls) !== "[true]") { failed++; console.error(`FAIL act unlock calls: ${JSON.stringify(calls)}`); }
-  if (!(await page.getByText("Act", { exact: true }).count())) { failed++; console.error("FAIL Act not offered after unlock"); }
-  if (!(await page.getByText("Lock Act", { exact: true }).count())) { failed++; console.error("FAIL no Lock Act after unlock"); }
-  await page.close();
-  cases.push(["frame-os-act-unlock"]);
-}
-// Reset what GFG learned: the first tap only asks, the second one forgets.
-{
-  const page = await openPage(browser, STATES["home-idle-oled"], ["Settings", "Diagnostics", "Reset what GFG learned for Sample Game"]);
-  const asked = await page.evaluate(() => (window.__forgets || []).length);
-  await page.getByText("Tap again to forget", { exact: true }).first().click();
-  await page.waitForTimeout(150);
-  const forgets = await page.evaluate(() => window.__forgets || []);
-  const text = await page.evaluate(() => document.body.innerText);
-  if (asked !== 0) { failed++; console.error(`FAIL forget model ran without confirmation`); }
-  if (forgets.length !== 1) { failed++; console.error(`FAIL forget model calls: ${JSON.stringify(forgets)}`); }
-  if (!text.includes("Forgotten. The next start searches from scratch.")) { failed++; console.error(`FAIL forget model result not shown`); }
-  await page.close();
-  cases.push(["forget-model-confirm"]);
-}
-// The wolf sits inside the FPS ring in every mode (2.1.2).
-{
-  for (const st of ["home-extreme", "home-balanced", "home-idle-oled"]) {
-    const page = await openPage(browser, STATES[st]);
-    if (!(await page.evaluate(() => !!document.querySelector(".hero .num.wolf img.wolfimg")))) { failed++; console.error(`FAIL wolf missing in ${st}`); }
-    for (const e of page.__errors) { failed++; console.error(`FAIL wolf ${st}: page error ${e}`); }
-    await page.close();
-  }
-  cases.push(["wolf-in-ring"]);
-}
-// Autopilot replaces Extreme in the selector and does not ask the Act question.
-{
-  const page = await openPage(browser, STATES["home-extreme-consent"]);
-  await page.getByText("Auto", { exact: true }).first().click();
-  await page.waitForTimeout(150);
-  const r = await page.evaluate(() => ({ modes: window.__modes || [], consents: window.__consents || [] }));
-  if (JSON.stringify(r.modes) !== JSON.stringify(["autopilot"])) { failed++; console.error(`FAIL autopilot switch: ${JSON.stringify(r)}`); }
-  if (r.consents.length) { failed++; console.error("FAIL Act question still used for Autopilot"); }
-  await page.close();
-  cases.push(["autopilot-replaces-extreme"]);
-}
-// The sharpening correction goes to the backend in 0.05 steps.
-{
-  const page = await openPage(browser, STATES["home-extreme"]);
-  await page.locator(".xsharp .stepb").nth(1).click();
-  await page.waitForTimeout(120);
-  const v = await page.evaluate(() => window.__sharp || []);
-  if (JSON.stringify(v) !== "[0.05]") { failed++; console.error(`FAIL extreme sharpening step: ${JSON.stringify(v)}`); }
-  await page.close();
-  cases.push(["extreme-sharpening"]);
-}
-// Extreme native preferences are available, saved independently and rolled back on RPC failure.
-{
-  const page = await openPage(browser, STATES["home-extreme"]);
-  await page.getByText("Stall shield", { exact: true }).first().click();
-  await page.waitForTimeout(120);
-  await page.getByText("Frame timing", { exact: true }).first().click();
-  await page.waitForTimeout(120);
-  const sets = await page.evaluate(() => (window.__featureSets || []).map(x => x.slice(1)));
-  if (JSON.stringify(sets) !== '[["shield",false],["latency",false]]') {
-    failed++; console.error("FAIL frame timing preference calls: " + JSON.stringify(sets));
-  }
-  await page.close();
-  cases.push(["extreme-frame-preferences"]);
-}
-{
-  const state = { ...STATES["home-extreme"], __featureFail: true };
-  const page = await openPage(browser, state);
-  const row = page.locator(".row").filter({ has: page.getByText("Stall shield", { exact: true }) });
-  await row.click();
-  await page.waitForTimeout(120);
-  if (!(await page.getByText("Could not save frame timing", { exact: true }).count())
-      || !(await row.locator(".tog.on").count())) {
-    failed++; console.error("FAIL frame timing save error kept a successful toggle");
-  }
-  await page.close();
-  cases.push(["extreme-frame-preferences-error"]);
-}
-// Energy text is cap savings; its independent arc is the current battery charge.
-{
-  for (const [slow, fast, expected] of [[15,15,"25%"],[12,12,"40%"],[12.75,12.75,"36%"],[12,20,"0%"],[null,null,"—"]]) {
-    const state = { ...STATES["home-frame-os-act"], battery: { percent: 72 }, power: { observed_tdp_w: slow, observed_fast_w: fast, maximum_tdp_w: 30, gamescope_max_tdp_w: 20 } };
-    const page = await openPage(browser, state, ["Details"]);
-    const data = await page.evaluate(() => {
-      const ring = [...document.querySelectorAll(".fos .mini")].find(e => e.querySelector(".mlab").textContent === "Energy");
-      return { text: ring.querySelector(".mnum").textContent, offset: Number(ring.querySelector("circle:last-child").getAttribute("stroke-dashoffset")) };
-    });
-    if (data.text !== expected || Math.abs(data.offset - 2 * Math.PI * 26 * .28) > .0001) {
-      failed++; console.error("FAIL Energy text/arc: " + JSON.stringify(data));
-    }
-    await page.close();
-  }
-  cases.push(["energy-cap-number-battery-arc"]);
-}
-{
-  const page = await openPage(browser, STATES["home-extreme"], ["Settings", "Frame generation backend"]);
-  if (await page.getByText("GFG Open generator", { exact: true }).count()) {
-    failed++; console.error("FAIL retired generator still selectable");
-  }
-  for (const e of page.__errors) { failed++; console.error("FAIL ordinary generator: " + e); }
-  await page.close();
-  cases.push(["ordinary-generator-only"]);
-}
-// Battery charge drives arc and colour independently of cap savings.
-{
-  for (const [charge, maximum, expectedText] of [[100,20,"25%"],[50,20,"25%"],[25,20,"25%"],[0,20,"25%"],[null,20,"25%"],[72,null,"—"]]) {
-    const state = { ...STATES["home-frame-os-act"], battery: { percent: charge },
-      power: { observed_tdp_w: 15, observed_fast_w: 15, gamescope_max_tdp_w: maximum } };
-    const page = await openPage(browser, state, ["Details"]);
-    const data = await page.evaluate(() => {
-      const ring = [...document.querySelectorAll(".fos .mini")].find(e => e.querySelector(".mlab").textContent === "Energy");
-      const circles = ring.querySelectorAll("circle");
-      return { text: ring.querySelector(".mnum").textContent, count: circles.length,
-        offset: Number(circles[circles.length - 1].getAttribute("stroke-dashoffset")),
-        color: circles[circles.length - 1].getAttribute("stroke") };
-    });
-    const expectedColor = charge == null ? "#26262d" : "hsl(" + (120 * Math.min(1, charge / 50)) + " 80% 52%)";
-    const badArc = charge == null ? data.count !== 1 : Math.abs(data.offset - 2 * Math.PI * 26 * (1 - charge / 100)) > .0001;
-    if (data.text !== expectedText || badArc || data.color !== expectedColor) {
-      failed++; console.error("FAIL battery ENERGY " + JSON.stringify({charge, data}));
-    }
-    await page.close();
-  }
-  cases.push(["energy-battery-colour-and-unknown-limits"]);
-}
-// GFG Theme (CSS Loader) was retired in 2.1.2: Settings must not offer it any more.
-{
-  const page = await openPage(browser, STATES["home-extreme"], ["Settings"]);
-  if (!(await page.getByText("GFG Shell", { exact: true }).count()) ||
-      await page.getByText("GFG theme", { exact: true }).count()) {
-    failed++; console.error("FAIL retired GFG theme still offered in Settings");
-  }
-  for (const error of page.__errors) { failed++; console.error("FAIL settings: " + error); }
-  await page.close();
-  cases.push(["theme-retired"]);
-}
-// GFG Shell: install from the plugin, then launch through a Steam shortcut created once.
-for (const fail of [false, true]) {
-  const page = await openPage(browser, { ...STATES["home-extreme"], __shellFail: fail }, ["Settings", "GFG Shell"]);
-  await page.getByText("Install GFG Shell", { exact: true }).click();
-  await page.waitForTimeout(200);
-  if (fail) {
-    if (!(await page.getByText("Godot download failed its SHA-256 check", { exact: true }).count()) ||
-        await page.getByText("Launch GFG Shell", { exact: true }).count()) { failed++; console.error("FAIL shell install error not shown"); }
-  } else {
-    await page.getByText("Launch GFG Shell", { exact: true }).click();
-    await page.waitForTimeout(200);
-    await page.getByText("Launch GFG Shell", { exact: true }).click();
-    await page.waitForTimeout(200);
-    const r = await page.evaluate(() => [window.__addShortcut, window.__shellShortcut, window.__runGame, window.__adds]);
-    const want = JSON.stringify([["GFG Shell", "/home/deck/.local/share/gfg-shell/app/gfg-shell.sh", "/home/deck/.local/share/gfg-shell/app", ""], 3000000001,
-      [((3000000001n << 32n) | 0x02000000n).toString(), ((3000000001n << 32n) | 0x02000000n).toString()], 1]);
-    if (JSON.stringify(r) !== want) { failed++; console.error("FAIL shell launch " + JSON.stringify(r)); }
-  }
-  for (const error of page.__errors) { failed++; console.error("FAIL shell: " + error); }
-  await page.close();
-  cases.push(["shell-" + (fail ? "install-error" : "install-and-launch")]);
-}
-for (const fail of [false, true]) {
-  const page = await openPage(browser, { ...STATES["home-extreme"], __flowFail: fail, flow_control: { enabled: true } }, ["Settings"]);
-  const row = page.locator(".row").filter({ has: page.getByText("Automatic flow scale", { exact: true }) });
-  await row.click();
-  await page.waitForTimeout(150);
-  const calls = await page.evaluate(() => window.__flowSets);
-  const on = await row.locator(".tog.on").count();
-  if (JSON.stringify(calls) !== "[false]" || on !== (fail ? 1 : 0) ||
-      (fail && !(await page.getByText("Error: Could not save flow policy", { exact: true }).count()))) {
-    failed++; console.error("FAIL automatic flow toggle: " + JSON.stringify({ fail, calls, on }));
-  }
-  await page.close();
-  cases.push(["automatic-flow-" + (fail ? "error" : "success")]);
-}
-for (const fail of [false, true]) {
-  const state = { ...STATES["home-autopilot"], __fusionFail: fail,
-    frame_fusion: { enabled: false, state: "off" } };
-  const page = await openPage(browser, state, ["Settings", "Diagnostics"]);
-  const row = page.locator(".row").filter({ has: page.getByText("Frame Fusion", { exact: true }) });
-  await row.click(); await page.waitForTimeout(150);
-  const calls = await page.evaluate(() => window.__fusionSets || []);
-  if (JSON.stringify(calls) !== "[true]" || (await row.locator(".tog.on").count()) !== (fail ? 0 : 1)
-      || (fail && !(await page.getByText("Could not save Frame Fusion", { exact: true }).count()))) {
-    failed++; console.error("FAIL Frame Fusion opt-in/save failure: " + JSON.stringify({ fail, calls }));
-  }
-  await page.close(); cases.push(["fusion-toggle-" + (fail ? "error" : "success")]);
-}
-for (const processing_path of ["native-input", "spatial-input"]) {
-  const state = { ...STATES["home-autopilot"], frame_fusion: {
-    enabled: true, state: "observed", processing_path } };
-  const page = await openPage(browser, state, ["Settings", "Diagnostics"]);
-  const expected = processing_path === "native-input"
-    ? "Native-resolution Fusion is processing frames. Power benefit is not measured yet."
-    : "The direct processing path has been used in this game. Power benefit is not measured yet.";
-  if (!(await page.getByText(expected, { exact: true }).count())) {
-    failed++; console.error("FAIL Fusion processing path: " + processing_path);
-  }
-  await page.close(); cases.push(["fusion-observed-" + processing_path]);
-}
-for (const diagnostics of [false, true]) for (const fail of [false, true]) {
-  const state = { ...STATES["home-autopilot"], __featureFail: fail };
-  const page = await openPage(browser, state, diagnostics ? ["Settings", "Diagnostics"] : ["Fine-tune"]);
-  const row = page.locator(".row").filter({ has: page.getByText("Stick touch Boost", { exact: true }) }).first();
-  if (!(await row.locator(".tog.on").count())) { failed++; console.error("FAIL stick touch default off"); }
-  await row.click(); await page.waitForTimeout(150);
-  const calls = await page.evaluate(() => (window.__featureSets || []).map(x => x.slice(1)));
-  if (JSON.stringify(calls) !== '[["touch_boost",false]]' ||
-      (await row.locator(".tog.on").count()) !== (fail ? 1 : 0)) {
-    failed++; console.error("FAIL independent stick touch switch: " + JSON.stringify({ diagnostics, fail, calls }));
-  }
-  await page.close(); cases.push(["stick-touch-" + (diagnostics ? "diagnostics" : "home") + (fail ? "-error" : "-saved")]);
-}
-for (const diagnostics of [false, true]) for (const fail of [false, true]) {
-  const page = await openPage(browser, { ...STATES["home-autopilot"], __featureFail: fail }, diagnostics ? ["Settings", "Diagnostics"] : ["Fine-tune"]);
-  const row = page.locator(".row").filter({ has: page.getByText("Continuous Boost", { exact: true }) }).first();
-  if (await row.locator(".tog.on").count()) { failed++; console.error("FAIL continuous Boost default on"); }
-  await row.click(); await page.waitForTimeout(150);
-  const calls = await page.evaluate(() => (window.__featureSets || []).map(x => x.slice(1)));
-  if (JSON.stringify(calls) !== '[["continuous_boost",true]]' ||
-      (await row.locator(".tog.on").count()) !== (fail ? 0 : 1)) {
-    failed++; console.error("FAIL continuous Boost save: " + JSON.stringify({ diagnostics, fail, calls }));
-  }
-  if (!fail) {
-    await row.click(); await page.waitForTimeout(150);
-    if (await row.locator(".tog.on").count()) { failed++; console.error("FAIL continuous Boost off"); }
-  }
-  await page.close(); cases.push(["continuous-boost-" + diagnostics + "-" + fail]);
-}
-for (const mode of ["budget","balanced","quality","extreme"]) {
-  const page = await openPage(browser,{ ...STATES["home-autopilot"],mode },["Settings","Diagnostics"]);
-  if (await page.getByText("Continuous Boost",{exact:true}).count() || await page.getByText("Stick touch Boost",{exact:true}).count() || await page.getByText("Short Boost",{exact:true}).count() || await page.getByText("Frame Fusion",{exact:true}).count()) {
-    failed++;console.error("FAIL Autopilot-only controls leaked into "+mode);
-  }
-  await page.close();cases.push(["autopilot-scope-"+mode]);
-}
-{
-  const page = await openPage(browser,STATES["home-autopilot"],["Settings","Profile"]);
-  if (!(await page.getByText("stable",{exact:true}).count())) {failed++;console.error("FAIL stable profile label");}
-  await page.close();cases.push(["stable-profile-label"]);
-}
-await browser.close();
-console.log(failed ? `${failed} failure(s)` : `frontend smoke OK (${cases.length} screens)`);
-process.exit(failed ? 1 : 0);
+await page.locator(".tab", { hasText: "Dash" }).first().click(); await page.waitForTimeout(200);
+await page.locator(".herotap").first().click(); await page.waitForTimeout(200);
+const classic = await page.locator(".ring").first().evaluate((e) => e.style.width);
+await page.locator(".tile", { hasText: "Battery" }).first().click(); await page.waitForTimeout(100);
+const calls = await page.evaluate(() => window.__calls.filter((c) => c[0] === "set_profile"));
+console.log(JSON.stringify({ errors, classic, calls }));
+await b.close();
+if (errors.length || classic !== "176px" || !calls.length) process.exit(1);

@@ -63,3 +63,21 @@ def _device_target(
     if rates and max(rates) >= 90:
         return {"target": TARGET_OLED, "mode": "oled", "reason": "unknown-device-90hz-panel"}
     return {"target": TARGET_LCD, "mode": "lcd", "reason": "unknown-device-default-60"}
+
+
+def external_display_connected(drm_root: Path = Path("/sys/class/drm")) -> bool:
+    """True while a DisplayPort or HDMI connector reports a connected display (the dock)."""
+    try:
+        connectors = sorted(Path(drm_root).glob("card*-*"))
+    except OSError:
+        return False
+    for connector in connectors:
+        name = connector.name.split("-", 1)[-1]
+        if not name.startswith(("DP", "HDMI")):
+            continue
+        try:
+            if (connector / "status").read_text(encoding="utf-8").strip() == "connected":
+                return True
+        except (OSError, UnicodeError):
+            continue
+    return False

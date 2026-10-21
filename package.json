@@ -1,15 +1,14 @@
 {
   "name": "gfg-extreme-plugin",
-  "version": "2.1.6",
-  "description": "GFG Extreme pipeline orchestrator with per-profile Frame Generation backends, scaling, and shaders",
+  "version": "3.0.0",
+  "description": "GFG Extreme 3.0: frame generation on its own engine (GSF Kedavra in Gamescope), Autopilot, TDP Governor, Power Split and GPU clock ceiling for Steam Deck",
   "type": "module",
   "scripts": {
-    "check:generated-config": "python3 scripts/check_generated_config.py",
     "build": "node frontend/build.mjs",
-    "test:backend": "python3 scripts/check_generated_config.py && python3 -m unittest discover -s tests -p 'test_*.py'",
+    "test:backend": "python3 -m unittest discover -s tests -p 'test_*.py'",
     "test:frontend": "node frontend/harness/smoke.mjs",
-    "test": "npm run test:backend && npm run build && npm run test:frontend",
-    "screenshots": "node frontend/harness/shot.mjs && python3 tools/make_hud_shots.py"
+    "test": "npm run test:backend && npm run test:sandbox && npm run build && npm run test:frontend",
+    "test:sandbox": "python3 -m sandbox.run"
   },
   "repository": {
     "type": "git",
@@ -21,13 +20,11 @@
     "steam-deck",
     "steam-machine",
     "deck",
-    "lossless-scaling",
-    "spatial-scaling",
     "frame-generation",
     "framegen",
-    "shaders",
-    "vkbasalt",
-    "gfg-extreme"
+    "gfg-extreme",
+    "kedavra",
+    "gamescope"
   ],
   "author": "Eugenio Segala",
   "license": "GPL-3.0-or-later",
@@ -36,36 +33,10 @@
   },
   "homepage": "https://github.com/wavessevaw/GFG-Extreme#readme",
   "devDependencies": {
-    "esbuild": "^0.28.2",
-    "playwright": "^1.63.0",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "esbuild": "0.24.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "playwright-core": "1.56.1"
   },
-  "remote_binary_bundling": true,
-  "remote_binary": [
-    {
-      "name": "MAKO-Renderer-v4.0.0-linux.tar.xz",
-      "version": "4.0.0-gfg.1",
-      "lineage_version": "4.0.0",
-      "source_repository": "https://github.com/eugeniosegala/MAKO",
-      "release_tag": "render-v4.0.0",
-      "source_commit": "edd2946bd3c4281e357bd436e0e7b80df0759576",
-      "url": "https://github.com/eugeniosegala/MAKO/releases/download/render-v4.0.0/MAKO-Renderer-v4.0.0-linux.tar.xz",
-      "sha256hash": "72ae1202f2a649f65cb75a7d1082f7aeacb7e87c8a2d6f29888343d5271c2b7c",
-      "host_architectures": [
-        "x86_64"
-      ],
-      "flatpak_bundle": {
-        "name": "MAKO-Renderer-v4.0.0-flatpaks.tar.xz",
-        "url": "https://github.com/eugeniosegala/MAKO/releases/download/render-v4.0.0/MAKO-Renderer-v4.0.0-flatpaks.tar.xz",
-        "sha256hash": "3159f6909f318f2c0b47c68336423ec9b3f8efa8e3c7d30ae4ecc5d9b41ac5cf"
-      },
-      "arch_package": {
-        "name": "mako-renderer-bin-4.0.0-1-x86_64.pkg.tar.zst",
-        "url": "https://github.com/eugeniosegala/MAKO/releases/download/render-v4.0.0/mako-renderer-bin-4.0.0-1-x86_64.pkg.tar.zst",
-        "sha256hash": "286656b72909698055ec12fbe0999334692dad801e2f2c034f51c1293d0af97d"
-      }
-    }
-  ],
-  "gfgPrerelease": false
+  "gfgPrerelease": true
 }

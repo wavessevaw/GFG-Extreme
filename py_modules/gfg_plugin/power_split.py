@@ -30,7 +30,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from .frame_os.proof import stats
+from .stats import stats
 
 LEVELS = (1.0, 0.85, 0.7, 0.6, 0.5)     # share of the CPU's maximum clock
 FLOOR_KHZ = 1_600_000                   # never below this, whatever the hardware allows

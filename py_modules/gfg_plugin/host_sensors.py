@@ -219,3 +219,19 @@ def diagnose(sensors: Dict[str, Any], *, cap_w: Optional[float] = None, draw_w: 
     stutter = (frametime or {}).get("stutter_ratio")
     smooth = "unknown" if stutter is None else ("stuttering" if stutter > 0.05 else "smooth")
     return {"bottleneck": bottleneck, "thermal": thermal, "smoothness": smooth}
+
+
+def device_name(dmi: Path = Path("/sys/class/dmi/id"), drm: Path = Path("/sys/class/drm")) -> str:
+    """Steam Deck OLED, Steam Deck LCD or Dock (an external display is connected)."""
+    try:
+        for status in drm.glob("card*-*/status"):
+            name = status.parent.name
+            if ("-DP-" in name or "-HDMI-" in name) and status.read_text().strip() == "connected":
+                return "Dock"
+    except OSError:
+        pass
+    try:
+        product = (dmi / "product_name").read_text().strip()
+    except OSError:
+        product = ""
+    return {"Galileo": "Steam Deck OLED", "Jupiter": "Steam Deck LCD"}.get(product, "Steam Deck" if not product else product)

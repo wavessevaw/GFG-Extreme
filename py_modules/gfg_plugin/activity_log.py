@@ -38,8 +38,9 @@ def _compact(value: Any) -> Any:
 
 
 class ActivityLog:
-    def __init__(self, path: Path, clock: Callable[[], float] = time.time) -> None:
+    def __init__(self, path: Path, clock: Callable[[], float] = time.time, owner=None) -> None:
         self.path = Path(path)
+        self.owner = owner
         self.clock = clock
         self._lock = threading.Lock()
 
@@ -50,8 +51,12 @@ class ActivityLog:
         with self._lock:
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
+                new = not self.path.exists()
                 with self.path.open("a", encoding="utf-8") as handle:
                     handle.write(line)
+                if new and self.owner is not None:
+                    from .user_files import own
+                    own(self.path, self.owner)
                 if self.path.stat().st_size > MAX_BYTES:
                     lines = self.path.read_text(encoding="utf-8", errors="replace").splitlines()[-KEEP_LINES:]
                     temp = self.path.with_suffix(".tmp")

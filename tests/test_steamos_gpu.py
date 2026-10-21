@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from gfg_plugin.autopilot.steamos_gpu import SteamOSGpuBackend, BUS_NAME, OBJECT_PATH, INTERFACE
-from gfg_plugin.autopilot.gpu_clock import GpuClock
+from gfg_plugin.steamos_gpu import SteamOSGpuBackend, BUS_NAME, OBJECT_PATH, INTERFACE
+from gfg_plugin.gpu_clock import GpuClock
 
 
 class FakeBus:
