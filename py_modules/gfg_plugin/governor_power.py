@@ -536,6 +536,9 @@ class SteamDeckPowerActuator:
         assert self.state.initial_fast_uw is not None and self.state.initial_slow_uw is not None
         failure = self._apply(self.state.initial_slow_uw, self.state.initial_fast_uw, exact=True)
         if failure is not None:
+            # The user's caps are still owed: the next claim must not learn our lowered caps
+            # as theirs (audit 3.0.0 P1).
+            self._keep_initial = True
             self.state.error = failure[1]
             return {"success": False, "restored": False, "error": failure[1], "state": self.status()}
         self._keep_initial = False

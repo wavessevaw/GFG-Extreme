@@ -150,6 +150,11 @@ class PilotTest(unittest.TestCase):
         self.assertEqual((out["phase"], out["point"], out["base_fps"]), ("locked", 45, 45))
         self.assertFalse(out["hold_ceiling"])
 
+    def test_stale_auto_cap_does_not_lock(self):
+        self.run_ctx(2)
+        out = self.run_ctx(13, confirmed=False, real=None, engine={})
+        self.assertEqual(out["phase"], "measure", "silence is not a stable measurement")
+
     def test_battery_locks_x375(self):
         out = self.run_ctx(2, objective="battery")
         self.assertEqual((out["point"], out["base_fps"], out["label"]), (24, 24, "x3.75"))
@@ -270,3 +275,16 @@ class AutopilotTest(unittest.TestCase):
         clock.t += 61
         self.assertEqual(a.decide("auto", {"external_power": False, "percent": 26}, 60)["objective"], "balanced")
         self.assertEqual(a.decide("smoothness", {"external_power": False, "percent": 10}, 60)["objective"], "quality")
+
+    def test_heat_does_not_flap(self):
+        clock = Clock()
+        a = autopilot.Autopilot(clock=clock)
+        seen = []
+        for temp in (84.9, 85.1, 84.9, 85.1, 84.0, 83.0):
+            seen.append(a.decide("smoothness", {"external_power": True}, temp)["objective"])
+            clock.t += 1
+        self.assertEqual(seen, ["quality"] + ["balanced"] * 5)
+        for _ in range(100):
+            clock.t += 1
+            out = a.decide("smoothness", {"external_power": True}, 75)
+        self.assertEqual(out["objective"], "quality", "cool for 30 s and past the dwell: Quality is back")

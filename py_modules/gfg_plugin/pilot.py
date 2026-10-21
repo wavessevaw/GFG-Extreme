@@ -43,6 +43,7 @@ PROMOTE_WAIT_MAX_S = 960.0
 # Headroom: the GPU (or the CPU) clearly not at its limit at the locked point means the game
 # could run the next point up. Then the next point is tried after HEADROOM_WAIT_S of clean play,
 # whatever the back-off, so a lighter scene gets its real frames back within seconds.
+MEASURE_GAP_S = 2.5   # seconds without a confirmed Auto cap that break a measurement
 HEADROOM_WAIT_S = 10.0
 HEADROOM_GPU_PCT = 92.0      # the GPU at the next point is estimated to stay under this
 HEADROOM_CPU_PCT = 85.0
@@ -269,6 +270,9 @@ class PointPilot:
             cap = int(st.get("cap_fps") or 0)
             if cap:
                 self.caps.append((now, cap))
+        if self.caps and now - self.caps[-1][0] > MEASURE_GAP_S:
+            # No fresh confirmed reading: silence is not stability, the measurement restarts.
+            self.caps.clear()
         elapsed = now - self.since
         if self.caps:
             last = self.caps[-1][1]

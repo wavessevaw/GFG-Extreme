@@ -313,6 +313,8 @@ class PowerGovernor:
             return self.status()
         temp_ok = temp is None or temp < HOT_C
         verdict = healthy(self.window, self.cap, temp_ok)
+        if len(self.window) < COVERAGE * (now - self.window_start):
+            verdict = {"ok": None, "reason": "no-data"}   # missed ticks: too few seconds were seen
         draws = [s["draw_w"] for s in self.window if isinstance(s.get("draw_w"), (int, float))]
         verdict["draw"] = round(statistics.median(draws), 2) if draws else None
         self.window = []

@@ -8,7 +8,8 @@ decides only how much power that may cost:
   preference "auto"        -> Quality on external power, Battery below 20 % battery (back above
                               25 %), Balanced otherwise
 
-A hot Deck (85 C and above) never runs Quality: Balanced, so the Governor may lower the TDP.
+A hot Deck (85 C and above) never runs Quality: Balanced, so the Governor may lower the TDP;
+Quality comes back after 30 s below 80 C.
 A choice holds at least 60 s, so a battery reading at the threshold does not flap.
 
 Battery in delegated Auto also lowers the base cap to 30 (x3 at 90 Hz, x2 at 60 Hz): the
@@ -24,6 +25,8 @@ DWELL_S = 60.0
 LOW_BATTERY = 20.0
 BATTERY_RECOVER = 25.0
 HOT_C = 85.0
+COOL_C = 80.0         # hot ends below this ...
+COOL_S = 30.0         # ... held this long
 BATTERY_CAP = 30
 
 
@@ -34,6 +37,22 @@ class Autopilot:
         self.reason = ""
         self.changed_at = -1e9
         self.low_battery = False
+        self.hot = False
+        self.cool_since: Optional[float] = None
+        self.preference: Optional[str] = None
+
+    def _heat(self, temp_c: Optional[float]) -> bool:
+        """Hot from 85 C until 30 s below 80 C, so 84.9/85.1 readings do not flip the objective."""
+        now = self.clock()
+        if temp_c is not None and temp_c >= HOT_C:
+            self.hot, self.cool_since = True, None
+        elif self.hot and temp_c is not None and temp_c < COOL_C:
+            self.cool_since = now if self.cool_since is None else self.cool_since
+            if now - self.cool_since >= COOL_S:
+                self.hot, self.cool_since = False, None
+        else:
+            self.cool_since = None
+        return self.hot
 
     def _wish(self, preference: str, power: Dict[str, Any], temp_c: Optional[float]) -> tuple:
         pct = power.get("percent")
@@ -52,15 +71,19 @@ class Autopilot:
             wish, why = "battery", f"battery below {LOW_BATTERY:.0f} %"
         else:
             wish, why = "balanced", "on battery"
-        hot = wish == "quality" and temp_c is not None and temp_c >= HOT_C
+        was_hot = self.hot
+        hot = self._heat(temp_c) and wish == "quality"
         if hot:
-            wish, why = "balanced", f"APU at {temp_c:.0f} C"
-        return wish, why, hot or preference != "auto"
+            wish, why = "balanced", f"APU at {temp_c:.0f} C" if temp_c is not None else "APU hot"
+        # Urgent: a new preference from the player, or the Deck just became hot.
+        changed = preference != self.preference
+        self.preference = preference
+        return wish, why, changed or (hot and not was_hot)
 
     def decide(self, preference: str, power: Dict[str, Any], temp_c: Optional[float]) -> Dict[str, Any]:
         now = self.clock()
         wish, why, urgent = self._wish(preference, power, temp_c)
-        # Hot, or a fixed preference: no dwell. Otherwise a choice holds 60 s.
+        # A new preference or a hot APU: no dwell. Otherwise a choice holds 60 s.
         urgent = urgent or self.objective is None
         if wish != self.objective and (urgent or now - self.changed_at >= DWELL_S):
             self.objective, self.reason, self.changed_at = wish, why, now
@@ -70,6 +93,9 @@ class Autopilot:
         self.objective = None
         self.reason = ""
         self.changed_at = -1e9
+        self.hot = False
+        self.cool_since = None
+        self.preference = None
 
 
 def engine_request(fg: str, base_fps: int, objective: str) -> Dict[str, int]:
