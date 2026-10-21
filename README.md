@@ -221,7 +221,8 @@ GFG Autopilot unites Kedavra's Auto with GFG Extreme's Autopilot. It picks the o
                        │
                        ▼
                 UNIFIED TELEMETRY
-     Real FPS / Pacing / GPU time / Power / Temp
+  Real FPS / Pacing / GPU time / CPU & GPU load
+           Power / Temp / Clocks
                        │
                        ▼
                  GFG AUTOPILOT
@@ -247,6 +248,15 @@ GFG Autopilot unites Kedavra's Auto with GFG Extreme's Autopilot. It picks the o
 
 Governor aims for the smallest power budget that keeps both the game and the generator steady.
 
+**Splitting the power between CPU and GPU**
+
+GFG measures the load of the busiest CPU core, GPU utilisation and the GPU clock every second, and uses them on a locked point:
+
+- **Power Split** (GPU-bound game): CPU and GPU share one power limit, so GFG lowers the CPU's maximum clock step by step (100 / 85 / 70 / 60 / 50 %, never under 1.6 GHz) and gives those watts to the GPU. Every step is proven with A/B/A windows; the cap is lifted at once when real frames dip or the busiest core nears its limit.
+- **GPU clock ceiling** (CPU-bound game): when the CPU is the limit and the GPU is lightly loaded, GFG lowers the GPU clock in 100 MHz steps through SteamOS's own GPU clock control (the Quick Access Menu slider) and keeps a step only if the frame rate holds and APU draw drops.
+
+Both act only on a locked point with Governor settled, one at a time, and every change restarts the measurement windows. The player's own CPU limits and manual GPU clock are always restored and never overridden.
+
 Lower power that costs real FPS, pacing or generation stability does not count as a successful optimisation.
 
 **EFFICIENCY WITHOUT SACRIFICING FRAME STABILITY.**
@@ -266,14 +276,15 @@ Their responsibilities are split at the system level.
 | Source FPS limiting | Operating point selection (Autopilot) |
 | Generation multiplier | TDP optimization (Governor) |
 | Motion estimation | Performance analysis |
-| Frame reconstruction | APU power & temperature telemetry |
-| Presentation scheduling | Thermal protection |
+| Frame reconstruction | APU power, temperature, CPU & GPU load telemetry |
+| Presentation scheduling | Power Split (CPU clock) & GPU clock ceiling |
+| | Thermal protection |
 | GPU generation diagnostics | Operating-point history per game |
 | Post filters & HUD layer | Filter, HUD and profile settings |
 
 Kedavra owns the FPS limiter and the frame generation itself.
 
-GFG hands the engine one agreed policy (multiplier, base frame rate, filters) and counts it as applied only once the engine confirms it. GFG controls the system's power policy (TDP).
+GFG hands the engine one agreed policy (multiplier, base frame rate, filters) and counts it as applied only once the engine confirms it. GFG controls the system's power policy (TDP, the CPU clock cap and the GPU clock ceiling).
 
 When the base frame rate or the multiplier changes, Governor gets a new operating point. Power tests never mix measurements from incompatible states.
 
@@ -348,6 +359,8 @@ GFG Extreme's unified telemetry covers original rendering, generation, frame pre
 | APU Power Draw | Actual APU power use |
 | TDP Limit | Power budget in force |
 | APU Temperature | Temperature and thermal headroom |
+| CPU / GPU Load | Busiest CPU core, GPU utilisation and GPU clock |
+| CPU Clock Cap / GPU Clock Ceiling | What Power Split and the GPU ceiling currently allow |
 | Autopilot State | Control loop phase (measure, lock, guard, adapt) |
 
 The system tells internal generation events apart from presentations confirmed by the display.
@@ -408,7 +421,7 @@ That keeps the generator's direction independent and lets it be tuned directly f
 | Frame Reconstruction | Motion-compensated |
 | Scheduling | Gamescope / Kedavra |
 | Presentation | DRM / KMS |
-| Power Management | GFG Governor |
+| Power Management | GFG Governor (TDP), Power Split, GPU clock ceiling |
 | Intelligent Control | GFG Autopilot |
 | Interface | Decky Loader |
 

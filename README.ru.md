@@ -221,7 +221,8 @@ GFG Autopilot объединяет Auto движка Kedavra и Autopilot GFG Ex
                        │
                        ▼
                 UNIFIED TELEMETRY
-     Real FPS / Pacing / GPU time / Power / Temp
+  Real FPS / Pacing / GPU time / CPU & GPU load
+           Power / Temp / Clocks
                        │
                        ▼
                  GFG AUTOPILOT
@@ -247,6 +248,15 @@ GFG Autopilot объединяет Auto движка Kedavra и Autopilot GFG Ex
 
 Governor стремится использовать минимально необходимый энергетический бюджет, достаточный для устойчивой работы игры и генератора.
 
+**Распределение мощности между CPU и GPU**
+
+Каждую секунду GFG измеряет загрузку самого занятого ядра CPU, загрузку GPU и его частоту и использует их на зафиксированной точке:
+
+- **Power Split** (игра упирается в GPU): CPU и GPU делят один лимит мощности, поэтому GFG ступенями снижает максимальную частоту CPU (100 / 85 / 70 / 60 / 50 %, не ниже 1,6 ГГц) и отдаёт освободившиеся ватты GPU. Каждая ступень подтверждается окнами A/B/A; ограничение снимается сразу, если просели настоящие кадры или самое занятое ядро подошло к пределу.
+- **Потолок частоты GPU** (игра упирается в CPU): когда предел задаёт CPU, а GPU загружен слабо, GFG снижает частоту GPU шагами по 100 МГц через штатное управление частотой GPU в SteamOS (ползунок в меню быстрого доступа) и оставляет шаг, только если частота кадров держится, а потребление APU падает.
+
+Оба механизма работают только на зафиксированной точке при успокоившемся Governor, по одному, и каждое изменение перезапускает окна измерений. Собственные ограничения CPU и ручная частота GPU игрока всегда возвращаются и никогда не перезаписываются.
+
 Снижение потребления, сопровождающееся ухудшением оригинального FPS, кадрового ритма или стабильности генерации, не считается успешной оптимизацией.
 
 **EFFICIENCY WITHOUT SACRIFICING FRAME STABILITY.**
@@ -266,14 +276,15 @@ GFG Extreme и Kedavra используют специализированные
 | Source FPS limiting | Operating point selection (Autopilot) |
 | Generation multiplier | TDP optimization (Governor) |
 | Motion estimation | Performance analysis |
-| Frame reconstruction | APU power & temperature telemetry |
-| Presentation scheduling | Thermal protection |
+| Frame reconstruction | APU power, temperature, CPU & GPU load telemetry |
+| Presentation scheduling | Power Split (CPU clock) & GPU clock ceiling |
+| | Thermal protection |
 | GPU generation diagnostics | Operating-point history per game |
 | Post filters & HUD layer | Filter, HUD and profile settings |
 
 Kedavra является владельцем FPS limiter и механизмов кадровой генерации.
 
-GFG передаёт движку согласованную политику (множитель, базовую частоту, фильтры) и считает её применённой только после подтверждения от движка. GFG управляет энергетической политикой системы (TDP).
+GFG передаёт движку согласованную политику (множитель, базовую частоту, фильтры) и считает её применённой только после подтверждения от движка. GFG управляет энергетической политикой системы (TDP, ограничение частоты CPU и потолок частоты GPU).
 
 При изменении базовой частоты или множителя Governor получает новую рабочую точку. Энергетические испытания не смешивают измерения несовместимых состояний.
 
@@ -348,6 +359,8 @@ Film Grain · Vignette · Chromatic Aberration · Deband · Noir · Sepia · Mon
 | APU Power Draw | Фактическое потребление APU |
 | TDP Limit | Установленный энергетический бюджет |
 | APU Temperature | Температура и тепловой запас |
+| CPU / GPU Load | Загрузка самого занятого ядра CPU, загрузка и частота GPU |
+| CPU Clock Cap / GPU Clock Ceiling | Текущий потолок частоты CPU (Power Split) и GPU |
 | Autopilot State | Фаза управляющего контура (замер, фиксация, страховка, адаптация) |
 
 Система разделяет внутренние события генерации и фактически подтверждённые события вывода.
@@ -408,7 +421,7 @@ GFG Extreme 3.0.0 использует собственное ядро кадр�
 | Frame Reconstruction | Motion-compensated |
 | Scheduling | Gamescope / Kedavra |
 | Presentation | DRM / KMS |
-| Power Management | GFG Governor |
+| Power Management | GFG Governor (TDP), Power Split, GPU clock ceiling |
 | Intelligent Control | GFG Autopilot |
 | Interface | Decky Loader |
 
