@@ -1,208 +1,466 @@
-<div align="center">
+# GFG EXTREME 3.0.0
 
 **English** · [Русский](README.ru.md)
 
-<img src="docs/img/logo.png" alt="GFG Extreme" width="144">
+**MOST POWERFUL DECKY PLUGIN EVER.**
 
-# GFG Extreme
+Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integration
 
-**Coordinated frame generation, performance and power management for Steam Deck**
+`SteamOS` `Vulkan Compute` `GSF Kedavra` `Native FG` `Frame Pacing` `Autopilot` `HDR`
 
-A Decky Loader plugin that coordinates the frame generator, CPU/GPU resources, rendering workload and power limits. Autopilot observes each game and chooses measurable, reversible adjustments rather than changing only TDP.
+---
 
-[**Download 2.1.6**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v2.1.6) · [Install](#installation) · [Autopilot](#autopilot) · [Diagnostics](#diagnostics)
+## FRAME GENERATION HAS MOVED INTO THE COMPOSITOR.
 
-![Release](https://img.shields.io/github/v/release/wavessevaw/GFG-Extreme?style=flat-square&color=fb0d00&label=release)
-![Steam Deck](https://img.shields.io/badge/Steam%20Deck-OLED%20%7C%20LCD-20242e?style=flat-square)
-![Decky](https://img.shields.io/badge/Decky%20Loader-plugin-20242e?style=flat-square)
-![License](https://img.shields.io/badge/license-GPL--3.0-20242e?style=flat-square)
+### A FUNDAMENTAL SHIFT IN STEAM DECK PERFORMANCE.
 
-<img src="docs/img/card-overview.png" alt="GFG Extreme 2.1.2 user interface: Battery, Autopilot and Details" width="900">
+GFG Extreme 3.0.0 combines its own frame generation engine, GSF Kedavra, with the GFG Autopilot / Governor performance control system.
 
-<sub>Real GFG Extreme 2.1.2 interface rendered in a browser using illustrative sample data. Not measured game performance.</sub>
+Frame generation, frame presentation and power optimisation are now treated as connected parts of one graphics pipeline.
 
-</div>
+Kedavra runs GPU motion estimation and reconstructs in-between frames directly inside Gamescope. GFG analyses the game's performance, the compute cost of generation and the Steam Deck's available power budget.
 
-## Autopilot
+No Lossless Scaling, no MAKO, no third-party frame generation layers: the whole frame pipeline runs inside GFG's own Gamescope.
 
-**Autopilot in GFG Extreme 2.1.6 is not an automatic TDP slider.** It is an orchestration mode that balances frame pacing, genuinely rendered frames, generated output, visual workload, APU power and temperature. Watts are only one of its tools.
+Version 3.0 is built on three technologies:
 
-The existing Governor handles a *rendering operating point*: the required real-frame cadence, generation multiplier, and available power. **Autopilot sits above the Governor.** It inspects the game, selects a promising type of intervention, reserves that resource for an isolated trial, and checks whether the result was worthwhile. It avoids adjusting several unrelated knobs simultaneously and then pretending to know which one helped.
+**FRAME RECONSTRUCTION**
+Its own Vulkan Compute pipeline for motion estimation and in-between frame synthesis.
 
-### What it can control and coordinate
+**PRESENTATION CONTROL**
+Compositor-level frame scheduling that follows the display refresh and GPU readiness.
 
-| Resource / tool | Purpose | What actually changes |
-| --- | --- | --- |
-| **Target FPS** | Choose an achievable output goal rather than endlessly chasing unreachable 90 FPS | On a 90 Hz display, may provisionally lower the software output target to 60 using fresh, non-overlapping evidence windows, then cautiously retry 90 |
-| **Frame generation** | Balance the share of real and generated frames | Via Governor, selects operating points and multipliers from ×1 to ×3; ×3.25–×3.75 only when needed, ×4 reserved for emergency fallback. Within 8 % of the FPS target counts as on target |
-| **APU power / TDP** | Preserve cadence at lower energy or help a heavier scene | Governor searches, confirms and rolls back power limits. Repeated failing lower-power steps can be blocked for up to 30 minutes |
-| **Steam GPU Clock** | Test whether the GPU ceiling is unhelpful when the CPU appears to be the bottleneck | Attempts one downward GPU clock-ceiling step via SteamOSManager, confirms read-back and checks fresh performance data |
-| **CPU/GPU power split** | Reallocate shared APU headroom toward a busy GPU | The separate Smart Power Split module may trial a CPU maximum-frequency cap with measured rollback; Autopilot coordinates pauses to prevent conflicting resource trials |
-| **Render Scale / Flow Scale** | Reduce game-rendering or generated-frame workload where supported | Governor can use renderer-confirmed 90% / 80% scale steps; the separate experimental automatic Flow controller can trial generator workload when no conflicting intervention is active |
-| **Half Rate Shading** | Trial a lower cost for GPU shading | When supported and enabled for the profile, trials Steam RADV VRS from 1×1 to 2×2, measures and rolls back when the experiment fails |
-| **Thermal/ownership guard** | Avoid unsafe or misleading changes | Pauses on high temperature, missing data or Steam QAM/manual overrides, and blocks overlapping experiments |
-| **Telemetry and HUD** | Expose what is measured and why action is taken | Shows Real/Output FPS, CPU/GPU utilization, GPU MHz, real-frame timing, temperature, TDP and trial state |
+**INTELLIGENT POWER MANAGEMENT**
+A closed TDP control loop with feedback that verifies every decision it makes.
 
-Smart Power Split, Flow Scale, Frame OS Act and compatible shading trials default on. Autopilot coordinates them and pauses incompatible trials. Explicit saved off choices remain off. Act prepares input-responsive pacing; Boost and Fusion execute only in Autopilot. vkBasalt looks retain the selected filter configuration.
+**ONE ENGINE. ONE CONTROL PLANE. ONE PERFORMANCE TARGET.**
 
-### How its decision loop works
+---
 
-1. **Observe the actual game.** Collect fresh Real FPS and Output FPS, p95/p99 *real*-frame timing, GPU MHz and load, the busiest CPU core, temperature, APU draw and power-cap status. An Output FPS reading of 90 does not prove 90 real frames or 90 distinct optically verified screen updates.
-2. **Choose the goal and operating point.** Account for refresh rate, renderer capabilities, the real-frame cadence needed by the chosen multiplier and the power available. When a scene becomes harder, Governor can choose a deeper generation step before simply spending more watts.
-3. **Diagnose the likely constraint.** A saturated GPU points toward the power budget or an enabled shading trial. High CPU utilization with lower GPU utilization may justify a GPU ceiling trial. If the bottleneck is uncertain, **HOLD** is safer than a random adjustment.
-4. **Change one thing at a time.** Capture the baseline, verify the current rendering point, make one supported actuator change and wait for clean new samples. During GPU Clock/VRS validation, Governor TDP probes and overlapping resource experiments are paused.
-5. **Accept or roll back.** Compare *new* Real/Output FPS, real-frame p95, power draw and thermal conditions against the baseline. A rejected trial restores the previous policy; an unconfirmed restore blocks further experiments.
-6. **Learn and revisit.** After healthy play, test whether an operating point can become more efficient or whether a previously lowered FPS goal can be raised again. Repeated bad watt floors are remembered and progressively backed off, even across plugin restarts.
+## 01 / GENERATION PHILOSOPHY
 
-### A typical example
+### MORE GENERATED FRAMES ISN'T ALWAYS BETTER.
 
-Imagine a Steam Deck OLED set to 90 Hz. The game consistently renders **30 real FPS**, while generation produces approximately **90 output FPS** at **×3**. Autopilot does not automatically increase TDP just because the GPU is 99% busy. If that operating point is confirmed and useful, it can keep the current settings and consider an efficiency check later.
+### WHY WE DELIBERATELY STOP AT ×4.
 
-In a tougher scene, real-frame delivery begins to fall. Governor can alter its generation operating point or power limit. **Auto keeps a 90 Hz display goal rather than implicitly dropping it to 45 FPS on low Real FPS.** The explicitly selected **Battery** preference may deliberately choose a **45 output FPS** goal and later retry 90. A 60 FPS goal is used only on the Deck LCD and on an external display. Deep emergency ratios above ×3 are temporary: Governor periodically attempts to restore the normal real-frame cadence, with rollback when unsuccessful. Display cadence still needs device testing.
+The highest multiplier is not a measure of a good frame generator.
 
-If the GPU appears shader-limited, Autopilot can consider Half Rate Shading, when **Try Half Rate Shading** is enabled. When evidence does not identify a helpful action, it waits.
+As the multiplier grows, more of what you see is synthetic, motion reconstruction gets harder, and responsiveness depends more and more on the game's real frame rate.
 
-*These figures demonstrate decision-making, not measured battery, latency or FPS improvements.*
+You can reach a high Output FPS with too low a Real FPS. The numbers then grow faster than the actual quality of play.
 
-### Three preferences
+GSF Kedavra has an architectural limit of ×4: at most three generated frames per real one.
 
-The mode's Home screen offers:
+In practice the floor is stricter. Auto and Battery never take a game below 24 FPS at 90 Hz, so they never go past ×3.75. That is the "golden middle": power savings without a slideshow. Custom accepts any base frame rate from 20 FPS, but never deeper than ×4.
 
-- **Auto:** balance consistency and efficiency; hold a good configuration when evidence does not justify an intervention.
-- **Battery:** give more weight to lowering power and allow an achievable lower output target under sustained constraints.
-- **Smoothness:** prioritize a consistent real-frame cadence, using Governor's smoother operating-point preference and fewer speculative changes.
+Multipliers don't have to be whole numbers. Kedavra caps the game at a base frame rate and generation fills every display refresh, so at 90 Hz 40 FPS gives ×2.25, 35 FPS gives ×2.6 and 24 FPS gives ×3.75.
 
-The separate **Try Half Rate Shading** toggle permits VRS experiments for the active game profile only. It is on by default; an explicit saved off choice is preserved. Enabling it does not guarantee that the feature will actually activate.
+**Engineering priorities**
 
-### Deliberate pauses, restoration and limitations
+* **Original FPS first.** Keep enough real game frames.
+* **Bounded latency.** Control the extra delay of the interpolation pipeline.
+* **Consistent pacing.** Minimise repeats and missed intervals.
+* **GPU budget awareness.** Account for the generator's compute cost.
+* **Performance per watt.** Use less power without losing useful performance.
 
-GPU Clock and VRS trials cannot begin while Steam's Quick Access Menu (QAM) is open, during scene transitions, without a confirmed renderer point, on stale or insufficient telemetry, at critical temperature, on an unsupported system or while an earlier change awaits rollback. Steam's manual settings take precedence over GFG-owned changes.
+**WE DON'T MAXIMIZE THE MULTIPLIER.**
+**WE MAXIMIZE THE USEFUL RESULT.**
 
-On **Stop**, game exit or a mode change, GFG attempts to restore only the controls it owns. **HOLD**, **PAUSE**, **Testing**, **Rollback** and **Restore pending** mean different things. A *proposed* optimization is not evidence that a write was applied.
+---
 
-**Hardware caveat:** mock backend tests pass, but real-device operation of dynamic GPU Clock and Half Rate Shading has not been validated on Steam Deck LCD/OLED. **Allow Tearing is not automatically controlled.** VRS 2×2 changes game shading generally, **not only generated intermediate frames**, and can blur text and fine details.
+## 02 / GSF KEDAVRA
 
-<div align="center">
-<img src="docs/img/card-autopilot.png" alt="Autopilot's confirmed configuration and skipped trial states" width="800">
-<sub>Actual 2.1.2 Autopilot cards using illustrative measurements: a verified operating point and a deferred experiment with no hardware write.</sub>
-</div>
+### COMPOSITOR-NATIVE FRAME GENERATION.
 
+GSF Kedavra is GFG Extreme's own graphics engine, built directly into Gamescope.
 
-## Modes
+It captures the original frames, estimates motion at several resolutions, reconstructs in-between frames and controls when they are presented.
 
-<div align="center"><img src="docs/img/card-modes.png" alt="Battery, Balanced, Quality, Autopilot" width="900"></div>
+**Processing pipeline**
 
-| Mode | Priority | How it works |
-| --- | --- | --- |
-| **Battery** | Efficiency | Searches lower TDP first; ratios up to ×3; ×3.25–×3.75 only when needed |
-| **Balanced** | Consistency | Starts near 12 W; ratios up to ×3; ×3.25–×3.75 only when needed to preserve output |
-| **Quality** | Real-frame quality | Prefers fewer generated frames, considers quarter steps through ×3.75, then looks for watt savings |
-| **Autopilot** | Whole-system orchestration | Coordinates output targets, frame generation, power, GPU Clock, compatible rendering trials and independent CPU/Flow modules |
-
-Performance depends on the game, scene, rendering backend, refresh rate and power limits. These are strategies, not guaranteed frame-rate floors.
-
-## In-game overlay
-
-<div align="center">
-<img src="docs/img/hud-rings-standard.png" alt="Autopilot HUD rings for real and output FPS, power and host telemetry" width="900">
-<sub>The actual GFG HUD bitmap on an illustrative background; sample measurements, not a capture of game performance.</sub>
-</div>
-
-The optional Vulkan rings overlay shows output and real FPS, TDP, and additional Autopilot metrics where available. Missing or stale readings are shown as unavailable rather than green. Configure style, detail and position in **Settings → In-game overlay**. In cases where the rings cannot load, GFG uses a text-line fallback.
-
-## Other features
-
-GFG Extreme 2.1.6 includes the earlier Governor work, alongside the Autopilot:
-
-- **Per-game profiles**, remembered viable operating points and explicit reset of learned game data.
-- **Smart CPU/GPU power split**, which tests CPU caps only after Governor's watts stabilize and preserves Real FPS during A/B proof. User-owned limits take priority. [Measurement contract](docs/CPU_GPU_POWER_SPLIT.md).
-- **Frame OS** offers Observe, Shadow and Act; Autopilot defaults to Act. The Act path has not been proven to improve each game; it can yield or roll back when unstable.
-- **vkBasalt filters** for sharpening, anti-aliasing and color looks; game restarts may be required for initial layer loading.
-- **Session summaries and Diagnostics**, including recent FPS/frametime/power estimates, reasons for Governor decisions and exportable logs.
-- **GFG Shell 0.4** (optional): a controller-first Gaming Mode front-end built with Godot, installed and launched from the plugin. Steam stays the game client. It shows the whole Steam library, including owned games that are not installed, and has Quick settings with GFG rings and switches. See [docs/GFG_SHELL.md](docs/GFG_SHELL.md).
-
-<div align="center">
-<img src="docs/img/card-power-split.png" alt="CPU/GPU power split details" width="390">
-<img src="docs/img/card-frame-os.png" alt="Frame OS information" width="740">
-<img src="docs/img/card-filters.png" alt="Shader filters" width="740">
-</div>
-
-### LSFG-VK 2.0 external generator
-
-**Generator Backend → LSFG-VK 2.0** uses a separately installed LSFG-VK 2.x Vulkan layer and the licensed `lsfg-vk.dll` from your own Lossless Scaling installation. This is an **external backend**: GFG handles per-game selection and settings, while the external LSFG-VK layer generates and presents the frames. No LSFG binary, proprietary shader or model resource is included or redistributed in GFG.
-
-GFG exposes 2×–5×, Flow Scale (25–100%), Performance mode, FP16, FIFO present override, swapchain image-count compatibility, and an optional absolute DLL path. The backend is active only for games launched with the normal GFG Steam launch wrapper after a restart. GFG's own FG, Temporal Engine and native output are disabled for that game's LSFG-VK session. If the layer or the model cannot be found, GFG leaves the game without that generator rather than injecting a broken external Vulkan layer.
-
-Installation presence is not a guarantee of compatibility with every Proton game or Gamescope version. LSFG-VK 2.0's independent runtime performance on Steam Deck has not been verified as part of this integration.
-
-## Installation
-
-Requires [Decky Loader](https://decky.xyz/) and [Lossless Scaling on Steam](https://store.steampowered.com/app/993090/Lossless_Scaling/) for the supported GFG generation setup.
-
-1. Download [**GFG-Extreme-v2_1_6.zip**](https://github.com/wavessevaw/GFG-Extreme/releases/download/v2.1.6/GFG-Extreme-v2_1_6.zip). Use Decky's **Install from zip** feature and approve the requested permissions for supported power controls.
-2. Open GFG Extreme and select **Install engine** if it is not installed.
-3. For a Steam game, open **Properties → Launch Options** and add:
-
-   ```text
-   /home/deck/.local/bin/gfg %command%
-   ```
-
-4. Restart the game to load the renderer and Vulkan layers, then press **Run** in the plugin.
-
-For Heroic, Lutris, EmuDeck and other Flatpak apps, check **Settings → System** for the supported integration and permissions. Installing a newer Decky ZIP over the old one preserves your settings and learned data.
-
-## Restoring settings and safety
-
-The Governor uses a temporary runtime overlay and does not rewrite the Saved game profile. GFG-owned TDP, GPU Clock, Half Rate Shading and CPU caps are restored on Stop, game exit and mode changes. If restoring cannot be verified, the affected experiment stays blocked while recovery is pending. Changes made manually in Steam QAM take priority over GFG's own settings.
-
-**No overclocking, BIOS modification or undervolting is required.** SteamOSManager features can be unavailable on some firmware, in which case the corresponding Autopilot action is disabled.
-
-## Diagnostics
-
-<div align="center"><img src="docs/img/card-help.png" alt="Setup check and diagnostic log" width="800"></div>
-
-Go to **Settings → Diagnostics → Check setup** to check the renderer, launcher, overlay and power-control access. To report a problem, select **Record log**, reproduce the issue in game, and stop recording. Attach the exported ZIP to a [GitHub issue](https://github.com/wavessevaw/GFG-Extreme/issues). For game-specific changes, include the display refresh rate and whether Steam QAM was open.
-
-## Status and limitations
-
-**Software release: 2.1.6.** Carries forward 2.1.5's emergency ×4 quality recovery. This version fixes native Fusion activation configuration, makes CPU/GPU Split trials causal and safe, and requires actual pacer acknowledgement and independent measurements for Frame OS A/B proof. Governor alone owns hardware TDP. Automated software validation does not establish improved frame rate or latency on a physical Steam Deck. This **does not** imply Steam Deck LCD/OLED hardware validation of dynamic GPU Clock or Half Rate Shading. Generated-frame acquisition timeouts and Frame OS Act gains need independent device testing. Allow Tearing is not automatically controlled.
-
-Measured output cadence is not the same as optical frame delivery. The 60/90 target transition on OLED, visual quality with VRS and physical restore behavior must be checked in games before performance or battery claims.
-
-[Official release notes](RELEASE_DESCRIPTION_V2_1_5.md) · [Known limitations](docs/GFG_GOVERNOR_KNOWN_LIMITATIONS.md) · [Autopilot acceptance](docs/AUTOPILOT_ACCEPTANCE.md)
-
-<details>
-<summary><b>Developers and documentation</b></summary>
-
-```bash
-npm ci
-npm test
-npm run screenshots       # render genuine UI cards + ring HUD images
-python3 tools/gfg_log_report.py <log.zip>
+```
+                    GAME RENDERING
+                          │
+              Base FPS cap (Kedavra limiter)
+                          │
+                          ▼
+                   ORIGINAL FRAMES
+                          │
+          ┌────────── GAMESCOPE ──────────┐
+          │                               │
+          │          GSF KEDAVRA          │
+          │                               │
+          │     Frame History (ring)      │
+          │              ↓                │
+          │   Luma Pyramid (4 levels)     │
+          │              ↓                │
+          │   Multi-Resolution Motion     │
+          │   Estimation (bidirectional)  │
+          │              ↓                │
+          │  Scene-Cut & Camera Motion    │
+          │              ↓                │
+          │     VBlank-Aware Scheduler    │
+          │  (real / generated / repeat)  │
+          │              ↓                │
+          │    Temporal Reconstruction    │
+          │   (motion-compensated warp)   │
+          │              ↓                │
+          │   Post Filters (after FG)     │
+          │              ↓                │
+          │  Frame Composition + HUD      │
+          │                               │
+          └──────────────┬────────────────┘
+                         │
+                         ▼
+                      DRM / KMS
+                         │
+                         ▼
+                       DISPLAY
 ```
 
-Architecture: [Governor](docs/GFG_GOVERNOR_ARCHITECTURE.md) · [Telemetry](docs/GFG_TELEMETRY_CAPABILITIES.md) · [Frame OS](docs/GFG_FRAME_OS.md).
+Motion is analysed once per real frame, in its own GPU submission after the composite. On every display refresh the scheduler decides what to show: a real frame, a generated one or, if the data is not ready, a repeat. Only then is the in-between frame it needs reconstructed.
 
-</details>
+**Engine capabilities**
 
-## Credits
+| Component | Implementation |
+|---|---|
+| Graphics API | Vulkan |
+| Processing | GPU Compute Shaders |
+| Motion Estimation | Multi-resolution, bidirectional, with temporal seeding |
+| Frame Reconstruction | Motion-compensated interpolation |
+| Multipliers | Auto / ×2 / ×3 / ×3.75 / Custom base FPS (fractional, up to ×4) |
+| Automatic Mode | Base FPS chosen from the game's measured frame rate |
+| Source FPS Control | Kedavra base FPS cap inside Gamescope (Steam's limiter is not used) |
+| Frame Scheduling | VBlank-aware |
+| Color | SDR (8/10-bit) and HDR: HDR10 PQ and scRGB in float frames |
+| Diagnostics | KMS flip tracing (Pace capture) |
+| Target Hardware | Steam Deck OLED (90 Hz); Steam Deck LCD and docked 60 Hz |
 
-GFG Extreme continues work from [MAKO](https://github.com/eugeniosegala/MAKO) and lsfg-vk. It succeeds [Decky LSFG-VK Experimental](https://github.com/eugeniosegala/decky-lsfg-vk-experimental). It does not include or redistribute Lossless Scaling.
+**Target operating points**
 
-Community: https://t.me/gfg_extreme
+| Display | Original FPS | Multiplier | Output |
+|---|---|---|---|
+| 90 Hz | 45 | ×2 | 90 FPS |
+| 90 Hz | 40 | ×2.25 | 90 FPS |
+| 90 Hz | 35 | ×2.6 | 90 FPS |
+| 90 Hz | 30 | ×3 | 90 FPS |
+| 90 Hz | 24 | ×3.75 | 90 FPS |
+| 60 Hz | 30 | ×2 | 60 FPS |
+| 60 Hz | 25 | ×2.4 | 60 FPS |
+| 60 Hz | 20 | ×3 | 60 FPS |
 
-GPL-3.0-or-later · [License](LICENSE.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+With a whole multiplier (×2, ×3) every pair of real frames gets the same number of in-between frames: one at ×2, two at ×3 (at 1/3 and 2/3 of the interval). With a fractional multiplier real frames arrive every 2 and 3 (or 3 and 4) refreshes, and generation fills every refresh in between.
 
-## Frame Fusion and short Boost
+Kedavra can also pick the game's base frame rate automatically (Auto). The operating point it picks depends on how many original frames the game delivers and how steady they are.
 
-Stable 2.1.6 includes both [Fusion Core and Native Fusion](docs/FRAME_FUSION.md), plus [short Boost and right-stick touch](docs/STICK_TOUCH_BOOST.md). **Fusion and Boost run only in Autopilot.** Their switches, frame timing, Stall Shield and compatible shading trials default on; explicit saved off choices remain off. The normal Battery, Balanced and Quality paths do not execute Fusion or Boost.
+These are target modes. The real Output FPS depends on the game's performance, the GPU time available and whether every composite meets its deadline.
 
-Fusion can avoid a compatible scaler-input transfer or the native BGRA conversion. Earlier Steam Deck logs showed native Fusion remained disabled at launch; 2.1.6 repairs the missing renderer TOML setting. Native transfers and performance, energy or latency gains still need a fresh Deck recording. Incompatible formats and resource failures retain the existing path. Leaving Autopilot closes the shortcuts immediately; private history replacement follows the renderer's bounded transition.
+---
 
-With Continuous Boost off, Short Boost requests a **500 ms pulse on right-stick touch**; camera/action input and contact with motion can request up to **1.5 seconds**, then return to calm cadence. Continuous input cannot turn it into a permanent hardware power increase. A recovery gap, energy bank, compatible executor, temperature/output guards and fresh short cadence observations remain in force. A request or policy acknowledgment is not delivered FPS.
+## 03 / PRESENTATION-LEVEL CONTROL
 
-**Continuous Boost** is an optional Autopilot switch, off by default. It holds a higher requested real-frame cadence without the 1.5-second pulse limit. GPU work may increase, but the hardware TDP remains Governor-owned. Menus, heat, ineffective delivery and power-search guards still pause it.
+### FRAME GENERATION IS ONLY HALF THE PROBLEM.
 
-The built-in profile is shown as **stable** in Profiles. Its existing persisted identifier is retained so saved profiles and Steam launch commands continue to work. Users of the 2.1.2 test builds (Temporal Engine, GFG Shell, Native FG) should install the stable 2.1.6 ZIP explicitly.
+An in-between frame that sits in GPU memory is not enough. It has to reach the display at exactly the right moment.
 
-<div align="center"><img src="docs/img/card-profile.png" alt="Profiles with the built-in stable profile" width="390"></div>
+At 90 Hz the display refreshes every 11.111 ms.
+
+Kedavra uses a scheduler tied to Gamescope's refresh cycle to coordinate real and generated frames.
+
+**VBlank-aware scheduling**
+
+The scheduler accounts for:
+
+* when original frames arrive;
+* when GPU work is ready;
+* the time position of each generated frame;
+* the current display refresh rate;
+* missed slots;
+* repeated presentations;
+* changes of the source frame rate;
+* scene cuts (frames are never blended across a cut);
+* recovery after long gaps in the frame stream.
+
+**GPU execution & synchronization**
+
+In-between frames are made in a Vulkan Compute pipeline built into the composite.
+
+Running there lets generation line up with Gamescope's own graphics work and keeps the cost of the extra passes under control. If motion analysis keeps falling behind, generation pauses and then retries instead of breaking the rhythm.
+
+**KMS-level diagnostics**
+
+Tracing of presentation events gives the data to analyse frame pacing, misses and how the scheduler behaves under load.
+
+The goal is steady presentation of useful frames with the smallest extra delay needed.
+
+Interpolation needs the next real frame, so the picture is shown about one source frame later, plus analysis time. End-to-end latency also depends on the game's real frame rate and the display, so it is measured separately on hardware.
+
+**GENERATE. SCHEDULE. PRESENT.**
+**EVERY FRAME HAS A DEADLINE.**
+
+---
+
+## 04 / GFG AUTOPILOT
+
+### CLOSED-LOOP PERFORMANCE OPTIMIZATION.
+
+GSF Kedavra runs the frame pipeline.
+
+GFG Autopilot runs the performance of the system that carries it.
+
+CPU, GPU, the game, compute shaders and the compositor all share the Steam Deck's power budget.
+
+The best operating point depends on the actual load, the cost of generation and the power available.
+
+GFG Autopilot unites Kedavra's Auto with GFG Extreme's Autopilot. It picks the operating point (base frame rate and multiplier) and coordinates with GFG Governor, which controls TDP.
+
+**Control loop**
+
+```
+              GAME + GSF KEDAVRA
+                       │
+                       ▼
+                UNIFIED TELEMETRY
+     Real FPS / Pacing / GPU time / Power / Temp
+                       │
+                       ▼
+                 GFG AUTOPILOT
+             Operating Point Selection
+                       │
+                       ▼
+                  GFG GOVERNOR
+               TDP Optimization
+                       │
+                       ▼
+                 STEAM DECK APU
+                       │
+                       └──── Feedback
+```
+
+**Operating principles**
+
+**MEASURE** — At full TDP: which frame rate does the game hold steadily?
+**LOCK** — Lock a stable operating point (base frame rate + multiplier).
+**GUARD** — Protect the point: Governor lowers TDP while the point holds and gives power back at the first sign of a drop.
+**ADAPT** — If the point fails even at full power, step down; later, carefully try the step above.
+**STABILIZE** — Keep the efficient point and avoid needless changes.
+
+Governor aims for the smallest power budget that keeps both the game and the generator steady.
+
+Lower power that costs real FPS, pacing or generation stability does not count as a successful optimisation.
+
+**EFFICIENCY WITHOUT SACRIFICING FRAME STABILITY.**
+
+---
+
+## 05 / UNIFIED CONTROL ARCHITECTURE
+
+### TWO INTELLIGENT SYSTEMS. ONE CONTROL PLANE.
+
+GFG Extreme and Kedavra each run their own specialised control logic.
+
+Their responsibilities are split at the system level.
+
+| GSF Kedavra | GFG Extreme |
+|---|---|
+| Source FPS limiting | Operating point selection (Autopilot) |
+| Generation multiplier | TDP optimization (Governor) |
+| Motion estimation | Performance analysis |
+| Frame reconstruction | APU power & temperature telemetry |
+| Presentation scheduling | Thermal protection |
+| GPU generation diagnostics | Operating-point history per game |
+| Post filters & HUD layer | Filter, HUD and profile settings |
+
+Kedavra owns the FPS limiter and the frame generation itself.
+
+GFG hands the engine one agreed policy (multiplier, base frame rate, filters) and counts it as applied only once the engine confirms it. GFG controls the system's power policy (TDP).
+
+When the base frame rate or the multiplier changes, Governor gets a new operating point. Power tests never mix measurements from incompatible states.
+
+If another tool (for example the standalone GSF Kedavra plugin) changes the same settings, GFG does not fight it: it backs off and offers to take over.
+
+**ONE OWNER PER CONTROL. ONE CONSISTENT SYSTEM STATE.**
+
+---
+
+## 06 / PERFORMANCE MODES
+
+### EXPLICIT PRIORITIES. ADAPTIVE EXECUTION.
+
+GFG Extreme offers four performance strategies.
+
+| Mode | Optimization objective |
+|---|---|
+| Autopilot | Picks Quality, Balanced or Battery from power source, charge and temperature |
+| Battery | Efficiency first: ×3.75 at 90 Hz (×3 at 60 Hz) and the lowest TDP that holds it |
+| Balanced | The highest base frame rate the game holds, without needless changes |
+| Quality | Real frames and motion quality first; TDP is not saved |
+
+The strategy sets the optimisation goals.
+
+Kedavra carries out the agreed frame generation policy, and Governor weighs the available power budget.
+
+The same Output FPS can come from different pairs of real frame rate and multiplier; the choice weighs their real cost and quality.
+
+---
+
+## 07 / IMAGE PROCESSING
+
+### A UNIFIED VISUAL PIPELINE.
+
+GFG Extreme keeps its graphics filters, now moved inside Gamescope. No vkBasalt needed.
+
+Filters run after generation, on the frame that goes to the screen. Motion analysis never sees filtered pixels, so grain and sharpening never fake motion. Real and generated frames get exactly the same look, and the HUD and Steam's overlays stay unfiltered.
+
+**Color & Tone**
+HDR Look · Vibrance · Colourfulness · Curves · Technicolor · Technicolor 2 · DPX · Levels Plus
+
+**Sharpness & Anti-Aliasing**
+CAS · DLS · Clarity · FXAA · SMAA
+
+**Creative Processing**
+Film Grain · Vignette · Chromatic Aberration · Deband · Noir · Sepia · Monochrome · Bleach Bypass · Cartoon · Nostalgia
+
+Presets: Sharp · Vivid · HDR Look · Cinema · Noir · Retro · Smooth.
+
+The order of passes is fixed: colour and tone → sharpening → antialiasing → finish (vignette, grain, chromatic aberration).
+
+Filters work on encoded pixel values (sRGB), as in ReShade and vkBasalt. There is no double sRGB decode.
+
+**HDR.** Frame generation supports HDR games (HDR10 PQ and scRGB). Colour filters are SDR art effects and are not applied to HDR frames. On HDR10, sharpening, antialiasing and finish effects still apply; scRGB frames are shown unfiltered. HDR Look is an SDR filter with an "HDR" style, not an HDR output mode.
+
+---
+
+## 08 / OBSERVABILITY
+
+### MEASURE THE PIPELINE. NOT JUST THE FPS.
+
+GFG Extreme's unified telemetry covers original rendering, generation, frame presentation and hardware.
+
+| Metric | Description |
+|---|---|
+| Real FPS | The game's original performance |
+| Output FPS | New frames on screen (real + generated) |
+| Effective Multiplier | Current generation mode |
+| Pace | Share of display refreshes without a repeat |
+| KMS Flip Events | Recorded presentation events |
+| GPU Generation Time | Compute cost of the generator and the filters |
+| APU Power Draw | Actual APU power use |
+| TDP Limit | Power budget in force |
+| APU Temperature | Temperature and thermal headroom |
+| Autopilot State | Control loop phase (measure, lock, guard, adapt) |
+
+The system tells internal generation events apart from presentations confirmed by the display.
+
+Diagnostic traces show missed frames, transitions between operating points, GPU overload and how well TDP changes worked.
+
+Hardware test results can be reproduced and matched against the control system's decisions.
+
+**REAL METRICS. REPRODUCIBLE RESULTS.**
+
+---
+
+## 09 / NATIVE STEAMOS INTEGRATION
+
+### ONE ENGINE. ONE INTERFACE.
+
+GFG Extreme 3.0.0 is one system for frame generation and performance control, run from Decky Loader. One zip, installed from Decky, no Desktop Mode scripts.
+
+Kedavra lives inside Gamescope, so in the stock Gaming Mode no game needs its own launch command for generation.
+
+**Core capabilities**
+
+* Compositor-native frame generation, SDR and HDR.
+* Kedavra Off / Auto / ×2 / ×3 / ×3.75 / Custom base FPS.
+* GFG Governor & Autopilot.
+* Adaptive TDP management.
+* Per-game profiles.
+* Graphics filters & image enhancement after generation.
+* Unified performance HUD (drawn by Gamescope, after generation).
+* GPU and APU telemetry.
+* Session diagnostics and Pace capture.
+* Controlled Gamescope installation, automatic rollback and recovery.
+* Settings migration from GFG Extreme 2.x (with a backup).
+
+Target platform: Steam Deck OLED / SteamOS.
+
+It needs Gamescope with Kedavra, which the plugin installs itself. Installation checks the system, and a boot that the Kedavra Gamescope does not confirm is rolled back to the stock compositor automatically.
+
+---
+
+## 10 / ENGINEERING INDEPENDENCE
+
+### OUR ENGINE. OUR FRAME PIPELINE. OUR ROADMAP.
+
+GFG Extreme 3.0.0 runs on its own frame generation core, GSF Kedavra.
+
+Motion estimation, image reconstruction and the scheduling of generated frames are developed in one GFG / GSF code base.
+
+That keeps the generator's direction independent and lets it be tuned directly for Gamescope, Vulkan and GFG's control logic.
+
+**Technology stack**
+
+| Subsystem | Technology |
+|---|---|
+| Frame Generation | GSF Kedavra |
+| GPU Processing | Vulkan Compute |
+| Motion Estimation | Multi-resolution |
+| Frame Reconstruction | Motion-compensated |
+| Scheduling | Gamescope / Kedavra |
+| Presentation | DRM / KMS |
+| Power Management | GFG Governor |
+| Intelligent Control | GFG Autopilot |
+| Interface | Decky Loader |
+
+The core technologies stay part of the open Linux graphics stack.
+
+The generator, the control of its compute cost and its link to frame presentation are brought together in one project.
+
+**A NEW ENGINE.**
+**A NEW PRESENTATION MODEL.**
+**A NEW FOUNDATION FOR GFG EXTREME.**
+
+---
+
+## GFG EXTREME 3.0.0
+
+### THE COMPOSITOR-NATIVE GENERATION RELEASE.
+
+The biggest architectural update of GFG Extreme brings together GSF Kedavra frame generation, presentation control inside Gamescope and intelligent APU optimisation.
+
+Version 3.0.0 is one platform for the further development of GPU reconstruction, frame scheduling and power management on the Steam Deck.
+
+**NATIVE FRAME GENERATION.**
+**PRESENTATION-LEVEL CONTROL.**
+**INTELLIGENT POWER MANAGEMENT.**
+**POWERED BY GSF KEDAVRA.**
+**ENGINEERED FOR STEAM DECK.**
+
+---
+
+## Development & Validation
+
+Version 3.0.0 is judged by measurable results:
+
+* Original FPS stability.
+* Presentation interval P95/P99.
+* Frame generation GPU cost.
+* Missed presentation deadlines.
+* End-to-end latency.
+* APU power consumption.
+* Image reconstruction quality (SDR and HDR).
+* Long-session stability.
+
+Targets and real benchmarks of the 3.0.0 build (×3.75 and HDR included) are published after testing on real hardware.
+
+---
+
+## Project
+
+* Repository: https://github.com/wavessevaw/GFG-Extreme
+* GSF Kedavra: https://github.com/wavessevaw/GSF_Kedavra
+* Community: https://t.me/gfg_extreme
+* Platform: Steam Deck / SteamOS
+* License: GPL-3.0-or-later, respecting the licences of the components used
+
+This README describes GFG Extreme 3.0.0 (pre-release). Features become part of a confirmed release only after testing on real hardware.
