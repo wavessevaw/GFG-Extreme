@@ -100,7 +100,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          # A tag push builds the tag; a manual run builds the commit it was started on.
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || env.TAG }}
       - uses: actions/download-artifact@v4
         with:
           name: gamescope-runtime

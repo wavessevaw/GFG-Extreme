@@ -11,9 +11,10 @@ trap 'rm -rf "$work"' EXIT
 git -C "$root" archive --prefix=GFG-Extreme/ HEAD | tar -x -C "$work"
 p="$work/GFG-Extreme"
 rm -rf "$p/.github" "$p/tests" "$p/sandbox" "$p/frontend" "$p/branding" "$p/tools" "$p/node_modules"
-test -x "$runtime/bin/gamescope" || { echo "no gamescope in $runtime" >&2; exit 1; }
+test -f "$runtime/bin/gamescope" || { echo "no gamescope in $runtime" >&2; exit 1; }
 cp -a "$runtime" "$p/runtime"
-chmod 755 "$p"/runtime/bin/* 2>/dev/null || true
+# Workflow artifacts drop the executable bit: set it back on the binaries and the bundled loader.
+chmod 755 "$p"/runtime/bin/* "$p"/runtime/lib/ld-linux*.so* 2>/dev/null || true
 name="GFG-Extreme-v${version//./_}.zip"
 mkdir -p "$out"
 (cd "$work" && zip -qr -X -y "$name" GFG-Extreme)

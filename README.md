@@ -1,12 +1,40 @@
-# GFG EXTREME 3.0.0
+<div align="center">
 
 **English** · [Русский](README.ru.md)
+
+<img src="docs/img/logo.png" alt="GFG Extreme" width="144">
+
+# GFG EXTREME 3.0.0
 
 **MOST POWERFUL DECKY PLUGIN EVER.**
 
 Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integration
 
-`SteamOS` `Vulkan Compute` `GSF Kedavra` `Native FG` `Frame Pacing` `Autopilot` `HDR`
+[**Download 3.0.0**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.0.0) · [Install](#installation) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Modes](#06--performance-modes) · [HUD](#08--observability)
+
+![Release](https://img.shields.io/github/v/release/wavessevaw/GFG-Extreme?include_prereleases&style=flat-square&color=fb0d00&label=release)
+![Downloads](https://img.shields.io/github/downloads/wavessevaw/GFG-Extreme/total?style=flat-square&color=20242e)
+![Steam Deck](https://img.shields.io/badge/Steam%20Deck-OLED%20%7C%20LCD-20242e?style=flat-square)
+![Decky](https://img.shields.io/badge/Decky%20Loader-plugin-20242e?style=flat-square)
+![Engine](https://img.shields.io/badge/engine-GSF%20Kedavra-fb0d00?style=flat-square)
+![No Lossless Scaling](https://img.shields.io/badge/Lossless%20Scaling-not%20needed-20242e?style=flat-square)
+![License](https://img.shields.io/badge/license-GPL--3.0-20242e?style=flat-square)
+[![Telegram](https://img.shields.io/badge/Telegram-gfg__extreme-26a5e4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/gfg_extreme)
+
+<img src="docs/img/card-overview.png" alt="GFG Extreme 3.0.0: Dash, Graphics, Engine and Setup tabs" width="900">
+
+<sub>Real GFG Extreme 3.0.0 interface rendered in a browser with illustrative sample data. Not measured game performance.</sub>
+
+
+<table>
+<tr>
+<td width="33%" align="center"><b>GSF KEDAVRA</b><br><sub>Own frame generation inside Gamescope. Auto, ×2, ×3, ×3.75, Custom. SDR and HDR.</sub></td>
+<td width="33%" align="center"><b>AUTOPILOT</b><br><sub>Measure, lock, guard, adapt. The lowest TDP that holds the frame rate.</sub></td>
+<td width="33%" align="center"><b>ONE ZIP</b><br><sub>Installed from Decky. Installs its own Gamescope, rolls back by itself.</sub></td>
+</tr>
+</table>
+
+</div>
 
 ---
 
@@ -34,6 +62,19 @@ Compositor-level frame scheduling that follows the display refresh and GPU readi
 A closed TDP control loop with feedback that verifies every decision it makes.
 
 **ONE ENGINE. ONE CONTROL PLANE. ONE PERFORMANCE TARGET.**
+
+---
+
+## Installation
+
+1. Download [**GFG-Extreme-v3_0_0.zip**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.0.0).
+2. In Decky Loader: **Settings → Developer → Install Plugin from ZIP**, pick the file.
+3. Open GFG Extreme → **Setup** → **Engine install**, install Kedavra and reboot when asked.
+4. Start a game and choose a mode on **Dash**. Nothing else to set up: no launch options, no Desktop Mode scripts.
+
+Coming from 2.x: settings move over with a backup, and MAKO is removed and the system restored automatically.
+
+> 3.0.0 is a pre-release. If Gaming Mode does not come back with the Kedavra Gamescope, the stock compositor is restored on the next boot.
 
 ---
 
@@ -298,6 +339,8 @@ If another tool (for example the standalone GSF Kedavra plugin) changes the same
 
 ### EXPLICIT PRIORITIES. ADAPTIVE EXECUTION.
 
+<p align="center"><img src="docs/img/card-modes.png" alt="Battery, Balanced, Quality and Autopilot" width="900"></p>
+
 GFG Extreme offers four performance strategies.
 
 | Mode | Optimization objective |
@@ -346,6 +389,8 @@ Filters work on encoded pixel values (sRGB), as in ReShade and vkBasalt. There i
 
 ### MEASURE THE PIPELINE. NOT JUST THE FPS.
 
+<p align="center"><img src="docs/img/hud-rings-gfg3.png" alt="In-game HUD: minimal and standard" width="700"></p>
+
 GFG Extreme's unified telemetry covers original rendering, generation, frame presentation and hardware.
 
 | Metric | Description |
@@ -376,6 +421,8 @@ Hardware test results can be reproduced and matched against the control system's
 ## 09 / NATIVE STEAMOS INTEGRATION
 
 ### ONE ENGINE. ONE INTERFACE.
+
+<p align="center"><img src="docs/img/card-ring-sizes.png" alt="Tap the ring: Side, Classic, Compact, Arc" width="900"></p>
 
 GFG Extreme 3.0.0 is one system for frame generation and performance control, run from Decky Loader. One zip, installed from Decky, no Desktop Mode scripts.
 
@@ -477,3 +524,13 @@ Targets and real benchmarks of the 3.0.0 build (×3.75 and HDR included) are pub
 * License: GPL-3.0-or-later, respecting the licences of the components used
 
 This README describes GFG Extreme 3.0.0 (pre-release). Features become part of a confirmed release only after testing on real hardware.
+
+---
+
+<div align="center">
+
+<img src="docs/img/logo.png" alt="GFG Extreme" width="56">
+
+<sub>GFG EXTREME 3.0.0 · POWERED BY GSF KEDAVRA · Made for Steam Deck · GPL-3.0-or-later</sub>
+
+</div>
