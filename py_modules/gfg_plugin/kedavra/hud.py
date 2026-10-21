@@ -264,36 +264,46 @@ def items_for(st: Dict[str, Any], rates: Optional[Dict[str, float]]) -> List[Dic
     return items
 
 
-DETAIL_RINGS = {"minimal": ("FPS", "MULT"), "standard": ("FPS", "MULT", "PACE", "TDP", "TEMP"),
-                "full": ("FPS", "MULT", "PACE", "TDP", "TEMP", "GEN")}
+DETAIL_RINGS = {"minimal": ("FPS", "MULT"),
+                "standard": ("FPS", "TDP", "MULT", "TEMP", "BATTERY", "PACE")}
+
+
+def battery_ring(battery: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The number is the time left (H:MM) on battery, AC on external power; the ring is the charge."""
+    pct = _num(battery.get("percent"))
+    if pct is None:
+        return None
+    if battery.get("external_power"):
+        text = "AC"
+    else:
+        hours = _num(battery.get("hours_left"))
+        text = f"{int(hours)}:{int(round((hours % 1) * 60)) % 60:02d}" if hours is not None and hours < 100 else "—"
+    rgb = GREEN if pct >= 50 else (YELLOW if pct >= 20 else RED)
+    return {"size": 46, "w": 4, "frac": min(1.0, pct / 100.0), "rgb": rgb, "text": text, "style": "val",
+            "label": "BATTERY H"}
 
 
 def gfg_items(st: Dict[str, Any], rates: Optional[Dict[str, float]], extra: Dict[str, Any],
               detail: str = "standard") -> List[Dict[str, Any]]:
-    """The engine's rings plus GFG's: TDP (draw below), APU temperature, generation cost."""
+    """The approved 3.0 HUD: FPS, TDP, multiplier, temperature, battery, pacing. One number per
+    ring, the unit in the label, no glow."""
     base = items_for(st, rates)
     named = {"FPS": base[0], "MULT": base[1]}
     if len(base) > 2:
-        named["PACE"] = base[2]
-    tdp, draw = _num(extra.get("tdp_w")), _num(extra.get("draw_w"))
+        named["PACE"] = {**base[2], "label": "PACE %"}
+    tdp = _num(extra.get("tdp_w"))
     if tdp is not None:
         ceiling = _num(extra.get("ceiling_w")) or 15.0
         named["TDP"] = {"size": 46, "w": 4, "frac": tdp / max(ceiling, tdp), "rgb": ACCENT,
-                        "text": f"{tdp:.0f}W", "style": "val",
-                        "sub": f"{draw:.1f}W" if draw is not None else None,
-                        "label": "TDP AUTO" if extra.get("managing") else "TDP"}
+                        "text": f"{tdp:.1f}" if tdp < 10 else f"{tdp:.0f}", "style": "val", "label": "TDP W"}
     temp = _num(extra.get("temp_c"))
     if temp is not None:
         named["TEMP"] = {"size": 46, "w": 4, "frac": min(1.0, temp / 100.0),
                          "rgb": GREEN if temp < 75 else (YELLOW if temp < 85 else RED),
-                         "text": f"{temp:.0f}C", "style": "val", "label": "APU"}
-    gen = _num(st.get("gpu_us_avg"))
-    if gen is not None and st.get("state") == "active" and _num(st.get("refresh_ns")):
-        period_ms = st["refresh_ns"] / 1e6
-        ms = gen / 1000.0
-        named["GEN"] = {"size": 46, "w": 4, "frac": min(1.0, ms / period_ms),
-                        "rgb": GREEN if ms < 0.35 * period_ms else (YELLOW if ms < 0.6 * period_ms else RED),
-                        "text": f"{ms:.1f}", "style": "val", "label": "GEN MS"}
+                         "text": f"{temp:.0f}", "style": "val", "label": "TEMP C"}
+    bat = battery_ring(extra.get("battery") or {})
+    if bat is not None:
+        named["BATTERY"] = bat
     order = DETAIL_RINGS.get(detail, DETAIL_RINGS["standard"])
     return [named[k] for k in order if k in named]
 

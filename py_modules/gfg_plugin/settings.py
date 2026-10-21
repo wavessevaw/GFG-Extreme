@@ -21,7 +21,7 @@ TELEMETRY_LEVELS = ("minimal", "standard", "debug")
 OBJECTIVES = ("autopilot", "battery", "balanced", "quality")
 AUTOPILOT_PREFERENCES = ("auto", "battery", "smoothness")
 HUD_POSITIONS = ("top-left", "top-right", "bottom-left", "bottom-right")
-HUD_DETAILS = ("minimal", "standard", "full")
+HUD_DETAILS = ("minimal", "standard")
 BASE_FPS_RANGE = (20, 90)
 DEFAULT_PROFILE = "default"
 

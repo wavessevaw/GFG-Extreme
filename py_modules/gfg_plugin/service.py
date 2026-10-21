@@ -142,7 +142,8 @@ class Service:
         hud_cfg = data["hud"]
         if self.hud is not None:
             extra = {"tdp_w": g.get("tdp_w") if g.get("owned") else None, "draw_w": g.get("draw_w"),
-                     "ceiling_w": g.get("ceiling_w"), "temp_c": temp, "managing": g.get("managing")}
+                     "ceiling_w": g.get("ceiling_w"), "temp_c": temp, "managing": g.get("managing"),
+                     "battery": {**power, "hours_left": self._hours_left(power)}}
             try:
                 self.hud.tick(bool(hud_cfg["enabled"]) and game, st if fresh else None, extra,
                               hud_cfg["position"], hud_cfg["detail"])
@@ -168,6 +169,16 @@ class Service:
                                    "draw": g.get("draw_w"), "temp": temp, "policy": coord["state"]})
             self.telemetry.engine(st)
         return self.snapshot
+
+    def _hours_left(self, power: Dict[str, Any]) -> Optional[float]:
+        """Hours to empty from a smoothed discharge power (None on AC or without readings)."""
+        e, w = power.get("energy_uwh"), power.get("power_uw")
+        if not power.get("discharging") or not isinstance(e, (int, float)) or not isinstance(w, (int, float)) or w <= 0:
+            self._drain = None
+            return None
+        prev = getattr(self, "_drain", None)
+        self._drain = w if prev is None else prev + 0.08 * (w - prev)
+        return e / self._drain
 
     def _delta(self, st: Dict[str, Any], key: str) -> float:
         prev = getattr(self, "_prev_counters", {})
