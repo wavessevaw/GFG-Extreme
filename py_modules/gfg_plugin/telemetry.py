@@ -2,7 +2,8 @@
 
   minimal   decisions only: the activity journal (policy sends and confirmations, pilot points,
             TDP writes, migrations, errors) and session summaries
-  standard  + one line per second while a game runs (fps, pace, point, TDP, draw, temperature),
+  standard  + one line per second while a game runs (fps, real, pace, point, multiplier, TDP, draw,
+            temperature, CPU/GPU load, GPU clock, fan, battery, CPU cap and GPU ceiling),
             the last 6 h, for the report zip
   debug     + the engine's raw status once a second, the last 30 min
 
