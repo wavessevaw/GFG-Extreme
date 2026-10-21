@@ -218,9 +218,28 @@ class GovernorTest(unittest.TestCase):
         self.feed(40)
         self.assertLess(self.act.tdp, 15.0)
         low = self.act.tdp
-        self.feed(24, real=30.0)  # severe shortfall
-        self.assertEqual(self.act.tdp, 15.0, "a clear shortfall goes back to full power at once")
-        self.assertGreaterEqual(self.g.floor_fail[45], low)
+        self.feed(4, real=30.0)  # severe shortfall at a binding limit
+        self.assertGreater(self.act.tdp, low, "a clear shortfall gets watts back within seconds")
+        self.feed(24, real=30.0)
+        self.assertEqual(self.act.tdp, 15.0)
+
+    def test_failed_probe_leaves_an_expiring_floor(self):
+        self.feed(1)
+        start = self.act.tdp
+        self.assertEqual(start, 12.0, "Balanced starts at 12 W")
+        self.feed(9)
+        probed = self.act.tdp
+        self.assertLess(probed, start)
+        self.feed(3, real=40.0)  # the step down does not hold
+        self.assertGreater(self.act.tdp, probed)
+        self.assertEqual(self.g.floor_fail[45], probed)
+        self.clock.t += 301
+        self.assertNotIn(45, self.g.floor_fail, "a floor expires")
+
+    def test_draw_headroom_jumps_down(self):
+        self.act.draw = 6.0
+        self.feed(30, objective="battery", draw_w=6.0)
+        self.assertLessEqual(self.act.tdp, 7.5, "the limit follows the draw when it is not binding")
 
     def test_quality_never_probes_and_hold(self):
         self.feed(60, objective="quality")

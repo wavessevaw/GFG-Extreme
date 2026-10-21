@@ -99,6 +99,7 @@ class Service:
             "fg": profile["fg"], "base_fps": profile["base_fps"], "objective": objective,
             "refresh": refresh, "game": game, "app": self.app, "engine": st,
             "real": live.get("real"), "pace": live.get("pace"), "confirmed": confirmed,
+            "gpu_busy": sensors.get("gpu_busy_pct"), "cpu_top": sensors.get("cpu_top_core_pct"),
             "at_ceiling": gov.at_ceiling(), "settling": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
         })
         policy = Policy(req["multiplier"], req["base_fps"], filters.to_post(profile["filters"]),
@@ -133,6 +134,8 @@ class Service:
             "epoch": (coord["epoch"], self.split.changes if self.split else 0, self.gclock.changes if self.gclock else 0),
             "real": live.get("real"), "pace": live.get("pace"),
             "over_budget": (rates or {}).get("over_budget", 0.0), "ring_miss": 0.0, "temp_c": temp,
+            "draw_w": gov.status().get("draw_w"),
+            "experiment": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
         }
         if rates is not None and self.rates.prev is not None:
             sample["ring_miss"] = self._delta(st, "ring_miss")

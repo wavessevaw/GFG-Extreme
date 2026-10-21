@@ -40,6 +40,12 @@ GUARD_S = 5.0
 TRIAL_S = 6.0
 PROMOTE_WAIT_S = 120.0
 PROMOTE_WAIT_MAX_S = 960.0
+# Headroom: the GPU (or the CPU) clearly not at its limit at the locked point means the game
+# could run the next point up. Then the next point is tried after HEADROOM_WAIT_S of clean play,
+# whatever the back-off, so a lighter scene gets its real frames back within seconds.
+HEADROOM_WAIT_S = 10.0
+HEADROOM_GPU_PCT = 92.0      # the GPU at the next point is estimated to stay under this
+HEADROOM_CPU_PCT = 85.0
 HOLD_RATIO = 0.95       # real fps vs cap over a guard window
 TRIAL_RATIO = 0.97
 PACE_MIN = 0.99
@@ -97,6 +103,7 @@ class PointPilot:
         self.window_start = self.clock()
         self.clean_since: Optional[float] = None
         self.promote_wait = PROMOTE_WAIT_S
+        self.headroom_backoff = 0.0  # after a failed trial the headroom estimate waits this long
         self.trial_cap = 0
         self.trial_from = 0
         self.holds = True
@@ -173,7 +180,8 @@ class PointPilot:
             self.window, self.window_start = [], now
             return None
         self.window.append({"real": float(ctx["real"]), "pace": ctx.get("pace"),
-                            "ceiling": bool(ctx.get("at_ceiling", True))})
+                            "ceiling": bool(ctx.get("at_ceiling", True)),
+                            "gpu": ctx.get("gpu_busy"), "cpu": ctx.get("cpu_top")})
         if now - self.window_start < length:
             return None
         self.window_done = self.window
@@ -183,8 +191,12 @@ class PointPilot:
         pace = statistics.fmean(paces) if paces else None
         self.window, self.window_start = [], now
         ok = real >= HOLD_RATIO * cap and (pace is None or pace >= PACE_MIN)
+        gpus = [x["gpu"] for x in self.window_done if isinstance(x.get("gpu"), (int, float))]
+        cpus = [x["cpu"] for x in self.window_done if isinstance(x.get("cpu"), (int, float))]
         return {"ok": ok, "real": real, "median": statistics.median(reals), "pace": pace,
-                "at_ceiling": all(x["ceiling"] for x in self.window_done)}
+                "at_ceiling": all(x["ceiling"] for x in self.window_done),
+                "gpu": statistics.median(gpus) if len(gpus) * 2 >= len(self.window_done) else None,
+                "cpu": statistics.median(cpus) if len(cpus) * 2 >= len(self.window_done) else None}
 
     def _auto(self, ctx: Dict[str, Any], steps: List[int], objective: str) -> Dict[str, Any]:
         now = self.clock()
@@ -213,6 +225,9 @@ class PointPilot:
                 self.holds = True
                 if self.clean_since is None:
                     self.clean_since = now
+                nxt = [c for c in steps if c > self.point]
+                if nxt and objective != "battery" and self._headroom(verdict, self.point, nxt[0]):
+                    self.promote_wait = min(self.promote_wait, max(HEADROOM_WAIT_S, self.headroom_backoff))
             else:
                 self.clean_since = None
                 if verdict["at_ceiling"]:
@@ -235,6 +250,17 @@ class PointPilot:
             self._go("trial", f"trying point {nxt}")
             return self._request(1, self.trial_from, 0, True)  # raise the TDP first
         return self._request(1, self.point, 0, False)
+
+    @staticmethod
+    def _headroom(verdict: Dict[str, Any], point: int, nxt: int) -> bool:
+        """The game has room for the next point: GPU load scaled to it stays under the limit,
+        and the busiest CPU core is not near its own."""
+        gpu, cpu = verdict.get("gpu"), verdict.get("cpu")
+        if gpu is None or gpu <= 0:
+            return False
+        if cpu is not None and cpu * nxt / point >= HEADROOM_CPU_PCT:
+            return False
+        return gpu * nxt / point < HEADROOM_GPU_PCT
 
     def _measure(self, ctx: Dict[str, Any], steps: List[int], top: int) -> Dict[str, Any]:
         now = self.clock()
@@ -277,10 +303,12 @@ class PointPilot:
         if verdict["ok"] and verdict["real"] >= TRIAL_RATIO * self.trial_cap:
             self.promotions += 1
             self.promote_wait = 30.0  # keep climbing soon while it holds
+            self.headroom_backoff = 0.0
             self._go("locked", f"point {self.trial_cap} holds: locked", self.trial_cap)
             self.clean_since = self.clock()
         else:
             self.promote_wait = min(PROMOTE_WAIT_MAX_S, self.promote_wait * 2)
+            self.headroom_backoff = min(480.0, max(60.0, self.headroom_backoff * 2))
             self._go("locked", f"point {self.trial_cap} did not hold; next try in {self.promote_wait:.0f} s",
                      self.trial_from)
         return self._request(1, self.point, 0, False)
