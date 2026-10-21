@@ -139,11 +139,12 @@ class Service:
             sample["over_budget"] = self._delta(st, "over_budget")
         g = gov.tick(sample)
 
+        hours = self._hours_left(power)
         hud_cfg = data["hud"]
         if self.hud is not None:
             extra = {"tdp_w": g.get("tdp_w") if g.get("owned") else None, "draw_w": g.get("draw_w"),
                      "ceiling_w": g.get("ceiling_w"), "temp_c": temp, "managing": g.get("managing"),
-                     "battery": {**power, "hours_left": self._hours_left(power)}}
+                     "battery": {**power, "hours_left": hours}}
             try:
                 self.hud.tick(bool(hud_cfg["enabled"]) and game, st if fresh else None, extra,
                               hud_cfg["position"], hud_cfg["detail"])
@@ -166,7 +167,13 @@ class Service:
             self.telemetry.sample({"t": round(time.time(), 1), "app": self.app, "fps": live.get("fps"),
                                    "real": live.get("real"), "pace": live.get("pace"), "point": req["point"],
                                    "phase": req["phase"], "objective": objective, "tdp": g.get("tdp_w"),
-                                   "draw": g.get("draw_w"), "temp": temp, "policy": coord["state"]})
+                                   "draw": g.get("draw_w"), "temp": temp, "policy": coord["state"],
+                                   "mult": st.get("multiplier"), "cap": st.get("cap_fps"), "hz": refresh,
+                                   "ceiling": g.get("ceiling_w"), "cpu": sensors.get("cpu_top_core_pct"),
+                                   "gpu": sensors.get("gpu_busy_pct"), "gpu_mhz": sensors.get("gpu_clock_mhz"),
+                                   "fan": sensors.get("fan_rpm"), "bat": power.get("percent"),
+                                   "ac": power.get("external_power"), "hours": None if hours is None else round(hours, 2),
+                                   "cpu_cap_khz": split_status.get("cap_khz"), "gpu_limit_mhz": gclock_status.get("limit_mhz")})
             self.telemetry.engine(st)
         return self.snapshot
 

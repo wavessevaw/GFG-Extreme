@@ -98,6 +98,17 @@ var css = `
 .gfg .sub{font-size:10.5px;color:var(--tx3);line-height:1.4}
 .gfg .err{font-size:11px;color:#ffb4a8;background:#2a1010;border:1px solid #5a1a10;border-radius:10px;padding:7px 9px;margin-bottom:8px}
 .gfg .row{display:block}
+/* Gamepad focus: Steam marks the element under the stick / D-pad with .gpfocus, but our own
+   backgrounds hide its ring. As in 2.x, the focused control turns white; a selected one gets a white ring. */
+.gfg .gpfocus,.gfg :focus-visible{outline:none}
+.gfg .tab.gpfocus,.gfg .seg .o.gpfocus,.gfg .pre.gpfocus,.gfg .ec.gpfocus,.gfg .btn.gpfocus,.gfg .step .b.gpfocus,.gfg .bump.gpfocus,.gfg .gpfocus>.tile,
+.gfg .tab:focus-visible,.gfg .seg .o:focus-visible,.gfg .pre:focus-visible,.gfg .ec:focus-visible,.gfg .btn:focus-visible,.gfg .step .b:focus-visible,.gfg :focus-visible>.tile{background:linear-gradient(180deg,#fff 0%,#dcdce2 100%)!important;color:#0a0a0c!important;border-color:#fff!important;box-shadow:0 0 16px rgba(255,255,255,.35)!important}
+.gfg .gpfocus>.tile span,.gfg :focus-visible>.tile span{color:#3a3a44!important}
+.gfg .tab.on.gpfocus,.gfg .seg .o.on.gpfocus,.gfg .pre.on.gpfocus,.gfg .ec.on.gpfocus,.gfg .btn.red.gpfocus,.gfg .gpfocus>.tile.on,
+.gfg .tab.on:focus-visible,.gfg .seg .o.on:focus-visible,.gfg .pre.on:focus-visible,.gfg .ec.on:focus-visible,.gfg .btn.red:focus-visible,.gfg :focus-visible>.tile.on{background:linear-gradient(180deg,#ff2d1a,#d10a00)!important;color:#fff!important;box-shadow:0 0 0 2px #fff,0 0 18px rgba(251,13,0,.6)!important}
+.gfg .gpfocus>.tile.on span,.gfg :focus-visible>.tile.on span{color:#ffd9d4!important}
+.gfg .tog.gpfocus,.gfg .tog:focus-visible,.gfg .herotap.gpfocus,.gfg .herotap:focus-visible{box-shadow:0 0 0 2px #fff,0 0 14px rgba(255,255,255,.4)!important}
+.gfg .gpfocus>.lrow,.gfg :focus-visible>.lrow{background:var(--s3);border-radius:10px;box-shadow:0 0 0 2px #fff}
 `;
 
 // frontend/src/logo.js
