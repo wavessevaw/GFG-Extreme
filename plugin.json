@@ -7,16 +7,14 @@
   "api_version": 1,
   "publish": {
     "tags": [
-      "installer",
-      "vulkan",
-      "gfg-extreme",
+      "frame-generation",
       "framegen",
-      "lossless-scaling",
-      "scaling",
-      "shaders",
-      "vkbasalt",
-      "steam-machine"
+      "gamescope",
+      "kedavra",
+      "tdp",
+      "steam-deck",
+      "gfg-extreme"
     ],
-    "description": "GFG Extreme Decky: press Run and the GFG Governor picks the target for your Deck (OLED 90 / LCD 60 / Dock 60), manages frame generation and TDP, and shows a compact in-game overlay."
+    "description": "GFG Extreme 3.0 Independence: frame generation x2–x3.75 on its own engine (GSF Kedavra in Gamescope), Autopilot, TDP Governor, Power Split and GPU clock ceiling. No Lossless Scaling."
   }
 }

@@ -21,7 +21,7 @@ from .cpu_freq import CpuFreqActuator
 from .game_model import GameModelStore
 from .governor_battery import read_battery
 from .governor_power import SteamDeckPowerActuator
-from .host_sensors import HostSensors
+from .host_sensors import HostSensors, device_name
 from .kedavra.ctl import Control
 from .kedavra.hud import Hud
 from .kedavra.install import Installer, bench
@@ -139,6 +139,7 @@ class Plugin:
     # ------------------------------------------------------------------ state
     async def get_state(self) -> Dict[str, Any]:
         return {"version": paths.VERSION, "codename": paths.CODENAME, "live": self.state,
+                "device": await asyncio.to_thread(device_name),
                 "settings": self.settings.data, "profiles": self._profiles(),
                 "migration": self.migration_report, "coexist": await asyncio.to_thread(self.coexist.status),
                 "capture": self.ctl._capture_info()}

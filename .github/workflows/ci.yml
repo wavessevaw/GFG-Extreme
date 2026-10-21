@@ -1,6 +1,8 @@
 name: CI
 
-# Runs on every push and pull request, independent of whether a release tag exists.
+# Every push and pull request: backend unit tests, the sandbox (virtual Steam Deck runs of the
+# pilot, Governor, Power Split and GPU clock ceiling), the committed frontend build and its
+# smoke test. Hardware numbers come only from a Steam Deck, never from here.
 on:
   push:
   pull_request:
@@ -17,32 +19,9 @@ jobs:
         with:
           node-version: "22"
       - name: Backend tests
-        run: |
-          python3 scripts/check_generated_config.py
-          python3 -m unittest discover -s tests -p 'test_*.py'
-      - name: Frame OS engine tests (scheduler, control channel, layer on the mock Vulkan driver)
-        run: |
-          VULKAN_DEPS="$RUNNER_TEMP/vk" engine/gfg-pacer/tests/setup_vulkan_deps.sh
-          make -C engine/gfg-pacer VULKAN_DEPS="$RUNNER_TEMP/vk" test layer abi integration ordering
-      - name: Compare late-frame pacing with the archived baseline
-        run: |
-          git fetch --depth=1 origin cfc323f0b9b28da42c803441bfacafa29a7f32d5
-          mkdir -p "$RUNNER_TEMP/old-pacer"
-          git show cfc323f0b9b28da42c803441bfacafa29a7f32d5:engine/gfg-pacer/src/scheduler.c > "$RUNNER_TEMP/old-pacer/scheduler.c"
-          git show cfc323f0b9b28da42c803441bfacafa29a7f32d5:engine/gfg-pacer/src/scheduler.h > "$RUNNER_TEMP/old-pacer/scheduler.h"
-          cc -O2 tools/benchmark_late_pacing.c "$RUNNER_TEMP/old-pacer/scheduler.c" -lm -o /tmp/old-pacing
-          cc -O2 tools/benchmark_late_pacing.c engine/gfg-pacer/src/scheduler.c -lm -o /tmp/new-pacing
-          /tmp/old-pacing baseline
-          /tmp/new-pacing fixed
-      - name: HUD layer tests (overlay file, pixel conversion, layer on the mock Vulkan driver)
-        run: make -C engine/gfg-hud VULKAN_DEPS="$RUNNER_TEMP/vk" test layer abi integration
-
-      - name: HUD pixels and CPU cost versus 1.2.1
-        run: |
-          git fetch --depth=1 origin tag v1.2.1
-          git show v1.2.1:py_modules/gfg_plugin/hud_rings.py > "$RUNNER_TEMP/hud_baseline.py"
-          python3 tools/benchmark_hud.py --baseline "$RUNNER_TEMP/hud_baseline.py"
-
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Sandbox scenarios
+        run: python3 -m sandbox.run --report "$RUNNER_TEMP/SANDBOX_REPORT.md"
       - name: Frontend build is committed and current
         run: |
           npm ci
@@ -50,5 +29,5 @@ jobs:
           git diff --exit-code dist/index.js || { echo "::error::dist/index.js is stale; run npm run build and commit"; exit 1; }
       - name: Frontend smoke test
         run: |
-          npx playwright install --with-deps chromium
+          npx playwright-core install --with-deps chromium
           node frontend/harness/smoke.mjs
