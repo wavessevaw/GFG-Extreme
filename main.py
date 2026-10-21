@@ -1,9 +1,5 @@
-"""
-Main entry point for the GFG Extreme Loader plugin.
+"""Decky entry point for GFG Extreme 3.0 "Independence"."""
 
-This file imports and exposes the Plugin class from the gfg_plugin package.
-"""
+from gfg_plugin.plugin import Plugin
 
-from gfg_plugin import Plugin
-
-__all__ = ['Plugin']
+__all__ = ["Plugin"]

@@ -39,8 +39,9 @@ def floor_key(profile: str, target: int, app_id: str = "") -> str:
 
 
 class GameModelStore:
-    def __init__(self, path: Path, clock: Callable[[], float] = time.time) -> None:
+    def __init__(self, path: Path, clock: Callable[[], float] = time.time, owner=None) -> None:
         self.path = Path(path)
+        self.owner = owner
         self.clock = clock
         self._entries: Dict[str, Dict[str, Any]] = {}
         # floor key -> point key -> [highest TDP a lower-power probe failed at, when, repeats]
@@ -251,6 +252,8 @@ class GameModelStore:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump({"version": 1, "entries": self._entries, "floors": self._floors}, handle, sort_keys=True)
             os.replace(tmp, self.path)
+            if self.owner is not None and os.geteuid() == 0:
+                os.chown(self.path, *self.owner)
             return True
         except OSError:
             return False
