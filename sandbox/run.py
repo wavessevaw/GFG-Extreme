@@ -26,6 +26,8 @@ from gfg_plugin import settings as settings_mod  # noqa: E402
 from gfg_plugin.service import Service  # noqa: E402
 
 from gfg_plugin.split_control import SplitControl  # noqa: E402
+from gfg_plugin.gpu_clock import GpuClock, MemoryBackend  # noqa: E402
+from gfg_plugin.gpu_clock_control import GpuClockControl  # noqa: E402
 
 from .vdeck import VClock, VControl, VCpu, VEngine, VGame, VModel, VPower, VSensors  # noqa: E402
 
@@ -57,7 +59,7 @@ class Rig:
 def make_rig(game: VGame, *, fg: str = "auto", objective: str = "balanced", preference: str = "auto",
              refresh: int = 90, user_tdp: float = 15.0, ambient: float = 25.0, battery: float = 80.0,
              external_power: bool = False, base_fps: int = 45, power_enabled: bool = True,
-             split: bool = True) -> Rig:
+             split: bool = True, gpu_clock: bool = True) -> Rig:
     clock = VClock()
     power = VPower(user_tdp=user_tdp)
     engine = VEngine(clock, game, power, refresh=refresh)
@@ -65,12 +67,14 @@ def make_rig(game: VGame, *, fg: str = "auto", objective: str = "balanced", pref
     sensors.battery, sensors.external_power = battery, external_power
     sensors.engine = engine
     vcpu = VCpu()
+    engine.gpu_backend = MemoryBackend()
     engine.cpu = vcpu
     data = settings_mod.defaults()
     data["profiles"]["default"].update({"fg": fg, "objective": objective, "base_fps": base_fps})
     data["autopilot"]["preference"] = preference
     data["power"]["enabled"] = power_enabled
     data["power"]["split"] = split
+    data["power"]["gpu_clock"] = gpu_clock
     data["hud"]["enabled"] = False
     st = MemSettings(data)
     log: List[Dict[str, Any]] = []
@@ -78,7 +82,9 @@ def make_rig(game: VGame, *, fg: str = "auto", objective: str = "balanced", pref
                   battery=sensors.read_battery, hud=None, hud_path="/dev/shm/gfg-extreme-hud.raw", clock=clock,
                   journal=lambda src, kind, **f: log.append({"t": clock(), "src": src, "kind": kind, **f}),
                   split=SplitControl(vcpu.actuator(), clock=clock,
-                                     journal=lambda kind, **f: log.append({"t": clock(), "src": "split", "kind": kind, **f})))
+                                     journal=lambda kind, **f: log.append({"t": clock(), "src": "split", "kind": kind, **f})),
+                  gclock=GpuClockControl(GpuClock(engine.gpu_backend, writes_enabled=True), clock=clock,
+                                         journal=lambda kind, **f: log.append({"t": clock(), "src": "gpu", "kind": kind, **f})))
     return Rig(clock, game, power, engine, sensors, svc, st, log)
 
 
@@ -99,7 +105,7 @@ def play(rig: Rig, seconds: int, events: Optional[Dict[int, Callable[[Rig], None
             "objective": snap["objective"], "policy": snap["policy"]["state"], "game": snap["game"],
             "sends": rig.engine.sends, "gov_paused": bool(snap["governor"].get("paused")),
             "mult": rig.engine._int("kfg_multiplier"), "base": rig.engine._int("kfg_base_fps"),
-            "cpu_share": round(rig.engine.cpu_share, 2), "split_phase": (snap.get("split") or {}).get("phase"),
+            "cpu_share": round(rig.engine.cpu_share, 2), "gpu_share": round(getattr(rig.engine, "gpu_share", 1.0), 3), "split_phase": (snap.get("split") or {}).get("phase"),
         })
         rig.clock.t += 1.0
 
@@ -613,6 +619,36 @@ def power_split_off() -> Dict[str, Any]:
     rig = make_rig(VGame("gpu-bound", 50.0), objective="balanced", split=False)
     play(rig, 600)
     check(out, "the CPU clock stays at 100 %", all(r["cpu_share"] == 1.0 for r in rig.timeline))
+    return out
+
+
+@scenario
+def gpu_clock_cpu_bound() -> Dict[str, Any]:
+    """A CPU-bound game (CPU feeds 38 fps, GPU lightly loaded): the GPU clock ceiling steps down."""
+    out: Dict[str, Any] = {"runs": {}}
+    for on in (False, True):
+        rig = make_rig(VGame("cpu-bound", 70.0, cpu_fps=38.0), objective="quality", gpu_clock=on)
+        play(rig, 1200)
+        m = metrics(rig, skip=120)
+        m["gpu_share_min"] = min(r["gpu_share"] for r in rig.timeline)
+        m["kept"] = sum(e["kind"] == "gpu-clock-kept" for e in rig.log)
+        out["runs"]["on" if on else "off"] = m
+    a, b = out["runs"]["off"], out["runs"]["on"]
+    check(out, "the GPU clock is lowered and a step is kept", b["gpu_share_min"] < 1.0 and b["kept"] >= 1,
+          f"min {b['gpu_share_min']}, kept {b['kept']}")
+    check(out, "same point", a["point_final"] == b["point_final"], f"{a['point_final']} vs {b['point_final']}")
+    check(out, "the point holds >= 97 %", b["smooth_pct"] >= 97.0, f"{b['smooth_pct']} %")
+    check(out, "less energy", b["energy_wh"] < a["energy_wh"], f"{b['energy_wh']} vs {a['energy_wh']} Wh")
+    return out
+
+
+@scenario
+def gpu_clock_gpu_bound_untouched() -> Dict[str, Any]:
+    """A GPU-bound game: the GPU clock is never lowered."""
+    out: Dict[str, Any] = {}
+    rig = make_rig(VGame("gpu-bound", 50.0), objective="balanced")
+    play(rig, 900)
+    check(out, "the GPU clock stays the player's", all(r["gpu_share"] == 1.0 for r in rig.timeline))
     return out
 
 

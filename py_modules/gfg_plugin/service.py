@@ -19,6 +19,7 @@ from .pilot import PointPilot
 from .policy import Policy, PolicyCoordinator
 from .session_stats import SessionStats
 from .split_control import SplitControl
+from .gpu_clock_control import GpuClockControl
 
 GAME_GRACE_S = 10.0   # the QAM or a loading screen does not end a game session
 STEAM_APP = 769
@@ -29,7 +30,7 @@ class Service:
                  battery: Callable[[], Dict[str, Any]], hud: Optional[Any] = None,
                  hud_path: str = "", clock: Callable[[], float] = time.monotonic,
                  journal: Optional[Callable[..., None]] = None, telemetry: Optional[Any] = None,
-                 split: Optional[SplitControl] = None) -> None:
+                 split: Optional[SplitControl] = None, gclock: Optional[GpuClockControl] = None) -> None:
         self.settings = settings
         self.ctl = ctl
         self.clock = clock
@@ -44,6 +45,7 @@ class Service:
         self.autopilot = Autopilot(clock=clock)
         self.governor = PowerGovernor(actuator, model, clock=clock, journal=self._j("governor"))
         self.split = split
+        self.gclock = gclock
         self.rates = hudmod.Rates()
         self.stats = SessionStats()
         self.last_game_at = -1e9
@@ -97,7 +99,7 @@ class Service:
             "fg": profile["fg"], "base_fps": profile["base_fps"], "objective": objective,
             "refresh": refresh, "game": game, "app": self.app, "engine": st,
             "real": live.get("real"), "pace": live.get("pace"), "confirmed": confirmed,
-            "at_ceiling": gov.at_ceiling(), "settling": bool(self.split and self.split.settling()),
+            "at_ceiling": gov.at_ceiling(), "settling": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
         })
         policy = Policy(req["multiplier"], req["base_fps"], filters.to_post(profile["filters"]),
                         self.hud_path, req["auto_floor"], bool(data["engine"]["hdr"]))
@@ -112,14 +114,23 @@ class Service:
             gs = gov.status()
             split_status = self.split.tick({
                 "enabled": bool(data["power"]["split"]), "game": game, "app": f"app:{self.app}",
-                "steady": bool(locked and gs.get("owned") and gov.settled()),
+                "steady": bool(locked and gs.get("owned") and gov.settled() and not (self.gclock and self.gclock.owned)),
                 "menu": bool(st.get("steam_ui")), "point": req["point"], "real": live.get("real"),
                 "sensors": sensors, "draw_w": gs.get("draw_w"), "tdp_w": gs.get("tdp_w")})
+        gclock_status: Dict[str, Any] = {}
+        if self.gclock is not None:
+            gs = gov.status()
+            gclock_status = self.gclock.tick({
+                "enabled": bool(data["power"]["gpu_clock"]), "game": game, "app": f"app:{self.app}",
+                "steady": bool(locked and gs.get("owned") and gov.settled()),
+                "other_busy": bool(self.split and (self.split.cpu.owned or self.split.settling())),
+                "menu": bool(st.get("steam_ui")), "point": req["point"], "real": live.get("real"),
+                "sensors": sensors, "draw_w": gs.get("draw_w")})
         sample = {
             "game": game, "key": f"app:{self.app}|{refresh}", "objective": objective,
             "cap": req["point"] if locked else 0, "hold_ceiling": req["hold_ceiling"],
             # A CPU clock change (Power Split) restarts the TDP windows like a new policy does.
-            "epoch": (coord["epoch"], self.split.changes if self.split else 0),
+            "epoch": (coord["epoch"], self.split.changes if self.split else 0, self.gclock.changes if self.gclock else 0),
             "real": live.get("real"), "pace": live.get("pace"),
             "over_budget": (rates or {}).get("over_budget", 0.0), "ring_miss": 0.0, "temp_c": temp,
         }
@@ -146,7 +157,7 @@ class Service:
             "time": now, "game": game, "app": self.app, "profile": profile_key, "profile_name": profile["name"],
             "fg": profile["fg"], "objective": objective, "objective_setting": profile["objective"],
             "autopilot_reason": auto_reason, "refresh": refresh, "engine": self._engine_view(st),
-            "live": live, "pilot": req, "policy": coord, "governor": g, "split": split_status,
+            "live": live, "pilot": req, "policy": coord, "governor": g, "split": split_status, "gpu_clock": gclock_status,
             "sensors": sensors, "power": power,
             "filters": filters.summary(profile["filters"]),
         }
@@ -188,6 +199,8 @@ class Service:
         self.governor.stop("unload")
         if self.split is not None:
             self.split.stop()
+        if self.gclock is not None:
+            self.gclock.stop()
         if self.hud is not None:
             try:
                 self.hud.tick(False, None)

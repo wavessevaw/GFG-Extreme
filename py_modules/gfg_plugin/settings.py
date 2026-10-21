@@ -35,9 +35,9 @@ def defaults() -> Dict[str, Any]:
     return {
         "schema": SCHEMA,
         "profiles": {DEFAULT_PROFILE: default_profile()},
-        "hud": {"enabled": True, "position": "top-left", "detail": "standard"},
+        "hud": {"enabled": True, "position": "top-right", "detail": "standard"},
         "autopilot": {"preference": "auto"},
-        "power": {"enabled": True, "split": True},
+        "power": {"enabled": True, "split": True, "gpu_clock": True},
         "engine": {"hdr": True},
         "telemetry": {"level": "standard"},
         "migrated_from": None,
@@ -82,13 +82,14 @@ def normalize(raw: Any) -> Dict[str, Any]:
     hud = raw.get("hud") if isinstance(raw.get("hud"), dict) else {}
     out["hud"] = {
         "enabled": bool(hud.get("enabled", True)),
-        "position": hud.get("position") if hud.get("position") in HUD_POSITIONS else "top-left",
+        "position": hud.get("position") if hud.get("position") in HUD_POSITIONS else "top-right",
         "detail": hud.get("detail") if hud.get("detail") in HUD_DETAILS else "standard",
     }
     ap = raw.get("autopilot") if isinstance(raw.get("autopilot"), dict) else {}
     out["autopilot"] = {"preference": ap.get("preference") if ap.get("preference") in AUTOPILOT_PREFERENCES else "auto"}
     power = raw.get("power") if isinstance(raw.get("power"), dict) else {}
-    out["power"] = {"enabled": bool(power.get("enabled", True)), "split": bool(power.get("split", True))}
+    out["power"] = {"enabled": bool(power.get("enabled", True)), "split": bool(power.get("split", True)),
+                    "gpu_clock": bool(power.get("gpu_clock", True))}
     eng = raw.get("engine") if isinstance(raw.get("engine"), dict) else {}
     out["engine"] = {"hdr": bool(eng.get("hdr", True))}
     tel = raw.get("telemetry") if isinstance(raw.get("telemetry"), dict) else {}

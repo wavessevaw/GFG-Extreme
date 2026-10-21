@@ -30,6 +30,9 @@ from .migration import Migration
 from .service import Service
 from .settings import Settings, profile_key
 from .split_control import SplitControl
+from .gpu_clock import GpuClock
+from .gpu_clock_control import GpuClockControl
+from .steamos_gpu import SteamOSGpuBackend
 from .steamos_tdp import SteamOSManagerTdp
 from .telemetry import Telemetry
 from .user_files import ensure_dir, home_owner, read_json, write_json_atomic
@@ -63,11 +66,15 @@ class Plugin:
         cpu.journal = lambda kind, **f: self.log.record("power", kind, **f)
         split = SplitControl(cpu, self.data / "power-split.json", self.owner,
                              journal=lambda kind, **f: self.log.record("split", kind, **f))
+        # SteamOSManager's manual GPU clock (the QAM slider) runs on the user's session bus.
+        gpu = GpuClock(SteamOSGpuBackend(home=str(self.home)), writes_enabled=True,
+                       receipt_path=self.runtime / "gpu-clock.json")
+        gclock = GpuClockControl(gpu, journal=lambda kind, **f: self.log.record("gpu-clock", kind, **f))
         self.service = Service(
             settings=self.settings, ctl=self.ctl, actuator=actuator, model=model, sensors=HostSensors(),
             battery=read_battery, hud=Hud(paths.HUD_PATH), hud_path=str(paths.HUD_PATH),
             journal=lambda src, kind, **f: self.log.record(src, kind, **f), telemetry=self.telemetry,
-            split=split)
+            split=split, gclock=gclock)
         self.lock = asyncio.Lock()
         self.state: Dict[str, Any] = {}
         self.stopping = False

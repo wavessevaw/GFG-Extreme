@@ -173,6 +173,7 @@ class VEngine:
         self.gpu_us = 1700.0
         self.over_budget_per_s = 0.0
         self.cpu: Optional[VCpu] = None
+        self.gpu_backend: Any = None   # gpu_clock.MemoryBackend: SteamOSManager's manual GPU clock
         self.cpu_share = 1.0
         self.gpu_capability = 0.0
 
@@ -208,6 +209,12 @@ class VEngine:
         cap_power = self.power.tdp + 0.6 * freed
         self.cpu_share = share
         self.gpu_capability = self.game.capability(cap_power, t, generating)
+        # A manual GPU clock (the QAM slider) caps what the GPU can render and stops it boosting
+        # past what the frame needs.
+        gb = self.gpu_backend
+        gshare = gb.maximum / 1600.0 if gb is not None and gb.level == "manual" else 1.0
+        self.gpu_share = gshare
+        self.gpu_capability *= gshare ** 0.9
         capability = min(self.gpu_capability, self.game.cpu_fps * share)
         if mult == 0:
             cap = 0
@@ -227,10 +234,10 @@ class VEngine:
             self.auto = None
         rate = min(capability, cap) if cap else min(capability, self.refresh)
         self.capability, self.rate, self.cap = capability, rate, cap
-        need = max(2.5, self.game.watts_for(rate, t, generating) - 0.5 * freed)
+        need = max(2.5, self.game.watts_for(rate, t, generating) * (0.85 + 0.15 * gshare) - 0.5 * freed)
         # A capped game below its TDP still boosts clocks past what it needs ("race to idle" is
         # not free): a third of the headroom is drawn. Lowering the TDP takes that away.
-        self.power.draw = min(self.power.tdp, need + 0.33 * max(0.0, self.power.tdp - need))
+        self.power.draw = min(self.power.tdp, need + 0.33 * gshare * gshare * max(0.0, self.power.tdp - need))
         c = self.counters
         c["flips"] += self.refresh
         c["sources"] += rate
@@ -343,7 +350,7 @@ class VSensors:
             cpu_cap = e.game.cpu_fps * e.cpu_share
             out["cpu_top_core_pct"] = round(min(100.0, 100.0 * e.rate / max(cpu_cap, 1e-6) * 0.95), 1)
             out["gpu_busy_pct"] = round(min(100.0, 100.0 * e.rate / max(e.gpu_capability, 1e-6)), 1)
-            out["gpu_clock_mhz"] = round(1600.0 * min(1.0, (e.gpu_capability / max(e.game.fps15, 1e-6))) ** 0.9, 0)
+            out["gpu_clock_mhz"] = round(1600.0 * getattr(e, "gpu_share", 1.0), 0)
         return out
 
     def read_battery(self) -> Dict[str, Any]:
