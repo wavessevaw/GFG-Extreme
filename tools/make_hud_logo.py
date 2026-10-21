@@ -12,7 +12,7 @@ from pathlib import Path
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
-HUD_SIZES = {"1.0": 22, "1.5": 33, "2.0": 44}
+HUD_SIZES = {"0.88": 19, "1.32": 29, "1.76": 39}   # hud.SCALES
 
 
 def main() -> None:

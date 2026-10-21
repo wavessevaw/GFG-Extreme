@@ -63,7 +63,7 @@ def _atlas() -> Dict[str, Any]:
 def _logo(scale: float) -> Optional[Tuple[int, bytes]]:
     try:
         from .hud_logo import LOGO
-        px, data = LOGO[f"{scale:.1f}"]
+        px, data = LOGO[f"{scale:.2f}"]
         return px, zlib.decompress(base64.b64decode(data))
     except (ImportError, KeyError, ValueError, zlib.error):
         return None
@@ -74,9 +74,32 @@ def _coverage(encoded: str) -> bytes:
     return base64.b64decode(encoded)
 
 
+HUD_SIZE = 0.88      # the HUD is 12 % smaller than the 3.0.0 one
+SCALES = (0.88, 1.32, 1.76)
+NUMBER_RISE = 2.0    # digit centre above the ring centre, in HUD pixels
+
+
 def scale_for(height: int) -> float:
-    """Atlas scale for the output height (800 p = 1)."""
-    return min((1.0, 1.5, 2.0), key=lambda s: abs(s - max(1.0, height / 800.0)))
+    """Atlas scale for the output height (800 p = 0.88)."""
+    base = min((1.0, 1.5, 2.0), key=lambda s: abs(s - max(1.0, height / 800.0)))
+    return round(base * HUD_SIZE, 2)
+
+
+def _advance(font: Dict[str, Any], g: Dict[str, Any]) -> int:
+    return round(g["adv"] + font["spacing"])
+
+
+@lru_cache(maxsize=32)
+def _digit_top(style: str) -> float:
+    """Top of the digits below the top of the line box."""
+    return float(_atlas()[style]["glyphs"]["0"]["y0"])
+
+
+@lru_cache(maxsize=32)
+def _digit_mid(style: str) -> float:
+    """Middle of the digits below the top of the line box."""
+    g = _atlas()[style]["glyphs"]["0"]
+    return g["y0"] + g["h"] / 2.0
 
 
 class Canvas:
@@ -132,14 +155,15 @@ class Canvas:
     def text_width(self, text: str, style: str) -> float:
         font = _atlas()[style]
         space = font["glyphs"][" "]
-        return (sum(font["glyphs"].get(ch, space)["adv"] for ch in text)
-                + font["spacing"] * max(0, len(text) - 1))
+        return float(sum(_advance(font, font["glyphs"].get(ch, space)) for ch in text[:-1])
+                     + (font["glyphs"].get(text[-1], space)["adv"] if text else 0.0))
 
     def text(self, cx: float, top: float, text: str, style: str, rgb: Rgb) -> None:
         """Centred on cx; top is the top of the line box."""
         font = _atlas()[style]
         space = font["glyphs"][" "]
-        x = cx - self.text_width(text, style) / 2.0
+        # Whole-pixel pen steps: small letters keep even gaps instead of jittering by rounding.
+        x = float(round(cx - self.text_width(text, style) / 2.0))
         for ch in text:
             g = font["glyphs"].get(ch, space)
             cov = _coverage(g["a"])
@@ -149,7 +173,7 @@ class Canvas:
                     a = cov[row * g["w"] + col]
                     if a:
                         self.blend(gx + col, gy + row, rgb, a / 255.0)
-            x += g["adv"] + font["spacing"]
+            x += _advance(font, g)
 
 
 @lru_cache(maxsize=8)
@@ -308,7 +332,7 @@ def gfg_items(st: Dict[str, Any], rates: Optional[Dict[str, float]], extra: Dict
     return [named[k] for k in order if k in named]
 
 
-def render(st: Dict[str, Any], rates: Optional[Dict[str, float]], scale: float = 1.0,
+def render(st: Dict[str, Any], rates: Optional[Dict[str, float]], scale: float = SCALES[0],
            items: Optional[List[Dict[str, Any]]] = None) -> Tuple[int, int, bytes]:
     s = scale
     items = items if items is not None else items_for(st, rates)
@@ -329,13 +353,13 @@ def render(st: Dict[str, Any], rates: Optional[Dict[str, float]], scale: float =
         cv.ring(cx, cy, it["size"] * s, it["w"] * s, it["frac"], it["rgb"])
         style = f"{it['style']}@{s}"
         sub_style = f"sub@{s}"
-        th = atlas[style]["ascent"]
-        sub = it.get("sub")
-        total = th + (atlas[sub_style]["ascent"] + s if sub else 0)
-        top = cy - total / 2.0
+        # Every number sits on one line: digit centres at the same height in every ring, a
+        # little above the ring centre so the FPS ring's "REAL" line fits under its number.
+        top = cy - NUMBER_RISE * s - _digit_mid(style)
         cv.text(cx, top, it["text"], style, WHITE)
+        sub = it.get("sub")
         if sub:
-            cv.text(cx, top + th + s, sub, sub_style, LABEL)
+            cv.text(cx, top + atlas[style]["ascent"] + 2 * s - _digit_top(sub_style), sub, sub_style, LABEL)
         cv.text(cx, pad_y + col + 2 * s, it["label"], f"lab@{s}", LABEL)
         x += iw + gap
     return w, h, bytes(cv.px)

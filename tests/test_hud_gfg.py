@@ -23,5 +23,15 @@ class GfgHudTest(unittest.TestCase):
         self.assertEqual(items["CAP 24"]["text"], "x3.75")
         self.assertEqual(items["TEMP C"]["text"], "71")
         items = hud.gfg_items(st, rates, extra, "standard")
-        w, h, px = hud.render(st, rates, 1.0, items)
+        w, h, px = hud.render(st, rates, hud.scale_for(800), items)
         self.assertEqual(len(px), w * h * 4)
+
+
+class HudSizeTest(unittest.TestCase):
+    def test_smaller_and_every_scale_has_glyphs_and_wolf(self):
+        self.assertEqual(hud.scale_for(800), 0.88)
+        self.assertEqual(hud.scale_for(1600), 1.76)
+        for s in hud.SCALES:
+            for style in ("fps", "val", "sub", "lab"):
+                self.assertIn("0", hud._atlas()[f"{style}@{s}"]["glyphs"])
+            self.assertIsNotNone(hud._logo(s))
