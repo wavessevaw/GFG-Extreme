@@ -23,6 +23,7 @@ from pathlib import Path
 UNIT_NAME = "kedavra-gamescope.service"
 LOADER = "ld-linux-x86-64.so.2"
 SYS_NICE_BIT = 23
+DISPLAY_SCRIPTS = b"/usr/share/gamescope/scripts"
 
 BOOT_SH = """#!/bin/sh
 # KEDAVRA boot step (written by the Decky plugin). Bind-mounts the patched Gamescope
@@ -239,6 +240,15 @@ class Installer:
                 "message": "Removed. Reboot the Deck to return to the stock Gamescope." if mounted
                 else "Removed. The stock Gamescope is active."}
 
+    @staticmethod
+    def _finds_display_scripts(binary):
+        """True when the build looks for /usr/share/gamescope/scripts, where SteamOS keeps the
+        Steam Deck display scripts (the OLED one turns HDR on). A /usr/local build never does."""
+        try:
+            return DISPLAY_SCRIPTS in Path(binary).read_bytes()
+        except OSError:
+            return False
+
     def reboot(self):
         self.run(["systemctl", "reboot"])
         return {"rebooting": True}
@@ -278,6 +288,11 @@ class Installer:
             missing = self._missing_libs(self.runtime)
             add("installed_libs", not missing, "Installed Gamescope finds its libraries" if not missing
                 else "Installed Gamescope is missing libraries", "\n".join(missing))
+        if inst:
+            ok = self._finds_display_scripts(self.runtime / "bin/gamescope")
+            add("scripts", ok, "Gamescope reads SteamOS's display scripts (Deck OLED HDR)" if ok
+                else "Gamescope does not read SteamOS's display scripts: no HDR on Deck OLED. "
+                "Install the runtime from GFG Extreme 3.0.2 or newer")
         rc, en = self.run(["systemctl", "is-enabled", UNIT_NAME])
         add("unit", en.strip() == "enabled", f"Boot step: {en.strip() or 'none'}")
         for f, text in (("auto_rollback", "An automatic rollback happened"), ("ldd_failed", "Libraries were missing at boot")):

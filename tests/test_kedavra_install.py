@@ -158,6 +158,14 @@ class InstallerTest(unittest.TestCase):
         self.assertFalse(keys["mounted"]["ok"])
         self.assertFalse(d["ok"])
 
+    def test_diagnose_checks_the_display_script_path(self):
+        self.inst.install()
+        keys = {c["key"]: c for c in self.inst.diagnose()["checks"]}
+        self.assertFalse(keys["scripts"]["ok"], "a /usr/local build never loads the Deck OLED script")
+        (self.root / "var/lib/kedavra/runtime/bin/gamescope").write_bytes(b"\0/usr/share/gamescope/scripts\0")
+        keys = {c["key"]: c for c in self.inst.diagnose()["checks"]}
+        self.assertTrue(keys["scripts"]["ok"])
+
     def test_boot_script_rolls_back_unhealthy_boot(self):
         self.inst.install()
         script = (self.root / "var/lib/kedavra/boot.sh").read_text()

@@ -89,12 +89,17 @@ jobs:
         run: |
           sh kedavra/gamescope/apply.sh /tmp/gamescope
           cd /tmp/gamescope
-          meson setup build --buildtype=release -Dpipewire=enabled -Denable_openvr_support=false -Denable_tests=false
+          # --prefix=/usr: Gamescope reads its display scripts from <prefix>/share/gamescope/scripts.
+          # With the default /usr/local it never finds SteamOS's Steam Deck OLED script, so the
+          # panel looks unknown and HDR is reported unsupported.
+          meson setup build --prefix=/usr --buildtype=release -Dpipewire=enabled -Denable_openvr_support=false -Denable_tests=false
           ninja -C build
           nm -C build/src/gamescope | grep -c 'kfg::'
+          grep -a -c '/usr/share/gamescope/scripts' build/src/gamescope
       - name: Bundle with its libraries
         run: |
-          sh kedavra/gamescope/bundle.sh /tmp/gamescope/build gamescope-runtime "kedavra-${KEDAVRA_SHA::7}"
+          # The GFG commit in the version: Setup asks for a reinstall whenever the runtime changes.
+          sh kedavra/gamescope/bundle.sh /tmp/gamescope/build gamescope-runtime "kedavra-${KEDAVRA_SHA::7}-gfg-${GITHUB_SHA::7}"
           mkdir -p gamescope-runtime/share/licenses
           cp kedavra/shaders/THIRD_PARTY.md gamescope-runtime/share/licenses/KEDAVRA-filters-THIRD_PARTY.md
           cp LICENSE.md NOTICE.md gamescope-runtime/share/licenses/ 2>/dev/null || true
