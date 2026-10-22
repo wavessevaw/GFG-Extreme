@@ -347,8 +347,8 @@ GFG Extreme offers four performance strategies.
 |---|---|
 | Autopilot | One adaptive mode: never above 15 W, keeps base 35-40 when the game holds it, ×3 at least, ×3.75 only when ×3 needs all 15 W or the battery is low |
 | Battery | Efficiency first: ×3.75 at 90 Hz (×3 at 60 Hz) and the lowest TDP that holds it |
-| Balanced | The highest base frame rate the game holds, without needless changes |
-| Quality | Real frames and motion quality first; TDP is not saved |
+| Balanced | The highest base frame rate the game holds, without needless changes; never below x3 |
+| Quality | Real frames and motion quality first; never below x2.5 |
 
 The strategy sets the optimisation goals.
 

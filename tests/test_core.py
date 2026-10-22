@@ -145,10 +145,29 @@ class PilotTest(unittest.TestCase):
         out = self.run_ctx(3)
         self.assertEqual(out["phase"], "measure")
         self.assertTrue(out["hold_ceiling"])
-        self.assertEqual((out["multiplier"], out["base_fps"], out["auto_floor"]), (1, 0, 24))
+        self.assertEqual((out["multiplier"], out["base_fps"], out["auto_floor"]), (1, 0, 30))  # Balanced: x3 lowest
         out = self.run_ctx(15)
         self.assertEqual((out["phase"], out["point"], out["base_fps"]), ("locked", 45, 45))
         self.assertFalse(out["hold_ceiling"])
+
+    def test_lowest_point_per_objective(self):
+        # User, 3.0.10: Balanced works down to x3, Quality to x2.5; Battery and Autopilot keep x3.75.
+        self.assertEqual(pilot.lowest_point(90, "balanced"), 30)
+        self.assertEqual(pilot.lowest_point(90, "quality"), 40)
+        self.assertEqual(pilot.lowest_point(60, "quality"), 25)
+        self.assertEqual(pilot.lowest_point(90, "battery"), 24)
+        self.assertEqual(pilot.lowest_point(90, "autopilot"), 24)
+
+    def test_quality_never_below_x2_5(self):
+        self.run_ctx(15, objective="quality", real=33.0, engine={"auto": True, "cap_fps": 30})
+        out = self.run_ctx(60, objective="quality", real=33.0, engine={"auto": True, "cap_fps": 30})
+        self.assertEqual(out["point"], 40)
+        self.assertFalse(out["holds"])
+
+    def test_balanced_never_below_x3(self):
+        self.run_ctx(15, real=26.0, engine={"auto": True, "cap_fps": 24})
+        out = self.run_ctx(60, real=26.0, engine={"auto": True, "cap_fps": 24})
+        self.assertEqual(out["point"], 30)
 
     def test_stale_auto_cap_does_not_lock(self):
         self.run_ctx(2)
@@ -302,6 +321,19 @@ class AutopilotTest(unittest.TestCase):
             clock.t += 1
             a.decide("auto", {"external_power": True}, 75)
         self.assertFalse(a.hot, "cool for 30 s")
+
+    def test_governor_never_above_15_in_any_objective(self):
+        for objective in ("quality", "balanced", "battery", "autopilot"):
+            clock = Clock()
+            act = FakeActuator()
+            act.tdp = act.initial = 20.0
+            g = PowerGovernor(act, None, clock=clock)
+            s = {"game": True, "key": "app:1|90", "objective": objective, "cap": 40, "epoch": 1,
+                 "real": 30.0, "pace": 1.0, "over_budget": 0.0, "ring_miss": 0.0, "temp_c": 70.0}
+            for _ in range(120):
+                clock.t += 1
+                g.tick(s)
+                self.assertLessEqual(act.tdp, 15.0, objective)
 
     def test_governor_autopilot_starts_at_15_and_tolerates_small_dips(self):
         clock = Clock()

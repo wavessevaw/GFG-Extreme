@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List
 
 from .run import Rig, make_rig
 from .vdeck import VGame
+from gfg_plugin.pilot import lowest_point  # noqa: E402  (run.py puts py_modules on the path)
 
 LADDER = (0, 20, 24, 25, 30, 35, 40, 45)
 
@@ -39,7 +40,8 @@ def drive(rig: Rig, seconds: int, events: Dict[int, Callable[[Rig], None]], bad:
                "tdp": rig.power.tdp, "paused": bool(g.get("paused")), "pause_reason": g.get("paused") or "",
                "hud_tdp": hud_tdp, "objective": snap["objective"], "sends": rig.engine.sends, "temp": rig.sensors.temp,
                "writes": rig.power.writes, "cap": rig.engine.cap, "rate": rig.engine.rate,
-               "phase": snap["pilot"]["phase"]}
+               "phase": snap["pilot"]["phase"], "holds": snap["pilot"].get("holds"),
+               "refresh": rig.engine.refresh}
         rows.append(row)
         if row["point"] not in LADDER:
             bad.append(f"t={k}: point {row['point']} not on the ladder")
@@ -123,8 +125,13 @@ def chaos(seed: int, seconds: int = 3600, steamos_ac: bool = True) -> Dict[str, 
     # are part of holding a point; a deeper or longer shortfall is not.
     tail = [r for r in rows[-100:] if r["phase"] != "trial"]
     held = sum(1 for r in tail if r["cap"] and r["rate"] >= 0.90 * r["cap"]) / len(tail)
-    if held < 0.95:
-        bad.append(f"the settled point does not hold: {held:.0%} of the last 100 s at {tail[-1]['point']}")
+    # Balanced stops at x3 and Quality at x2.5 (user, 3.0.10): a game too heavy for that lowest
+    # point is reported (holds False), not moved below it.
+    last = tail[-1]
+    floor_case = (last["point"] == lowest_point(last["refresh"], last["objective"]) and last["holds"] is False
+                  and last["objective"] in ("balanced", "quality"))
+    if held < 0.95 and not floor_case:
+        bad.append(f"the settled point does not hold: {held:.0%} of the last 100 s at {last['point']}")
     player = rig.power.slider if hasattr(rig.power, "slider") else rig.power.user_tdp
     rig.service.stop()
     if abs(rig.power.tdp - player) > 0.05:

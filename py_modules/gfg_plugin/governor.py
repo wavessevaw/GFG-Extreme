@@ -84,7 +84,7 @@ AC_GRACE_S = 15.0
 # Autopilot (Deck report 3.0.7: 18 W, x3.75, 80+ C): never above 15 W, even when SteamOS's TDP
 # was higher at the start (Steam's limit off). From 80 C it is "warm": the pilot does not climb
 # above its point (no watts for a higher one) until 30 s under 75 C.
-AUTOPILOT_MAX_W = 15.0
+AUTOPILOT_MAX_W = 15.0   # every objective (user, 3.0.10): never above 15 W
 WARM_C = {"autopilot": 80.0}
 WARM_COOL_C = 75.0
 EXTERNAL_WAIT_S = 10.0       # an outside change waits this long for the charger to show up
@@ -93,7 +93,7 @@ OBJECTIVES = ("battery", "balanced", "quality", "autopilot")
 # steps down 2 W every time (not only before the first failure); a shortfall raises only when a
 # second window confirms it, by 1 W; a collapse gets 2 W, not the ceiling. Going back to the level
 # a failed step down came from is not a raise: that level was checked already.
-BOLD = ("autopilot", "battery")   # Balanced keeps 2.x "up fast": smoothness is its objective
+BOLD = ("autopilot", "battery", "balanced", "quality")   # every objective (user, 3.0.10): down boldly, up slowly
 BOLD_UP_W = 1.0
 # Stable point (GFG principle "find, lock, guard"): a level held for six windows in a row with a
 # failed step just below it (or at the minimum) is locked: no more probing down, so no periodic
@@ -253,7 +253,7 @@ class PowerGovernor:
 
     def _ceiling_for(self, objective: str) -> float:
         player = self.player_ceiling or 15.0
-        return min(player, AUTOPILOT_MAX_W) if objective == "autopilot" else player
+        return min(player, AUTOPILOT_MAX_W)
 
     def _first_level(self, cap: int) -> None:
         """The first TDP at a point: what held last time plus a watt, else the objective's start."""

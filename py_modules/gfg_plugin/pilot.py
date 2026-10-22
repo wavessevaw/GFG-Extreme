@@ -18,9 +18,10 @@ GFG Extreme's principles, with Kedavra Auto as the measuring instrument:
            min after failed tries): TDP at the ceiling, 6 s trial, kept only if the game holds.
 
 Objectives: Quality and Balanced climb to the top of the ladder (Balanced then saves watts
-with a margin, Quality keeps the player's TDP). Battery locks the lowest point, x3.75 at 90 Hz
-(x3 at 60 Hz): the game renders the fewest frames, generation fills the screen. Any objective
-falls back to x3.75 when a game cannot hold x3 even at full power: frames held 3-4 refreshes
+with a margin, Quality keeps the player's TDP, at most 15 W). Balanced never goes below x3,
+Quality never below x2.5 (user, 3.0.10). Battery locks the lowest point, x3.75 at 90 Hz
+(x3 at 60 Hz): the game renders the fewest frames, generation fills the screen. Battery and
+Autopilot fall back to x3.75 when a game cannot hold x3 even at full power: frames held 3-4 refreshes
 look smoother than x3 with repeated frames.
 
 Fixed choices (x2, x3, x3.75, a custom cap) are never changed by the pilot; it only reports when
@@ -62,6 +63,8 @@ POWER_IDEAL_W = 10.0
 # does 40, keep base 35-40"), x3 at least; x3.75 only when x3 needs the whole 15 W. x2 (45) is a
 # bonus: climbed into from the ideal 10 W, kept within the good 12 W.
 BAND_MAX_W = 14.5
+# The highest multiplier per objective (user, 3.0.10): Balanced works down to x3, Quality to x2.5.
+MAX_MULT = {"balanced": 3.0, "quality": 2.5}
 POWER_WAIT_S = 60.0
 COSTLY_HOLD_S = 600.0
 
@@ -84,6 +87,15 @@ def ladder(refresh: int) -> List[int]:
     if hi > lo:
         out.append(hi)
     return out
+
+
+def lowest_point(refresh: int, objective: str) -> int:
+    """The lowest point an objective may use: the first cap whose multiplier is within its limit."""
+    steps = ladder(refresh)
+    mult = MAX_MULT.get(objective)
+    if mult is None:
+        return steps[0]
+    return next((c for c in steps if refresh / c <= mult + 1e-6), steps[-1])
 
 
 def x375_cap(refresh: int) -> int:
@@ -226,6 +238,8 @@ class PointPilot:
         floor = self._battery_point(ctx, steps)
         low = objective == "battery" or bool(ctx.get("autopilot") and ctx.get("low_battery"))
         top = floor if low else steps[-1]
+        bottom = lowest_point(int(ctx.get("refresh") or 90), objective)
+        steps = [c for c in steps if c >= bottom]
         if not ctx.get("game"):
             self.phase = "idle"
             return self._request(1, 0, steps[0], False)
@@ -233,7 +247,7 @@ class PointPilot:
             if objective == "battery":
                 self._go("locked", "Battery: a low point, generation fills the refresh", floor)
             elif self.point:
-                self._go("locked", "kept the measured point", min(self.point, top))
+                self._go("locked", "kept the measured point", max(min(self.point, top), bottom))
             elif ctx.get("autopilot") and ctx.get("stable_point") in steps and ctx["stable_point"] <= top:
                 # The point that was stable last time: no full-power measurement (the guard and the
                 # headroom climb still correct it if the game changed).
@@ -248,6 +262,8 @@ class PointPilot:
         # locked
         if self.point > top:
             self._go("locked", "objective lowered the point", top)
+        elif self.point < bottom:
+            self._go("locked", "objective raised the point to its lowest", bottom)
         verdict = self._window(ctx, self.point, GUARD_S)
         if verdict is not None:
             if verdict["ok"]:
@@ -272,7 +288,9 @@ class PointPilot:
                                  f"point {self.point} -> {new}", new)
                     else:
                         self.holds = False
-                        self.reason = "the game does not hold the lowest point even at full power"
+                        self.reason = ("the game does not hold the lowest point even at full power"
+                                       if bottom == ladder(int(ctx.get("refresh") or 90))[0] else
+                                       f"the game does not hold {bottom} (this mode's lowest point) even at full power")
         if self._over_power_target(ctx, steps, now):
             return self._request(1, self.point, 0, False)
         if (objective != "battery" and self.clean_since is not None and self.point < top
@@ -380,7 +398,9 @@ class PointPilot:
                 self._go("locked", f"measured: the game holds {choice} fps; locked {point}", point)
                 return self._request(1, point, 0, False)
         elif elapsed >= MEASURE_MAX_S:
-            self._go("locked", "no measurement (no game frames): x3", steps[1] if len(steps) > 1 else steps[0])
+            x3 = div_up(int(ctx.get("refresh") or 90), 3)
+            self._go("locked", "no measurement (no game frames): x3 or this mode's lowest point",
+                     next((c for c in steps if c >= x3), steps[-1]))
             return self._request(1, self.point, 0, False)
         return self._request(1, 0, steps[0], True)
 
