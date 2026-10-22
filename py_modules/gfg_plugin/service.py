@@ -14,9 +14,10 @@ from typing import Any, Callable, Dict, Optional
 from . import filters
 from .autopilot import Autopilot
 from .governor import PowerGovernor
+from .filter_budget import FilterBudget, shed
 from .lease import ExperimentLease
 from .kedavra import hud as hudmod
-from .pilot import PointPilot
+from .pilot import PointPilot, ladder
 from .policy import Policy, PolicyCoordinator
 from .session_stats import SessionStats
 from .split_control import SplitControl
@@ -49,6 +50,7 @@ class Service:
         self.split = split
         self.gclock = gclock
         self.lease = ExperimentLease(clock=clock, journal=self._j("lease"))
+        self.fbudget = FilterBudget(clock=clock, journal=self._j("filters"))
         self.rates = hudmod.Rates()
         self.stats = SessionStats()
         self.last_game_at = -1e9
@@ -130,7 +132,16 @@ class Service:
             "tdp_w": gov.tdp if gov.owned and not gov.paused else None, "gov_settled": gov.settled(), "warm": gov.warm,
             "at_ceiling": gov.at_ceiling(), "settling": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
         })
-        policy = Policy(req["multiplier"], req["base_fps"], filters.to_post(profile["filters"]),
+        # Real frames and watts come before the look (user, 3.0.9): a GPU that cannot carry the
+        # game above x3 sheds the filters, light first, then off.
+        steps = ladder(refresh)
+        above_x3 = steps[2] if len(steps) > 2 else steps[-1]
+        budget = self.fbudget.tick(
+            app=self.app, active=bool(game and req["multiplier"] and objective != "quality"
+                                      and filters.is_active(profile["filters"])),
+            gpu_busy=sensors.get("gpu_busy_pct"),
+            starved=bool(req["phase"] in ("locked", "fixed") and (0 < req["point"] < above_x3 or not self.pilot.holds)))
+        policy = Policy(req["multiplier"], req["base_fps"], filters.to_post(shed(profile["filters"], budget)),
                         self.hud_path, req["auto_floor"], bool(data["engine"]["hdr"]))
         self.coord.want(policy)
         self.last_policy = policy
@@ -197,7 +208,7 @@ class Service:
             "fg": profile["fg"], "objective": objective, "objective_setting": profile["objective"],
             "autopilot_reason": auto_reason, "refresh": refresh, "engine": self._engine_view(st),
             "live": live, "pilot": req, "policy": coord, "governor": g, "split": split_status, "gpu_clock": gclock_status,
-            "lease": lease,
+            "lease": lease, "filter_budget": self.fbudget.status(),
             "sensors": sensors, "power": power,
             "filters": filters.summary(profile["filters"]),
         }

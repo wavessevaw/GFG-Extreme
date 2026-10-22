@@ -83,6 +83,13 @@ WARM_C = {"autopilot": 80.0}
 WARM_COOL_C = 75.0
 EXTERNAL_WAIT_S = 10.0       # an outside change waits this long for the charger to show up
 OBJECTIVES = ("battery", "balanced", "quality", "autopilot")
+# User rule (3.0.9): down the TDP boldly, up reluctantly and with checks. A window that holds
+# steps down 2 W every time (not only before the first failure); a shortfall raises only when a
+# second window confirms it, by 1 W; a collapse gets 2 W, not the ceiling. Going back to the level
+# a failed step down came from is not a raise: that level was checked already.
+BOLD = ("autopilot", "battery")   # Balanced keeps 2.x "up fast": smoothness is its objective
+BOLD_UP_W = 1.0
+CONFIRM_WINDOWS = 2
 
 
 def healthy(window: List[Dict[str, Any]], cap: int, temp_ok: bool, hold: float = 0.97,
@@ -162,6 +169,7 @@ class PowerGovernor:
         self.last: Dict[str, Any] = {}
         self.learned = False
         self.fast = True
+        self.fail_streak = 0                    # failed windows in a row (bold: a raise needs 2)
 
     @property
     def floor_fail(self) -> Dict[int, float]:
@@ -399,6 +407,7 @@ class PowerGovernor:
             self.window_start = now
             self.healthy_since = None
             self.recent.clear()
+            self.fail_streak = 0
             if first:
                 self.learned = False
                 self._first_level(cap)
@@ -497,10 +506,15 @@ class PowerGovernor:
         if med >= SHORT_RATIO.get(self.objective, FAST_SHORT_RATIO) * self.cap or not self._binding(sample.get("draw_w")):
             return False
         severe = med < SEVERE_RATIO * self.cap
+        bold = self.objective in BOLD
         if self.probe_from is not None and now - self.changed_at < 30.0:
             # The step down did not hold: back to where it came from, and a floor at this level.
             self._failed(self.cap, self.tdp)
             target, why = self.probe_from, "fast-restore"
+        elif bold and not severe:
+            return False   # a mild shortfall waits for the windows to confirm it
+        elif bold:
+            target, why = self.tdp + STEP_UP_W, "fast-severe"   # a collapse: 2 W, not the ceiling
         elif severe:
             target, why = ceiling, "fast-severe"   # a collapse, not a shortfall: full power now
         else:
@@ -525,18 +539,25 @@ class PowerGovernor:
             self.fast = False
             if verdict["reason"] in ("below-cap", "pace", "gpu-budget", "ring-miss"):
                 severe = verdict.get("real", 0.0) < SEVERE_RATIO * self.cap
+                self.fail_streak += 1
                 if self.probe_from is not None:
                     # The last step down did not hold a whole window: back up, a floor here.
                     self._failed(self.cap, self.tdp)
-                    target = max(self.probe_from, self.tdp + STEP_UP_W)
+                    target = self.probe_from if self.objective in BOLD else max(self.probe_from, self.tdp + STEP_UP_W)
+                elif self.objective in BOLD:
+                    if self.fail_streak < CONFIRM_WINDOWS:
+                        return   # one window is not proof: check again before adding watts
+                    target = self.tdp + (STEP_UP_W if severe else BOLD_UP_W)
                 else:
                     target = self.tdp + (SEVERE_STEP_W if severe else STEP_UP_W)
                 self.probe_from = None
+                self.fail_streak = 0
                 self._write(target, f"window-failed:{verdict['reason']}" + (":severe" if severe else ""))
             return
         if verdict["ok"] is not True:
             return
         # The level holds a whole window.
+        self.fail_streak = 0
         if self.probe_from is not None:
             self.probe_from = None
             prev = self.floors.get(self.cap)
@@ -560,7 +581,7 @@ class PowerGovernor:
             return
         floor = self._floor(self.cap) or self._limits()["low"] or MIN_TDP_W
         draw = verdict.get("draw")
-        step = FAST_STEP_W if self.fast else STEP_DOWN_W
+        step = FAST_STEP_W if self.fast or self.objective in BOLD else STEP_DOWN_W
         target = self.tdp - step
         if isinstance(draw, (int, float)) and self.tdp - draw >= DRAW_JUMP_W:
             # The game uses clearly less than the limit: the limit goes to what it draws.
