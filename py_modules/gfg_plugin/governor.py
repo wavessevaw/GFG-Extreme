@@ -84,7 +84,7 @@ AC_GRACE_S = 15.0
 # Autopilot (Deck report 3.0.7: 18 W, x3.75, 80+ C): never above 15 W, even when SteamOS's TDP
 # was higher at the start (Steam's limit off). From 80 C it is "warm": the pilot does not climb
 # above its point (no watts for a higher one) until 30 s under 75 C.
-AUTOPILOT_MAX_W = 15.0   # every objective (user, 3.0.10): never above 15 W
+AUTOPILOT_MAX_W = 15.0   # every objective (user, 3.0.10): never above 15 W; the dock is the exception
 # Deck health (user, 3.1.0): from 80 C no mode climbs to a more demanding point; from 90 C the
 # TDP ceiling comes down a watt per window (HOT_C, 85 C), from 97 C the TDP drops to the minimum (CRITICAL_C).
 WARM_C = {"autopilot": 80.0, "battery": 80.0, "balanced": 80.0, "quality": 80.0}
@@ -258,6 +258,11 @@ class PowerGovernor:
 
     def _ceiling_for(self, objective: str) -> float:
         player = self.player_ceiling or 15.0
+        if self.dock:
+            # Dock (user, 3.1.0): a high TDP is fine on the TV, the temperature guards it. SteamOS
+            # gives 20 W on the dock's power (Deck report 3.1.2): the Governor used to pull it back
+            # to 15 W and the pilot then dropped to x2.4 "at full power".
+            return player
         return min(player, AUTOPILOT_MAX_W)
 
     def _first_level(self, cap: int) -> None:
@@ -392,6 +397,8 @@ class PowerGovernor:
                     return self.status()
             self._reset_session()
             self.key = key
+            # The reset clears the session's dock flag: the ceiling taken at the start needs it.
+            self.dock = bool(sample.get("dock"))
             if self.enabled:
                 self._start(key, objective)
             self.window_start = now
