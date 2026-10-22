@@ -110,6 +110,7 @@ class Settings:
         self.data = normalize(read_json(self.path, {}))
 
     def save(self) -> None:
+        self.rev = getattr(self, "rev", 0) + 1   # the service re-runs its idle pipeline on a change
         write_json_atomic(self.path, self.data, self.owner)
         self.exists = True
 

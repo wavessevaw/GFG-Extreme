@@ -42,7 +42,7 @@ class MemSettings(settings_mod.Settings):
         self.data = settings_mod.normalize(data)
 
     def save(self) -> None:
-        pass
+        self.rev = getattr(self, "rev", 0) + 1
 
 
 @dataclass
@@ -734,6 +734,44 @@ def heavy_game_from_list() -> Dict[str, Any]:
     first = next(i for i, r in enumerate(rig.timeline) if r["phase"] == "locked")
     early = [r["tdp"] for r in rig.timeline[first:first + 4]]
     check(out, "the locked point starts at 15 W (unlisted: 12 W)", min(early) >= 15.0, f"{early}")
+    return out
+
+
+@scenario
+def idle_after_game() -> Dict[str, Any]:
+    """After a game (user, 3.1.1) GFG resets and computes nothing: the player's TDP is back, the
+    pilot, Governor and sensors are not run while idle, a settings change is still applied and
+    the next game starts from scratch."""
+    rig = make_rig(VGame("g", 55.0, app_id=444), objective="autopilot", user_tdp=15.0)
+    play(rig, 600)
+    calls = {"pilot": 0, "gov": 0, "sensors": 0}
+    svc = rig.service
+    for name, obj, meth in (("pilot", svc.pilot, "tick"), ("gov", svc.governor, "tick"), ("sensors", rig.sensors, "sample")):
+        orig = getattr(obj, meth)
+        setattr(obj, meth, (lambda o, n: lambda *a, **k: (calls.__setitem__(n, calls[n] + 1), o(*a, **k))[1])(orig, name))
+
+    def leave(r): r.engine.app_id = 0
+    play(rig, 120, {600: leave})
+    out: Dict[str, Any] = {}
+    base = dict(calls)
+    play(rig, 300)
+    idle = {k: calls[k] - base[k] for k in calls}
+    out["idle_calls_300s"] = idle
+    check(out, "the player's TDP is back", rig.power.tdp == 15.0, f"{rig.power.tdp} W")
+    check(out, "idle: no pilot, no Governor", idle["pilot"] == 0 and idle["gov"] == 0, str(idle))
+    check(out, "idle: sensors only every 5 s for the panel", idle["sensors"] <= 61, str(idle))
+    check(out, "idle: nothing of the game kept", svc.pilot.point == 0 and svc.app == 0 and not svc.pilot.caps and svc.noted_point is None,
+          f"point {svc.pilot.point}, app {svc.app}")
+    rig.settings.update_profile("default", {"fg": "off"})
+    play(rig, 3)
+    check(out, "a settings change while idle is applied", rig.engine._int("kfg_multiplier") == 0,
+          f"multiplier {rig.engine._int('kfg_multiplier')}")
+    rig.settings.update_profile("default", {"fg": "auto"})
+
+    def back(r): r.engine.app_id = 444
+    play(rig, 120, {rig.timeline[-1]["t"] + 1: back})
+    check(out, "the next game runs the full pipeline again", calls["pilot"] - base["pilot"] - idle["pilot"] >= 100,
+          f"{calls['pilot']}")
     return out
 
 

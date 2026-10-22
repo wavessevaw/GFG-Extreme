@@ -29,6 +29,11 @@ GAME_GRACE_S = 10.0   # the QAM or a loading screen does not end a game session
 STEAM_APP = 769
 HDR_RESEND_S = 10.0
 DOCK_CHECK_S = 5.0    # an external display (the dock) is looked up this often
+# No game (user, 3.1.1): after a game GFG resets everything and computes nothing. An idle tick
+# only reads the engine status (to see the next game) and keeps the idle policy confirmed; the
+# sensors shown in the panel are read this often, the full pipeline runs again only for a
+# settings change.
+IDLE_SENSORS_S = 5.0
 
 
 class Service:
@@ -71,6 +76,9 @@ class Service:
         self.cur = (0, 90, False)          # (app, refresh, dock) of the running session, for the book
         self.noted_point: Optional[tuple] = None
         self.light_dropped = False
+        self.idle = False          # reset after the last game and idling: the light tick runs
+        self.idle_rev: Any = None  # settings revision the idle snapshot was made with
+        self.idle_sensors_at = -1e9
 
     def _stable_point(self, refresh: int) -> Optional[int]:
         """The point the Governor locked as stable for this game last time (None: unknown)."""
@@ -128,6 +136,11 @@ class Service:
         if not game and self.app:
             self._end_session("game-exit")
             self.app = 0
+            self._reset_after_game()
+        if game:
+            self.idle = False
+        elif self.idle and self.idle_rev == getattr(self.settings, "rev", 0):
+            return self._idle_tick(now, st, fresh, live)
 
         data = self.settings.data
         self._hdr_output(bool(data["engine"].get("hdr_output", True)), fresh, now)
@@ -274,7 +287,42 @@ class Service:
                                    "ac": power.get("external_power"), "hours": None if hours is None else round(hours, 2),
                                    "cpu_cap_khz": split_status.get("cap_khz"), "gpu_limit_mhz": gclock_status.get("limit_mhz")})
             self.telemetry.engine(st)
+        if not game and self._idle_ready():
+            self.idle, self.idle_rev = True, getattr(self.settings, "rev", 0)
+            self.idle_sensors_at = now
         return self.snapshot
+
+    def _reset_after_game(self) -> None:
+        """The game is gone: nothing of it is kept in memory (the book and the model have it)."""
+        self.pilot.reset()
+        self.pilot.context = None
+        self.autopilot.reset()
+        self.fbudget.tick(app=None, active=False, gpu_busy=None, starved=False)
+        self.rates = hudmod.Rates()
+        self._prev_counters = {}
+        self._drain = None
+        self.noted_point = None
+        self.cur = (0, 90, self.dock)
+
+    def _idle_ready(self) -> bool:
+        """Everything handed back to the player: TDP, CPU and GPU clocks."""
+        g = self.governor
+        return (not g.owned and not g.restore_pending and not (self.split and (self.split.cpu.owned or getattr(self.split.cpu, "restore_pending", False)))
+                and not (self.gclock and self.gclock.owned))
+
+    def _idle_tick(self, now: float, st: Dict[str, Any], fresh: bool, live: Dict[str, Any]) -> Dict[str, Any]:
+        self._hdr_output(bool(self.settings.data["engine"].get("hdr_output", True)), fresh, now)
+        if self.last_policy is not None:
+            self.coord.want(self.last_policy)
+        coord = self.coord.tick(st)
+        snap = dict(self.snapshot)
+        snap.update({"time": now, "engine": self._engine_view(st), "live": live, "policy": coord, "idle": True})
+        if now - self.idle_sensors_at >= IDLE_SENSORS_S:
+            self.idle_sensors_at = now
+            snap["sensors"] = self.sensors.sample() if self.sensors else {}
+            snap["power"] = self.battery() if self.battery else {}
+        self.snapshot = snap
+        return snap
 
     def _hours_left(self, power: Dict[str, Any]) -> Optional[float]:
         """Hours to empty from a smoothed discharge power (None on AC or without readings)."""
