@@ -34,6 +34,8 @@ class Autopilot:
         self.reason = ""
         self.changed_at = -1e9
         self.low_battery = False
+        self.thermal_limited = False
+        self.cool_since = None
 
     def _wish(self, preference: str, power: Dict[str, Any], temp_c: Optional[float]) -> tuple:
         pct = power.get("percent")
@@ -52,9 +54,20 @@ class Autopilot:
             wish, why = "battery", f"battery below {LOW_BATTERY:.0f} %"
         else:
             wish, why = "balanced", "on battery"
-        hot = wish == "quality" and temp_c is not None and temp_c >= HOT_C
+        hot = temp_c is not None and temp_c >= HOT_C
         if hot:
-            wish, why = "balanced", f"APU at {temp_c:.0f} C"
+            self.thermal_limited = True
+            self.cool_since = None
+        elif self.thermal_limited:
+            if temp_c is not None and temp_c < HOT_C - 5:
+                if self.cool_since is None:
+                    self.cool_since = self.clock()
+                if self.clock() - self.cool_since >= DWELL_S:
+                    self.thermal_limited = False
+            else:
+                self.cool_since = None
+        if wish == "quality" and self.thermal_limited:
+            wish, why = "balanced", "APU thermal limit: waiting for sustained cooling"
         return wish, why, hot or preference != "auto"
 
     def decide(self, preference: str, power: Dict[str, Any], temp_c: Optional[float]) -> Dict[str, Any]:

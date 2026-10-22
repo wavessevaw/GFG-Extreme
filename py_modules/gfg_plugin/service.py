@@ -132,6 +132,7 @@ class Service:
             # A CPU clock change (Power Split) restarts the TDP windows like a new policy does.
             "epoch": (coord["epoch"], self.split.changes if self.split else 0, self.gclock.changes if self.gclock else 0),
             "real": live.get("real"), "pace": live.get("pace"),
+            "probe_active": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
             "over_budget": (rates or {}).get("over_budget", 0.0), "ring_miss": 0.0, "temp_c": temp,
         }
         if rates is not None and self.rates.prev is not None:
@@ -153,7 +154,7 @@ class Service:
         if game:
             self.stats.add(now, output=live.get("fps"), real=live.get("real"), tdp=g.get("tdp_w"),
                            draw=g.get("draw_w"), reference_w=g.get("ceiling_w"), temp_c=temp,
-                           stuttering=(live.get("pace") or 1.0) < 0.97, hot=(temp or 0) >= 85,
+                           stuttering=(live.get("pace") is not None and live["pace"] < 0.97), hot=(temp or 0) >= 85,
                            mode=objective)
         self.snapshot = {
             "time": now, "game": game, "app": self.app, "profile": profile_key, "profile_name": profile["name"],

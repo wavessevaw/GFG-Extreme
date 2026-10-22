@@ -1,0 +1,165 @@
+FFF.FFFFFFFFFFFF.F
+======================================================================
+FAIL: test_active_clock_probe_holds_tdp_but_thermal_preempts (test_controller_review.ControllerReviewTest.test_active_clock_probe_holds_tdp_but_thermal_preempts)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/GFG-Extreme-integration/tests/test_controller_review.py", line 63, in test_active_clock_probe_holds_tdp_but_thermal_preempts
+    self.assertEqual(self.act.writes, [])
+AssertionError: Lists differ: [14.0, 13.0, 12.0] != []
+
+First list contains 3 additional elements.
+First extra element 0:
+14.0
+
+- [14.0, 13.0, 12.0]
++ []
+
+======================================================================
+FAIL: test_clock_probe_end_requires_new_governor_window (test_controller_review.ControllerReviewTest.test_clock_probe_end_requires_new_governor_window)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/GFG-Extreme-integration/tests/test_controller_review.py", line 71, in test_clock_probe_end_requires_new_governor_window
+    self.assertEqual(self.act.writes, [])
+AssertionError: Lists differ: [14.0, 13.0, 12.0, 11.0] != []
+
+First list contains 4 additional elements.
+First extra element 0:
+14.0
+
+- [14.0, 13.0, 12.0, 11.0]
++ []
+
+======================================================================
+FAIL: test_expensive_filter_change_invalidates_epoch (test_controller_review.ControllerReviewTest.test_expensive_filter_change_invalidates_epoch)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/GFG-Extreme-integration/tests/test_controller_review.py", line 160, in test_expensive_filter_change_invalidates_epoch
+    self.assertGreater(c.s.epoch, epoch)
+AssertionError: 1 not greater than 1
+
+======================================================================
+FAIL: test_no_energy_savings_inferred_from_unused_limit (test_controller_review.ControllerReviewTest.test_no_energy_savings_inferred_from_unused_limit)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/GFG-Extreme-integration/tests/test_controller_review.py", line 166, in test_no_energy_savings_inferred_from_unused_limit
+    self.assertIsNone(s.summary()['saved_wh'])
+AssertionError: 0.12 is not None
+
+======================================================================
+FAIL: test_quality_restores_user_power_after_cooling (test_controller_review.ControllerReviewTest.test_quality_restores_user_power_after_cooling)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/GFG-Extreme-integration/tests/test_controller_review.py", line 41, in test_quality_restores_user_power_after_cooling
+    self.assertEqual(self.act.tdp, 15)
+AssertionError: 4.0 != 15
+
+======================================================================
+FAIL: test_repeated_status_does_not_count_as_stability (test_controller_review.ControllerReviewTest.test_repeated_status_does_not_count_as_stability)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/GFG-Extreme-integration/tests/test_controller_review.py", line 135, in test_repeated_status_does_not_count_as_stability
+    self.assertNotEqual(result['phase'], 'locked')
+AssertionError: 'locked' == 'locked'
+
+======================================================================
+FAIL: test_restore_failure_blocks_new_claim_until_restored (test_controller_review.ControllerReviewTest.test_restore_failure_blocks_new_claim_until_restored)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/GFG-Extreme-integration/tests/test_controller_review.py", line 109, in test_restore_failure_blocks_new_claim_until_restored
+    self.assertEqual(a.initial, 15)
+AssertionError: 10 != 15
+
+======================================================================
+FAIL: test_service_propagates_active_probe (test_controller_review.ControllerReviewTest.test_service_propagates_active_probe)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/GFG-Extreme-integration/tests/test_controller_review.py", line 92, in test_service_propagates_active_probe
+    self.assertEqual(r.power.tdp, before)
+AssertionError: 11.0 != 12.0
+
+======================================================================
+FAIL: test_smoothness_thermal_hysteresis (test_controller_review.ControllerReviewTest.test_smoothness_thermal_hysteresis)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/GFG-Extreme-integration/tests/test_controller_review.py", line 153, in test_smoothness_thermal_hysteresis
+    self.assertEqual(modes, ['quality', 'balanced', 'balanced', 'balanced'])
+AssertionError: Lists differ: ['quality', 'balanced', 'quality', 'balanced'] != ['quality', 'balanced', 'balanced', 'balanced']
+
+First differing element 2:
+'quality'
+'balanced'
+
+- ['quality', 'balanced', 'quality', 'balanced']
+?                          ^^  ^^^
+
++ ['quality', 'balanced', 'balanced', 'balanced']
+?                          ^  ^^^^^
+
+
+======================================================================
+FAIL: test_sparse_samples_do_not_prove_window (test_controller_review.ControllerReviewTest.test_sparse_samples_do_not_prove_window)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/GFG-Extreme-integration/tests/test_controller_review.py", line 52, in test_sparse_samples_do_not_prove_window
+    self.assertEqual(self.act.writes, [])
+AssertionError: Lists differ: [14.0] != []
+
+First list contains 1 additional elements.
+First extra element 0:
+14.0
+
+- [14.0]
++ []
+
+======================================================================
+FAIL: test_stale_auto_cannot_lock_from_old_measurement (test_controller_review.ControllerReviewTest.test_stale_auto_cannot_lock_from_old_measurement)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/GFG-Extreme-integration/tests/test_controller_review.py", line 125, in test_stale_auto_cannot_lock_from_old_measurement
+    self.assertNotEqual(p.tick(ctx)['phase'], 'locked')
+AssertionError: 'locked' == 'locked'
+
+======================================================================
+FAIL: test_thermal_recovers_even_while_pilot_requests_ceiling (test_controller_review.ControllerReviewTest.test_thermal_recovers_even_while_pilot_requests_ceiling)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/GFG-Extreme-integration/tests/test_controller_review.py", line 35, in test_thermal_recovers_even_while_pilot_requests_ceiling
+    self.assertEqual(self.act.tdp, 15)
+AssertionError: 4.0 != 15
+
+======================================================================
+FAIL: test_unknown_or_nonfinite_pace_cannot_prove_health (test_controller_review.ControllerReviewTest.test_unknown_or_nonfinite_pace_cannot_prove_health) (pace=None)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/GFG-Extreme-integration/tests/test_controller_review.py", line 58, in test_unknown_or_nonfinite_pace_cannot_prove_health
+    self.assertIsNot(verdict['ok'], True)
+AssertionError: unexpectedly identical: True
+
+======================================================================
+FAIL: test_unknown_or_nonfinite_pace_cannot_prove_health (test_controller_review.ControllerReviewTest.test_unknown_or_nonfinite_pace_cannot_prove_health) (pace=nan)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/GFG-Extreme-integration/tests/test_controller_review.py", line 58, in test_unknown_or_nonfinite_pace_cannot_prove_health
+    self.assertIsNot(verdict['ok'], True)
+AssertionError: unexpectedly identical: True
+
+======================================================================
+FAIL: test_unknown_or_nonfinite_pace_cannot_prove_health (test_controller_review.ControllerReviewTest.test_unknown_or_nonfinite_pace_cannot_prove_health) (pace=inf)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/GFG-Extreme-integration/tests/test_controller_review.py", line 58, in test_unknown_or_nonfinite_pace_cannot_prove_health
+    self.assertIsNot(verdict['ok'], True)
+AssertionError: unexpectedly identical: True
+
+======================================================================
+FAIL: test_zero_fps_included_in_average (test_controller_review.ControllerReviewTest.test_zero_fps_included_in_average)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/GFG-Extreme-integration/tests/test_controller_review.py", line 173, in test_zero_fps_included_in_average
+    self.assertEqual(s.summary()['avg_output_fps'], 45)
+AssertionError: 90.0 != 45
+
+----------------------------------------------------------------------
+Ran 16 tests in 0.050s
+
+FAILED (failures=16)

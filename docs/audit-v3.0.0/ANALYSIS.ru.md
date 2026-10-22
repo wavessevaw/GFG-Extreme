@@ -136,3 +136,5 @@ ZIP не соответствует исходному tag по части фа�
 Для воспроизведения подготовить каталог AUDIT: `source/` = git archive GFG v3.0.0; `kedavra/` = checkout GSF_Kedavra c264c28; `package/` = распакованный проверенный release ZIP. Запустить `python3 reproduce.py AUDIT`. Результат AUDIT/reproductions.json. Выполнение встроенных фиктивных installer tests не требует root.
 
 Статус передачи: отчёт и доказательства предназначены основному агенту. Исправления продукта здесь не внесены; рекомендации с кодовым обоснованием и воспроизведённые дефекты отмечены отдельно. Никаких release/tag/workflow_dispatch операций.
+
+Практическая перепроверка: [Governor 2.0](../governor2/CONCEPT.ru.md) и [исправления с red/green тестами](../governor2/IMPLEMENTATION.ru.md).

@@ -28,6 +28,7 @@ the chosen point does not hold.
 """
 from __future__ import annotations
 
+import math
 import statistics
 import time
 from collections import deque
@@ -102,6 +103,8 @@ class PointPilot:
         self.holds = True
         self.demotions = 0
         self.promotions = 0
+        self._measure_sample_id = None
+        self._measure_sample_at = None
 
     def _note(self, kind: str, **fields: Any) -> None:
         if self.journal:
@@ -239,10 +242,23 @@ class PointPilot:
     def _measure(self, ctx: Dict[str, Any], steps: List[int], top: int) -> Dict[str, Any]:
         now = self.clock()
         st = ctx.get("engine") or {}
-        if ctx.get("confirmed") and st.get("auto") and ctx.get("game"):
-            cap = int(st.get("cap_fps") or 0)
-            if cap:
-                self.caps.append((now, cap))
+        sample_id = st.get("time_ns", now)
+        real = ctx.get("real")
+        valid = (ctx.get("confirmed") and st.get("auto") and ctx.get("game")
+                 and not st.get("steam_ui") and not ctx.get("settling")
+                 and isinstance(real, (int, float)) and math.isfinite(real))
+        if not valid or (self._measure_sample_at is not None and now - self._measure_sample_at > 2.5):
+            self.caps.clear()
+        if not valid:
+            self._measure_sample_at = None
+            self._measure_sample_id = None
+            return self._request(1, 0, steps[0], True)
+        if sample_id == self._measure_sample_id:
+            return self._request(1, 0, steps[0], True)
+        self._measure_sample_id, self._measure_sample_at = sample_id, now
+        cap = int(st.get("cap_fps") or 0)
+        if cap:
+            self.caps.append((now, cap))
         elapsed = now - self.since
         if self.caps:
             last = self.caps[-1][1]

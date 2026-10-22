@@ -22,6 +22,7 @@ the ceiling 1 W per window, 97 C goes to the minimum at once.
 from __future__ import annotations
 
 import time
+import math
 from typing import Any, Callable, Dict, List, Optional
 
 WINDOW_S = 10.0
@@ -43,7 +44,10 @@ def healthy(window: List[Dict[str, Any]], cap: int, temp_ok: bool) -> Dict[str, 
     n = len(window)
     if n == 0 or cap <= 0:
         return {"ok": None, "reason": "no-data"}
-    real = sum(s.get("real") or 0.0 for s in window) / n
+    if any(not isinstance(s.get(k), (int, float)) or not math.isfinite(s[k])
+           for s in window for k in ("real", "pace")):
+        return {"ok": None, "reason": "incomplete-telemetry"}
+    real = sum(s["real"] for s in window) / n
     paces = [s["pace"] for s in window if s.get("pace") is not None]
     pace = sum(paces) / len(paces) if paces else None
     over = sum(s.get("over_budget") or 0.0 for s in window) / n
@@ -94,6 +98,12 @@ class PowerGovernor:
         self.cap = 0
         self.last: Dict[str, Any] = {}
         self.learned = False
+        self.restore_pending = False
+        self.probe_active = False
+        self._last_sample_at = None
+        self._thermal_step_at = -1e9
+        self._cool_since = None
+        self._severe_samples = []
 
     def _note(self, kind: str, **fields: Any) -> None:
         if self.journal:
@@ -108,6 +118,10 @@ class PowerGovernor:
         if self.owned:
             result = self.actuator.restore_if_owned()
             self._note("governor-restore", reason=reason, restored=result.get("restored"), error=result.get("error"))
+        if result.get("success") is False or result.get("error"):
+            self.restore_pending = True
+            self.window = []
+            return result
         self._reset_session()
         return result
 
@@ -172,6 +186,10 @@ class PowerGovernor:
         0 = none), hold_ceiling, epoch, real, pace, over_budget, ring_miss (per second), temp_c,
         game (bool: a game is running)."""
         now = self.clock()
+        if self.restore_pending:
+            self.stop("retry-restore")
+            if self.restore_pending:
+                return self.status()
         if not self.enabled or not sample.get("game"):
             if self.owned or self.key:
                 self.stop("no-game" if self.enabled else "disabled")
@@ -181,6 +199,8 @@ class PowerGovernor:
         if key != self.key:
             if self.owned:
                 self.stop("context-change")
+                if self.restore_pending:
+                    return self.status()
             self._reset_session()
             self.key = key
             if self.enabled:
@@ -199,9 +219,14 @@ class PowerGovernor:
             return self.status()
 
         temp = sample.get("temp_c")
-        if temp is not None and temp >= CRITICAL_C:
-            self.thermal_ceiling = self._limits()["low"]
-            self._write(self.thermal_ceiling or MIN_TDP_W, "critical-temperature")
+        if self._thermal(now, temp, sample):
+            return self.status()
+        active = bool(sample.get("probe_active"))
+        if active or self.probe_active:
+            self.window, self.window_start, self.healthy_since = [], now, None
+            self._last_sample_at = None
+        self.probe_active = active
+        if active:
             return self.status()
         if sample.get("hold_ceiling"):
             # The pilot measures the game or tries a higher point: full power, no verdicts.
@@ -225,11 +250,27 @@ class PowerGovernor:
             self.window_start = now
             self.last = {"ok": None, "reason": "no-cap"}
             return self.status()
+        real = sample.get("real")
+        if isinstance(real, (int, float)) and math.isfinite(real) and real < SEVERE_RATIO * self.cap:
+            self._severe_samples = [t for t in self._severe_samples if now - t <= 2.5]
+            if not self._severe_samples or now > self._severe_samples[-1]:
+                self._severe_samples.append(now)
+            if len(self._severe_samples) >= 3 and not self.at_ceiling():
+                self._decide(now, {"ok": False, "reason": "below-cap", "real": real}, temp)
+                self._severe_samples = []
+                self.window, self.window_start = [], now
+                return self.status()
+        else:
+            self._severe_samples = []
         if now - self.changed_at < SETTLE_S:
             self.window_start = now
             return self.status()
+        # A quiet gap is missing evidence, not a healthy ten-second window.
+        if self._last_sample_at is not None and now - self._last_sample_at > 2.5:
+            self.window, self.window_start = [], now
+        self._last_sample_at = now
         self.window.append(sample)
-        if now - self.window_start < WINDOW_S:
+        if now - self.window_start < WINDOW_S or len(self.window) < 8:
             return self.status()
         temp_ok = temp is None or temp < HOT_C
         verdict = healthy(self.window, self.cap, temp_ok)
@@ -239,15 +280,37 @@ class PowerGovernor:
         self._decide(now, verdict, temp)
         return self.status()
 
+    def _thermal(self, now: float, temp: Optional[float], sample: Dict[str, Any]) -> bool:
+        """Thermal recovery runs even during measurement/no-cap. No missing-sensor recovery."""
+        if temp is None or not math.isfinite(temp):
+            self._cool_since = None
+            return False
+        if temp >= HOT_C:
+            self._cool_since = None
+            if temp >= CRITICAL_C or now - self._thermal_step_at >= WINDOW_S:
+                low = self._limits()["low"] or MIN_TDP_W
+                self.thermal_ceiling = low if temp >= CRITICAL_C else max(low, (self.thermal_ceiling or self.tdp) - 1)
+                self._thermal_step_at = now
+                self._write(self.thermal_ceiling, "thermal-limit")
+            return True
+        if self.thermal_ceiling is None:
+            return False
+        if temp >= HOT_C - 5:
+            self._cool_since = None
+            return False
+        if self._cool_since is None:
+            self._cool_since = now
+        if now - self._cool_since >= WINDOW_S and now - self._thermal_step_at >= WINDOW_S:
+            self.thermal_ceiling = min(self.ceiling, self.thermal_ceiling + 1)
+            self._thermal_step_at = now
+            if self.thermal_ceiling >= self.ceiling:
+                self.thermal_ceiling = None
+            if self.objective == "quality" or sample.get("hold_ceiling"):
+                self._write(self.ceiling, "thermal-recovery")
+        return False
+
     def _decide(self, now: float, verdict: Dict[str, Any], temp: Optional[float]) -> None:
         assert self.tdp is not None and self.ceiling is not None
-        if temp is not None and temp >= HOT_C:
-            # Too hot: the ceiling comes down a watt per window until it cools.
-            self.thermal_ceiling = max(self._limits()["low"] or MIN_TDP_W, (self.thermal_ceiling or self.tdp) - 1.0)
-            self._write(self.tdp, "hot")
-            return
-        if self.thermal_ceiling is not None and temp is not None and temp < HOT_C - 5:
-            self.thermal_ceiling = None
         if verdict["ok"] is False:
             self.healthy_since = None
             if verdict["reason"] in ("below-cap", "pace", "gpu-budget", "ring-miss"):
@@ -305,6 +368,8 @@ class PowerGovernor:
         return {
             "enabled": self.enabled,
             "owned": self.owned,
+            "restore_pending": self.restore_pending,
+            "probe_active": self.probe_active,
             "paused": self.paused,
             "objective": self.objective,
             "managing": bool(self.owned and self.cap > 0 and not self.paused),
