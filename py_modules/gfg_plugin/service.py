@@ -253,9 +253,11 @@ class Service:
             "experiment": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
             "dock": dock, "start_w": CLASS_START_W.get(gp.get("class") or ""),
         }
-        if rates is not None and self.rates.prev is not None:
-            sample["ring_miss"] = self._delta(st, "ring_miss")
-            sample["over_budget"] = self._delta(st, "over_budget")
+        # The counters are read every fresh tick: after a stale engine status (a hitch, the QAM) the
+        # next delta is that one second, not everything the engine counted while it was stale.
+        ring_miss, over_budget = (self._delta(st, "ring_miss"), self._delta(st, "over_budget")) if fresh else (0.0, 0.0)
+        if rates is not None:
+            sample["ring_miss"], sample["over_budget"] = ring_miss, over_budget
         g = gov.status() if boosting else gov.tick(sample)
         if game and g.get("stable") and req["point"]:
             mark = (self.app, refresh, dock, req["point"], g.get("tdp_w"))

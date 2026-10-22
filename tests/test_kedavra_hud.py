@@ -111,3 +111,28 @@ class HudTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HudCacheTest(unittest.TestCase):
+    """3.1.2: rings drawn once per fill step and pasted with precomputed panel spans."""
+
+    def test_cached_ring_draws_the_same_pixels(self):
+        items = [{"size": 48, "w": 3.5, "frac": 0.613, "rgb": kedavra_hud.GREEN, "text": "55",
+                  "style": "val", "label": "FPS"}]
+        st = status(1, 0, 0, 0, 0, 0)
+        first = kedavra_hud.render(st, None, 0.88, items)
+        kedavra_hud._TILES.clear()
+        kedavra_hud._ring_tile.cache_clear()
+        kedavra_hud._spans.cache_clear()
+        self.assertEqual(kedavra_hud.render(st, None, 0.88, items), first)
+        # Uncached reference: the same tile drawn with the old full path.
+        w, h, px = first
+        cv = kedavra_hud.Canvas.plain(w, h)
+        cv.px = bytearray(kedavra_hud._base(w, h, 0.88))
+        self.assertEqual(kedavra_hud._spans(w, h, 0.88), [cv._span(y) for y in range(h)])
+
+    def test_fill_steps(self):
+        self.assertEqual(kedavra_hud.ring_frac(0.5001), 0.5)
+        self.assertEqual(kedavra_hud.ring_frac(None), 0.0)
+        self.assertEqual(kedavra_hud.ring_frac(1.7), 1.0)
+        self.assertEqual(kedavra_hud.ring_frac(float("nan")), 0.0)

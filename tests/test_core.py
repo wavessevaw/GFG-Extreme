@@ -87,6 +87,11 @@ class PolicyTest(unittest.TestCase):
         for _ in range(5):
             self.tick()
         self.assertEqual(len(self.ctl.calls), sent, "nothing is re-sent while confirmed")
+        # 3.1.2: a new point sends only what changed, the revision last.
+        self.c.want(Policy(1, 30, "vibrance", "/dev/shm/h", 24))
+        self.assertEqual(self.tick()["state"], "applying")
+        self.assertEqual([n for n, _ in self.ctl.calls[sent:]], ["kfg_base_fps", "kfg_policy"])
+        self.assertEqual(self.tick()["state"], "confirmed")
 
     def test_stale_holds_and_old_engine(self):
         self.c.want(self.want)

@@ -79,6 +79,7 @@ class Plugin:
             boost=Boost(self.ctl, journal=lambda kind, **f: self.log.record("boost", kind, **f)))
         self.lock = asyncio.Lock()
         self._gate_at, self._gate_cache = -1e9, {}
+        self._host_at, self._host_cache = -1e9, {}
         self.state: Dict[str, Any] = {}
         self.stopping = False
         loop = asyncio.get_event_loop()
@@ -151,12 +152,22 @@ class Plugin:
                                             engine_gate.read_record(self.data / "engine-install.json"))
         return self._gate_cache
 
+    def _host(self) -> Dict[str, Any]:
+        """Device name and the other plugins, re-read at most every 5 s: the panel asks every
+        second while it is open, and both only change on a dock or a plugin install (3.1.2)."""
+        now = time.monotonic()
+        if now - self._host_at >= 5.0 or not self._host_cache:
+            self._host_at = now
+            self._host_cache = {"device": device_name(), "coexist": self.coexist.status()}
+        return self._host_cache
+
     async def get_state(self) -> Dict[str, Any]:
+        host = await asyncio.to_thread(self._host)
         return {"version": paths.VERSION, "codename": paths.CODENAME, "live": self.state,
                 "gate": await asyncio.to_thread(self._gate),
-                "device": await asyncio.to_thread(device_name),
+                "device": host["device"],
                 "settings": self.settings.data, "profiles": self._profiles(),
-                "migration": self.migration_report, "coexist": await asyncio.to_thread(self.coexist.status),
+                "migration": self.migration_report, "coexist": host["coexist"],
                 "capture": self.ctl._capture_info()}
 
     def _profiles(self) -> Dict[str, Any]:
@@ -201,6 +212,7 @@ class Plugin:
         async with self.lock:
             result = await asyncio.to_thread(self.inst.install)
             await asyncio.to_thread(self.coexist.mark_owner)
+            self._host_cache = {}
             ok = result.get("ok", True) is not False
             record = {"version": self.inst.bundled_version(), "boot_id": engine_gate.boot_id() if ok else "",
                       "error": "" if ok else str(result.get("log") or result.get("error") or "install failed")}
@@ -266,6 +278,7 @@ class Plugin:
     # ------------------------------------------------------------------ coexistence / legacy
     async def take_over(self) -> Dict[str, Any]:
         result = await asyncio.to_thread(self.coexist.take_over)
+        self._host_cache = {}
         self.service.coord.take_over()
         self.log.record("coexist", "take-over", steps=result.get("steps"))
         return result

@@ -47,6 +47,10 @@ HOLD_S = 1.5          # the coordinator holds this long after a boost so the eng
 SETTLE_S = 2.0        # the pilot and the Governor skip readings this close to a boost
 RESCAN_S = 2.0
 WAIT_S = 0.05
+# The Deck controller sends 250 reports a second: the reader wakes at most this often and takes
+# what queued up (hidraw keeps 64 reports), not one wake per report. 40 ms is far under the
+# 0.3 s a turn needs.
+PERIOD_S = 0.04
 EPS = 1e-6
 
 # struct input_event on 64-bit Linux: timeval (2 x long), u16 type, u16 code, s32 value
@@ -363,4 +367,7 @@ class Boost:
             for fd in ready:
                 self._read(fd)
             self.step(self.clock())
+            rest = PERIOD_S - (self.clock() - now)
+            if ready and rest > 0:
+                self.stopping.wait(rest)
         self._close_all()
