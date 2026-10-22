@@ -38,7 +38,7 @@ def defaults() -> Dict[str, Any]:
         "hud": {"enabled": True, "position": "top-right", "detail": "standard"},
         "autopilot": {"preference": "auto"},
         "power": {"enabled": True, "split": True, "gpu_clock": True},
-        "engine": {"hdr": True, "hdr_output": True},
+        "engine": {"hdr": True, "hdr_output": True, "above_x3": False},
         "telemetry": {"level": "standard"},
         "migrated_from": None,
     }
@@ -91,7 +91,9 @@ def normalize(raw: Any) -> Dict[str, Any]:
     out["power"] = {"enabled": bool(power.get("enabled", True)), "split": bool(power.get("split", True)),
                     "gpu_clock": bool(power.get("gpu_clock", True))}
     eng = raw.get("engine") if isinstance(raw.get("engine"), dict) else {}
-    out["engine"] = {"hdr": bool(eng.get("hdr", True)), "hdr_output": bool(eng.get("hdr_output", True))}
+    out["engine"] = {"hdr": bool(eng.get("hdr", True)), "hdr_output": bool(eng.get("hdr_output", True)),
+                     # Above x3 (user, 3.1.1): x3.75 plays badly, so it is unlocked only here.
+                     "above_x3": bool(eng.get("above_x3", False))}
     tel = raw.get("telemetry") if isinstance(raw.get("telemetry"), dict) else {}
     out["telemetry"] = {"level": tel.get("level") if tel.get("level") in TELEMETRY_LEVELS else "standard"}
     out["migrated_from"] = raw.get("migrated_from") if isinstance(raw.get("migrated_from"), (str, type(None))) else None
