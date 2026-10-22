@@ -310,6 +310,48 @@ function Setup({ s, set }) {
     h("div", { className: "sub", style: { textAlign: "center", marginTop: 4 } }, `GFG Extreme ${s.version}${s.codename ? " " + s.codename : ""}`));
 }
 
+// ---------------------------------------------------------------- first run (user, 3.1.0)
+// Until the engine is installed and running in this boot the panel shows only this card:
+// install, reboot, then the four tabs (mockup approved 3.1.0, labels must fit their tiles).
+function Gate({ g, set, version }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState({ text: "", bad: false });
+  const st = g.state;
+  const go = (label, f, doing) => set(async () => {
+    setBusy(true); setMsg({ text: doing + "…", bad: false }); notify("GFG Extreme", doing + "…");
+    try { const r = await f(); const bad = !!(r && r.ok === false);
+      const text = bad ? String(r.log || r.error || label + " failed") : resultText(r, label);
+      setMsg({ text, bad }); notify("GFG Extreme · " + label + (bad ? " failed" : ""), text.slice(0, 160));
+    } catch (e) { const text = String((e && e.message) || e); setMsg({ text, bad: true }); notify("GFG Extreme · " + label + " failed", text.slice(0, 160)); }
+    setBusy(false);
+  });
+  const tiles = (a, b) => h("div", { className: "steps" }, h("div", { className: "st " + a }, h("b", null, "1"), "Install"),
+    h("div", { className: "st " + b }, h("b", null, "2"), "Reboot"), h("div", { className: "st" }, h("b", null, "3"), "Play"));
+  const install = h(Focusable, { className: "btn red", onClick: () => !busy && go("Install", rpc.install, "Installing the engine") }, busy ? "Installing…" : st === "failed" ? "Try again" : g.update ? "Update engine" : "Install engine");
+  let head, text, body;
+  if (st === "reboot") {
+    head = "Reboot to start the engine";
+    text = "Installed. Gamescope KEDAVRA starts with the next boot; until then the Deck runs stock Gamescope.";
+    body = [tiles("done", "on"), h(Focusable, { key: "r", className: "btn red", onClick: () => go("Reboot", rpc.reboot, "Rebooting the Deck") }, "Reboot now"),
+      h("div", { key: "s", className: "small" }, "After the reboot open GFG Extreme again: all tabs unlock.")];
+  } else if (st === "failed") {
+    head = "The engine could not be installed";
+    text = "The panel stays locked so nothing runs half installed.";
+    body = [tiles("on", ""), h("div", { key: "b", className: "btns", style: { marginTop: 0 } }, install,
+      h(Focusable, { className: "btn", onClick: () => go("Report", rpc.report, "Saving the report") }, "Save report")),
+      h("div", { key: "e", className: "note bad" }, g.error || "Install failed.")];
+  } else {
+    head = g.update ? "Update the KEDAVRA engine" : "Install the KEDAVRA engine";
+    text = g.update ? "This GFG Extreme carries a newer engine. Install it, then reboot."
+      : "GFG Extreme generates frames inside its own Gamescope. Install it first: nothing in SteamOS is overwritten, and Remove in Setup brings stock Gamescope back.";
+    body = [tiles("on", ""), install, h("div", { key: "s", className: "small" }, "The panel opens after the engine is installed and the Deck has rebooted.")];
+  }
+  return h("div", { className: "card hero col gate" }, h("img", { className: "wolf", src: LOGO }),
+    h("div", { className: "gh" }, head), h("div", { className: "gp" }, text), body,
+    msg.text && st !== "failed" ? h("div", { className: "note" + (msg.bad ? " bad" : "") }, msg.text) : null,
+    h("div", { className: "small" }, "GFG Extreme " + version));
+}
+
 // ---------------------------------------------------------------- root
 function Content() {
   const [s, setS] = useState(null);
@@ -321,13 +363,15 @@ function Content() {
   const set = async (f) => { try { await f(); } catch (e) {} load(); };
   const step = (d) => setTab((t) => (t + d + TABS.length) % TABS.length);
   const GB = (window.DFL && window.DFL.GamepadButton) || {};
-  const onButtonDown = (e) => { const b = e && e.detail && e.detail.button; if (b === (GB.BUMPER_LEFT ?? 5)) step(-1); else if (b === (GB.BUMPER_RIGHT ?? 6)) step(1); };
-  const body = !s ? h("div", { className: "sub" }, "Loading…") : h([Dash, Graphics, Engine, Setup][tab], { s, set, cat });
+  const onButtonDown = (e) => { if (s && s.gate && s.gate.state && s.gate.state !== "ready") return; const b = e && e.detail && e.detail.button; if (b === (GB.BUMPER_LEFT ?? 5)) step(-1); else if (b === (GB.BUMPER_RIGHT ?? 6)) step(1); };
+  const gated = !!(s && s.gate && s.gate.state && s.gate.state !== "ready");
+  const body = !s ? h("div", { className: "sub" }, "Loading…") : gated ? h(Gate, { g: s.gate, set, version: s.version })
+    : h([Dash, Graphics, Engine, Setup][tab], { s, set, cat });
   return h(Focusable, { className: "gfg", onButtonDown },
     h("style", null, css),
     h("div", { className: "top" }, h("div", { className: "brand" }, h("img", { src: LOGO }), "GFG ·", h("b", null, "EXTREME")),
       h("div", { className: "chip" }, h("i"), (s && s.device) || "Steam Deck")),
-    h("div", { className: "tabs" }, h(Focusable, { className: "bump", onClick: () => step(-1) }, "L1"),
+    gated ? null : h("div", { className: "tabs" }, h(Focusable, { className: "bump", onClick: () => step(-1) }, "L1"),
       TABS.map((t, i) => h(Focusable, { key: t, className: "tab" + (i === tab ? " on" : ""), onClick: () => setTab(i) }, t)),
       h(Focusable, { className: "bump", onClick: () => step(1) }, "R1")),
     errs.last ? h("div", { className: "err" }, `${errs.last.name}: ${errs.last.message}`) : null,

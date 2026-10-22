@@ -14,9 +14,12 @@ from typing import Any, Callable, Dict, Optional
 from . import filters
 from .autopilot import Autopilot
 from .governor import PowerGovernor
+from .filter_budget import FilterBudget, shed
+from .game_book import GameBook, START_W as CLASS_START_W
+from .governor_device import external_display_connected
 from .lease import ExperimentLease
 from .kedavra import hud as hudmod
-from .pilot import PointPilot
+from .pilot import PointPilot, ladder
 from .policy import Policy, PolicyCoordinator
 from .session_stats import SessionStats
 from .split_control import SplitControl
@@ -25,6 +28,7 @@ from .gpu_clock_control import GpuClockControl
 GAME_GRACE_S = 10.0   # the QAM or a loading screen does not end a game session
 STEAM_APP = 769
 HDR_RESEND_S = 10.0
+DOCK_CHECK_S = 5.0    # an external display (the dock) is looked up this often
 
 
 class Service:
@@ -32,7 +36,8 @@ class Service:
                  battery: Callable[[], Dict[str, Any]], hud: Optional[Any] = None,
                  hud_path: str = "", clock: Callable[[], float] = time.monotonic,
                  journal: Optional[Callable[..., None]] = None, telemetry: Optional[Any] = None,
-                 split: Optional[SplitControl] = None, gclock: Optional[GpuClockControl] = None) -> None:
+                 split: Optional[SplitControl] = None, gclock: Optional[GpuClockControl] = None,
+                 book: Optional[GameBook] = None, display: Optional[Callable[[], bool]] = None) -> None:
         self.settings = settings
         self.ctl = ctl
         self.clock = clock
@@ -49,6 +54,7 @@ class Service:
         self.split = split
         self.gclock = gclock
         self.lease = ExperimentLease(clock=clock, journal=self._j("lease"))
+        self.fbudget = FilterBudget(clock=clock, journal=self._j("filters"))
         self.rates = hudmod.Rates()
         self.stats = SessionStats()
         self.last_game_at = -1e9
@@ -57,6 +63,23 @@ class Service:
         self.snapshot: Dict[str, Any] = {}
         self.ticks = 0
         self.hdr_off_sent = -1e9   # HDR output switched off: when hdr_enabled 0 was last sent
+        self.hdr_error = ""        # the last HDR switch failure, journalled once
+        self.book = book if book is not None else GameBook(None)
+        self.display = display if display is not None else external_display_connected
+        self.dock = False
+        self.dock_at = -1e9
+        self.cur = (0, 90, False)          # (app, refresh, dock) of the running session, for the book
+        self.noted_point: Optional[tuple] = None
+        self.light_dropped = False
+
+    def _stable_point(self, refresh: int) -> Optional[int]:
+        """The point the Governor locked as stable for this game last time (None: unknown)."""
+        model = self.governor.model
+        try:
+            entry = model.get(f"app:{self.app}|{refresh}|stable") if model else None
+            return int(entry["point"]) if entry and entry.get("point") is not None else None
+        except (TypeError, ValueError, KeyError):
+            return None
 
     def _hdr_output(self, on: bool, fresh: bool, now: float) -> None:
         """HDR output off: Gamescope's hdr_enabled 0, sent again every 10 s because Steam sets it
@@ -64,15 +87,20 @@ class Service:
         if not fresh:
             return
         try:
+            # The time is taken before the call: a failing gamescopectl is retried every 10 s,
+            # not every tick (3.0.10 journalled 5000 failures in an hour).
             if not on and now - self.hdr_off_sent >= HDR_RESEND_S:
-                self.ctl.set_var("hdr_enabled", 0)
                 self.hdr_off_sent = now
+                self.ctl.set_var("hdr_enabled", 0)
+                self.hdr_error = ""
             elif on and self.hdr_off_sent > -1e9:
-                self.ctl.set_var("hdr_enabled", 1)
                 self.hdr_off_sent = -1e9
+                self.ctl.set_var("hdr_enabled", 1)
+                self.hdr_error = ""
         except Exception as exc:
-            if self.journal:
+            if self.journal and str(exc) != self.hdr_error:
                 self.journal("service", "hdr-output-failed", error=str(exc))
+            self.hdr_error = str(exc)
 
     def _j(self, source: str) -> Optional[Callable[..., None]]:
         if not self.journal:
@@ -115,6 +143,16 @@ class Service:
             ap = self.autopilot.decide(data["autopilot"]["preference"], power, temp)
             auto_reason = ap["reason"]
         refresh = round(1e9 / st["refresh_ns"]) if fresh and st.get("refresh_ns") else 90
+        if now - self.dock_at >= DOCK_CHECK_S:
+            self.dock_at = now
+            try:
+                self.dock = bool(self.display())
+            except OSError:
+                pass
+        dock = self.dock
+        gp = self.book.profile(self.app, refresh, dock) if game else {"class": None, "source": None}
+        if game:
+            self.cur = (self.app, refresh, dock)
 
         confirmed = self.coord.engine_runs(self.last_policy, st)
         gov = self.governor
@@ -123,14 +161,30 @@ class Service:
             "refresh": refresh, "game": game, "app": self.app, "engine": st,
             "real": live.get("real"), "pace": live.get("pace"), "confirmed": confirmed,
             "gpu_busy": sensors.get("gpu_busy_pct"), "cpu_top": sensors.get("cpu_top_core_pct"),
-            "autopilot": objective == "autopilot",
+            "autopilot": objective == "autopilot", "stable_point": self._stable_point(refresh) if game else None,
+            "known_point": gp.get("point"), "game_class": gp.get("class"), "dock": dock,
             "low_battery": self.autopilot.low_battery or data["autopilot"]["preference"] == "battery",
             # Only a TDP the Governor manages is a power reading for the pilot: paused (the player's own
             # TDP) Autopilot must still climb when the game gets lighter (Deck report 3.0.7).
             "tdp_w": gov.tdp if gov.owned and not gov.paused else None, "gov_settled": gov.settled(), "warm": gov.warm,
             "at_ceiling": gov.at_ceiling(), "settling": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
         })
-        policy = Policy(req["multiplier"], req["base_fps"], filters.to_post(profile["filters"]),
+        if game and self.pilot.measured:
+            self.book.note_measure(self.app, refresh, dock, self.pilot.measured, ladder(refresh))
+        self.pilot.measured = 0
+        if game and self.pilot.light_failed and gp.get("class") == "light" and not self.light_dropped:
+            self.book.not_light(self.app, refresh, dock)
+            self.light_dropped = True
+        # Real frames and watts come before the look (user, 3.0.9): a GPU that cannot carry the
+        # game above x3 sheds the filters, light first, then off.
+        steps = ladder(refresh)
+        above_x3 = steps[2] if len(steps) > 2 else steps[-1]
+        budget = self.fbudget.tick(
+            app=self.app, active=bool(game and req["multiplier"] and objective != "quality"
+                                      and filters.is_active(profile["filters"])),
+            gpu_busy=sensors.get("gpu_busy_pct"),
+            starved=bool(req["phase"] in ("locked", "fixed") and (0 < req["point"] < above_x3 or not self.pilot.holds)))
+        policy = Policy(req["multiplier"], req["base_fps"], filters.to_post(shed(profile["filters"], budget)),
                         self.hud_path, req["auto_floor"], bool(data["engine"]["hdr"]))
         self.coord.want(policy)
         self.last_policy = policy
@@ -166,11 +220,17 @@ class Service:
             "draw_w": gov.status().get("draw_w"),
             "ac": power.get("external_power"),
             "experiment": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
+            "dock": dock, "start_w": CLASS_START_W.get(gp.get("class") or ""),
         }
         if rates is not None and self.rates.prev is not None:
             sample["ring_miss"] = self._delta(st, "ring_miss")
             sample["over_budget"] = self._delta(st, "over_budget")
         g = gov.tick(sample)
+        if game and g.get("stable") and req["point"]:
+            mark = (self.app, refresh, dock, req["point"], g.get("tdp_w"))
+            if mark != self.noted_point:
+                self.noted_point = mark
+                self.book.note_point(self.app, refresh, dock, req["point"], g.get("tdp_w"), ladder(refresh)[-1])
         lease = self.lease.observe({"tdp": bool(g.get("probing")) and game,
                                     "cpu": bool(self.split and self.split.settling()),
                                     "gpu": bool(self.gclock and self.gclock.settling())})
@@ -197,7 +257,7 @@ class Service:
             "fg": profile["fg"], "objective": objective, "objective_setting": profile["objective"],
             "autopilot_reason": auto_reason, "refresh": refresh, "engine": self._engine_view(st),
             "live": live, "pilot": req, "policy": coord, "governor": g, "split": split_status, "gpu_clock": gclock_status,
-            "lease": lease,
+            "lease": lease, "filter_budget": self.fbudget.status(), "game_profile": gp, "dock": dock,
             "sensors": sensors, "power": power,
             "filters": filters.summary(profile["filters"]),
         }
@@ -238,12 +298,15 @@ class Service:
     @staticmethod
     def _engine_view(st: Dict[str, Any]) -> Dict[str, Any]:
         keys = ("engine", "fresh", "state", "multiplier", "cap_fps", "base_fps", "auto", "auto_floor",
-                "post", "post_active", "post_error", "gpu_us_avg", "gpu_post_us_avg", "last_problem",
+                "post", "post_active", "post_error", "gpu_us_avg", "gpu_post_us_avg", "gpu_analysis_us_avg", "analysis_pairs", "last_problem",
                 "steam_ui", "width", "height", "message", "trace", "transfer", "hdr_enabled", "post_hdr_limited")
         return {k: st.get(k) for k in keys if k in st}
 
     def _end_session(self, reason: str) -> None:
         summary = self.stats.finish()
+        if summary and self.cur[0] == self.app:
+            self.book.end_session(*self.cur, summary)
+        self.light_dropped = False
         if summary and self.telemetry is not None:
             self.telemetry.session({"app": self.app, "reason": reason, "end": round(time.time()), **summary})
         if summary and self.journal:

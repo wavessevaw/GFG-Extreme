@@ -5,6 +5,7 @@ from unittest.mock import patch
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -189,6 +190,31 @@ class CpuFreqActuatorTests(unittest.TestCase):
             self.assertTrue(a.restore())
             self.assertEqual(self.read(root), 3_500_000)
             self.assertFalse(a.marker.exists())
+
+    def test_cap_applied_a_moment_late_is_ours(self):
+        """Deck report 3.0.6: the kernel showed the new cap only a moment after the write."""
+        with tempfile.TemporaryDirectory() as temp:
+            root, a = self.make(temp)
+            late = {}
+            real_write = Path.write_text
+
+            def write(path, text, *args, **kw):
+                if path.name == "scaling_max_freq":
+                    late[path] = text
+                    return len(text)
+                return real_write(path, text, *args, **kw)
+
+            def sleep(_):
+                for path, text in late.items():
+                    real_write(path, text)
+                late.clear()
+            a._sleep = sleep
+            self.assertTrue(a.claim())
+            with mock.patch.object(Path, "write_text", write):
+                self.assertTrue(a.set_cap_khz(2_400_000))
+            self.assertEqual((self.read(root, 0), self.read(root, 1)), (2_400_000, 2_400_000))
+            self.assertFalse(a.external_change)
+            self.assertTrue(a.restore())
 
     def test_never_above_the_users_own_limit(self):
         with tempfile.TemporaryDirectory() as temp:

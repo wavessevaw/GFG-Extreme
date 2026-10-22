@@ -45,8 +45,14 @@ FAST_STEP_W = 2.0
 # Autopilot (user, 3.0.4): starts at 15 W and measures; tolerates 8-10 % dips of the game's
 # frame rate (watts come back only for a deeper fall); targets 12 W, ideally 9-10 W.
 START_W = {"battery": 10.0, "balanced": 12.0, "autopilot": 15.0}
-HOLD_RATIO = {"autopilot": 0.92}          # window mean vs cap that still holds (default 0.97)
-SHORT_RATIO = {"autopilot": 0.90}         # fast guard: under this share of the cap -> watts back
+# Autopilot and Battery (user, 3.0.9): the output falling to 80-83 of 90 fps is still fine and
+# no reason for watts, so frames and pace may dip 12 % before a window fails.
+HOLD_RATIO = {"autopilot": 0.88, "battery": 0.88}   # window vs cap that still holds (default 0.97)
+SHORT_RATIO = {"autopilot": 0.88, "battery": 0.88}  # fast guard: under this share of the cap -> watts back
+PACE_RATIO = {"autopilot": 0.88, "battery": 0.88}   # pace that still holds (default PACE_MIN)
+# ... but a dip is only tolerated, never the place to settle: a step down needs a window at
+# >= 95 % of the cap. Between the two the TDP stays where it is.
+DOWN_RATIO = 0.95
 # Autopilot: a short sharp drop is no reason for watts (user, 3.0.4). The fast guard needs the
 # drop to last: 5 of the last 6 seconds short; windows judge the median, not the mean.
 SUSTAIN_S = 6
@@ -67,8 +73,8 @@ PACE_MIN = 0.99              # the pilot locks points at the same pace
 COVERAGE = 0.6               # share of a window's seconds with a real-frame reading
 BALANCED_MARGIN_W = 1.0
 MIN_TDP_W = 4.0
-HOT_C = 90.0
-COOL_C = 85.0
+HOT_C = 85.0   # Deck health (user, 3.1.0): SteamOS lets the APU sit at 85-89 C, GFG does not
+COOL_C = 80.0
 COOL_S = 30.0
 CRITICAL_C = 97.0
 # Plugging or unplugging the charger makes SteamOS put its own TDP for that power source back.
@@ -78,15 +84,33 @@ AC_GRACE_S = 15.0
 # Autopilot (Deck report 3.0.7: 18 W, x3.75, 80+ C): never above 15 W, even when SteamOS's TDP
 # was higher at the start (Steam's limit off). From 80 C it is "warm": the pilot does not climb
 # above its point (no watts for a higher one) until 30 s under 75 C.
-AUTOPILOT_MAX_W = 15.0
-WARM_C = {"autopilot": 80.0}
+AUTOPILOT_MAX_W = 15.0   # every objective (user, 3.0.10): never above 15 W
+# Deck health (user, 3.1.0): from 80 C no mode climbs to a more demanding point; from 90 C the
+# TDP ceiling comes down a watt per window (HOT_C, 85 C), from 97 C the TDP drops to the minimum (CRITICAL_C).
+WARM_C = {"autopilot": 80.0, "battery": 80.0, "balanced": 80.0, "quality": 80.0}
+WARM_DOCK_C = 80.0
 WARM_COOL_C = 75.0
 EXTERNAL_WAIT_S = 10.0       # an outside change waits this long for the charger to show up
 OBJECTIVES = ("battery", "balanced", "quality", "autopilot")
+# User rule (3.0.9): down the TDP boldly, up reluctantly and with checks. A window that holds
+# steps down 2 W every time (not only before the first failure); a shortfall raises only when a
+# second window confirms it, by 1 W; a collapse gets 2 W, not the ceiling. Going back to the level
+# a failed step down came from is not a raise: that level was checked already.
+BOLD = ("autopilot", "battery", "balanced", "quality")   # every objective (user, 3.0.10): down boldly, up slowly
+BOLD_UP_W = 1.0
+# Stable point (GFG principle "find, lock, guard"): a level held for six windows in a row with a
+# failed step just below it (or at the minimum) is locked: no more probing down, so no periodic
+# dips from re-probes. A failed window unlocks it (the guard), and so does a lighter scene: the
+# APU drawing 3 W under the limit for three windows in a row. Remembered per game, so the next
+# launch starts at the point and TDP that were stable.
+STABLE_WINDOWS = 6
+STABLE_FLOOR_W = 2.5
+LIGHTER_WINDOWS = 3
+CONFIRM_WINDOWS = 2
 
 
 def healthy(window: List[Dict[str, Any]], cap: int, temp_ok: bool, hold: float = 0.97,
-            median: bool = False) -> Dict[str, Any]:
+            median: bool = False, pace_min: float = 0.0) -> Dict[str, Any]:
     """Verdict for one window of 1 s samples, with the reason a failed window failed. A missing
     pace is allowed (no generation running); a non-finite reading is broken telemetry."""
     n = len(window)
@@ -105,7 +129,7 @@ def healthy(window: List[Dict[str, Any]], cap: int, temp_ok: bool, hold: float =
            "over_budget": round(over, 2), "ring_miss": miss}
     if real < hold * cap:
         return {**out, "ok": False, "reason": "below-cap"}
-    if pace is not None and pace < PACE_MIN:
+    if pace is not None and pace < (pace_min or PACE_MIN):
         return {**out, "ok": False, "reason": "pace"}
     if over >= 1.0:
         return {**out, "ok": False, "reason": "gpu-budget"}
@@ -140,7 +164,9 @@ class PowerGovernor:
         self.player_ceiling: Optional[float] = None   # SteamOS's TDP when the Governor took over
         self.thermal_ceiling: Optional[float] = None
         self.cool_since: Optional[float] = None
-        self.warm = False                             # Autopilot from 80 C: no climbing
+        self.warm = False                             # from 80 C: no climbing to a higher point
+        self.dock = False                             # an external display: warm hold in every mode
+        self.start_hint: Optional[float] = None       # the game list's start TDP (light 7 W, heavy 15 W)
         self.warm_cool_since: Optional[float] = None
         # cap -> (TDP that failed, until, repeats): no probe at or below that TDP until then
         self.floors: Dict[int, Tuple[float, float, int]] = {}
@@ -162,6 +188,12 @@ class PowerGovernor:
         self.last: Dict[str, Any] = {}
         self.learned = False
         self.fast = True
+        self.fail_streak = 0                    # failed windows in a row (bold: a raise needs 2)
+        self.stable = False                     # the level is locked (no probing down)
+        self.stable_cap = 0
+        self.stable_tdp: Optional[float] = None
+        self.same_windows = 0                   # held windows in a row at this TDP
+        self.lighter_windows = 0                # held windows in a row with the draw far under the limit
 
     @property
     def floor_fail(self) -> Dict[int, float]:
@@ -226,7 +258,7 @@ class PowerGovernor:
 
     def _ceiling_for(self, objective: str) -> float:
         player = self.player_ceiling or 15.0
-        return min(player, AUTOPILOT_MAX_W) if objective == "autopilot" else player
+        return min(player, AUTOPILOT_MAX_W)
 
     def _first_level(self, cap: int) -> None:
         """The first TDP at a point: what held last time plus a watt, else the objective's start."""
@@ -237,7 +269,11 @@ class PowerGovernor:
             target, why = float(learned["tdp_w"]) + 1.0, "warm-start"
         elif (self.key, self.objective) not in self.started:
             # A fresh game starts low; later unknown points keep the level the session reached.
-            target, why = START_W.get(self.objective, self.ceiling), "start-level"
+            # The game list (user, 3.1.0): a light game starts at 7 W, a heavy one at the ceiling.
+            if self.start_hint is not None:
+                target, why = min(self.start_hint, self.ceiling), "start-level-game-class"
+            else:
+                target, why = START_W.get(self.objective, self.ceiling), "start-level"
         else:
             return
         self.started.add((self.key, self.objective))
@@ -346,6 +382,9 @@ class PowerGovernor:
             return self.status()
         key = str(sample.get("key") or "")
         objective = sample.get("objective") if sample.get("objective") in OBJECTIVES else "balanced"
+        self.dock = bool(sample.get("dock"))
+        hint = sample.get("start_w")
+        self.start_hint = float(hint) if isinstance(hint, (int, float)) and hint > 0 else None
         if key != self.key:
             if self.owned:
                 self.stop("context-change")
@@ -358,10 +397,11 @@ class PowerGovernor:
             self.window_start = now
         if objective != self.objective and self.owned:
             self.objective = objective
+            self._unlock("objective-changed")
             self.ceiling = self._ceiling_for(objective)
             if self.tdp is not None and self.tdp > self.ceiling + 0.05:
                 self._write(self.ceiling, "autopilot-ceiling")
-            if objective not in WARM_C:
+            if objective not in WARM_C and not self.dock:
                 self.warm, self.warm_cool_since = False, None
             self.window = []
             self.window_start = now
@@ -399,7 +439,12 @@ class PowerGovernor:
             self.window_start = now
             self.healthy_since = None
             self.recent.clear()
-            if first:
+            self.fail_streak = 0
+            if first and self.stable and cap == self.stable_cap and self.stable_tdp is not None:
+                # Back from a pilot trial to the locked point: straight to its locked level.
+                self._write(self.stable_tdp, "stable-point")
+            elif first:
+                self._unlock("point-changed")   # a new policy epoch alone (Power Split) keeps the lock
                 self.learned = False
                 self._first_level(cap)
         if self.cap <= 0:
@@ -423,6 +468,7 @@ class PowerGovernor:
             return self.status()
         temp_ok = temp is None or temp < HOT_C
         verdict = healthy(self.window, self.cap, temp_ok, HOLD_RATIO.get(self.objective, 0.97),
+                          pace_min=PACE_RATIO.get(self.objective, PACE_MIN),
                           median=self.objective == "autopilot")
         if len(self.window) < COVERAGE * (now - self.window_start):
             verdict = {"ok": None, "reason": "no-data"}   # missed ticks: too few seconds were seen
@@ -434,6 +480,37 @@ class PowerGovernor:
         self._decide(now, verdict, temp, self._probing(sample))
         return self.status()
 
+    def _stable_check(self, draw: Any) -> bool:
+        """True while the level is locked (no step down this window)."""
+        lighter = isinstance(draw, (int, float)) and self.tdp is not None and self.tdp - draw >= DRAW_JUMP_W
+        if self.stable:
+            self.lighter_windows = self.lighter_windows + 1 if lighter else 0
+            if self.lighter_windows < LIGHTER_WINDOWS:
+                return True
+            self._unlock("lighter-scene")
+            return False
+        f = self.floors.get(self.cap)
+        low = self._limits()["low"] or MIN_TDP_W
+        below = (f is not None and self.tdp is not None and f[0] >= self.tdp - STABLE_FLOOR_W) or (
+            self.tdp is not None and self.tdp <= low + 0.05)
+        if self.same_windows >= STABLE_WINDOWS and below and not lighter:
+            self.stable = True
+            self.stable_cap, self.stable_tdp = self.cap, self.tdp
+            self.lighter_windows = 0
+            self._note("governor-stable", cap=self.cap, tdp_w=self.tdp)
+            if self.model and self.key:
+                self.model.record(f"{self.key}|stable", str(self.cap), self.tdp)
+            return True
+        return False
+
+    def _unlock(self, why: str) -> None:
+        if self.stable:
+            self._note("governor-unlocked", reason=why, cap=self.cap, tdp_w=self.tdp)
+        self.stable = False
+        self.stable_cap, self.stable_tdp = 0, None
+        self.same_windows = 0
+        self.lighter_windows = 0
+
     def _thermal(self, now: float, temp: Optional[float]) -> bool:
         """True when the temperature decided this second."""
         if temp is None:
@@ -444,7 +521,7 @@ class PowerGovernor:
             self.cool_since = None
             self._write(self.thermal_ceiling or MIN_TDP_W, "critical-temperature")
             return True
-        warm = WARM_C.get(self.objective)
+        warm = WARM_C.get(self.objective, WARM_DOCK_C if self.dock else None)
         if warm is not None:
             if temp >= warm:
                 self.warm_cool_since = None
@@ -485,7 +562,10 @@ class PowerGovernor:
 
     def _fast_guard(self, now: float, sample: Dict[str, Any]) -> bool:
         """Up fast: the last 3 s short of the cap at a binding limit get watts back at once."""
-        n = SUSTAIN_S if self.objective == "autopilot" else 3
+        probing = self.probe_from is not None and now - self.changed_at < 30.0
+        # Our own step down that did not hold is taken back after 3 s: that is not a raise, the
+        # level was checked already. Anything else in Autopilot needs 5 of 6 s short.
+        n = SUSTAIN_S if self.objective == "autopilot" and not probing else 3
         last = list(self.recent)[-n:]
         if self.tdp is None or self.ceiling is None or len(last) < n or None in last:
             return False
@@ -497,10 +577,15 @@ class PowerGovernor:
         if med >= SHORT_RATIO.get(self.objective, FAST_SHORT_RATIO) * self.cap or not self._binding(sample.get("draw_w")):
             return False
         severe = med < SEVERE_RATIO * self.cap
+        bold = self.objective in BOLD
         if self.probe_from is not None and now - self.changed_at < 30.0:
             # The step down did not hold: back to where it came from, and a floor at this level.
             self._failed(self.cap, self.tdp)
             target, why = self.probe_from, "fast-restore"
+        elif bold and not severe:
+            return False   # a mild shortfall waits for the windows to confirm it
+        elif bold:
+            target, why = self.tdp + STEP_UP_W, "fast-severe"   # a collapse: 2 W, not the ceiling
         elif severe:
             target, why = ceiling, "fast-severe"   # a collapse, not a shortfall: full power now
         else:
@@ -525,18 +610,34 @@ class PowerGovernor:
             self.fast = False
             if verdict["reason"] in ("below-cap", "pace", "gpu-budget", "ring-miss"):
                 severe = verdict.get("real", 0.0) < SEVERE_RATIO * self.cap
+                self.fail_streak += 1
+                self._unlock(f"window-failed:{verdict['reason']}")
                 if self.probe_from is not None:
                     # The last step down did not hold a whole window: back up, a floor here.
                     self._failed(self.cap, self.tdp)
-                    target = max(self.probe_from, self.tdp + STEP_UP_W)
+                    target = self.probe_from if self.objective in BOLD else max(self.probe_from, self.tdp + STEP_UP_W)
+                elif self.objective in BOLD:
+                    if self.fail_streak < CONFIRM_WINDOWS:
+                        return   # one window is not proof: check again before adding watts
+                    target = self.tdp + (STEP_UP_W if severe else BOLD_UP_W)
                 else:
                     target = self.tdp + (SEVERE_STEP_W if severe else STEP_UP_W)
                 self.probe_from = None
+                self.fail_streak = 0
                 self._write(target, f"window-failed:{verdict['reason']}" + (":severe" if severe else ""))
             return
         if verdict["ok"] is not True:
             return
+        if self.probe_from is not None and verdict.get("real", self.cap) < DOWN_RATIO * self.cap:
+            # Our own step down made the dip: a dip is tolerated, not bought with a step. Back
+            # to the level it came from, a floor here.
+            self._failed(self.cap, self.tdp)
+            frm, self.probe_from = self.probe_from, None
+            self._write(frm, "step-dipped")
+            return
         # The level holds a whole window.
+        self.fail_streak = 0
+        self.same_windows = self.same_windows + 1 if self.held_at_tdp else 1
         if self.probe_from is not None:
             self.probe_from = None
             prev = self.floors.get(self.cap)
@@ -556,11 +657,13 @@ class PowerGovernor:
             self.dips = dips
             if dips:
                 self._note("governor-dips", tdp_w=self.tdp, p5=verdict.get("p5"), cap=self.cap)
-        if dips:
+        if dips or verdict.get("real", self.cap) < DOWN_RATIO * self.cap:
+            return
+        draw = verdict.get("draw")
+        if self._stable_check(draw):
             return
         floor = self._floor(self.cap) or self._limits()["low"] or MIN_TDP_W
-        draw = verdict.get("draw")
-        step = FAST_STEP_W if self.fast else STEP_DOWN_W
+        step = FAST_STEP_W if self.fast or self.objective in BOLD else STEP_DOWN_W
         target = self.tdp - step
         if isinstance(draw, (int, float)) and self.tdp - draw >= DRAW_JUMP_W:
             # The game uses clearly less than the limit: the limit goes to what it draws.
@@ -603,6 +706,7 @@ class PowerGovernor:
             "floor_fail_w": self.floor_fail.get(self.cap),
             "probing": self.probe_from is not None,
             "dips": self.dips,
+            "stable": self.stable,
             "hold": self.hold,
             "at_ceiling": self.at_ceiling(),
             "settled": self.settled(),

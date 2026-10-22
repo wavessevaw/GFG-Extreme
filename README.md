@@ -347,14 +347,34 @@ GFG Extreme offers four performance strategies.
 |---|---|
 | Autopilot | One adaptive mode: never above 15 W, keeps base 35-40 when the game holds it, ×3 at least, ×3.75 only when ×3 needs all 15 W or the battery is low |
 | Battery | Efficiency first: ×3.75 at 90 Hz (×3 at 60 Hz) and the lowest TDP that holds it |
-| Balanced | The highest base frame rate the game holds, without needless changes |
-| Quality | Real frames and motion quality first; TDP is not saved |
+| Balanced | The highest base frame rate the game holds, without needless changes; never below x3 |
+| Quality | Real frames and motion quality first; never below x2.5 |
 
 The strategy sets the optimisation goals.
 
 Kedavra carries out the agreed frame generation policy, and Governor weighs the available power budget.
 
 The same Output FPS can come from different pairs of real frame rate and multiplier; the choice weighs their real cost and quality.
+
+Every game is remembered: the point it held, its class and the medians of its last sessions. A known game starts on its point, without measuring at full power again.
+
+* **Light games** (DuckTales, Terraria, Hades, Celeste and other titles on the built-in list, or measured as light on your Deck): 4-7 W and never above ×2 in Balanced, Quality and Autopilot.
+* **Heavy games** (The Witcher 3, Elden Ring, Cyberpunk 2077, Death Stranding and others): the session starts at 15 W.
+* **Dock (TV)**: an external gamepad needs low latency, so no mode goes above ×3 there. A higher TDP is fine on the TV; the temperature is still watched.
+* **Steam Deck LCD**: 60 Hz, or the panel's own rate when it is unlocked (for example 75 Hz).
+
+### WE CARE ABOUT YOUR STEAM DECK'S HEALTH.
+
+SteamOS lets the APU run at 85-89 °C for hours. We don't agree with that, and we want your Deck to last.
+GFG Extreme deliberately holds games back from 80 °C, in every mode:
+
+| APU temperature | What GFG Extreme does |
+|---|---|
+| 80 °C | No mode climbs to a more demanding point: no extra watts for extra frames |
+| 85 °C | The TDP ceiling comes down a watt at a time until the Deck cools to 80 °C |
+| 97 °C | The TDP drops to the minimum at once |
+
+Every mode also stays at or below 15 W, even when SteamOS allows 20 W.
 
 ---
 

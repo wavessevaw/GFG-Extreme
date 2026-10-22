@@ -138,6 +138,19 @@ var css = `
 .gfg .gpfocus>.tile.on span,.gfg :focus-visible>.tile.on span{color:#ffd9d4!important}
 .gfg .tog.gpfocus,.gfg .tog:focus-visible,.gfg .herotap.gpfocus,.gfg .herotap:focus-visible{box-shadow:0 0 0 2px #fff,0 0 14px rgba(255,255,255,.4)!important}
 .gfg .gpfocus>.lrow,.gfg :focus-visible>.lrow{background:var(--s3);border-radius:10px;box-shadow:0 0 0 2px #fff}
+.gfg .gate{text-align:center;padding:18px 12px 16px}
+.gfg .gate .wolf{display:block;width:60px;height:60px;margin:2px auto 10px;filter:drop-shadow(0 0 16px rgba(251,13,0,.7))}
+.gfg .gate .gh{font-size:14px;font-weight:800;margin:0 0 6px;line-height:1.25}
+.gfg .gate .gp{font-size:10.5px;color:var(--tx2);line-height:1.45;margin:0 0 12px}
+.gfg .steps{display:flex;gap:5px;margin:0 0 12px}
+.gfg .st{flex:1;min-width:0;border-radius:10px;padding:7px 2px;background:var(--s2);border:1px solid var(--line);font-size:9.5px;font-weight:700;color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gfg .st b{display:block;font-size:12.5px;margin-bottom:1px}
+.gfg .st.on{color:var(--tx);border-color:rgba(251,13,0,.6);background:linear-gradient(180deg,rgba(251,13,0,.22),rgba(251,13,0,.06));box-shadow:0 0 14px rgba(251,13,0,.25)}
+.gfg .st.done{color:var(--ok)}
+.gfg .gate>.steps,.gfg .gate>.btn,.gfg .gate>.btns,.gfg .gate>.note{align-self:stretch;width:100%}
+.gfg .gate .btn{white-space:nowrap}
+.gfg .gate .small{font-size:9.5px;color:var(--tx3);margin-top:9px;line-height:1.4}
+.gfg .gate .note{text-align:left}
 `;
 
 // frontend/src/logo.js
@@ -629,6 +642,73 @@ function Setup({ s, set }) {
     h("div", { className: "sub", style: { textAlign: "center", marginTop: 4 } }, `GFG Extreme ${s.version}${s.codename ? " " + s.codename : ""}`)
   );
 }
+function Gate({ g, set, version }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState({ text: "", bad: false });
+  const st = g.state;
+  const go = (label, f, doing) => set(async () => {
+    setBusy(true);
+    setMsg({ text: doing + "\u2026", bad: false });
+    notify("GFG Extreme", doing + "\u2026");
+    try {
+      const r = await f();
+      const bad = !!(r && r.ok === false);
+      const text2 = bad ? String(r.log || r.error || label + " failed") : resultText(r, label);
+      setMsg({ text: text2, bad });
+      notify("GFG Extreme \xB7 " + label + (bad ? " failed" : ""), text2.slice(0, 160));
+    } catch (e) {
+      const text2 = String(e && e.message || e);
+      setMsg({ text: text2, bad: true });
+      notify("GFG Extreme \xB7 " + label + " failed", text2.slice(0, 160));
+    }
+    setBusy(false);
+  });
+  const tiles = (a, b) => h(
+    "div",
+    { className: "steps" },
+    h("div", { className: "st " + a }, h("b", null, "1"), "Install"),
+    h("div", { className: "st " + b }, h("b", null, "2"), "Reboot"),
+    h("div", { className: "st" }, h("b", null, "3"), "Play")
+  );
+  const install = h(Focusable, { className: "btn red", onClick: () => !busy && go("Install", rpc.install, "Installing the engine") }, busy ? "Installing\u2026" : st === "failed" ? "Try again" : g.update ? "Update engine" : "Install engine");
+  let head, text, body;
+  if (st === "reboot") {
+    head = "Reboot to start the engine";
+    text = "Installed. Gamescope KEDAVRA starts with the next boot; until then the Deck runs stock Gamescope.";
+    body = [
+      tiles("done", "on"),
+      h(Focusable, { key: "r", className: "btn red", onClick: () => go("Reboot", rpc.reboot, "Rebooting the Deck") }, "Reboot now"),
+      h("div", { key: "s", className: "small" }, "After the reboot open GFG Extreme again: all tabs unlock.")
+    ];
+  } else if (st === "failed") {
+    head = "The engine could not be installed";
+    text = "The panel stays locked so nothing runs half installed.";
+    body = [
+      tiles("on", ""),
+      h(
+        "div",
+        { key: "b", className: "btns", style: { marginTop: 0 } },
+        install,
+        h(Focusable, { className: "btn", onClick: () => go("Report", rpc.report, "Saving the report") }, "Save report")
+      ),
+      h("div", { key: "e", className: "note bad" }, g.error || "Install failed.")
+    ];
+  } else {
+    head = g.update ? "Update the KEDAVRA engine" : "Install the KEDAVRA engine";
+    text = g.update ? "This GFG Extreme carries a newer engine. Install it, then reboot." : "GFG Extreme generates frames inside its own Gamescope. Install it first: nothing in SteamOS is overwritten, and Remove in Setup brings stock Gamescope back.";
+    body = [tiles("on", ""), install, h("div", { key: "s", className: "small" }, "The panel opens after the engine is installed and the Deck has rebooted.")];
+  }
+  return h(
+    "div",
+    { className: "card hero col gate" },
+    h("img", { className: "wolf", src: LOGO }),
+    h("div", { className: "gh" }, head),
+    h("div", { className: "gp" }, text),
+    body,
+    msg.text && st !== "failed" ? h("div", { className: "note" + (msg.bad ? " bad" : "") }, msg.text) : null,
+    h("div", { className: "small" }, "GFG Extreme " + version)
+  );
+}
 function Content() {
   const [s, setS] = useState(null);
   const [cat, setCat] = useState(null);
@@ -658,11 +738,13 @@ function Content() {
   const step = (d) => setTab((t) => (t + d + TABS.length) % TABS.length);
   const GB = window.DFL && window.DFL.GamepadButton || {};
   const onButtonDown = (e) => {
+    if (s && s.gate && s.gate.state && s.gate.state !== "ready") return;
     const b = e && e.detail && e.detail.button;
     if (b === (GB.BUMPER_LEFT ?? 5)) step(-1);
     else if (b === (GB.BUMPER_RIGHT ?? 6)) step(1);
   };
-  const body = !s ? h("div", { className: "sub" }, "Loading\u2026") : h([Dash, Graphics, Engine, Setup][tab], { s, set, cat });
+  const gated = !!(s && s.gate && s.gate.state && s.gate.state !== "ready");
+  const body = !s ? h("div", { className: "sub" }, "Loading\u2026") : gated ? h(Gate, { g: s.gate, set, version: s.version }) : h([Dash, Graphics, Engine, Setup][tab], { s, set, cat });
   return h(
     Focusable,
     { className: "gfg", onButtonDown },
@@ -673,7 +755,7 @@ function Content() {
       h("div", { className: "brand" }, h("img", { src: LOGO }), "GFG \xB7", h("b", null, "EXTREME")),
       h("div", { className: "chip" }, h("i"), s && s.device || "Steam Deck")
     ),
-    h(
+    gated ? null : h(
       "div",
       { className: "tabs" },
       h(Focusable, { className: "bump", onClick: () => step(-1) }, "L1"),

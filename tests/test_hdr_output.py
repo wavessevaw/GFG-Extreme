@@ -32,6 +32,30 @@ class HdrOutputTest(unittest.TestCase):
         rig.service.stop()
         self.assertEqual(rig.engine.vars.get("hdr_enabled"), "1")
 
+    def test_real_control_lets_hdr_enabled_through(self):
+        # 3.0.10 on a Deck: "unknown convar hdr_enabled" every second, the switch never worked.
+        import subprocess
+        from gfg_plugin.kedavra.ctl import Control
+        calls = []
+        run = lambda args, **kw: (calls.append(args[1:]), subprocess.CompletedProcess(args, 0, "", ""))[1]  # noqa: E731
+        Control("/tmp", "/tmp", runner=run).set_var("hdr_enabled", 0)
+        self.assertEqual(calls, [["hdr_enabled", "0"]])
+
+    def test_a_failing_switch_is_retried_every_10_s_and_journalled_once(self):
+        rig = make_rig(VGame("g", 55.0))
+        tries = []
+
+        def broken(n, v):
+            if n == "hdr_enabled":
+                tries.append(v)
+                raise RuntimeError("gamescopectl failed")
+        rig.engine.set_var = broken
+        rig.settings.data["engine"]["hdr_output"] = False
+        play(rig, 60)
+        self.assertLessEqual(len(tries), 7)
+        fails = [e for e in rig.log if e.get("kind") == "hdr-output-failed"]
+        self.assertEqual(len(fails), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

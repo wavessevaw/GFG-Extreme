@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -29,11 +30,16 @@ def _read_int(path: Path) -> Optional[int]:
         return None
 
 
+SETTLE_TRIES = 10
+SETTLE_STEP_S = 0.05
+
+
 class CpuFreqActuator:
     def __init__(self, *, root: Path = Path("/sys/devices/system/cpu/cpufreq"),
                  helper: Callable[[], Any] = privileged_writer, access: Any = os.access,
-                 marker: Optional[Path] = None) -> None:
+                 marker: Optional[Path] = None, sleep: Callable[[float], None] = time.sleep) -> None:
         self.root = Path(root)
+        self._sleep = sleep
         self._helper = helper
         self._access = access
         self.marker = marker
@@ -214,6 +220,14 @@ class CpuFreqActuator:
             except OSError as error:
                 self.error = str(error)
             read = _read_int(p)
+            if read != value and helper is None:
+                # Deck report 3.0.6: the kernel applied the cap a moment after the write (every
+                # Power Split step failed, then its value turned up as an "outside change").
+                for _ in range(SETTLE_TRIES):
+                    self._sleep(SETTLE_STEP_S)
+                    read = _read_int(p)
+                    if read == value:
+                        break
             if read is not None:
                 self.expected[p] = read           # the driver may clamp; what it reads is ours
             if read != value:
