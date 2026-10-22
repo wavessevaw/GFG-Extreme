@@ -11,8 +11,8 @@ const img = path.join(root, "docs/img");
 const app = await build({ entryPoints: [path.join(root, "frontend/src/app.js")], bundle: true, format: "iife", globalName: "GFGPlugin", write: false, target: "es2020" });
 const rb = await build({ stdin: { contents: 'import * as React from "react"; import { createRoot } from "react-dom/client"; window.React = React; window.__createRoot = createRoot;', resolveDir: root }, bundle: true, format: "iife", write: false, define: { "process.env.NODE_ENV": '"production"' } });
 const settings = (objective) => ({ profiles: { default: { name: "Default", fg: "auto", base_fps: 45, objective, filters: { effects: ["vibrance"], sharpen: "cas", sharpness: 0.5, denoise: 0.17, aa: "none" } } },
-  hud: { enabled: true, position: "top-right", detail: "standard" }, autopilot: { preference: "auto" }, power: { enabled: true, split: true, gpu_clock: true }, engine: { hdr: true }, telemetry: { level: "standard" } });
-const state = ({ objective = "autopilot", live = "balanced", real = 30, mult = 3, tdp = 9.5 } = {}) => ({ version: "3.0.0", codename: "Independence", device: "Steam Deck OLED", settings: settings(objective),
+  hud: { enabled: true, position: "top-right", detail: "standard" }, autopilot: { preference: "auto" }, power: { enabled: true, split: true, gpu_clock: true }, engine: { hdr: true, hdr_output: true }, telemetry: { level: "standard" } });
+const state = ({ objective = "autopilot", live = "balanced", real = 30, mult = 3, tdp = 9.5 } = {}) => ({ version: "3.0.8", codename: "", device: "Steam Deck OLED", settings: settings(objective),
   profiles: { active: "default", game_key: "app:1245620", names: { default: "Default" } }, migration: {}, coexist: { standalone: false }, capture: {},
   live: { game: true, app: 1245620, refresh: 90, objective: live, live: { fps: 90, real, pace: 0.998 },
     pilot: { phase: "locked", point: real, reason: `point ${real} holds: locked` }, policy: { state: "confirmed", epoch: 412 },
@@ -25,7 +25,7 @@ const mock = `try { localStorage.length; } catch (e) { const m = {}; Object.defi
 window.SP_REACT = React; window.DFL = { staticClasses: { Title: "t" } }; window.appStore = { GetAppOverviewByAppID: () => ({ display_name: "Elden Ring" }) };
 window.__state = null; const __cat = ${JSON.stringify(catalog)};
 var callable = (n) => async (...a) => ({ get_state: () => window.__state, get_catalog: () => __cat, diagnose: () => ({ checks: [{ key: "a", ok: true, text: "Gamescope KEDAVRA 3.0.0 installed" }, { key: "b", ok: true, text: "Running after reboot (confirmed)" }, { key: "c", ok: true, text: "Libraries found on this SteamOS" }] }) }[n] || (() => ({})))(...a);
-var definePlugin = (f) => f;`;
+var definePlugin = (f) => f; var toaster = { toast: () => {} };`;
 const b = await chromium.launch({ args: ["--no-sandbox"], ...(process.env.GFG_CHROMIUM ? { executablePath: process.env.GFG_CHROMIUM } : {}) });
 const page = await b.newPage({ viewport: { width: 330, height: 300 }, deviceScaleFactor: 2 });
 const errors = []; page.on("pageerror", (e) => errors.push(String(e)));
@@ -66,7 +66,7 @@ await card("card-modes.png", [
   [await shot(state({ objective: "battery", live: "battery", real: 30, mult: 3, tdp: 8 }), { sel: ".hero" }), "BATTERY"],
   [await shot(state({ objective: "balanced", live: "balanced", real: 45, mult: 2, tdp: 10 }), { sel: ".hero" }), "BALANCED"],
   [await shot(state({ objective: "quality", live: "quality", real: 45, mult: 2, tdp: 12 }), { sel: ".hero" }), "QUALITY"],
-  [await shot(state({ objective: "autopilot", live: "battery", real: 24, mult: 3.75, tdp: 7 }), { sel: ".hero" }), "<b>AUTOPILOT</b> · X3.75"]], 310);
+  [await shot(state({ objective: "autopilot", live: "autopilot", real: 35, mult: 2.57, tdp: 11 }), { sel: ".hero" }), "<b>AUTOPILOT</b> · BASE 35"]], 310);
 await card("card-ring-sizes.png", [
   [await shot(base, { layout: "side", sel: ".hero" }), "SIDE"],
   [await shot(base, { layout: "classic", sel: ".hero" }), "CLASSIC"],
