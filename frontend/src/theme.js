@@ -36,6 +36,32 @@ export const css = `
 .gfg .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:6px}
 .gfg .stat{background:linear-gradient(180deg,#222228,var(--s2));border-radius:10px;padding:6px 2px;text-align:center}
 .gfg .stat b{display:block;font-size:14px;font-variant-numeric:tabular-nums}.gfg .stat span{font-size:9px;color:var(--tx3);font-weight:700;letter-spacing:.08em}
+.gfg .minis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px 4px;background:linear-gradient(160deg,#18161a 0%,var(--s1) 55%,#121214 100%);border:1px solid var(--line);border-radius:16px;padding:10px 4px 8px;margin-bottom:10px}
+.gfg .mini{display:flex;flex-direction:column;align-items:center}
+.gfg .mring{position:relative;width:62px;height:62px}.gfg .mring svg{position:absolute;inset:0;transform:rotate(-90deg);overflow:visible}
+.gfg .mring .mg{transition:stroke-dashoffset .6s,stroke .6s}
+.gfg .mn{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1}
+.gfg .mn b{font-weight:800;font-variant-numeric:tabular-nums}.gfg .mn i{font-style:normal;font-size:8px;font-weight:700;color:var(--tx3);margin-top:2px;letter-spacing:.04em}
+.gfg .mini>span{font-size:8.5px;font-weight:800;letter-spacing:.08em;color:var(--tx3);margin-top:4px}
+.gfg .fgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.gfg .ftile{display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 2px 7px;border-radius:12px;border:1px solid transparent;background:var(--s2)}
+.gfg .ftile .sw{position:relative;width:38px;height:38px;border-radius:11px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);overflow:hidden}
+.gfg .ftile .slash{position:absolute;left:50%;top:-4px;bottom:-4px;width:2px;background:var(--tx3);transform:rotate(45deg)}
+.gfg .ftile .fl{font-size:10.5px;font-weight:700;color:var(--tx2);white-space:nowrap}
+.gfg .ftile.on{border-color:var(--red);background:var(--redbg);box-shadow:0 0 14px rgba(251,13,0,.22)}.gfg .ftile.on .fl{color:var(--tx)}
+.gfg .fmore{margin-top:10px;padding:9px 10px;border-radius:11px;background:var(--s2);font-size:11.5px;color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gfg .egrid{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+.gfg .echip{display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:11px;background:var(--s2);border:1px solid var(--line);min-width:0}
+.gfg .echip .en{font-size:12px;font-weight:600;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gfg .echip.on{border-color:rgba(251,13,0,.6);background:var(--redbg)}.gfg .echip.on .en{color:var(--tx)}
+.gfg .eord{width:20px;height:20px;border-radius:6px;background:var(--s3);color:var(--tx3);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex:none}
+.gfg .eord.on{background:var(--red);color:#fff}
+.gfg .t2 b{display:block;font-size:12.5px;font-weight:600}.gfg .t2 span{font-size:10px;color:var(--tx3)}
+.gfg .tile.mode{display:flex;align-items:center;gap:9px;position:relative;overflow:hidden}
+.gfg .mico{width:34px;height:34px;flex:none;border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--tx2);
+ background:linear-gradient(160deg,#33333b,#1c1c21);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 0 0 1px var(--line)}
+.gfg .tile.mode{background:linear-gradient(160deg,#222228 0%,var(--s2) 60%,#18181c 100%)}
+.gfg .tile.mode.on .mico{color:#fff;background:linear-gradient(160deg,#ff2d1a,#b30800);box-shadow:0 0 12px rgba(251,13,0,.5)}
 .gfg .grid2{display:grid;grid-template-columns:1fr 1fr;gap:7px}
 .gfg .tile{background:var(--s2);border:1px solid var(--line);border-radius:12px;padding:9px 10px;height:100%}
 .gfg .tile b{display:block;font-size:13px}.gfg .tile span{font-size:10.5px;color:var(--tx2)}
@@ -69,10 +95,10 @@ export const css = `
 /* Gamepad focus: Steam marks the element under the stick / D-pad with .gpfocus, but our own
    backgrounds hide its ring. As in 2.x, the focused control turns white; a selected one gets a white ring. */
 .gfg .gpfocus,.gfg :focus-visible{outline:none}
-.gfg .tab.gpfocus,.gfg .seg .o.gpfocus,.gfg .pre.gpfocus,.gfg .ec.gpfocus,.gfg .btn.gpfocus,.gfg .step .b.gpfocus,.gfg .bump.gpfocus,.gfg .gpfocus>.tile,
+.gfg .tab.gpfocus,.gfg .seg .o.gpfocus,.gfg .pre.gpfocus,.gfg .ec.gpfocus,.gfg .ftile.gpfocus,.gfg .echip.gpfocus,.gfg .btn.gpfocus,.gfg .step .b.gpfocus,.gfg .bump.gpfocus,.gfg .gpfocus>.tile,
 .gfg .tab:focus-visible,.gfg .seg .o:focus-visible,.gfg .pre:focus-visible,.gfg .ec:focus-visible,.gfg .btn:focus-visible,.gfg .step .b:focus-visible,.gfg :focus-visible>.tile{background:linear-gradient(180deg,#fff 0%,#dcdce2 100%)!important;color:#0a0a0c!important;border-color:#fff!important;box-shadow:0 0 16px rgba(255,255,255,.35)!important}
 .gfg .gpfocus>.tile span,.gfg :focus-visible>.tile span{color:#3a3a44!important}
-.gfg .tab.on.gpfocus,.gfg .seg .o.on.gpfocus,.gfg .pre.on.gpfocus,.gfg .ec.on.gpfocus,.gfg .btn.red.gpfocus,.gfg .gpfocus>.tile.on,
+.gfg .tab.on.gpfocus,.gfg .seg .o.on.gpfocus,.gfg .pre.on.gpfocus,.gfg .ec.on.gpfocus,.gfg .ftile.on.gpfocus,.gfg .echip.on.gpfocus,.gfg .btn.red.gpfocus,.gfg .gpfocus>.tile.on,
 .gfg .tab.on:focus-visible,.gfg .seg .o.on:focus-visible,.gfg .pre.on:focus-visible,.gfg .ec.on:focus-visible,.gfg .btn.red:focus-visible,.gfg :focus-visible>.tile.on{background:linear-gradient(180deg,#ff2d1a,#d10a00)!important;color:#fff!important;box-shadow:0 0 0 2px #fff,0 0 18px rgba(251,13,0,.6)!important}
 .gfg .gpfocus>.tile.on span,.gfg :focus-visible>.tile.on span{color:#ffd9d4!important}
 .gfg .tog.gpfocus,.gfg .tog:focus-visible,.gfg .herotap.gpfocus,.gfg .herotap:focus-visible{box-shadow:0 0 0 2px #fff,0 0 14px rgba(255,255,255,.4)!important}

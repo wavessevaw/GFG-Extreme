@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, Optional
 from . import filters
 from .autopilot import Autopilot
 from .governor import PowerGovernor
+from .lease import ExperimentLease
 from .kedavra import hud as hudmod
 from .pilot import PointPilot
 from .policy import Policy, PolicyCoordinator
@@ -46,6 +47,7 @@ class Service:
         self.governor = PowerGovernor(actuator, model, clock=clock, journal=self._j("governor"))
         self.split = split
         self.gclock = gclock
+        self.lease = ExperimentLease(clock=clock, journal=self._j("lease"))
         self.rates = hudmod.Rates()
         self.stats = SessionStats()
         self.last_game_at = -1e9
@@ -147,6 +149,9 @@ class Service:
             sample["ring_miss"] = self._delta(st, "ring_miss")
             sample["over_budget"] = self._delta(st, "over_budget")
         g = gov.tick(sample)
+        lease = self.lease.observe({"tdp": bool(g.get("probing")) and game,
+                                    "cpu": bool(self.split and self.split.settling()),
+                                    "gpu": bool(self.gclock and self.gclock.settling())})
 
         hours = self._hours_left(power)
         hud_cfg = data["hud"]
@@ -169,6 +174,7 @@ class Service:
             "fg": profile["fg"], "objective": objective, "objective_setting": profile["objective"],
             "autopilot_reason": auto_reason, "refresh": refresh, "engine": self._engine_view(st),
             "live": live, "pilot": req, "policy": coord, "governor": g, "split": split_status, "gpu_clock": gclock_status,
+            "lease": lease,
             "sensors": sensors, "power": power,
             "filters": filters.summary(profile["filters"]),
         }

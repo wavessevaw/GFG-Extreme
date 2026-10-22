@@ -31,6 +31,7 @@ MIN_SAVING_W = 0.3
 HOLD_RATIO = 0.98        # real frames must hold the point within 2 %
 GUARD_RATIO = 0.93       # under this, the clock goes back up at once
 MAX_STEPS = 6
+COVERAGE = 0.6           # share of the verify window's seconds with a reading (audit 3.0.0)
 
 
 class GpuClockControl:
@@ -159,6 +160,15 @@ class GpuClockControl:
 
     def _judge(self, now: float, point: float) -> None:
         assert self.baseline is not None
+        if min(len(self.reals), len(self.draws)) < COVERAGE * VERIFY_S:
+            # Too few readings to prove anything: the step is not kept on a guess.
+            r = self.gpu.raise_ceiling()
+            self._note("gpu-clock-rejected", reason="no-data", reals=len(self.reals), draws=len(self.draws),
+                       back_to=self.gpu.applied_max, applied=r.get("applied"))
+            self._changed()
+            self.blocked_until = now + REJECT_S
+            self._to("hold")
+            return
         real = statistics.median(self.reals) if self.reals else 0.0
         draw = statistics.median(self.draws) if self.draws else self.baseline["draw"]
         held = point > 0 and real >= HOLD_RATIO * point

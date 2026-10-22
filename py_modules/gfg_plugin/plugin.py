@@ -59,7 +59,7 @@ class Plugin:
         self.inst = Installer(PLUGIN_DIR, self.home, uid=uid)
         self.coexist = Coexistence(self.home, owner=self.owner, version=paths.VERSION)
         manager = SteamOSManagerTdp(home=str(self.home))
-        actuator = SteamDeckPowerActuator(manager=manager)
+        actuator = SteamDeckPowerActuator(manager=manager, marker=self.runtime / "tdp-cap.json")
         actuator.journal = lambda kind, **f: self.log.record("power", kind, **f)
         model = GameModelStore(self.data / "game-models.json", owner=self.owner)
         cpu = CpuFreqActuator(marker=self.runtime / "cpu-cap.json")

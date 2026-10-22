@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-VERSION = "3.0.5"
+VERSION = "3.0.6"
 CODENAME = "Independence"
 
 # 3.0 data (settings, learned power points, sessions, logs). Owned by the desktop user.

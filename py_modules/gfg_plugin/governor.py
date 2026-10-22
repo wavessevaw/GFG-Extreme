@@ -50,6 +50,9 @@ SHORT_RATIO = {"autopilot": 0.90}         # fast guard: under this share of the 
 # Autopilot: a short sharp drop is no reason for watts (user, 3.0.4). The fast guard needs the
 # drop to last: 5 of the last 6 seconds short; windows judge the median, not the mean.
 SUSTAIN_S = 6
+# 2.1.6's p5 rule: a window steps down only while its low end (p5 of the 1 s readings) stays near
+# the cap. A dip that deep is no reason for watts, but no reason to take more away either.
+P5_RATIO = {"autopilot": 0.85, "battery": 0.85}   # default 0.90
 DRAW_MARGIN_W = 1.5          # limit kept above the measured draw when jumping down to it
 DRAW_JUMP_W = 3.0            # draw this far under the limit: the limit is not what holds the game
 DRAW_BINDING_W = 1.2         # draw this close to the limit: the limit is what holds the game
@@ -86,7 +89,8 @@ def healthy(window: List[Dict[str, Any]], cap: int, temp_ok: bool, hold: float =
     pace = sum(paces) / len(paces) if paces else None
     over = sum(s.get("over_budget") or 0.0 for s in window) / n
     miss = sum(s.get("ring_miss") or 0.0 for s in window)
-    out = {"real": round(real, 2), "low": round(min(reals), 2), "pace": None if pace is None else round(pace, 4),
+    p5 = sorted(reals)[int(0.05 * len(reals))]
+    out = {"real": round(real, 2), "low": round(min(reals), 2), "p5": round(p5, 2), "pace": None if pace is None else round(pace, 4),
            "over_budget": round(over, 2), "ring_miss": miss}
     if real < hold * cap:
         return {**out, "ok": False, "reason": "below-cap"}
@@ -126,6 +130,7 @@ class PowerGovernor:
         self.last_good: Dict[int, float] = {}   # cap -> lowest TDP that held a whole window
         self.lowest_ok: Optional[float] = None
         self.held_at_tdp = False                # a window held since the last TDP write
+        self.dips = False                       # the last held window dipped under the p5 line
         self.probe_from: Optional[float] = None  # the level a step down came from (until it holds)
         self.hold = False
         self.window: List[Dict[str, Any]] = []
@@ -455,6 +460,13 @@ class PowerGovernor:
             self.learned = bool(self.model.record(f"{self.key}|cap{self.cap}", "tdp", self.tdp))
         if self.objective == "quality" or experiment:
             return
+        dips = verdict.get("p5", self.cap) < P5_RATIO.get(self.objective, 0.90) * self.cap
+        if dips != self.dips:
+            self.dips = dips
+            if dips:
+                self._note("governor-dips", tdp_w=self.tdp, p5=verdict.get("p5"), cap=self.cap)
+        if dips:
+            return
         floor = self._floor(self.cap) or self._limits()["low"] or MIN_TDP_W
         draw = verdict.get("draw")
         step = FAST_STEP_W if self.fast else STEP_DOWN_W
@@ -498,6 +510,7 @@ class PowerGovernor:
             "thermal_ceiling_w": self.thermal_ceiling,
             "floor_fail_w": self.floor_fail.get(self.cap),
             "probing": self.probe_from is not None,
+            "dips": self.dips,
             "hold": self.hold,
             "at_ceiling": self.at_ceiling(),
             "settled": self.settled(),
