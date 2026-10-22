@@ -4,7 +4,7 @@
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="144">
 
-# GFG EXTREME 3.1
+# GFG EXTREME 3.2
 
 **MOST POWERFUL DECKY PLUGIN EVER.**
 
@@ -116,6 +116,8 @@ Lossless Scaling, MAKO и сторонние слои генерации не н
 GSF Kedavra — собственный графический движок GFG Extreme с интеграцией непосредственно в Gamescope.
 
 Он объединяет получение оригинальных кадров, многомасштабную оценку движения, реконструкцию промежуточных изображений и управление их предъявлением.
+
+С 3.2 (GSF Kedavra 1.4, «Silk») подача движется восьмыми долями обновления экрана: после опоздавшего кадра игры картинка ненадолго идёт чуть быстрее вместо пропуска кадра, а когда следующий кадр опаздывает, плавно замедляется вместо остановки. Та же задержка, та же работа GPU.
 
 **Processing pipeline**
 
@@ -549,7 +551,7 @@ GFG Extreme 3 использует собственное ядро кадров�
 * Platform: Steam Deck / SteamOS
 * License: GPL-3.0-or-later, с соблюдением лицензий используемых компонентов
 
-README описывает GFG Extreme 3.1. Возможности становятся частью подтверждённого релиза только после испытаний на реальном оборудовании.
+README описывает GFG Extreme 3.2. Возможности становятся частью подтверждённого релиза только после испытаний на реальном оборудовании.
 
 ---
 
@@ -557,6 +559,6 @@ README описывает GFG Extreme 3.1. Возможности становя
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="56">
 
-<sub>GFG EXTREME 3.1 · POWERED BY GSF KEDAVRA · Сделано для Steam Deck · GPL-3.0-or-later</sub>
+<sub>GFG EXTREME 3.2 · POWERED BY GSF KEDAVRA · Сделано для Steam Deck · GPL-3.0-or-later</sub>
 
 </div>
