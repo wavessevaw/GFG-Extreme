@@ -59,6 +59,7 @@ class Service:
         self.snapshot: Dict[str, Any] = {}
         self.ticks = 0
         self.hdr_off_sent = -1e9   # HDR output switched off: when hdr_enabled 0 was last sent
+        self.hdr_error = ""        # the last HDR switch failure, journalled once
 
     def _stable_point(self, refresh: int) -> Optional[int]:
         """The point the Governor locked as stable for this game last time (None: unknown)."""
@@ -75,15 +76,20 @@ class Service:
         if not fresh:
             return
         try:
+            # The time is taken before the call: a failing gamescopectl is retried every 10 s,
+            # not every tick (3.0.10 journalled 5000 failures in an hour).
             if not on and now - self.hdr_off_sent >= HDR_RESEND_S:
-                self.ctl.set_var("hdr_enabled", 0)
                 self.hdr_off_sent = now
+                self.ctl.set_var("hdr_enabled", 0)
+                self.hdr_error = ""
             elif on and self.hdr_off_sent > -1e9:
-                self.ctl.set_var("hdr_enabled", 1)
                 self.hdr_off_sent = -1e9
+                self.ctl.set_var("hdr_enabled", 1)
+                self.hdr_error = ""
         except Exception as exc:
-            if self.journal:
+            if self.journal and str(exc) != self.hdr_error:
                 self.journal("service", "hdr-output-failed", error=str(exc))
+            self.hdr_error = str(exc)
 
     def _j(self, source: str) -> Optional[Callable[..., None]]:
         if not self.journal:

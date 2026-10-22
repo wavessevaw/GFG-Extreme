@@ -3,7 +3,7 @@
 
 The engine runs inside the patched Gamescope. This module only:
   * sets Gamescope convars with gamescopectl (kfg_multiplier, kfg_base_fps, kfg_post, kfg_hud,
-    kfg_policy, kfg_trace);
+    kfg_policy, kfg_trace, and Gamescope's own hdr_enabled);
   * reads the status file the engine rewrites every second, and reports the
     engine as running only while that file is fresh (never from settings alone);
   * starts and stops KMS-flip trace captures and analyses them with kfg_pacing.
@@ -22,7 +22,8 @@ STATUS_STALE_S = 3.0
 
 
 class Control:
-    VARS = ("kfg_multiplier", "kfg_base_fps", "kfg_auto_floor", "kfg_post", "kfg_hud", "kfg_policy", "kfg_trace", "kfg_hdr")
+    VARS = ("kfg_multiplier", "kfg_base_fps", "kfg_auto_floor", "kfg_post", "kfg_hud", "kfg_policy", "kfg_trace", "kfg_hdr",
+            "hdr_enabled")   # stock Gamescope convar: HDR output on/off (Graphics -> HDR output)
 
     def __init__(self, home, plugin_dir, uid=1000, runner=subprocess.run, clock=time.time, sleep=time.sleep,
                  data=None):
