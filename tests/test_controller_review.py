@@ -162,7 +162,9 @@ class ControllerReviewTest(unittest.TestCase):
         for temp in (84.9, 85.1, 84.9, 85.1):
             modes.append(a.decide('smoothness', {}, temp)['objective'])
             self.clock.t += 1
-        self.assertEqual(modes, ['quality', 'balanced', 'balanced', 'balanced'])
+        # 3.0.4: Autopilot is one adaptive mode; heat changes its reason, not its mode.
+        self.assertEqual(modes, ['autopilot'] * 4)
+        self.assertTrue(a.hot)
 
     def test_expensive_filter_change_invalidates_epoch(self):
         c = PolicyCoordinator(None, clock=self.clock)

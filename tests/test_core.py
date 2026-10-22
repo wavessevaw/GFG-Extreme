@@ -279,29 +279,46 @@ class GovernorTest(unittest.TestCase):
 
 
 class AutopilotTest(unittest.TestCase):
-    def test_choices_and_hysteresis(self):
+    def test_one_adaptive_mode(self):
         clock = Clock()
         a = autopilot.Autopilot(clock=clock)
-        self.assertEqual(a.decide("auto", {"external_power": True}, 60)["objective"], "quality")
-        clock.t += 61
-        self.assertEqual(a.decide("auto", {"external_power": True}, 88)["objective"], "balanced")
-        clock.t += 61
-        self.assertEqual(a.decide("auto", {"external_power": False, "percent": 19}, 60)["objective"], "battery")
-        clock.t += 61
-        self.assertEqual(a.decide("auto", {"external_power": False, "percent": 23}, 60)["objective"], "battery")
-        clock.t += 61
-        self.assertEqual(a.decide("auto", {"external_power": False, "percent": 26}, 60)["objective"], "balanced")
-        self.assertEqual(a.decide("smoothness", {"external_power": False, "percent": 10}, 60)["objective"], "quality")
+        for power in ({"external_power": True}, {"external_power": False, "percent": 60}):
+            self.assertEqual(a.decide("auto", power, 60)["objective"], "autopilot")
+        a.decide("auto", {"external_power": False, "percent": 19}, 60)
+        self.assertTrue(a.low_battery)
+        a.decide("auto", {"external_power": False, "percent": 23}, 60)
+        self.assertTrue(a.low_battery, "back only above 25 %")
+        a.decide("auto", {"external_power": False, "percent": 26}, 60)
+        self.assertFalse(a.low_battery)
 
     def test_heat_does_not_flap(self):
         clock = Clock()
         a = autopilot.Autopilot(clock=clock)
-        seen = []
         for temp in (84.9, 85.1, 84.9, 85.1, 84.0, 83.0):
-            seen.append(a.decide("smoothness", {"external_power": True}, temp)["objective"])
+            a.decide("auto", {"external_power": True}, temp)
             clock.t += 1
-        self.assertEqual(seen, ["quality"] + ["balanced"] * 5)
-        for _ in range(100):
+        self.assertTrue(a.hot)
+        for _ in range(40):
             clock.t += 1
-            out = a.decide("smoothness", {"external_power": True}, 75)
-        self.assertEqual(out["objective"], "quality", "cool for 30 s and past the dwell: Quality is back")
+            a.decide("auto", {"external_power": True}, 75)
+        self.assertFalse(a.hot, "cool for 30 s")
+
+    def test_governor_autopilot_starts_at_15_and_tolerates_small_dips(self):
+        clock = Clock()
+        act = FakeActuator()
+        act.tdp = act.initial = 20.0
+        g = PowerGovernor(act, None, clock=clock)
+        s = {"game": True, "key": "app:1|90", "objective": "autopilot", "cap": 40, "epoch": 1,
+             "real": 40.0, "pace": 1.0, "over_budget": 0.0, "ring_miss": 0.0, "temp_c": 70.0}
+        clock.t += 1
+        g.tick(s)
+        self.assertEqual(act.tdp, 15.0)
+        for _ in range(30):
+            clock.t += 1
+            g.tick({**s, "real": 37.0})   # 7.5 % short: tolerated, the TDP keeps going down
+        self.assertLess(act.tdp, 15.0)
+        low = act.tdp
+        for _ in range(4):
+            clock.t += 1
+            g.tick({**s, "real": 34.0})   # 15 % short: watts back
+        self.assertGreater(act.tdp, low)

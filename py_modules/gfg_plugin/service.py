@@ -89,8 +89,10 @@ class Service:
         objective = profile["objective"]
         auto_reason = ""
         if objective == "autopilot":
+            # Autopilot is its own adaptive mode (it does not switch between Battery, Balanced
+            # and Quality); this only tracks the battery and the reason shown in the panel.
             ap = self.autopilot.decide(data["autopilot"]["preference"], power, temp)
-            objective, auto_reason = ap["objective"], ap["reason"]
+            auto_reason = ap["reason"]
         refresh = round(1e9 / st["refresh_ns"]) if fresh and st.get("refresh_ns") else 90
 
         confirmed = self.coord.engine_runs(self.last_policy, st)
@@ -100,7 +102,8 @@ class Service:
             "refresh": refresh, "game": game, "app": self.app, "engine": st,
             "real": live.get("real"), "pace": live.get("pace"), "confirmed": confirmed,
             "gpu_busy": sensors.get("gpu_busy_pct"), "cpu_top": sensors.get("cpu_top_core_pct"),
-            "autopilot": profile["objective"] == "autopilot", "low_battery": self.autopilot.low_battery,
+            "autopilot": objective == "autopilot",
+            "low_battery": self.autopilot.low_battery or data["autopilot"]["preference"] == "battery",
             "tdp_w": gov.status().get("tdp_w"), "gov_settled": gov.settled(),
             "at_ceiling": gov.at_ceiling(), "settling": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
         })
@@ -137,7 +140,7 @@ class Service:
             "real": live.get("real"), "pace": live.get("pace"),
             "probe_active": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
             "over_budget": (rates or {}).get("over_budget", 0.0), "ring_miss": 0.0, "temp_c": temp,
-            "draw_w": gov.status().get("draw_w"), "autopilot": profile["objective"] == "autopilot",
+            "draw_w": gov.status().get("draw_w"),
             "experiment": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
         }
         if rates is not None and self.rates.prev is not None:

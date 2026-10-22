@@ -42,8 +42,11 @@ SETTLE_S = 2.0
 LEARN_AFTER_S = 60.0
 STEP_DOWN_W = 1.0
 FAST_STEP_W = 2.0
-AUTOPILOT_START_W = 10.0
-START_W = {"battery": 10.0, "balanced": 12.0}
+# Autopilot (user, 3.0.4): starts at 15 W and measures; tolerates 8-10 % dips of the game's
+# frame rate (watts come back only for a deeper fall); targets 12 W, ideally 9-10 W.
+START_W = {"battery": 10.0, "balanced": 12.0, "autopilot": 15.0}
+HOLD_RATIO = {"autopilot": 0.92}          # window mean vs cap that still holds (default 0.97)
+SHORT_RATIO = {"autopilot": 0.90}         # fast guard: last 3 s under this share -> watts back
 DRAW_MARGIN_W = 1.5          # limit kept above the measured draw when jumping down to it
 DRAW_JUMP_W = 3.0            # draw this far under the limit: the limit is not what holds the game
 DRAW_BINDING_W = 1.2         # draw this close to the limit: the limit is what holds the game
@@ -62,10 +65,10 @@ HOT_C = 90.0
 COOL_C = 85.0
 COOL_S = 30.0
 CRITICAL_C = 97.0
-OBJECTIVES = ("battery", "balanced", "quality")
+OBJECTIVES = ("battery", "balanced", "quality", "autopilot")
 
 
-def healthy(window: List[Dict[str, Any]], cap: int, temp_ok: bool) -> Dict[str, Any]:
+def healthy(window: List[Dict[str, Any]], cap: int, temp_ok: bool, hold: float = 0.97) -> Dict[str, Any]:
     """Verdict for one window of 1 s samples, with the reason a failed window failed. A missing
     pace is allowed (no generation running); a non-finite reading is broken telemetry."""
     n = len(window)
@@ -81,7 +84,7 @@ def healthy(window: List[Dict[str, Any]], cap: int, temp_ok: bool) -> Dict[str, 
     miss = sum(s.get("ring_miss") or 0.0 for s in window)
     out = {"real": round(real, 2), "low": round(min(reals), 2), "pace": None if pace is None else round(pace, 4),
            "over_budget": round(over, 2), "ring_miss": miss}
-    if real < 0.97 * cap:
+    if real < hold * cap:
         return {**out, "ok": False, "reason": "below-cap"}
     if pace is not None and pace < PACE_MIN:
         return {**out, "ok": False, "reason": "pace"}
@@ -103,7 +106,6 @@ class PowerGovernor:
         self.journal = journal
         self.enabled = True
         self.restore_pending = False
-        self.autopilot = False
         self._reset_session()
 
     def _reset_session(self) -> None:
@@ -198,9 +200,7 @@ class PowerGovernor:
             target, why = float(learned["tdp_w"]) + 1.0, "warm-start"
         elif (self.key, self.objective) not in self.started:
             # A fresh game starts low; later unknown points keep the level the session reached.
-            # Autopilot starts at its ideal power (9-10 W), the modes at their own levels.
-            start = AUTOPILOT_START_W if self.autopilot else START_W.get(self.objective, self.ceiling)
-            target, why = start, "start-level"
+            target, why = START_W.get(self.objective, self.ceiling), "start-level"
         else:
             return
         self.started.add((self.key, self.objective))
@@ -215,7 +215,7 @@ class PowerGovernor:
         f = self.floors.get(cap)
         if not f or self.clock() >= f[1]:
             return 0.0
-        return f[0] + (1.0 if self.objective == "battery" else 1.0 + BALANCED_MARGIN_W)
+        return f[0] + (1.0 + BALANCED_MARGIN_W if self.objective == "balanced" else 1.0)
 
     def _failed(self, cap: int, tdp: float) -> None:
         """A step to ``tdp`` did not hold: a floor that expires, longer when it repeats."""
@@ -259,7 +259,6 @@ class PowerGovernor:
         0 = none), hold_ceiling, epoch, real, pace, over_budget, ring_miss (per second), temp_c,
         draw_w, experiment (Power Split / GPU clock trying a step), game (bool)."""
         now = self.clock()
-        self.autopilot = bool(sample.get("autopilot"))
         if self.restore_pending:
             self.stop("retry-restore")
             if self.restore_pending:
@@ -338,7 +337,7 @@ class PowerGovernor:
         if now - self.window_start < (FAST_WINDOW_S if self.fast else WINDOW_S):
             return self.status()
         temp_ok = temp is None or temp < HOT_C
-        verdict = healthy(self.window, self.cap, temp_ok)
+        verdict = healthy(self.window, self.cap, temp_ok, HOLD_RATIO.get(self.objective, 0.97))
         if len(self.window) < COVERAGE * (now - self.window_start):
             verdict = {"ok": None, "reason": "no-data"}   # missed ticks: too few seconds were seen
         draws = [s["draw_w"] for s in self.window if isinstance(s.get("draw_w"), (int, float))]
@@ -391,7 +390,7 @@ class PowerGovernor:
         if self.tdp >= ceiling - 0.05 or now - self.fast_at < FAST_GAP_S:
             return False
         med = statistics.median(self.recent)  # type: ignore[arg-type]
-        if med >= FAST_SHORT_RATIO * self.cap or not self._binding(sample.get("draw_w")):
+        if med >= SHORT_RATIO.get(self.objective, FAST_SHORT_RATIO) * self.cap or not self._binding(sample.get("draw_w")):
             return False
         severe = med < SEVERE_RATIO * self.cap
         if self.probe_from is not None and now - self.changed_at < 30.0:

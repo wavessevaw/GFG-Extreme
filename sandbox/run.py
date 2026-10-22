@@ -235,7 +235,7 @@ def hot_deck() -> Dict[str, Any]:
     out = {"metrics": m}
     objectives = {r["objective"] for r in rig.timeline[200:]}
     check(out, "temperature stays below 95 C", m["temp_max"] < 95.0, f"max {m['temp_max']} C")
-    check(out, "Autopilot leaves Quality when hot", "balanced" in objectives, f"objectives {sorted(objectives)}")
+    check(out, "Autopilot stays one adaptive mode", objectives == {"autopilot"}, f"objectives {sorted(objectives)}")
     return out
 
 
@@ -314,7 +314,7 @@ def stale_status() -> Dict[str, Any]:
 
 @scenario
 def battery_drains_autopilot() -> Dict[str, Any]:
-    """Autopilot on battery from 23 %: Balanced, then Battery below 20 % (x3.75), once."""
+    """Autopilot on battery from 23 %: below 20 % it goes to x3.75, once, without changing mode."""
     rig = make_rig(VGame("g", 55.0), objective="autopilot", battery=23.0)
     rig.sensors.capacity_wh = 5.0  # drain fast
     play(rig, 1500)
@@ -322,21 +322,20 @@ def battery_drains_autopilot() -> Dict[str, Any]:
     objs = [r["objective"] for r in tl]
     switches = sum(1 for a, b in zip(objs, objs[1:]) if a != b)
     out = {"objective_switches": switches, "final": objs[-1], "battery_final": round(tl[-1]["battery"], 1)}
-    check(out, "switches to Battery below 20 %", objs[-1] == "battery")
-    check(out, "no flapping (<= 2 switches)", switches <= 2, f"{switches}")
+    check(out, "stays Autopilot", set(objs) == {"autopilot"}, f"{sorted(set(objs))}")
     check(out, "Battery point x3.75 (24)", tl[-1]["point"] == 24, f"{tl[-1]['point']}")
     return out
 
 
 @scenario
 def plug_in_charger() -> Dict[str, Any]:
-    """Autopilot on battery, then the charger: Quality, the TDP goes back to the player's."""
+    """Autopilot on battery, then the charger: still Autopilot, still within its power target."""
     rig = make_rig(VGame("g", 65.0), objective="autopilot", battery=60.0)
     play(rig, 400)
     play(rig, 300, {400: lambda r: setattr(r.sensors, "external_power", True)})
     out = {"objective": rig.timeline[-1]["objective"], "tdp": rig.timeline[-1]["tdp"]}
-    check(out, "Quality on external power", out["objective"] == "quality")
-    check(out, "TDP back at the player's 15 W", out["tdp"] == 15.0, f"{out['tdp']} W")
+    check(out, "Autopilot on external power", out["objective"] == "autopilot")
+    check(out, "TDP at most 12 W (target)", out["tdp"] <= 12.0, f"{out['tdp']} W")
     return out
 
 

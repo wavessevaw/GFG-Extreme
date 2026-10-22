@@ -49,6 +49,7 @@ HEADROOM_WAIT_S = 10.0
 HEADROOM_GPU_PCT = 92.0      # the GPU at the next point is estimated to stay under this
 HEADROOM_CPU_PCT = 85.0
 HOLD_RATIO = 0.95       # real fps vs cap over a guard window
+AUTOPILOT_HOLD_RATIO = 0.90  # Autopilot tolerates 8-10 % dips (user, 3.0.4)
 TRIAL_RATIO = 0.97
 PACE_MIN = 0.99
 # Autopilot's power target (user, 3.0.3): 12 W is good, 9-10 W ideal. The Governor may go higher
@@ -203,7 +204,8 @@ class PointPilot:
         real = statistics.fmean(reals)
         pace = statistics.fmean(paces) if paces else None
         self.window, self.window_start = [], now
-        ok = real >= HOLD_RATIO * cap and (pace is None or pace >= PACE_MIN)
+        hold = AUTOPILOT_HOLD_RATIO if ctx.get("objective") == "autopilot" else HOLD_RATIO
+        ok = real >= hold * cap and (pace is None or pace >= PACE_MIN)
         gpus = [x["gpu"] for x in self.window_done if isinstance(x.get("gpu"), (int, float))]
         cpus = [x["cpu"] for x in self.window_done if isinstance(x.get("cpu"), (int, float))]
         return {"ok": ok, "real": real, "median": statistics.median(reals), "pace": pace,
@@ -214,7 +216,8 @@ class PointPilot:
     def _auto(self, ctx: Dict[str, Any], steps: List[int], objective: str) -> Dict[str, Any]:
         now = self.clock()
         floor = self._battery_point(ctx, steps)
-        top = floor if objective == "battery" else steps[-1]
+        low = objective == "battery" or bool(ctx.get("autopilot") and ctx.get("low_battery"))
+        top = floor if low else steps[-1]
         if not ctx.get("game"):
             self.phase = "idle"
             return self._request(1, 0, steps[0], False)
