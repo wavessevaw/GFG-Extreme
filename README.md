@@ -356,6 +356,13 @@ Kedavra carries out the agreed frame generation policy, and Governor weighs the 
 
 The same Output FPS can come from different pairs of real frame rate and multiplier; the choice weighs their real cost and quality.
 
+Every game is remembered: the point it held, its class and the medians of its last sessions. A known game starts on its point, without measuring at full power again.
+
+* **Light games** (DuckTales, Terraria, Hades, Celeste and other titles on the built-in list, or measured as light on your Deck): 4-7 W and never above ×2 in Balanced, Quality and Autopilot.
+* **Heavy games** (The Witcher 3, Elden Ring, Cyberpunk 2077, Death Stranding and others): the session starts at 15 W.
+* **Dock (TV)**: an external gamepad needs low latency, so no mode goes above ×3 there. A higher TDP is fine on the TV; the temperature is still watched.
+* **Steam Deck LCD**: 60 Hz, or the panel's own rate when it is unlocked (for example 75 Hz).
+
 ### WE CARE ABOUT YOUR STEAM DECK'S HEALTH.
 
 SteamOS lets the APU run at 85-89 °C for hours. We don't agree with that, and we want your Deck to last.

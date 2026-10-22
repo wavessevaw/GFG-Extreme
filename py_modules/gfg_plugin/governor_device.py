@@ -3,7 +3,7 @@
 Targets (output FPS):
 
 * Steam Deck OLED (DMI ``Galileo``), handheld ........ 90
-* Steam Deck LCD  (DMI ``Jupiter``), handheld ........ 60 (panel is 60 Hz max)
+* Steam Deck LCD  (DMI ``Jupiter``), handheld ........ 60 (an unlocked panel: its running 61-80 Hz)
 * Any device docked to an external display ........... 60
 
 Unknown hardware falls back to the internal panel's highest valid refresh rate.  60 FPS is a
@@ -21,6 +21,7 @@ _MODELS = {"galileo": "oled", "jupiter": "lcd"}
 TARGET_OLED = 90
 TARGET_LCD = 60
 TARGET_DOCK = 60
+LCD_UNLOCKED_MAX_HZ = 80
 
 
 def detect_model(dmi_root: Path = DMI_ROOT) -> Dict[str, str]:
@@ -42,6 +43,12 @@ def target_for(
 ) -> Dict[str, Any]:
     """Pick the output-FPS target and say why (shown verbatim in the UI)."""
     policy = _device_target(model, external=external, valid_rates=valid_rates)
+    if (not external and model == "lcd" and isinstance(current_hz, (int, float)) and not isinstance(current_hz, bool)
+            and TARGET_LCD < current_hz <= LCD_UNLOCKED_MAX_HZ):
+        # Some LCD Decks run their panel unlocked above 60 Hz (often 70-75): the running refresh
+        # is the target then (user, 3.1.0).
+        hz = int(round(current_hz))
+        return {"target": hz, "mode": "lcd", "reason": f"steam-deck-lcd-unlocked-{hz}hz"}
     if (not external and policy["target"] < TARGET_OLED
             and isinstance(current_hz, (int, float)) and not isinstance(current_hz, bool)
             and 20 <= current_hz < policy["target"]):
