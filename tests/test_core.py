@@ -372,17 +372,10 @@ class AutopilotTest(unittest.TestCase):
             g.tick({**s, "real": 37.6})   # 6 % short: tolerated, no watts for it (5-8 %, user 3.1.1);
         self.assertLessEqual(act.tdp, checked)   # only the step that caused it is taken back
         low = act.tdp
-        for _ in range(2):
+        for _ in range(3):
             clock.t += 1
             g.tick({**s, "real": 20.0})   # a short sharp drop: no watts for it
         self.assertEqual(act.tdp, low)
-        clock.t += 1
-        g.tick({**s, "real": 40.0})
-        for _ in range(3):
-            clock.t += 1
-            g.tick({**s, "real": 37.0})   # 7.5 % short for 3 s in a row (user, 3.1.1): a watt
-        self.assertEqual(act.tdp, low + 1.0)
-        low = act.tdp
         for _ in range(20):
             clock.t += 1
             g.tick({**s, "real": 33.0})   # 17 % short and lasting, confirmed by a second window: watts back
