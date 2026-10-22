@@ -1,0 +1,57 @@
+name: Steam Deck report
+description: How GFG Extreme worked in a game on your Deck (good or bad)
+title: "[Deck] <game> · <mode> · GFG <version>"
+labels: ["deck-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you! Real Deck numbers are what moves GFG Extreme forward.
+        In the plugin: **Setup → Save report**, then attach the zip below. Russian is fine too.
+  - type: dropdown
+    id: model
+    attributes:
+      label: Steam Deck
+      options: [OLED, LCD, LCD with unlocked refresh]
+    validations:
+      required: true
+  - type: dropdown
+    id: display
+    attributes:
+      label: Display
+      options: [Handheld, Dock / TV]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: GFG Extreme version and SteamOS version
+      placeholder: "3.1.0, SteamOS 3.7.x"
+    validations:
+      required: true
+  - type: input
+    id: game
+    attributes:
+      label: Game
+      placeholder: "The Witcher 3 (next-gen)"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options: [Autopilot, Battery, Balanced, Quality, Custom]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What you saw
+      description: Smoothness, artifacts, latency, TDP and temperature, crashes. Screenshots or a short video help a lot.
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Report zip
+      description: Drag the zip from Setup → Save report here.
