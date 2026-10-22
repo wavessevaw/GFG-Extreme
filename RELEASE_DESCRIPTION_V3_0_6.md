@@ -20,6 +20,9 @@ pieces: a TDP recovery journal, the 2.1.6 p5 rule and a shadow record of experim
 - KEDAVRA engine bumped to GSF 1.2.0: at base 24 the coarsest motion search is centred on the
   camera's motion when the camera turns fast. In the software test of a fast camera pan the
   worst frame went from 14.1 to 23.1 dB and the false scene cuts from 3 to 0.
+- Fix from the external engine review: the motion repair read its centre neighbour before
+  loading it, so whether a block got repaired depended on an undefined value. Fixed with the
+  same nine reads; warp's three square roots per pixel replaced by squared thresholds.
 
 ## Governor
 
