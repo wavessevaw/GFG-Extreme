@@ -313,16 +313,21 @@ class AutopilotTest(unittest.TestCase):
         clock.t += 1
         g.tick(s)
         self.assertEqual(act.tdp, 15.0)
+        for _ in range(12):
+            clock.t += 1
+            g.tick(s)                     # holds: the TDP goes down
+        self.assertLess(act.tdp, 15.0)
+        checked = g.probe_from or act.tdp   # the last level that held a whole window
         for _ in range(30):
             clock.t += 1
-            g.tick({**s, "real": 37.0})   # 7.5 % short: tolerated, the TDP keeps going down
-        self.assertLess(act.tdp, 15.0)
+            g.tick({**s, "real": 36.0})   # 10 % short (81 of 90): tolerated, no watts for it (3.0.9);
+        self.assertLessEqual(act.tdp, checked)   # only the step that caused it is taken back
         low = act.tdp
         for _ in range(3):
             clock.t += 1
             g.tick({**s, "real": 20.0})   # a short sharp drop: no watts for it
         self.assertEqual(act.tdp, low)
-        for _ in range(7):
+        for _ in range(20):
             clock.t += 1
-            g.tick({**s, "real": 34.0})   # 15 % short and lasting: watts back
+            g.tick({**s, "real": 33.0})   # 17 % short and lasting, confirmed by a second window: watts back
         self.assertGreater(act.tdp, low)

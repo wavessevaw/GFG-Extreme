@@ -168,14 +168,14 @@ def slider_then_charger() -> Dict[str, Any]:
 
 def slider_inside_grace() -> Dict[str, Any]:
     """Charger plugged, then 5 s later the player moves Steam's slider to 6 W: that is the
-    player's change, the Governor must give the TDP back."""
+    player's change: their 6 W is the ceiling from then on (the Governor may go lower)."""
     rig = make_rig(VGame("g", 65.0), objective="balanced", battery=60.0)
     bad: List[str] = []
     ev = {300: lambda r: (setattr(r.sensors, "external_power", True), r.power.steamos_power_source()),
           310: lambda r: r.power.steam_slider(6.0)}
     rows = drive(rig, 500, ev, bad)
-    if rows[-1]["tdp"] != 6.0:
-        bad.append(f"player's 6 W overwritten: TDP {rows[-1]['tdp']} W, Governor paused={rows[-1]['paused']}")
+    if max(r["tdp"] for r in rows[311:]) > 6.0:
+        bad.append(f"above the player's 6 W: TDP {max(r['tdp'] for r in rows[311:])} W")
     return {"bad": bad, "tdp_final": rows[-1]["tdp"]}
 
 

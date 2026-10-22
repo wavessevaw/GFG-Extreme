@@ -60,6 +60,15 @@ class Service:
         self.ticks = 0
         self.hdr_off_sent = -1e9   # HDR output switched off: when hdr_enabled 0 was last sent
 
+    def _stable_point(self, refresh: int) -> Optional[int]:
+        """The point the Governor locked as stable for this game last time (None: unknown)."""
+        model = self.governor.model
+        try:
+            entry = model.get(f"app:{self.app}|{refresh}|stable") if model else None
+            return int(entry["point"]) if entry and entry.get("point") is not None else None
+        except (TypeError, ValueError, KeyError):
+            return None
+
     def _hdr_output(self, on: bool, fresh: bool, now: float) -> None:
         """HDR output off: Gamescope's hdr_enabled 0, sent again every 10 s because Steam sets it
         back from its own setting; switched on again, it goes back to 1 once."""
@@ -125,7 +134,7 @@ class Service:
             "refresh": refresh, "game": game, "app": self.app, "engine": st,
             "real": live.get("real"), "pace": live.get("pace"), "confirmed": confirmed,
             "gpu_busy": sensors.get("gpu_busy_pct"), "cpu_top": sensors.get("cpu_top_core_pct"),
-            "autopilot": objective == "autopilot",
+            "autopilot": objective == "autopilot", "stable_point": self._stable_point(refresh) if game else None,
             "low_battery": self.autopilot.low_battery or data["autopilot"]["preference"] == "battery",
             # Only a TDP the Governor manages is a power reading for the pilot: paused (the player's own
             # TDP) Autopilot must still climb when the game gets lighter (Deck report 3.0.7).

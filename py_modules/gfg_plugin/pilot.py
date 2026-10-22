@@ -49,7 +49,8 @@ HEADROOM_WAIT_S = 10.0
 HEADROOM_GPU_PCT = 92.0      # the GPU at the next point is estimated to stay under this
 HEADROOM_CPU_PCT = 85.0
 HOLD_RATIO = 0.95       # real fps vs cap over a guard window
-AUTOPILOT_HOLD_RATIO = 0.90  # Autopilot tolerates 8-10 % dips (user, 3.0.4)
+AUTOPILOT_HOLD_RATIO = 0.88  # Autopilot: 80-83 of 90 fps is still fine (user, 3.0.9)
+AUTOPILOT_PACE_MIN = 0.88
 TRIAL_RATIO = 0.97
 PACE_MIN = 0.99
 # Autopilot's power target (user, 3.0.3): 12 W is good, 9-10 W ideal. The Governor may go higher
@@ -211,7 +212,8 @@ class PointPilot:
         auto = ctx.get("objective") == "autopilot"
         hold = AUTOPILOT_HOLD_RATIO if auto else HOLD_RATIO
         # Autopilot judges the median: a short sharp drop does not move the point.
-        ok = (statistics.median(reals) if auto else real) >= hold * cap and (pace is None or pace >= PACE_MIN)
+        ok = ((statistics.median(reals) if auto else real) >= hold * cap
+              and (pace is None or pace >= (AUTOPILOT_PACE_MIN if auto else PACE_MIN)))
         gpus = [x["gpu"] for x in self.window_done if isinstance(x.get("gpu"), (int, float))]
         cpus = [x["cpu"] for x in self.window_done if isinstance(x.get("cpu"), (int, float))]
         return {"ok": ok, "real": real, "median": statistics.median(reals), "pace": pace,
@@ -232,6 +234,10 @@ class PointPilot:
                 self._go("locked", "Battery: a low point, generation fills the refresh", floor)
             elif self.point:
                 self._go("locked", "kept the measured point", min(self.point, top))
+            elif ctx.get("autopilot") and ctx.get("stable_point") in steps and ctx["stable_point"] <= top:
+                # The point that was stable last time: no full-power measurement (the guard and the
+                # headroom climb still correct it if the game changed).
+                self._go("locked", "the stable point from last time", int(ctx["stable_point"]))
             else:
                 self.caps.clear()
                 self._go("measure", "measuring the game at full power")
