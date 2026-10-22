@@ -36,3 +36,11 @@ python3 -m unittest discover -s docs/governor2 -p 'test_*.py'
 ```
 
 Новые timestamp/lease/thermal numeric параметры не подтверждены Deck. Не исправлены в этом commit: engine physical counter protocol, exact ZIP tools, runtime transaction install, полный persistent governor journal/unload concurrency, GPU-controller coverage, model TTL и causal A/B baseline. Это явно оставленные задачи, не утверждение о завершённом Governor2.
+
+## Передача результатов Kedavra
+
+Продолжение проверки engine опубликовано в [GSF_Kedavra, codex/kedavra-deep-review](https://github.com/wavessevaw/GSF_Kedavra/blob/codex/kedavra-deep-review/docs/deep-review/ANALYSIS.ru.md), коммит `1db6fab`. Там находятся исправленный pacing analyzer, семь регрессий, контрпример production scheduler completion contract, полный A/B no-blur и инструкция адаптера GPU completion/epoch/resource retirement.
+
+Для Governor 2.0 это обязательная зависимость: источник должен различать requested/effective FG, фактически завершённую GPU работу и подтверждённый вывод. Нельзя выдавать текущие intent counters за аппаратную приёмку. Глобальное отключение blur не рекомендуется: fast_pan улучшился до +2.268 dB, occlusion ухудшился до −0.400 dB; три quality phases climb остаются неуспешными в обоих вариантах, несмотря на общий зелёный gate.
+
+Аппаратного доступа нет; эти результаты подтверждены только кодом, моделями и software Vulkan. Релизы не создавались.
