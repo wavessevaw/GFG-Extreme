@@ -30,6 +30,7 @@ the ceiling 1 W per window, 97 C goes to the minimum at once, and the ceiling co
 """
 from __future__ import annotations
 
+import math
 import statistics
 import time
 from collections import deque
@@ -41,6 +42,7 @@ SETTLE_S = 2.0
 LEARN_AFTER_S = 60.0
 STEP_DOWN_W = 1.0
 FAST_STEP_W = 2.0
+AUTOPILOT_START_W = 10.0
 START_W = {"battery": 10.0, "balanced": 12.0}
 DRAW_MARGIN_W = 1.5          # limit kept above the measured draw when jumping down to it
 DRAW_JUMP_W = 3.0            # draw this far under the limit: the limit is not what holds the game
@@ -64,8 +66,11 @@ OBJECTIVES = ("battery", "balanced", "quality")
 
 
 def healthy(window: List[Dict[str, Any]], cap: int, temp_ok: bool) -> Dict[str, Any]:
-    """Verdict for one window of 1 s samples, with the reason a failed window failed."""
+    """Verdict for one window of 1 s samples, with the reason a failed window failed. A missing
+    pace is allowed (no generation running); a non-finite reading is broken telemetry."""
     n = len(window)
+    if any(isinstance(s.get(k), float) and not math.isfinite(s[k]) for s in window for k in ("real", "pace")):
+        return {"ok": None, "reason": "incomplete-telemetry"}
     reals = [s["real"] for s in window if s.get("real") is not None]
     if n == 0 or cap <= 0 or len(reals) < max(1, COVERAGE * n):
         return {"ok": None, "reason": "no-data"}
@@ -97,6 +102,8 @@ class PowerGovernor:
         self.clock = clock
         self.journal = journal
         self.enabled = True
+        self.restore_pending = False
+        self.autopilot = False
         self._reset_session()
 
     def _reset_session(self) -> None:
@@ -147,6 +154,12 @@ class PowerGovernor:
         if self.owned:
             result = self.actuator.restore_if_owned()
             self._note("governor-restore", reason=reason, restored=result.get("restored"), error=result.get("error"))
+        if result.get("success") is False or result.get("error"):
+            # The player's TDP is still owed: retried every tick, no new claim until it is back.
+            self.restore_pending = True
+            self.window = []
+            return result
+        self.restore_pending = False
         self._reset_session()
         return result
 
@@ -185,7 +198,9 @@ class PowerGovernor:
             target, why = float(learned["tdp_w"]) + 1.0, "warm-start"
         elif (self.key, self.objective) not in self.started:
             # A fresh game starts low; later unknown points keep the level the session reached.
-            target, why = START_W.get(self.objective, self.ceiling), "start-level"
+            # Autopilot starts at its ideal power (9-10 W), the modes at their own levels.
+            start = AUTOPILOT_START_W if self.autopilot else START_W.get(self.objective, self.ceiling)
+            target, why = start, "start-level"
         else:
             return
         self.started.add((self.key, self.objective))
@@ -244,6 +259,11 @@ class PowerGovernor:
         0 = none), hold_ceiling, epoch, real, pace, over_budget, ring_miss (per second), temp_c,
         draw_w, experiment (Power Split / GPU clock trying a step), game (bool)."""
         now = self.clock()
+        self.autopilot = bool(sample.get("autopilot"))
+        if self.restore_pending:
+            self.stop("retry-restore")
+            if self.restore_pending:
+                return self.status()
         if not self.enabled or not sample.get("game"):
             if self.owned or self.key:
                 self.stop("no-game" if self.enabled else "disabled")
@@ -253,6 +273,8 @@ class PowerGovernor:
         if key != self.key:
             if self.owned:
                 self.stop("context-change")
+                if self.restore_pending:
+                    return self.status()
             self._reset_session()
             self.key = key
             if self.enabled:
@@ -305,6 +327,10 @@ class PowerGovernor:
         self.recent.append(None if real is None else float(real))
         if self._fast_guard(now, sample):
             return self.status()
+        if self._probing(sample):
+            # Its A/B windows need a fixed TDP; our own verdict starts over once it is done.
+            self.window, self.window_start = [], now
+            return self.status()
         if now - self.changed_at < SETTLE_S:
             self.window_start = now
             return self.status()
@@ -320,7 +346,7 @@ class PowerGovernor:
         self.window = []
         self.window_start = now
         self.last = verdict
-        self._decide(now, verdict, temp, bool(sample.get("experiment")))
+        self._decide(now, verdict, temp, self._probing(sample))
         return self.status()
 
     def _thermal(self, now: float, temp: Optional[float]) -> bool:
@@ -352,6 +378,11 @@ class PowerGovernor:
             return True
         return float(draw) >= self.tdp - DRAW_BINDING_W
 
+    @staticmethod
+    def _probing(sample: Dict[str, Any]) -> bool:
+        """Power Split or the GPU clock ceiling is trying a step: the TDP stays where it is."""
+        return bool(sample.get("experiment") or sample.get("probe_active"))
+
     def _fast_guard(self, now: float, sample: Dict[str, Any]) -> bool:
         """Up fast: the last 3 s short of the cap at a binding limit get watts back at once."""
         if self.tdp is None or self.ceiling is None or len(self.recent) < 3 or None in self.recent:
@@ -367,8 +398,10 @@ class PowerGovernor:
             # The step down did not hold: back to where it came from, and a floor at this level.
             self._failed(self.cap, self.tdp)
             target, why = self.probe_from, "fast-restore"
+        elif severe:
+            target, why = ceiling, "fast-severe"   # a collapse, not a shortfall: full power now
         else:
-            target, why = self.tdp + (SEVERE_STEP_W if severe else STEP_UP_W), "fast-raise"
+            target, why = self.tdp + STEP_UP_W, "fast-raise"
         self.fast = False
         self.probe_from = None
         self.fast_at = now
@@ -449,6 +482,7 @@ class PowerGovernor:
         return {
             "enabled": self.enabled,
             "owned": self.owned,
+            "restore_pending": self.restore_pending,
             "paused": self.paused,
             "objective": self.objective,
             "managing": bool(self.owned and self.cap > 0 and not self.paused),
