@@ -4,7 +4,7 @@
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="144">
 
-# GFG EXTREME 3.0.0
+# GFG EXTREME 3.1
 
 **MOST POWERFUL DECKY PLUGIN EVER.**
 
@@ -42,7 +42,7 @@ Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integ
 
 ### A FUNDAMENTAL SHIFT IN STEAM DECK PERFORMANCE.
 
-GFG Extreme 3.0.0 объединяет собственный движок кадровой генерации GSF Kedavra и интеллектуальную систему управления производительностью GFG Autopilot / Governor.
+GFG Extreme 3 объединяет собственный движок кадровой генерации GSF Kedavra и интеллектуальную систему управления производительностью GFG Autopilot / Governor.
 
 Генерация кадров, планирование их вывода и оптимизация энергопотребления теперь рассматриваются как взаимосвязанные процессы в рамках одного графического конвейера.
 
@@ -69,12 +69,12 @@ Lossless Scaling, MAKO и сторонние слои генерации не н
 
 1. Скачайте последний **GFG-Extreme-v3_x_x.zip** со страницы [Releases](https://github.com/wavessevaw/GFG-Extreme/releases/latest).
 2. В Decky Loader: **Settings → Developer → Install Plugin from ZIP**, выберите файл.
-3. Откройте GFG Extreme → **Setup** → **Engine install**, установите Kedavra и перезагрузитесь, когда плагин попросит.
+3. Откройте GFG Extreme. Панель откроется на одном экране: **Install engine**, затем **Reboot now**. Вкладки откроются, когда заработает Gamescope от Kedavra.
 4. Запустите игру и выберите режим на вкладке **Dash**. Больше ничего настраивать не нужно: ни параметров запуска, ни скриптов в Desktop Mode.
 
 Переход с 2.x: настройки переносятся с резервной копией, MAKO удаляется, система восстанавливается автоматически.
 
-> 3.0.0 это pre-release. Если Gaming Mode не поднимется с Gamescope от Kedavra, при следующей загрузке вернётся штатный композитор.
+> Пока не все игры и сборки SteamOS проверены на Deck; отчёты ждём в [Issues](https://github.com/wavessevaw/GFG-Extreme/issues/new/choose) или в [Telegram-канале](https://t.me/gfg_extreme). Если Gaming Mode не поднимется с Gamescope от Kedavra, при следующей загрузке вернётся штатный композитор.
 
 ---
 
@@ -444,7 +444,7 @@ Film Grain · Vignette · Chromatic Aberration · Deband · Noir · Sepia · Mon
 
 <p align="center"><img src="docs/img/card-ring-sizes.png" alt="Tap the ring: Side, Classic, Compact, Arc" width="900"></p>
 
-GFG Extreme 3.0.0 — единая система управления генерацией и производительностью через Decky Loader. Один zip, устанавливается из Decky, без скриптов в Desktop Mode.
+GFG Extreme 3 — единая система управления генерацией и производительностью через Decky Loader. Один zip, устанавливается из Decky, без скриптов в Desktop Mode.
 
 Kedavra интегрируется на уровне Gamescope, поэтому в штатном Gaming Mode генерация не требует отдельной команды запуска для каждой игры.
 
@@ -472,7 +472,7 @@ Kedavra интегрируется на уровне Gamescope, поэтому �
 
 ### OUR ENGINE. OUR FRAME PIPELINE. OUR ROADMAP.
 
-GFG Extreme 3.0.0 использует собственное ядро кадровой генерации GSF Kedavra.
+GFG Extreme 3 использует собственное ядро кадровой генерации GSF Kedavra.
 
 Алгоритмы оценки движения, реконструкции изображений и планирования синтетических кадров развиваются в рамках единой кодовой базы GFG / GSF.
 
@@ -543,7 +543,7 @@ GFG Extreme 3.0.0 использует собственное ядро кадр�
 * Platform: Steam Deck / SteamOS
 * License: GPL-3.0-or-later, с соблюдением лицензий используемых компонентов
 
-README описывает GFG Extreme 3.0.0 (pre-release). Возможности становятся частью подтверждённого релиза только после испытаний на реальном оборудовании.
+README описывает GFG Extreme 3.1. Возможности становятся частью подтверждённого релиза только после испытаний на реальном оборудовании.
 
 ---
 
@@ -551,6 +551,6 @@ README описывает GFG Extreme 3.0.0 (pre-release). Возможност�
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="56">
 
-<sub>GFG EXTREME 3.0.0 · POWERED BY GSF KEDAVRA · Сделано для Steam Deck · GPL-3.0-or-later</sub>
+<sub>GFG EXTREME 3.1 · POWERED BY GSF KEDAVRA · Сделано для Steam Deck · GPL-3.0-or-later</sub>
 
 </div>

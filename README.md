@@ -4,7 +4,7 @@
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="144">
 
-# GFG EXTREME 3.0.0
+# GFG EXTREME 3.1
 
 **MOST POWERFUL DECKY PLUGIN EVER.**
 
@@ -42,7 +42,7 @@ Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integ
 
 ### A FUNDAMENTAL SHIFT IN STEAM DECK PERFORMANCE.
 
-GFG Extreme 3.0.0 combines its own frame generation engine, GSF Kedavra, with the GFG Autopilot / Governor performance control system.
+GFG Extreme 3 combines its own frame generation engine, GSF Kedavra, with the GFG Autopilot / Governor performance control system.
 
 Frame generation, frame presentation and power optimisation are now treated as connected parts of one graphics pipeline.
 
@@ -69,12 +69,12 @@ A closed TDP control loop with feedback that verifies every decision it makes.
 
 1. Download the latest **GFG-Extreme-v3_x_x.zip** from [Releases](https://github.com/wavessevaw/GFG-Extreme/releases/latest).
 2. In Decky Loader: **Settings → Developer → Install Plugin from ZIP**, pick the file.
-3. Open GFG Extreme → **Setup** → **Engine install**, install Kedavra and reboot when asked.
+3. Open GFG Extreme. The panel opens on one screen: **Install engine**, then **Reboot now**. The tabs unlock once the Kedavra Gamescope runs.
 4. Start a game and choose a mode on **Dash**. Nothing else to set up: no launch options, no Desktop Mode scripts.
 
 Coming from 2.x: settings move over with a backup, and MAKO is removed and the system restored automatically.
 
-> 3.0.0 is a pre-release. If Gaming Mode does not come back with the Kedavra Gamescope, the stock compositor is restored on the next boot.
+> Not every game and SteamOS build has been checked on a Deck yet; reports are welcome in [Issues](https://github.com/wavessevaw/GFG-Extreme/issues/new/choose) or the [Telegram channel](https://t.me/gfg_extreme). If Gaming Mode does not come back with the Kedavra Gamescope, the stock compositor is restored on the next boot.
 
 ---
 
@@ -444,7 +444,7 @@ Hardware test results can be reproduced and matched against the control system's
 
 <p align="center"><img src="docs/img/card-ring-sizes.png" alt="Tap the ring: Side, Classic, Compact, Arc" width="900"></p>
 
-GFG Extreme 3.0.0 is one system for frame generation and performance control, run from Decky Loader. One zip, installed from Decky, no Desktop Mode scripts.
+GFG Extreme 3 is one system for frame generation and performance control, run from Decky Loader. One zip, installed from Decky, no Desktop Mode scripts.
 
 Kedavra lives inside Gamescope, so in the stock Gaming Mode no game needs its own launch command for generation.
 
@@ -472,7 +472,7 @@ It needs Gamescope with Kedavra, which the plugin installs itself. Installation 
 
 ### OUR ENGINE. OUR FRAME PIPELINE. OUR ROADMAP.
 
-GFG Extreme 3.0.0 runs on its own frame generation core, GSF Kedavra.
+GFG Extreme 3 runs on its own frame generation core, GSF Kedavra.
 
 Motion estimation, image reconstruction and the scheduling of generated frames are developed in one GFG / GSF code base.
 
@@ -543,7 +543,7 @@ Targets and real benchmarks of the 3.0.0 build (×3.75 and HDR included) are pub
 * Platform: Steam Deck / SteamOS
 * License: GPL-3.0-or-later, respecting the licences of the components used
 
-This README describes GFG Extreme 3.0.0 (pre-release). Features become part of a confirmed release only after testing on real hardware.
+This README describes GFG Extreme 3.1. Features become part of a confirmed release only after testing on real hardware.
 
 ---
 
@@ -551,6 +551,6 @@ This README describes GFG Extreme 3.0.0 (pre-release). Features become part of a
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="56">
 
-<sub>GFG EXTREME 3.0.0 · POWERED BY GSF KEDAVRA · Made for Steam Deck · GPL-3.0-or-later</sub>
+<sub>GFG EXTREME 3.1 · POWERED BY GSF KEDAVRA · Made for Steam Deck · GPL-3.0-or-later</sub>
 
 </div>
