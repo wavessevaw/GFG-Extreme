@@ -1,0 +1,526 @@
+{
+ "about": "Starting hints per Steam app id (user, 3.1.0). light: 4-7 W is enough, no multiplier above x2; medium: the objective's usual start; heavy: start at the 15 W ceiling. A measurement on the Deck always overrides the hint and is kept per game in game-book.json.",
+ "start_w": {
+  "light": 7.0,
+  "medium": null,
+  "heavy": 15.0
+ },
+ "games": {
+  "220": {
+   "name": "Half-Life 2",
+   "class": "light"
+  },
+  "400": {
+   "name": "Portal",
+   "class": "light"
+  },
+  "550": {
+   "name": "Left 4 Dead 2",
+   "class": "light"
+  },
+  "570": {
+   "name": "Dota 2",
+   "class": "medium"
+  },
+  "620": {
+   "name": "Portal 2",
+   "class": "light"
+  },
+  "730": {
+   "name": "Counter-Strike 2",
+   "class": "medium"
+  },
+  "40800": {
+   "name": "Super Meat Boy",
+   "class": "light"
+  },
+  "105600": {
+   "name": "Terraria",
+   "class": "light"
+  },
+  "219150": {
+   "name": "Hotline Miami",
+   "class": "light"
+  },
+  "237630": {
+   "name": "DuckTales: Remastered",
+   "class": "light"
+  },
+  "239030": {
+   "name": "Papers, Please",
+   "class": "light"
+  },
+  "250760": {
+   "name": "Shovel Knight: Treasure Trove",
+   "class": "light"
+  },
+  "250900": {
+   "name": "The Binding of Isaac: Rebirth",
+   "class": "light"
+  },
+  "252950": {
+   "name": "Rocket League",
+   "class": "light"
+  },
+  "255710": {
+   "name": "Cities: Skylines",
+   "class": "medium"
+  },
+  "268910": {
+   "name": "Cuphead",
+   "class": "light"
+  },
+  "271590": {
+   "name": "Grand Theft Auto V",
+   "class": "medium"
+  },
+  "275850": {
+   "name": "No Man's Sky",
+   "class": "medium"
+  },
+  "287700": {
+   "name": "Metal Gear Solid V: The Phantom Pain",
+   "class": "medium"
+  },
+  "289070": {
+   "name": "Sid Meier's Civilization VI",
+   "class": "medium"
+  },
+  "292030": {
+   "name": "The Witcher 3: Wild Hunt",
+   "class": "heavy"
+  },
+  "294100": {
+   "name": "RimWorld",
+   "class": "light"
+  },
+  "311690": {
+   "name": "Enter the Gungeon",
+   "class": "light"
+  },
+  "322330": {
+   "name": "Don't Starve Together",
+   "class": "light"
+  },
+  "367520": {
+   "name": "Hollow Knight",
+   "class": "light"
+  },
+  "374320": {
+   "name": "Dark Souls III",
+   "class": "medium"
+  },
+  "377160": {
+   "name": "Fallout 4",
+   "class": "medium"
+  },
+  "379720": {
+   "name": "DOOM",
+   "class": "medium"
+  },
+  "387290": {
+   "name": "Ori and the Blind Forest: Definitive Edition",
+   "class": "light"
+  },
+  "391540": {
+   "name": "Undertale",
+   "class": "light"
+  },
+  "397540": {
+   "name": "Borderlands 3",
+   "class": "medium"
+  },
+  "412020": {
+   "name": "Metro Exodus",
+   "class": "heavy"
+  },
+  "413150": {
+   "name": "Stardew Valley",
+   "class": "light"
+  },
+  "418530": {
+   "name": "Spelunky 2",
+   "class": "light"
+  },
+  "427520": {
+   "name": "Factorio",
+   "class": "light"
+  },
+  "460950": {
+   "name": "Katana ZERO",
+   "class": "light"
+  },
+  "489830": {
+   "name": "The Elder Scrolls V: Skyrim Special Edition",
+   "class": "medium"
+  },
+  "504230": {
+   "name": "Celeste",
+   "class": "light"
+  },
+  "524220": {
+   "name": "NieR:Automata",
+   "class": "medium"
+  },
+  "526870": {
+   "name": "Satisfactory",
+   "class": "heavy"
+  },
+  "534380": {
+   "name": "Dying Light 2 Stay Human",
+   "class": "heavy"
+  },
+  "548430": {
+   "name": "Deep Rock Galactic",
+   "class": "medium"
+  },
+  "553420": {
+   "name": "TUNIC",
+   "class": "medium"
+  },
+  "553850": {
+   "name": "HELLDIVERS 2",
+   "class": "heavy"
+  },
+  "582010": {
+   "name": "Monster Hunter: World",
+   "class": "heavy"
+  },
+  "582160": {
+   "name": "Assassin's Creed Origins",
+   "class": "heavy"
+  },
+  "584400": {
+   "name": "Sonic Mania",
+   "class": "light"
+  },
+  "588650": {
+   "name": "Dead Cells",
+   "class": "light"
+  },
+  "590380": {
+   "name": "Into the Breach",
+   "class": "light"
+  },
+  "632360": {
+   "name": "Risk of Rain 2",
+   "class": "medium"
+  },
+  "632470": {
+   "name": "Disco Elysium",
+   "class": "light"
+  },
+  "646570": {
+   "name": "Slay the Spire",
+   "class": "light"
+  },
+  "739630": {
+   "name": "Phasmophobia",
+   "class": "medium"
+  },
+  "782330": {
+   "name": "DOOM Eternal",
+   "class": "medium"
+  },
+  "812140": {
+   "name": "Assassin's Creed Odyssey",
+   "class": "heavy"
+  },
+  "814380": {
+   "name": "Sekiro: Shadows Die Twice",
+   "class": "medium"
+  },
+  "870780": {
+   "name": "Control",
+   "class": "heavy"
+  },
+  "883710": {
+   "name": "Resident Evil 2",
+   "class": "medium"
+  },
+  "892970": {
+   "name": "Valheim",
+   "class": "medium"
+  },
+  "920210": {
+   "name": "LEGO Star Wars: The Skywalker Saga",
+   "class": "medium"
+  },
+  "945360": {
+   "name": "Among Us",
+   "class": "light"
+  },
+  "985890": {
+   "name": "Streets of Rage 4",
+   "class": "light"
+  },
+  "990080": {
+   "name": "Hogwarts Legacy",
+   "class": "heavy"
+  },
+  "1030300": {
+   "name": "Hollow Knight: Silksong",
+   "class": "light"
+  },
+  "1030840": {
+   "name": "Mafia: Definitive Edition",
+   "class": "medium"
+  },
+  "1057090": {
+   "name": "Ori and the Will of the Wisps",
+   "class": "medium"
+  },
+  "1086940": {
+   "name": "Baldur's Gate 3",
+   "class": "heavy"
+  },
+  "1091500": {
+   "name": "Cyberpunk 2077",
+   "class": "heavy"
+  },
+  "1092790": {
+   "name": "Inscryption",
+   "class": "light"
+  },
+  "1113000": {
+   "name": "Persona 4 Golden",
+   "class": "light"
+  },
+  "1145350": {
+   "name": "Hades II",
+   "class": "light"
+  },
+  "1145360": {
+   "name": "Hades",
+   "class": "light"
+  },
+  "1151640": {
+   "name": "Horizon Zero Dawn",
+   "class": "heavy"
+  },
+  "1172470": {
+   "name": "Apex Legends",
+   "class": "medium"
+  },
+  "1172620": {
+   "name": "Sea of Thieves",
+   "class": "medium"
+  },
+  "1174180": {
+   "name": "Red Dead Redemption 2",
+   "class": "heavy"
+  },
+  "1182900": {
+   "name": "A Plague Tale: Requiem",
+   "class": "heavy"
+  },
+  "1190460": {
+   "name": "DEATH STRANDING",
+   "class": "heavy"
+  },
+  "1196590": {
+   "name": "Resident Evil Village",
+   "class": "medium"
+  },
+  "1235140": {
+   "name": "Yakuza: Like a Dragon",
+   "class": "medium"
+  },
+  "1244090": {
+   "name": "Sea of Stars",
+   "class": "light"
+  },
+  "1245620": {
+   "name": "ELDEN RING",
+   "class": "heavy"
+  },
+  "1259420": {
+   "name": "Days Gone",
+   "class": "heavy"
+  },
+  "1282730": {
+   "name": "Loop Hero",
+   "class": "light"
+  },
+  "1293830": {
+   "name": "Forza Horizon 4",
+   "class": "medium"
+  },
+  "1313140": {
+   "name": "Cult of the Lamb",
+   "class": "light"
+  },
+  "1332010": {
+   "name": "Stray",
+   "class": "medium"
+  },
+  "1364780": {
+   "name": "Street Fighter 6",
+   "class": "medium"
+  },
+  "1426210": {
+   "name": "It Takes Two",
+   "class": "medium"
+  },
+  "1446780": {
+   "name": "Monster Hunter Rise",
+   "class": "medium"
+  },
+  "1462040": {
+   "name": "FINAL FANTASY VII REMAKE INTERGRADE",
+   "class": "heavy"
+  },
+  "1551360": {
+   "name": "Forza Horizon 5",
+   "class": "heavy"
+  },
+  "1593500": {
+   "name": "God of War",
+   "class": "heavy"
+  },
+  "1623730": {
+   "name": "Palworld",
+   "class": "heavy"
+  },
+  "1627720": {
+   "name": "Lies of P",
+   "class": "medium"
+  },
+  "1649240": {
+   "name": "Returnal",
+   "class": "heavy"
+  },
+  "1687950": {
+   "name": "Persona 5 Royal",
+   "class": "medium"
+  },
+  "1716740": {
+   "name": "Starfield",
+   "class": "heavy"
+  },
+  "1771300": {
+   "name": "Kingdom Come: Deliverance II",
+   "class": "heavy"
+  },
+  "1774580": {
+   "name": "STAR WARS Jedi: Survivor",
+   "class": "heavy"
+  },
+  "1778820": {
+   "name": "TEKKEN 8",
+   "class": "medium"
+  },
+  "1794680": {
+   "name": "Vampire Survivors",
+   "class": "light"
+  },
+  "1817070": {
+   "name": "Marvel's Spider-Man Remastered",
+   "class": "heavy"
+  },
+  "1817190": {
+   "name": "Marvel's Spider-Man: Miles Morales",
+   "class": "heavy"
+  },
+  "1817230": {
+   "name": "Hi-Fi RUSH",
+   "class": "medium"
+  },
+  "1850570": {
+   "name": "DEATH STRANDING DIRECTOR'S CUT",
+   "class": "heavy"
+  },
+  "1868140": {
+   "name": "Dave the Diver",
+   "class": "light"
+  },
+  "1888160": {
+   "name": "ARMORED CORE VI FIRES OF RUBICON",
+   "class": "heavy"
+  },
+  "1888930": {
+   "name": "The Last of Us Part I",
+   "class": "heavy"
+  },
+  "1895880": {
+   "name": "Ratchet & Clank: Rift Apart",
+   "class": "heavy"
+  },
+  "1903340": {
+   "name": "Clair Obscur: Expedition 33",
+   "class": "heavy"
+  },
+  "1942280": {
+   "name": "Brotato",
+   "class": "light"
+  },
+  "1966720": {
+   "name": "Lethal Company",
+   "class": "light"
+  },
+  "2001120": {
+   "name": "Split Fiction",
+   "class": "heavy"
+  },
+  "2050650": {
+   "name": "Resident Evil 4",
+   "class": "heavy"
+  },
+  "2054970": {
+   "name": "Dragon's Dogma 2",
+   "class": "heavy"
+  },
+  "2072450": {
+   "name": "Like a Dragon: Infinite Wealth",
+   "class": "medium"
+  },
+  "2124490": {
+   "name": "SILENT HILL 2",
+   "class": "heavy"
+  },
+  "2208920": {
+   "name": "Assassin's Creed Valhalla",
+   "class": "heavy"
+  },
+  "2215430": {
+   "name": "Ghost of Tsushima",
+   "class": "heavy"
+  },
+  "2246340": {
+   "name": "Monster Hunter Wilds",
+   "class": "heavy"
+  },
+  "2358720": {
+   "name": "Black Myth: Wukong",
+   "class": "heavy"
+  },
+  "2379780": {
+   "name": "Balatro",
+   "class": "light"
+  },
+  "2420110": {
+   "name": "Horizon Forbidden West",
+   "class": "heavy"
+  },
+  "2515020": {
+   "name": "FINAL FANTASY XVI",
+   "class": "heavy"
+  },
+  "2677660": {
+   "name": "Indiana Jones and the Great Circle",
+   "class": "heavy"
+  },
+  "2909400": {
+   "name": "FINAL FANTASY VII REBIRTH",
+   "class": "heavy"
+  },
+  "3017860": {
+   "name": "DOOM: The Dark Ages",
+   "class": "heavy"
+  },
+  "3489700": {
+   "name": "Stellar Blade",
+   "class": "heavy"
+  }
+ }
+}

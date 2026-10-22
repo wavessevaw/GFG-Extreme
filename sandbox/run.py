@@ -24,6 +24,8 @@ sys.path.insert(0, str(ROOT / "py_modules"))
 
 from gfg_plugin import settings as settings_mod  # noqa: E402
 from gfg_plugin.service import Service  # noqa: E402
+from gfg_plugin.game_book import GameBook  # noqa: E402
+from gfg_plugin.pilot import ladder  # noqa: E402
 
 from gfg_plugin.split_control import SplitControl  # noqa: E402
 from gfg_plugin.gpu_clock import GpuClock, MemoryBackend  # noqa: E402
@@ -59,7 +61,7 @@ class Rig:
 def make_rig(game: VGame, *, fg: str = "auto", objective: str = "balanced", preference: str = "auto",
              refresh: int = 90, user_tdp: float = 15.0, ambient: float = 25.0, battery: float = 80.0,
              external_power: bool = False, base_fps: int = 45, power_enabled: bool = True,
-             split: bool = True, gpu_clock: bool = True) -> Rig:
+             split: bool = True, gpu_clock: bool = True, dock: bool = False, game_list: bool = False) -> Rig:
     clock = VClock()
     power = VPower(user_tdp=user_tdp)
     engine = VEngine(clock, game, power, refresh=refresh)
@@ -78,7 +80,11 @@ def make_rig(game: VGame, *, fg: str = "auto", objective: str = "balanced", pref
     data["hud"]["enabled"] = False
     st = MemSettings(data)
     log: List[Dict[str, Any]] = []
-    svc = Service(settings=st, ctl=VControl(engine), actuator=power, model=VModel(), sensors=sensors,
+    # The real game list only where a scenario asks for it: VGame's default app id is a listed
+    # heavy game, and every other scenario measures its game from scratch.
+    engine.dock = dock
+    book = GameBook(None) if game_list else GameBook(None, list_path=Path("/nonexistent"))
+    svc = Service(settings=st, ctl=VControl(engine), book=book, display=lambda: engine.dock, actuator=power, model=VModel(), sensors=sensors,
                   battery=sensors.read_battery, hud=None, hud_path="/dev/shm/gfg-extreme-hud.raw", clock=clock,
                   journal=lambda src, kind, **f: log.append({"t": clock(), "src": src, "kind": kind, **f}),
                   split=SplitControl(vcpu.actuator(), clock=clock,
@@ -653,6 +659,124 @@ def gpu_clock_gpu_bound_untouched() -> Dict[str, Any]:
     rig = make_rig(VGame("gpu-bound", 50.0), objective="balanced")
     play(rig, 900)
     check(out, "the GPU clock stays the player's", all(r["gpu_share"] == 1.0 for r in rig.timeline))
+    return out
+
+
+@scenario
+def game_switch_no_carryover() -> Dict[str, Any]:
+    """A heavy game, then a light one (user, 3.1.0): nothing of the first game follows into the second."""
+    rig = make_rig(VGame("heavy", 27.0, app_id=111), objective="autopilot")
+    play(rig, 900)
+
+    def switch(r):
+        r.engine.app_id = 222
+        r.engine.game = VGame("light", 150.0, app_id=222)
+    play(rig, 300, {900: switch})
+    tl = rig.timeline
+    out: Dict[str, Any] = {}
+    first = next((r for r in tl[900:] if r["phase"] != "idle"), {})
+    starts = [e for e in rig.log if e["kind"] == "governor-start"]
+    check(out, "the new game is measured from scratch", first.get("phase") == "measure" and first.get("point") == 0,
+          f"{first.get('phase')} {first.get('point')}")
+    check(out, "its own Governor session", starts[-1]["key"] == "app:222|90", starts[-1]["key"])
+    check(out, "the light game ends at low watts", tl[-1]["tdp"] <= 7.0 and tl[-1]["point"] == 45,
+          f"{tl[-1]['tdp']} W, point {tl[-1]['point']}")
+    check(out, "filters back to full", rig.service.fbudget.status().get("level") == "full")
+    return out
+
+
+@scenario
+def light_game_from_list() -> Dict[str, Any]:
+    """DuckTales (listed light): x2 at once, no full-power measurement, 4-7 W, never above x2."""
+    out: Dict[str, Any] = {"runs": {}}
+    for obj in ("balanced", "autopilot", "quality"):
+        rig = make_rig(VGame("ducktales", 150.0, app_id=237630), objective=obj, game_list=True)
+        play(rig, 600)
+        tl = rig.timeline
+        out["runs"][obj] = metrics(rig, skip=120)
+        check(out, f"{obj}: never measured at full power", all(r["phase"] != "measure" for r in tl))
+        check(out, f"{obj}: x2 the whole time", all(r["point"] in (0, 45) for r in tl))
+        if obj != "quality":
+            check(out, f"{obj}: 4-7 W", 4.0 <= out["runs"][obj]["tdp_final"] <= 7.0, f"{out['runs'][obj]['tdp_final']} W")
+            check(out, f"{obj}: started at 7 W, not 12-15", max(r["tdp"] for r in tl[2:60]) <= 7.0,
+                  f"max {max(r['tdp'] for r in tl[2:60])} W")
+    return out
+
+
+@scenario
+def light_listed_but_heavy() -> Dict[str, Any]:
+    """A listed light game that cannot hold x2 even at 15 W (a heavy mod): the Deck's numbers win."""
+    rig = make_rig(VGame("modded", 36.0, app_id=105600), objective="balanced", game_list=True)
+    play(rig, 900)
+    out: Dict[str, Any] = {"metrics": metrics(rig, skip=300)}
+    prof = rig.service.book.profile(105600, 90, False)
+    check(out, "no longer treated as light", prof["class"] == "medium", str(prof["class"]))
+    check(out, "steps down below x2", rig.timeline[-1]["point"] < 45, f"point {rig.timeline[-1]['point']}")
+    check(out, "the lower point holds", out["metrics"]["smooth_pct"] >= 90.0, f"{out['metrics']['smooth_pct']} %")
+    return out
+
+
+@scenario
+def heavy_game_from_list() -> Dict[str, Any]:
+    """The Witcher 3 (listed heavy) in Balanced starts at the 15 W ceiling, not at 12 W."""
+    rig = make_rig(VGame("witcher", 38.0, app_id=292030), objective="balanced", game_list=True)
+    play(rig, 300)
+    out: Dict[str, Any] = {}
+    first = next(i for i, r in enumerate(rig.timeline) if r["phase"] == "locked")
+    early = [r["tdp"] for r in rig.timeline[first:first + 4]]
+    check(out, "the locked point starts at 15 W (unlisted: 12 W)", min(early) >= 15.0, f"{early}")
+    return out
+
+
+@scenario
+def known_game_second_launch() -> Dict[str, Any]:
+    """A game played once starts the next time on its point, without the full-power measurement."""
+    rig = make_rig(VGame("known", 46.0, app_id=333), objective="balanced")
+    play(rig, 900)
+    first_point = rig.timeline[-1]["point"]
+
+    def leave(r): r.engine.app_id = 0
+    def back(r): r.engine.app_id = 333
+    play(rig, 400, {900: leave, 960: back})
+    tl = rig.timeline[960:]
+    out: Dict[str, Any] = {"first_point": first_point}
+    prof = rig.service.book.profile(333, 90, False)
+    check(out, "no full-power measurement the second time", all(r["phase"] != "measure" for r in tl))
+    check(out, "starts on the known point", next(r["point"] for r in tl if r["point"]) == prof["point"],
+          f"{next(r['point'] for r in tl if r['point'])} vs {prof['point']}")
+    check(out, "the session medians are kept", prof["sessions"] >= 1 and prof["median_real"] is not None, str(prof))
+    return out
+
+
+@scenario
+def dock_tv_60hz() -> Dict[str, Any]:
+    """Dock, TV at 60 Hz, external gamepad (user, 3.1.0): x3 at most in every mode, Autopilot keeps
+    no watt targets there, the temperature is watched in every mode."""
+    out: Dict[str, Any] = {"runs": {}}
+    for obj, fps in (("autopilot", 40.0), ("battery", 40.0), ("balanced", 24.0)):
+        rig = make_rig(VGame("tv", fps), objective=obj, refresh=60, dock=True, external_power=True)
+        play(rig, 900)
+        tl = rig.timeline
+        out["runs"][obj] = metrics(rig, skip=120)
+        check(out, f"{obj}: never above x3 (20 at 60 Hz)", all(r["point"] == 0 or r["point"] >= 20 for r in tl))
+    check(out, "autopilot: x2 (30) when the game holds it", out["runs"]["autopilot"]["point_final"] == 30,
+          f"point {out['runs']['autopilot']['point_final']}")
+    hot = make_rig(VGame("tv", 40.0), objective="balanced", refresh=60, dock=True, external_power=True, ambient=40.0)
+    play(hot, 900)
+    check(out, "balanced in the dock holds climbs from 80 C", any(e["kind"] == "governor-warm" for e in hot.log))
+    return out
+
+
+@scenario
+def lcd_unlocked_75hz() -> Dict[str, Any]:
+    """A Steam Deck LCD with its panel unlocked to 75 Hz: the ladder follows 75 Hz."""
+    rig = make_rig(VGame("lcd", 40.0), objective="balanced", refresh=75)
+    play(rig, 900)
+    m = metrics(rig, skip=120)
+    out: Dict[str, Any] = {"metrics": m}
+    check(out, "points on the 75 Hz ladder", set(m["points"]) <= set(ladder(75)), str(m["points"]))
+    check(out, "x2 (37) when the game holds it", m["point_final"] == 37, f"point {m['point_final']}")
+    check(out, "smooth >= 97 %", m["smooth_pct"] >= 97.0, f"{m['smooth_pct']} %")
     return out
 
 

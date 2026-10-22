@@ -356,6 +356,19 @@ Kedavra carries out the agreed frame generation policy, and Governor weighs the 
 
 The same Output FPS can come from different pairs of real frame rate and multiplier; the choice weighs their real cost and quality.
 
+### WE CARE ABOUT YOUR STEAM DECK'S HEALTH.
+
+SteamOS lets the APU run at 85-89 °C for hours. We don't agree with that, and we want your Deck to last.
+GFG Extreme deliberately holds games back from 80 °C, in every mode:
+
+| APU temperature | What GFG Extreme does |
+|---|---|
+| 80 °C | No mode climbs to a more demanding point: no extra watts for extra frames |
+| 85 °C | The TDP ceiling comes down a watt at a time until the Deck cools to 80 °C |
+| 97 °C | The TDP drops to the minimum at once |
+
+Every mode also stays at or below 15 W, even when SteamOS allows 20 W.
+
 ---
 
 ## 07 / IMAGE PROCESSING

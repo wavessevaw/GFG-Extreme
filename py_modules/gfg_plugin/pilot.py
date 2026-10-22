@@ -65,7 +65,11 @@ POWER_IDEAL_W = 10.0
 BAND_MAX_W = 14.5
 # The highest multiplier per objective (user, 3.0.10): Balanced works down to x3, Quality to x2.5.
 MAX_MULT = {"balanced": 3.0, "quality": 2.5}
+DOCK_MAX_MULT = 3.0
+LIGHT_MAX_MULT = 2.0
+LIGHT_OBJECTIVES = ("balanced", "quality", "autopilot")
 POWER_WAIT_S = 60.0
+KNOWN_RECHECK_S = 30.0
 COSTLY_HOLD_S = 600.0
 
 
@@ -89,10 +93,16 @@ def ladder(refresh: int) -> List[int]:
     return out
 
 
-def lowest_point(refresh: int, objective: str) -> int:
-    """The lowest point an objective may use: the first cap whose multiplier is within its limit."""
+def lowest_point(refresh: int, objective: str, light: bool = False, dock: bool = False) -> int:
+    """The lowest point an objective may use: the first cap whose multiplier is within its limit.
+    Dock (user, 3.1.0): a TV with an external gamepad needs low latency, x3 at most in every mode.
+    A light game (DuckTales, Terraria) wants no multiplier above x2 in Balanced, Quality, Autopilot."""
     steps = ladder(refresh)
     mult = MAX_MULT.get(objective)
+    if dock:
+        mult = min(mult or DOCK_MAX_MULT, DOCK_MAX_MULT)
+    if light and objective in LIGHT_OBJECTIVES:
+        mult = min(mult or LIGHT_MAX_MULT, LIGHT_MAX_MULT)
     if mult is None:
         return steps[0]
     return next((c for c in steps if refresh / c <= mult + 1e-6), steps[-1])
@@ -120,6 +130,8 @@ class PointPilot:
 
     def reset(self) -> None:
         self.context: Optional[tuple] = None
+        self.light_failed = False   # listed as light, but x2 does not hold even at full power
+        self.measured = 0           # what the last full-power measurement held (read once by the service)
         self.phase = "idle"
         self.point = 0
         self.reason = ""
@@ -171,7 +183,7 @@ class PointPilot:
         refresh = int(ctx.get("refresh") or 90)
         steps = ladder(refresh)
         objective = ctx.get("objective", "balanced")
-        context = (ctx.get("app"), refresh, fg, objective, int(ctx.get("base_fps") or 0))
+        context = (ctx.get("app"), refresh, fg, objective, int(ctx.get("base_fps") or 0), bool(ctx.get("dock")))
         if context != self.context:
             keep = (self.context is not None and self.context[:3] == context[:3] and self.point
                     and self.context[3] != "battery")
@@ -238,20 +250,26 @@ class PointPilot:
         floor = self._battery_point(ctx, steps)
         low = objective == "battery" or bool(ctx.get("autopilot") and ctx.get("low_battery"))
         top = floor if low else steps[-1]
-        bottom = lowest_point(int(ctx.get("refresh") or 90), objective)
+        light = ctx.get("game_class") == "light" and not self.light_failed
+        bottom = lowest_point(int(ctx.get("refresh") or 90), objective, light, bool(ctx.get("dock")))
         steps = [c for c in steps if c >= bottom]
         if not ctx.get("game"):
             self.phase = "idle"
             return self._request(1, 0, steps[0], False)
+        known = ctx.get("known_point") or (ctx.get("stable_point") if ctx.get("autopilot") else None)
+        known = int(known) if isinstance(known, (int, float)) else None
         if self.phase in ("idle",):
             if objective == "battery":
                 self._go("locked", "Battery: a low point, generation fills the refresh", floor)
             elif self.point:
                 self._go("locked", "kept the measured point", max(min(self.point, top), bottom))
-            elif ctx.get("autopilot") and ctx.get("stable_point") in steps and ctx["stable_point"] <= top:
-                # The point that was stable last time: no full-power measurement (the guard and the
-                # headroom climb still correct it if the game changed).
-                self._go("locked", "the stable point from last time", int(ctx["stable_point"]))
+            elif known in steps and known <= top:
+                # The point that held last time (per game, user 3.1.0): no full-power measurement
+                # (the guard and the headroom climb still correct it if the game changed).
+                self._go("locked", "the point from last time", known)
+                self.promote_wait = KNOWN_RECHECK_S   # it may have been a heavier scene: try up soon
+            elif light:
+                self._go("locked", "light game: x2 at once, no full-power measurement", steps[-1])
             else:
                 self.caps.clear()
                 self._go("measure", "measuring the game at full power")
@@ -286,6 +304,9 @@ class PointPilot:
                         self.promote_wait = PROMOTE_WAIT_S
                         self._go("locked", f"game fell to {verdict['median']:.0f} fps at full power: "
                                  f"point {self.point} -> {new}", new)
+                    elif light:
+                        self.light_failed = True
+                        self.reason = "not a light game: x2 does not hold even at full power"
                     else:
                         self.holds = False
                         self.reason = ("the game does not hold the lowest point even at full power"
@@ -312,10 +333,11 @@ class PointPilot:
 
     def _may_climb(self, ctx: Dict[str, Any], nxt: int) -> bool:
         """Autopilot climbs only from the ideal power and never into a point that cost too much."""
-        if not ctx.get("autopilot"):
-            return True
         if ctx.get("warm"):
-            return False   # 80 C and up: no watts for a higher point (x3 itself stays)
+            return False   # 80 C and up, every mode (Deck health, user 3.1.0): no higher point
+        if ctx.get("dock") or not ctx.get("autopilot"):
+            # Dock (user, 3.1.0): a high TDP is fine on the TV; only the temperature holds a climb.
+            return True
         if self.costly.get(nxt, 0.0) > self.clock():
             return False
         tdp = ctx.get("tdp_w")
@@ -334,7 +356,7 @@ class PointPilot:
         tdp = ctx.get("tdp_w")
         lower = [c for c in steps if c < self.point]
         limit = BAND_MAX_W if self.point <= self._band_top(ctx) else POWER_GOOD_W
-        if (not ctx.get("autopilot") or not ctx.get("gov_settled") or not isinstance(tdp, (int, float))
+        if (not ctx.get("autopilot") or ctx.get("dock") or not ctx.get("gov_settled") or not isinstance(tdp, (int, float))
                 or tdp <= limit or not lower):
             self.costly_since = None
             return False
@@ -395,6 +417,7 @@ class PointPilot:
             if choice:
                 fit = [c for c in steps if c <= choice] or [steps[0]]
                 point = min(fit[-1], top)
+                self.measured = choice
                 self._go("locked", f"measured: the game holds {choice} fps; locked {point}", point)
                 return self._request(1, point, 0, False)
         elif elapsed >= MEASURE_MAX_S:

@@ -73,8 +73,8 @@ PACE_MIN = 0.99              # the pilot locks points at the same pace
 COVERAGE = 0.6               # share of a window's seconds with a real-frame reading
 BALANCED_MARGIN_W = 1.0
 MIN_TDP_W = 4.0
-HOT_C = 90.0
-COOL_C = 85.0
+HOT_C = 85.0   # Deck health (user, 3.1.0): SteamOS lets the APU sit at 85-89 C, GFG does not
+COOL_C = 80.0
 COOL_S = 30.0
 CRITICAL_C = 97.0
 # Plugging or unplugging the charger makes SteamOS put its own TDP for that power source back.
@@ -85,7 +85,10 @@ AC_GRACE_S = 15.0
 # was higher at the start (Steam's limit off). From 80 C it is "warm": the pilot does not climb
 # above its point (no watts for a higher one) until 30 s under 75 C.
 AUTOPILOT_MAX_W = 15.0   # every objective (user, 3.0.10): never above 15 W
-WARM_C = {"autopilot": 80.0}
+# Deck health (user, 3.1.0): from 80 C no mode climbs to a more demanding point; from 90 C the
+# TDP ceiling comes down a watt per window (HOT_C, 85 C), from 97 C the TDP drops to the minimum (CRITICAL_C).
+WARM_C = {"autopilot": 80.0, "battery": 80.0, "balanced": 80.0, "quality": 80.0}
+WARM_DOCK_C = 80.0
 WARM_COOL_C = 75.0
 EXTERNAL_WAIT_S = 10.0       # an outside change waits this long for the charger to show up
 OBJECTIVES = ("battery", "balanced", "quality", "autopilot")
@@ -161,7 +164,9 @@ class PowerGovernor:
         self.player_ceiling: Optional[float] = None   # SteamOS's TDP when the Governor took over
         self.thermal_ceiling: Optional[float] = None
         self.cool_since: Optional[float] = None
-        self.warm = False                             # Autopilot from 80 C: no climbing
+        self.warm = False                             # from 80 C: no climbing to a higher point
+        self.dock = False                             # an external display: warm hold in every mode
+        self.start_hint: Optional[float] = None       # the game list's start TDP (light 7 W, heavy 15 W)
         self.warm_cool_since: Optional[float] = None
         # cap -> (TDP that failed, until, repeats): no probe at or below that TDP until then
         self.floors: Dict[int, Tuple[float, float, int]] = {}
@@ -264,7 +269,11 @@ class PowerGovernor:
             target, why = float(learned["tdp_w"]) + 1.0, "warm-start"
         elif (self.key, self.objective) not in self.started:
             # A fresh game starts low; later unknown points keep the level the session reached.
-            target, why = START_W.get(self.objective, self.ceiling), "start-level"
+            # The game list (user, 3.1.0): a light game starts at 7 W, a heavy one at the ceiling.
+            if self.start_hint is not None:
+                target, why = min(self.start_hint, self.ceiling), "start-level-game-class"
+            else:
+                target, why = START_W.get(self.objective, self.ceiling), "start-level"
         else:
             return
         self.started.add((self.key, self.objective))
@@ -373,6 +382,9 @@ class PowerGovernor:
             return self.status()
         key = str(sample.get("key") or "")
         objective = sample.get("objective") if sample.get("objective") in OBJECTIVES else "balanced"
+        self.dock = bool(sample.get("dock"))
+        hint = sample.get("start_w")
+        self.start_hint = float(hint) if isinstance(hint, (int, float)) and hint > 0 else None
         if key != self.key:
             if self.owned:
                 self.stop("context-change")
@@ -389,7 +401,7 @@ class PowerGovernor:
             self.ceiling = self._ceiling_for(objective)
             if self.tdp is not None and self.tdp > self.ceiling + 0.05:
                 self._write(self.ceiling, "autopilot-ceiling")
-            if objective not in WARM_C:
+            if objective not in WARM_C and not self.dock:
                 self.warm, self.warm_cool_since = False, None
             self.window = []
             self.window_start = now
@@ -509,7 +521,7 @@ class PowerGovernor:
             self.cool_since = None
             self._write(self.thermal_ceiling or MIN_TDP_W, "critical-temperature")
             return True
-        warm = WARM_C.get(self.objective)
+        warm = WARM_C.get(self.objective, WARM_DOCK_C if self.dock else None)
         if warm is not None:
             if temp >= warm:
                 self.warm_cool_since = None
