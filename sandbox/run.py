@@ -65,7 +65,7 @@ def make_rig(game: VGame, *, fg: str = "auto", objective: str = "balanced", pref
              split: bool = True, gpu_clock: bool = True, dock: bool = False, game_list: bool = False,
              above_x3: bool = False, boost: bool = False) -> Rig:
     clock = VClock()
-    power = VPower(user_tdp=user_tdp)
+    power = VPower(user_tdp=user_tdp, maximum=max(15.0, user_tdp))
     engine = VEngine(clock, game, power, refresh=refresh)
     sensors = VSensors(clock, power, ambient=ambient)
     sensors.battery, sensors.external_power = battery, external_power
@@ -861,6 +861,26 @@ def dock_tv_60hz() -> Dict[str, Any]:
     hot = make_rig(VGame("tv", 40.0), objective="balanced", refresh=60, dock=True, external_power=True, ambient=40.0)
     play(hot, 900)
     check(out, "balanced in the dock holds climbs from 80 C", any(e["kind"] == "governor-warm" for e in hot.log))
+    return out
+
+
+@scenario
+def dock_20w_scene_changes() -> Dict[str, Any]:
+    """Deck report 3.1.2 (Assassin's Creed Origins on the TV): SteamOS gives 20 W on the dock and the
+    game's heavy scenes come back every few minutes. The Governor may use the 20 W in the dock, and
+    a point that keeps falling at full power is retried later each time (no x2 <-> x2.4 every 5 min)."""
+    out: Dict[str, Any] = {}
+    # x2 (30) holds at 20 W but not at 15 W; a 90 s heavy scene every 5 minutes.
+    load = lambda t: 0.85 if (t - 1000) % 300 >= 210 else 1.0  # noqa: E731
+    rig = make_rig(VGame("tv", 30.0, load), objective="autopilot", refresh=60, dock=True,
+                   external_power=True, user_tdp=20.0)
+    play(rig, 2400)
+    tl = rig.timeline
+    out["metrics"] = metrics(rig, skip=120)
+    check(out, "the dock's 20 W is used", max(r["tdp"] for r in tl) > 15.0, f"max {max(r['tdp'] for r in tl)} W")
+    changes = sum(1 for a, b in zip(tl[120:], tl[121:]) if a["point"] and b["point"] and a["point"] != b["point"])
+    out["point_changes"] = changes
+    check(out, "the point changes at most 8 times in 38 min", changes <= 8, f"{changes} changes")
     return out
 
 

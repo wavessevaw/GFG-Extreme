@@ -155,6 +155,7 @@ class PointPilot:
         self.headroom_backoff = 0.0  # after a failed trial the headroom estimate waits this long
         self.costly_since: Optional[float] = None
         self.costly: Dict[int, float] = {}  # point -> until: needed more than POWER_GOOD_W
+        self.falls: Dict[int, int] = {}     # point -> times it fell at full power this game
         self.trial_cap = 0
         self.trial_from = 0
         self.holds = True
@@ -315,7 +316,11 @@ class PointPilot:
                     if lower:
                         new = fit[-1] if fit else lower[0]
                         self.demotions += 1
-                        self.promote_wait = PROMOTE_WAIT_S
+                        # A point that keeps falling at full power is tried again later each time
+                        # (Deck report 3.1.2: x2 <-> x2.4 every 5 min in one game): 2, 4, 8, 16 min.
+                        # The GPU headroom check still climbs early when the scene is clearly lighter.
+                        falls = self.falls[self.point] = self.falls.get(self.point, 0) + 1
+                        self.promote_wait = min(PROMOTE_WAIT_MAX_S, PROMOTE_WAIT_S * 2 ** (falls - 1))
                         self._go("locked", f"game fell to {verdict['median']:.0f} fps at full power: "
                                  f"point {self.point} -> {new}", new)
                     elif light:
