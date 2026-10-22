@@ -2,7 +2,7 @@
 // @ts-ignore
 
 // Prevents it from being duplicated in output.
-const manifest = {"name": "GFG Extreme", "author": "Eugenio Segala", "flags": ["root"], "api_version": 1, "publish": {"tags": ["frame-generation", "framegen", "gamescope", "kedavra", "tdp", "steam-deck", "gfg-extreme"], "description": "GFG Extreme 3.0 Independence: frame generation x2–x3.75 on its own engine (GSF Kedavra in Gamescope), Autopilot, TDP Governor, Power Split and GPU clock ceiling. No Lossless Scaling."}};
+const manifest = {"name": "GFG Extreme", "author": "Eugenio Segala", "flags": ["root"], "api_version": 1, "publish": {"tags": ["frame-generation", "framegen", "gamescope", "kedavra", "tdp", "steam-deck", "gfg-extreme"], "description": "GFG Extreme 3.0: frame generation x2–x3.75 on its own engine (GSF Kedavra in Gamescope), Autopilot, TDP Governor, Power Split and GPU clock ceiling. No Lossless Scaling."}};
 const API_VERSION = 2;
 const internalAPIConnection = window.__DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_deckyLoaderAPIInit;
 // Initialize
@@ -591,7 +591,7 @@ function Setup({ s, set }) {
       h(Seg, { value: cfg.telemetry.level, options: [["minimal", "Minimal"], ["standard", "Standard"], ["debug", "Debug"]], onChange: (v) => set(() => rpc.setSection("telemetry", { level: v })) })
     ),
     mig && mig.from ? h(Card, { title: "FROM GFG EXTREME 2.X" }, (mig.steps || []).slice(0, 4).map((t, i) => h("div", { key: i, className: "check" }, h("b", null, "\u2713"), String(t)))) : null,
-    h("div", { className: "sub", style: { textAlign: "center", marginTop: 4 } }, `GFG Extreme ${s.version} ${s.codename || ""}`)
+    h("div", { className: "sub", style: { textAlign: "center", marginTop: 4 } }, `GFG Extreme ${s.version}${s.codename ? " " + s.codename : ""}`)
   );
 }
 function Content() {

@@ -1,0 +1,26 @@
+name: Release titles
+
+# Run by hand: puts every 3.x release's title and notes back in line with
+# RELEASE_DESCRIPTION_V<version>.md (title "GFG Extreme <version>"). Assets are not touched.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  titles:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Edit releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for notes in RELEASE_DESCRIPTION_V3_*.md; do
+            version="${notes#RELEASE_DESCRIPTION_V}"; version="${version%.md}"; version="${version//_/.}"
+            if gh release view "v$version" >/dev/null 2>&1; then
+              gh release edit "v$version" --title "GFG Extreme $version" --notes-file "$notes"
+              echo "v$version: $(gh release view "v$version" --json name -q .name)"
+            fi
+          done

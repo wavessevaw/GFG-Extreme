@@ -1,4 +1,4 @@
-# GFG Extreme 3.0.1 Independence
+# GFG Extreme 3.0.1
 
 The first update after 3.0.0, built from the feedback of the first Steam Deck sessions: a faster,
 smarter Governor in the style of 2.1.6, Auto that follows the game's real frame rate, a tidier HUD

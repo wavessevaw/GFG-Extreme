@@ -1,4 +1,4 @@
-# GFG Extreme 3.0.4 Independence
+# GFG Extreme 3.0.4
 
 Autopilot becomes its own adaptive mode.
 

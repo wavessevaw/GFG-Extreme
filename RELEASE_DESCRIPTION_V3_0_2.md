@@ -1,4 +1,4 @@
-# GFG Extreme 3.0.2 Independence
+# GFG Extreme 3.0.2
 
 HDR fix: Gamescope KEDAVRA now reads SteamOS's display scripts, so the Steam Deck OLED is
 recognised again and HDR is available in games, switched on automatically like in the stock

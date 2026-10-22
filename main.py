@@ -1,4 +1,4 @@
-"""Decky entry point for GFG Extreme 3.0 "Independence"."""
+"""Decky entry point for GFG Extreme 3.0."""
 
 from gfg_plugin.plugin import Plugin
 

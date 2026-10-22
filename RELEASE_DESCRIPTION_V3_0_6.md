@@ -1,4 +1,4 @@
-# GFG Extreme 3.0.6 Independence
+# GFG Extreme 3.0.6
 
 New Dash and Graphics panels, sharper x3.75 picture in fast turns, and the first Governor 2.0
 pieces: a TDP recovery journal, the 2.1.6 p5 rule and a shadow record of experiments.
