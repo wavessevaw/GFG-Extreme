@@ -46,7 +46,10 @@ FAST_STEP_W = 2.0
 # frame rate (watts come back only for a deeper fall); targets 12 W, ideally 9-10 W.
 START_W = {"battery": 10.0, "balanced": 12.0, "autopilot": 15.0}
 HOLD_RATIO = {"autopilot": 0.92}          # window mean vs cap that still holds (default 0.97)
-SHORT_RATIO = {"autopilot": 0.90}         # fast guard: last 3 s under this share -> watts back
+SHORT_RATIO = {"autopilot": 0.90}         # fast guard: under this share of the cap -> watts back
+# Autopilot: a short sharp drop is no reason for watts (user, 3.0.4). The fast guard needs the
+# drop to last: 5 of the last 6 seconds short; windows judge the median, not the mean.
+SUSTAIN_S = 6
 DRAW_MARGIN_W = 1.5          # limit kept above the measured draw when jumping down to it
 DRAW_JUMP_W = 3.0            # draw this far under the limit: the limit is not what holds the game
 DRAW_BINDING_W = 1.2         # draw this close to the limit: the limit is what holds the game
@@ -68,7 +71,8 @@ CRITICAL_C = 97.0
 OBJECTIVES = ("battery", "balanced", "quality", "autopilot")
 
 
-def healthy(window: List[Dict[str, Any]], cap: int, temp_ok: bool, hold: float = 0.97) -> Dict[str, Any]:
+def healthy(window: List[Dict[str, Any]], cap: int, temp_ok: bool, hold: float = 0.97,
+            median: bool = False) -> Dict[str, Any]:
     """Verdict for one window of 1 s samples, with the reason a failed window failed. A missing
     pace is allowed (no generation running); a non-finite reading is broken telemetry."""
     n = len(window)
@@ -77,7 +81,7 @@ def healthy(window: List[Dict[str, Any]], cap: int, temp_ok: bool, hold: float =
     reals = [s["real"] for s in window if s.get("real") is not None]
     if n == 0 or cap <= 0 or len(reals) < max(1, COVERAGE * n):
         return {"ok": None, "reason": "no-data"}
-    real = sum(reals) / len(reals)
+    real = statistics.median(reals) if median else sum(reals) / len(reals)
     paces = [s["pace"] for s in window if s.get("pace") is not None]
     pace = sum(paces) / len(paces) if paces else None
     over = sum(s.get("over_budget") or 0.0 for s in window) / n
@@ -126,7 +130,7 @@ class PowerGovernor:
         self.hold = False
         self.window: List[Dict[str, Any]] = []
         self.window_start = 0.0
-        self.recent: Deque[Optional[float]] = deque(maxlen=3)
+        self.recent: Deque[Optional[float]] = deque(maxlen=SUSTAIN_S)
         self.started: set = set()
         self.fast_at = -1e9
         self.changed_at = -1e9
@@ -337,7 +341,8 @@ class PowerGovernor:
         if now - self.window_start < (FAST_WINDOW_S if self.fast else WINDOW_S):
             return self.status()
         temp_ok = temp is None or temp < HOT_C
-        verdict = healthy(self.window, self.cap, temp_ok, HOLD_RATIO.get(self.objective, 0.97))
+        verdict = healthy(self.window, self.cap, temp_ok, HOLD_RATIO.get(self.objective, 0.97),
+                          median=self.objective == "autopilot")
         if len(self.window) < COVERAGE * (now - self.window_start):
             verdict = {"ok": None, "reason": "no-data"}   # missed ticks: too few seconds were seen
         draws = [s["draw_w"] for s in self.window if isinstance(s.get("draw_w"), (int, float))]
@@ -384,12 +389,15 @@ class PowerGovernor:
 
     def _fast_guard(self, now: float, sample: Dict[str, Any]) -> bool:
         """Up fast: the last 3 s short of the cap at a binding limit get watts back at once."""
-        if self.tdp is None or self.ceiling is None or len(self.recent) < 3 or None in self.recent:
+        n = SUSTAIN_S if self.objective == "autopilot" else 3
+        last = list(self.recent)[-n:]
+        if self.tdp is None or self.ceiling is None or len(last) < n or None in last:
             return False
         ceiling = min(x for x in (self.ceiling, self.thermal_ceiling) if x is not None)
         if self.tdp >= ceiling - 0.05 or now - self.fast_at < FAST_GAP_S:
             return False
-        med = statistics.median(self.recent)  # type: ignore[arg-type]
+        # Autopilot: the second-best of 6 s (5 of 6 short); the modes: the median of 3 s.
+        med = sorted(last)[-2] if n == SUSTAIN_S else statistics.median(last)  # type: ignore[arg-type]
         if med >= SHORT_RATIO.get(self.objective, FAST_SHORT_RATIO) * self.cap or not self._binding(sample.get("draw_w")):
             return False
         severe = med < SEVERE_RATIO * self.cap

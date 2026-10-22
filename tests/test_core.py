@@ -318,7 +318,11 @@ class AutopilotTest(unittest.TestCase):
             g.tick({**s, "real": 37.0})   # 7.5 % short: tolerated, the TDP keeps going down
         self.assertLess(act.tdp, 15.0)
         low = act.tdp
-        for _ in range(4):
+        for _ in range(3):
             clock.t += 1
-            g.tick({**s, "real": 34.0})   # 15 % short: watts back
+            g.tick({**s, "real": 20.0})   # a short sharp drop: no watts for it
+        self.assertEqual(act.tdp, low)
+        for _ in range(7):
+            clock.t += 1
+            g.tick({**s, "real": 34.0})   # 15 % short and lasting: watts back
         self.assertGreater(act.tdp, low)

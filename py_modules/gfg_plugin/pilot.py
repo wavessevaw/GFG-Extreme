@@ -204,8 +204,10 @@ class PointPilot:
         real = statistics.fmean(reals)
         pace = statistics.fmean(paces) if paces else None
         self.window, self.window_start = [], now
-        hold = AUTOPILOT_HOLD_RATIO if ctx.get("objective") == "autopilot" else HOLD_RATIO
-        ok = real >= hold * cap and (pace is None or pace >= PACE_MIN)
+        auto = ctx.get("objective") == "autopilot"
+        hold = AUTOPILOT_HOLD_RATIO if auto else HOLD_RATIO
+        # Autopilot judges the median: a short sharp drop does not move the point.
+        ok = (statistics.median(reals) if auto else real) >= hold * cap and (pace is None or pace >= PACE_MIN)
         gpus = [x["gpu"] for x in self.window_done if isinstance(x.get("gpu"), (int, float))]
         cpus = [x["cpu"] for x in self.window_done if isinstance(x.get("cpu"), (int, float))]
         return {"ok": ok, "real": real, "median": statistics.median(reals), "pace": pace,
@@ -287,7 +289,16 @@ class PointPilot:
         if self.costly.get(nxt, 0.0) > self.clock():
             return False
         tdp = ctx.get("tdp_w")
-        return not isinstance(tdp, (int, float)) or tdp <= POWER_IDEAL_W
+        # Better than x3 is the aim (x3 good, x3.75 last resort): up to the first point above
+        # x3 Autopilot climbs within the good target, higher ones only from the ideal.
+        limit = POWER_GOOD_W if nxt <= self._first_above_x3(ctx) else POWER_IDEAL_W
+        return not isinstance(tdp, (int, float)) or tdp <= limit
+
+    @staticmethod
+    def _first_above_x3(ctx: Dict[str, Any]) -> int:
+        steps = ladder(int(ctx.get("refresh") or 90))
+        x3 = steps[1] if len(steps) > 1 else steps[0]
+        return next((c for c in steps if c > x3), x3)
 
     def _over_power_target(self, ctx: Dict[str, Any], steps: List[int], now: float) -> bool:
         """Autopilot: a point the settled Governor holds only above 12 W for a minute steps down."""
