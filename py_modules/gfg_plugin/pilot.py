@@ -57,6 +57,10 @@ PACE_MIN = 0.99
 # lower one, and Autopilot climbs only while the TDP is at the ideal.
 POWER_GOOD_W = 12.0
 POWER_IDEAL_W = 10.0
+# Autopilot (user, 3.0.8): below 15 W keep the highest point up to 40 the game holds ("if it
+# does 40, keep base 35-40"), x3 at least; x3.75 only when x3 needs the whole 15 W. x2 (45) is a
+# bonus: climbed into from the ideal 10 W, kept within the good 12 W.
+BAND_MAX_W = 14.5
 POWER_WAIT_S = 60.0
 COSTLY_HOLD_S = 600.0
 
@@ -286,26 +290,28 @@ class PointPilot:
         """Autopilot climbs only from the ideal power and never into a point that cost too much."""
         if not ctx.get("autopilot"):
             return True
+        if ctx.get("warm"):
+            return False   # 80 C and up: no watts for a higher point (x3 itself stays)
         if self.costly.get(nxt, 0.0) > self.clock():
             return False
         tdp = ctx.get("tdp_w")
-        # Better than x3 is the aim (x3 good, x3.75 last resort): up to the first point above
-        # x3 Autopilot climbs within the good target, higher ones only from the ideal.
-        limit = POWER_GOOD_W if nxt <= self._first_above_x3(ctx) else POWER_IDEAL_W
+        limit = BAND_MAX_W if nxt <= self._band_top(ctx) else POWER_IDEAL_W
         return not isinstance(tdp, (int, float)) or tdp <= limit
 
     @staticmethod
-    def _first_above_x3(ctx: Dict[str, Any]) -> int:
+    def _band_top(ctx: Dict[str, Any]) -> int:
+        """Autopilot's band: every point below x2 (40 at 90 Hz, 25 at 60 Hz)."""
         steps = ladder(int(ctx.get("refresh") or 90))
-        x3 = steps[1] if len(steps) > 1 else steps[0]
-        return next((c for c in steps if c > x3), x3)
+        return steps[-2] if len(steps) > 2 else steps[-1]
 
     def _over_power_target(self, ctx: Dict[str, Any], steps: List[int], now: float) -> bool:
-        """Autopilot: a point the settled Governor holds only above 12 W for a minute steps down."""
+        """Autopilot: a point the settled Governor holds only near the whole 15 W (x2: above 12 W)
+        for a minute steps down one point; x3.75 is where x3 needs the whole 15 W."""
         tdp = ctx.get("tdp_w")
-        lower = [c for c in steps if c < self.point and c >= self._battery_point(ctx, steps)]
+        lower = [c for c in steps if c < self.point]
+        limit = BAND_MAX_W if self.point <= self._band_top(ctx) else POWER_GOOD_W
         if (not ctx.get("autopilot") or not ctx.get("gov_settled") or not isinstance(tdp, (int, float))
-                or tdp <= POWER_GOOD_W or not lower):
+                or tdp <= limit or not lower):
             self.costly_since = None
             return False
         if self.costly_since is None:
@@ -318,7 +324,7 @@ class PointPilot:
         self.demotions += 1
         self.clean_since = None
         self._go("locked", f"Autopilot power target: point {self.point} needs {tdp:.0f} W, "
-                 f"over {POWER_GOOD_W:.0f} W -> {new}", new)
+                 f"over {limit:.0f} W -> {new}", new)
         return True
 
     @staticmethod

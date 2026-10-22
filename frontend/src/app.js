@@ -208,6 +208,9 @@ function Graphics({ s, set, cat }) {
       chain.length ? h(Focusable, { className: "btn", style: { marginTop: 8 }, onClick: () => put({ effects: [] }) }, "Clear effects") : null,
       h("div", { className: "note" }, "Each effect costs some GPU time, the heavy ones (HDR Look, Clarity, SMAA) the most: with the Governor on, that can mean a little more power or a deeper ratio. " +
         (hdr ? "This game runs in HDR: colour effects are skipped, sharpening and anti-aliasing still apply." : "HDR games: colour effects are skipped, sharpening and anti-aliasing still apply."))),
+    h(Card, { title: "HDR" },
+      h(Row, { k: "HDR output", first: true }, h(Tog, { on: s.settings.engine.hdr_output !== false, onChange: (v) => set(() => rpc.setSection("engine", { hdr_output: v })) })),
+      h("div", { className: "sub" }, s.settings.engine.hdr_output !== false ? "On: HDR as set in Steam. Off: the screen and games get SDR." : "Off: the screen and games get SDR. A game started in HDR may need a restart.")),
     h(Card, { title: "HUD" }, h(Row, { k: "Show HUD in game", first: true }, h(Tog, { on: hud.enabled, onChange: (v) => set(() => rpc.setSection("hud", { enabled: v })) })),
       h("div", { className: "sec sec2" }, "POSITION"),
       h(Seg, { value: hud.position, options: [["top-right", "Top right"], ["top-left", "Top left"], ["bottom-left", "Bottom left"], ["bottom-right", "Bottom right"]], onChange: (v) => set(() => rpc.setSection("hud", { position: v })) }),

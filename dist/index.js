@@ -476,6 +476,12 @@ function Graphics({ s, set, cat }) {
     ),
     h(
       Card,
+      { title: "HDR" },
+      h(Row, { k: "HDR output", first: true }, h(Tog, { on: s.settings.engine.hdr_output !== false, onChange: (v) => set(() => rpc.setSection("engine", { hdr_output: v })) })),
+      h("div", { className: "sub" }, s.settings.engine.hdr_output !== false ? "On: HDR as set in Steam. Off: the screen and games get SDR." : "Off: the screen and games get SDR. A game started in HDR may need a restart.")
+    ),
+    h(
+      Card,
       { title: "HUD" },
       h(Row, { k: "Show HUD in game", first: true }, h(Tog, { on: hud.enabled, onChange: (v) => set(() => rpc.setSection("hud", { enabled: v })) })),
       h("div", { className: "sec sec2" }, "POSITION"),
