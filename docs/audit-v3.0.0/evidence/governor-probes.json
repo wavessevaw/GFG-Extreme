@@ -1,0 +1,105 @@
+{
+  "missing_pace_accepted": {
+    "real": 30.0,
+    "pace": null,
+    "over_budget": 0.0,
+    "ring_miss": 0.0,
+    "ok": true,
+    "reason": "holds"
+  },
+  "10pct_one_second_dip_accepted": {
+    "real": 29.7,
+    "pace": 1.0,
+    "over_budget": 0.0,
+    "ring_miss": 0.0,
+    "ok": true,
+    "reason": "holds"
+  },
+  "cooled_quality": {
+    "tdp": 4.0,
+    "thermal_ceiling": null,
+    "window": {
+      "real": 30.0,
+      "pace": 1.0,
+      "over_budget": 0.0,
+      "ring_miss": 0.0,
+      "ok": true,
+      "reason": "holds"
+    }
+  },
+  "cooled_while_pilot_measures": {
+    "tdp": 4.0,
+    "thermal_ceiling": 4.0,
+    "hold": true
+  },
+  "thermal_smoothness_flap": [
+    "quality",
+    "balanced",
+    "quality",
+    "balanced"
+  ],
+  "two_samples_ten_seconds": {
+    "writes": [
+      14.0
+    ],
+    "window": {
+      "real": 30.0,
+      "pace": 1.0,
+      "over_budget": 0.0,
+      "ring_miss": 0.0,
+      "ok": true,
+      "reason": "holds"
+    }
+  },
+  "severe_zero_fps_recovery_seconds": 8.0,
+  "expired_local_failure_floor": {
+    "tdp": 15.0,
+    "failure": 13
+  },
+  "pilot_locks_on_stale_measurement": {
+    "multiplier": 1,
+    "base_fps": 45,
+    "auto_floor": 0,
+    "hold_ceiling": false,
+    "phase": "locked",
+    "point": 45,
+    "label": "x2",
+    "reason": "measured: the game holds 45 fps; locked 45",
+    "holds": true,
+    "demotions": 0,
+    "promotions": 0,
+    "trial_cap": 0
+  },
+  "unmodified_tdp_claimed_saving": {
+    "minutes": 1.0,
+    "avg_output_fps": 90.0,
+    "avg_real_fps": 30.0,
+    "avg_tdp_w": 15.0,
+    "avg_draw_w": 8.0,
+    "reference_w": 15.0,
+    "saved_w": null,
+    "saved_wh": 0.12,
+    "max_temp_c": null,
+    "stutter_pct": 0,
+    "hot_pct": 0,
+    "modes": {
+      "quality": 1.0
+    },
+    "mode": "quality"
+  },
+  "gpu_trial_one_sample_accepted": {
+    "phase": "hold",
+    "owned": true,
+    "blocked_until": 0.0
+  },
+  "governor_during_split_trial": {
+    "tdp_before": 12.0,
+    "tdp_after": 11.0,
+    "split_settling": true
+  },
+  "restore_failure_then_new_game": {
+    "governor_forgot_pending_restore": true,
+    "saved_original_after_new_claim": 10,
+    "actual_tdp": 10
+  }
+}

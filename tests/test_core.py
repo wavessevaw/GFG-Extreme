@@ -150,6 +150,28 @@ class PilotTest(unittest.TestCase):
         self.assertEqual((out["phase"], out["point"], out["base_fps"]), ("locked", 45, 45))
         self.assertFalse(out["hold_ceiling"])
 
+    def test_stale_auto_cap_does_not_lock(self):
+        self.run_ctx(2)
+        out = self.run_ctx(13, confirmed=False, real=None, engine={})
+        self.assertEqual(out["phase"], "measure", "silence is not a stable measurement")
+
+    def test_autopilot_gives_up_a_point_that_costs_over_12w(self):
+        self.run_ctx(20)                       # locked 45
+        out = self.run_ctx(30, autopilot=True, tdp_w=14.0, gov_settled=True)
+        self.assertEqual(out["point"], 45, "a minute first")
+        out = self.run_ctx(35, autopilot=True, tdp_w=14.0, gov_settled=True)
+        self.assertEqual(out["point"], 40)
+        out = self.run_ctx(200, autopilot=True, tdp_w=9.0, gov_settled=True, gpu_busy=50, cpu_top=30)
+        self.assertEqual(out["point"], 40, "the costly point is not retried for 10 minutes")
+
+    def test_autopilot_battery_keeps_x3_until_low_battery(self):
+        out = self.run_ctx(2, objective="battery", autopilot=True)
+        self.assertEqual(out["point"], 30)
+        self.p.reset()
+        self.p.context = None
+        out = self.run_ctx(2, objective="battery", autopilot=True, low_battery=True)
+        self.assertEqual(out["point"], 24)
+
     def test_battery_locks_x375(self):
         out = self.run_ctx(2, objective="battery")
         self.assertEqual((out["point"], out["base_fps"], out["label"]), (24, 24, "x3.75"))
@@ -218,9 +240,28 @@ class GovernorTest(unittest.TestCase):
         self.feed(40)
         self.assertLess(self.act.tdp, 15.0)
         low = self.act.tdp
-        self.feed(24, real=30.0)  # severe shortfall
-        self.assertEqual(self.act.tdp, 15.0, "a clear shortfall goes back to full power at once")
-        self.assertGreaterEqual(self.g.floor_fail[45], low)
+        self.feed(4, real=30.0)  # severe shortfall at a binding limit
+        self.assertGreater(self.act.tdp, low, "a clear shortfall gets watts back within seconds")
+        self.feed(24, real=30.0)
+        self.assertEqual(self.act.tdp, 15.0)
+
+    def test_failed_probe_leaves_an_expiring_floor(self):
+        self.feed(1)
+        start = self.act.tdp
+        self.assertEqual(start, 12.0, "Balanced starts at 12 W")
+        self.feed(9)
+        probed = self.act.tdp
+        self.assertLess(probed, start)
+        self.feed(3, real=40.0)  # the step down does not hold
+        self.assertGreater(self.act.tdp, probed)
+        self.assertEqual(self.g.floor_fail[45], probed)
+        self.clock.t += 301
+        self.assertNotIn(45, self.g.floor_fail, "a floor expires")
+
+    def test_draw_headroom_jumps_down(self):
+        self.act.draw = 6.0
+        self.feed(30, objective="battery", draw_w=6.0)
+        self.assertLessEqual(self.act.tdp, 7.5, "the limit follows the draw when it is not binding")
 
     def test_quality_never_probes_and_hold(self):
         self.feed(60, objective="quality")
@@ -238,16 +279,50 @@ class GovernorTest(unittest.TestCase):
 
 
 class AutopilotTest(unittest.TestCase):
-    def test_choices_and_hysteresis(self):
+    def test_one_adaptive_mode(self):
         clock = Clock()
         a = autopilot.Autopilot(clock=clock)
-        self.assertEqual(a.decide("auto", {"external_power": True}, 60)["objective"], "quality")
-        clock.t += 61
-        self.assertEqual(a.decide("auto", {"external_power": True}, 88)["objective"], "balanced")
-        clock.t += 61
-        self.assertEqual(a.decide("auto", {"external_power": False, "percent": 19}, 60)["objective"], "battery")
-        clock.t += 61
-        self.assertEqual(a.decide("auto", {"external_power": False, "percent": 23}, 60)["objective"], "battery")
-        clock.t += 61
-        self.assertEqual(a.decide("auto", {"external_power": False, "percent": 26}, 60)["objective"], "balanced")
-        self.assertEqual(a.decide("smoothness", {"external_power": False, "percent": 10}, 60)["objective"], "quality")
+        for power in ({"external_power": True}, {"external_power": False, "percent": 60}):
+            self.assertEqual(a.decide("auto", power, 60)["objective"], "autopilot")
+        a.decide("auto", {"external_power": False, "percent": 19}, 60)
+        self.assertTrue(a.low_battery)
+        a.decide("auto", {"external_power": False, "percent": 23}, 60)
+        self.assertTrue(a.low_battery, "back only above 25 %")
+        a.decide("auto", {"external_power": False, "percent": 26}, 60)
+        self.assertFalse(a.low_battery)
+
+    def test_heat_does_not_flap(self):
+        clock = Clock()
+        a = autopilot.Autopilot(clock=clock)
+        for temp in (84.9, 85.1, 84.9, 85.1, 84.0, 83.0):
+            a.decide("auto", {"external_power": True}, temp)
+            clock.t += 1
+        self.assertTrue(a.hot)
+        for _ in range(40):
+            clock.t += 1
+            a.decide("auto", {"external_power": True}, 75)
+        self.assertFalse(a.hot, "cool for 30 s")
+
+    def test_governor_autopilot_starts_at_15_and_tolerates_small_dips(self):
+        clock = Clock()
+        act = FakeActuator()
+        act.tdp = act.initial = 20.0
+        g = PowerGovernor(act, None, clock=clock)
+        s = {"game": True, "key": "app:1|90", "objective": "autopilot", "cap": 40, "epoch": 1,
+             "real": 40.0, "pace": 1.0, "over_budget": 0.0, "ring_miss": 0.0, "temp_c": 70.0}
+        clock.t += 1
+        g.tick(s)
+        self.assertEqual(act.tdp, 15.0)
+        for _ in range(30):
+            clock.t += 1
+            g.tick({**s, "real": 37.0})   # 7.5 % short: tolerated, the TDP keeps going down
+        self.assertLess(act.tdp, 15.0)
+        low = act.tdp
+        for _ in range(3):
+            clock.t += 1
+            g.tick({**s, "real": 20.0})   # a short sharp drop: no watts for it
+        self.assertEqual(act.tdp, low)
+        for _ in range(7):
+            clock.t += 1
+            g.tick({**s, "real": 34.0})   # 15 % short and lasting: watts back
+        self.assertGreater(act.tdp, low)

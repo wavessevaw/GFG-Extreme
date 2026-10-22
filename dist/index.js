@@ -68,6 +68,32 @@ var css = `
 .gfg .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:6px}
 .gfg .stat{background:linear-gradient(180deg,#222228,var(--s2));border-radius:10px;padding:6px 2px;text-align:center}
 .gfg .stat b{display:block;font-size:14px;font-variant-numeric:tabular-nums}.gfg .stat span{font-size:9px;color:var(--tx3);font-weight:700;letter-spacing:.08em}
+.gfg .minis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px 4px;background:linear-gradient(160deg,#18161a 0%,var(--s1) 55%,#121214 100%);border:1px solid var(--line);border-radius:16px;padding:10px 4px 8px;margin-bottom:10px}
+.gfg .mini{display:flex;flex-direction:column;align-items:center}
+.gfg .mring{position:relative;width:62px;height:62px}.gfg .mring svg{position:absolute;inset:0;transform:rotate(-90deg);overflow:visible}
+.gfg .mring .mg{transition:stroke-dashoffset .6s,stroke .6s}
+.gfg .mn{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1}
+.gfg .mn b{font-weight:800;font-variant-numeric:tabular-nums}.gfg .mn i{font-style:normal;font-size:8px;font-weight:700;color:var(--tx3);margin-top:2px;letter-spacing:.04em}
+.gfg .mini>span{font-size:8.5px;font-weight:800;letter-spacing:.08em;color:var(--tx3);margin-top:4px}
+.gfg .fgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.gfg .ftile{display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 2px 7px;border-radius:12px;border:1px solid transparent;background:var(--s2)}
+.gfg .ftile .sw{position:relative;width:38px;height:38px;border-radius:11px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);overflow:hidden}
+.gfg .ftile .slash{position:absolute;left:50%;top:-4px;bottom:-4px;width:2px;background:var(--tx3);transform:rotate(45deg)}
+.gfg .ftile .fl{font-size:10.5px;font-weight:700;color:var(--tx2);white-space:nowrap}
+.gfg .ftile.on{border-color:var(--red);background:var(--redbg);box-shadow:0 0 14px rgba(251,13,0,.22)}.gfg .ftile.on .fl{color:var(--tx)}
+.gfg .fmore{margin-top:10px;padding:9px 10px;border-radius:11px;background:var(--s2);font-size:11.5px;color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gfg .egrid{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+.gfg .echip{display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:11px;background:var(--s2);border:1px solid var(--line);min-width:0}
+.gfg .echip .en{font-size:12px;font-weight:600;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gfg .echip.on{border-color:rgba(251,13,0,.6);background:var(--redbg)}.gfg .echip.on .en{color:var(--tx)}
+.gfg .eord{width:20px;height:20px;border-radius:6px;background:var(--s3);color:var(--tx3);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex:none}
+.gfg .eord.on{background:var(--red);color:#fff}
+.gfg .t2 b{display:block;font-size:12.5px;font-weight:600}.gfg .t2 span{font-size:10px;color:var(--tx3)}
+.gfg .tile.mode{display:flex;align-items:center;gap:9px;position:relative;overflow:hidden}
+.gfg .mico{width:34px;height:34px;flex:none;border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--tx2);
+ background:linear-gradient(160deg,#33333b,#1c1c21);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 0 0 1px var(--line)}
+.gfg .tile.mode{background:linear-gradient(160deg,#222228 0%,var(--s2) 60%,#18181c 100%)}
+.gfg .tile.mode.on .mico{color:#fff;background:linear-gradient(160deg,#ff2d1a,#b30800);box-shadow:0 0 12px rgba(251,13,0,.5)}
 .gfg .grid2{display:grid;grid-template-columns:1fr 1fr;gap:7px}
 .gfg .tile{background:var(--s2);border:1px solid var(--line);border-radius:12px;padding:9px 10px;height:100%}
 .gfg .tile b{display:block;font-size:13px}.gfg .tile span{font-size:10.5px;color:var(--tx2)}
@@ -101,10 +127,10 @@ var css = `
 /* Gamepad focus: Steam marks the element under the stick / D-pad with .gpfocus, but our own
    backgrounds hide its ring. As in 2.x, the focused control turns white; a selected one gets a white ring. */
 .gfg .gpfocus,.gfg :focus-visible{outline:none}
-.gfg .tab.gpfocus,.gfg .seg .o.gpfocus,.gfg .pre.gpfocus,.gfg .ec.gpfocus,.gfg .btn.gpfocus,.gfg .step .b.gpfocus,.gfg .bump.gpfocus,.gfg .gpfocus>.tile,
+.gfg .tab.gpfocus,.gfg .seg .o.gpfocus,.gfg .pre.gpfocus,.gfg .ec.gpfocus,.gfg .ftile.gpfocus,.gfg .echip.gpfocus,.gfg .btn.gpfocus,.gfg .step .b.gpfocus,.gfg .bump.gpfocus,.gfg .gpfocus>.tile,
 .gfg .tab:focus-visible,.gfg .seg .o:focus-visible,.gfg .pre:focus-visible,.gfg .ec:focus-visible,.gfg .btn:focus-visible,.gfg .step .b:focus-visible,.gfg :focus-visible>.tile{background:linear-gradient(180deg,#fff 0%,#dcdce2 100%)!important;color:#0a0a0c!important;border-color:#fff!important;box-shadow:0 0 16px rgba(255,255,255,.35)!important}
 .gfg .gpfocus>.tile span,.gfg :focus-visible>.tile span{color:#3a3a44!important}
-.gfg .tab.on.gpfocus,.gfg .seg .o.on.gpfocus,.gfg .pre.on.gpfocus,.gfg .ec.on.gpfocus,.gfg .btn.red.gpfocus,.gfg .gpfocus>.tile.on,
+.gfg .tab.on.gpfocus,.gfg .seg .o.on.gpfocus,.gfg .pre.on.gpfocus,.gfg .ec.on.gpfocus,.gfg .ftile.on.gpfocus,.gfg .echip.on.gpfocus,.gfg .btn.red.gpfocus,.gfg .gpfocus>.tile.on,
 .gfg .tab.on:focus-visible,.gfg .seg .o.on:focus-visible,.gfg .pre.on:focus-visible,.gfg .ec.on:focus-visible,.gfg .btn.red:focus-visible,.gfg :focus-visible>.tile.on{background:linear-gradient(180deg,#ff2d1a,#d10a00)!important;color:#fff!important;box-shadow:0 0 0 2px #fff,0 0 18px rgba(251,13,0,.6)!important}
 .gfg .gpfocus>.tile.on span,.gfg :focus-visible>.tile.on span{color:#ffd9d4!important}
 .gfg .tog.gpfocus,.gfg .tog:focus-visible,.gfg .herotap.gpfocus,.gfg .herotap:focus-visible{box-shadow:0 0 0 2px #fff,0 0 14px rgba(255,255,255,.4)!important}
@@ -191,8 +217,8 @@ function useLayout() {
   });
   return [v, next];
 }
-function Ring({ size, stroke, frac, label, sub }) {
-  const r = (size - stroke) / 2 - 1, c = 2 * Math.PI * r, off = c * (1 - Math.max(0, Math.min(1, frac)));
+function Ring({ size, stroke, frac: frac2, label, sub }) {
+  const r = (size - stroke) / 2 - 1, c = 2 * Math.PI * r, off2 = c * (1 - Math.max(0, Math.min(1, frac2)));
   const big = size >= 170 ? 34 : size >= 120 ? 24 : size >= 100 ? 22 : 15;
   return h(
     "div",
@@ -201,8 +227,8 @@ function Ring({ size, stroke, frac, label, sub }) {
       "svg",
       { viewBox: `0 0 ${size} ${size}`, width: size, height: size },
       h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#26262d", strokeWidth: stroke }),
-      h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#fb0d00", strokeOpacity: 0.25, strokeWidth: stroke + 5, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: off }),
-      h("circle", { className: "arcg", cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#fb0d00", strokeWidth: stroke, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: off })
+      h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#fb0d00", strokeOpacity: 0.25, strokeWidth: stroke + 5, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: off2 }),
+      h("circle", { className: "arcg", cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#fb0d00", strokeWidth: stroke, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: off2 })
     ),
     h(
       "div",
@@ -213,8 +239,8 @@ function Ring({ size, stroke, frac, label, sub }) {
     )
   );
 }
-function Arc({ frac, label, sub }) {
-  const len = Math.PI * 83, off = len * (1 - Math.max(0, Math.min(1, frac)));
+function Arc({ frac: frac2, label, sub }) {
+  const len = Math.PI * 83, off2 = len * (1 - Math.max(0, Math.min(1, frac2)));
   return h(
     "div",
     { className: "arc" },
@@ -222,7 +248,7 @@ function Arc({ frac, label, sub }) {
       "svg",
       { viewBox: "0 0 190 104", width: 190, height: 104 },
       h("path", { d: "M12 98 A83 83 0 0 1 178 98", fill: "none", stroke: "#26262d", strokeWidth: 9, strokeLinecap: "round" }),
-      h("path", { className: "arcg", d: "M12 98 A83 83 0 0 1 178 98", fill: "none", stroke: "#fb0d00", strokeWidth: 9, strokeLinecap: "round", strokeDasharray: len, strokeDashoffset: off, style: { filter: "drop-shadow(0 0 6px rgba(251,13,0,.75))" } })
+      h("path", { className: "arcg", d: "M12 98 A83 83 0 0 1 178 98", fill: "none", stroke: "#fb0d00", strokeWidth: 9, strokeLinecap: "round", strokeDasharray: len, strokeDashoffset: off2, style: { filter: "drop-shadow(0 0 6px rgba(251,13,0,.75))" } })
     ),
     h(
       "div",
@@ -231,6 +257,30 @@ function Arc({ frac, label, sub }) {
       h("div", { className: "big", style: { fontSize: 28 } }, label),
       sub ? h("div", { className: "sm", style: { fontSize: 9 } }, sub) : null
     )
+  );
+}
+var FAN_MAX = 7e3;
+var frac = (v, max) => num(v) === null || !max ? 0 : v / max;
+var off = (v, ideal, offAt) => num(v) === null ? null : Math.max(0, Math.min(1, (v - ideal) / (offAt - ideal)));
+var tone = (t) => t === null || t === void 0 ? null : `hsl(${Math.round(130 - 126 * t)},85%,${Math.round(50 + 4 * Math.sin(Math.PI * t))}%)`;
+function Mini({ frac: f, v, u, k, t }) {
+  const size = 62, stroke = 5, r = (size - stroke) / 2 - 1, c = 2 * Math.PI * r, dash = c * (1 - Math.max(0, Math.min(1, f || 0)));
+  const col = tone(t);
+  return h(
+    "div",
+    { className: "mini" },
+    h(
+      "div",
+      { className: "mring" },
+      h(
+        "svg",
+        { viewBox: `0 0 ${size} ${size}`, width: size, height: size },
+        h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#26262d", strokeWidth: stroke }),
+        h("circle", { className: "mg", cx: size / 2, cy: size / 2, r, fill: "none", stroke: col || "#4a4a55", strokeWidth: stroke, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: dash })
+      ),
+      h("div", { className: "mn" }, h("b", { style: { fontSize: String(v).length > 4 ? 12 : 14 } }, v), u ? h("i", null, u) : null)
+    ),
+    h("span", null, k)
   );
 }
 var PHASES = ["MEASURE", "LOCK", "GUARD", "ADAPT"];
@@ -255,7 +305,14 @@ var gameName = (app) => {
     return "";
   }
 };
-var OBJ = { autopilot: ["Autopilot", "picks the mode"], battery: ["Battery", "\xD73.75 \xB7 lowest watts"], balanced: ["Balanced", "best point it holds"], quality: ["Quality", "real frames first"] };
+var OBJ = { autopilot: ["Autopilot", "adapts \xB7 aims at 12 W"], battery: ["Battery", "\xD73.75 \xB7 lowest watts"], balanced: ["Balanced", "best point it holds"], quality: ["Quality", "real frames first"] };
+var svg = (...c) => h("svg", { viewBox: "0 0 24 24", width: 22, height: 22, fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, ...c);
+var ICON = {
+  autopilot: svg(h("path", { d: "M12 2.5l2.2 5.3 5.3 2.2-5.3 2.2L12 17.5l-2.2-5.3L4.5 10l5.3-2.2z", fill: "currentColor", stroke: "none" }), h("path", { d: "M18.5 15.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z", fill: "currentColor", stroke: "none" })),
+  battery: svg(h("rect", { x: 2.5, y: 7, width: 17, height: 10, rx: 2.5 }), h("path", { d: "M21.5 10.5v3" }), h("rect", { x: 5, y: 9.5, width: 7, height: 5, rx: 1, fill: "currentColor", stroke: "none" })),
+  balanced: svg(h("path", { d: "M12 4v16M7 20h10M5 7h14" }), h("path", { d: "M5 7l-2.5 6a2.5 2.5 0 0 0 5 0z M19 7l-2.5 6a2.5 2.5 0 0 0 5 0z" })),
+  quality: svg(h("path", { d: "M6 3h12l3 6-9 12L3 9z" }), h("path", { d: "M3 9h18M9.5 3L12 21M14.5 3L12 21" }))
+};
 function Dash({ s, set }) {
   const [layout, next] = useLayout();
   const live = s.live || {}, eng = live.engine || {}, gov = live.governor || {}, sen = live.sensors || {}, split = live.split || {};
@@ -276,31 +333,44 @@ function Dash({ s, set }) {
   const setProf = (changes) => set(() => rpc.setProfile(scope, changes));
   const fgOpts = [["off", "Off"], ["auto", "Auto"], ["x2", "\xD72"], ["x3", "\xD73"], ["x3.75", "\xD73.75"], ["custom", "Custom"]];
   const cpuGhz = split.cap_khz ? (split.cap_khz / 1e6).toFixed(1) : null;
+  const pace = num((live.live || {}).pace), hdr = !!(eng.transfer && eng.transfer !== "sdr");
+  const short = !!(point && real !== null && real < 0.9 * point);
   return h(
     "div",
     null,
     h("div", { className: "card hero" + (layout === "side" ? "" : " col") }, h(Focusable, { className: "herotap", onClick: next }, ring), status),
     h(
       "div",
-      { className: "stats" },
-      h("div", { className: "stat" }, h("b", null, fmt(gov.tdp_w, 1, " W")), h("span", null, "TDP")),
-      h("div", { className: "stat" }, h("b", null, fmt(sen.temp_c, 0, "\xB0")), h("span", null, "APU")),
-      h("div", { className: "stat" }, h("b", null, num((live.live || {}).pace) === null ? "\u2014" : (100 * live.live.pace).toFixed(1) + "%"), h("span", null, "PACE")),
-      h("div", { className: "stat" }, h("b", null, eng.transfer && eng.transfer !== "sdr" ? "HDR" : "SDR"), h("span", null, "COLOR"))
-    ),
-    h(
-      "div",
-      { className: "stats" },
-      h("div", { className: "stat" }, h("b", null, fmt(sen.cpu_top_core_pct, 0, "%")), h("span", null, "CPU TOP")),
-      h("div", { className: "stat" }, h("b", null, fmt(sen.gpu_busy_pct, 0, "%")), h("span", null, "GPU")),
-      h("div", { className: "stat" }, h("b", null, cpuGhz || "MAX"), h("span", null, "CPU GHZ")),
-      h("div", { className: "stat" }, h("b", null, fmt(sen.fan_rpm)), h("span", null, "FAN RPM"))
+      { className: "minis" },
+      // TDP: 12 W good, 9-10 W ideal (user, 3.0.3); 20 W is way off.
+      h(Mini, { frac: frac(gov.tdp_w, gov.ceiling_w || 15), v: fmt(gov.tdp_w, 1), u: "W", k: "TDP", t: off(gov.tdp_w, 10, 20) }),
+      // APU: the Governor steps down from 90 C, 97 C is critical.
+      h(Mini, { frac: frac(sen.temp_c, 100), v: fmt(sen.temp_c, 0), u: "\xB0C", k: "APU", t: off(sen.temp_c, 70, 95) }),
+      h(Mini, { frac: frac(pace, 1), v: pace === null ? "\u2014" : (100 * pace).toFixed(1), u: "%", k: "PACE", t: off(pace === null ? null : 100 * pace, 99.5, 95) }),
+      h(Mini, { frac: 1, v: hdr ? "HDR" : "SDR", k: "COLOR" }),
+      h(Mini, { frac: frac(sen.cpu_top_core_pct, 100), v: fmt(sen.cpu_top_core_pct, 0), u: "%", k: "CPU TOP", t: off(sen.cpu_top_core_pct, 70, 100) }),
+      // GPU: a busy GPU is the point of a low TDP; it is off only when the game misses its cap too.
+      h(Mini, {
+        frac: frac(sen.gpu_busy_pct, 100),
+        v: fmt(sen.gpu_busy_pct, 0),
+        u: "%",
+        k: "GPU",
+        t: num(sen.gpu_busy_pct) === null ? null : short ? off(sen.gpu_busy_pct, 80, 98) : 0.25 * off(sen.gpu_busy_pct, 90, 100)
+      }),
+      // CPU clock: a cap Power Split kept saves watts; MAX is fine, not ideal.
+      h(Mini, { frac: split.cap_khz && split.max_khz ? split.cap_khz / split.max_khz : 1, v: cpuGhz || "MAX", u: cpuGhz ? "GHz" : "", k: "CPU CLOCK", t: cpuGhz ? 0 : 0.3 }),
+      h(Mini, { frac: frac(sen.fan_rpm, FAN_MAX), v: num(sen.fan_rpm) === null ? "\u2014" : (sen.fan_rpm / 1e3).toFixed(1), u: "k rpm", k: "FAN", t: off(sen.fan_rpm, 3500, 7e3) })
     ),
     h(Card, { title: "MODE" }, h("div", { className: "grid2" }, Object.entries(OBJ).map(([k, [name, sub]]) => h(Focusable, { key: k, onClick: () => setProf({ objective: k }) }, h(
       "div",
-      { className: "tile" + (prof.objective === k ? " on" : "") },
-      h("b", null, name),
-      h("span", null, k === "autopilot" && prof.objective === "autopilot" && live.objective ? "now " + (OBJ[live.objective] || [live.objective])[0] : sub)
+      { className: "tile mode m-" + k + (prof.objective === k ? " on" : "") },
+      h("div", { className: "mico" }, ICON[k]),
+      h(
+        "div",
+        null,
+        h("b", null, name),
+        h("span", null, k === "autopilot" && prof.objective === "autopilot" && live.objective && live.objective !== "autopilot" ? "now " + (OBJ[live.objective] || [live.objective])[0] : sub)
+      )
     ))))),
     h(
       Card,
@@ -327,37 +397,80 @@ function Dash({ s, set }) {
     }))
   );
 }
+var SWATCH = {
+  off: "linear-gradient(135deg,#2a2a31,#151519)",
+  sharp: "linear-gradient(135deg,#6f7682,#f2f5fa)",
+  vivid: "linear-gradient(135deg,#ff2d55,#ffcc00 55%,#34c759)",
+  hdr: "linear-gradient(135deg,#ff9500,#ffe7b0 50%,#2f7cf6)",
+  cinema: "linear-gradient(135deg,#0f6a6a,#e09a3e)",
+  noir: "linear-gradient(135deg,#050505,#d9d9d9)",
+  retro: "linear-gradient(135deg,#6b3f17,#e6c27a)",
+  smooth: "linear-gradient(135deg,#3a4a66,#9fb4d9)"
+};
+function lookSummary(f, names) {
+  const parts = (f.effects || []).map((e) => names[e] || e);
+  if (f.aa && f.aa !== "none") parts.push(f.aa.toUpperCase());
+  if (f.sharpen && f.sharpen !== "none") parts.push(f.sharpen.toUpperCase() + " " + Math.round((f.sharpness || 0) * 100) + "%");
+  return parts.length ? parts.join(" + ") : "No effect";
+}
 function Graphics({ s, set, cat }) {
   const prof = s.settings.profiles[s.profiles.active] || s.settings.profiles.default;
-  const f = prof.filters || { effects: [], sharpen: "none", sharpness: 0.4, aa: "none" };
+  const f = prof.filters || { effects: [], sharpen: "none", sharpness: 0.4, denoise: 0.17, aa: "none" };
   const scope = (s.profiles.active || "").startsWith("app:") ? "game" : "default";
   const put = (changes) => set(() => rpc.setProfile(scope, { filters: { ...f, ...changes } }));
-  const presets = cat && cat.presets || [];
+  const presets = cat && cat.presets || [], effects = cat && cat.effects || [];
+  const names = Object.fromEntries(effects.map((e) => [e.key, e.name]));
   const same = (a, b) => JSON.stringify([...a.effects || []].sort()) === JSON.stringify([...b.effects || []].sort()) && (a.sharpen || "none") === (b.sharpen || "none") && (a.aa || "none") === (b.aa || "none");
+  const active = (presets.find((p) => same(f, p.filters)) || {}).id || "custom";
   const hud = s.settings.hud;
   const hdr = ((s.live || {}).engine || {}).transfer && s.live.engine.transfer !== "sdr";
+  const chain = f.effects || [];
+  const step = (k, dv) => put({ [k]: Math.max(0, Math.min(1, Math.round(((f[k] || 0) + dv) * 20) / 20)) });
+  const stepper = (k) => h(
+    "div",
+    { className: "step" },
+    h(Focusable, { className: "b", onClick: () => step(k, -0.05) }, "\u2212"),
+    h("span", { className: "val" }, Math.round((f[k] || 0) * 100) + "%"),
+    h(Focusable, { className: "b", onClick: () => step(k, 0.05) }, "+")
+  );
   return h(
     "div",
     null,
-    h(Card, { title: "LOOK" }, h("div", { className: "grid4" }, presets.map((p) => h(Focusable, { key: p.id, className: "pre" + (same(f, p.filters) ? " on" : ""), onClick: () => set(() => rpc.setProfile(scope, { filters: p.id })) }, p.name)))),
     h(
       Card,
-      { title: "SHARPNESS" },
-      h(Seg, { value: f.sharpen, options: [["none", "None"], ["cas", "CAS"], ["dls", "DLS"]], onChange: (v) => put({ sharpen: v }) }),
-      f.sharpen !== "none" ? h("div", { className: "lrow first", style: { marginTop: 6 } }, "Strength", h(
-        "div",
-        { className: "step" },
-        h(Focusable, { className: "b", onClick: () => put({ sharpness: Math.max(0, Math.round((f.sharpness - 0.05) * 100) / 100) }) }, "\u2212"),
-        h("span", { className: "val" }, Math.round(f.sharpness * 100) + "%"),
-        h(Focusable, { className: "b", onClick: () => put({ sharpness: Math.min(1, Math.round((f.sharpness + 0.05) * 100) / 100) }) }, "+")
-      )) : null,
-      h("div", { className: "sec sec2" }, "ANTIALIASING"),
-      h(Seg, { value: f.aa, options: [["none", "None"], ["fxaa", "FXAA"], ["smaa", "SMAA"]], onChange: (v) => put({ aa: v }) })
+      { title: "LOOK" },
+      h("div", { className: "fgrid" }, presets.map((p) => h(
+        Focusable,
+        { key: p.id, className: "ftile" + (active === p.id ? " on" : ""), onClick: () => set(() => rpc.setProfile(scope, { filters: p.id })) },
+        h("div", { className: "sw", style: { background: SWATCH[p.id] || SWATCH.off } }, p.id === "off" ? h("i", { className: "slash" }) : null),
+        h("div", { className: "fl" }, p.name)
+      ))),
+      h("div", { className: "fmore" }, h("span", null, active === "custom" ? "Custom \xB7 " + lookSummary(f, names) : lookSummary(f, names)))
     ),
-    h(Card, { title: "EFFECTS" }, h("div", { className: "chips" }, (cat && cat.effects || []).map((e) => {
-      const on = (f.effects || []).includes(e.key);
-      return h(Focusable, { key: e.key, className: "ec" + (on ? " on" : ""), onClick: () => put({ effects: on ? f.effects.filter((x) => x !== e.key) : [...f.effects || [], e.key] }) }, e.name);
-    })), h("div", { className: "note" }, hdr ? "This game runs in HDR: colour effects are skipped, sharpness and antialiasing still apply." : "HDR games: colour effects are skipped, sharpness and antialiasing still apply.")),
+    h(
+      Card,
+      { title: "SHARPENING" },
+      h(Seg, { value: f.sharpen, options: [["none", "Off"], ["cas", "CAS"], ["dls", "DLS"]], onChange: (v) => put({ sharpen: v }) }),
+      f.sharpen !== "none" ? h("div", { className: "lrow first", style: { marginTop: 6 } }, h("div", { className: "t2" }, h("b", null, "Strength"), h("span", null, "May show grain")), stepper("sharpness")) : null,
+      f.sharpen === "dls" ? h("div", { className: "lrow" }, h("div", { className: "t2" }, h("b", null, "Denoise"), h("span", null, "Keeps DLS off film grain")), stepper("denoise")) : null,
+      h("div", { className: "sec sec2" }, "ANTI-ALIASING"),
+      h(Seg, { value: f.aa, options: [["none", "Off"], ["fxaa", "FXAA"], ["smaa", "SMAA"]], onChange: (v) => put({ aa: v }) })
+    ),
+    h(
+      Card,
+      { title: "EFFECTS \xB7 " + (chain.length ? chain.length + " ON" : "NONE") },
+      h("div", { className: "egrid" }, effects.map((e) => {
+        const on = chain.includes(e.key);
+        return h(
+          Focusable,
+          { key: e.key, className: "echip" + (on ? " on" : ""), onClick: () => put({ effects: on ? chain.filter((x) => x !== e.key) : [...chain, e.key] }) },
+          h("span", { className: "eord" + (on ? " on" : "") }, on ? "\u2713" : "+"),
+          h("span", { className: "en" }, e.name)
+        );
+      })),
+      chain.length ? h(Focusable, { className: "btn", style: { marginTop: 8 }, onClick: () => put({ effects: [] }) }, "Clear effects") : null,
+      h("div", { className: "note" }, "Each effect costs some GPU time, the heavy ones (HDR Look, Clarity, SMAA) the most: with the Governor on, that can mean a little more power or a deeper ratio. " + (hdr ? "This game runs in HDR: colour effects are skipped, sharpening and anti-aliasing still apply." : "HDR games: colour effects are skipped, sharpening and anti-aliasing still apply."))
+    ),
     h(
       Card,
       { title: "HUD" },

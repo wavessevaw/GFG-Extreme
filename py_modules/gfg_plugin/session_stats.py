@@ -7,6 +7,8 @@ Governor took over, i.e. what the game would have been allowed without GFG.
 """
 from __future__ import annotations
 
+import math
+
 from typing import Any, Dict, Optional
 
 MAX_STEP_S = 5.0
@@ -50,7 +52,7 @@ class SessionStats:
         if mode:  # review 1.1.x: the mode at the exit alone misfiled mixed sessions
             self.mode_s[str(mode)] = self.mode_s.get(str(mode), 0.0) + dt
         for name, value in (("output", output), ("real", real), ("tdp", tdp), ("draw", draw), ("battery", battery_w)):
-            if isinstance(value, (int, float)) and value > 0:
+            if isinstance(value, (int, float)) and math.isfinite(value) and (value >= 0 if name in ("output", "real") else value > 0):
                 self._sums[name] = self._sums.get(name, 0.0) + float(value) * dt
                 self._weights[name] = self._weights.get(name, 0.0) + dt
         if isinstance(reference_w, (int, float)) and reference_w > 0:
@@ -75,12 +77,10 @@ class SessionStats:
         # Cap below the user's limit; a cap above it (Balanced/emergency) is no saving.
         saved_w = round(self.reference_w - tdp, 1) if self.reference_w and tdp else None
         saved_w = saved_w if saved_w and saved_w > 0 else None
-        # Energy, not just watts: what the APU measurably drew below the user's limit over the time
-        # played (the cap alone says what was allowed, not what was used); left out without a draw
-        # sensor.  Battery minutes only when the battery's own discharge rate was measured.
+        # A limit is not a measured counterfactual baseline. Report consumption only;
+        # causal savings require matched workloads with and without the intervention.
         draw = self._avg("draw")
-        draw_saved_w = self.reference_w - draw if self.reference_w and draw else None
-        saved_wh = round(max(0.0, draw_saved_w or 0.0) * self.seconds / 3600.0, 2) or None
+        saved_wh = None
         battery = self._avg("battery")
         result = {
             "minutes": round(self.seconds / 60.0, 1),
@@ -89,7 +89,10 @@ class SessionStats:
             "avg_tdp_w": tdp,
             "avg_draw_w": draw,
             "reference_w": self.reference_w,
-            "saved_w": saved_w,
+            "saved_w": None,
+            "cap_reduction_w": saved_w,
+            "observed_apu_wh": round(self._sums.get("draw", 0.0) / 3600.0, 3),
+            "draw_coverage_s": self._weights.get("draw", 0.0),
             "saved_wh": saved_wh,
             "max_temp_c": round(self.max_temp_c, 0) if self.max_temp_c else None,
             "stutter_pct": round(100.0 * self.stutter_s / self.seconds),

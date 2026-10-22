@@ -10,15 +10,15 @@
 
 Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integration
 
-[**Скачать 3.0.0**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.0.0) · [Установка](#установка) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Режимы](#06--performance-modes) · [HUD](#08--observability)
+[**Скачать последнюю**](https://github.com/wavessevaw/GFG-Extreme/releases/latest) · [Установка](#установка) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Режимы](#06--performance-modes) · [HUD](#08--observability)
 
-![Release](https://img.shields.io/github/v/release/wavessevaw/GFG-Extreme?include_prereleases&style=flat-square&color=fb0d00&label=release)
-![Downloads](https://img.shields.io/github/downloads/wavessevaw/GFG-Extreme/total?style=flat-square&color=20242e)
-![Steam Deck](https://img.shields.io/badge/Steam%20Deck-OLED%20%7C%20LCD-20242e?style=flat-square)
-![Decky](https://img.shields.io/badge/Decky%20Loader-plugin-20242e?style=flat-square)
-![Engine](https://img.shields.io/badge/engine-GSF%20Kedavra-fb0d00?style=flat-square)
-![No Lossless Scaling](https://img.shields.io/badge/Lossless%20Scaling-not%20needed-20242e?style=flat-square)
-![License](https://img.shields.io/badge/license-GPL--3.0-20242e?style=flat-square)
+[![Release](https://img.shields.io/github/v/release/wavessevaw/GFG-Extreme?include_prereleases&style=flat-square&color=fb0d00&label=release)](https://github.com/wavessevaw/GFG-Extreme/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/wavessevaw/GFG-Extreme/total?style=flat-square&color=20242e)](https://github.com/wavessevaw/GFG-Extreme/releases)
+[![Steam Deck](https://img.shields.io/badge/Steam%20Deck-OLED%20%7C%20LCD-20242e?style=flat-square)](#установка)
+[![Decky](https://img.shields.io/badge/Decky%20Loader-plugin-20242e?style=flat-square)](https://github.com/SteamDeckHomebrew/decky-loader)
+[![Engine](https://img.shields.io/badge/engine-GSF%20Kedavra-fb0d00?style=flat-square)](https://github.com/wavessevaw/GSF_Kedavra)
+[![No Lossless Scaling](https://img.shields.io/badge/Lossless%20Scaling-not%20needed-20242e?style=flat-square)](#02--gsf-kedavra)
+[![License](https://img.shields.io/badge/license-GPL--3.0-20242e?style=flat-square)](LICENSE.md)
 [![Telegram](https://img.shields.io/badge/Telegram-gfg__extreme-26a5e4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/gfg_extreme)
 
 <img src="docs/img/card-overview.png" alt="GFG Extreme 3.0.0: Dash, Graphics, Engine and Setup tabs" width="900">
@@ -67,7 +67,7 @@ Lossless Scaling, MAKO и сторонние слои генерации не н
 
 ## Установка
 
-1. Скачайте [**GFG-Extreme-v3_0_0.zip**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.0.0).
+1. Скачайте последний **GFG-Extreme-v3_x_x.zip** со страницы [Releases](https://github.com/wavessevaw/GFG-Extreme/releases/latest).
 2. В Decky Loader: **Settings → Developer → Install Plugin from ZIP**, выберите файл.
 3. Откройте GFG Extreme → **Setup** → **Engine install**, установите Kedavra и перезагрузитесь, когда плагин попросит.
 4. Запустите игру и выберите режим на вкладке **Dash**. Больше ничего настраивать не нужно: ни параметров запуска, ни скриптов в Desktop Mode.

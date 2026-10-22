@@ -63,7 +63,7 @@ def _atlas() -> Dict[str, Any]:
 def _logo(scale: float) -> Optional[Tuple[int, bytes]]:
     try:
         from .hud_logo import LOGO
-        px, data = LOGO[f"{scale:.1f}"]
+        px, data = LOGO[f"{scale:.2f}"]
         return px, zlib.decompress(base64.b64decode(data))
     except (ImportError, KeyError, ValueError, zlib.error):
         return None
@@ -74,9 +74,32 @@ def _coverage(encoded: str) -> bytes:
     return base64.b64decode(encoded)
 
 
+HUD_SIZE = 0.88      # the HUD is 12 % smaller than the 3.0.0 one
+SCALES = (0.88, 1.32, 1.76)
+NUMBER_RISE = 4.0    # digit centre above the ring centre when a second line follows, HUD pixels
+
+
 def scale_for(height: int) -> float:
-    """Atlas scale for the output height (800 p = 1)."""
-    return min((1.0, 1.5, 2.0), key=lambda s: abs(s - max(1.0, height / 800.0)))
+    """Atlas scale for the output height (800 p = 0.88)."""
+    base = min((1.0, 1.5, 2.0), key=lambda s: abs(s - max(1.0, height / 800.0)))
+    return round(base * HUD_SIZE, 2)
+
+
+def _advance(font: Dict[str, Any], g: Dict[str, Any]) -> int:
+    return round(g["adv"] + font["spacing"])
+
+
+@lru_cache(maxsize=32)
+def _digit_top(style: str) -> float:
+    """Top of the digits below the top of the line box."""
+    return float(_atlas()[style]["glyphs"]["0"]["y0"])
+
+
+@lru_cache(maxsize=32)
+def _digit_mid(style: str) -> float:
+    """Middle of the digits below the top of the line box."""
+    g = _atlas()[style]["glyphs"]["0"]
+    return g["y0"] + g["h"] / 2.0
 
 
 class Canvas:
@@ -132,14 +155,15 @@ class Canvas:
     def text_width(self, text: str, style: str) -> float:
         font = _atlas()[style]
         space = font["glyphs"][" "]
-        return (sum(font["glyphs"].get(ch, space)["adv"] for ch in text)
-                + font["spacing"] * max(0, len(text) - 1))
+        return float(sum(_advance(font, font["glyphs"].get(ch, space)) for ch in text[:-1])
+                     + (font["glyphs"].get(text[-1], space)["adv"] if text else 0.0))
 
     def text(self, cx: float, top: float, text: str, style: str, rgb: Rgb) -> None:
         """Centred on cx; top is the top of the line box."""
         font = _atlas()[style]
         space = font["glyphs"][" "]
-        x = cx - self.text_width(text, style) / 2.0
+        # Whole-pixel pen steps: small letters keep even gaps instead of jittering by rounding.
+        x = float(round(cx - self.text_width(text, style) / 2.0))
         for ch in text:
             g = font["glyphs"].get(ch, space)
             cov = _coverage(g["a"])
@@ -149,7 +173,7 @@ class Canvas:
                     a = cov[row * g["w"] + col]
                     if a:
                         self.blend(gx + col, gy + row, rgb, a / 255.0)
-            x += g["adv"] + font["spacing"]
+            x += _advance(font, g)
 
 
 @lru_cache(maxsize=8)
@@ -238,7 +262,7 @@ def items_for(st: Dict[str, Any], rates: Optional[Dict[str, float]]) -> List[Dic
     shown = (rates["real"] + rates["gen"] + rates["repeat"]) if rates else 0.0
     base = st.get("base_fps") if isinstance(st.get("base_fps"), int) else 0
     items = [{
-        "size": 52, "w": 4.5, "frac": (fps or 0) / refresh,
+        "size": 54, "w": 4, "frac": (fps or 0) / refresh,
         "rgb": _rate_color(fps or 0, refresh) if active else GREEN,
         "text": str(round(fps)) if fps is not None else "—", "style": "fps",
         "sub": f"{round(real)} REAL" if real is not None else None, "label": "FPS"}]
@@ -253,12 +277,12 @@ def items_for(st: Dict[str, Any], rates: Optional[Dict[str, float]]) -> List[Dic
         text = f"x{mult}" if active and mult > 1 else "OFF"
     label = f"CAP {base}" if base else ("AUTO" if st.get("auto") else "GEN")
     items.append({
-        "size": 46, "w": 4, "frac": gen_share if active else 0.0, "rgb": ACCENT if active else GREY,
+        "size": 48, "w": 3.5, "frac": gen_share if active else 0.0, "rgb": ACCENT if active else GREY,
         "text": text, "style": "val", "label": label})
     if active and rates and shown > 0:
         new = 1.0 - rates["repeat"] / shown
         rgb = GREEN if new >= 0.995 else (YELLOW if new >= 0.97 else RED)
-        items.append({"size": 46, "w": 4, "frac": new, "rgb": rgb,
+        items.append({"size": 48, "w": 3.5, "frac": new, "rgb": rgb,
                       "text": f"{min(99.9, 100 * new):.1f}" if new < 0.9995 else "100", "style": "val",
                       "label": "PACE"})
     return items
@@ -279,7 +303,7 @@ def battery_ring(battery: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         hours = _num(battery.get("hours_left"))
         text = f"{int(hours)}:{int(round((hours % 1) * 60)) % 60:02d}" if hours is not None and hours < 100 else "—"
     rgb = GREEN if pct >= 50 else (YELLOW if pct >= 20 else RED)
-    return {"size": 46, "w": 4, "frac": min(1.0, pct / 100.0), "rgb": rgb, "text": text, "style": "val",
+    return {"size": 48, "w": 3.5, "frac": min(1.0, pct / 100.0), "rgb": rgb, "text": text, "style": "val",
             "label": "BATTERY H"}
 
 
@@ -288,17 +312,19 @@ def gfg_items(st: Dict[str, Any], rates: Optional[Dict[str, float]], extra: Dict
     """The approved 3.0 HUD: FPS, TDP, multiplier, temperature, battery, pacing. One number per
     ring, the unit in the label, no glow."""
     base = items_for(st, rates)
-    named = {"FPS": base[0], "MULT": base[1]}
+    # The real frame rate goes under the ring, so the number stays centred like the others.
+    real = base[0].get("sub")
+    named = {"FPS": {**base[0], "sub": None, "label": f"FPS · {real}" if real else "FPS"}, "MULT": base[1]}
     if len(base) > 2:
         named["PACE"] = {**base[2], "label": "PACE %"}
     tdp = _num(extra.get("tdp_w"))
     if tdp is not None:
         ceiling = _num(extra.get("ceiling_w")) or 15.0
-        named["TDP"] = {"size": 46, "w": 4, "frac": tdp / max(ceiling, tdp), "rgb": ACCENT,
+        named["TDP"] = {"size": 48, "w": 3.5, "frac": tdp / max(ceiling, tdp), "rgb": ACCENT,
                         "text": f"{tdp:.1f}" if tdp < 10 else f"{tdp:.0f}", "style": "val", "label": "TDP W"}
     temp = _num(extra.get("temp_c"))
     if temp is not None:
-        named["TEMP"] = {"size": 46, "w": 4, "frac": min(1.0, temp / 100.0),
+        named["TEMP"] = {"size": 48, "w": 3.5, "frac": min(1.0, temp / 100.0),
                          "rgb": GREEN if temp < 75 else (YELLOW if temp < 85 else RED),
                          "text": f"{temp:.0f}", "style": "val", "label": "TEMP C"}
     bat = battery_ring(extra.get("battery") or {})
@@ -308,11 +334,11 @@ def gfg_items(st: Dict[str, Any], rates: Optional[Dict[str, float]], extra: Dict
     return [named[k] for k in order if k in named]
 
 
-def render(st: Dict[str, Any], rates: Optional[Dict[str, float]], scale: float = 1.0,
+def render(st: Dict[str, Any], rates: Optional[Dict[str, float]], scale: float = SCALES[0],
            items: Optional[List[Dict[str, Any]]] = None) -> Tuple[int, int, bytes]:
     s = scale
     items = items if items is not None else items_for(st, rates)
-    pad_x, pad_y, gap, col, lab_h = 8 * s, 6 * s, 8 * s, 52 * s, 11 * s
+    pad_x, pad_y, gap, col, lab_h = 8 * s, 6 * s, 7 * s, 54 * s, 11 * s
     widths = [it["size"] * s for it in items]
     logo = _logo(s)
     lw = logo[0] + gap if logo else 0
@@ -328,14 +354,17 @@ def render(st: Dict[str, Any], rates: Optional[Dict[str, float]], scale: float =
         cx, cy = x + iw / 2.0, pad_y + col / 2.0
         cv.ring(cx, cy, it["size"] * s, it["w"] * s, it["frac"], it["rgb"])
         style = f"{it['style']}@{s}"
+        inner = (it["size"] - 2 * it["w"] - 9) * s
+        if it["style"] == "val" and cv.text_width(it["text"], style) > inner:
+            style = f"vsm@{s}"   # x2.25, 99.7, 0:30: the smaller cut, still inside the ring
         sub_style = f"sub@{s}"
-        th = atlas[style]["ascent"]
+        # The digits' own middle on the ring's centre, whatever the font or the number of
+        # characters; a ring with a second line lifts its number to make room for it.
         sub = it.get("sub")
-        total = th + (atlas[sub_style]["ascent"] + s if sub else 0)
-        top = cy - total / 2.0
+        top = cy - (NUMBER_RISE * s if sub else 0.0) - _digit_mid(style)
         cv.text(cx, top, it["text"], style, WHITE)
         if sub:
-            cv.text(cx, top + th + s, sub, sub_style, LABEL)
+            cv.text(cx, top + atlas[style]["ascent"] + 2 * s - _digit_top(sub_style), sub, sub_style, LABEL)
         cv.text(cx, pad_y + col + 2 * s, it["label"], f"lab@{s}", LABEL)
         x += iw + gap
     return w, h, bytes(cv.px)

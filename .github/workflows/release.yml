@@ -3,14 +3,15 @@ name: Release
 # GFG Extreme 3.x: a version tag (v3.0.0) pushed, or a release created on github.com together
 # with its tag, builds the Decky zip with the KEDAVRA Gamescope runtime and publishes it with
 # the notes in RELEASE_DESCRIPTION_V<version>.md. "gfgPrerelease": true in package.json marks
-# it a pre-release. Run by hand with a tag to publish to that tag's release.
+# it a pre-release. Run by hand with a tag to build the branch it was started on and publish it
+# to that tag's release; a tag that does not exist yet is created at that commit.
 on:
   push:
     tags: ['v3.*']
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing tag to publish to (e.g. v3.0.0)'
+        description: 'Tag to publish to (e.g. v3.0.1); created at this commit when new'
         required: true
 
 permissions:
@@ -19,7 +20,7 @@ permissions:
 env:
   # GSF Kedavra (KEDAVRA engine and Gamescope patch) at the commit this release was tested with.
   KEDAVRA_REPO: wavessevaw/GSF_Kedavra
-  KEDAVRA_SHA: c264c2877a15d9b3739a346432a4fae9b8ef479d
+  KEDAVRA_SHA: 46ec27df48a6f1433dde07bc43ba378d79fb1b72
 
 jobs:
   test:
@@ -40,6 +41,26 @@ jobs:
           git diff --exit-code dist/index.js
           npx playwright-core install --with-deps chromium
           node frontend/harness/smoke.mjs
+
+  bench:
+    # Built on Ubuntu 24.04, whose glibc is older than SteamOS's, so the binary runs on the Deck.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.KEDAVRA_REPO }}
+          ref: ${{ env.KEDAVRA_SHA }}
+      - name: Engine bench (kfg_vktest) and shaders
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev glslang-tools
+          make -C kedavra all
+          mkdir -p deck-bench
+          cp kedavra/build/kfg_vktest kedavra/build/kfg_posttest kedavra/build/*.spv deck-bench/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kedavra-bench
+          path: deck-bench
 
   gamescope:
     runs-on: ubuntu-24.04
@@ -68,12 +89,17 @@ jobs:
         run: |
           sh kedavra/gamescope/apply.sh /tmp/gamescope
           cd /tmp/gamescope
-          meson setup build --buildtype=release -Dpipewire=enabled -Denable_openvr_support=false -Denable_tests=false
+          # --prefix=/usr: Gamescope reads its display scripts from <prefix>/share/gamescope/scripts.
+          # With the default /usr/local it never finds SteamOS's Steam Deck OLED script, so the
+          # panel looks unknown and HDR is reported unsupported.
+          meson setup build --prefix=/usr --buildtype=release -Dpipewire=enabled -Denable_openvr_support=false -Denable_tests=false
           ninja -C build
           nm -C build/src/gamescope | grep -c 'kfg::'
+          grep -a -c '/usr/share/gamescope/scripts' build/src/gamescope
       - name: Bundle with its libraries
         run: |
-          sh kedavra/gamescope/bundle.sh /tmp/gamescope/build gamescope-runtime "kedavra-${KEDAVRA_SHA::7}"
+          # The GFG commit in the version: Setup asks for a reinstall whenever the runtime changes.
+          sh kedavra/gamescope/bundle.sh /tmp/gamescope/build gamescope-runtime "kedavra-${KEDAVRA_SHA::7}-gfg-${GITHUB_SHA::7}"
           mkdir -p gamescope-runtime/share/licenses
           cp kedavra/shaders/THIRD_PARTY.md gamescope-runtime/share/licenses/KEDAVRA-filters-THIRD_PARTY.md
           cp LICENSE.md NOTICE.md gamescope-runtime/share/licenses/ 2>/dev/null || true
@@ -90,7 +116,7 @@ jobs:
           path: gamescope-runtime
 
   release:
-    needs: [test, gamescope]
+    needs: [test, gamescope, bench]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -106,13 +132,19 @@ jobs:
         with:
           name: gamescope-runtime
           path: gamescope-runtime
+      - uses: actions/download-artifact@v4
+        with:
+          name: kedavra-bench
+          path: kedavra-bench
       - name: Zip for Decky
         run: |
           version="$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
           test "v$version" = "$TAG" || { echo "::error::package.json $version does not match $TAG"; exit 1; }
           echo "version=$version" >> "$GITHUB_ENV"
-          scripts/build_release.sh "$version" gamescope-runtime out
+          scripts/build_release.sh "$version" gamescope-runtime out kedavra-bench
           unzip -Z1 out/*.zip | grep -Fx GFG-Extreme/runtime/bin/gamescope
+          unzip -Z1 out/*.zip | grep -Fx GFG-Extreme/bin/kfg_pacing.py
+          unzip -Z1 out/*.zip | grep -Fx GFG-Extreme/bench/kfg_vktest
           unzip -Z1 out/*.zip | grep -Fx GFG-Extreme/dist/index.js
           if unzip -Z1 out/*.zip | grep -qi 'mako\|lsfg\|lossless'; then echo "::error::MAKO/LSFG files in the zip"; exit 1; fi
       - name: Publish
@@ -124,5 +156,7 @@ jobs:
             gh release upload "$TAG" out/*.zip out/SHA256SUMS.txt --clobber
             gh release edit "$TAG" --title "$title" --notes-file "$notes" $pre
           else
-            gh release create "$TAG" out/*.zip out/SHA256SUMS.txt --title "$title" --notes-file "$notes" $pre --verify-tag
+            # A tag push or a release made on github.com: the tag exists. A manual run: the tag
+            # is created at the commit that was built.
+            gh release create "$TAG" out/*.zip out/SHA256SUMS.txt --title "$title" --notes-file "$notes" $pre --target "$GITHUB_SHA"
           fi

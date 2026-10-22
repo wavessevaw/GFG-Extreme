@@ -35,7 +35,7 @@ for (const [i, t] of ["Dash", "Graphics", "Engine", "Setup"].entries()) {
   await page.locator(".tab", { hasText: t }).first().click(); await page.waitForTimeout(300);
   if (outDir) await page.locator("#r").screenshot({ path: path.join(outDir, `ui-${i + 1}-${t.toLowerCase()}.png`) });
   const text = await page.locator("#r").innerText();
-  for (const want of { Dash: ["Steam Deck OLED", "CPU TOP", "FAN RPM"], Graphics: ["Top right", "Bottom right", "Standard"], Engine: ["POWER SPLIT", "GPU clock ceiling", "1.8 GHz"], Setup: ["Take over", "Frame generation in HDR games"] }[t])
+  for (const want of { Dash: ["Steam Deck OLED", "CPU TOP", "FAN", "k rpm"], Graphics: ["LOOK", "SHARPENING", "ANTI-ALIASING", "Top right", "Bottom right", "Standard"], Engine: ["POWER SPLIT", "GPU clock ceiling", "1.8 GHz"], Setup: ["Take over", "Frame generation in HDR games"] }[t])
     if (!text.includes(want) && !(t === "Setup" && want === "Take over")) errors.push(`${t}: missing "${want}"`);
 }
 await page.locator(".tab", { hasText: "Dash" }).first().click(); await page.waitForTimeout(200);

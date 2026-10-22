@@ -4,9 +4,15 @@ The actuator is deliberately conservative.  It discovers the amdgpu hwmon PPT
 controls, snapshots the user's current caps as the session ceiling, preserves
 fast/slow PPT proportion within an explicit ceiling, and refuses to overwrite caps that changed outside
 Governor ownership.
+
+Intent journal (Governor 2.0): before a cap write the user's caps and the caps GFG may leave
+behind are saved to a marker file. If the plugin dies with the TDP lowered, the next claim finds
+the marker: caps that still read one of ours go back to the user's, anything else was set by
+someone else and stays. No marker can be saved: no write.
 """
 from __future__ import annotations
 
+import json
 import os
 import math
 import threading
@@ -90,7 +96,9 @@ class SteamDeckPowerActuator:
         manager: Any = None,
         verify_seconds: float = 1.5,
         sleep: Callable[[float], None] = time.sleep,
+        marker: Optional[Path] = None,
     ) -> None:
+        self.marker = Path(marker) if marker is not None else None
         # steamos-manager (Steam's own TDP path) when present; direct hwmon writes otherwise.
         self.manager = manager
         self._verify_seconds = verify_seconds
@@ -301,6 +309,8 @@ class SteamDeckPowerActuator:
             self.discover()
         if not self.state.available or self._fast_path is None or self._slow_path is None:
             return self.status()
+        if not self._keep_initial:
+            self._recover_marker()
         fast = _read_int(self._fast_path)
         slow = _read_int(self._slow_path)
         if not fast or not slow:
@@ -487,6 +497,9 @@ class SteamDeckPowerActuator:
         if ((self.state.slow_min_uw is not None and slow < self.state.slow_min_uw)
                 or (self.state.fast_min_uw is not None and fast < self.state.fast_min_uw)):
             return {"success": False, "error": "PPT ceiling is below the hardware minimum", "state": self.status()}
+        whole = max(1, int(round(slow / 1_000_000.0))) * 1_000_000   # steamos-manager writes whole watts
+        if not self._save_marker([(slow, fast), (whole, whole), (self.state.expected_slow_uw, self.state.expected_fast_uw)]):
+            return {"success": False, "error": self.state.error, "state": self.status()}
         failure = self._apply(slow, fast)
         if failure is not None:
             kind, error = failure
@@ -529,21 +542,88 @@ class SteamDeckPowerActuator:
             if now_caps not in self._unverified_caps:
                 # Someone else set the caps after our write failed: theirs stay (review 1.0.10).
                 self._keep_initial = False
+                self._clear_marker()
                 return {"success": True, "restored": False, "reason": "external-change", "state": self.status()}
         elif not self._verify_ownership():
+            self._clear_marker()
             return {"success": True, "restored": False, "reason": "external-change", "state": self.status()}
         assert self._fast_path is not None and self._slow_path is not None
         assert self.state.initial_fast_uw is not None and self.state.initial_slow_uw is not None
         failure = self._apply(self.state.initial_slow_uw, self.state.initial_fast_uw, exact=True)
         if failure is not None:
+            # The user's caps are still owed: the next claim must not learn our lowered caps
+            # as theirs (audit 3.0.0 P1).
+            self._keep_initial = True
             self.state.error = failure[1]
             return {"success": False, "restored": False, "error": failure[1], "state": self.status()}
         self._keep_initial = False
+        self._clear_marker()
         self.state.expected_fast_uw = self.state.initial_fast_uw
         self.state.expected_slow_uw = self.state.initial_slow_uw
         self.state.owned = False
         self.state.error = None
         return {"success": True, "restored": True, "reason": "restored", "state": self.status()}
+
+    # ------------------------------------------------------------------ intent journal
+    def _save_marker(self, caps: Iterable[tuple]) -> bool:
+        """Persist the user's caps and the caps this write may leave, before the write."""
+        if self.marker is None:
+            return True
+        ours = []
+        try:
+            old = json.loads(self.marker.read_text(encoding="utf-8")) if self.marker.exists() else {}
+            ours = [tuple(c) for c in old.get("ours", [])] if old.get("initial") == [self.state.initial_slow_uw, self.state.initial_fast_uw] else []
+        except (OSError, ValueError, TypeError, AttributeError):
+            ours = []
+        for c in caps:
+            if all(isinstance(v, int) and v > 0 for v in c) and tuple(c) not in ours:
+                ours.append(tuple(c))
+        data = {"initial": [self.state.initial_slow_uw, self.state.initial_fast_uw], "ours": [list(c) for c in ours[-8:]]}
+        try:
+            self.marker.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.marker.with_name(self.marker.name + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(json.dumps(data))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.marker)
+            return True
+        except OSError as error:
+            self.state.error = f"TDP recovery marker could not be saved: {error}"
+            return False  # no cap write without its undo record
+
+    def _clear_marker(self) -> None:
+        if self.marker is not None:
+            try:
+                self.marker.unlink()
+            except OSError:
+                pass
+
+    def _recover_marker(self) -> None:
+        """A marker left by a plugin that died while it held the TDP: give the user's caps back
+        when the caps still read one of ours."""
+        if self.marker is None or not self.marker.exists() or self._fast_path is None or self._slow_path is None:
+            return
+        try:
+            data = json.loads(self.marker.read_text(encoding="utf-8"))
+            slow0, fast0 = (int(v) for v in data["initial"])
+            ours = {tuple(int(v) for v in c) for c in data.get("ours", [])}
+        except (OSError, ValueError, TypeError, KeyError):
+            self._clear_marker()
+            return
+        now = (_read_int(self._slow_path), _read_int(self._fast_path))
+        if now == (slow0, fast0) or now not in ours or slow0 <= 0 or fast0 <= 0:
+            self._clear_marker()   # already the user's, or set by someone else since: theirs stay
+            return
+        failure = self._apply(slow0, fast0, exact=True)
+        if failure is None:
+            self._clear_marker()
+            self._note("tdp-recovered", slow_w=slow0 / 1e6, fast_w=fast0 / 1e6, found_w=(now[0] or 0) / 1e6)
+        else:
+            # Still owed: this claim keeps the marker's caps as the user's, never our leftover.
+            self.state.initial_slow_uw, self.state.initial_fast_uw = slow0, fast0
+            self._keep_initial = True
+            self._note("tdp-recover-failed", error=failure[1])
 
     def verify_ownership(self) -> Dict[str, Any]:
         """Check that external Steam/QAM tooling has not changed our caps."""

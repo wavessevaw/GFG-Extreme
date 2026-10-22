@@ -28,6 +28,7 @@ the chosen point does not hold.
 """
 from __future__ import annotations
 
+import math
 import statistics
 import time
 from collections import deque
@@ -40,9 +41,24 @@ GUARD_S = 5.0
 TRIAL_S = 6.0
 PROMOTE_WAIT_S = 120.0
 PROMOTE_WAIT_MAX_S = 960.0
+# Headroom: the GPU (or the CPU) clearly not at its limit at the locked point means the game
+# could run the next point up. Then the next point is tried after HEADROOM_WAIT_S of clean play,
+# whatever the back-off, so a lighter scene gets its real frames back within seconds.
+MEASURE_GAP_S = 2.5   # seconds without a confirmed Auto cap that break a measurement
+HEADROOM_WAIT_S = 10.0
+HEADROOM_GPU_PCT = 92.0      # the GPU at the next point is estimated to stay under this
+HEADROOM_CPU_PCT = 85.0
 HOLD_RATIO = 0.95       # real fps vs cap over a guard window
+AUTOPILOT_HOLD_RATIO = 0.90  # Autopilot tolerates 8-10 % dips (user, 3.0.4)
 TRIAL_RATIO = 0.97
 PACE_MIN = 0.99
+# Autopilot's power target (user, 3.0.3): 12 W is good, 9-10 W ideal. The Governor may go higher
+# to hold a point, but a point that needs more than 12 W for a minute is given up for the next
+# lower one, and Autopilot climbs only while the TDP is at the ideal.
+POWER_GOOD_W = 12.0
+POWER_IDEAL_W = 10.0
+POWER_WAIT_S = 60.0
+COSTLY_HOLD_S = 600.0
 
 
 def div_up(a: int, b: int) -> int:
@@ -97,11 +113,16 @@ class PointPilot:
         self.window_start = self.clock()
         self.clean_since: Optional[float] = None
         self.promote_wait = PROMOTE_WAIT_S
+        self.headroom_backoff = 0.0  # after a failed trial the headroom estimate waits this long
+        self.costly_since: Optional[float] = None
+        self.costly: Dict[int, float] = {}  # point -> until: needed more than POWER_GOOD_W
         self.trial_cap = 0
         self.trial_from = 0
         self.holds = True
         self.demotions = 0
         self.promotions = 0
+        self._measure_sample_id = None
+        self._measure_sample_at = None
 
     def _note(self, kind: str, **fields: Any) -> None:
         if self.journal:
@@ -173,7 +194,8 @@ class PointPilot:
             self.window, self.window_start = [], now
             return None
         self.window.append({"real": float(ctx["real"]), "pace": ctx.get("pace"),
-                            "ceiling": bool(ctx.get("at_ceiling", True))})
+                            "ceiling": bool(ctx.get("at_ceiling", True)),
+                            "gpu": ctx.get("gpu_busy"), "cpu": ctx.get("cpu_top")})
         if now - self.window_start < length:
             return None
         self.window_done = self.window
@@ -182,19 +204,28 @@ class PointPilot:
         real = statistics.fmean(reals)
         pace = statistics.fmean(paces) if paces else None
         self.window, self.window_start = [], now
-        ok = real >= HOLD_RATIO * cap and (pace is None or pace >= PACE_MIN)
+        auto = ctx.get("objective") == "autopilot"
+        hold = AUTOPILOT_HOLD_RATIO if auto else HOLD_RATIO
+        # Autopilot judges the median: a short sharp drop does not move the point.
+        ok = (statistics.median(reals) if auto else real) >= hold * cap and (pace is None or pace >= PACE_MIN)
+        gpus = [x["gpu"] for x in self.window_done if isinstance(x.get("gpu"), (int, float))]
+        cpus = [x["cpu"] for x in self.window_done if isinstance(x.get("cpu"), (int, float))]
         return {"ok": ok, "real": real, "median": statistics.median(reals), "pace": pace,
-                "at_ceiling": all(x["ceiling"] for x in self.window_done)}
+                "at_ceiling": all(x["ceiling"] for x in self.window_done),
+                "gpu": statistics.median(gpus) if len(gpus) * 2 >= len(self.window_done) else None,
+                "cpu": statistics.median(cpus) if len(cpus) * 2 >= len(self.window_done) else None}
 
     def _auto(self, ctx: Dict[str, Any], steps: List[int], objective: str) -> Dict[str, Any]:
         now = self.clock()
-        top = steps[0] if objective == "battery" else steps[-1]
+        floor = self._battery_point(ctx, steps)
+        low = objective == "battery" or bool(ctx.get("autopilot") and ctx.get("low_battery"))
+        top = floor if low else steps[-1]
         if not ctx.get("game"):
             self.phase = "idle"
             return self._request(1, 0, steps[0], False)
         if self.phase in ("idle",):
             if objective == "battery":
-                self._go("locked", "Battery: the lowest point, generation fills the refresh", steps[0])
+                self._go("locked", "Battery: a low point, generation fills the refresh", floor)
             elif self.point:
                 self._go("locked", "kept the measured point", min(self.point, top))
             else:
@@ -213,6 +244,10 @@ class PointPilot:
                 self.holds = True
                 if self.clean_since is None:
                     self.clean_since = now
+                nxt = [c for c in steps if c > self.point]
+                if (nxt and objective != "battery" and self._may_climb(ctx, nxt[0])
+                        and self._headroom(verdict, self.point, nxt[0])):
+                    self.promote_wait = min(self.promote_wait, max(HEADROOM_WAIT_S, self.headroom_backoff))
             else:
                 self.clean_since = None
                 if verdict["at_ceiling"]:
@@ -228,21 +263,92 @@ class PointPilot:
                     else:
                         self.holds = False
                         self.reason = "the game does not hold the lowest point even at full power"
+        if self._over_power_target(ctx, steps, now):
+            return self._request(1, self.point, 0, False)
         if (objective != "battery" and self.clean_since is not None and self.point < top
-                and now - self.clean_since >= self.promote_wait and ctx.get("at_ceiling_possible", True)):
+                and now - self.clean_since >= self.promote_wait and ctx.get("at_ceiling_possible", True)
+                and self._may_climb(ctx, [c for c in steps if c > self.point][0])):
             nxt = [c for c in steps if c > self.point][0]
             self.trial_cap, self.trial_from = nxt, self.point
             self._go("trial", f"trying point {nxt}")
             return self._request(1, self.trial_from, 0, True)  # raise the TDP first
         return self._request(1, self.point, 0, False)
 
+    @staticmethod
+    def _battery_point(ctx: Dict[str, Any], steps: List[int]) -> int:
+        """Battery's point. x3.75 shows the most artefacts: Autopilot keeps x3 (30 at 90 Hz) and
+        goes to x3.75 only on a low battery; the Battery mode chosen by hand keeps x3.75."""
+        if ctx.get("autopilot") and not ctx.get("low_battery") and len(steps) > 1:
+            return steps[1]
+        return steps[0]
+
+    def _may_climb(self, ctx: Dict[str, Any], nxt: int) -> bool:
+        """Autopilot climbs only from the ideal power and never into a point that cost too much."""
+        if not ctx.get("autopilot"):
+            return True
+        if self.costly.get(nxt, 0.0) > self.clock():
+            return False
+        tdp = ctx.get("tdp_w")
+        # Better than x3 is the aim (x3 good, x3.75 last resort): up to the first point above
+        # x3 Autopilot climbs within the good target, higher ones only from the ideal.
+        limit = POWER_GOOD_W if nxt <= self._first_above_x3(ctx) else POWER_IDEAL_W
+        return not isinstance(tdp, (int, float)) or tdp <= limit
+
+    @staticmethod
+    def _first_above_x3(ctx: Dict[str, Any]) -> int:
+        steps = ladder(int(ctx.get("refresh") or 90))
+        x3 = steps[1] if len(steps) > 1 else steps[0]
+        return next((c for c in steps if c > x3), x3)
+
+    def _over_power_target(self, ctx: Dict[str, Any], steps: List[int], now: float) -> bool:
+        """Autopilot: a point the settled Governor holds only above 12 W for a minute steps down."""
+        tdp = ctx.get("tdp_w")
+        lower = [c for c in steps if c < self.point and c >= self._battery_point(ctx, steps)]
+        if (not ctx.get("autopilot") or not ctx.get("gov_settled") or not isinstance(tdp, (int, float))
+                or tdp <= POWER_GOOD_W or not lower):
+            self.costly_since = None
+            return False
+        if self.costly_since is None:
+            self.costly_since = now
+        if now - self.costly_since < POWER_WAIT_S:
+            return False
+        self.costly[self.point] = now + COSTLY_HOLD_S
+        new = lower[-1]
+        self.costly_since = None
+        self.demotions += 1
+        self.clean_since = None
+        self._go("locked", f"Autopilot power target: point {self.point} needs {tdp:.0f} W, "
+                 f"over {POWER_GOOD_W:.0f} W -> {new}", new)
+        return True
+
+    @staticmethod
+    def _headroom(verdict: Dict[str, Any], point: int, nxt: int) -> bool:
+        """The game has room for the next point: GPU load scaled to it stays under the limit,
+        and the busiest CPU core is not near its own."""
+        gpu, cpu = verdict.get("gpu"), verdict.get("cpu")
+        if gpu is None or gpu <= 0:
+            return False
+        if cpu is not None and cpu * nxt / point >= HEADROOM_CPU_PCT:
+            return False
+        return gpu * nxt / point < HEADROOM_GPU_PCT
+
     def _measure(self, ctx: Dict[str, Any], steps: List[int], top: int) -> Dict[str, Any]:
         now = self.clock()
         st = ctx.get("engine") or {}
-        if ctx.get("confirmed") and st.get("auto") and ctx.get("game"):
+        sample_id = st.get("time_ns", now)
+        real = ctx.get("real")
+        valid = bool(ctx.get("confirmed") and st.get("auto") and ctx.get("game")
+                     and not st.get("steam_ui") and not ctx.get("settling")
+                     and isinstance(real, (int, float)) and math.isfinite(real))
+        if valid and sample_id != self._measure_sample_id:
+            # Only a new engine status counts: a repeated one is not a second reading.
+            self._measure_sample_id = sample_id
             cap = int(st.get("cap_fps") or 0)
             if cap:
                 self.caps.append((now, cap))
+        if self.caps and now - self.caps[-1][0] > MEASURE_GAP_S:
+            # No fresh confirmed reading: silence is not stability, the measurement restarts.
+            self.caps.clear()
         elapsed = now - self.since
         if self.caps:
             last = self.caps[-1][1]
@@ -277,10 +383,12 @@ class PointPilot:
         if verdict["ok"] and verdict["real"] >= TRIAL_RATIO * self.trial_cap:
             self.promotions += 1
             self.promote_wait = 30.0  # keep climbing soon while it holds
+            self.headroom_backoff = 0.0
             self._go("locked", f"point {self.trial_cap} holds: locked", self.trial_cap)
             self.clean_since = self.clock()
         else:
             self.promote_wait = min(PROMOTE_WAIT_MAX_S, self.promote_wait * 2)
+            self.headroom_backoff = min(480.0, max(60.0, self.headroom_backoff * 2))
             self._go("locked", f"point {self.trial_cap} did not hold; next try in {self.promote_wait:.0f} s",
                      self.trial_from)
         return self._request(1, self.point, 0, False)

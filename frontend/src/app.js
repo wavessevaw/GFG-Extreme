@@ -64,6 +64,26 @@ function Arc({ frac, label, sub }) {
       h("div", { className: "big", style: { fontSize: 28 } }, label), sub ? h("div", { className: "sm", style: { fontSize: 9 } }, sub) : null));
 }
 
+// Dash gauges: a small ring per reading, the number centred in it (the HUD's rule), unit
+// under the number, name under the ring. The colour runs smoothly from green at the ideal
+// through yellow to red when the reading is way off (user, 3.0.6); grey has no ideal.
+const FAN_MAX = 7000;
+const frac = (v, max) => (num(v) === null || !max ? 0 : v / max);
+// 0 = at the ideal (or better), 1 = way off. `ideal` > `off` means higher is better.
+const off = (v, ideal, offAt) => (num(v) === null ? null : Math.max(0, Math.min(1, (v - ideal) / (offAt - ideal))));
+const tone = (t) => (t === null || t === undefined ? null : `hsl(${Math.round(130 - 126 * t)},85%,${Math.round(50 + 4 * Math.sin(Math.PI * t))}%)`);
+function Mini({ frac: f, v, u, k, t }) {
+  const size = 62, stroke = 5, r = (size - stroke) / 2 - 1, c = 2 * Math.PI * r, dash = c * (1 - Math.max(0, Math.min(1, f || 0)));
+  const col = tone(t);
+  return h("div", { className: "mini" },
+    h("div", { className: "mring" },
+      h("svg", { viewBox: `0 0 ${size} ${size}`, width: size, height: size },
+        h("circle", { cx: size / 2, cy: size / 2, r, fill: "none", stroke: "#26262d", strokeWidth: stroke }),
+        h("circle", { className: "mg", cx: size / 2, cy: size / 2, r, fill: "none", stroke: col || "#4a4a55", strokeWidth: stroke, strokeLinecap: "round", strokeDasharray: c, strokeDashoffset: dash })),
+      h("div", { className: "mn" }, h("b", { style: { fontSize: String(v).length > 4 ? 12 : 14 } }, v), u ? h("i", null, u) : null)),
+    h("span", null, k));
+}
+
 // ---------------------------------------------------------------- texts
 const PHASES = ["MEASURE", "LOCK", "GUARD", "ADAPT"];
 const phaseOf = (p) => ({ measure: "MEASURE", trial: "ADAPT", demote: "ADAPT", locked: "GUARD", fixed: "LOCK" }[p] || null);
@@ -79,7 +99,16 @@ const heroLine = (live) => {
   return [{ measure: "Measuring the game", trial: "Trying the next point up", demote: "Stepping down", locked: "Point locked and guarded.", fixed: "Fixed multiplier" }[p.phase] || "Starting", p.reason || ""];
 };
 const gameName = (app) => { try { const o = window.appStore && window.appStore.GetAppOverviewByAppID(app); return (o && o.display_name) || (app ? "App " + app : ""); } catch (e) { return ""; } };
-const OBJ = { autopilot: ["Autopilot", "picks the mode"], battery: ["Battery", "×3.75 · lowest watts"], balanced: ["Balanced", "best point it holds"], quality: ["Quality", "real frames first"] };
+const OBJ = { autopilot: ["Autopilot", "adapts · aims at 12 W"], battery: ["Battery", "×3.75 · lowest watts"], balanced: ["Balanced", "best point it holds"], quality: ["Quality", "real frames first"] };
+
+// Mode icons (user, 3.0.6): drawn, not emoji, so Steam's fonts cannot turn them into boxes.
+const svg = (...c) => h("svg", { viewBox: "0 0 24 24", width: 22, height: 22, fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, ...c);
+const ICON = {
+  autopilot: svg(h("path", { d: "M12 2.5l2.2 5.3 5.3 2.2-5.3 2.2L12 17.5l-2.2-5.3L4.5 10l5.3-2.2z", fill: "currentColor", stroke: "none" }), h("path", { d: "M18.5 15.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z", fill: "currentColor", stroke: "none" })),
+  battery: svg(h("rect", { x: 2.5, y: 7, width: 17, height: 10, rx: 2.5 }), h("path", { d: "M21.5 10.5v3" }), h("rect", { x: 5, y: 9.5, width: 7, height: 5, rx: 1, fill: "currentColor", stroke: "none" })),
+  balanced: svg(h("path", { d: "M12 4v16M7 20h10M5 7h14" }), h("path", { d: "M5 7l-2.5 6a2.5 2.5 0 0 0 5 0z M19 7l-2.5 6a2.5 2.5 0 0 0 5 0z" })),
+  quality: svg(h("path", { d: "M6 3h12l3 6-9 12L3 9z" }), h("path", { d: "M3 9h18M9.5 3L12 21M14.5 3L12 21" })),
+};
 
 // ---------------------------------------------------------------- tabs
 function Dash({ s, set }) {
@@ -100,21 +129,28 @@ function Dash({ s, set }) {
   const setProf = (changes) => set(() => rpc.setProfile(scope, changes));
   const fgOpts = [["off", "Off"], ["auto", "Auto"], ["x2", "×2"], ["x3", "×3"], ["x3.75", "×3.75"], ["custom", "Custom"]];
   const cpuGhz = split.cap_khz ? (split.cap_khz / 1e6).toFixed(1) : null;
+  const pace = num((live.live || {}).pace), hdr = !!(eng.transfer && eng.transfer !== "sdr");
+  const short = !!(point && real !== null && real < 0.9 * point);
   return h("div", null,
     h("div", { className: "card hero" + (layout === "side" ? "" : " col") }, h(Focusable, { className: "herotap", onClick: next }, ring), status),
-    h("div", { className: "stats" },
-      h("div", { className: "stat" }, h("b", null, fmt(gov.tdp_w, 1, " W")), h("span", null, "TDP")),
-      h("div", { className: "stat" }, h("b", null, fmt(sen.temp_c, 0, "°")), h("span", null, "APU")),
-      h("div", { className: "stat" }, h("b", null, num((live.live || {}).pace) === null ? "—" : (100 * live.live.pace).toFixed(1) + "%"), h("span", null, "PACE")),
-      h("div", { className: "stat" }, h("b", null, eng.transfer && eng.transfer !== "sdr" ? "HDR" : "SDR"), h("span", null, "COLOR"))),
-    h("div", { className: "stats" },
-      h("div", { className: "stat" }, h("b", null, fmt(sen.cpu_top_core_pct, 0, "%")), h("span", null, "CPU TOP")),
-      h("div", { className: "stat" }, h("b", null, fmt(sen.gpu_busy_pct, 0, "%")), h("span", null, "GPU")),
-      h("div", { className: "stat" }, h("b", null, cpuGhz || "MAX"), h("span", null, "CPU GHZ")),
-      h("div", { className: "stat" }, h("b", null, fmt(sen.fan_rpm)), h("span", null, "FAN RPM"))),
+    h("div", { className: "minis" },
+      // TDP: 12 W good, 9-10 W ideal (user, 3.0.3); 20 W is way off.
+      h(Mini, { frac: frac(gov.tdp_w, gov.ceiling_w || 15), v: fmt(gov.tdp_w, 1), u: "W", k: "TDP", t: off(gov.tdp_w, 10, 20) }),
+      // APU: the Governor steps down from 90 C, 97 C is critical.
+      h(Mini, { frac: frac(sen.temp_c, 100), v: fmt(sen.temp_c, 0), u: "°C", k: "APU", t: off(sen.temp_c, 70, 95) }),
+      h(Mini, { frac: frac(pace, 1), v: pace === null ? "—" : (100 * pace).toFixed(1), u: "%", k: "PACE", t: off(pace === null ? null : 100 * pace, 99.5, 95) }),
+      h(Mini, { frac: 1, v: hdr ? "HDR" : "SDR", k: "COLOR" }),
+      h(Mini, { frac: frac(sen.cpu_top_core_pct, 100), v: fmt(sen.cpu_top_core_pct, 0), u: "%", k: "CPU TOP", t: off(sen.cpu_top_core_pct, 70, 100) }),
+      // GPU: a busy GPU is the point of a low TDP; it is off only when the game misses its cap too.
+      h(Mini, { frac: frac(sen.gpu_busy_pct, 100), v: fmt(sen.gpu_busy_pct, 0), u: "%", k: "GPU",
+        t: num(sen.gpu_busy_pct) === null ? null : short ? off(sen.gpu_busy_pct, 80, 98) : 0.25 * off(sen.gpu_busy_pct, 90, 100) }),
+      // CPU clock: a cap Power Split kept saves watts; MAX is fine, not ideal.
+      h(Mini, { frac: split.cap_khz && split.max_khz ? split.cap_khz / split.max_khz : 1, v: cpuGhz || "MAX", u: cpuGhz ? "GHz" : "", k: "CPU CLOCK", t: cpuGhz ? 0 : 0.3 }),
+      h(Mini, { frac: frac(sen.fan_rpm, FAN_MAX), v: num(sen.fan_rpm) === null ? "—" : (sen.fan_rpm / 1000).toFixed(1), u: "k rpm", k: "FAN", t: off(sen.fan_rpm, 3500, 7000) })),
     h(Card, { title: "MODE" }, h("div", { className: "grid2" }, Object.entries(OBJ).map(([k, [name, sub]]) =>
-      h(Focusable, { key: k, onClick: () => setProf({ objective: k }) }, h("div", { className: "tile" + (prof.objective === k ? " on" : "") }, h("b", null, name),
-        h("span", null, k === "autopilot" && prof.objective === "autopilot" && live.objective ? "now " + (OBJ[live.objective] || [live.objective])[0] : sub)))))),
+      h(Focusable, { key: k, onClick: () => setProf({ objective: k }) }, h("div", { className: "tile mode m-" + k + (prof.objective === k ? " on" : "") },
+        h("div", { className: "mico" }, ICON[k]), h("div", null, h("b", null, name),
+        h("span", null, k === "autopilot" && prof.objective === "autopilot" && live.objective && live.objective !== "autopilot" ? "now " + (OBJ[live.objective] || [live.objective])[0] : sub))))))),
     h(Card, { title: "FRAME GENERATION" }, h(Seg, { value: prof.fg, options: fgOpts, onChange: (v) => setProf({ fg: v }) }),
       prof.fg === "custom" ? h("div", { className: "lrow first", style: { marginTop: 6 } }, "Base FPS cap",
         h("div", { className: "step" }, h(Focusable, { className: "b", onClick: () => setProf({ base_fps: Math.max(20, prof.base_fps - 1) }) }, "−"),
@@ -124,29 +160,54 @@ function Dash({ s, set }) {
       onChange: (v) => set(() => (v === "game" ? rpc.setProfile("game", {}) : rpc.dropGame())) })));
 }
 
+// Look as in 2.1.6: colour swatch per preset, a summary line, then sharpening, antialiasing and
+// the effects as a two-column list. The engine runs effects in its own fixed order, so a chip
+// shows on/off, not a position.
+const SWATCH = { off: "linear-gradient(135deg,#2a2a31,#151519)", sharp: "linear-gradient(135deg,#6f7682,#f2f5fa)",
+  vivid: "linear-gradient(135deg,#ff2d55,#ffcc00 55%,#34c759)", hdr: "linear-gradient(135deg,#ff9500,#ffe7b0 50%,#2f7cf6)",
+  cinema: "linear-gradient(135deg,#0f6a6a,#e09a3e)", noir: "linear-gradient(135deg,#050505,#d9d9d9)",
+  retro: "linear-gradient(135deg,#6b3f17,#e6c27a)", smooth: "linear-gradient(135deg,#3a4a66,#9fb4d9)" };
+function lookSummary(f, names) {
+  const parts = (f.effects || []).map((e) => names[e] || e);
+  if (f.aa && f.aa !== "none") parts.push(f.aa.toUpperCase());
+  if (f.sharpen && f.sharpen !== "none") parts.push(f.sharpen.toUpperCase() + " " + Math.round((f.sharpness || 0) * 100) + "%");
+  return parts.length ? parts.join(" + ") : "No effect";
+}
 function Graphics({ s, set, cat }) {
   const prof = s.settings.profiles[s.profiles.active] || s.settings.profiles.default;
-  const f = prof.filters || { effects: [], sharpen: "none", sharpness: 0.4, aa: "none" };
+  const f = prof.filters || { effects: [], sharpen: "none", sharpness: 0.4, denoise: 0.17, aa: "none" };
   const scope = (s.profiles.active || "").startsWith("app:") ? "game" : "default";
   const put = (changes) => set(() => rpc.setProfile(scope, { filters: { ...f, ...changes } }));
-  const presets = (cat && cat.presets) || [];
+  const presets = (cat && cat.presets) || [], effects = (cat && cat.effects) || [];
+  const names = Object.fromEntries(effects.map((e) => [e.key, e.name]));
   const same = (a, b) => JSON.stringify([...(a.effects || [])].sort()) === JSON.stringify([...(b.effects || [])].sort()) && (a.sharpen || "none") === (b.sharpen || "none") && (a.aa || "none") === (b.aa || "none");
+  const active = (presets.find((p) => same(f, p.filters)) || {}).id || "custom";
   const hud = s.settings.hud;
   const hdr = ((s.live || {}).engine || {}).transfer && s.live.engine.transfer !== "sdr";
+  const chain = f.effects || [];
+  const step = (k, dv) => put({ [k]: Math.max(0, Math.min(1, Math.round(((f[k] || 0) + dv) * 20) / 20)) });
+  const stepper = (k) => h("div", { className: "step" }, h(Focusable, { className: "b", onClick: () => step(k, -0.05) }, "−"),
+    h("span", { className: "val" }, Math.round((f[k] || 0) * 100) + "%"), h(Focusable, { className: "b", onClick: () => step(k, 0.05) }, "+"));
   return h("div", null,
-    h(Card, { title: "LOOK" }, h("div", { className: "grid4" }, presets.map((p) =>
-      h(Focusable, { key: p.id, className: "pre" + (same(f, p.filters) ? " on" : ""), onClick: () => set(() => rpc.setProfile(scope, { filters: p.id })) }, p.name)))),
-    h(Card, { title: "SHARPNESS" }, h(Seg, { value: f.sharpen, options: [["none", "None"], ["cas", "CAS"], ["dls", "DLS"]], onChange: (v) => put({ sharpen: v }) }),
-      f.sharpen !== "none" ? h("div", { className: "lrow first", style: { marginTop: 6 } }, "Strength", h("div", { className: "step" },
-        h(Focusable, { className: "b", onClick: () => put({ sharpness: Math.max(0, Math.round((f.sharpness - 0.05) * 100) / 100) }) }, "−"),
-        h("span", { className: "val" }, Math.round(f.sharpness * 100) + "%"),
-        h(Focusable, { className: "b", onClick: () => put({ sharpness: Math.min(1, Math.round((f.sharpness + 0.05) * 100) / 100) }) }, "+"))) : null,
-      h("div", { className: "sec sec2" }, "ANTIALIASING"), h(Seg, { value: f.aa, options: [["none", "None"], ["fxaa", "FXAA"], ["smaa", "SMAA"]], onChange: (v) => put({ aa: v }) })),
-    h(Card, { title: "EFFECTS" }, h("div", { className: "chips" }, ((cat && cat.effects) || []).map((e) => {
-      const on = (f.effects || []).includes(e.key);
-      return h(Focusable, { key: e.key, className: "ec" + (on ? " on" : ""), onClick: () => put({ effects: on ? f.effects.filter((x) => x !== e.key) : [...(f.effects || []), e.key] }) }, e.name);
-    })), h("div", { className: "note" }, hdr ? "This game runs in HDR: colour effects are skipped, sharpness and antialiasing still apply."
-      : "HDR games: colour effects are skipped, sharpness and antialiasing still apply.")),
+    h(Card, { title: "LOOK" },
+      h("div", { className: "fgrid" }, presets.map((p) =>
+        h(Focusable, { key: p.id, className: "ftile" + (active === p.id ? " on" : ""), onClick: () => set(() => rpc.setProfile(scope, { filters: p.id })) },
+          h("div", { className: "sw", style: { background: SWATCH[p.id] || SWATCH.off } }, p.id === "off" ? h("i", { className: "slash" }) : null),
+          h("div", { className: "fl" }, p.name)))),
+      h("div", { className: "fmore" }, h("span", null, active === "custom" ? "Custom · " + lookSummary(f, names) : lookSummary(f, names)))),
+    h(Card, { title: "SHARPENING" }, h(Seg, { value: f.sharpen, options: [["none", "Off"], ["cas", "CAS"], ["dls", "DLS"]], onChange: (v) => put({ sharpen: v }) }),
+      f.sharpen !== "none" ? h("div", { className: "lrow first", style: { marginTop: 6 } }, h("div", { className: "t2" }, h("b", null, "Strength"), h("span", null, "May show grain")), stepper("sharpness")) : null,
+      f.sharpen === "dls" ? h("div", { className: "lrow" }, h("div", { className: "t2" }, h("b", null, "Denoise"), h("span", null, "Keeps DLS off film grain")), stepper("denoise")) : null,
+      h("div", { className: "sec sec2" }, "ANTI-ALIASING"), h(Seg, { value: f.aa, options: [["none", "Off"], ["fxaa", "FXAA"], ["smaa", "SMAA"]], onChange: (v) => put({ aa: v }) })),
+    h(Card, { title: "EFFECTS · " + (chain.length ? chain.length + " ON" : "NONE") },
+      h("div", { className: "egrid" }, effects.map((e) => {
+        const on = chain.includes(e.key);
+        return h(Focusable, { key: e.key, className: "echip" + (on ? " on" : ""), onClick: () => put({ effects: on ? chain.filter((x) => x !== e.key) : [...chain, e.key] }) },
+          h("span", { className: "eord" + (on ? " on" : "") }, on ? "✓" : "+"), h("span", { className: "en" }, e.name));
+      })),
+      chain.length ? h(Focusable, { className: "btn", style: { marginTop: 8 }, onClick: () => put({ effects: [] }) }, "Clear effects") : null,
+      h("div", { className: "note" }, "Each effect costs some GPU time, the heavy ones (HDR Look, Clarity, SMAA) the most: with the Governor on, that can mean a little more power or a deeper ratio. " +
+        (hdr ? "This game runs in HDR: colour effects are skipped, sharpening and anti-aliasing still apply." : "HDR games: colour effects are skipped, sharpening and anti-aliasing still apply."))),
     h(Card, { title: "HUD" }, h(Row, { k: "Show HUD in game", first: true }, h(Tog, { on: hud.enabled, onChange: (v) => set(() => rpc.setSection("hud", { enabled: v })) })),
       h("div", { className: "sec sec2" }, "POSITION"),
       h(Seg, { value: hud.position, options: [["top-right", "Top right"], ["top-left", "Top left"], ["bottom-left", "Bottom left"], ["bottom-right", "Bottom right"]], onChange: (v) => set(() => rpc.setSection("hud", { position: v })) }),

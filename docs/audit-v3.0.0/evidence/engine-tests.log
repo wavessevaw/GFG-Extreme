@@ -1,0 +1,171 @@
+make: Entering directory '/workspace/gfg-300-audit/kedavra/kedavra'
+/workspace/gfg-300-audit/build/test_sched
+kfg_sched: all tests passed
+/workspace/gfg-300-audit/build/test_auto
+native 60:  cap 45 100.0%, mean cap 45.0, switches 3, late 0.000%
+native 50:  cap 45 100.0%, mean cap 45.0, switches 3, late 0.000%
+native 44:  mean cap 35.1, switches 43, late 0.218%
+native 38:  mean cap 35.1, switches 39, late 0.171%
+native 33:  mean cap 30.1, switches 38, late 0.022%
+native 22:  mean cap 30.0, switches 0
+floor 24, native 27:  mean cap 24.0, switches 40, late 0.139%, uneven motion 8.82%
+floor 24, native 60:  cap 45 100.0%
+lock 30:    above 30 0.00% of the run, switches 38, late 0.256%, uneven motion 0.10%
+lock 45:    cap 45 100.0%, switches 3, late 0.059%, uneven motion 0.09%
+60->36->60: cap 45 63.9% (second half), switches 15
+kfg_auto: all tests passed
+python3 sched/run_scenarios.py --sim /workspace/gfg-300-audit/build/kfg_sim --seeds 3 --out /workspace/gfg-300-audit/build/scenarios.json
+PASS x3_30to90_stable               seed=1 missed=0.0074% p95=0.003ms p99=0.004ms lat50=46.7ms drift=-0.01ms reorder=0 degraded_rows=0
+PASS x3_30to90_stable               seed=2 missed=0.0056% p95=0.003ms p99=0.004ms lat50=46.7ms drift=-0.05ms reorder=0 degraded_rows=0
+PASS x3_30to90_stable               seed=3 missed=0.0037% p95=0.003ms p99=0.004ms lat50=46.7ms drift=-0.12ms reorder=0 degraded_rows=0
+PASS x2_45to90_stable               seed=1 missed=0.0167% p95=0.003ms p99=0.004ms lat50=31.0ms drift=0.03ms reorder=0 degraded_rows=0
+PASS x2_45to90_stable               seed=2 missed=0.0167% p95=0.003ms p99=0.004ms lat50=31.0ms drift=-0.04ms reorder=0 degraded_rows=0
+PASS x2_45to90_stable               seed=3 missed=0.0093% p95=0.003ms p99=0.004ms lat50=31.0ms drift=-0.03ms reorder=0 degraded_rows=0
+PASS x2_30to60_stable               seed=1 missed=0.0111% p95=0.003ms p99=0.004ms lat50=46.7ms drift=0.00ms reorder=0 degraded_rows=0
+PASS x2_30to60_stable               seed=2 missed=0.0000% p95=0.003ms p99=0.004ms lat50=46.7ms drift=-0.03ms reorder=0 degraded_rows=0
+PASS x2_30to60_stable               seed=3 missed=0.0084% p95=0.003ms p99=0.004ms lat50=46.7ms drift=-0.02ms reorder=0 degraded_rows=0
+PASS x2_40to80_stable               seed=1 missed=0.0125% p95=0.003ms p99=0.004ms lat50=34.4ms drift=-0.03ms reorder=0 degraded_rows=0
+PASS x2_40to80_stable               seed=2 missed=0.0146% p95=0.003ms p99=0.004ms lat50=34.4ms drift=0.02ms reorder=0 degraded_rows=0
+PASS x2_40to80_stable               seed=3 missed=0.0084% p95=0.003ms p99=0.004ms lat50=34.4ms drift=-0.02ms reorder=0 degraded_rows=0
+PASS x3_30to90_30min                seed=1 missed=0.0043% p95=0.003ms p99=0.004ms lat50=46.7ms drift=-0.04ms reorder=0 degraded_rows=0
+PASS x2_45to90_30min                seed=1 missed=0.0136% p95=0.003ms p99=0.004ms lat50=31.0ms drift=-0.01ms reorder=0 degraded_rows=0
+PASS x3_game_spikes                 seed=1 missed=0.2713% p95=0.003ms p99=0.004ms lat50=46.7ms drift=-0.02ms reorder=0 degraded_rows=0
+PASS x3_game_spikes                 seed=2 missed=0.3475% p95=0.003ms p99=0.004ms lat50=46.7ms drift=0.08ms reorder=0 degraded_rows=0
+PASS x3_game_spikes                 seed=3 missed=0.2824% p95=0.003ms p99=0.004ms lat50=46.7ms drift=0.01ms reorder=0 degraded_rows=0
+PASS x3_heavy_analysis              seed=1 missed=0.0074% p95=0.003ms p99=0.004ms lat50=44.6ms drift=-0.01ms reorder=0 degraded_rows=0
+PASS x3_heavy_analysis              seed=2 missed=0.0167% p95=0.003ms p99=0.004ms lat50=44.6ms drift=-0.00ms reorder=0 degraded_rows=0
+PASS x3_heavy_analysis              seed=3 missed=0.0074% p95=0.003ms p99=0.004ms lat50=44.6ms drift=-0.01ms reorder=0 degraded_rows=0
+PASS x3_scene_cuts                  seed=1 missed=0.0074% p95=0.003ms p99=0.004ms lat50=46.7ms drift=-0.01ms reorder=0 degraded_rows=0
+PASS x3_scene_cuts                  seed=2 missed=0.0056% p95=0.003ms p99=0.004ms lat50=46.7ms drift=-0.05ms reorder=0 degraded_rows=0
+PASS x3_scene_cuts                  seed=3 missed=0.0037% p95=0.003ms p99=0.004ms lat50=46.7ms drift=-0.11ms reorder=0 degraded_rows=0
+PASS x3_fps_drop                    seed=1 missed=0.0071% p95=0.003ms p99=0.004ms lat50=46.7ms drift=0.07ms reorder=0 degraded_rows=0
+PASS x3_fps_drop                    seed=2 missed=0.0071% p95=0.003ms p99=0.004ms lat50=46.7ms drift=-0.06ms reorder=0 degraded_rows=0
+PASS x3_fps_drop                    seed=3 missed=0.0000% p95=0.003ms p99=0.004ms lat50=46.8ms drift=-0.07ms reorder=0 degraded_rows=0
+PASS toggle_off_on                  seed=1 missed=0.0079% p95=0.003ms p99=0.004ms lat50=46.7ms drift=0.00ms reorder=0 degraded_rows=0
+PASS toggle_off_on                  seed=2 missed=0.0000% p95=0.003ms p99=0.004ms lat50=46.7ms drift=-0.00ms reorder=0 degraded_rows=0
+PASS toggle_off_on                  seed=3 missed=0.0000% p95=0.003ms p99=0.004ms lat50=46.8ms drift=-0.06ms reorder=0 degraded_rows=0
+PASS switch_x3_x2                   seed=1 missed=0.0136% p95=0.003ms p99=0.004ms lat50=52.5ms drift=0.12ms reorder=0 degraded_rows=0
+PASS switch_x3_x2                   seed=2 missed=0.0000% p95=0.003ms p99=0.004ms lat50=52.4ms drift=-0.04ms reorder=0 degraded_rows=0
+PASS switch_x3_x2                   seed=3 missed=0.0068% p95=0.003ms p99=0.004ms lat50=52.5ms drift=-0.08ms reorder=0 degraded_rows=0
+PASS refresh_90_to_60               seed=1 missed=0.0000% p95=0.003ms p99=0.004ms lat50=46.7ms drift=0.02ms reorder=0 degraded_rows=0
+PASS refresh_90_to_60               seed=2 missed=0.0084% p95=0.003ms p99=0.004ms lat50=46.8ms drift=0.05ms reorder=0 degraded_rows=0
+PASS refresh_90_to_60               seed=3 missed=0.0000% p95=0.003ms p99=0.004ms lat50=46.7ms drift=-0.14ms reorder=0 degraded_rows=0
+PASS insufficient_compute           seed=1 missed=0.0082% p95=0.003ms p99=0.004ms lat50=46.7ms drift=-0.04ms reorder=0 degraded_rows=2520
+PASS insufficient_compute           seed=2 missed=0.0000% p95=0.003ms p99=0.004ms lat50=46.8ms drift=-0.02ms reorder=0 degraded_rows=2520
+PASS insufficient_compute           seed=3 missed=0.0000% p95=0.003ms p99=0.004ms lat50=46.8ms drift=-0.04ms reorder=0 degraded_rows=2520
+PASS suspend_resume                 seed=1 missed=0.0000% p95=0.003ms p99=0.004ms lat50=46.7ms drift=0.08ms reorder=0 degraded_rows=0
+PASS suspend_resume                 seed=2 missed=0.0000% p95=0.003ms p99=0.004ms lat50=46.7ms drift=0.05ms reorder=0 degraded_rows=0
+PASS suspend_resume                 seed=3 missed=0.0000% p95=0.003ms p99=0.004ms lat50=46.8ms drift=0.05ms reorder=0 degraded_rows=0
+PASS uncapped_40fps_x3_informative  seed=1 missed=0.1319% p95=0.003ms p99=0.004ms lat50=41.4ms drift=-0.07ms reorder=0 degraded_rows=0
+PASS uncapped_40fps_x3_informative  seed=2 missed=0.1224% p95=0.003ms p99=0.004ms lat50=41.4ms drift=-0.14ms reorder=0 degraded_rows=0
+PASS uncapped_40fps_x3_informative  seed=3 missed=0.2637% p95=0.003ms p99=0.004ms lat50=41.7ms drift=-0.23ms reorder=0 degraded_rows=0
+/workspace/gfg-300-audit/build/kfg_vktest --spv /workspace/gfg-300-audit/build --json /workspace/gfg-300-audit/build/engine.json
+Failed to create /home/agent/.cache/mesa_shader_cache for shader cache (Read-only file system)---disabling.
+Failed to create /home/agent/.cache/mesa_shader_cache_db for shader cache (Read-only file system)---disabling.
+device: llvmpipe (LLVM 19.1.7, 256 bits) (llvmpipe Mesa 25.0.7-2+deb13u1 (LLVM 19.1.7))
+pan          cut=0 bad=0.024 mc=0.0154 zero=0.1163 global=(24.0,8.0) grad=(0.0,0.0;0.0,0.0)
+  t=0.333 gen=33.67dB blend=17.23dB dup=16.22dB region gen/blend/dup=33.67/17.23/16.22 |G-A|=25.26 |G-B|=33.42 hud=0.00 PASS
+  t=0.667 gen=33.40dB blend=17.24dB dup=16.23dB region gen/blend/dup=33.40/17.24/16.23 |G-A|=33.37 |G-B|=25.27 hud=0.00 PASS
+  t=0.500 gen=33.19dB blend=16.58dB dup=15.09dB region gen/blend/dup=33.19/16.58/15.09 |G-A|=31.23 |G-B|=31.26 hud=0.00 PASS
+fast_pan     cut=0 bad=0.004 mc=0.0020 zero=0.0959 global=(72.0,-0.0) grad=(0.0,0.0;0.0,0.0)
+  t=0.333 gen=29.63dB blend=17.70dB dup=16.68dB region gen/blend/dup=29.63/17.70/16.68 |G-A|=26.05 |G-B|=29.10 hud=0.00 PASS
+  t=0.667 gen=28.80dB blend=17.67dB dup=16.65dB region gen/blend/dup=28.80/17.67/16.65 |G-A|=28.98 |G-B|=26.14 hud=0.00 PASS
+  t=0.500 gen=28.92dB blend=17.50dB dup=16.19dB region gen/blend/dup=28.92/17.50/16.19 |G-A|=28.27 |G-B|=28.37 hud=0.00 PASS
+objects_hud  cut=0 bad=0.001 mc=0.0005 zero=0.0043 global=(0.0,0.0) grad=(0.0,0.0;0.0,0.0)
+  t=0.333 gen=36.72dB blend=30.10dB dup=29.20dB region gen/blend/dup=24.97/19.33/18.21 |G-A|=1.04 |G-B|=1.34 hud=0.00 PASS
+  t=0.667 gen=36.86dB blend=30.08dB dup=29.16dB region gen/blend/dup=25.56/19.42/18.28 |G-A|=1.33 |G-B|=1.04 hud=0.00 PASS
+  t=0.500 gen=36.60dB blend=29.67dB dup=28.20dB region gen/blend/dup=24.87/19.25/17.70 |G-A|=1.22 |G-B|=1.23 hud=0.00 PASS
+occlusion    cut=0 bad=0.003 mc=0.0010 zero=0.0776 global=(-16.0,0.0) grad=(0.0,0.0;0.0,0.0)
+  t=0.333 gen=35.08dB blend=20.62dB dup=19.28dB region gen/blend/dup=24.45/19.14/17.99 |G-A|=16.44 |G-B|=20.90 hud=0.00 PASS
+  t=0.667 gen=35.18dB blend=20.60dB dup=19.26dB region gen/blend/dup=24.49/19.00/17.84 |G-A|=20.92 |G-B|=16.40 hud=0.00 PASS
+  t=0.500 gen=37.39dB blend=20.24dB dup=18.50dB region gen/blend/dup=24.50/18.82/17.15 |G-A|=18.84 |G-B|=18.81 hud=0.00 PASS
+static       cut=0 bad=0.000 mc=0.0000 zero=0.0000 global=(0.0,0.0) grad=(0.0,0.0;0.0,0.0)
+  t=0.333 gen=99.00dB blend=99.00dB dup=99.00dB region gen/blend/dup=99.00/99.00/99.00 |G-A|=0.00 |G-B|=0.00 hud=0.00 PASS
+  t=0.667 gen=99.00dB blend=99.00dB dup=99.00dB region gen/blend/dup=99.00/99.00/99.00 |G-A|=0.00 |G-B|=0.00 hud=0.00 PASS
+  t=0.500 gen=99.00dB blend=99.00dB dup=99.00dB region gen/blend/dup=99.00/99.00/99.00 |G-A|=0.00 |G-B|=0.00 hud=0.00 PASS
+scene_cut    cut=1 bad=0.036 mc=0.0258 zero=0.0798 global=(0.0,0.0) grad=(0.0,0.0;0.0,0.0)
+  t=0.333 gen=99.00dB blend=27.64dB dup=99.00dB region gen/blend/dup=99.00/27.64/99.00 |G-A|=0.00 |G-B|=24.60 hud=0.00 PASS
+  t=0.667 gen=99.00dB blend=27.64dB dup=99.00dB region gen/blend/dup=99.00/27.64/99.00 |G-A|=24.60 |G-B|=0.00 hud=0.00 PASS
+  t=0.500 gen=99.00dB blend=24.11dB dup=99.00dB region gen/blend/dup=99.00/24.11/99.00 |G-A|=24.60 |G-B|=0.00 hud=0.00 PASS
+stairs       cut=0 bad=0.017 mc=0.0172 zero=0.1049 global=(16.0,8.0) grad=(-0.0,0.0;0.0,-0.0)
+  t=0.333 gen=23.11dB blend=12.63dB dup=11.40dB region gen/blend/dup=23.11/12.63/11.40 |G-A|=54.48 |G-B|=48.63 hud=0.00 PASS
+  t=0.667 gen=23.01dB blend=12.63dB dup=11.40dB region gen/blend/dup=23.01/12.63/11.40 |G-A|=48.81 |G-B|=54.93 hud=0.00 PASS
+  t=0.500 gen=25.36dB blend=12.83dB dup=11.37dB region gen/blend/dup=25.36/12.83/11.37 |G-A|=56.65 |G-B|=56.75 hud=0.00 PASS
+dolly        cut=0 bad=0.025 mc=0.0179 zero=0.1033 global=(-0.2,4.9) grad=(30.5,0.0;0.0,19.1)
+  t=0.333 gen=31.37dB blend=17.90dB dup=16.63dB region gen/blend/dup=30.76/16.95/15.74 |G-A|=23.86 |G-B|=28.97 hud=0.00 PASS
+  t=0.667 gen=32.15dB blend=17.80dB dup=16.73dB region gen/blend/dup=32.05/16.85/15.78 |G-A|=29.64 |G-B|=22.90 hud=0.00 PASS
+  t=0.500 gen=33.56dB blend=17.87dB dup=16.27dB region gen/blend/dup=32.80/17.04/15.53 |G-A|=27.31 |G-B|=26.45 hud=0.00 PASS
+dolly_stairs cut=0 bad=0.019 mc=0.0202 zero=0.1100 global=(1.1,0.6) grad=(2.9,0.0;0.0,1.8)
+  t=0.333 gen=20.98dB blend=12.96dB dup=11.89dB region gen/blend/dup=20.98/12.96/11.89 |G-A|=42.82 |G-B|=44.86 hud=0.00 PASS
+  t=0.667 gen=21.19dB blend=12.97dB dup=11.88dB region gen/blend/dup=21.19/12.97/11.88 |G-A|=44.65 |G-B|=42.41 hud=0.00 PASS
+  t=0.500 gen=21.84dB blend=13.08dB dup=11.80dB region gen/blend/dup=21.84/13.08/11.80 |G-A|=44.95 |G-B|=45.13 hud=0.00 PASS
+near_object  cut=0 bad=0.004 mc=0.0026 zero=0.0721 global=(16.0,0.0) grad=(-0.0,0.0;0.0,-0.0)
+  t=0.333 gen=31.12dB blend=20.01dB dup=18.82dB region gen/blend/dup=25.00/18.64/17.53 |G-A|=16.40 |G-B|=20.44 hud=0.00 PASS
+  t=0.667 gen=32.06dB blend=20.02dB dup=18.84dB region gen/blend/dup=25.49/18.71/17.62 |G-A|=20.30 |G-B|=16.38 hud=0.00 PASS
+  t=0.500 gen=31.65dB blend=19.96dB dup=18.39dB region gen/blend/dup=25.18/18.35/16.93 |G-A|=18.66 |G-B|=18.68 hud=0.00 PASS
+climb        cut=0 bad=0.053 mc=0.0183 zero=0.0830 global=(0.0,0.0) grad=(0.0,0.0;0.0,0.0)
+  t=0.333 gen=21.59dB blend=21.63dB dup=19.37dB region gen/blend/dup=21.59/21.63/19.37 |G-A|=10.35 |G-B|=15.97 hud=0.00 OPEN (not gated): moving region not better than blend/duplicate by 2 dB
+  t=0.667 gen=21.83dB blend=21.68dB dup=19.24dB region gen/blend/dup=21.83/21.68/19.24 |G-A|=16.69 |G-B|=9.37 hud=0.00 OPEN (not gated): moving region not better than blend/duplicate by 2 dB
+  t=0.500 gen=20.26dB blend=21.16dB dup=17.32dB region gen/blend/dup=20.26/21.16/17.32 |G-A|=14.16 |G-B|=13.04 hud=0.00 OPEN (not gated): moving region not better than blend/duplicate by 2 dB
+sequence: PASS (0 bad outputs of 14)
+camera: psnr gen 27.83 dB (worst 23.50), dup 15.99 dB; temporal gen 5.243, dup 34.459; cuts 0 of 11; hud max 4.13
+stairs temporal: gen 9.962, duplicate 66.624 (mean |change error| per channel); psnr gen 23.79 dB, dup 11.40 dB
+slow_pan temporal: gen 5.427, duplicate 7.295 (mean |change error| per channel); psnr gen 29.15 dB, dup 25.52 dB
+slow_stairs temporal: gen 4.927, duplicate 28.171 (mean |change error| per channel); psnr gen 29.07 dB, dup 14.51 dB
+climb temporal: gen 3.345, duplicate 10.352 (mean |change error| per channel); psnr gen 25.33 dB, dup 19.55 dB
+hdr pq    pan          cut=0 PASS
+          worst gain over blend/duplicate 16.02 dB
+hdr pq    objects_hud  cut=0 PASS
+          worst gain over blend/duplicate 5.65 dB
+hdr pq    occlusion    cut=0 PASS
+          worst gain over blend/duplicate 13.76 dB
+hdr pq    static       cut=0 PASS
+hdr pq    scene_cut    cut=1 PASS
+hdr scrgb pan          cut=0 PASS
+          worst gain over blend/duplicate 14.69 dB
+hdr scrgb objects_hud  cut=0 PASS
+          worst gain over blend/duplicate 5.61 dB
+hdr scrgb occlusion    cut=0 PASS
+          worst gain over blend/duplicate 13.25 dB
+hdr scrgb static       cut=0 PASS
+hdr scrgb scene_cut    cut=1 PASS
+PASS: 0 failure(s)
+/workspace/gfg-300-audit/build/kfg_posttest --spv /workspace/gfg-300-audit/build
+Failed to create /home/agent/.cache/mesa_shader_cache for shader cache (Read-only file system)---disabling.
+Failed to create /home/agent/.cache/mesa_shader_cache_db for shader cache (Read-only file system)---disabling.
+parser and plan
+device: llvmpipe (LLVM 19.1.7, 256 bits) (llvmpipe Mesa 25.0.7-2+deb13u1 (LLVM 19.1.7))
+colour looks against the CPU reference
+  levels_plus    max |gpu - cpu| = 0.48/255, 0 px over 1.0
+  curves         max |gpu - cpu| = 0.50/255, 0 px over 1.0
+  vibrance       max |gpu - cpu| = 0.50/255, 0 px over 1.0
+  colourfulness  max |gpu - cpu| = 0.50/255, 0 px over 1.0
+  technicolor2   max |gpu - cpu| = 0.50/255, 0 px over 1.0
+  dpx            max |gpu - cpu| = 0.50/255, 0 px over 1.0
+  technicolor    max |gpu - cpu| = 0.50/255, 0 px over 1.0
+  bleach_bypass  max |gpu - cpu| = 0.50/255, 0 px over 1.0
+  sepia          max |gpu - cpu| = 0.50/255, 0 px over 1.0
+  monochrome     max |gpu - cpu| = 0.50/255, 0 px over 1.0
+  noir           max |gpu - cpu| = 0.50/255, 0 px over 1.0
+  nostalgia      max |gpu - cpu| = 0.48/255, 0 px over 1.0
+  hdr_look       flat: gpu (80,140,222) cpu (80.0,140.5,221.5)
+detail effects on a flat image
+  clarity                flat image: max change 0/255
+  cartoon                flat image: max change 0/255
+  deband                 flat image: max change 0/255
+  cas=1                  flat image: max change 0/255
+  dls=1:0.17             flat image: max change 0/255
+  fxaa                   flat image: max change 0/255
+  smaa                   flat image: max change 0/255
+  chromatic_aberration   flat image: max change 0/255
+sharpening and antialiasing
+  cas=0.5      step: 76..179 -> 69..183
+  dls=0.5:0.17 step: 76..179 -> 67..191
+  fxaa   stairs: 126 intermediate pixels (source 0), 0 changed away from the edge
+  smaa   stairs: 378 intermediate pixels (source 0), 0 changed away from the edge
+finish
+  vignette: centre 160, corner 125 (input 160)
+  film_grain: mean 40.0 (input 40), 89% of pixels differ between two phases
+chains
+PASS: 0 failure(s)
+make: Leaving directory '/workspace/gfg-300-audit/kedavra/kedavra'

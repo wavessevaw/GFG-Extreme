@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, Optional
 from . import filters
 from .autopilot import Autopilot
 from .governor import PowerGovernor
+from .lease import ExperimentLease
 from .kedavra import hud as hudmod
 from .pilot import PointPilot
 from .policy import Policy, PolicyCoordinator
@@ -46,6 +47,7 @@ class Service:
         self.governor = PowerGovernor(actuator, model, clock=clock, journal=self._j("governor"))
         self.split = split
         self.gclock = gclock
+        self.lease = ExperimentLease(clock=clock, journal=self._j("lease"))
         self.rates = hudmod.Rates()
         self.stats = SessionStats()
         self.last_game_at = -1e9
@@ -89,8 +91,10 @@ class Service:
         objective = profile["objective"]
         auto_reason = ""
         if objective == "autopilot":
+            # Autopilot is its own adaptive mode (it does not switch between Battery, Balanced
+            # and Quality); this only tracks the battery and the reason shown in the panel.
             ap = self.autopilot.decide(data["autopilot"]["preference"], power, temp)
-            objective, auto_reason = ap["objective"], ap["reason"]
+            auto_reason = ap["reason"]
         refresh = round(1e9 / st["refresh_ns"]) if fresh and st.get("refresh_ns") else 90
 
         confirmed = self.coord.engine_runs(self.last_policy, st)
@@ -99,6 +103,10 @@ class Service:
             "fg": profile["fg"], "base_fps": profile["base_fps"], "objective": objective,
             "refresh": refresh, "game": game, "app": self.app, "engine": st,
             "real": live.get("real"), "pace": live.get("pace"), "confirmed": confirmed,
+            "gpu_busy": sensors.get("gpu_busy_pct"), "cpu_top": sensors.get("cpu_top_core_pct"),
+            "autopilot": objective == "autopilot",
+            "low_battery": self.autopilot.low_battery or data["autopilot"]["preference"] == "battery",
+            "tdp_w": gov.status().get("tdp_w"), "gov_settled": gov.settled(),
             "at_ceiling": gov.at_ceiling(), "settling": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
         })
         policy = Policy(req["multiplier"], req["base_fps"], filters.to_post(profile["filters"]),
@@ -132,17 +140,25 @@ class Service:
             # A CPU clock change (Power Split) restarts the TDP windows like a new policy does.
             "epoch": (coord["epoch"], self.split.changes if self.split else 0, self.gclock.changes if self.gclock else 0),
             "real": live.get("real"), "pace": live.get("pace"),
+            "probe_active": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
             "over_budget": (rates or {}).get("over_budget", 0.0), "ring_miss": 0.0, "temp_c": temp,
+            "draw_w": gov.status().get("draw_w"),
+            "ac": power.get("external_power"),
+            "experiment": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
         }
         if rates is not None and self.rates.prev is not None:
             sample["ring_miss"] = self._delta(st, "ring_miss")
             sample["over_budget"] = self._delta(st, "over_budget")
         g = gov.tick(sample)
+        lease = self.lease.observe({"tdp": bool(g.get("probing")) and game,
+                                    "cpu": bool(self.split and self.split.settling()),
+                                    "gpu": bool(self.gclock and self.gclock.settling())})
 
         hours = self._hours_left(power)
         hud_cfg = data["hud"]
         if self.hud is not None:
-            extra = {"tdp_w": g.get("tdp_w") if g.get("owned") else None, "draw_w": g.get("draw_w"),
+            # Not managed (paused, or Governor off): the HUD still shows the TDP the Deck runs at.
+            extra = {"tdp_w": g.get("tdp_w") if g.get("owned") else g.get("observed_tdp_w"), "draw_w": g.get("draw_w"),
                      "ceiling_w": g.get("ceiling_w"), "temp_c": temp, "managing": g.get("managing"),
                      "battery": {**power, "hours_left": hours}}
             try:
@@ -153,13 +169,14 @@ class Service:
         if game:
             self.stats.add(now, output=live.get("fps"), real=live.get("real"), tdp=g.get("tdp_w"),
                            draw=g.get("draw_w"), reference_w=g.get("ceiling_w"), temp_c=temp,
-                           stuttering=(live.get("pace") or 1.0) < 0.97, hot=(temp or 0) >= 85,
+                           stuttering=(live.get("pace") is not None and live["pace"] < 0.97), hot=(temp or 0) >= 85,
                            mode=objective)
         self.snapshot = {
             "time": now, "game": game, "app": self.app, "profile": profile_key, "profile_name": profile["name"],
             "fg": profile["fg"], "objective": objective, "objective_setting": profile["objective"],
             "autopilot_reason": auto_reason, "refresh": refresh, "engine": self._engine_view(st),
             "live": live, "pilot": req, "policy": coord, "governor": g, "split": split_status, "gpu_clock": gclock_status,
+            "lease": lease,
             "sensors": sensors, "power": power,
             "filters": filters.summary(profile["filters"]),
         }

@@ -116,8 +116,8 @@ class PolicyCoordinator:
     # ------------------------------------------------------------------ API
     def want(self, policy: Policy) -> None:
         if self.wanted is None or policy.key() != self.wanted.key():
-            if self.wanted is None or (policy.multiplier, policy.base_fps, policy.auto_floor) != (
-                    self.wanted.multiplier, self.wanted.base_fps, self.wanted.auto_floor):
+            if self.wanted is None or (policy.multiplier, policy.base_fps, policy.auto_floor, policy.post, policy.hdr) != (
+                    self.wanted.multiplier, self.wanted.base_fps, self.wanted.auto_floor, self.wanted.post, self.wanted.hdr):
                 self.s.epoch += 1
             self.wanted = policy
             self.retry_at = 0.0  # a new wish is sent now, not after an old back-off

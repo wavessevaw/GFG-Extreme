@@ -1,0 +1,40 @@
+{
+  "packaged_analysis": {
+    "trace": "/workspace/gfg-300-audit/probe.csv",
+    "report": "/workspace/gfg-300-audit/probe.json",
+    "ok": false,
+    "log": "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python: can't open file '/workspace/gfg-300-audit/package/GFG-Extreme/bin/kfg_pacing.py': [Errno 2] No such file or directory\n"
+  },
+  "packaged_benchmark": {
+    "ok": false,
+    "log": "the plugin zip has no bench/kfg_vktest",
+    "json": ""
+  },
+  "half_refresh_health": {
+    "fps": 45.0,
+    "real": 30.0,
+    "pace": 1.0,
+    "gen_share": 0.6666666666666666,
+    "unsupported": 0.0
+  },
+  "failed_update_error": "setcap: injected setcap failure",
+  "failed_update_retained_old_version": false,
+  "45_flips_at_90hz_analyzer": {
+    "missed_fraction": 0.0,
+    "interval_error_ms": {
+      "p50": 11.111111,
+      "p95": 11.111111,
+      "p99": 11.111111,
+      "max": 11.111111
+    },
+    "checks": {
+      "p95_interval_error": false,
+      "p99_interval_error": false,
+      "missed_below_0.5pct": true,
+      "no_oscillation": true,
+      "no_reorder": true,
+      "uniform_content_steps": true
+    },
+    "pass": false
+  }
+}
