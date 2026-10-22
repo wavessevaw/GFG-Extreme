@@ -258,7 +258,7 @@ class Service:
     @staticmethod
     def _engine_view(st: Dict[str, Any]) -> Dict[str, Any]:
         keys = ("engine", "fresh", "state", "multiplier", "cap_fps", "base_fps", "auto", "auto_floor",
-                "post", "post_active", "post_error", "gpu_us_avg", "gpu_post_us_avg", "last_problem",
+                "post", "post_active", "post_error", "gpu_us_avg", "gpu_post_us_avg", "gpu_analysis_us_avg", "analysis_pairs", "last_problem",
                 "steam_ui", "width", "height", "message", "trace", "transfer", "hdr_enabled", "post_hdr_limited")
         return {k: st.get(k) for k in keys if k in st}
 
