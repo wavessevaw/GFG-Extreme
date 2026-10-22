@@ -37,12 +37,12 @@ var css = `
  font-family:"Motiva Sans","Inter","Segoe UI",system-ui,sans-serif;color:var(--tx);box-sizing:border-box;-webkit-font-smoothing:antialiased;
  padding:10px 10px 18px;min-height:100%;background:linear-gradient(180deg,#120c0d 0%,var(--bg) 22%,var(--bg) 100%)}
 .gfg *{box-sizing:border-box}
-.gfg .top{display:flex;align-items:center;justify-content:space-between;margin:2px 2px 10px}
-.gfg .brand{display:flex;align-items:center;font-weight:800;letter-spacing:.2em;font-size:13px;white-space:nowrap}
-.gfg .brand img{width:22px;height:22px;margin-right:7px;filter:drop-shadow(0 0 6px rgba(251,13,0,.6))}
-.gfg .brand b{color:var(--red);text-shadow:0 0 12px rgba(251,13,0,.65);margin-left:6px}
-.gfg .chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--tx2);background:var(--s2);border:1px solid var(--line);border-radius:999px;padding:4px 9px;white-space:nowrap}
-.gfg .chip i{width:6px;height:6px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red)}
+.gfg .top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 10px;margin:4px 2px 12px;line-height:1.2}
+.gfg .brand{display:flex;align-items:center;font-weight:800;letter-spacing:.14em;font-size:12px;white-space:nowrap}
+.gfg .brand img{width:20px;height:20px;margin-right:6px;filter:drop-shadow(0 0 6px rgba(251,13,0,.6))}
+.gfg .brand b{color:var(--red);text-shadow:0 0 12px rgba(251,13,0,.65);margin-left:5px}
+.gfg .chip{display:inline-flex;align-items:center;gap:5px;font-size:9.5px;font-weight:600;color:var(--tx2);background:var(--s2);border:1px solid var(--line);border-radius:999px;padding:3px 8px;white-space:nowrap;margin-left:auto}
+.gfg .chip i{width:5px;height:5px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red)}
 .gfg .tabs{display:flex;align-items:center;gap:3px;background:var(--s1);border:1px solid var(--line);border-radius:14px;padding:4px;margin-bottom:10px}
 .gfg .bump{font-size:10px;font-weight:800;color:var(--tx3);background:var(--s3);border-radius:6px;padding:3px 5px}
 .gfg .tab{flex:1;text-align:center;font-size:11.5px;font-weight:700;color:var(--tx2);padding:7px 0;border-radius:10px}
@@ -73,7 +73,7 @@ var css = `
 .gfg .mring{position:relative;width:62px;height:62px}.gfg .mring svg{position:absolute;inset:0;transform:rotate(-90deg);overflow:visible}
 .gfg .mring .mg{transition:stroke-dashoffset .6s,stroke .6s}
 .gfg .mn{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1}
-.gfg .mn b{font-weight:800;font-variant-numeric:tabular-nums}.gfg .mn i{font-style:normal;font-size:8px;font-weight:700;color:var(--tx3);margin-top:2px;letter-spacing:.04em}
+.gfg .mn b{font-weight:800;font-variant-numeric:tabular-nums;line-height:1}.gfg .mn i{font-style:normal;line-height:1;font-size:8px;font-weight:700;color:var(--tx3);margin-top:2px;letter-spacing:.04em}
 .gfg .mini>span{font-size:8.5px;font-weight:800;letter-spacing:.08em;color:var(--tx3);margin-top:4px}
 .gfg .fgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 .gfg .ftile{display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 2px 7px;border-radius:12px;border:1px solid transparent;background:var(--s2)}
@@ -89,8 +89,10 @@ var css = `
 .gfg .eord{width:20px;height:20px;border-radius:6px;background:var(--s3);color:var(--tx3);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex:none}
 .gfg .eord.on{background:var(--red);color:#fff}
 .gfg .t2 b{display:block;font-size:12.5px;font-weight:600}.gfg .t2 span{font-size:10px;color:var(--tx3)}
-.gfg .tile.mode{display:flex;align-items:center;gap:9px;position:relative;overflow:hidden}
-.gfg .mico{width:34px;height:34px;flex:none;border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--tx2);
+.gfg .tile.mode{display:flex;align-items:center;gap:8px;position:relative;overflow:hidden;padding:7px 8px;line-height:1.2}
+.gfg .tile.mode>div:last-child{min-width:0}
+.gfg .tile.mode b{font-size:12.5px;line-height:1.2}.gfg .tile.mode span{display:block;font-size:10px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gfg .mico{width:26px;height:26px;flex:none;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--tx2);
  background:linear-gradient(160deg,#33333b,#1c1c21);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 0 0 1px var(--line)}
 .gfg .tile.mode{background:linear-gradient(160deg,#222228 0%,var(--s2) 60%,#18181c 100%)}
 .gfg .tile.mode.on .mico{color:#fff;background:linear-gradient(160deg,#ff2d1a,#b30800);box-shadow:0 0 12px rgba(251,13,0,.5)}
@@ -116,6 +118,7 @@ var css = `
 .gfg .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
 .gfg .pre{background:var(--s2);border:1px solid var(--line);border-radius:10px;text-align:center;padding:8px 0;font-size:10.5px;font-weight:700;color:var(--tx2)}
 .gfg .note{font-size:10.5px;color:var(--tx2);background:var(--s2);border-radius:10px;padding:8px 9px;line-height:1.4;margin-top:8px}
+.gfg .note.bad{color:#ffb4a8;background:#2a1010}
 .gfg .btns{display:flex;gap:6px;margin-top:9px}.gfg .btns>div{flex:1}
 .gfg .btn{text-align:center;font-size:11.5px;font-weight:800;padding:9px 0;border-radius:10px;background:var(--s3)}
 .gfg .btn.red{background:linear-gradient(180deg,#ff2d1a,#d10a00);box-shadow:0 0 14px rgba(251,13,0,.45)}
@@ -305,8 +308,8 @@ var gameName = (app) => {
     return "";
   }
 };
-var OBJ = { autopilot: ["Autopilot", "adapts \xB7 aims at 12 W"], battery: ["Battery", "\xD73.75 \xB7 lowest watts"], balanced: ["Balanced", "best point it holds"], quality: ["Quality", "real frames first"] };
-var svg = (...c) => h("svg", { viewBox: "0 0 24 24", width: 22, height: 22, fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, ...c);
+var OBJ = { autopilot: ["Autopilot", "adapts \xB7 12 W"], battery: ["Battery", "\xD73.75 \xB7 low watts"], balanced: ["Balanced", "best point"], quality: ["Quality", "real frames"] };
+var svg = (...c) => h("svg", { viewBox: "0 0 24 24", width: 16, height: 16, fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, ...c);
 var ICON = {
   autopilot: svg(h("path", { d: "M12 2.5l2.2 5.3 5.3 2.2-5.3 2.2L12 17.5l-2.2-5.3L4.5 10l5.3-2.2z", fill: "currentColor", stroke: "none" }), h("path", { d: "M18.5 15.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z", fill: "currentColor", stroke: "none" })),
   battery: svg(h("rect", { x: 2.5, y: 7, width: 17, height: 10, rx: 2.5 }), h("path", { d: "M21.5 10.5v3" }), h("rect", { x: 5, y: 9.5, width: 7, height: 5, rx: 1, fill: "currentColor", stroke: "none" })),
@@ -326,7 +329,7 @@ function Dash({ s, set }) {
     "div",
     { className: "st" },
     h("h3", null, h("b", null, multText(refresh, point, eng)), point ? ` \xB7 ${point} FPS` : ""),
-    h("p", null, head, live.game ? h("br") : null, live.game ? `${gameName(live.app)} \xB7 ${(OBJ[live.objective] || [live.objective])[0]}` : body),
+    h("p", null, head, h("br"), live.game ? `${gameName(live.app)} \xB7 ${(OBJ[live.objective] || [live.objective])[0]}` : body),
     h("div", { className: "phase" }, PHASES.map((p) => h("span", { key: p, className: p === ph ? "on" : "" }, p)))
   );
   const scope = (s.profiles.active || "").startsWith("app:") ? "game" : "default";
@@ -473,6 +476,12 @@ function Graphics({ s, set, cat }) {
     ),
     h(
       Card,
+      { title: "HDR" },
+      h(Row, { k: "HDR output", first: true }, h(Tog, { on: s.settings.engine.hdr_output !== false, onChange: (v) => set(() => rpc.setSection("engine", { hdr_output: v })) })),
+      h("div", { className: "sub" }, s.settings.engine.hdr_output !== false ? "On: HDR as set in Steam. Off: the screen and games get SDR." : "Off: the screen and games get SDR. A game started in HDR may need a restart.")
+    ),
+    h(
+      Card,
       { title: "HUD" },
       h(Row, { k: "Show HUD in game", first: true }, h(Tog, { on: hud.enabled, onChange: (v) => set(() => rpc.setSection("hud", { enabled: v })) })),
       h("div", { className: "sec sec2" }, "POSITION"),
@@ -542,20 +551,41 @@ function Engine({ s, set }) {
     )
   );
 }
+var notify = (title, body) => {
+  try {
+    if (typeof toaster !== "undefined" && toaster) toaster.toast({ title, body, duration: 6e3 });
+  } catch (e) {
+  }
+};
+var resultText = (r, label) => r && (r.message || r.error || (r.path ? "Saved to " + r.path : null) || (r.rebooting ? "Rebooting now" : null)) || label + ": done";
 function Setup({ s, set }) {
   const [diag, setDiag] = useState(null);
-  const [msg, setMsg] = useState("");
+  const [msg, setMsg] = useState({ where: "", text: "", bad: false });
   const co = s.coexist || {}, mig = s.migration || {}, cfg = s.settings;
-  const run = (label, f) => set(async () => {
-    setMsg(label + "\u2026");
-    const r = await f();
-    setMsg(r && (r.message || r.path || r.error) ? String(r.message || r.path || r.error) : label + ": done");
-    return r;
+  const run = (where, label, f, busy) => set(async () => {
+    setMsg({ where, text: busy + "\u2026", bad: false });
+    notify("GFG Extreme", busy + "\u2026");
+    try {
+      const r = await f();
+      const text = r && r.ok === false ? String(r.log || r.error || label + " failed") : resultText(r, label);
+      const bad = !!(r && r.ok === false);
+      setMsg({ where, text, bad });
+      notify(bad ? "GFG Extreme \xB7 " + label + " failed" : "GFG Extreme \xB7 " + label, text.slice(0, 160));
+      return r;
+    } catch (e) {
+      const text = String(e && e.message || e);
+      setMsg({ where, text, bad: true });
+      notify("GFG Extreme \xB7 " + label + " failed", text.slice(0, 160));
+      throw e;
+    }
   });
-  useEffect(() => {
-    rpc.diagnose().then(setDiag).catch(() => {
-    });
-  }, []);
+  const note = (where) => msg.where === where && msg.text ? h("div", { className: "note" + (msg.bad ? " bad" : "") }, msg.text) : null;
+  const check = () => run("diag", "Checks", async () => {
+    const d = await rpc.diagnose();
+    setDiag(d);
+    const bad = (d.checks || []).filter((c) => !c.ok).length;
+    return { message: bad ? bad + " check" + (bad > 1 ? "s" : "") + " failed: see the list above" : "All checks passed" };
+  }, "Running checks");
   const checks = diag && diag.checks || [];
   return h(
     "div",
@@ -567,26 +597,31 @@ function Setup({ s, set }) {
       h(
         "div",
         { className: "btns" },
-        h(Focusable, { className: "btn", onClick: () => run("Install", rpc.install) }, "Reinstall"),
-        h(Focusable, { className: "btn", onClick: () => run("Remove", rpc.uninstall) }, "Remove"),
-        h(Focusable, { className: "btn", onClick: () => run("Reboot", rpc.reboot) }, "Reboot")
-      )
+        h(Focusable, { className: "btn", onClick: () => run("install", "Reinstall", rpc.install, "Installing the engine") }, "Reinstall"),
+        h(Focusable, { className: "btn", onClick: () => run("install", "Remove", rpc.uninstall, "Removing the engine") }, "Remove"),
+        h(Focusable, { className: "btn", onClick: () => run("install", "Reboot", rpc.reboot, "Rebooting the Deck") }, "Reboot")
+      ),
+      note("install")
     ),
     co.standalone && !co.taken_over ? h(
       Card,
       { title: "STANDALONE GSF KEDAVRA FOUND", cls: "warn" },
       h("div", { className: "sub" }, "Both plugins can drive the engine. GFG backs off instead of fighting."),
-      h("div", { className: "btns" }, h(Focusable, { className: "btn red", onClick: () => run("Take over", rpc.takeOver) }, "Take over"))
+      h("div", { className: "btns" }, h(Focusable, { className: "btn red", onClick: () => run("coexist", "Take over", rpc.takeOver, "Taking over the engine") }, "Take over")),
+      note("coexist")
     ) : null,
     h(Card, { title: "GENERATION" }, h(Row, { k: "Frame generation in HDR games", first: true }, h(Tog, { on: cfg.engine.hdr, onChange: (v) => set(() => rpc.setSection("engine", { hdr: v })) }))),
     h(
       Card,
       { title: "DIAGNOSTICS" },
-      h(Focusable, { onClick: () => rpc.diagnose().then(setDiag) }, h(Row, { k: "Run checks", v: "\u203A", first: true })),
-      h(Focusable, { onClick: () => run("Save report", rpc.report) }, h(Row, { k: "Save report to Desktop", v: "\u203A" })),
-      h(Focusable, { onClick: () => run("Engine log", async () => ({ message: String(await rpc.logs()).slice(-600) })) }, h(Row, { k: "Engine log", v: "\u203A" })),
-      h(Focusable, { onClick: () => run("GPU benchmark", rpc.bench) }, h(Row, { k: "GPU benchmark", v: "\u203A" })),
-      msg ? h("div", { className: "note" }, msg) : null,
+      h(Focusable, { onClick: check }, h(Row, { k: "Run checks", v: "\u203A", first: true })),
+      h(Focusable, { onClick: () => run("diag", "Report", rpc.report, "Saving the report") }, h(Row, { k: "Save report to Desktop", v: "\u203A" })),
+      h(Focusable, { onClick: () => run("diag", "Engine log", async () => ({ message: String(await rpc.logs()).slice(-600) }), "Reading the engine log") }, h(Row, { k: "Engine log", v: "\u203A" })),
+      h(Focusable, { onClick: () => run("diag", "GPU benchmark", async () => {
+        const r = await rpc.bench();
+        return r && r.ok !== false ? { ...r, message: "Benchmark done. " + String(r.log || "").trim().slice(-240) } : r;
+      }, "Running the GPU benchmark") }, h(Row, { k: "GPU benchmark", v: "\u203A" })),
+      note("diag"),
       h("div", { className: "sec sec2" }, "TELEMETRY"),
       h(Seg, { value: cfg.telemetry.level, options: [["minimal", "Minimal"], ["standard", "Standard"], ["debug", "Debug"]], onChange: (v) => set(() => rpc.setSection("telemetry", { level: v })) })
     ),

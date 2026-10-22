@@ -21,7 +21,7 @@ Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integ
 [![License](https://img.shields.io/badge/license-GPL--3.0-20242e?style=flat-square)](LICENSE.md)
 [![Telegram](https://img.shields.io/badge/Telegram-gfg__extreme-26a5e4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/gfg_extreme)
 
-<img src="docs/img/card-overview.png" alt="GFG Extreme 3.0.0: Dash, Graphics, Engine and Setup tabs" width="900">
+<img src="docs/img/card-overview.png" alt="GFG Extreme 3.0.8: Dash, Graphics, Engine and Setup tabs" width="900">
 
 <sub>Real GFG Extreme 3.0.0 interface rendered in a browser with illustrative sample data. Not measured game performance.</sub>
 
@@ -345,7 +345,7 @@ GFG Extreme offers four performance strategies.
 
 | Mode | Optimization objective |
 |---|---|
-| Autopilot | Picks Quality, Balanced or Battery from power source, charge and temperature |
+| Autopilot | One adaptive mode: never above 15 W, keeps base 35-40 when the game holds it, ×3 at least, ×3.75 only when ×3 needs all 15 W or the battery is low |
 | Battery | Efficiency first: ×3.75 at 90 Hz (×3 at 60 Hz) and the lowest TDP that holds it |
 | Balanced | The highest base frame rate the game holds, without needless changes |
 | Quality | Real frames and motion quality first; TDP is not saved |

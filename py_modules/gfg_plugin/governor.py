@@ -75,6 +75,12 @@ CRITICAL_C = 97.0
 # That is not the player moving the slider: an outside change this close to a charger change is
 # taken over again (its value becomes the new ceiling) instead of pausing the Governor.
 AC_GRACE_S = 15.0
+# Autopilot (Deck report 3.0.7: 18 W, x3.75, 80+ C): never above 15 W, even when SteamOS's TDP
+# was higher at the start (Steam's limit off). From 80 C it is "warm": the pilot does not climb
+# above its point (no watts for a higher one) until 30 s under 75 C.
+AUTOPILOT_MAX_W = 15.0
+WARM_C = {"autopilot": 80.0}
+WARM_COOL_C = 75.0
 EXTERNAL_WAIT_S = 10.0       # an outside change waits this long for the charger to show up
 OBJECTIVES = ("battery", "balanced", "quality", "autopilot")
 
@@ -131,8 +137,11 @@ class PowerGovernor:
         self.external_at: Optional[float] = None  # an outside TDP change seen, not yet explained
         self.tdp: Optional[float] = None
         self.ceiling: Optional[float] = None
+        self.player_ceiling: Optional[float] = None   # SteamOS's TDP when the Governor took over
         self.thermal_ceiling: Optional[float] = None
         self.cool_since: Optional[float] = None
+        self.warm = False                             # Autopilot from 80 C: no climbing
+        self.warm_cool_since: Optional[float] = None
         # cap -> (TDP that failed, until, repeats): no probe at or below that TDP until then
         self.floors: Dict[int, Tuple[float, float, int]] = {}
         self.last_good: Dict[int, float] = {}   # cap -> lowest TDP that held a whole window
@@ -197,8 +206,11 @@ class PowerGovernor:
         self.key = key
         self.objective = objective
         lim = self._limits()
-        self.ceiling = float(lim["ceiling"] or 15.0)
-        self.tdp = self.ceiling
+        self.player_ceiling = float(lim["ceiling"] or 15.0)
+        self.ceiling = self._ceiling_for(objective)
+        self.tdp = self.player_ceiling
+        if self.ceiling < self.tdp - 0.05:
+            self._write(self.ceiling, "autopilot-ceiling")
         now = self.clock()
         failures = self.model.floor_failures(key) if self.model else {}
         for point, (tdp, age, n) in failures.items():
@@ -207,6 +219,14 @@ class PowerGovernor:
                 if left > 0:
                     self.floors[int(point[3:])] = (float(tdp), now + left, max(1, n))
         self._note("governor-start", key=key, objective=objective, ceiling_w=self.ceiling)
+
+    def _top(self) -> float:
+        """The highest TDP allowed now: the session ceiling, lowered by heat."""
+        return min(x for x in (self.ceiling, self.thermal_ceiling) if x is not None)
+
+    def _ceiling_for(self, objective: str) -> float:
+        player = self.player_ceiling or 15.0
+        return min(player, AUTOPILOT_MAX_W) if objective == "autopilot" else player
 
     def _first_level(self, cap: int) -> None:
         """The first TDP at a point: what held last time plus a watt, else the objective's start."""
@@ -246,7 +266,7 @@ class PowerGovernor:
 
     def _write(self, watts: float, why: str) -> bool:
         lim = self._limits()
-        ceiling = min(x for x in (self.ceiling, self.thermal_ceiling) if x is not None)
+        ceiling = self._top()
         target = round(max(lim["low"] or MIN_TDP_W, min(ceiling, watts)), 1)
         if self.tdp is not None and abs(target - self.tdp) < 0.05:
             return False
@@ -269,7 +289,12 @@ class PowerGovernor:
     def _external(self, now: float) -> bool:
         """An outside TDP change: SteamOS's own after a charger change (take over again, its
         value is the new ceiling), else the player's (pause for this game). True while waiting."""
-        if now - self.ac_changed_at <= AC_GRACE_S:
+        observed = self.actuator.status().get("observed_tdp_w")
+        steamos = (isinstance(observed, (int, float)) and self.player_ceiling is not None
+                   and abs(observed - self.player_ceiling) < 0.55)
+        if now - self.ac_changed_at <= AC_GRACE_S or steamos:
+            # A charger change, or SteamOS putting its own TDP back (after sleep or a game start:
+            # the very value it had when the Governor took over), not the player's slider.
             was = self.tdp
             self.external_at = None
             claim = self.actuator.claim()
@@ -277,11 +302,15 @@ class PowerGovernor:
                 self._pause(claim.get("error") or "TDP control is not available")
                 return True
             self.owned = True
-            self.ceiling = float(self._limits()["ceiling"] or self.ceiling or 15.0)
-            self.tdp = self.ceiling
-            self._note("governor-reclaimed", reason="power-source", ac=self.ac, ceiling_w=self.ceiling, was=was)
+            self.player_ceiling = float(self._limits()["ceiling"] or self.player_ceiling or 15.0)
+            self.ceiling = self._ceiling_for(self.objective)
+            self.tdp = self.player_ceiling
+            self._note("governor-reclaimed", reason="steamos-restore" if steamos else "power-source", ac=self.ac,
+                       ceiling_w=self.ceiling, was=was)
             if was is not None and was < self.ceiling - 0.05 and self.objective != "quality":
                 self._write(was, "power-source")   # keep the level the session had reached
+            elif self.ceiling < self.tdp - 0.05:
+                self._write(self.ceiling, "autopilot-ceiling")
             self.window, self.window_start = [], now
             return False
         if now - self.external_at < EXTERNAL_WAIT_S:
@@ -329,6 +358,11 @@ class PowerGovernor:
             self.window_start = now
         if objective != self.objective and self.owned:
             self.objective = objective
+            self.ceiling = self._ceiling_for(objective)
+            if self.tdp is not None and self.tdp > self.ceiling + 0.05:
+                self._write(self.ceiling, "autopilot-ceiling")
+            if objective not in WARM_C:
+                self.warm, self.warm_cool_since = False, None
             self.window = []
             self.window_start = now
             if objective == "quality":
@@ -410,6 +444,21 @@ class PowerGovernor:
             self.cool_since = None
             self._write(self.thermal_ceiling or MIN_TDP_W, "critical-temperature")
             return True
+        warm = WARM_C.get(self.objective)
+        if warm is not None:
+            if temp >= warm:
+                self.warm_cool_since = None
+                if not self.warm:
+                    self.warm = True
+                    self._note("governor-warm", temp_c=temp, tdp_w=self.tdp)
+            elif self.warm and temp < WARM_COOL_C:
+                if self.warm_cool_since is None:
+                    self.warm_cool_since = now
+                elif now - self.warm_cool_since >= COOL_S:
+                    self.warm, self.warm_cool_since = False, None
+                    self._note("governor-cooled", temp_c=temp, warm=True)
+            elif temp >= WARM_COOL_C:
+                self.warm_cool_since = None
         if temp < COOL_C and self.thermal_ceiling is not None:
             if self.cool_since is None:
                 self.cool_since = now
@@ -440,7 +489,7 @@ class PowerGovernor:
         last = list(self.recent)[-n:]
         if self.tdp is None or self.ceiling is None or len(last) < n or None in last:
             return False
-        ceiling = min(x for x in (self.ceiling, self.thermal_ceiling) if x is not None)
+        ceiling = self._top()
         if self.tdp >= ceiling - 0.05 or now - self.fast_at < FAST_GAP_S:
             return False
         # Autopilot: the second-best of 6 s (5 of 6 short); the modes: the median of 3 s.
@@ -535,7 +584,7 @@ class PowerGovernor:
         """Nothing left to raise: the TDP is at its ceiling, or the Governor does not manage it."""
         if not self.owned or self.paused or self.tdp is None or self.ceiling is None:
             return True
-        ceiling = min(x for x in (self.ceiling, self.thermal_ceiling) if x is not None)
+        ceiling = self._top()
         return self.tdp >= ceiling - 0.05
 
     def status(self) -> Dict[str, Any]:
@@ -550,6 +599,7 @@ class PowerGovernor:
             "tdp_w": self.tdp,
             "ceiling_w": self.ceiling,
             "thermal_ceiling_w": self.thermal_ceiling,
+            "warm": self.warm,
             "floor_fail_w": self.floor_fail.get(self.cap),
             "probing": self.probe_from is not None,
             "dips": self.dips,

@@ -24,6 +24,7 @@ from .gpu_clock_control import GpuClockControl
 
 GAME_GRACE_S = 10.0   # the QAM or a loading screen does not end a game session
 STEAM_APP = 769
+HDR_RESEND_S = 10.0
 
 
 class Service:
@@ -55,6 +56,23 @@ class Service:
         self.last_policy: Optional[Policy] = None
         self.snapshot: Dict[str, Any] = {}
         self.ticks = 0
+        self.hdr_off_sent = -1e9   # HDR output switched off: when hdr_enabled 0 was last sent
+
+    def _hdr_output(self, on: bool, fresh: bool, now: float) -> None:
+        """HDR output off: Gamescope's hdr_enabled 0, sent again every 10 s because Steam sets it
+        back from its own setting; switched on again, it goes back to 1 once."""
+        if not fresh:
+            return
+        try:
+            if not on and now - self.hdr_off_sent >= HDR_RESEND_S:
+                self.ctl.set_var("hdr_enabled", 0)
+                self.hdr_off_sent = now
+            elif on and self.hdr_off_sent > -1e9:
+                self.ctl.set_var("hdr_enabled", 1)
+                self.hdr_off_sent = -1e9
+        except Exception as exc:
+            if self.journal:
+                self.journal("service", "hdr-output-failed", error=str(exc))
 
     def _j(self, source: str) -> Optional[Callable[..., None]]:
         if not self.journal:
@@ -84,6 +102,7 @@ class Service:
             self.app = 0
 
         data = self.settings.data
+        self._hdr_output(bool(data["engine"].get("hdr_output", True)), fresh, now)
         profile_key, profile = self.settings.profile_for(self.app)
         sensors = self.sensors.sample() if self.sensors else {}
         power = self.battery() if self.battery else {}
@@ -106,7 +125,9 @@ class Service:
             "gpu_busy": sensors.get("gpu_busy_pct"), "cpu_top": sensors.get("cpu_top_core_pct"),
             "autopilot": objective == "autopilot",
             "low_battery": self.autopilot.low_battery or data["autopilot"]["preference"] == "battery",
-            "tdp_w": gov.status().get("tdp_w"), "gov_settled": gov.settled(),
+            # Only a TDP the Governor manages is a power reading for the pilot: paused (the player's own
+            # TDP) Autopilot must still climb when the game gets lighter (Deck report 3.0.7).
+            "tdp_w": gov.tdp if gov.owned and not gov.paused else None, "gov_settled": gov.settled(), "warm": gov.warm,
             "at_ceiling": gov.at_ceiling(), "settling": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
         })
         policy = Policy(req["multiplier"], req["base_fps"], filters.to_post(profile["filters"]),
@@ -229,8 +250,10 @@ class Service:
             self.journal("service", "session-summary", app=self.app, **summary)
 
     def stop(self) -> None:
-        """Plugin unload: TDP back to the player's, HUD hidden, generation left as the engine runs it."""
+        """Plugin unload: TDP back to the player's, HDR output back on, HUD hidden, generation left
+        as the engine runs it."""
         self._end_session("unload")
+        self._hdr_output(True, True, self.clock())
         self.governor.stop("unload")
         if self.split is not None:
             self.split.stop()

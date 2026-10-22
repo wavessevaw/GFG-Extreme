@@ -99,10 +99,10 @@ const heroLine = (live) => {
   return [{ measure: "Measuring the game", trial: "Trying the next point up", demote: "Stepping down", locked: "Point locked and guarded.", fixed: "Fixed multiplier" }[p.phase] || "Starting", p.reason || ""];
 };
 const gameName = (app) => { try { const o = window.appStore && window.appStore.GetAppOverviewByAppID(app); return (o && o.display_name) || (app ? "App " + app : ""); } catch (e) { return ""; } };
-const OBJ = { autopilot: ["Autopilot", "adapts · aims at 12 W"], battery: ["Battery", "×3.75 · lowest watts"], balanced: ["Balanced", "best point it holds"], quality: ["Quality", "real frames first"] };
+const OBJ = { autopilot: ["Autopilot", "adapts · 12 W"], battery: ["Battery", "×3.75 · low watts"], balanced: ["Balanced", "best point"], quality: ["Quality", "real frames"] };
 
 // Mode icons (user, 3.0.6): drawn, not emoji, so Steam's fonts cannot turn them into boxes.
-const svg = (...c) => h("svg", { viewBox: "0 0 24 24", width: 22, height: 22, fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, ...c);
+const svg = (...c) => h("svg", { viewBox: "0 0 24 24", width: 16, height: 16, fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, ...c);
 const ICON = {
   autopilot: svg(h("path", { d: "M12 2.5l2.2 5.3 5.3 2.2-5.3 2.2L12 17.5l-2.2-5.3L4.5 10l5.3-2.2z", fill: "currentColor", stroke: "none" }), h("path", { d: "M18.5 15.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z", fill: "currentColor", stroke: "none" })),
   battery: svg(h("rect", { x: 2.5, y: 7, width: 17, height: 10, rx: 2.5 }), h("path", { d: "M21.5 10.5v3" }), h("rect", { x: 5, y: 9.5, width: 7, height: 5, rx: 1, fill: "currentColor", stroke: "none" })),
@@ -123,7 +123,7 @@ function Dash({ s, set }) {
     : h(Ring, { ...({ side: { size: 112, stroke: 7 }, classic: { size: 176, stroke: 9 }, compact: { size: 128, stroke: 7 } }[layout]), frac: (fps || 0) / refresh, label: fmt(fps), sub: real !== null ? Math.round(real) + " REAL" : "" });
   const status = h("div", { className: "st" },
     h("h3", null, h("b", null, multText(refresh, point, eng)), point ? ` · ${point} FPS` : ""),
-    h("p", null, head, live.game ? h("br") : null, live.game ? `${gameName(live.app)} · ${(OBJ[live.objective] || [live.objective])[0]}` : body),
+    h("p", null, head, h("br"), live.game ? `${gameName(live.app)} · ${(OBJ[live.objective] || [live.objective])[0]}` : body),
     h("div", { className: "phase" }, PHASES.map((p) => h("span", { key: p, className: p === ph ? "on" : "" }, p))));
   const scope = (s.profiles.active || "").startsWith("app:") ? "game" : "default";
   const setProf = (changes) => set(() => rpc.setProfile(scope, changes));
@@ -208,6 +208,9 @@ function Graphics({ s, set, cat }) {
       chain.length ? h(Focusable, { className: "btn", style: { marginTop: 8 }, onClick: () => put({ effects: [] }) }, "Clear effects") : null,
       h("div", { className: "note" }, "Each effect costs some GPU time, the heavy ones (HDR Look, Clarity, SMAA) the most: with the Governor on, that can mean a little more power or a deeper ratio. " +
         (hdr ? "This game runs in HDR: colour effects are skipped, sharpening and anti-aliasing still apply." : "HDR games: colour effects are skipped, sharpening and anti-aliasing still apply."))),
+    h(Card, { title: "HDR" },
+      h(Row, { k: "HDR output", first: true }, h(Tog, { on: s.settings.engine.hdr_output !== false, onChange: (v) => set(() => rpc.setSection("engine", { hdr_output: v })) })),
+      h("div", { className: "sub" }, s.settings.engine.hdr_output !== false ? "On: HDR as set in Steam. Off: the screen and games get SDR." : "Off: the screen and games get SDR. A game started in HDR may need a restart.")),
     h(Card, { title: "HUD" }, h(Row, { k: "Show HUD in game", first: true }, h(Tog, { on: hud.enabled, onChange: (v) => set(() => rpc.setSection("hud", { enabled: v })) })),
       h("div", { className: "sec sec2" }, "POSITION"),
       h(Seg, { value: hud.position, options: [["top-right", "Top right"], ["top-left", "Top left"], ["bottom-left", "Bottom left"], ["bottom-right", "Bottom right"]], onChange: (v) => set(() => rpc.setSection("hud", { position: v })) }),
@@ -253,28 +256,54 @@ function Engine({ s, set }) {
       cap ? h("div", { className: "note" }, typeof cap === "string" ? cap : JSON.stringify(cap).slice(0, 400)) : null));
 }
 
+// Steam toast for actions that take a while or change the system (user, 3.0.7: Setup must
+// never be silent). `toaster` comes from the shim; the browser harness has none.
+const notify = (title, body) => { try { if (typeof toaster !== "undefined" && toaster) toaster.toast({ title, body, duration: 6000 }); } catch (e) {} };
+const resultText = (r, label) => (r && (r.message || r.error || (r.path ? "Saved to " + r.path : null) || (r.rebooting ? "Rebooting now" : null))) || label + ": done";
 function Setup({ s, set }) {
   const [diag, setDiag] = useState(null);
-  const [msg, setMsg] = useState("");
+  const [msg, setMsg] = useState({ where: "", text: "", bad: false });
   const co = s.coexist || {}, mig = s.migration || {}, cfg = s.settings;
-  const run = (label, f) => set(async () => { setMsg(label + "…"); const r = await f(); setMsg(r && (r.message || r.path || r.error) ? String(r.message || r.path || r.error) : label + ": done"); return r; });
-  useEffect(() => { rpc.diagnose().then(setDiag).catch(() => {}); }, []);
+  // Every action says it started, then how it ended, on the card it came from and as a toast.
+  const run = (where, label, f, busy) => set(async () => {
+    setMsg({ where, text: busy + "…", bad: false });
+    notify("GFG Extreme", busy + "…");
+    try {
+      const r = await f();
+      const text = r && r.ok === false ? String(r.log || r.error || label + " failed") : resultText(r, label);
+      const bad = !!(r && r.ok === false);
+      setMsg({ where, text, bad });
+      notify(bad ? "GFG Extreme · " + label + " failed" : "GFG Extreme · " + label, text.slice(0, 160));
+      return r;
+    } catch (e) {
+      const text = String((e && e.message) || e);
+      setMsg({ where, text, bad: true });
+      notify("GFG Extreme · " + label + " failed", text.slice(0, 160));
+      throw e;
+    }
+  });
+  const note = (where) => (msg.where === where && msg.text ? h("div", { className: "note" + (msg.bad ? " bad" : "") }, msg.text) : null);
+  const check = () => run("diag", "Checks", async () => { const d = await rpc.diagnose(); setDiag(d);
+    const bad = (d.checks || []).filter((c) => !c.ok).length;
+    return { message: bad ? bad + " check" + (bad > 1 ? "s" : "") + " failed: see the list above" : "All checks passed" }; }, "Running checks");
   const checks = (diag && diag.checks) || [];
   return h("div", null,
     h(Card, { title: "ENGINE INSTALL" }, checks.length ? checks.slice(0, 6).map((c) => h("div", { key: c.key, className: "check" }, h("b", { className: c.ok ? "" : "x" }, c.ok ? "✓" : "✗"), c.text))
       : h("div", { className: "sub" }, diag ? "No checks returned." : "Checking…"),
-      h("div", { className: "btns" }, h(Focusable, { className: "btn", onClick: () => run("Install", rpc.install) }, "Reinstall"),
-        h(Focusable, { className: "btn", onClick: () => run("Remove", rpc.uninstall) }, "Remove"), h(Focusable, { className: "btn", onClick: () => run("Reboot", rpc.reboot) }, "Reboot"))),
+      h("div", { className: "btns" }, h(Focusable, { className: "btn", onClick: () => run("install", "Reinstall", rpc.install, "Installing the engine") }, "Reinstall"),
+        h(Focusable, { className: "btn", onClick: () => run("install", "Remove", rpc.uninstall, "Removing the engine") }, "Remove"),
+        h(Focusable, { className: "btn", onClick: () => run("install", "Reboot", rpc.reboot, "Rebooting the Deck") }, "Reboot")),
+      note("install")),
     co.standalone && !co.taken_over ? h(Card, { title: "STANDALONE GSF KEDAVRA FOUND", cls: "warn" },
       h("div", { className: "sub" }, "Both plugins can drive the engine. GFG backs off instead of fighting."),
-      h("div", { className: "btns" }, h(Focusable, { className: "btn red", onClick: () => run("Take over", rpc.takeOver) }, "Take over"))) : null,
+      h("div", { className: "btns" }, h(Focusable, { className: "btn red", onClick: () => run("coexist", "Take over", rpc.takeOver, "Taking over the engine") }, "Take over")), note("coexist")) : null,
     h(Card, { title: "GENERATION" }, h(Row, { k: "Frame generation in HDR games", first: true }, h(Tog, { on: cfg.engine.hdr, onChange: (v) => set(() => rpc.setSection("engine", { hdr: v })) }))),
     h(Card, { title: "DIAGNOSTICS" },
-      h(Focusable, { onClick: () => rpc.diagnose().then(setDiag) }, h(Row, { k: "Run checks", v: "›", first: true })),
-      h(Focusable, { onClick: () => run("Save report", rpc.report) }, h(Row, { k: "Save report to Desktop", v: "›" })),
-      h(Focusable, { onClick: () => run("Engine log", async () => ({ message: String(await rpc.logs()).slice(-600) })) }, h(Row, { k: "Engine log", v: "›" })),
-      h(Focusable, { onClick: () => run("GPU benchmark", rpc.bench) }, h(Row, { k: "GPU benchmark", v: "›" })),
-      msg ? h("div", { className: "note" }, msg) : null,
+      h(Focusable, { onClick: check }, h(Row, { k: "Run checks", v: "›", first: true })),
+      h(Focusable, { onClick: () => run("diag", "Report", rpc.report, "Saving the report") }, h(Row, { k: "Save report to Desktop", v: "›" })),
+      h(Focusable, { onClick: () => run("diag", "Engine log", async () => ({ message: String(await rpc.logs()).slice(-600) }), "Reading the engine log") }, h(Row, { k: "Engine log", v: "›" })),
+      h(Focusable, { onClick: () => run("diag", "GPU benchmark", async () => { const r = await rpc.bench(); return r && r.ok !== false ? { ...r, message: "Benchmark done. " + String(r.log || "").trim().slice(-240) } : r; }, "Running the GPU benchmark") }, h(Row, { k: "GPU benchmark", v: "›" })),
+      note("diag"),
       h("div", { className: "sec sec2" }, "TELEMETRY"),
       h(Seg, { value: cfg.telemetry.level, options: [["minimal", "Minimal"], ["standard", "Standard"], ["debug", "Debug"]], onChange: (v) => set(() => rpc.setSection("telemetry", { level: v })) })),
     mig && mig.from ? h(Card, { title: "FROM GFG EXTREME 2.X" }, (mig.steps || []).slice(0, 4).map((t, i) => h("div", { key: i, className: "check" }, h("b", null, "✓"), String(t)))) : null,

@@ -320,12 +320,16 @@ class VPower:
 
     def steam_slider(self, w: float) -> None:
         """The player moves Steam's TDP slider."""
-        self.tdp = w
+        self.tdp = self.slider = w
 
     def status(self) -> Dict[str, Any]:
         return {"owned": self.owned, "external_change": self.external, "initial_tdp_w": self.initial,
                 "ceiling_tdp_w": self.initial, "minimum_tdp_w": self.minimum, "draw_w": round(self.draw, 2),
-                "method": "virtual"}
+                "observed_tdp_w": self.tdp, "method": "virtual"}
+
+    def steamos_power_source(self) -> None:
+        """SteamOS re-applies its own TDP (the player's slider) when the charger is plugged or pulled."""
+        self.tdp = getattr(self, "slider", self.user_tdp)
 
 
 class VSensors:
@@ -389,5 +393,7 @@ class VModel:
         return {p: (v[0], 0.0, 1) for p, v in (self.floors.get(key) or {}).items()}
 
     def record_floor_failure(self, key, point, tdp, count=1):
+        if tdp is None:  # the level held: game_model.py clears the entry
+            return self.floors.get(key, {}).pop(point, None) is not None
         self.floors.setdefault(key, {})[point] = (tdp,)
         return True
