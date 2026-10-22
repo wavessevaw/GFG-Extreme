@@ -92,7 +92,7 @@ You can reach a high Output FPS with too low a Real FPS. The numbers then grow f
 
 GSF Kedavra has an architectural limit of ×4: at most three generated frames per real one.
 
-In practice the floor is stricter. Auto and Battery never take a game below 24 FPS at 90 Hz, so they never go past ×3.75. That is the "golden middle": power savings without a slideshow. Custom accepts any base frame rate from 20 FPS, but never deeper than ×4.
+In practice the floor is stricter. By default no mode goes past ×3 (30 FPS at 90 Hz): above that the picture and the latency suffer. **Setup → Allow above ×3** unlocks ×3.75 (24 FPS at 90 Hz) for Battery, a low battery and the Dash choice. Custom accepts any base frame rate from 20 FPS, but never deeper than ×4.
 
 Multipliers don't have to be whole numbers. Kedavra caps the game at a base frame rate and generation fills every display refresh, so at 90 Hz 40 FPS gives ×2.25, 35 FPS gives ×2.6 and 24 FPS gives ×3.75.
 
@@ -195,6 +195,12 @@ With a whole multiplier (×2, ×3) every pair of real frames gets the same numbe
 Kedavra can also pick the game's base frame rate automatically (Auto). The operating point it picks depends on how many original frames the game delivers and how steady they are.
 
 These are target modes. The real Output FPS depends on the game's performance, the GPU time available and whether every composite meets its deadline.
+
+---
+
+### BOOST 2.0 (EXPERIMENTAL)
+
+The second generation of Boost, rebuilt for Kedavra. Generated frames smear exactly where the camera turns, so for a turn of about a second with the right stick GFG lowers the multiplier to ×1.75 (a sharp turn: ×1.5, set in Setup) and gives it back as soon as the stick rests, at most 1.5 s per turn. A thread reads the Deck's controller (or a pad in the dock) and talks to the engine directly, without waiting for the 1 s control loop. Watts are never raised: the boost only uses what the GPU can render at the present TDP, so it shows most in Quality and with a fixed ×3. Off by default: **Setup → Experimental → Boost 2.0**.
 
 ---
 

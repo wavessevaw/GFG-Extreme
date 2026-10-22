@@ -303,6 +303,10 @@ function Setup({ s, set }) {
     h(Card, { title: "GENERATION" }, h(Row, { k: "Frame generation in HDR games", first: true }, h(Tog, { on: cfg.engine.hdr, onChange: (v) => set(() => rpc.setSection("engine", { hdr: v })) })),
       h(Row, { k: "Allow above ×3" }, h(Tog, { on: !!cfg.engine.above_x3, onChange: (v) => set(() => rpc.setSection("engine", { above_x3: v })) })),
       h("div", { className: "sub" }, cfg.engine.above_x3 ? "On: ×3.75 in Battery, on a low battery and as a choice on Dash. More artefacts and latency." : "Off: no mode goes above ×3. ×3.75 shows more artefacts and latency.")),
+    // Boost 2.0 (user, 3.1.1): hidden down here, off by default.
+    h(Card, { title: "EXPERIMENTAL" }, h(Row, { k: "Boost 2.0", first: true }, h(Tog, { on: !!cfg.engine.boost, onChange: (v) => set(() => rpc.setSection("engine", { boost: v })) })),
+      cfg.engine.boost ? h(Seg, { value: cfg.engine.boost_mult || 1.5, options: [[1.25, "×1.25"], [1.5, "×1.5"], [1.75, "×1.75"]], onChange: (v) => set(() => rpc.setSection("engine", { boost_mult: v })) }) : null,
+      h("div", { className: "sub" }, "A camera turn of about a second with the right stick gets real frames: the multiplier drops for up to 1.5 s and comes back when the stick rests. Watts are not raised.")),
     h(Card, { title: "DIAGNOSTICS" },
       h(Focusable, { onClick: check }, h(Row, { k: "Run checks", v: "›", first: true })),
       h(Focusable, { onClick: () => run("diag", "Report", rpc.report, "Saving the report") }, h(Row, { k: "Save report to Desktop", v: "›" })),
