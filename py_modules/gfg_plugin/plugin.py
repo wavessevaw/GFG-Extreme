@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional
 
 import decky  # provided by Decky Loader at runtime
 
-from . import filters, paths
+from . import engine_gate, filters, paths
 from .activity_log import ActivityLog
 from .coexist import Coexistence
 from .cpu_freq import CpuFreqActuator
@@ -76,6 +76,7 @@ class Plugin:
             journal=lambda src, kind, **f: self.log.record(src, kind, **f), telemetry=self.telemetry,
             split=split, gclock=gclock)
         self.lock = asyncio.Lock()
+        self._gate_at, self._gate_cache = -1e9, {}
         self.state: Dict[str, Any] = {}
         self.stopping = False
         loop = asyncio.get_event_loop()
@@ -137,8 +138,20 @@ class Plugin:
             pass
 
     # ------------------------------------------------------------------ state
+    def _gate(self) -> Dict[str, Any]:
+        """First-run gate, re-checked at most every 5 s (findmnt is a subprocess)."""
+        now = time.monotonic()
+        if now - self._gate_at < 5.0 and self._gate_cache:
+            return self._gate_cache
+        self._gate_at = now
+        self._gate_cache = engine_gate.gate(self.inst.installed_version(), self.inst.bundled_version(),
+                                            self.inst._mounted(), engine_gate.boot_id(),
+                                            engine_gate.read_record(self.data / "engine-install.json"))
+        return self._gate_cache
+
     async def get_state(self) -> Dict[str, Any]:
         return {"version": paths.VERSION, "codename": paths.CODENAME, "live": self.state,
+                "gate": await asyncio.to_thread(self._gate),
                 "device": await asyncio.to_thread(device_name),
                 "settings": self.settings.data, "profiles": self._profiles(),
                 "migration": self.migration_report, "coexist": await asyncio.to_thread(self.coexist.status),
@@ -186,6 +199,14 @@ class Plugin:
         async with self.lock:
             result = await asyncio.to_thread(self.inst.install)
             await asyncio.to_thread(self.coexist.mark_owner)
+            ok = result.get("ok", True) is not False
+            record = {"version": self.inst.bundled_version(), "boot_id": engine_gate.boot_id() if ok else "",
+                      "error": "" if ok else str(result.get("log") or result.get("error") or "install failed")}
+            try:
+                await asyncio.to_thread(write_json_atomic, self.data / "engine-install.json", record, self.owner)
+            except OSError:
+                pass
+            self._gate_cache = {}
         self.log.record("engine", "install", **{k: v for k, v in result.items() if k != "message"})
         return result
 

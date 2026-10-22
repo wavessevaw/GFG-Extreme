@@ -106,4 +106,17 @@ export const css = `
 .gfg .gpfocus>.tile.on span,.gfg :focus-visible>.tile.on span{color:#ffd9d4!important}
 .gfg .tog.gpfocus,.gfg .tog:focus-visible,.gfg .herotap.gpfocus,.gfg .herotap:focus-visible{box-shadow:0 0 0 2px #fff,0 0 14px rgba(255,255,255,.4)!important}
 .gfg .gpfocus>.lrow,.gfg :focus-visible>.lrow{background:var(--s3);border-radius:10px;box-shadow:0 0 0 2px #fff}
+.gfg .gate{text-align:center;padding:18px 12px 16px}
+.gfg .gate .wolf{display:block;width:60px;height:60px;margin:2px auto 10px;filter:drop-shadow(0 0 16px rgba(251,13,0,.7))}
+.gfg .gate .gh{font-size:14px;font-weight:800;margin:0 0 6px;line-height:1.25}
+.gfg .gate .gp{font-size:10.5px;color:var(--tx2);line-height:1.45;margin:0 0 12px}
+.gfg .steps{display:flex;gap:5px;margin:0 0 12px}
+.gfg .st{flex:1;min-width:0;border-radius:10px;padding:7px 2px;background:var(--s2);border:1px solid var(--line);font-size:9.5px;font-weight:700;color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gfg .st b{display:block;font-size:12.5px;margin-bottom:1px}
+.gfg .st.on{color:var(--tx);border-color:rgba(251,13,0,.6);background:linear-gradient(180deg,rgba(251,13,0,.22),rgba(251,13,0,.06));box-shadow:0 0 14px rgba(251,13,0,.25)}
+.gfg .st.done{color:var(--ok)}
+.gfg .gate>.steps,.gfg .gate>.btn,.gfg .gate>.btns,.gfg .gate>.note{align-self:stretch;width:100%}
+.gfg .gate .btn{white-space:nowrap}
+.gfg .gate .small{font-size:9.5px;color:var(--tx3);margin-top:9px;line-height:1.4}
+.gfg .gate .note{text-align:left}
 `;
