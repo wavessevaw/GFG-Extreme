@@ -118,18 +118,23 @@ class Canvas:
         return cv
 
     def paste(self, x0: int, y0: int, w: int, h: int, px: bytes) -> None:
-        """Copy a tile in where the panel is (outside it stays transparent)."""
+        """Copy a tile in where the panel is (outside it stays transparent): one slice per row,
+        the panel being a rounded rectangle, one opaque span per row."""
         for row in range(h):
             y = y0 + row
             if not 0 <= y < self.h:
                 continue
-            for col in range(w):
-                x = x0 + col
-                if 0 <= x < self.w:
-                    i = (y * self.w + x) * 4
-                    if self.px[i + 3]:
-                        j = (row * w + col) * 4
-                        self.px[i:i + 4] = px[j:j + 4]
+            a, b = self._span(y)
+            lo, hi = max(x0, a), min(x0 + w, b)
+            if lo < hi:
+                self.px[(y * self.w + lo) * 4:(y * self.w + hi) * 4] = px[(row * w + lo - x0) * 4:(row * w + hi - x0) * 4]
+
+    def _span(self, y: int) -> Tuple[int, int]:
+        row = self.px[y * self.w * 4:(y + 1) * self.w * 4]
+        alpha = row[3::4]
+        a = next((i for i, v in enumerate(alpha) if v), self.w)
+        b = self.w - next((i for i, v in enumerate(reversed(alpha)) if v), self.w)
+        return a, max(a, b)
 
     def blend(self, x: int, y: int, rgb: Rgb, a: float) -> None:
         if a <= 0 or not (0 <= x < self.w and 0 <= y < self.h):
@@ -356,7 +361,7 @@ def gfg_items(st: Dict[str, Any], rates: Optional[Dict[str, float]], extra: Dict
     return [named[k] for k in order if k in named]
 
 
-def _item_tile(it: Dict[str, Any], s: float, tw: int, th: int, ox: float, oy: float) -> bytes:
+def _item_tile(it: Dict[str, Any], s: float, tw: int, th: int, ox: float, oy: float, label_top: float) -> bytes:
     """One ring with its number and label, drawn on a plain panel-coloured tile."""
     cv = Canvas.plain(tw, th)
     atlas = _atlas()
@@ -375,6 +380,18 @@ def _item_tile(it: Dict[str, Any], s: float, tw: int, th: int, ox: float, oy: fl
     cv.text(cx, top, it["text"], style, WHITE)
     if sub:
         cv.text(cx, top + atlas[style]["ascent"] + 2 * s - _digit_top(sub_style), sub, sub_style, LABEL)
+    cv.text(cx, label_top, it["label"], f"lab@{s}", LABEL)
+    return bytes(cv.px)
+
+
+@lru_cache(maxsize=8)
+def _base(w: int, h: int, s: float) -> bytes:
+    """The panel with the logo: the same for every frame of one HUD size."""
+    cv = Canvas(w, h, 12 * s)
+    logo = _logo(s)
+    if logo:
+        pad_x, pad_y, col = 8 * s, 6 * s, 54 * s
+        cv.image(round(pad_x), round(pad_y + (col - logo[0]) / 2), logo[0], logo[1])
     return bytes(cv.px)
 
 
@@ -391,27 +408,24 @@ def render(st: Dict[str, Any], rates: Optional[Dict[str, float]], scale: float =
     lw = logo[0] + gap if logo else 0
     w = math.ceil(2 * pad_x + lw + sum(widths) + gap * (len(items) - 1))
     h = math.ceil(2 * pad_y + col + 2 * s + lab_h)
-    cv = Canvas(w, h, 12 * s)
-    x = pad_x
-    if logo:
-        cv.image(round(pad_x), round(pad_y + (col - logo[0]) / 2), logo[0], logo[1])
-        x += lw
+    cv = Canvas.plain(w, h)
+    cv.px = bytearray(_base(w, h, s))
+    x = pad_x + lw
     for it, iw in zip(items, widths):
         # Ring and number are drawn once per value on a tile and copied in (the HUD changes
         # every second, but each ring only shows a few dozen values): the pixels are the same
         # as drawing them here, at a fraction of the CPU.
         x0, y0 = math.floor(x) - 2, math.floor(pad_y) - 2
-        x1, y1 = min(w, math.ceil(x + iw) + 3), min(h, math.ceil(pad_y + col) + 3)
+        x1, y1 = min(w, math.ceil(x + iw) + 3), h
         tw, th = x1 - x0, y1 - y0
-        key = json.dumps([it.get(k) for k in ("size", "w", "frac", "rgb", "style", "text", "sub")]
+        key = json.dumps([it.get(k) for k in ("size", "w", "frac", "rgb", "style", "text", "sub", "label")]
                          + [s, tw, th, x - x0, pad_y + col / 2.0 - y0], default=str)
         tile = _TILES.get(key)
         if tile is None:
             if len(_TILES) > 512:
                 _TILES.clear()
-            tile = _TILES[key] = _item_tile(it, s, tw, th, x - x0, pad_y + col / 2.0 - y0)
+            tile = _TILES[key] = _item_tile(it, s, tw, th, x - x0, pad_y + col / 2.0 - y0, pad_y + col + 2 * s - y0)
         cv.paste(x0, y0, tw, th, tile)
-        cv.text(x + iw / 2.0, pad_y + col + 2 * s, it["label"], f"lab@{s}", LABEL)
         x += iw + gap
     return w, h, bytes(cv.px)
 
