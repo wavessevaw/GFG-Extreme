@@ -123,7 +123,7 @@ function Dash({ s, set }) {
     : h(Ring, { ...({ side: { size: 112, stroke: 7 }, classic: { size: 176, stroke: 9 }, compact: { size: 128, stroke: 7 } }[layout]), frac: (fps || 0) / refresh, label: fmt(fps), sub: real !== null ? Math.round(real) + " REAL" : "" });
   const status = h("div", { className: "st" },
     h("h3", null, h("b", null, multText(refresh, point, eng)), point ? ` · ${point} FPS` : ""),
-    h("p", null, head, live.game ? h("br") : null, live.game ? `${gameName(live.app)} · ${(OBJ[live.objective] || [live.objective])[0]}` : body),
+    h("p", null, head, h("br"), live.game ? `${gameName(live.app)} · ${(OBJ[live.objective] || [live.objective])[0]}` : body),
     h("div", { className: "phase" }, PHASES.map((p) => h("span", { key: p, className: p === ph ? "on" : "" }, p))));
   const scope = (s.profiles.active || "").startsWith("app:") ? "game" : "default";
   const setProf = (changes) => set(() => rpc.setProfile(scope, changes));
@@ -253,28 +253,54 @@ function Engine({ s, set }) {
       cap ? h("div", { className: "note" }, typeof cap === "string" ? cap : JSON.stringify(cap).slice(0, 400)) : null));
 }
 
+// Steam toast for actions that take a while or change the system (user, 3.0.7: Setup must
+// never be silent). `toaster` comes from the shim; the browser harness has none.
+const notify = (title, body) => { try { if (typeof toaster !== "undefined" && toaster) toaster.toast({ title, body, duration: 6000 }); } catch (e) {} };
+const resultText = (r, label) => (r && (r.message || r.error || (r.path ? "Saved to " + r.path : null) || (r.rebooting ? "Rebooting now" : null))) || label + ": done";
 function Setup({ s, set }) {
   const [diag, setDiag] = useState(null);
-  const [msg, setMsg] = useState("");
+  const [msg, setMsg] = useState({ where: "", text: "", bad: false });
   const co = s.coexist || {}, mig = s.migration || {}, cfg = s.settings;
-  const run = (label, f) => set(async () => { setMsg(label + "…"); const r = await f(); setMsg(r && (r.message || r.path || r.error) ? String(r.message || r.path || r.error) : label + ": done"); return r; });
-  useEffect(() => { rpc.diagnose().then(setDiag).catch(() => {}); }, []);
+  // Every action says it started, then how it ended, on the card it came from and as a toast.
+  const run = (where, label, f, busy) => set(async () => {
+    setMsg({ where, text: busy + "…", bad: false });
+    notify("GFG Extreme", busy + "…");
+    try {
+      const r = await f();
+      const text = r && r.ok === false ? String(r.log || r.error || label + " failed") : resultText(r, label);
+      const bad = !!(r && r.ok === false);
+      setMsg({ where, text, bad });
+      notify(bad ? "GFG Extreme · " + label + " failed" : "GFG Extreme · " + label, text.slice(0, 160));
+      return r;
+    } catch (e) {
+      const text = String((e && e.message) || e);
+      setMsg({ where, text, bad: true });
+      notify("GFG Extreme · " + label + " failed", text.slice(0, 160));
+      throw e;
+    }
+  });
+  const note = (where) => (msg.where === where && msg.text ? h("div", { className: "note" + (msg.bad ? " bad" : "") }, msg.text) : null);
+  const check = () => run("diag", "Checks", async () => { const d = await rpc.diagnose(); setDiag(d);
+    const bad = (d.checks || []).filter((c) => !c.ok).length;
+    return { message: bad ? bad + " check" + (bad > 1 ? "s" : "") + " failed: see the list above" : "All checks passed" }; }, "Running checks");
   const checks = (diag && diag.checks) || [];
   return h("div", null,
     h(Card, { title: "ENGINE INSTALL" }, checks.length ? checks.slice(0, 6).map((c) => h("div", { key: c.key, className: "check" }, h("b", { className: c.ok ? "" : "x" }, c.ok ? "✓" : "✗"), c.text))
       : h("div", { className: "sub" }, diag ? "No checks returned." : "Checking…"),
-      h("div", { className: "btns" }, h(Focusable, { className: "btn", onClick: () => run("Install", rpc.install) }, "Reinstall"),
-        h(Focusable, { className: "btn", onClick: () => run("Remove", rpc.uninstall) }, "Remove"), h(Focusable, { className: "btn", onClick: () => run("Reboot", rpc.reboot) }, "Reboot"))),
+      h("div", { className: "btns" }, h(Focusable, { className: "btn", onClick: () => run("install", "Reinstall", rpc.install, "Installing the engine") }, "Reinstall"),
+        h(Focusable, { className: "btn", onClick: () => run("install", "Remove", rpc.uninstall, "Removing the engine") }, "Remove"),
+        h(Focusable, { className: "btn", onClick: () => run("install", "Reboot", rpc.reboot, "Rebooting the Deck") }, "Reboot")),
+      note("install")),
     co.standalone && !co.taken_over ? h(Card, { title: "STANDALONE GSF KEDAVRA FOUND", cls: "warn" },
       h("div", { className: "sub" }, "Both plugins can drive the engine. GFG backs off instead of fighting."),
-      h("div", { className: "btns" }, h(Focusable, { className: "btn red", onClick: () => run("Take over", rpc.takeOver) }, "Take over"))) : null,
+      h("div", { className: "btns" }, h(Focusable, { className: "btn red", onClick: () => run("coexist", "Take over", rpc.takeOver, "Taking over the engine") }, "Take over")), note("coexist")) : null,
     h(Card, { title: "GENERATION" }, h(Row, { k: "Frame generation in HDR games", first: true }, h(Tog, { on: cfg.engine.hdr, onChange: (v) => set(() => rpc.setSection("engine", { hdr: v })) }))),
     h(Card, { title: "DIAGNOSTICS" },
-      h(Focusable, { onClick: () => rpc.diagnose().then(setDiag) }, h(Row, { k: "Run checks", v: "›", first: true })),
-      h(Focusable, { onClick: () => run("Save report", rpc.report) }, h(Row, { k: "Save report to Desktop", v: "›" })),
-      h(Focusable, { onClick: () => run("Engine log", async () => ({ message: String(await rpc.logs()).slice(-600) })) }, h(Row, { k: "Engine log", v: "›" })),
-      h(Focusable, { onClick: () => run("GPU benchmark", rpc.bench) }, h(Row, { k: "GPU benchmark", v: "›" })),
-      msg ? h("div", { className: "note" }, msg) : null,
+      h(Focusable, { onClick: check }, h(Row, { k: "Run checks", v: "›", first: true })),
+      h(Focusable, { onClick: () => run("diag", "Report", rpc.report, "Saving the report") }, h(Row, { k: "Save report to Desktop", v: "›" })),
+      h(Focusable, { onClick: () => run("diag", "Engine log", async () => ({ message: String(await rpc.logs()).slice(-600) }), "Reading the engine log") }, h(Row, { k: "Engine log", v: "›" })),
+      h(Focusable, { onClick: () => run("diag", "GPU benchmark", async () => { const r = await rpc.bench(); return r && r.ok !== false ? { ...r, message: "Benchmark done. " + String(r.log || "").trim().slice(-240) } : r; }, "Running the GPU benchmark") }, h(Row, { k: "GPU benchmark", v: "›" })),
+      note("diag"),
       h("div", { className: "sec sec2" }, "TELEMETRY"),
       h(Seg, { value: cfg.telemetry.level, options: [["minimal", "Minimal"], ["standard", "Standard"], ["debug", "Debug"]], onChange: (v) => set(() => rpc.setSection("telemetry", { level: v })) })),
     mig && mig.from ? h(Card, { title: "FROM GFG EXTREME 2.X" }, (mig.steps || []).slice(0, 4).map((t, i) => h("div", { key: i, className: "check" }, h("b", null, "✓"), String(t)))) : null,
