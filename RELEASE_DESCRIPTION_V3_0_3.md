@@ -1,4 +1,4 @@
-# GFG Extreme 3.0.3 Independence
+# GFG Extreme 3.0.3
 
 Autopilot with a power target, the controller fixes from the Governor 2.0 review, and a clearer HUD.
 

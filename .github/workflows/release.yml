@@ -151,7 +151,7 @@ jobs:
         run: |
           notes="RELEASE_DESCRIPTION_V${version//./_}.md"
           pre=$(python3 -c 'import json; print("--prerelease" if json.load(open("package.json")).get("gfgPrerelease") else "")')
-          title="GFG Extreme $version Independence"
+          title="GFG Extreme $version"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" out/*.zip out/SHA256SUMS.txt --clobber
             gh release edit "$TAG" --title "$title" --notes-file "$notes" $pre

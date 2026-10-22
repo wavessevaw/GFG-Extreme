@@ -1,4 +1,4 @@
-# GFG Extreme 3.0.0 Independence (pre-release)
+# GFG Extreme 3.0.0 (pre-release)
 
 GFG Extreme now runs on its own frame generation engine: **GSF Kedavra**, built into Gamescope.
 MAKO, lsfg-vk and Lossless Scaling are gone. One zip, installed from Decky; the plugin installs

@@ -1,4 +1,4 @@
-// GFG Extreme 3.0 "Independence" UI: four tabs (Dash / Graphics / Engine / Setup), switched with
+// GFG Extreme 3.0 UI: four tabs (Dash / Graphics / Engine / Setup), switched with
 // L1/R1 or a tap, as approved in mockup v3. No npm deps: Decky provides SP_REACT and DFL as
 // globals; `callable` and `definePlugin` come from the shim.
 import { css } from "./theme.js";
@@ -278,7 +278,7 @@ function Setup({ s, set }) {
       h("div", { className: "sec sec2" }, "TELEMETRY"),
       h(Seg, { value: cfg.telemetry.level, options: [["minimal", "Minimal"], ["standard", "Standard"], ["debug", "Debug"]], onChange: (v) => set(() => rpc.setSection("telemetry", { level: v })) })),
     mig && mig.from ? h(Card, { title: "FROM GFG EXTREME 2.X" }, (mig.steps || []).slice(0, 4).map((t, i) => h("div", { key: i, className: "check" }, h("b", null, "✓"), String(t)))) : null,
-    h("div", { className: "sub", style: { textAlign: "center", marginTop: 4 } }, `GFG Extreme ${s.version} ${s.codename || ""}`));
+    h("div", { className: "sub", style: { textAlign: "center", marginTop: 4 } }, `GFG Extreme ${s.version}${s.codename ? " " + s.codename : ""}`));
 }
 
 // ---------------------------------------------------------------- root

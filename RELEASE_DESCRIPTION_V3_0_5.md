@@ -1,4 +1,4 @@
-# GFG Extreme 3.0.5 Independence
+# GFG Extreme 3.0.5
 
 Autopilot ignores short frame-rate drops and aims for a base frame rate above 30.
 

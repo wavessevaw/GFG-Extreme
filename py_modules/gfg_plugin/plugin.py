@@ -1,4 +1,4 @@
-"""GFG Extreme 3.0 "Independence": the Decky backend.
+"""GFG Extreme 3.0: the Decky backend.
 
 Runs as root (plugin.json "root" flag): it installs the KEDAVRA Gamescope and writes the TDP.
 Files in the user's home are handed to the user; session-bus tools run as the user.
