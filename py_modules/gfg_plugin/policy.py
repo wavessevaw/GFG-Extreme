@@ -82,6 +82,7 @@ class PolicyCoordinator:
         # Boost (3.1.1) sends the base cap itself for a camera turn and puts it back after: until
         # then the coordinator neither sends nor counts the difference as somebody else's drift.
         self.hold_until = -1e9
+        self.hud_sent: Optional[str] = None   # the HUD path the engine has from us
         # The engine's policy revision restarts at 0 with Gamescope; ours keeps counting.
         self.next_rev = int(time.time()) % 1_000_000 + 1
 
@@ -196,7 +197,7 @@ class PolicyCoordinator:
                 return self.snapshot()
         if now < self.retry_at or now - self.last_apply_at < (REAPPLY_MIN_S if self.s.drifts else 0.0):
             return self.snapshot()
-        self._apply(now, want, time_ns)
+        self._apply(now, want, time_ns, st if self.s.confirmed_rev and engine_rev == self.s.confirmed_rev else None)
         return self.snapshot()
 
     def _fail(self, now: float, message: str) -> None:
@@ -205,20 +206,41 @@ class PolicyCoordinator:
         self.retry_at = now + delay
         self._set("error", f"{message} (retry in {delay:.0f} s)")
 
-    def _apply(self, now: float, want: Policy, status_time_ns: int) -> None:
+    def _apply(self, now: float, want: Policy, status_time_ns: int, st: Optional[Dict[str, Any]] = None) -> None:
+        """Send a policy. With st (the engine still runs our last confirmed revision), a convar the
+        engine already reports at the wanted value is not sent again: every gamescopectl is a
+        process start and a round trip through Gamescope, and a point change touches only one or
+        two of the seven (3.1.2). Without it (a restart, someone else's change) everything goes."""
         rev = self.next_rev
         self.next_rev += 1
         self.last_apply_at = now
+        st = st or {}
+        hud_ok = bool(st) and self.hud_sent == want.hud_path
+
+        def same(key: str, value: Any) -> bool:
+            try:
+                return key in st and (bool(st[key]) == value if isinstance(value, bool) else
+                                      str(st[key]) == value if isinstance(value, str) else int(st[key]) == value)
+            except (TypeError, ValueError):
+                return False
+
         try:
             # HUD first (harmless), HDR switch, filters, cap, then the multiplier; the revision last, so its
             # echo proves that everything before it arrived.
-            if want.hud_path:
+            self.hud_sent = None
+            if want.hud_path and not hud_ok:
                 self.ctl.set_var("kfg_hud", want.hud_path)
-            self.ctl.set_var("kfg_hdr", 1 if want.hdr else 0)
-            self.ctl.set_var("kfg_post", want.post)
-            self.ctl.set_var("kfg_auto_floor", want.auto_floor)
-            self.ctl.set_var("kfg_base_fps", want.base_fps)
-            self.ctl.set_var("kfg_multiplier", want.multiplier)
+            self.hud_sent = want.hud_path
+            if not same("hdr_enabled", bool(want.hdr)):
+                self.ctl.set_var("kfg_hdr", 1 if want.hdr else 0)
+            if not same("post", want.post):
+                self.ctl.set_var("kfg_post", want.post)
+            if not same("req_auto_floor", want.auto_floor):
+                self.ctl.set_var("kfg_auto_floor", want.auto_floor)
+            if not same("req_base_fps", want.base_fps):
+                self.ctl.set_var("kfg_base_fps", want.base_fps)
+            if not same("req_multiplier", want.multiplier):
+                self.ctl.set_var("kfg_multiplier", want.multiplier)
             self.ctl.set_var("kfg_policy", rev)
         except Exception as error:  # gamescopectl missing, timed out, refused
             self._note("policy-send-failed", rev=rev, error=str(error)[:300])

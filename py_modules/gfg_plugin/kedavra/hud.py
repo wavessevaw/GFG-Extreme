@@ -117,14 +117,16 @@ class Canvas:
         cv.px = bytearray(bytes((PANEL[2], PANEL[1], PANEL[0], 255)) * (w * h))
         return cv
 
-    def paste(self, x0: int, y0: int, w: int, h: int, px: bytes) -> None:
+    def paste(self, x0: int, y0: int, w: int, h: int, px: bytes,
+              spans: Optional[List[Tuple[int, int]]] = None) -> None:
         """Copy a tile in where the panel is (outside it stays transparent): one slice per row,
-        the panel being a rounded rectangle, one opaque span per row."""
+        the panel being a rounded rectangle, one opaque span per row (precomputed per panel
+        size when given: the scan was a third of the HUD's CPU)."""
         for row in range(h):
             y = y0 + row
             if not 0 <= y < self.h:
                 continue
-            a, b = self._span(y)
+            a, b = spans[y] if spans is not None else self._span(y)
             lo, hi = max(x0, a), min(x0 + w, b)
             if lo < hi:
                 self.px[(y * self.w + lo) * 4:(y * self.w + hi) * 4] = px[(row * w + lo - x0) * 4:(row * w + hi - x0) * 4]
@@ -363,11 +365,14 @@ def gfg_items(st: Dict[str, Any], rates: Optional[Dict[str, float]], extra: Dict
 
 def _item_tile(it: Dict[str, Any], s: float, tw: int, th: int, ox: float, oy: float, label_top: float) -> bytes:
     """One ring with its number and label, drawn on a plain panel-coloured tile."""
-    cv = Canvas.plain(tw, th)
+    cv = Canvas.__new__(Canvas)
+    cv.w, cv.h = tw, th
     atlas = _atlas()
     iw = it["size"] * s
     cx, cy = ox + iw / 2.0, oy
-    cv.ring(cx, cy, it["size"] * s, it["w"] * s, it["frac"], it["rgb"])
+    # The ring is most of the drawing and only shows a few hundred arcs: drawn once, the number
+    # and the label go on a copy.
+    cv.px = bytearray(_ring_tile(tw, th, cx, cy, it["size"] * s, it["w"] * s, it["frac"], tuple(it["rgb"])))
     style = f"{it['style']}@{s}"
     inner = (it["size"] - 2 * it["w"] - 9) * s
     if it["style"] == "val" and cv.text_width(it["text"], style) > inner:
@@ -382,6 +387,31 @@ def _item_tile(it: Dict[str, Any], s: float, tw: int, th: int, ox: float, oy: fl
         cv.text(cx, top + atlas[style]["ascent"] + 2 * s - _digit_top(sub_style), sub, sub_style, LABEL)
     cv.text(cx, label_top, it["label"], f"lab@{s}", LABEL)
     return bytes(cv.px)
+
+
+RING_STEPS = 256   # arc ends a fraction of a pixel apart look the same: 1/256 of a turn
+
+
+def ring_frac(frac: Any) -> float:
+    """The ring's fill on the steps it is drawn at (0 for a missing value)."""
+    if not isinstance(frac, (int, float)) or isinstance(frac, bool) or not math.isfinite(frac):
+        return 0.0
+    return round(max(0.0, min(1.0, float(frac))) * RING_STEPS) / RING_STEPS
+
+
+@lru_cache(maxsize=768)
+def _ring_tile(tw: int, th: int, cx: float, cy: float, size: float, width: float, frac: float, rgb: Rgb) -> bytes:
+    cv = Canvas.plain(tw, th)
+    cv.ring(cx, cy, size, width, frac, rgb)
+    return bytes(cv.px)
+
+
+@lru_cache(maxsize=8)
+def _spans(w: int, h: int, s: float) -> List[Tuple[int, int]]:
+    """The panel's opaque span on each row, for one HUD size."""
+    cv = Canvas.plain(w, h)
+    cv.px = bytearray(_base(w, h, s))
+    return [cv._span(y) for y in range(h)]
 
 
 @lru_cache(maxsize=8)
@@ -418,6 +448,7 @@ def render(st: Dict[str, Any], rates: Optional[Dict[str, float]], scale: float =
         x0, y0 = math.floor(x) - 2, math.floor(pad_y) - 2
         x1, y1 = min(w, math.ceil(x + iw) + 3), h
         tw, th = x1 - x0, y1 - y0
+        it = {**it, "frac": ring_frac(it.get("frac"))}
         key = json.dumps([it.get(k) for k in ("size", "w", "frac", "rgb", "style", "text", "sub", "label")]
                          + [s, tw, th, x - x0, pad_y + col / 2.0 - y0], default=str)
         tile = _TILES.get(key)
@@ -425,7 +456,7 @@ def render(st: Dict[str, Any], rates: Optional[Dict[str, float]], scale: float =
             if len(_TILES) > 512:
                 _TILES.clear()
             tile = _TILES[key] = _item_tile(it, s, tw, th, x - x0, pad_y + col / 2.0 - y0, pad_y + col + 2 * s - y0)
-        cv.paste(x0, y0, tw, th, tile)
+        cv.paste(x0, y0, tw, th, tile, _spans(w, h, s))
         x += iw + gap
     return w, h, bytes(cv.px)
 
