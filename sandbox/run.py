@@ -26,6 +26,7 @@ from gfg_plugin import settings as settings_mod  # noqa: E402
 from gfg_plugin.service import Service  # noqa: E402
 from gfg_plugin.game_book import GameBook  # noqa: E402
 from gfg_plugin.pilot import ladder  # noqa: E402
+from gfg_plugin.boost import Boost  # noqa: E402
 
 from gfg_plugin.split_control import SplitControl  # noqa: E402
 from gfg_plugin.gpu_clock import GpuClock, MemoryBackend  # noqa: E402
@@ -62,7 +63,7 @@ def make_rig(game: VGame, *, fg: str = "auto", objective: str = "balanced", pref
              refresh: int = 90, user_tdp: float = 15.0, ambient: float = 25.0, battery: float = 80.0,
              external_power: bool = False, base_fps: int = 45, power_enabled: bool = True,
              split: bool = True, gpu_clock: bool = True, dock: bool = False, game_list: bool = False,
-             above_x3: bool = False) -> Rig:
+             above_x3: bool = False, boost: bool = False) -> Rig:
     clock = VClock()
     power = VPower(user_tdp=user_tdp)
     engine = VEngine(clock, game, power, refresh=refresh)
@@ -92,7 +93,8 @@ def make_rig(game: VGame, *, fg: str = "auto", objective: str = "balanced", pref
                   split=SplitControl(vcpu.actuator(), clock=clock,
                                      journal=lambda kind, **f: log.append({"t": clock(), "src": "split", "kind": kind, **f})),
                   gclock=GpuClockControl(GpuClock(engine.gpu_backend, writes_enabled=True), clock=clock,
-                                         journal=lambda kind, **f: log.append({"t": clock(), "src": "gpu", "kind": kind, **f})))
+                                         journal=lambda kind, **f: log.append({"t": clock(), "src": "gpu", "kind": kind, **f})),
+                  boost=Boost(VControl(engine), clock=clock, threaded=False) if boost else None)
     return Rig(clock, game, power, engine, sensors, svc, st, log)
 
 
@@ -772,6 +774,54 @@ def idle_after_game() -> Dict[str, Any]:
     play(rig, 120, {rig.timeline[-1]["t"] + 1: back})
     check(out, "the next game runs the full pipeline again", calls["pilot"] - base["pilot"] - idle["pilot"] >= 100,
           f"{calls['pilot']}")
+    return out
+
+
+@scenario
+def boost_camera_turns() -> Dict[str, Any]:
+    """Boost 2.0 (user, 3.1.1): a turn of ~1 s lowers the multiplier at once and gives it back as
+    soon as the stick rests; the TDP is not touched and the pilot and Governor ignore the turn."""
+    # Fixed x3 in Quality keeps the player's watts: the GPU has room for real frames. (In Autopilot
+    # the Governor takes that room away as watts, so a boost seldom finds any: by design.)
+    rig = make_rig(VGame("g", 70.0), fg="x3", objective="quality", boost=True)
+    rig.settings.data["engine"]["boost"] = True
+    play(rig, 600)
+    b, svc = rig.service.boost, rig.service
+    point, tdp = rig.timeline[-1]["point"], rig.power.tdp
+    out: Dict[str, Any] = {"point": point, "tdp": tdp}
+    bases: List[int] = []
+    tdps: List[float] = []
+    drifts0 = sum(1 for e in rig.log if e["kind"] == "policy-drift")
+
+    def turn(seconds: float, deflection: float) -> None:
+        steps = int(round(seconds / 0.05))
+        for i in range(steps):
+            b.stick(int(deflection * 32767), 0)
+            rig.clock.t += 0.05
+            b.step(rig.clock.t)
+            if i % 20 == 19:
+                rig.clock.t -= 1.0   # play() advances the clock by 1 s itself
+                play(rig, 1)
+            mult = rig.engine._int("kfg_multiplier")
+            bases.append(rig.engine._int("kfg_base_fps") if mult == 1 else round(90 / mult))
+            tdps.append(rig.power.tdp)
+
+    turn(0.4, 0.6)                       # a flick
+    flick = max(bases)
+    turn(1.0, 0.6)                       # a real turn
+    peak = max(bases)
+    turn(0.5, 0.0)                       # the stick rests
+    back = bases[-1]
+    play(rig, 20)
+    drifts = sum(1 for e in rig.log if e["kind"] == "policy-drift") - drifts0
+    out.update({"flick_base": flick, "boost_base": peak, "back_base": back, "count": b.count})
+    check(out, "a flick does not boost", flick == point, f"{flick} vs {point}")
+    check(out, "a turn of ~1 s boosts (x1.75 or the game's headroom)", peak > point + 4, f"{peak} vs {point}")
+    check(out, "the multiplier comes back within 0.3 s of the stick resting", back == point, f"{back}")
+    check(out, "the TDP is not touched during the boost", max(tdps) == min(tdps) == tdp, f"{min(tdps)}-{max(tdps)} W")
+    check(out, "no drift or conflict from the boost", drifts == 0 and svc.coord.s.state == "confirmed",
+          f"{drifts} drifts, {svc.coord.s.state}")
+    check(out, "the point holds after the boost", rig.timeline[-1]["point"] == point, f"{rig.timeline[-1]['point']}")
     return out
 
 

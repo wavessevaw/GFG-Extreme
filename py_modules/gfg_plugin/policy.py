@@ -79,6 +79,9 @@ class PolicyCoordinator:
         self.pending: Optional[_Attempt] = None
         self.retry_at = 0.0
         self.last_apply_at = -1e9
+        # Boost (3.1.1) sends the base cap itself for a camera turn and puts it back after: until
+        # then the coordinator neither sends nor counts the difference as somebody else's drift.
+        self.hold_until = -1e9
         # The engine's policy revision restarts at 0 with Gamescope; ours keeps counting.
         self.next_rev = int(time.time()) % 1_000_000 + 1
 
@@ -138,6 +141,8 @@ class PolicyCoordinator:
             return self.snapshot()
         if "policy" not in st or "req_auto_floor" not in st or "hdr_enabled" not in st:
             self._set("outdated", "The running Gamescope KEDAVRA is older than GFG Extreme 3.0: reinstall the engine and reboot")
+            return self.snapshot()
+        if now < self.hold_until:
             return self.snapshot()
         want = self.wanted
         engine_rev = int(st.get("policy") or 0)

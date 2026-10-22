@@ -16,6 +16,7 @@ import decky  # provided by Decky Loader at runtime
 
 from . import engine_gate, filters, paths
 from .activity_log import ActivityLog
+from .boost import Boost
 from .coexist import Coexistence
 from .cpu_freq import CpuFreqActuator
 from .game_model import GameModelStore
@@ -74,7 +75,8 @@ class Plugin:
             settings=self.settings, ctl=self.ctl, actuator=actuator, model=model, sensors=HostSensors(),
             battery=read_battery, hud=Hud(paths.HUD_PATH), hud_path=str(paths.HUD_PATH),
             journal=lambda src, kind, **f: self.log.record(src, kind, **f), telemetry=self.telemetry,
-            split=split, gclock=gclock)
+            split=split, gclock=gclock,
+            boost=Boost(self.ctl, journal=lambda kind, **f: self.log.record("boost", kind, **f)))
         self.lock = asyncio.Lock()
         self._gate_at, self._gate_cache = -1e9, {}
         self.state: Dict[str, Any] = {}
