@@ -50,8 +50,8 @@ HEADROOM_WAIT_S = 10.0
 HEADROOM_GPU_PCT = 92.0      # the GPU at the next point is estimated to stay under this
 HEADROOM_CPU_PCT = 85.0
 HOLD_RATIO = 0.95       # real fps vs cap over a guard window
-AUTOPILOT_HOLD_RATIO = 0.88  # Autopilot: 80-83 of 90 fps is still fine (user, 3.0.9)
-AUTOPILOT_PACE_MIN = 0.88
+AUTOPILOT_HOLD_RATIO = 0.93  # Autopilot: a dip of 5-8 % is still fine (user, 3.1.1; was 12 %)
+AUTOPILOT_PACE_MIN = 0.93
 TRIAL_RATIO = 0.97
 PACE_MIN = 0.99
 # Autopilot's power target (user, 3.0.3): 12 W is good, 9-10 W ideal. The Governor may go higher

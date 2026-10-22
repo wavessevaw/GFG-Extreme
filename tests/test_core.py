@@ -369,7 +369,7 @@ class AutopilotTest(unittest.TestCase):
         checked = g.probe_from or act.tdp   # the last level that held a whole window
         for _ in range(30):
             clock.t += 1
-            g.tick({**s, "real": 36.0})   # 10 % short (81 of 90): tolerated, no watts for it (3.0.9);
+            g.tick({**s, "real": 37.6})   # 6 % short: tolerated, no watts for it (5-8 %, user 3.1.1);
         self.assertLessEqual(act.tdp, checked)   # only the step that caused it is taken back
         low = act.tdp
         for _ in range(3):
