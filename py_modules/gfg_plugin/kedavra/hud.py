@@ -76,7 +76,7 @@ def _coverage(encoded: str) -> bytes:
 
 HUD_SIZE = 0.88      # the HUD is 12 % smaller than the 3.0.0 one
 SCALES = (0.88, 1.32, 1.76)
-NUMBER_RISE = 2.0    # digit centre above the ring centre, in HUD pixels
+NUMBER_RISE = 4.0    # digit centre above the ring centre when a second line follows, HUD pixels
 
 
 def scale_for(height: int) -> float:
@@ -262,7 +262,7 @@ def items_for(st: Dict[str, Any], rates: Optional[Dict[str, float]]) -> List[Dic
     shown = (rates["real"] + rates["gen"] + rates["repeat"]) if rates else 0.0
     base = st.get("base_fps") if isinstance(st.get("base_fps"), int) else 0
     items = [{
-        "size": 52, "w": 4.5, "frac": (fps or 0) / refresh,
+        "size": 54, "w": 4, "frac": (fps or 0) / refresh,
         "rgb": _rate_color(fps or 0, refresh) if active else GREEN,
         "text": str(round(fps)) if fps is not None else "—", "style": "fps",
         "sub": f"{round(real)} REAL" if real is not None else None, "label": "FPS"}]
@@ -277,12 +277,12 @@ def items_for(st: Dict[str, Any], rates: Optional[Dict[str, float]]) -> List[Dic
         text = f"x{mult}" if active and mult > 1 else "OFF"
     label = f"CAP {base}" if base else ("AUTO" if st.get("auto") else "GEN")
     items.append({
-        "size": 46, "w": 4, "frac": gen_share if active else 0.0, "rgb": ACCENT if active else GREY,
+        "size": 48, "w": 3.5, "frac": gen_share if active else 0.0, "rgb": ACCENT if active else GREY,
         "text": text, "style": "val", "label": label})
     if active and rates and shown > 0:
         new = 1.0 - rates["repeat"] / shown
         rgb = GREEN if new >= 0.995 else (YELLOW if new >= 0.97 else RED)
-        items.append({"size": 46, "w": 4, "frac": new, "rgb": rgb,
+        items.append({"size": 48, "w": 3.5, "frac": new, "rgb": rgb,
                       "text": f"{min(99.9, 100 * new):.1f}" if new < 0.9995 else "100", "style": "val",
                       "label": "PACE"})
     return items
@@ -303,7 +303,7 @@ def battery_ring(battery: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         hours = _num(battery.get("hours_left"))
         text = f"{int(hours)}:{int(round((hours % 1) * 60)) % 60:02d}" if hours is not None and hours < 100 else "—"
     rgb = GREEN if pct >= 50 else (YELLOW if pct >= 20 else RED)
-    return {"size": 46, "w": 4, "frac": min(1.0, pct / 100.0), "rgb": rgb, "text": text, "style": "val",
+    return {"size": 48, "w": 3.5, "frac": min(1.0, pct / 100.0), "rgb": rgb, "text": text, "style": "val",
             "label": "BATTERY H"}
 
 
@@ -312,17 +312,19 @@ def gfg_items(st: Dict[str, Any], rates: Optional[Dict[str, float]], extra: Dict
     """The approved 3.0 HUD: FPS, TDP, multiplier, temperature, battery, pacing. One number per
     ring, the unit in the label, no glow."""
     base = items_for(st, rates)
-    named = {"FPS": base[0], "MULT": base[1]}
+    # The real frame rate goes under the ring, so the number stays centred like the others.
+    real = base[0].get("sub")
+    named = {"FPS": {**base[0], "sub": None, "label": f"FPS · {real}" if real else "FPS"}, "MULT": base[1]}
     if len(base) > 2:
         named["PACE"] = {**base[2], "label": "PACE %"}
     tdp = _num(extra.get("tdp_w"))
     if tdp is not None:
         ceiling = _num(extra.get("ceiling_w")) or 15.0
-        named["TDP"] = {"size": 46, "w": 4, "frac": tdp / max(ceiling, tdp), "rgb": ACCENT,
+        named["TDP"] = {"size": 48, "w": 3.5, "frac": tdp / max(ceiling, tdp), "rgb": ACCENT,
                         "text": f"{tdp:.1f}" if tdp < 10 else f"{tdp:.0f}", "style": "val", "label": "TDP W"}
     temp = _num(extra.get("temp_c"))
     if temp is not None:
-        named["TEMP"] = {"size": 46, "w": 4, "frac": min(1.0, temp / 100.0),
+        named["TEMP"] = {"size": 48, "w": 3.5, "frac": min(1.0, temp / 100.0),
                          "rgb": GREEN if temp < 75 else (YELLOW if temp < 85 else RED),
                          "text": f"{temp:.0f}", "style": "val", "label": "TEMP C"}
     bat = battery_ring(extra.get("battery") or {})
@@ -336,7 +338,7 @@ def render(st: Dict[str, Any], rates: Optional[Dict[str, float]], scale: float =
            items: Optional[List[Dict[str, Any]]] = None) -> Tuple[int, int, bytes]:
     s = scale
     items = items if items is not None else items_for(st, rates)
-    pad_x, pad_y, gap, col, lab_h = 8 * s, 6 * s, 8 * s, 52 * s, 11 * s
+    pad_x, pad_y, gap, col, lab_h = 8 * s, 6 * s, 7 * s, 54 * s, 11 * s
     widths = [it["size"] * s for it in items]
     logo = _logo(s)
     lw = logo[0] + gap if logo else 0
@@ -352,12 +354,15 @@ def render(st: Dict[str, Any], rates: Optional[Dict[str, float]], scale: float =
         cx, cy = x + iw / 2.0, pad_y + col / 2.0
         cv.ring(cx, cy, it["size"] * s, it["w"] * s, it["frac"], it["rgb"])
         style = f"{it['style']}@{s}"
+        inner = (it["size"] - 2 * it["w"] - 9) * s
+        if it["style"] == "val" and cv.text_width(it["text"], style) > inner:
+            style = f"vsm@{s}"   # x2.25, 99.7, 0:30: the smaller cut, still inside the ring
         sub_style = f"sub@{s}"
-        # Every number sits on one line: digit centres at the same height in every ring, a
-        # little above the ring centre so the FPS ring's "REAL" line fits under its number.
-        top = cy - NUMBER_RISE * s - _digit_mid(style)
-        cv.text(cx, top, it["text"], style, WHITE)
+        # The digits' own middle on the ring's centre, whatever the font or the number of
+        # characters; a ring with a second line lifts its number to make room for it.
         sub = it.get("sub")
+        top = cy - (NUMBER_RISE * s if sub else 0.0) - _digit_mid(style)
+        cv.text(cx, top, it["text"], style, WHITE)
         if sub:
             cv.text(cx, top + atlas[style]["ascent"] + 2 * s - _digit_top(sub_style), sub, sub_style, LABEL)
         cv.text(cx, pad_y + col + 2 * s, it["label"], f"lab@{s}", LABEL)

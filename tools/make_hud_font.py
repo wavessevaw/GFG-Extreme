@@ -14,12 +14,13 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-CHARS = " %+-./0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZx—"
+CHARS = " %+-./0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZx—·"
 SCALES = (0.88, 1.32, 1.76)   # hud.SCALES: 1, 1.5 and 2 times the 800 p size, 12 % smaller
 # style: (font file, pixel size at scale 1, letter spacing)
 STYLES = {
-    "fps": ("Inter-Bold.otf", 17, 0.0),
-    "val": ("Inter-SemiBold.otf", 13, 0.0),
+    "fps": ("Inter-Bold.otf", 20, 0.0),
+    "val": ("Inter-Bold.otf", 16, 0.0),
+    "vsm": ("Inter-Bold.otf", 13, 0.0),   # a number too wide for its ring at "val"
     "sub": ("Inter-SemiBold.otf", 8, 0.2),
     "lab": ("Inter-SemiBold.otf", 8, 0.6),
 }
