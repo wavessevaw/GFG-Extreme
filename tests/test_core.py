@@ -188,12 +188,29 @@ class PilotTest(unittest.TestCase):
         self.assertEqual(out["point"], 30)
         self.p.reset()
         self.p.context = None
-        out = self.run_ctx(2, objective="battery", autopilot=True, low_battery=True)
+        out = self.run_ctx(2, objective="battery", autopilot=True, low_battery=True, above_x3=True)
         self.assertEqual(out["point"], 24)
 
     def test_battery_locks_x375(self):
-        out = self.run_ctx(2, objective="battery")
+        out = self.run_ctx(2, objective="battery", above_x3=True)
         self.assertEqual((out["point"], out["base_fps"], out["label"]), (24, 24, "x3.75"))
+
+    def test_x3_is_the_limit_until_unlocked(self):
+        # User, 3.1.1: "above x3 plays very badly"; x3.75 only with the setting.
+        out = self.run_ctx(2, objective="battery")
+        self.assertEqual((out["point"], out["label"]), (30, "x3"))
+        self.p.reset()
+        self.p.context = None
+        out = self.run_ctx(2, objective="battery", autopilot=True, low_battery=True)
+        self.assertEqual(out["point"], 30)
+        self.p.reset()
+        self.p.context = None
+        self.assertEqual(self.run_ctx(1, fg="x3.75")["multiplier"], 3)
+        self.assertEqual(self.run_ctx(1, fg="custom", base_fps=24)["base_fps"], 30)
+        self.run_ctx(15, objective="autopilot", autopilot=True, real=26.0, engine={"auto": True, "cap_fps": 24})
+        out = self.run_ctx(60, objective="autopilot", autopilot=True, real=26.0, engine={"auto": True, "cap_fps": 24})
+        self.assertEqual(out["point"], 30)
+        self.assertFalse(out["holds"])
 
     def test_demotes_only_at_full_power(self):
         self.run_ctx(20)
@@ -204,7 +221,7 @@ class PilotTest(unittest.TestCase):
 
     def test_fixed_choices(self):
         self.assertEqual(self.run_ctx(1, fg="x3")["multiplier"], 3)
-        out = self.run_ctx(1, fg="x3.75")
+        out = self.run_ctx(1, fg="x3.75", above_x3=True)
         self.assertEqual((out["multiplier"], out["base_fps"]), (1, 24))
         out = self.run_ctx(1, fg="custom", base_fps=40)
         self.assertEqual(out["base_fps"], 40)
@@ -352,7 +369,7 @@ class AutopilotTest(unittest.TestCase):
         checked = g.probe_from or act.tdp   # the last level that held a whole window
         for _ in range(30):
             clock.t += 1
-            g.tick({**s, "real": 36.0})   # 10 % short (81 of 90): tolerated, no watts for it (3.0.9);
+            g.tick({**s, "real": 37.6})   # 6 % short: tolerated, no watts for it (5-8 %, user 3.1.1);
         self.assertLessEqual(act.tdp, checked)   # only the step that caused it is taken back
         low = act.tdp
         for _ in range(3):

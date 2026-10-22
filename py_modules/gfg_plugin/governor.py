@@ -42,14 +42,14 @@ SETTLE_S = 2.0
 LEARN_AFTER_S = 60.0
 STEP_DOWN_W = 1.0
 FAST_STEP_W = 2.0
-# Autopilot (user, 3.0.4): starts at 15 W and measures; tolerates 8-10 % dips of the game's
+# Autopilot (user, 3.0.4): starts at 15 W and measures; tolerates 5-8 % dips (3.1.1) of the game's
 # frame rate (watts come back only for a deeper fall); targets 12 W, ideally 9-10 W.
 START_W = {"battery": 10.0, "balanced": 12.0, "autopilot": 15.0}
-# Autopilot and Battery (user, 3.0.9): the output falling to 80-83 of 90 fps is still fine and
-# no reason for watts, so frames and pace may dip 12 % before a window fails.
-HOLD_RATIO = {"autopilot": 0.88, "battery": 0.88}   # window vs cap that still holds (default 0.97)
-SHORT_RATIO = {"autopilot": 0.88, "battery": 0.88}  # fast guard: under this share of the cap -> watts back
-PACE_RATIO = {"autopilot": 0.88, "battery": 0.88}   # pace that still holds (default PACE_MIN)
+# Autopilot and Battery: a small dip is no reason for watts. 3.0.9 allowed 12 %; the user (3.1.1)
+# narrowed it to 5-8 %: frames and pace may dip 7 % before a window fails.
+HOLD_RATIO = {"autopilot": 0.93, "battery": 0.93}   # window vs cap that still holds (default 0.97)
+SHORT_RATIO = {"autopilot": 0.93, "battery": 0.93}  # fast guard: under this share of the cap -> watts back
+PACE_RATIO = {"autopilot": 0.93, "battery": 0.93}   # pace that still holds (default PACE_MIN)
 # ... but a dip is only tolerated, never the place to settle: a step down needs a window at
 # >= 95 % of the cap. Between the two the TDP stays where it is.
 DOWN_RATIO = 0.95
@@ -58,7 +58,7 @@ DOWN_RATIO = 0.95
 SUSTAIN_S = 6
 # 2.1.6's p5 rule: a window steps down only while its low end (p5 of the 1 s readings) stays near
 # the cap. A dip that deep is no reason for watts, but no reason to take more away either.
-P5_RATIO = {"autopilot": 0.85, "battery": 0.85}   # default 0.90
+P5_RATIO = {"autopilot": 0.92, "battery": 0.92}   # default 0.90; 8 % at most (user, 3.1.1)
 DRAW_MARGIN_W = 1.5          # limit kept above the measured draw when jumping down to it
 DRAW_JUMP_W = 3.0            # draw this far under the limit: the limit is not what holds the game
 DRAW_BINDING_W = 1.2         # draw this close to the limit: the limit is what holds the game

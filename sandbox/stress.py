@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, List
 
 from .run import Rig, make_rig
 from .vdeck import VGame
-from gfg_plugin.pilot import lowest_point  # noqa: E402  (run.py puts py_modules on the path)
+from gfg_plugin.pilot import lowest_point, x3_cap  # noqa: E402  (run.py puts py_modules on the path)
 
 LADDER = (0, 20, 24, 25, 30, 35, 40, 45)
 
@@ -128,8 +128,12 @@ def chaos(seed: int, seconds: int = 3600, steamos_ac: bool = True) -> Dict[str, 
     # Balanced stops at x3 and Quality at x2.5 (user, 3.0.10): a game too heavy for that lowest
     # point is reported (holds False), not moved below it.
     last = tail[-1]
-    floor_case = (last["point"] == lowest_point(last["refresh"], last["objective"]) and last["holds"] is False
-                  and last["objective"] in ("balanced", "quality"))
+    above = rig.settings.data["engine"].get("above_x3", False)
+    floor = lowest_point(last["refresh"], last["objective"])
+    floor = floor if above else max(floor, x3_cap(last["refresh"]))
+    # A game too heavy for the lowest point the mode may use (x3 while x3.75 is locked, user 3.1.1).
+    floor_case = (last["point"] == floor and last["holds"] is False
+                  and (last["objective"] in ("balanced", "quality") or not above))
     if held < 0.95 and not floor_case:
         bad.append(f"the settled point does not hold: {held:.0%} of the last 100 s at {last['point']}")
     player = rig.power.slider if hasattr(rig.power, "slider") else rig.power.user_tdp
@@ -252,7 +256,9 @@ def autopilot_heavy() -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for fps15 in (22.0, 26.0, 30.0, 34.0, 40.0):
         for player in (15.0, 18.0):
-            rig = make_rig(VGame("g", fps15), objective="autopilot", user_tdp=player, battery=70.0, ambient=30.0)
+            # x3.75 unlocked: this case checks Autopilot's fall-back below x3 (locked by default, 3.1.1).
+            rig = make_rig(VGame("g", fps15), objective="autopilot", user_tdp=player, battery=70.0, ambient=30.0,
+                           above_x3=True)
             rig.power.maximum = 20.0
             rows = drive(rig, 1200, {}, bad)
             tail = rows[400:]
@@ -281,7 +287,7 @@ def paused_governor_climbs() -> Dict[str, Any]:
     Governor pauses at their 15 W) and the game gets light (40+ fps). Autopilot must climb back
     instead of staying at x3.75 forever."""
     load = {"v": 0.45}
-    rig = make_rig(VGame("g", 55.0, lambda t: load["v"]), objective="autopilot", battery=70.0)
+    rig = make_rig(VGame("g", 55.0, lambda t: load["v"]), objective="autopilot", battery=70.0, above_x3=True)
     bad: List[str] = []
     ev = {200: lambda r: r.power.steam_slider(14.0), 260: lambda r: load.update(v=1.0)}
     rows = drive(rig, 1200, ev, bad)

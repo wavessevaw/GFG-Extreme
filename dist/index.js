@@ -143,10 +143,10 @@ var css = `
 .gfg .gate .gh{font-size:14px;font-weight:800;margin:0 0 6px;line-height:1.25}
 .gfg .gate .gp{font-size:10.5px;color:var(--tx2);line-height:1.45;margin:0 0 12px}
 .gfg .steps{display:flex;gap:5px;margin:0 0 12px}
-.gfg .st{flex:1;min-width:0;border-radius:10px;padding:7px 2px;background:var(--s2);border:1px solid var(--line);font-size:9.5px;font-weight:700;color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.gfg .st b{display:block;font-size:12.5px;margin-bottom:1px}
-.gfg .st.on{color:var(--tx);border-color:rgba(251,13,0,.6);background:linear-gradient(180deg,rgba(251,13,0,.22),rgba(251,13,0,.06));box-shadow:0 0 14px rgba(251,13,0,.25)}
-.gfg .st.done{color:var(--ok)}
+.gfg .steps .st{flex:1;min-width:0;border-radius:10px;padding:7px 2px;background:var(--s2);border:1px solid var(--line);font-size:9.5px;font-weight:700;color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gfg .steps .st b{display:block;font-size:12.5px;margin-bottom:1px}
+.gfg .steps .st.on{color:var(--tx);border-color:rgba(251,13,0,.6);background:linear-gradient(180deg,rgba(251,13,0,.22),rgba(251,13,0,.06));box-shadow:0 0 14px rgba(251,13,0,.25)}
+.gfg .steps .st.done{color:var(--ok)}
 .gfg .gate>.steps,.gfg .gate>.btn,.gfg .gate>.btns,.gfg .gate>.note{align-self:stretch;width:100%}
 .gfg .gate .btn{white-space:nowrap}
 .gfg .gate .small{font-size:9.5px;color:var(--tx3);margin-top:9px;line-height:1.4}
@@ -321,7 +321,8 @@ var gameName = (app) => {
     return "";
   }
 };
-var OBJ = { autopilot: ["Autopilot", "adapts \xB7 12 W"], battery: ["Battery", "\xD73.75 \xB7 low watts"], balanced: ["Balanced", "best point"], quality: ["Quality", "real frames"] };
+var OBJ = { autopilot: ["Autopilot", "adapts \xB7 12 W"], battery: ["Battery", "\xD73 \xB7 low watts"], balanced: ["Balanced", "best point"], quality: ["Quality", "real frames"] };
+var objSub = (k, sub, above) => k === "battery" && above ? "\xD73.75 \xB7 low watts" : sub;
 var svg = (...c) => h("svg", { viewBox: "0 0 24 24", width: 16, height: 16, fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, ...c);
 var ICON = {
   autopilot: svg(h("path", { d: "M12 2.5l2.2 5.3 5.3 2.2-5.3 2.2L12 17.5l-2.2-5.3L4.5 10l5.3-2.2z", fill: "currentColor", stroke: "none" }), h("path", { d: "M18.5 15.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z", fill: "currentColor", stroke: "none" })),
@@ -347,7 +348,8 @@ function Dash({ s, set }) {
   );
   const scope = (s.profiles.active || "").startsWith("app:") ? "game" : "default";
   const setProf = (changes) => set(() => rpc.setProfile(scope, changes));
-  const fgOpts = [["off", "Off"], ["auto", "Auto"], ["x2", "\xD72"], ["x3", "\xD73"], ["x3.75", "\xD73.75"], ["custom", "Custom"]];
+  const above = !!s.settings.engine.above_x3, minCap = above ? 20 : Math.ceil(refresh / 3);
+  const fgOpts = [["off", "Off"], ["auto", "Auto"], ["x2", "\xD72"], ["x3", "\xD73"], ...above ? [["x3.75", "\xD73.75"]] : [], ["custom", "Custom"]];
   const cpuGhz = split.cap_khz ? (split.cap_khz / 1e6).toFixed(1) : null;
   const pace = num((live.live || {}).pace), hdr = !!(eng.transfer && eng.transfer !== "sdr");
   const short = !!(point && real !== null && real < 0.9 * point);
@@ -385,13 +387,13 @@ function Dash({ s, set }) {
         "div",
         null,
         h("b", null, name),
-        h("span", null, k === "autopilot" && prof.objective === "autopilot" && live.objective && live.objective !== "autopilot" ? "now " + (OBJ[live.objective] || [live.objective])[0] : sub)
+        h("span", null, k === "autopilot" && prof.objective === "autopilot" && live.objective && live.objective !== "autopilot" ? "now " + (OBJ[live.objective] || [live.objective])[0] : objSub(k, sub, above))
       )
     ))))),
     h(
       Card,
       { title: "FRAME GENERATION" },
-      h(Seg, { value: prof.fg, options: fgOpts, onChange: (v) => setProf({ fg: v }) }),
+      h(Seg, { value: prof.fg === "x3.75" && !above ? "x3" : prof.fg, options: fgOpts, onChange: (v) => setProf({ fg: v }) }),
       prof.fg === "custom" ? h(
         "div",
         { className: "lrow first", style: { marginTop: 6 } },
@@ -399,12 +401,12 @@ function Dash({ s, set }) {
         h(
           "div",
           { className: "step" },
-          h(Focusable, { className: "b", onClick: () => setProf({ base_fps: Math.max(20, prof.base_fps - 1) }) }, "\u2212"),
-          h("span", { className: "val" }, prof.base_fps),
+          h(Focusable, { className: "b", onClick: () => setProf({ base_fps: Math.max(minCap, Math.max(minCap, prof.base_fps) - 1) }) }, "\u2212"),
+          h("span", { className: "val" }, Math.max(minCap, prof.base_fps)),
           h(Focusable, { className: "b", onClick: () => setProf({ base_fps: Math.min(90, prof.base_fps + 1) }) }, "+")
         )
       ) : null,
-      h("div", { className: "note" }, prof.fg === "custom" ? `The game is capped at ${prof.base_fps} FPS, generation fills ${refresh} Hz.` : "Custom: the game is capped at your base FPS (20\u201390), generation fills the display.")
+      h("div", { className: "note" }, prof.fg === "custom" ? `The game is capped at ${Math.max(minCap, prof.base_fps)} FPS, generation fills ${refresh} Hz.` : `Custom: the game is capped at your base FPS (${minCap}\u201390), generation fills the display.`)
     ),
     h(Card, { title: "SETTINGS APPLY TO" }, h(Seg, {
       value: scope,
@@ -623,7 +625,21 @@ function Setup({ s, set }) {
       h("div", { className: "btns" }, h(Focusable, { className: "btn red", onClick: () => run("coexist", "Take over", rpc.takeOver, "Taking over the engine") }, "Take over")),
       note("coexist")
     ) : null,
-    h(Card, { title: "GENERATION" }, h(Row, { k: "Frame generation in HDR games", first: true }, h(Tog, { on: cfg.engine.hdr, onChange: (v) => set(() => rpc.setSection("engine", { hdr: v })) }))),
+    h(
+      Card,
+      { title: "GENERATION" },
+      h(Row, { k: "Frame generation in HDR games", first: true }, h(Tog, { on: cfg.engine.hdr, onChange: (v) => set(() => rpc.setSection("engine", { hdr: v })) })),
+      h(Row, { k: "Allow above \xD73" }, h(Tog, { on: !!cfg.engine.above_x3, onChange: (v) => set(() => rpc.setSection("engine", { above_x3: v })) })),
+      h("div", { className: "sub" }, cfg.engine.above_x3 ? "On: \xD73.75 in Battery, on a low battery and as a choice on Dash. More artefacts and latency." : "Off: no mode goes above \xD73. \xD73.75 shows more artefacts and latency.")
+    ),
+    // Boost 2.0 (user, 3.1.1): hidden down here, off by default.
+    h(
+      Card,
+      { title: "EXPERIMENTAL" },
+      h(Row, { k: "Boost 2.0", first: true }, h(Tog, { on: !!cfg.engine.boost, onChange: (v) => set(() => rpc.setSection("engine", { boost: v })) })),
+      cfg.engine.boost ? h(Seg, { value: cfg.engine.boost_mult || 1.5, options: [[1.25, "\xD71.25"], [1.5, "\xD71.5"], [1.75, "\xD71.75"]], onChange: (v) => set(() => rpc.setSection("engine", { boost_mult: v })) }) : null,
+      h("div", { className: "sub" }, "A camera turn of about a second with the right stick gets real frames: the multiplier drops for up to 1.5 s and comes back when the stick rests. Watts are not raised.")
+    ),
     h(
       Card,
       { title: "DIAGNOSTICS" },

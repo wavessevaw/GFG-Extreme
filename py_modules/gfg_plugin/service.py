@@ -23,12 +23,18 @@ from .pilot import PointPilot, ladder
 from .policy import Policy, PolicyCoordinator
 from .session_stats import SessionStats
 from .split_control import SplitControl
+from .boost import Boost
 from .gpu_clock_control import GpuClockControl
 
 GAME_GRACE_S = 10.0   # the QAM or a loading screen does not end a game session
 STEAM_APP = 769
 HDR_RESEND_S = 10.0
 DOCK_CHECK_S = 5.0    # an external display (the dock) is looked up this often
+# No game (user, 3.1.1): after a game GFG resets everything and computes nothing. An idle tick
+# only reads the engine status (to see the next game) and keeps the idle policy confirmed; the
+# sensors shown in the panel are read this often, the full pipeline runs again only for a
+# settings change.
+IDLE_SENSORS_S = 5.0
 
 
 class Service:
@@ -37,7 +43,8 @@ class Service:
                  hud_path: str = "", clock: Callable[[], float] = time.monotonic,
                  journal: Optional[Callable[..., None]] = None, telemetry: Optional[Any] = None,
                  split: Optional[SplitControl] = None, gclock: Optional[GpuClockControl] = None,
-                 book: Optional[GameBook] = None, display: Optional[Callable[[], bool]] = None) -> None:
+                 book: Optional[GameBook] = None, display: Optional[Callable[[], bool]] = None,
+                 boost: Optional[Boost] = None) -> None:
         self.settings = settings
         self.ctl = ctl
         self.clock = clock
@@ -71,6 +78,13 @@ class Service:
         self.cur = (0, 90, False)          # (app, refresh, dock) of the running session, for the book
         self.noted_point: Optional[tuple] = None
         self.light_dropped = False
+        self.boost = boost
+        if boost is not None:
+            boost.coord = self.coord
+        self.last_req: Optional[Dict[str, Any]] = None
+        self.idle = False          # reset after the last game and idling: the light tick runs
+        self.idle_rev: Any = None  # settings revision the idle snapshot was made with
+        self.idle_sensors_at = -1e9
 
     def _stable_point(self, refresh: int) -> Optional[int]:
         """The point the Governor locked as stable for this game last time (None: unknown)."""
@@ -128,6 +142,11 @@ class Service:
         if not game and self.app:
             self._end_session("game-exit")
             self.app = 0
+            self._reset_after_game()
+        if game:
+            self.idle = False
+        elif self.idle and self.idle_rev == getattr(self.settings, "rev", 0):
+            return self._idle_tick(now, st, fresh, live)
 
         data = self.settings.data
         self._hdr_output(bool(data["engine"].get("hdr_output", True)), fresh, now)
@@ -156,7 +175,10 @@ class Service:
 
         confirmed = self.coord.engine_runs(self.last_policy, st)
         gov = self.governor
-        req = self.pilot.tick({
+        # A camera-turn boost (3.1.1) and the 2 s after it are not the point's readings: the pilot
+        # and the Governor keep what they had.
+        boosting = bool(game and self.boost is not None and self.boost.busy(now) and self.last_req is not None)
+        req = self.last_req if boosting else self.pilot.tick({
             "fg": profile["fg"], "base_fps": profile["base_fps"], "objective": objective,
             "refresh": refresh, "game": game, "app": self.app, "engine": st,
             "real": live.get("real"), "pace": live.get("pace"), "confirmed": confirmed,
@@ -164,11 +186,13 @@ class Service:
             "autopilot": objective == "autopilot", "stable_point": self._stable_point(refresh) if game else None,
             "known_point": gp.get("point"), "game_class": gp.get("class"), "dock": dock,
             "low_battery": self.autopilot.low_battery or data["autopilot"]["preference"] == "battery",
+            "above_x3": data["engine"].get("above_x3", False),
             # Only a TDP the Governor manages is a power reading for the pilot: paused (the player's own
             # TDP) Autopilot must still climb when the game gets lighter (Deck report 3.0.7).
             "tdp_w": gov.tdp if gov.owned and not gov.paused else None, "gov_settled": gov.settled(), "warm": gov.warm,
             "at_ceiling": gov.at_ceiling(), "settling": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
         })
+        self.last_req = req if game else None
         if game and self.pilot.measured:
             self.book.note_measure(self.app, refresh, dock, self.pilot.measured, ladder(refresh))
         self.pilot.measured = 0
@@ -188,6 +212,13 @@ class Service:
                         self.hud_path, req["auto_floor"], bool(data["engine"]["hdr"]))
         self.coord.want(policy)
         self.last_policy = policy
+        if self.boost is not None:
+            eng = data["engine"]
+            self.boost.configure(
+                enabled=bool(game and eng.get("boost") and req["phase"] in ("locked", "fixed")),
+                mult=eng.get("boost_mult", 1.5), refresh=refresh, wanted=policy,
+                headroom=Boost.estimate_headroom(refresh, live.get("real"), sensors.get("gpu_busy_pct"),
+                                                 st.get("gpu_us_avg"), st.get("gpu_analysis_us_avg")))
         coord = self.coord.tick(st)
 
         gov.enabled = bool(data["power"]["enabled"])
@@ -197,7 +228,7 @@ class Service:
             gs = gov.status()
             split_status = self.split.tick({
                 "enabled": bool(data["power"]["split"]), "game": game, "app": f"app:{self.app}",
-                "steady": bool(locked and gs.get("owned") and gov.settled() and not (self.gclock and self.gclock.owned)),
+                "steady": bool(locked and not boosting and gs.get("owned") and gov.settled() and not (self.gclock and self.gclock.owned)),
                 "menu": bool(st.get("steam_ui")), "point": req["point"], "real": live.get("real"),
                 "sensors": sensors, "draw_w": gs.get("draw_w"), "tdp_w": gs.get("tdp_w")})
         gclock_status: Dict[str, Any] = {}
@@ -205,7 +236,7 @@ class Service:
             gs = gov.status()
             gclock_status = self.gclock.tick({
                 "enabled": bool(data["power"]["gpu_clock"]), "game": game, "app": f"app:{self.app}",
-                "steady": bool(locked and gs.get("owned") and gov.settled()),
+                "steady": bool(locked and not boosting and gs.get("owned") and gov.settled()),
                 "other_busy": bool(self.split and (self.split.cpu.owned or self.split.settling())),
                 "menu": bool(st.get("steam_ui")), "point": req["point"], "real": live.get("real"),
                 "sensors": sensors, "draw_w": gs.get("draw_w")})
@@ -225,7 +256,7 @@ class Service:
         if rates is not None and self.rates.prev is not None:
             sample["ring_miss"] = self._delta(st, "ring_miss")
             sample["over_budget"] = self._delta(st, "over_budget")
-        g = gov.tick(sample)
+        g = gov.status() if boosting else gov.tick(sample)
         if game and g.get("stable") and req["point"]:
             mark = (self.app, refresh, dock, req["point"], g.get("tdp_w"))
             if mark != self.noted_point:
@@ -258,6 +289,7 @@ class Service:
             "autopilot_reason": auto_reason, "refresh": refresh, "engine": self._engine_view(st),
             "live": live, "pilot": req, "policy": coord, "governor": g, "split": split_status, "gpu_clock": gclock_status,
             "lease": lease, "filter_budget": self.fbudget.status(), "game_profile": gp, "dock": dock,
+            "boost": self.boost.status() if self.boost is not None else None,
             "sensors": sensors, "power": power,
             "filters": filters.summary(profile["filters"]),
         }
@@ -273,7 +305,42 @@ class Service:
                                    "ac": power.get("external_power"), "hours": None if hours is None else round(hours, 2),
                                    "cpu_cap_khz": split_status.get("cap_khz"), "gpu_limit_mhz": gclock_status.get("limit_mhz")})
             self.telemetry.engine(st)
+        if not game and self._idle_ready():
+            self.idle, self.idle_rev = True, getattr(self.settings, "rev", 0)
+            self.idle_sensors_at = now
         return self.snapshot
+
+    def _reset_after_game(self) -> None:
+        """The game is gone: nothing of it is kept in memory (the book and the model have it)."""
+        self.pilot.reset()
+        self.pilot.context = None
+        self.autopilot.reset()
+        self.fbudget.tick(app=None, active=False, gpu_busy=None, starved=False)
+        self.rates = hudmod.Rates()
+        self._prev_counters = {}
+        self._drain = None
+        self.noted_point = None
+        self.cur = (0, 90, self.dock)
+
+    def _idle_ready(self) -> bool:
+        """Everything handed back to the player: TDP, CPU and GPU clocks."""
+        g = self.governor
+        return (not g.owned and not g.restore_pending and not (self.split and (self.split.cpu.owned or getattr(self.split.cpu, "restore_pending", False)))
+                and not (self.gclock and self.gclock.owned))
+
+    def _idle_tick(self, now: float, st: Dict[str, Any], fresh: bool, live: Dict[str, Any]) -> Dict[str, Any]:
+        self._hdr_output(bool(self.settings.data["engine"].get("hdr_output", True)), fresh, now)
+        if self.last_policy is not None:
+            self.coord.want(self.last_policy)
+        coord = self.coord.tick(st)
+        snap = dict(self.snapshot)
+        snap.update({"time": now, "engine": self._engine_view(st), "live": live, "policy": coord, "idle": True})
+        if now - self.idle_sensors_at >= IDLE_SENSORS_S:
+            self.idle_sensors_at = now
+            snap["sensors"] = self.sensors.sample() if self.sensors else {}
+            snap["power"] = self.battery() if self.battery else {}
+        self.snapshot = snap
+        return snap
 
     def _hours_left(self, power: Dict[str, Any]) -> Optional[float]:
         """Hours to empty from a smoothed discharge power (None on AC or without readings)."""
@@ -316,6 +383,8 @@ class Service:
         """Plugin unload: TDP back to the player's, HDR output back on, HUD hidden, generation left
         as the engine runs it."""
         self._end_session("unload")
+        if self.boost is not None:
+            self.boost.stop()
         self._hdr_output(True, True, self.clock())
         self.governor.stop("unload")
         if self.split is not None:

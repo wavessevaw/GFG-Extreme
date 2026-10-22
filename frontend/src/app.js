@@ -99,7 +99,9 @@ const heroLine = (live) => {
   return [{ measure: "Measuring the game", trial: "Trying the next point up", demote: "Stepping down", locked: "Point locked and guarded.", fixed: "Fixed multiplier" }[p.phase] || "Starting", p.reason || ""];
 };
 const gameName = (app) => { try { const o = window.appStore && window.appStore.GetAppOverviewByAppID(app); return (o && o.display_name) || (app ? "App " + app : ""); } catch (e) { return ""; } };
-const OBJ = { autopilot: ["Autopilot", "adapts · 12 W"], battery: ["Battery", "×3.75 · low watts"], balanced: ["Balanced", "best point"], quality: ["Quality", "real frames"] };
+const OBJ = { autopilot: ["Autopilot", "adapts · 12 W"], battery: ["Battery", "×3 · low watts"], balanced: ["Balanced", "best point"], quality: ["Quality", "real frames"] };
+// Above ×3 (user, 3.1.1): ×3.75 plays badly, so it shows only once Setup unlocks it.
+const objSub = (k, sub, above) => (k === "battery" && above ? "×3.75 · low watts" : sub);
 
 // Mode icons (user, 3.0.6): drawn, not emoji, so Steam's fonts cannot turn them into boxes.
 const svg = (...c) => h("svg", { viewBox: "0 0 24 24", width: 16, height: 16, fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, ...c);
@@ -127,7 +129,8 @@ function Dash({ s, set }) {
     h("div", { className: "phase" }, PHASES.map((p) => h("span", { key: p, className: p === ph ? "on" : "" }, p))));
   const scope = (s.profiles.active || "").startsWith("app:") ? "game" : "default";
   const setProf = (changes) => set(() => rpc.setProfile(scope, changes));
-  const fgOpts = [["off", "Off"], ["auto", "Auto"], ["x2", "×2"], ["x3", "×3"], ["x3.75", "×3.75"], ["custom", "Custom"]];
+  const above = !!s.settings.engine.above_x3, minCap = above ? 20 : Math.ceil(refresh / 3);
+  const fgOpts = [["off", "Off"], ["auto", "Auto"], ["x2", "×2"], ["x3", "×3"], ...(above ? [["x3.75", "×3.75"]] : []), ["custom", "Custom"]];
   const cpuGhz = split.cap_khz ? (split.cap_khz / 1e6).toFixed(1) : null;
   const pace = num((live.live || {}).pace), hdr = !!(eng.transfer && eng.transfer !== "sdr");
   const short = !!(point && real !== null && real < 0.9 * point);
@@ -150,12 +153,12 @@ function Dash({ s, set }) {
     h(Card, { title: "MODE" }, h("div", { className: "grid2" }, Object.entries(OBJ).map(([k, [name, sub]]) =>
       h(Focusable, { key: k, onClick: () => setProf({ objective: k }) }, h("div", { className: "tile mode m-" + k + (prof.objective === k ? " on" : "") },
         h("div", { className: "mico" }, ICON[k]), h("div", null, h("b", null, name),
-        h("span", null, k === "autopilot" && prof.objective === "autopilot" && live.objective && live.objective !== "autopilot" ? "now " + (OBJ[live.objective] || [live.objective])[0] : sub))))))),
-    h(Card, { title: "FRAME GENERATION" }, h(Seg, { value: prof.fg, options: fgOpts, onChange: (v) => setProf({ fg: v }) }),
+        h("span", null, k === "autopilot" && prof.objective === "autopilot" && live.objective && live.objective !== "autopilot" ? "now " + (OBJ[live.objective] || [live.objective])[0] : objSub(k, sub, above)))))))),
+    h(Card, { title: "FRAME GENERATION" }, h(Seg, { value: prof.fg === "x3.75" && !above ? "x3" : prof.fg, options: fgOpts, onChange: (v) => setProf({ fg: v }) }),
       prof.fg === "custom" ? h("div", { className: "lrow first", style: { marginTop: 6 } }, "Base FPS cap",
-        h("div", { className: "step" }, h(Focusable, { className: "b", onClick: () => setProf({ base_fps: Math.max(20, prof.base_fps - 1) }) }, "−"),
-          h("span", { className: "val" }, prof.base_fps), h(Focusable, { className: "b", onClick: () => setProf({ base_fps: Math.min(90, prof.base_fps + 1) }) }, "+"))) : null,
-      h("div", { className: "note" }, prof.fg === "custom" ? `The game is capped at ${prof.base_fps} FPS, generation fills ${refresh} Hz.` : "Custom: the game is capped at your base FPS (20–90), generation fills the display.")),
+        h("div", { className: "step" }, h(Focusable, { className: "b", onClick: () => setProf({ base_fps: Math.max(minCap, Math.max(minCap, prof.base_fps) - 1) }) }, "−"),
+          h("span", { className: "val" }, Math.max(minCap, prof.base_fps)), h(Focusable, { className: "b", onClick: () => setProf({ base_fps: Math.min(90, prof.base_fps + 1) }) }, "+"))) : null,
+      h("div", { className: "note" }, prof.fg === "custom" ? `The game is capped at ${Math.max(minCap, prof.base_fps)} FPS, generation fills ${refresh} Hz.` : `Custom: the game is capped at your base FPS (${minCap}–90), generation fills the display.`)),
     h(Card, { title: "SETTINGS APPLY TO" }, h(Seg, { value: scope, options: [["game", "This game"], ["default", "All games"]],
       onChange: (v) => set(() => (v === "game" ? rpc.setProfile("game", {}) : rpc.dropGame())) })));
 }
@@ -297,7 +300,13 @@ function Setup({ s, set }) {
     co.standalone && !co.taken_over ? h(Card, { title: "STANDALONE GSF KEDAVRA FOUND", cls: "warn" },
       h("div", { className: "sub" }, "Both plugins can drive the engine. GFG backs off instead of fighting."),
       h("div", { className: "btns" }, h(Focusable, { className: "btn red", onClick: () => run("coexist", "Take over", rpc.takeOver, "Taking over the engine") }, "Take over")), note("coexist")) : null,
-    h(Card, { title: "GENERATION" }, h(Row, { k: "Frame generation in HDR games", first: true }, h(Tog, { on: cfg.engine.hdr, onChange: (v) => set(() => rpc.setSection("engine", { hdr: v })) }))),
+    h(Card, { title: "GENERATION" }, h(Row, { k: "Frame generation in HDR games", first: true }, h(Tog, { on: cfg.engine.hdr, onChange: (v) => set(() => rpc.setSection("engine", { hdr: v })) })),
+      h(Row, { k: "Allow above ×3" }, h(Tog, { on: !!cfg.engine.above_x3, onChange: (v) => set(() => rpc.setSection("engine", { above_x3: v })) })),
+      h("div", { className: "sub" }, cfg.engine.above_x3 ? "On: ×3.75 in Battery, on a low battery and as a choice on Dash. More artefacts and latency." : "Off: no mode goes above ×3. ×3.75 shows more artefacts and latency.")),
+    // Boost 2.0 (user, 3.1.1): hidden down here, off by default.
+    h(Card, { title: "EXPERIMENTAL" }, h(Row, { k: "Boost 2.0", first: true }, h(Tog, { on: !!cfg.engine.boost, onChange: (v) => set(() => rpc.setSection("engine", { boost: v })) })),
+      cfg.engine.boost ? h(Seg, { value: cfg.engine.boost_mult || 1.5, options: [[1.25, "×1.25"], [1.5, "×1.5"], [1.75, "×1.75"]], onChange: (v) => set(() => rpc.setSection("engine", { boost_mult: v })) }) : null,
+      h("div", { className: "sub" }, "A camera turn of about a second with the right stick gets real frames: the multiplier drops for up to 1.5 s and comes back when the stick rests. Watts are not raised.")),
     h(Card, { title: "DIAGNOSTICS" },
       h(Focusable, { onClick: check }, h(Row, { k: "Run checks", v: "›", first: true })),
       h(Focusable, { onClick: () => run("diag", "Report", rpc.report, "Saving the report") }, h(Row, { k: "Save report to Desktop", v: "›" })),

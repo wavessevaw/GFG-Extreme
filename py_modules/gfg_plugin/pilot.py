@@ -50,8 +50,8 @@ HEADROOM_WAIT_S = 10.0
 HEADROOM_GPU_PCT = 92.0      # the GPU at the next point is estimated to stay under this
 HEADROOM_CPU_PCT = 85.0
 HOLD_RATIO = 0.95       # real fps vs cap over a guard window
-AUTOPILOT_HOLD_RATIO = 0.88  # Autopilot: 80-83 of 90 fps is still fine (user, 3.0.9)
-AUTOPILOT_PACE_MIN = 0.88
+AUTOPILOT_HOLD_RATIO = 0.93  # Autopilot: a dip of 5-8 % is still fine (user, 3.1.1; was 12 %)
+AUTOPILOT_PACE_MIN = 0.93
 TRIAL_RATIO = 0.97
 PACE_MIN = 0.99
 # Autopilot's power target (user, 3.0.3): 12 W is good, 9-10 W ideal. The Governor may go higher
@@ -110,6 +110,16 @@ def lowest_point(refresh: int, objective: str, light: bool = False, dock: bool =
 
 def x375_cap(refresh: int) -> int:
     return ladder(refresh)[0]
+
+
+def x3_cap(refresh: int) -> int:
+    return div_up(max(30, int(refresh)), 3)
+
+
+def capped(steps: List[int], refresh: int, above_x3: bool) -> List[int]:
+    """Above x3 (user, 3.1.1): "above x3 plays very badly", so x3 is the limit in every mode and
+    x3.75 is unlocked only by the setting."""
+    return steps if above_x3 else [c for c in steps if c >= x3_cap(refresh)]
 
 
 def mult_label(refresh: int, cap: int) -> str:
@@ -181,9 +191,12 @@ class PointPilot:
         managed)."""
         fg = ctx.get("fg", "auto")
         refresh = int(ctx.get("refresh") or 90)
-        steps = ladder(refresh)
+        above = bool(ctx.get("above_x3"))
+        steps = capped(ladder(refresh), refresh, above)
+        if fg == "x3.75" and not above:
+            fg = "x3"
         objective = ctx.get("objective", "balanced")
-        context = (ctx.get("app"), refresh, fg, objective, int(ctx.get("base_fps") or 0), bool(ctx.get("dock")))
+        context = (ctx.get("app"), refresh, fg, objective, int(ctx.get("base_fps") or 0), bool(ctx.get("dock")), above)
         if context != self.context:
             keep = (self.context is not None and self.context[:3] == context[:3] and self.point
                     and self.context[3] != "battery")
@@ -201,7 +214,7 @@ class PointPilot:
             self._guard_fixed(ctx)
             return {**req, **self.snapshot(refresh)}
         if fg in ("x3.75", "custom"):
-            cap = x375_cap(refresh) if fg == "x3.75" else max(20, min(refresh, int(ctx.get("base_fps") or 45)))
+            cap = x375_cap(refresh) if fg == "x3.75" else max(20 if above else x3_cap(refresh), min(refresh, int(ctx.get("base_fps") or 45)))
             self.phase, self.point = "fixed", cap
             self._guard_fixed(ctx)
             return {**self._request(1, cap, 0, False), **self.snapshot(refresh)}
@@ -251,7 +264,8 @@ class PointPilot:
         low = objective == "battery" or bool(ctx.get("autopilot") and ctx.get("low_battery"))
         top = floor if low else steps[-1]
         light = ctx.get("game_class") == "light" and not self.light_failed
-        bottom = lowest_point(int(ctx.get("refresh") or 90), objective, light, bool(ctx.get("dock")))
+        bottom = max(steps[0], lowest_point(int(ctx.get("refresh") or 90), objective, light, bool(ctx.get("dock"))))
+        floor_cap = steps[0]
         steps = [c for c in steps if c >= bottom]
         if not ctx.get("game"):
             self.phase = "idle"
@@ -310,7 +324,7 @@ class PointPilot:
                     else:
                         self.holds = False
                         self.reason = ("the game does not hold the lowest point even at full power"
-                                       if bottom == ladder(int(ctx.get("refresh") or 90))[0] else
+                                       if bottom == floor_cap else
                                        f"the game does not hold {bottom} (this mode's lowest point) even at full power")
         if self._over_power_target(ctx, steps, now):
             return self._request(1, self.point, 0, False)
@@ -327,9 +341,9 @@ class PointPilot:
     def _battery_point(ctx: Dict[str, Any], steps: List[int]) -> int:
         """Battery's point. x3.75 shows the most artefacts: Autopilot keeps x3 (30 at 90 Hz) and
         goes to x3.75 only on a low battery; the Battery mode chosen by hand keeps x3.75."""
-        if ctx.get("autopilot") and not ctx.get("low_battery") and len(steps) > 1:
-            return steps[1]
-        return steps[0]
+        full = ladder(int(ctx.get("refresh") or 90))
+        point = full[1] if ctx.get("autopilot") and not ctx.get("low_battery") and len(full) > 1 else full[0]
+        return max(point, steps[0])
 
     def _may_climb(self, ctx: Dict[str, Any], nxt: int) -> bool:
         """Autopilot climbs only from the ideal power and never into a point that cost too much."""
