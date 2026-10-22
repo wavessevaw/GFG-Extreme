@@ -107,6 +107,9 @@ STABLE_WINDOWS = 6
 STABLE_FLOOR_W = 2.5
 LIGHTER_WINDOWS = 3
 CONFIRM_WINDOWS = 2
+# Autopilot and Battery (user, 3.1.1): a dip past the 7 % tolerance that lasts 3 s in a row
+# (every 1 s reading short) gets a watt at once, without waiting for the windows.
+DIP_SUSTAIN_S = 3
 
 
 def healthy(window: List[Dict[str, Any]], cap: int, temp_ok: bool, hold: float = 0.97,
@@ -565,15 +568,16 @@ class PowerGovernor:
         probing = self.probe_from is not None and now - self.changed_at < 30.0
         # Our own step down that did not hold is taken back after 3 s: that is not a raise, the
         # level was checked already. Anything else in Autopilot needs 5 of 6 s short.
-        n = SUSTAIN_S if self.objective == "autopilot" and not probing else 3
+        dip_rule = self.objective in HOLD_RATIO and not probing
+        n = DIP_SUSTAIN_S if dip_rule else 3
         last = list(self.recent)[-n:]
         if self.tdp is None or self.ceiling is None or len(last) < n or None in last:
             return False
         ceiling = self._top()
         if self.tdp >= ceiling - 0.05 or now - self.fast_at < FAST_GAP_S:
             return False
-        # Autopilot: the second-best of 6 s (5 of 6 short); the modes: the median of 3 s.
-        med = sorted(last)[-2] if n == SUSTAIN_S else statistics.median(last)  # type: ignore[arg-type]
+        # Autopilot and Battery: every reading of the 3 s short; the modes: the median of 3 s.
+        med = max(last) if dip_rule else statistics.median(last)  # type: ignore[arg-type]
         if med >= SHORT_RATIO.get(self.objective, FAST_SHORT_RATIO) * self.cap or not self._binding(sample.get("draw_w")):
             return False
         severe = med < SEVERE_RATIO * self.cap
@@ -582,8 +586,10 @@ class PowerGovernor:
             # The step down did not hold: back to where it came from, and a floor at this level.
             self._failed(self.cap, self.tdp)
             target, why = self.probe_from, "fast-restore"
-        elif bold and not severe:
+        elif bold and not severe and not dip_rule:
             return False   # a mild shortfall waits for the windows to confirm it
+        elif dip_rule and not severe:
+            target, why = self.tdp + BOLD_UP_W, "dip-3s"
         elif bold:
             target, why = self.tdp + STEP_UP_W, "fast-severe"   # a collapse: 2 W, not the ceiling
         elif severe:
