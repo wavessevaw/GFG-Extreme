@@ -71,6 +71,11 @@ HOT_C = 90.0
 COOL_C = 85.0
 COOL_S = 30.0
 CRITICAL_C = 97.0
+# Plugging or unplugging the charger makes SteamOS put its own TDP for that power source back.
+# That is not the player moving the slider: an outside change this close to a charger change is
+# taken over again (its value becomes the new ceiling) instead of pausing the Governor.
+AC_GRACE_S = 15.0
+EXTERNAL_WAIT_S = 10.0       # an outside change waits this long for the charger to show up
 OBJECTIVES = ("battery", "balanced", "quality", "autopilot")
 
 
@@ -114,6 +119,8 @@ class PowerGovernor:
         self.journal = journal
         self.enabled = True
         self.restore_pending = False
+        self.ac: Optional[bool] = None
+        self.ac_changed_at = -1e9
         self._reset_session()
 
     def _reset_session(self) -> None:
@@ -121,6 +128,7 @@ class PowerGovernor:
         self.objective = "balanced"
         self.owned = False
         self.paused = ""  # reason the Governor stopped for this session
+        self.external_at: Optional[float] = None  # an outside TDP change seen, not yet explained
         self.tdp: Optional[float] = None
         self.ceiling: Optional[float] = None
         self.thermal_ceiling: Optional[float] = None
@@ -246,7 +254,8 @@ class PowerGovernor:
         if not result.get("success"):
             state = result.get("state") or {}
             if state.get("external_change"):
-                self._pause("TDP changed outside GFG Extreme (Steam's slider?): the Governor stays off for this game")
+                self.owned = False
+                self.external_at = self.clock() if self.external_at is None else self.external_at
             else:
                 self._note("governor-write-failed", watts=target, error=result.get("error"))
             return False
@@ -255,6 +264,30 @@ class PowerGovernor:
         self.held_at_tdp = False
         self.changed_at = self.clock()
         self.window = []
+        return True
+
+    def _external(self, now: float) -> bool:
+        """An outside TDP change: SteamOS's own after a charger change (take over again, its
+        value is the new ceiling), else the player's (pause for this game). True while waiting."""
+        if now - self.ac_changed_at <= AC_GRACE_S:
+            was = self.tdp
+            self.external_at = None
+            claim = self.actuator.claim()
+            if not claim.get("owned"):
+                self._pause(claim.get("error") or "TDP control is not available")
+                return True
+            self.owned = True
+            self.ceiling = float(self._limits()["ceiling"] or self.ceiling or 15.0)
+            self.tdp = self.ceiling
+            self._note("governor-reclaimed", reason="power-source", ac=self.ac, ceiling_w=self.ceiling, was=was)
+            if was is not None and was < self.ceiling - 0.05 and self.objective != "quality":
+                self._write(was, "power-source")   # keep the level the session had reached
+            self.window, self.window_start = [], now
+            return False
+        if now - self.external_at < EXTERNAL_WAIT_S:
+            return True
+        self.external_at = None
+        self._pause("TDP changed outside GFG Extreme (Steam's slider?): the Governor stays off for this game")
         return True
 
     def _pause(self, reason: str) -> None:
@@ -268,6 +301,12 @@ class PowerGovernor:
         0 = none), hold_ceiling, epoch, real, pace, over_budget, ring_miss (per second), temp_c,
         draw_w, experiment (Power Split / GPU clock trying a step), game (bool)."""
         now = self.clock()
+        ac = sample.get("ac")
+        if isinstance(ac, bool):
+            if self.ac is not None and ac != self.ac:
+                self.ac_changed_at = now
+                self._note("governor-power-source", ac=ac)
+            self.ac = ac
         if self.restore_pending:
             self.stop("retry-restore")
             if self.restore_pending:
@@ -296,10 +335,13 @@ class PowerGovernor:
                 self._write(self.ceiling or 15.0, "quality")
             elif self.cap > 0:
                 self._first_level(self.cap)
+        if self.external_at is None and self.owned and self.actuator.verify_ownership().get("external_change"):
+            self.owned = False
+            self.external_at = now
+        if self.external_at is not None and not self.paused:
+            if self._external(now):
+                return self.status()
         if self.paused or not self.owned:
-            return self.status()
-        if self.actuator.verify_ownership().get("external_change"):
-            self._pause("TDP changed outside GFG Extreme (Steam's slider?): the Governor stays off for this game")
             return self.status()
 
         temp = sample.get("temp_c")
@@ -517,5 +559,6 @@ class PowerGovernor:
             "cap": self.cap,
             "window": self.last,
             "draw_w": act.get("draw_w"),
+            "observed_tdp_w": act.get("observed_tdp_w"),
             "method": act.get("method"),
         }

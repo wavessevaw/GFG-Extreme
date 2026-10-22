@@ -126,6 +126,41 @@ class ControllerReviewTest(unittest.TestCase):
         self.assertEqual(a.tdp, 15)
         self.assertFalse(g.status()['restore_pending'])
 
+    def steam_resets_tdp(self, watts):
+        """SteamOS puts its own TDP back: the caps change outside GFG."""
+        self.act.tdp, self.act.external, self.act.owned = watts, True, False
+        orig_claim = self.act.claim
+        def claim():
+            self.act.external = False
+            return orig_claim()
+        self.act.claim = claim
+
+    def test_unplugging_the_charger_does_not_pause_the_governor(self):
+        self.feed(30, ac=True)
+        level = self.act.tdp
+        self.assertLess(level, 15)
+        self.steam_resets_tdp(15)
+        self.feed(1, ac=False)
+        st = self.gov.status()
+        self.assertTrue(st['owned'])
+        self.assertEqual(st['paused'], '')
+        self.assertEqual(self.act.tdp, level)   # the session's level comes back
+
+    def test_slider_change_without_charger_change_still_pauses(self):
+        self.feed(30, ac=False)
+        self.steam_resets_tdp(9)
+        self.feed(12, ac=False)
+        self.assertTrue(self.gov.status()['paused'])
+        self.assertEqual(self.act.tdp, 9)
+
+    def test_charger_seen_a_few_seconds_after_the_change_still_counts(self):
+        self.feed(30, ac=True)
+        self.steam_resets_tdp(15)
+        self.feed(4, ac=True)       # the battery status lags behind
+        self.feed(1, ac=False)
+        self.assertEqual(self.gov.status()['paused'], '')
+        self.assertTrue(self.gov.status()['owned'])
+
     def test_stale_auto_cannot_lock_from_old_measurement(self):
         p = PointPilot(clock=self.clock)
         ctx = dict(fg='auto', objective='balanced', refresh=90, app=1, game=True,

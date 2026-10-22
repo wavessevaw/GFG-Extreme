@@ -23,6 +23,11 @@ pieces: a TDP recovery journal, the 2.1.6 p5 rule and a shadow record of experim
 
 ## Governor
 
+- **Unplugging the charger no longer switches the Governor off.** SteamOS puts its own TDP for
+  the new power source back; that used to look like the player moving the slider, so the
+  Governor paused for the game and the HUD lost its TDP ring. A TDP change within 15 s of a
+  charger change is now taken over again (SteamOS's value becomes the ceiling, the session's
+  level comes back). The HUD shows the TDP the Deck runs at even when the Governor is off.
 - **TDP recovery journal.** Before every TDP write the player's own TDP is saved. If the plugin
   ever dies with the TDP lowered, the next start puts the player's TDP back; a TDP changed by
   someone else in between stays.

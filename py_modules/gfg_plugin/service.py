@@ -143,6 +143,7 @@ class Service:
             "probe_active": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
             "over_budget": (rates or {}).get("over_budget", 0.0), "ring_miss": 0.0, "temp_c": temp,
             "draw_w": gov.status().get("draw_w"),
+            "ac": power.get("external_power"),
             "experiment": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
         }
         if rates is not None and self.rates.prev is not None:
@@ -156,7 +157,8 @@ class Service:
         hours = self._hours_left(power)
         hud_cfg = data["hud"]
         if self.hud is not None:
-            extra = {"tdp_w": g.get("tdp_w") if g.get("owned") else None, "draw_w": g.get("draw_w"),
+            # Not managed (paused, or Governor off): the HUD still shows the TDP the Deck runs at.
+            extra = {"tdp_w": g.get("tdp_w") if g.get("owned") else g.get("observed_tdp_w"), "draw_w": g.get("draw_w"),
                      "ceiling_w": g.get("ceiling_w"), "temp_c": temp, "managing": g.get("managing"),
                      "battery": {**power, "hours_left": hours}}
             try:
