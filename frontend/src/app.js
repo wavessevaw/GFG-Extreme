@@ -99,10 +99,10 @@ const heroLine = (live) => {
   return [{ measure: "Measuring the game", trial: "Trying the next point up", demote: "Stepping down", locked: "Point locked and guarded.", fixed: "Fixed multiplier" }[p.phase] || "Starting", p.reason || ""];
 };
 const gameName = (app) => { try { const o = window.appStore && window.appStore.GetAppOverviewByAppID(app); return (o && o.display_name) || (app ? "App " + app : ""); } catch (e) { return ""; } };
-const OBJ = { autopilot: ["Autopilot", "adapts · aims at 12 W"], battery: ["Battery", "×3.75 · lowest watts"], balanced: ["Balanced", "best point it holds"], quality: ["Quality", "real frames first"] };
+const OBJ = { autopilot: ["Autopilot", "adapts · 12 W"], battery: ["Battery", "×3.75 · low watts"], balanced: ["Balanced", "best point"], quality: ["Quality", "real frames"] };
 
 // Mode icons (user, 3.0.6): drawn, not emoji, so Steam's fonts cannot turn them into boxes.
-const svg = (...c) => h("svg", { viewBox: "0 0 24 24", width: 22, height: 22, fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, ...c);
+const svg = (...c) => h("svg", { viewBox: "0 0 24 24", width: 16, height: 16, fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, ...c);
 const ICON = {
   autopilot: svg(h("path", { d: "M12 2.5l2.2 5.3 5.3 2.2-5.3 2.2L12 17.5l-2.2-5.3L4.5 10l5.3-2.2z", fill: "currentColor", stroke: "none" }), h("path", { d: "M18.5 15.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z", fill: "currentColor", stroke: "none" })),
   battery: svg(h("rect", { x: 2.5, y: 7, width: 17, height: 10, rx: 2.5 }), h("path", { d: "M21.5 10.5v3" }), h("rect", { x: 5, y: 9.5, width: 7, height: 5, rx: 1, fill: "currentColor", stroke: "none" })),

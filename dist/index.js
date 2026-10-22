@@ -89,8 +89,10 @@ var css = `
 .gfg .eord{width:20px;height:20px;border-radius:6px;background:var(--s3);color:var(--tx3);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex:none}
 .gfg .eord.on{background:var(--red);color:#fff}
 .gfg .t2 b{display:block;font-size:12.5px;font-weight:600}.gfg .t2 span{font-size:10px;color:var(--tx3)}
-.gfg .tile.mode{display:flex;align-items:center;gap:9px;position:relative;overflow:hidden}
-.gfg .mico{width:34px;height:34px;flex:none;border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--tx2);
+.gfg .tile.mode{display:flex;align-items:center;gap:8px;position:relative;overflow:hidden;padding:7px 8px;line-height:1.2}
+.gfg .tile.mode>div:last-child{min-width:0}
+.gfg .tile.mode b{font-size:12.5px;line-height:1.2}.gfg .tile.mode span{display:block;font-size:10px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gfg .mico{width:26px;height:26px;flex:none;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--tx2);
  background:linear-gradient(160deg,#33333b,#1c1c21);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 0 0 1px var(--line)}
 .gfg .tile.mode{background:linear-gradient(160deg,#222228 0%,var(--s2) 60%,#18181c 100%)}
 .gfg .tile.mode.on .mico{color:#fff;background:linear-gradient(160deg,#ff2d1a,#b30800);box-shadow:0 0 12px rgba(251,13,0,.5)}
@@ -305,8 +307,8 @@ var gameName = (app) => {
     return "";
   }
 };
-var OBJ = { autopilot: ["Autopilot", "adapts \xB7 aims at 12 W"], battery: ["Battery", "\xD73.75 \xB7 lowest watts"], balanced: ["Balanced", "best point it holds"], quality: ["Quality", "real frames first"] };
-var svg = (...c) => h("svg", { viewBox: "0 0 24 24", width: 22, height: 22, fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, ...c);
+var OBJ = { autopilot: ["Autopilot", "adapts \xB7 12 W"], battery: ["Battery", "\xD73.75 \xB7 low watts"], balanced: ["Balanced", "best point"], quality: ["Quality", "real frames"] };
+var svg = (...c) => h("svg", { viewBox: "0 0 24 24", width: 16, height: 16, fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, ...c);
 var ICON = {
   autopilot: svg(h("path", { d: "M12 2.5l2.2 5.3 5.3 2.2-5.3 2.2L12 17.5l-2.2-5.3L4.5 10l5.3-2.2z", fill: "currentColor", stroke: "none" }), h("path", { d: "M18.5 15.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z", fill: "currentColor", stroke: "none" })),
   battery: svg(h("rect", { x: 2.5, y: 7, width: 17, height: 10, rx: 2.5 }), h("path", { d: "M21.5 10.5v3" }), h("rect", { x: 5, y: 9.5, width: 7, height: 5, rx: 1, fill: "currentColor", stroke: "none" })),

@@ -57,8 +57,10 @@ export const css = `
 .gfg .eord{width:20px;height:20px;border-radius:6px;background:var(--s3);color:var(--tx3);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex:none}
 .gfg .eord.on{background:var(--red);color:#fff}
 .gfg .t2 b{display:block;font-size:12.5px;font-weight:600}.gfg .t2 span{font-size:10px;color:var(--tx3)}
-.gfg .tile.mode{display:flex;align-items:center;gap:9px;position:relative;overflow:hidden}
-.gfg .mico{width:34px;height:34px;flex:none;border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--tx2);
+.gfg .tile.mode{display:flex;align-items:center;gap:8px;position:relative;overflow:hidden;padding:7px 8px;line-height:1.2}
+.gfg .tile.mode>div:last-child{min-width:0}
+.gfg .tile.mode b{font-size:12.5px;line-height:1.2}.gfg .tile.mode span{display:block;font-size:10px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gfg .mico{width:26px;height:26px;flex:none;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--tx2);
  background:linear-gradient(160deg,#33333b,#1c1c21);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 0 0 1px var(--line)}
 .gfg .tile.mode{background:linear-gradient(160deg,#222228 0%,var(--s2) 60%,#18181c 100%)}
 .gfg .tile.mode.on .mico{color:#fff;background:linear-gradient(160deg,#ff2d1a,#b30800);box-shadow:0 0 12px rgba(251,13,0,.5)}
