@@ -6,14 +6,13 @@
 
 # GFG EXTREME 3.2
 
-**MOST POWERFUL DECKY PLUGIN EVER.**
+**Генерация кадров и адаптивное управление питанием Steam Deck.**
 
-Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integration
+Планирование кадров в Gamescope · Vulkan compute · Управление APU
 
-[**Скачать последнюю**](https://github.com/wavessevaw/GFG-Extreme/releases/latest) · [Установка](#установка) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Режимы](#06--performance-modes) · [HUD](#08--observability)
+[**Скачать последнюю**](https://github.com/wavessevaw/GFG-Extreme/releases/latest) · [Установка](#установка) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Режимы](#06--performance-modes) · [HUD](#08--observability) · [Тестирование (EN)](docs/INDEPENDENT_TESTING.md)
 
 [![Release](https://img.shields.io/github/v/release/wavessevaw/GFG-Extreme?include_prereleases&style=flat-square&color=fb0d00&label=release)](https://github.com/wavessevaw/GFG-Extreme/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/wavessevaw/GFG-Extreme/total?style=flat-square&color=20242e)](https://github.com/wavessevaw/GFG-Extreme/releases)
 [![Steam Deck](https://img.shields.io/badge/Steam%20Deck-OLED%20%7C%20LCD-20242e?style=flat-square)](#установка)
 [![Decky](https://img.shields.io/badge/Decky%20Loader-plugin-20242e?style=flat-square)](https://github.com/SteamDeckHomebrew/decky-loader)
 [![Engine](https://img.shields.io/badge/engine-GSF%20Kedavra-fb0d00?style=flat-square)](https://github.com/wavessevaw/GSF_Kedavra)
@@ -38,9 +37,9 @@ Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integ
 
 ---
 
-## FRAME GENERATION HAS MOVED INTO THE COMPOSITOR.
+## Архитектура
 
-### A FUNDAMENTAL SHIFT IN STEAM DECK PERFORMANCE.
+### Реконструкция и планирование кадров в Gamescope
 
 GFG Extreme 3 объединяет собственный движок кадровой генерации GSF Kedavra и интеллектуальную систему управления производительностью GFG Autopilot / Governor.
 
@@ -61,7 +60,7 @@ Lossless Scaling, MAKO и сторонние слои генерации не н
 **INTELLIGENT POWER MANAGEMENT**
 Замкнутый контур управления TDP с обратной связью и проверкой эффективности принимаемых решений.
 
-**ONE ENGINE. ONE CONTROL PLANE. ONE PERFORMANCE TARGET.**
+Цель системы: учитывать стабильность вывода, стоимость GPU-генерации и энергопотребление совместно. Это не заявление о доказанном приросте FPS или времени работы.
 
 ---
 
