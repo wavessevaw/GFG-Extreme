@@ -6,14 +6,13 @@
 
 # GFG EXTREME 3.2
 
-**MOST POWERFUL DECKY PLUGIN EVER.**
+**Frame reconstruction and adaptive power control for Steam Deck.**
 
-Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integration
+Gamescope frame scheduling · Vulkan compute · APU management
 
-[**Download latest**](https://github.com/wavessevaw/GFG-Extreme/releases/latest) · [Install](#installation) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Modes](#06--performance-modes) · [HUD](#08--observability)
+[**Download latest**](https://github.com/wavessevaw/GFG-Extreme/releases/latest) · [Install](#installation) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Modes](#06--performance-modes) · [HUD](#08--observability) · [Independent testing](docs/INDEPENDENT_TESTING.md)
 
 [![Release](https://img.shields.io/github/v/release/wavessevaw/GFG-Extreme?include_prereleases&style=flat-square&color=fb0d00&label=release)](https://github.com/wavessevaw/GFG-Extreme/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/wavessevaw/GFG-Extreme/total?style=flat-square&color=20242e)](https://github.com/wavessevaw/GFG-Extreme/releases)
 [![Steam Deck](https://img.shields.io/badge/Steam%20Deck-OLED%20%7C%20LCD-20242e?style=flat-square)](#installation)
 [![Decky](https://img.shields.io/badge/Decky%20Loader-plugin-20242e?style=flat-square)](https://github.com/SteamDeckHomebrew/decky-loader)
 [![Engine](https://img.shields.io/badge/engine-GSF%20Kedavra-fb0d00?style=flat-square)](https://github.com/wavessevaw/GSF_Kedavra)
@@ -38,9 +37,9 @@ Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integ
 
 ---
 
-## FRAME GENERATION HAS MOVED INTO THE COMPOSITOR.
+## Architecture
 
-### A FUNDAMENTAL SHIFT IN STEAM DECK PERFORMANCE.
+### Reconstruction and presentation scheduling in Gamescope
 
 GFG Extreme 3 combines its own frame generation engine, GSF Kedavra, with the GFG Autopilot / Governor performance control system.
 
@@ -61,7 +60,7 @@ Compositor-level frame scheduling that follows the display refresh and GPU readi
 **INTELLIGENT POWER MANAGEMENT**
 A closed TDP control loop with feedback that verifies every decision it makes.
 
-**ONE ENGINE. ONE CONTROL PLANE. ONE PERFORMANCE TARGET.**
+The objective is to measure frame delivery, generator GPU cost, and power consumption together. The design is not a claim of proven FPS or battery gains.
 
 ---
 
