@@ -1,15 +1,15 @@
 # GFG Extreme 3.3.1
 
-Camera turns without jelly or blocks, steadier Autopilot and calmer power management.
+Solid camera turns, steadier Autopilot and calmer power management.
 **Update engine** and reboot after installing.
 
 ## New engine: GSF Kedavra 1.4.3
 - **The world turns as one image.** The camera's motion is now fitted as a plane projective map,
   the exact image motion of a turning camera, where the sides move faster than the centre and
   along curves. Wherever the picture agrees, a pixel follows that map instead of its 4×4 block,
-  so the jelly of a turn and the square blocks at the sides of the screen are gone.
+  so the whole screen turns as one solid image, sides included.
 - **The true phase of a turn.** Each generated frame shows the camera turned by exactly its share
-  of the angle, so generated frames no longer wobble at the sides during a fast turn.
+  of the angle, so the sides stay steady during a fast turn.
 - **Same cost.** Analysis and synthesis cost the same as before within a few percent.
 
 Engine test (1280×800), 3.3.0 → 3.3.1:
@@ -22,8 +22,8 @@ Engine test (1280×800), 3.3.0 → 3.3.1:
 
 ## Steadier Autopilot
 - **A point is kept once it is chosen.** When the game does not hold the next point up, that
-  point waits 1, 2, 4, 8 and up to 16 minutes before the next try, so the multiplier no longer
-  switches back and forth every minute in a game that sits near its limit.
+  point waits 1, 2, 4, 8 and up to 16 minutes before the next try, so the multiplier stays put
+  in a game that sits near its limit.
 - **Short trials.** A try that is clearly short ends after 4 seconds instead of running to the end.
 
 ## Calmer power management
