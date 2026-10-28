@@ -127,7 +127,7 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || (github.event_name != 'workflow_dispatch' && github.ref_name || '') }}
     steps:
       - uses: actions/checkout@v4
         with:
