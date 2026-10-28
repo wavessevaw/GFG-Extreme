@@ -151,7 +151,8 @@ class VAuto:
 
 class VEngine:
     DEFAULTS = {"kfg_multiplier": "0", "kfg_base_fps": "0", "kfg_auto_floor": "0", "kfg_post": "",
-                "kfg_hud": "", "kfg_policy": "0", "kfg_trace": "", "kfg_hdr": "1"}
+                "kfg_hud": "", "kfg_policy": "0", "kfg_trace": "", "kfg_hdr": "1",
+                "kfg_strict": "1"}
 
     def __init__(self, clock: VClock, game: VGame, power: "VPower", refresh: int = 90) -> None:
         self.clock, self.game, self.power = clock, game, power
@@ -177,8 +178,10 @@ class VEngine:
         self.gpu_backend: Any = None   # gpu_clock.MemoryBackend: SteamOSManager's manual GPU clock
         self.cpu_share = 1.0
         self.gpu_capability = 0.0
-        # Honest multipliers: the engine draws exactly N-1 intermediates per real frame for a
-        # policy (N >= 2, base) and says so in its status ("strict_multiplier").
+        # A GSF 1.5 engine (strict multiplier): status "strict" (kfg_strict 0 fill, 1 stretch =
+        # default, 2 hold, 3 real). With kfg_strict >= 1 it draws exactly N-1 intermediates per
+        # real frame for N >= 2; in every mode at most two per real frame, and Auto and a base
+        # stay at refresh / 3 or above (x3.75's (1, 24) runs as base 30).
         self.strict = False
         # Generation's cost to the game: None keeps the flat 8 %; a number is the share lost per
         # 60 generated frames a second (0.08: 8 % at x3 on 90 Hz, less for fewer intermediates).
@@ -210,6 +213,10 @@ class VEngine:
         if self.rival:
             self.rival(self)
         mult, base, floor = self._int("kfg_multiplier"), self._int("kfg_base_fps"), self._int("kfg_auto_floor")
+        if self.strict:
+            third = -(-self.refresh // 3)
+            base = max(third, base) if base else 0
+            floor = max(third, floor) if floor else 0
         generating = mult != 0 and self.app_id not in (0, 769)
         # CPU and GPU share the TDP: a capped CPU clock gives part of its boost back to the GPU
         # and limits how many frames the CPU can prepare.
@@ -243,7 +250,7 @@ class VEngine:
         else:
             cap = self.refresh // mult
             self.auto = None
-        strict = self.strict and mult >= 2 and generating
+        strict = self.strict and self._int("kfg_strict") >= 1 and mult >= 2 and generating
         if strict and base:
             cap = min(self.refresh // mult, max(20, base))
         rate = min(capability, cap) if cap else min(capability, self.refresh)
@@ -287,7 +294,7 @@ class VEngine:
             "width": 1280, "height": 800, "app_id": self.app_id, "steam_ui": self.steam_ui,
             "auto": mult == 1 and not self._int("kfg_base_fps"), "cap_fps": self.cap,
             "base_fps": self._int("kfg_base_fps"), "gpu_us_avg": self.gpu_us,
-            **({"strict_multiplier": True} if self.strict else {}),
+            **({"strict": self._int("kfg_strict")} if self.strict else {}),
             **{k: int(v) for k, v in self.counters.items()},
         }
         if not self.old_engine:

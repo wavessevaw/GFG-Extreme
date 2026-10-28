@@ -9,6 +9,7 @@ battery), so the sandbox runs this same code against a virtual Deck.
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from typing import Any, Callable, Dict, Optional
 
 from . import filters
@@ -20,7 +21,7 @@ from .governor_device import external_display_connected
 from .lease import ExperimentLease
 from .kedavra import hud as hudmod
 from .benchmark import Benchmark
-from .pilot import PointPilot, ladder
+from .pilot import PointPilot, ladder, x3_cap
 from .policy import Policy, PolicyCoordinator
 from .session_stats import SessionStats
 from .split_control import SplitControl
@@ -30,6 +31,8 @@ from .gpu_clock_control import GpuClockControl
 GAME_GRACE_S = 10.0   # the QAM or a loading screen does not end a game session
 STEAM_APP = 769
 HDR_RESEND_S = 10.0
+STRICT_FILL = 0      # kfg_strict (GSF 1.5): Autopilot fills to the refresh, at most two intermediates
+STRICT_DEFAULT = 1   # strict xN (stretch), the engine's default: every other mode, and no game
 DOCK_CHECK_S = 5.0    # an external display (the dock) is looked up this often
 # No game (user, 3.1.1): after a game GFG resets everything and computes nothing. An idle tick
 # only reads the engine status (to see the next game) and keeps the idle policy confirmed; the
@@ -182,7 +185,7 @@ class Service:
             except OSError:
                 pass
         dock = self.dock
-        panel = self._honest_panel(game, st, refresh, dock)
+        panel = self._honest_panel(game, st, refresh, dock, objective)
         aim = (self.last_req or {}).get("point") if self.last_req else None
         pace = self._control_pace(live, rates, st, refresh, aim) if panel is not None else live.get("pace")
         gp = self.book.profile(self.app, refresh, dock) if game else {"class": None, "source": None}
@@ -229,8 +232,9 @@ class Service:
                                       and filters.is_active(profile["filters"])),
             gpu_busy=sensors.get("gpu_busy_pct"),
             starved=bool(req["phase"] in ("locked", "fixed") and (0 < req["point"] < above_x3 or not self.pilot.holds)))
-        policy = Policy(req["multiplier"], req["base_fps"], filters.to_post(shed(profile["filters"], budget)),
-                        self.hud_path, req["auto_floor"], bool(data["engine"]["hdr"]))
+        mult, base, floor = self._at_most_x3(req["multiplier"], req["base_fps"], req["auto_floor"], refresh)
+        policy = Policy(mult, base, filters.to_post(shed(profile["filters"], budget)),
+                        self.hud_path, floor, bool(data["engine"]["hdr"]), self._strict(st, game, objective))
         self.coord.want(policy)
         self.last_policy = policy
         if self.boost is not None:
@@ -361,10 +365,33 @@ class Service:
         return 1.0 - max(0.0, rates["repeat"] - planned) / shown if shown > 0 else pace
 
     @staticmethod
-    def _honest_panel(game: bool, st: Dict[str, Any], refresh: int, dock: bool) -> Optional[Dict[str, Any]]:
-        """Honest multipliers (honest.py) once the engine draws strict xN; the refresh is never
-        changed (user, 22:22), so this is the refresh the points are for."""
-        if not game or not st.get("strict_multiplier"):
+    def _strict_engine(st: Dict[str, Any]) -> bool:
+        """A GSF 1.5 engine: its status has "strict" (kfg_strict 0-3)."""
+        return "strict" in (st or {})
+
+    @classmethod
+    def _strict(cls, st: Dict[str, Any], game: bool, objective: str) -> int:
+        """kfg_strict to send: Autopilot fills to the refresh (0, within the engine's two
+        intermediates), every other mode draws strict xN (1, the engine's default); -1 for an
+        engine without the convar."""
+        if not cls._strict_engine(st):
+            return -1
+        return STRICT_FILL if game and objective == "autopilot" else STRICT_DEFAULT
+
+    @staticmethod
+    def _at_most_x3(mult: int, base: int, floor: int, refresh: int) -> tuple:
+        """x3 is the most in every mode (user, 2026-10-28): never x4, never a cap or an Auto floor
+        under refresh / 3 (x3.75's 24 at 90 Hz is sent as 30)."""
+        third = x3_cap(refresh)
+        return (min(3, mult), max(third, base) if base else 0, max(third, floor) if floor else 0)
+
+    @classmethod
+    def _honest_panel(cls, game: bool, st: Dict[str, Any], refresh: int, dock: bool,
+                      objective: str = "balanced") -> Optional[Dict[str, Any]]:
+        """Honest multipliers (honest.py) when the engine draws strict xN, which is every mode but
+        Autopilot (kfg_strict 0: fill to the refresh). The refresh is never changed by GFG (user,
+        22:22), so this is the refresh the points are for."""
+        if not game or not cls._strict_engine(st) or objective == "autopilot":
             return None
         return {"refresh": refresh, "dock": dock}
 
@@ -389,6 +416,9 @@ class Service:
     def _idle_tick(self, now: float, st: Dict[str, Any], fresh: bool, live: Dict[str, Any]) -> Dict[str, Any]:
         self._hdr_output(bool(self.settings.data["engine"].get("hdr_output", True)), fresh, now)
         if self.last_policy is not None:
+            if self.last_policy.strict >= 0:
+                # The game is gone: the engine's default (strict xN) again, not Autopilot's fill.
+                self.last_policy = replace(self.last_policy, strict=STRICT_DEFAULT)
             self.coord.want(self.last_policy)
         coord = self.coord.tick(st)
         snap = dict(self.snapshot)
@@ -439,8 +469,13 @@ class Service:
 
     def stop(self) -> None:
         """Plugin unload: TDP back to the player's, HDR output back on, HUD hidden, generation left
-        as the engine runs it."""
+        as the engine runs it (with its default kfg_strict back if Autopilot had it at fill)."""
         self._end_session("unload")
+        if self.last_policy is not None and self.last_policy.strict not in (-1, STRICT_DEFAULT):
+            try:
+                self.coord.ctl.set_var("kfg_strict", STRICT_DEFAULT)
+            except Exception:
+                pass
         if self.boost is not None:
             self.boost.stop()
         self._hdr_output(True, True, self.clock())

@@ -23,7 +23,8 @@ Fixed x2 / x3 keep the cap refresh / N and Custom keeps its base (a fractional m
 alternates one and two intermediates, never three): those requests do not change.
 
 The pilot's measure, lock, guard, trials and back-offs work on the bases as before. Nothing here
-runs until the engine reports that it draws strict multipliers (status "strict_multiplier").
+runs until the engine reports that it draws strict multipliers (GSF 1.5: "strict" in its status;
+GFG sends kfg_strict 1 for these modes and 0, fill to the refresh, for Autopilot).
 """
 from __future__ import annotations
 

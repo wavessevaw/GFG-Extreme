@@ -66,6 +66,27 @@ class SettingsTest(unittest.TestCase):
             self.assertEqual(again.data["profiles"]["app:1245620"]["name"], "Elden Ring")
 
 
+class StrictServiceTest(unittest.TestCase):
+    def test_strict_per_mode_and_x3_limit(self):
+        from gfg_plugin.service import Service
+        gsf15 = {"strict": 1}
+        self.assertEqual(Service._strict(gsf15, True, "autopilot"), 0)
+        for obj in ("balanced", "quality", "battery"):
+            self.assertEqual(Service._strict(gsf15, True, obj), 1)
+        self.assertEqual(Service._strict(gsf15, False, "autopilot"), 1, "no game: the engine's default")
+        self.assertEqual(Service._strict({"strict": 0}, True, "balanced"), 1)
+        self.assertEqual(Service._strict({}, True, "balanced"), -1, "an older engine gets no kfg_strict")
+        self.assertIsNone(Service._honest_panel(True, gsf15, 90, False, "autopilot"))
+        self.assertEqual(Service._honest_panel(True, {"strict": 0}, 90, False, "quality"), {"refresh": 90, "dock": False})
+        self.assertIsNone(Service._honest_panel(True, {}, 90, False, "quality"))
+        # Never x3.75 / x4 on the wire.
+        self.assertEqual(Service._at_most_x3(1, 0, 24, 90), (1, 0, 30))
+        self.assertEqual(Service._at_most_x3(1, 24, 0, 90), (1, 30, 0))
+        self.assertEqual(Service._at_most_x3(4, 0, 0, 90), (3, 0, 0))
+        self.assertEqual(Service._at_most_x3(2, 45, 0, 90), (2, 45, 0))
+        self.assertEqual(Service._at_most_x3(1, 0, 0, 60), (1, 0, 0))
+
+
 class PolicyTest(unittest.TestCase):
     def setUp(self):
         self.clock = Clock()
@@ -92,6 +113,32 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(self.tick()["state"], "applying")
         self.assertEqual([n for n, _ in self.ctl.calls[sent:]], ["kfg_base_fps", "kfg_policy"])
         self.assertEqual(self.tick()["state"], "confirmed")
+
+    def test_strict_sent_and_confirmed(self):
+        """GSF 1.5: kfg_strict is part of the policy, sent before the cap and checked in the echo."""
+        def tick():
+            self.clock.t += 1
+            st = engine_status(self.ctl, self.clock.t)
+            st["strict"] = int(self.ctl.vars.get("kfg_strict", 1))
+            return self.c.tick(st)
+        self.c.want(Policy(1, 35, "", "/dev/shm/h", 0, True, 0))
+        self.assertEqual(tick()["state"], "applying")
+        names = [n for n, _ in self.ctl.calls]
+        self.assertLess(names.index("kfg_strict"), names.index("kfg_base_fps"))
+        self.assertEqual(self.ctl.vars["kfg_strict"], "0")
+        self.assertEqual(tick()["state"], "confirmed")
+        sent = len(self.ctl.calls)
+        self.c.want(Policy(2, 45, "", "/dev/shm/h", 0, True, 1))
+        tick()
+        self.assertEqual(self.ctl.vars["kfg_strict"], "1")
+        self.assertEqual(tick()["state"], "confirmed")
+        # An engine without the convar never gets it.
+        ctl = FakeCtl()
+        c = PolicyCoordinator(ctl, clock=self.clock)
+        c.want(self.want)
+        self.clock.t += 1
+        c.tick(engine_status(ctl, self.clock.t))
+        self.assertNotIn("kfg_strict", ctl.vars)
 
     def test_stale_holds_and_old_engine(self):
         self.c.want(self.want)

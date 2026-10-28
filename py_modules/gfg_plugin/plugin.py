@@ -137,6 +137,7 @@ class Plugin:
         try:
             await asyncio.to_thread(self.ctl.set_var, "kfg_multiplier", 0)
             await asyncio.to_thread(self.ctl.set_var, "kfg_post", "")
+            await asyncio.to_thread(self.ctl.set_var, "kfg_strict", 1)   # GSF 1.5's default
         except Exception:
             pass
 

@@ -76,12 +76,14 @@ class HonestTest(unittest.TestCase):
 
     def test_strict_engine_gets_pairs(self):
         rows = self._rows(42.0)
-        for obj, want in (("autopilot", "x2@40"), ("balanced", "x2@40"), ("quality", "x2@45"),
+        # GSF 1.5: Autopilot runs fill (kfg_strict 0, two intermediates at most), the rest strict xN.
+        for obj, want in (("autopilot", "fill@40"), ("balanced", "x2@40"), ("quality", "x2@45"),
                           ("battery", "x3@30")):
             res = replay.replay(rows, strict=True, gen_cost=0.08, objective=obj)
             top, pairs = self._main(res)
             self.assertEqual(top, want, (obj, pairs))
-            self.assertFalse(any(k.startswith("fill") for k in pairs), (obj, pairs))
+            if obj != "autopilot":
+                self.assertFalse(any(k.startswith("fill") for k in pairs), (obj, pairs))
         # x3 only for a game that cannot hold more than about 30, outside Autopilot too.
         top, pairs = self._main(replay.replay(self._rows(33.0), strict=True, gen_cost=0.08, objective="balanced"))
         self.assertEqual(top, "x3@30", pairs)

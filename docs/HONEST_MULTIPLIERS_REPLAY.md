@@ -142,3 +142,27 @@ The arms are equal to within 0.01 fps and 0.01 W.
   (70-80 on screen) feels better than x3 at 30 (90, even) has to be judged on a Deck.
 - **The labels are those of the docked sessions.** In the tables, x2@25, x2@30 and x3@20 come
   from docked sessions at 60 Hz. The labels do not show the refresh.
+
+## Update: the GSF 1.5 engine contract (engine e10d039)
+
+The engine's contract is described in GSF `docs/kedavra/STRICT_MULTIPLIER_1_5.md`.
+
+- **Detection.** The engine status has `"strict"`, with values 0 fill, 1 stretch (the default),
+  2 hold and 3 real. GFG treats an engine as honest-capable when that key is present. An engine
+  without it gets no `kfg_strict`, and 3.3.2's requests stand.
+- **What GFG sends.** `kfg_strict` is part of the policy. It is sent before the cap and checked
+  in the engine's echo like the other convars.
+  - **Autopilot** sends `kfg_strict 0`. That is fill to the refresh, with the engine's hard limit
+    of two intermediates per real frame. Autopilot uses 3.3.2's fill ladder, capped at x3.
+  - **Every other mode** sends `kfg_strict 1` and uses the honest ladders above. The x2 ladder
+    from 32 in this report's Autopilot table is not used while Autopilot runs fill.
+  - **When no game runs**, and when the plugin unloads or is uninstalled, the default 1 is set
+    back.
+- **x3 at most on the wire.** The service never sends a multiplier above 3, nor a base or an
+  Auto floor under refresh / 3. So x3.75's `(1, 24)` goes out as base 30, matching the engine,
+  which runs it as base 30 x3.
+
+The replay was rerun on the same 21.1 h with 3 seeds. Autopilot with fill on GSF 1.5 gives 34.18
+real fps at 11.81 W, against 33.94 at 11.79 W for 3.3.2. That matches the branch's fill arm,
+whose difference from 3.3.2 is the control-churn hysteresis. Balanced, Quality and Battery
+are unchanged from the tables above, within ±0.1 fps.

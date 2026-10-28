@@ -43,9 +43,12 @@ class Policy:
     hud_path: str = ""
     auto_floor: int = 0  # lowest cap Auto may use; 0 = refresh / 3 (x3), 24 at 90 Hz = x3.75
     hdr: bool = True     # generate and filter HDR games (kfg_hdr); False = they pass through
+    # kfg_strict (GSF 1.5): 0 fill (Autopilot), 1 strict xN (the engine's default); -1 = not sent
+    # (an engine without "strict" in its status).
+    strict: int = -1
 
     def key(self) -> tuple:
-        return (self.multiplier, self.base_fps, self.post, self.hud_path, self.auto_floor, self.hdr)
+        return (self.multiplier, self.base_fps, self.post, self.hud_path, self.auto_floor, self.hdr, self.strict)
 
 
 @dataclass
@@ -101,7 +104,8 @@ class PolicyCoordinator:
                     and int(st.get("req_base_fps", -1)) == want.base_fps
                     and int(st.get("req_auto_floor", -1)) == want.auto_floor
                     and bool(st.get("hdr_enabled")) == want.hdr
-                    and str(st.get("post", "")) == want.post)
+                    and str(st.get("post", "")) == want.post
+                    and (want.strict < 0 or int(st.get("strict", -1)) == want.strict))
         except (TypeError, ValueError):
             return False
 
@@ -120,8 +124,9 @@ class PolicyCoordinator:
     # ------------------------------------------------------------------ API
     def want(self, policy: Policy) -> None:
         if self.wanted is None or policy.key() != self.wanted.key():
-            if self.wanted is None or (policy.multiplier, policy.base_fps, policy.auto_floor, policy.post, policy.hdr) != (
-                    self.wanted.multiplier, self.wanted.base_fps, self.wanted.auto_floor, self.wanted.post, self.wanted.hdr):
+            if self.wanted is None or (policy.multiplier, policy.base_fps, policy.auto_floor, policy.post, policy.hdr, policy.strict) != (
+                    self.wanted.multiplier, self.wanted.base_fps, self.wanted.auto_floor, self.wanted.post, self.wanted.hdr,
+                    self.wanted.strict):
                 self.s.epoch += 1
             self.wanted = policy
             self.retry_at = 0.0  # a new wish is sent now, not after an old back-off
@@ -235,6 +240,8 @@ class PolicyCoordinator:
                 self.ctl.set_var("kfg_hdr", 1 if want.hdr else 0)
             if not same("post", want.post):
                 self.ctl.set_var("kfg_post", want.post)
+            if want.strict >= 0 and not same("strict", want.strict):
+                self.ctl.set_var("kfg_strict", want.strict)
             if not same("req_auto_floor", want.auto_floor):
                 self.ctl.set_var("kfg_auto_floor", want.auto_floor)
             if not same("req_base_fps", want.base_fps):
