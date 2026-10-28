@@ -179,14 +179,17 @@ class PilotTest(unittest.TestCase):
         out = self.run_ctx(13, confirmed=False, real=None, engine={})
         self.assertEqual(out["phase"], "measure", "silence is not a stable measurement")
 
-    def test_autopilot_gives_up_a_point_that_costs_over_12w(self):
+    def test_autopilot_keeps_x2_below_the_whole_15w(self):
+        # 3.3.0: the multiplier follows the game; x2 is kept up to the 15 W ceiling.
         self.run_ctx(20)                       # locked 45
-        out = self.run_ctx(30, autopilot=True, tdp_w=14.0, gov_settled=True)
-        self.assertEqual(out["point"], 45, "a minute first")
-        out = self.run_ctx(35, autopilot=True, tdp_w=14.0, gov_settled=True)
-        self.assertEqual(out["point"], 40)
-        out = self.run_ctx(200, autopilot=True, tdp_w=9.0, gov_settled=True, gpu_busy=50, cpu_top=30)
-        self.assertEqual(out["point"], 40, "the costly point is not retried for 10 minutes")
+        out = self.run_ctx(100, autopilot=True, tdp_w=13.5, gov_settled=True)
+        self.assertEqual(out["point"], 45)
+
+    def test_autopilot_keeps_x2_even_at_the_whole_15w(self):
+        # 3.3.0: above x3 the multiplier follows the game; only the guard steps down.
+        self.run_ctx(20)                       # locked 45
+        out = self.run_ctx(120, autopilot=True, tdp_w=14.8, gov_settled=True)
+        self.assertEqual(out["point"], 45)
 
     def test_autopilot_battery_keeps_x3_until_low_battery(self):
         out = self.run_ctx(2, objective="battery", autopilot=True)

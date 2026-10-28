@@ -19,6 +19,7 @@ from .game_book import GameBook, START_W as CLASS_START_W
 from .governor_device import external_display_connected
 from .lease import ExperimentLease
 from .kedavra import hud as hudmod
+from .benchmark import Benchmark
 from .pilot import PointPilot, ladder
 from .policy import Policy, PolicyCoordinator
 from .session_stats import SessionStats
@@ -56,6 +57,7 @@ class Service:
         self.hud_path = hud_path
         self.coord = PolicyCoordinator(ctl, clock=clock, journal=self._j("policy"))
         self.pilot = PointPilot(clock=clock, journal=self._j("pilot"))
+        self.bench = Benchmark(clock=clock)
         self.autopilot = Autopilot(clock=clock)
         self.governor = PowerGovernor(actuator, model, clock=clock, journal=self._j("governor"))
         self.split = split
@@ -85,6 +87,17 @@ class Service:
         self.idle = False          # reset after the last game and idling: the light tick runs
         self.idle_rev: Any = None  # settings revision the idle snapshot was made with
         self.idle_sensors_at = -1e9
+
+    def bench_start(self) -> Dict[str, Any]:
+        return self.bench.start(self.app, bool(self.app))
+
+    def bench_answer(self, accept: bool) -> Dict[str, Any]:
+        res = self.bench.answer(accept)
+        if res:
+            self.book.note_benchmark(res["app"], res["refresh"], res["dock"], res["point"], res["medians"])
+            if self.app == res["app"]:
+                self.pilot.adopt(res["point"], "benchmark: the game's medians")
+        return {"ok": True, "accepted": bool(res)}
 
     def _stable_point(self, refresh: int) -> Optional[int]:
         """The point the Governor locked as stable for this game last time (None: unknown)."""
@@ -178,13 +191,14 @@ class Service:
         # A camera-turn boost (3.1.1) and the 2 s after it are not the point's readings: the pilot
         # and the Governor keep what they had.
         boosting = bool(game and self.boost is not None and self.boost.busy(now) and self.last_req is not None)
-        req = self.last_req if boosting else self.pilot.tick({
+        benching = bool(game and self.bench.measuring and self.last_req is not None)
+        req = self.last_req if boosting or benching else self.pilot.tick({
             "fg": profile["fg"], "base_fps": profile["base_fps"], "objective": objective,
             "refresh": refresh, "game": game, "app": self.app, "engine": st,
             "real": live.get("real"), "pace": live.get("pace"), "confirmed": confirmed,
             "gpu_busy": sensors.get("gpu_busy_pct"), "cpu_top": sensors.get("cpu_top_core_pct"),
             "autopilot": objective == "autopilot", "stable_point": self._stable_point(refresh) if game else None,
-            "known_point": gp.get("point"), "game_class": gp.get("class"), "dock": dock,
+            "known_point": gp.get("point"), "bench_point": gp.get("bench_point"), "game_class": gp.get("class"), "dock": dock,
             "low_battery": self.autopilot.low_battery or data["autopilot"]["preference"] == "battery",
             "above_x3": data["engine"].get("above_x3", False),
             # Only a TDP the Governor manages is a power reading for the pilot: paused (the player's own
@@ -193,6 +207,10 @@ class Service:
             "at_ceiling": gov.at_ceiling(), "settling": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
         })
         self.last_req = req if game else None
+        if benching:
+            # Benchmark: the game's own frames at the 15 W ceiling, generation off; the pilot keeps
+            # its point for after the run.
+            req = {**req, "multiplier": 0, "base_fps": 0, "auto_floor": 0, "hold_ceiling": True, "phase": "bench"}
         if game and self.pilot.measured:
             self.book.note_measure(self.app, refresh, dock, self.pilot.measured, ladder(refresh))
         self.pilot.measured = 0
@@ -259,7 +277,14 @@ class Service:
         if rates is not None:
             sample["ring_miss"], sample["over_budget"] = ring_miss, over_budget
         g = gov.status() if boosting else gov.tick(sample)
-        if game and g.get("stable") and req["point"]:
+        self.bench.tick({"app": self.app, "game": game, "steam_ui": bool(st.get("steam_ui")), "real": live.get("real"),
+                         "gpu": sensors.get("gpu_busy_pct"), "cpu": sensors.get("cpu_top_core_pct"),
+                         "draw_w": g.get("draw_w"), "temp_c": temp, "at_ceiling": gov.at_ceiling(), "refresh": refresh,
+                         "dock": dock, "above_x3": data["engine"].get("above_x3", False)})
+        # A point forced by the Battery mode or a low battery is not what the game holds: it is
+        # not the next launch's starting point (3.3.0).
+        if (game and g.get("stable") and req["point"] and objective != "battery"
+                and not self.autopilot.low_battery and not benching):
             mark = (self.app, refresh, dock, req["point"], g.get("tdp_w"))
             if mark != self.noted_point:
                 self.noted_point = mark
@@ -276,8 +301,12 @@ class Service:
                      "ceiling_w": g.get("ceiling_w"), "temp_c": temp, "managing": g.get("managing"),
                      "battery": {**power, "hours_left": hours}}
             try:
-                self.hud.tick(bool(hud_cfg["enabled"]) and game, st if fresh else None, extra,
-                              hud_cfg["position"], hud_cfg["detail"])
+                panel = self.bench.panel() if game else None
+                if panel:
+                    self.hud.message(st if fresh else None, panel, self.bench.view())
+                else:
+                    self.hud.tick(bool(hud_cfg["enabled"]) and game, st if fresh else None, extra,
+                                  hud_cfg["position"], hud_cfg["detail"])
             except OSError:
                 pass
         if game:
@@ -294,6 +323,7 @@ class Service:
             "boost": self.boost.status() if self.boost is not None else None,
             "sensors": sensors, "power": power,
             "filters": filters.summary(profile["filters"]),
+            "bench": self.bench.view(),
         }
         if self.telemetry is not None and game:
             self.telemetry.sample({"t": round(time.time(), 1), "app": self.app, "fps": live.get("fps"),

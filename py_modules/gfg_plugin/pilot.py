@@ -59,9 +59,11 @@ PACE_MIN = 0.99
 # lower one, and Autopilot climbs only while the TDP is at the ideal.
 POWER_GOOD_W = 12.0
 POWER_IDEAL_W = 10.0
-# Autopilot (user, 3.0.8): below 15 W keep the highest point up to 40 the game holds ("if it
-# does 40, keep base 35-40"), x3 at least; x3.75 only when x3 needs the whole 15 W. x2 (45) is a
-# bonus: climbed into from the ideal 10 W, kept within the good 12 W.
+# Autopilot (user, 3.3.0): the multiplier follows the game's base FPS, not the other way round.
+# Whenever the game holds more than 30, the x2 family (35, 40, 45 at 90 Hz) is the aim; x3 stays
+# only where the game really does not get above 30. Every point is climbed into and kept below
+# the whole 15 W; x3.75 only when x3 needs it. A low battery keeps following the game, it only
+# climbs within the good 12 W.
 BAND_MAX_W = 14.5
 # The highest multiplier per objective (user, 3.0.10): Balanced works down to x3, Quality to x2.5.
 MAX_MULT = {"balanced": 3.0, "quality": 2.5}
@@ -262,7 +264,9 @@ class PointPilot:
     def _auto(self, ctx: Dict[str, Any], steps: List[int], objective: str) -> Dict[str, Any]:
         now = self.clock()
         floor = self._battery_point(ctx, steps)
-        low = objective == "battery" or bool(ctx.get("autopilot") and ctx.get("low_battery"))
+        # Only the Battery mode chosen by hand pins its low point. A low battery under Autopilot
+        # no longer locks x3 (Deck report 3.2.1: 45 fps at 7.5 W dropped to 30 at 19 %).
+        low = objective == "battery"
         top = floor if low else steps[-1]
         light = ctx.get("game_class") == "light" and not self.light_failed
         bottom = max(steps[0], lowest_point(int(ctx.get("refresh") or 90), objective, light, bool(ctx.get("dock"))))
@@ -331,6 +335,11 @@ class PointPilot:
                         self.reason = ("the game does not hold the lowest point even at full power"
                                        if bottom == floor_cap else
                                        f"the game does not hold {bottom} (this mode's lowest point) even at full power")
+        compass = ctx.get("bench_point")
+        if isinstance(compass, (int, float)) and self.point < compass and compass in steps:
+            # Below the benchmark's point (a heavier scene): back up there soon once it is calm,
+            # later after each try that did not hold.
+            self.promote_wait = min(self.promote_wait, max(KNOWN_RECHECK_S, self.headroom_backoff))
         if self._over_power_target(ctx, steps, now):
             return self._request(1, self.point, 0, False)
         if (objective != "battery" and self.clean_since is not None and self.point < top
@@ -350,8 +359,16 @@ class PointPilot:
         point = full[1] if ctx.get("autopilot") and not ctx.get("low_battery") and len(full) > 1 else full[0]
         return max(point, steps[0])
 
+    def adopt(self, point: int, reason: str) -> None:
+        """A point chosen outside the pilot (an accepted benchmark): locked now, guarded as usual."""
+        self.caps.clear()
+        self.clean_since = None
+        self._go("locked", reason, int(point))
+        self.promote_wait = KNOWN_RECHECK_S
+
     def _may_climb(self, ctx: Dict[str, Any], nxt: int) -> bool:
-        """Autopilot climbs only from the ideal power and never into a point that cost too much."""
+        """Autopilot climbs while the TDP is below the whole 15 W (12 W on a low battery) and never
+        into a point that cost too much."""
         if ctx.get("warm"):
             return False   # 80 C and up, every mode (Deck health, user 3.1.0): no higher point
         if ctx.get("dock") or not ctx.get("autopilot"):
@@ -360,23 +377,18 @@ class PointPilot:
         if self.costly.get(nxt, 0.0) > self.clock():
             return False
         tdp = ctx.get("tdp_w")
-        limit = BAND_MAX_W if nxt <= self._band_top(ctx) else POWER_IDEAL_W
+        limit = POWER_GOOD_W if ctx.get("low_battery") else BAND_MAX_W
         return not isinstance(tdp, (int, float)) or tdp <= limit
 
-    @staticmethod
-    def _band_top(ctx: Dict[str, Any]) -> int:
-        """Autopilot's band: every point below x2 (40 at 90 Hz, 25 at 60 Hz)."""
-        steps = ladder(int(ctx.get("refresh") or 90))
-        return steps[-2] if len(steps) > 2 else steps[-1]
-
     def _over_power_target(self, ctx: Dict[str, Any], steps: List[int], now: float) -> bool:
-        """Autopilot: a point the settled Governor holds only near the whole 15 W (x2: above 12 W)
-        for a minute steps down one point; x3.75 is where x3 needs the whole 15 W."""
+        """Autopilot: x3 that the settled Governor holds only near the whole 15 W for a minute steps
+        down to x3.75. Above x3 the multiplier follows the game (3.3.0): a point the game holds
+        within the 15 W ceiling is kept, and the guard steps down one it does not hold."""
         tdp = ctx.get("tdp_w")
         lower = [c for c in steps if c < self.point]
-        limit = BAND_MAX_W if self.point <= self._band_top(ctx) else POWER_GOOD_W
+        limit = BAND_MAX_W
         if (not ctx.get("autopilot") or ctx.get("dock") or not ctx.get("gov_settled") or not isinstance(tdp, (int, float))
-                or tdp <= limit or not lower):
+                or tdp <= limit or not lower or self.point > x3_cap(int(ctx.get("refresh") or 90))):
             self.costly_since = None
             return False
         if self.costly_since is None:
