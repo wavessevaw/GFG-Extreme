@@ -1,18 +1,16 @@
 # GFG Extreme 3.3.2
 
-The game keeps its own frames under generation, and the picture responds sooner.
+More real game frames under generation and a faster response.
 **Update engine** and reboot after installing.
 
 ## New engine: GSF Kedavra 1.4.4
-- **No more falling to half the frame rate.** The base cap lets one game frame through per slot
-  (×2 at 90 Hz: a slot of two refreshes). A frame that finished just after the start of its slot
-  used to wait for the whole next slot, so a game rendering 44 fps under ×2 was shown at about 30
-  and a 37 fps game at about 22. Such a frame now goes through on the very next refresh, and the
-  game keeps the rate it can render.
-- **Lower latency.** A game frame no longer waits for its slot, so it reaches the screen sooner,
-  also in games that hold the cap.
-- **Same cadence when the cap holds.** A game that is on time still gets exactly one frame per
-  slot, on the 2-2-2-3 pattern of fractional caps.
+- **Every frame the game renders is shown.** The base cap now passes a game frame on the very
+  next refresh as soon as it is ready, one frame per slot of the cap (×2 at 90 Hz: a slot of two
+  refreshes). A game running just under the cap keeps the full frame rate it renders.
+- **Faster response.** Game frames reach the screen sooner, in every game, including games that
+  hold the cap.
+- **Steady rhythm.** A game that holds the cap gets exactly one frame per slot, on the 2-2-2-3
+  pattern of fractional caps.
 
 Scheduler simulator, 90 Hz, 3 seeds × 120 s, 3.3.1 → 3.3.2:
 
@@ -28,19 +26,17 @@ Scheduler simulator, 90 Hz, 3 seeds × 120 s, 3.3.1 → 3.3.2:
 
 # GFG Extreme 3.3.2
 
-Игра сохраняет свои кадры при генерации, а картинка откликается быстрее.
+Больше настоящих кадров игры при генерации и более быстрый отклик.
 После установки нажмите **Update engine** и перезагрузите устройство.
 
 ## Новый движок: GSF Kedavra 1.4.4
-- **Больше никакого провала к половине частоты.** Лимит базы пропускает один кадр игры на слот
-  (×2 при 90 Гц: слот в два обновления экрана). Кадр, готовый чуть позже начала слота, раньше ждал
-  весь следующий слот, поэтому игра на 44 FPS при ×2 показывалась примерно на 30, а игра на 37 FPS
-  примерно на 22. Теперь такой кадр проходит на ближайшем обновлении, и игра сохраняет ту частоту,
-  которую может рисовать.
-- **Меньше задержка.** Кадр игры больше не ждёт свой слот и раньше попадает на экран, в том числе
-  в играх, которые держат лимит.
-- **Тот же ритм, когда лимит держится.** Игра, которая успевает, по-прежнему получает ровно один кадр
-  на слот, а при дробном лимите в его ритме 2-2-2-3.
+- **Каждый кадр игры на экране.** Лимит базы теперь пропускает кадр игры на ближайшем обновлении
+  экрана, как только он готов, по одному кадру на слот лимита (×2 при 90 Гц: слот в два обновления).
+  Игра чуть ниже лимита сохраняет всю частоту кадров, которую рисует.
+- **Быстрее отклик.** Кадры игры раньше попадают на экран во всех играх, в том числе в тех, что
+  держат лимит.
+- **Ровный ритм.** Игра, которая держит лимит, получает ровно один кадр на слот, а при дробном
+  лимите в его ритме 2-2-2-3.
 
 Симулятор планировщика, 90 Гц, 3 прогона × 120 с, 3.3.1 → 3.3.2:
 
