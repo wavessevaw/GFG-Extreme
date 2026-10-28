@@ -80,5 +80,16 @@ class BenchmarkTest(unittest.TestCase):
                 self.assertLessEqual(len(px), 1 << 20)
 
 
+
+class PowerDefaultsTest(unittest.TestCase):
+    def test_split_and_gpu_clock_off_from_schema_4(self):
+        from gfg_plugin import settings
+        self.assertEqual(settings.normalize({})["power"], {"enabled": True, "split": False, "gpu_clock": False})
+        old = settings.normalize({"schema": 3, "power": {"enabled": True, "split": True, "gpu_clock": True}})
+        self.assertFalse(old["power"]["split"] or old["power"]["gpu_clock"])
+        new = settings.normalize({"schema": 4, "power": {"enabled": True, "split": True, "gpu_clock": False}})
+        self.assertTrue(new["power"]["split"])
+
+
 if __name__ == "__main__":
     unittest.main()

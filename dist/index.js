@@ -194,7 +194,9 @@ var rpc = {
   stopCapture: call("stop_capture"),
   captures: call("list_captures"),
   logs: call("get_logs"),
-  takeOver: call("take_over")
+  takeOver: call("take_over"),
+  benchStart: call("bench_start"),
+  benchAnswer: call("bench_answer")
 };
 var TABS = ["Dash", "Graphics", "Engine", "Setup"];
 var num = (v) => typeof v === "number" && isFinite(v) ? v : null;
@@ -330,6 +332,42 @@ var ICON = {
   balanced: svg(h("path", { d: "M12 4v16M7 20h10M5 7h14" }), h("path", { d: "M5 7l-2.5 6a2.5 2.5 0 0 0 5 0z M19 7l-2.5 6a2.5 2.5 0 0 0 5 0z" })),
   quality: svg(h("path", { d: "M6 3h12l3 6-9 12L3 9z" }), h("path", { d: "M3 9h18M9.5 3L12 21M14.5 3L12 21" }))
 };
+function Bench({ live, set }) {
+  const b = live.bench || {}, last = (live.game_profile || {}).bench, refresh = live.refresh || 90;
+  const busy = b.state === "waiting" || b.state === "running";
+  const start = () => set(async () => {
+    const r = await rpc.benchStart();
+    notify("GFG Extreme \xB7 Benchmark", r && r.ok === false ? r.error : "Close Quick Access: the 20 s start in game. Do not touch anything.");
+  });
+  if (b.state === "done") {
+    const r = b.result || {}, m = r.medians || {};
+    return h(
+      Card,
+      { title: "BENCHMARK DONE" },
+      h(Row, { k: "Base FPS", v: `${r.point || "\u2014"} \xB7 ${multText(refresh, r.point)}`, first: true }),
+      h(Row, { k: "Expected power", v: r.watts ? `~${r.watts} W` : "\u2014" }),
+      h(Row, { k: "Medians at 15 W", v: `${fmt(m.real)} FPS \xB7 GPU ${fmt(m.gpu, 0, "%")} \xB7 ${fmt(m.temp_c, 0, " \xB0C")}` }),
+      h("div", { className: "sub" }, "Autopilot starts here and still adapts to heavier and lighter scenes."),
+      h(
+        "div",
+        { className: "btns" },
+        h(Focusable, { className: "btn red", onClick: () => set(() => rpc.benchAnswer(true)) }, "Accept"),
+        h(Focusable, { className: "btn", onClick: () => set(() => rpc.benchAnswer(false)) }, "No, keep searching")
+      )
+    );
+  }
+  return h(
+    Card,
+    { title: "BENCHMARK" },
+    h(
+      Focusable,
+      { className: "btn" + (busy ? "" : " red"), onClick: busy ? () => set(() => rpc.benchAnswer(false)) : start },
+      busy ? b.state === "running" ? `Measuring \xB7 ${b.seconds_left} s \xB7 tap to cancel` : "Close Quick Access to start \xB7 tap to cancel" : "Run benchmark"
+    ),
+    b.state === "cancelled" ? h("div", { className: "note bad" }, "Benchmark cancelled: " + b.reason + ".") : null,
+    h("div", { className: "sub", style: { marginTop: 6 } }, !live.game ? "Start a game first: 20 s in game at 15 W, generation off." : last ? `Last for this game: base ${last.point} ${multText(refresh, last.point)} \xB7 accepted` : "20 s in game at 15 W, generation off: a starting point for Autopilot.")
+  );
+}
 function Dash({ s, set }) {
   const [layout, next] = useLayout();
   const live = s.live || {}, eng = live.engine || {}, gov = live.governor || {}, sen = live.sensors || {}, split = live.split || {};
@@ -412,7 +450,8 @@ function Dash({ s, set }) {
       value: scope,
       options: [["game", "This game"], ["default", "All games"]],
       onChange: (v) => set(() => v === "game" ? rpc.setProfile("game", {}) : rpc.dropGame())
-    }))
+    })),
+    h(Bench, { live, set })
   );
 }
 var SWATCH = {

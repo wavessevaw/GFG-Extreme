@@ -15,6 +15,6 @@
       "steam-deck",
       "gfg-extreme"
     ],
-    "description": "GFG Extreme 3.0: frame generation x2–x3.75 on its own engine (GSF Kedavra in Gamescope), Autopilot, TDP Governor, Power Split and GPU clock ceiling. No Lossless Scaling."
+    "description": "GFG Extreme 3.3: frame generation x2–x3.75 on its own engine (GSF Kedavra in Gamescope), Autopilot with Benchmark, TDP Governor and a system profile for games. No Lossless Scaling."
   }
 }

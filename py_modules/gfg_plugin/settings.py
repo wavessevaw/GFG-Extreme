@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from . import filters
 from .user_files import read_json, write_json_atomic
 
-SCHEMA = 3
+SCHEMA = 4   # 4 (3.3.0): Power Split and the GPU clock ceiling off by default
 FG_MODES = ("off", "auto", "x2", "x3", "x3.75", "custom")
 TELEMETRY_LEVELS = ("minimal", "standard", "debug")
 OBJECTIVES = ("autopilot", "battery", "balanced", "quality")
@@ -37,7 +37,7 @@ def defaults() -> Dict[str, Any]:
         "profiles": {DEFAULT_PROFILE: default_profile()},
         "hud": {"enabled": True, "position": "top-right", "detail": "standard"},
         "autopilot": {"preference": "auto"},
-        "power": {"enabled": True, "split": True, "gpu_clock": True},
+        "power": {"enabled": True, "split": False, "gpu_clock": False},
         "engine": {"hdr": True, "hdr_output": True, "above_x3": False, "boost": False, "boost_mult": 1.5},
         "telemetry": {"level": "standard"},
         "migrated_from": None,
@@ -88,8 +88,13 @@ def normalize(raw: Any) -> Dict[str, Any]:
     ap = raw.get("autopilot") if isinstance(raw.get("autopilot"), dict) else {}
     out["autopilot"] = {"preference": ap.get("preference") if ap.get("preference") in AUTOPILOT_PREFERENCES else "auto"}
     power = raw.get("power") if isinstance(raw.get("power"), dict) else {}
-    out["power"] = {"enabled": bool(power.get("enabled", True)), "split": bool(power.get("split", True)),
-                    "gpu_clock": bool(power.get("gpu_clock", True))}
+    # 3.3.0: each CPU cap step made short pacing dips more frequent (2.6 -> 4.0 % of the next 8 s,
+    # about one change a minute) for a median 0.6 % GPU clock per watt; the GPU clock ceiling pins
+    # a fixed clock. Both are off from schema 4 and stay switchable on the Engine tab.
+    old = _int_in(raw.get("schema"), 0, SCHEMA, 0) < 4
+    out["power"] = {"enabled": bool(power.get("enabled", True)),
+                    "split": False if old else bool(power.get("split", False)),
+                    "gpu_clock": False if old else bool(power.get("gpu_clock", False))}
     eng = raw.get("engine") if isinstance(raw.get("engine"), dict) else {}
     out["engine"] = {"hdr": bool(eng.get("hdr", True)), "hdr_output": bool(eng.get("hdr_output", True)),
                      # Above x3 (user, 3.1.1): x3.75 plays badly, so it is unlocked only here.
