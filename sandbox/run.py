@@ -329,22 +329,33 @@ def stale_status() -> Dict[str, Any]:
 
 @scenario
 def battery_drains_autopilot() -> Dict[str, Any]:
-    """Autopilot on battery from 23 %: below 20 % it goes to x3.75 (with "above x3" on), once,
-    without changing mode."""
+    """Autopilot on battery from 23 %: below 20 % it keeps following the game (3.3.0: a 55 fps
+    game stays in the x2 family, no forced x3) within 12 W, without changing mode."""
     rig = make_rig(VGame("g", 55.0), objective="autopilot", battery=23.0, above_x3=True)
     rig.sensors.capacity_wh = 5.0  # drain fast
     play(rig, 1500)
     tl = rig.timeline
     objs = [r["objective"] for r in tl]
     switches = sum(1 for a, b in zip(objs, objs[1:]) if a != b)
-    out = {"objective_switches": switches, "final": objs[-1], "battery_final": round(tl[-1]["battery"], 1)}
+    out = {"objective_switches": switches, "final": objs[-1], "battery_final": round(tl[-1]["battery"], 1),
+           "point_final": tl[-1]["point"], "tdp_final": tl[-1]["tdp"]}
     check(out, "stays Autopilot", set(objs) == {"autopilot"}, f"{sorted(set(objs))}")
-    check(out, "Battery point x3.75 (24)", tl[-1]["point"] == 24, f"{tl[-1]['point']}")
-    locked = make_rig(VGame("g", 55.0), objective="autopilot", battery=23.0)
-    locked.sensors.capacity_wh = 5.0
-    play(locked, 1500)
-    check(out, "x3.75 locked (default): stays at x3 (30)", locked.timeline[-1]["point"] == 30,
-          f"{locked.timeline[-1]['point']}")
+    check(out, "battery below 20 % in the run", tl[-1]["battery"] < 20.0, f"{tl[-1]['battery']:.1f}")
+    check(out, "low battery keeps the x2 family (35-45)", 35 <= tl[-1]["point"] <= 45, f"{tl[-1]['point']}")
+    return out
+
+
+@scenario
+def multiplier_follows_base_fps() -> Dict[str, Any]:
+    """3.3.0: the multiplier follows the game's base FPS. A game that holds more than 30 gets the
+    x2 family (35, 40, 45 at 90 Hz) within the 15 W ceiling; x3 only below that."""
+    out: Dict[str, Any] = {}
+    for fps, want in ((60.0, 45), (44.0, 40), (38.0, 35), (27.0, 30)):
+        rig = make_rig(VGame("g", fps), objective="autopilot", battery=60.0)
+        play(rig, 900)
+        got = rig.timeline[-1]["point"]
+        out[f"{fps:.0f}fps"] = got
+        check(out, f"a {fps:.0f} fps game ends at {want}", got == want, f"{got}")
     return out
 
 

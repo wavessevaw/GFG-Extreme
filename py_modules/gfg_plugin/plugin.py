@@ -245,6 +245,17 @@ class Plugin:
         async with self.lock:
             return await asyncio.to_thread(bench, PLUGIN_DIR, self.runtime)
 
+    # Game benchmark (3.3.0): 20 s in game at 15 W, generation off; answered on Dash.
+    async def bench_start(self) -> Dict[str, Any]:
+        r = self.service.bench_start()
+        self.log.record("bench", "start", ok=r.get("ok"))
+        return r
+
+    async def bench_answer(self, accept: bool) -> Dict[str, Any]:
+        r = self.service.bench_answer(bool(accept))
+        self.log.record("bench", "accept" if accept else "decline")
+        return r
+
     async def save_report(self) -> Dict[str, Any]:
         extra = [(f"gfg/{p.name}", p) for p in self.telemetry.files()]
         for name in ("activity.jsonl",):

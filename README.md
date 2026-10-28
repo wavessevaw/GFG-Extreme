@@ -4,7 +4,7 @@
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="144">
 
-# GFG EXTREME 3.2
+# GFG EXTREME 3.3
 
 **MOST POWERFUL DECKY PLUGIN EVER.**
 
@@ -119,6 +119,8 @@ It captures the original frames, estimates motion at several resolutions, recons
 
 Since 3.2 (GSF Kedavra 1.4, "Silk") the presentation moves in eighths of a refresh: after a late game frame the picture briefly runs a little faster instead of skipping a frame, and when the next frame is late it slows down smoothly instead of stopping. Same latency, same GPU work.
 
+Since 3.3 (GSF Kedavra 1.4.2) a slow-down is no longer paid back with a speed-up, fractional caps follow their real rhythm (40 FPS at 90 Hz releases 2-2-2-3), and the motion analysis runs in one refresh when it fits, so a generated frame is ready one refresh sooner. Simulator, stable base: ×2 at base 45, latency 33.3 → 22.2 ms; ×2.25 at base 40, outputs at a changed speed 77.8 → 0 %, latency 37.8 → 33.3 ms.
+
 **Processing pipeline**
 
 ```
@@ -203,6 +205,26 @@ These are target modes. The real Output FPS depends on the game's performance, t
 ### BOOST 2.0 (EXPERIMENTAL)
 
 The second generation of Boost, rebuilt for Kedavra. Generated frames smear exactly where the camera turns, so for a turn of about a second with the right stick GFG lowers the multiplier to ×1.75 (a sharp turn: ×1.5, set in Setup) and gives it back as soon as the stick rests, at most 1.5 s per turn. A thread reads the Deck's controller (or a pad in the dock) and talks to the engine directly, without waiting for the 1 s control loop. Watts are never raised: the boost only uses what the GPU can render at the present TDP, so it shows most in Quality and with a fixed ×3. Off by default: **Setup → Experimental → Boost 2.0**.
+
+---
+
+### BENCHMARK
+
+**Dash → Benchmark** (bottom of the tab), with a game running. Close Quick Access: for 20 s GFG holds the TDP at 15 W with generation off, and a centred panel says *Do not touch anything* while it counts down. It takes the medians of the game's own FPS, GPU and CPU load, power and APU temperature, then proposes a strategy: base FPS, multiplier and expected watts. **Accept** stores it for this game: the next launches start there and Autopilot uses it as its compass, still adapting to heavier and lighter scenes. **No, keep searching** leaves Autopilot to its normal search. The Steam menu, a pause or a game change cancels the run.
+
+The proposal follows the game's base frame rate: above 30 FPS it picks the fractional ×2 family (35 / 40 / 45 at 90 Hz), ×3 only when the game does not get above 30.
+
+---
+
+### SYSTEM PROFILE
+
+Installed with the engine, in the same step and the same boot unit, and removed with it. Runtime kernel settings only: nothing in the read-only system image, no kernel command line, no driver or package changes, no security mitigations touched. Every value is saved before it is written and written back on **Remove**.
+
+- **Memory**: transparent huge pages for game memory, reclaim started earlier with a larger free reserve, proactive compaction off, swap tuned for zram, MGLRU thrash protection, KSM off, writeback in smaller and earlier bursts.
+- **CPU**: no autogroup and no lockup watchdogs, fewer vmstat wakeups.
+- **Storage**: kyber on NVMe and BFQ on microSD with low read-latency targets, 1 MiB read-ahead for asset streaming.
+
+The report from **Setup → Save report to Desktop** lists how many settings were applied in this boot.
 
 ---
 
@@ -300,6 +322,8 @@ Governor aims for the smallest power budget that keeps both the game and the gen
 **Splitting the power between CPU and GPU**
 
 GFG measures the load of the busiest CPU core, GPU utilisation and the GPU clock every second, and uses them on a locked point:
+
+Both are **off by default since 3.3** and can be switched on in the Engine tab: each CPU cap change made short pacing dips more frequent (2.6 → 4.0 % of the following seconds) for a median gain of 0.6 % GPU clock per watt (plugin telemetry, 7 h of play).
 
 - **Power Split** (GPU-bound game): CPU and GPU share one power limit, so GFG lowers the CPU's maximum clock step by step (100 / 85 / 70 / 60 / 50 %, never under 1.6 GHz) and gives those watts to the GPU. Every step is proven with A/B/A windows; the cap is lifted at once when real frames dip or the busiest core nears its limit.
 - **GPU clock ceiling** (CPU-bound game): when the CPU is the limit and the GPU is lightly loaded, GFG lowers the GPU clock in 100 MHz steps through SteamOS's own GPU clock control (the Quick Access Menu slider) and keeps a step only if the frame rate holds and APU draw drops.
@@ -468,6 +492,8 @@ Kedavra lives inside Gamescope, so in the stock Gaming Mode no game needs its ow
 * GPU and APU telemetry.
 * Session diagnostics and Pace capture.
 * Controlled Gamescope installation, automatic rollback and recovery.
+* System profile for games, installed and removed together with the engine.
+* Benchmark: 20 s of the game's own medians give Autopilot its starting point.
 * Settings migration from GFG Extreme 2.x (with a backup).
 
 Target platform: Steam Deck OLED / SteamOS.
@@ -551,7 +577,7 @@ Targets and real benchmarks of the 3.0.0 build (×3.75 and HDR included) are pub
 * Platform: Steam Deck / SteamOS
 * License: GPL-3.0-or-later, respecting the licences of the components used
 
-This README describes GFG Extreme 3.2. Features become part of a confirmed release only after testing on real hardware.
+This README describes GFG Extreme 3.3.
 
 ---
 
@@ -559,6 +585,6 @@ This README describes GFG Extreme 3.2. Features become part of a confirmed relea
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="56">
 
-<sub>GFG EXTREME 3.2 · POWERED BY GSF KEDAVRA · Made for Steam Deck · GPL-3.0-or-later</sub>
+<sub>GFG EXTREME 3.3 · POWERED BY GSF KEDAVRA · Made for Steam Deck · GPL-3.0-or-later</sub>
 
 </div>

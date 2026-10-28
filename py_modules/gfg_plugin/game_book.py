@@ -75,7 +75,8 @@ class GameBook:
         if cls not in CLASSES:
             cls, source = (hint["class"], "list") if hint else (None, None)
         out = {"class": cls, "source": source, "name": (hint or {}).get("name"),
-               "point": e.get("point"), "sessions": len(e.get("sessions", []))}
+               "point": e.get("point"), "sessions": len(e.get("sessions", [])),
+               "bench_point": (e.get("bench") or {}).get("point"), "bench": e.get("bench")}
         out.update(self.medians(e))
         return out
 
@@ -108,6 +109,16 @@ class GameBook:
                 e["class"] = "light"
             elif e.get("class") == "light" and (point < top or t > LIGHT_MAX_W + 2.0):
                 e["class"] = "medium"
+        self._save()
+
+    def note_benchmark(self, app: int, refresh: int, dock: bool, point: int, medians: Dict[str, Any]) -> None:
+        """An accepted benchmark (3.3.0): the next launch starts at its point and Autopilot uses it
+        as its compass."""
+        if not app or not point:
+            return
+        e = self._entry(app, refresh, dock)
+        e["point"] = int(point)
+        e["bench"] = {"point": int(point), "medians": dict(medians), "at": self.clock()}
         self._save()
 
     def note_measure(self, app: int, refresh: int, dock: bool, held: int, steps: List[int]) -> None:
