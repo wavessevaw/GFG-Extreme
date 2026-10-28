@@ -121,6 +121,8 @@ Since 3.2 (GSF Kedavra 1.4, "Silk") the presentation moves in eighths of a refre
 
 Since 3.3 (GSF Kedavra 1.4.2) a slow-down is no longer paid back with a speed-up, fractional caps follow their real rhythm (40 FPS at 90 Hz releases 2-2-2-3), and the motion analysis runs in one refresh when it fits, so a generated frame is ready one refresh sooner. Simulator, stable base: ×2 at base 45, latency 33.3 → 22.2 ms; ×2.25 at base 40, outputs at a changed speed 77.8 → 0 %, latency 37.8 → 33.3 ms.
 
+Since 3.3.2 (GSF Kedavra 1.4.4) a game just under its base cap keeps its own frames: a game frame that misses the start of its cap slot goes through on the next refresh instead of waiting a whole slot, so a game rendering 46 fps under x2 no longer drops to about 33, and every frame reaches the screen sooner. Scheduler simulator, x2 at 90 Hz, game at 46.5 fps: base 33.7 → 38.3 fps, median latency 49.5 → 38.5 ms.
+
 Since 3.3.1 (GSF Kedavra 1.4.3) camera turns move as one rigid image: the camera's motion is fitted as a plane projective map (the exact image motion of a turning camera), and each generated frame shows the camera turned by exactly its share of the angle, so the jelly and the square blocks at the sides of a turn are gone. Engine test, camera turn up to 10° per frame: 25.35 → 27.56 dB, frame-to-frame error 8.70 → 5.18.
 
 **Processing pipeline**
