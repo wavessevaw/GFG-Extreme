@@ -898,7 +898,7 @@ def dock_20w_scene_changes() -> Dict[str, Any]:
 @scenario
 def lcd_unlocked_75hz() -> Dict[str, Any]:
     """A Steam Deck LCD with its panel unlocked to 75 Hz: the ladder follows 75 Hz."""
-    rig = make_rig(VGame("lcd", 40.0), objective="balanced", refresh=75)
+    rig = make_rig(VGame("lcd", 41.0), objective="balanced", refresh=75)
     play(rig, 900)
     m = metrics(rig, skip=120)
     out: Dict[str, Any] = {"metrics": m}
