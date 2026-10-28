@@ -323,7 +323,7 @@ Governor aims for the smallest power budget that keeps both the game and the gen
 
 GFG measures the load of the busiest CPU core, GPU utilisation and the GPU clock every second, and uses them on a locked point:
 
-Both are **off by default since 3.3** and can be switched on in the Engine tab: each CPU cap change made short pacing dips more frequent (2.6 → 4.0 % of the following seconds) for a median gain of 0.6 % GPU clock per watt (plugin telemetry, 7 h of play).
+Since 3.3 the Governor manages power through the TDP alone by default, for steadier frame pacing; both can be switched on in the Engine tab.
 
 - **Power Split** (GPU-bound game): CPU and GPU share one power limit, so GFG lowers the CPU's maximum clock step by step (100 / 85 / 70 / 60 / 50 %, never under 1.6 GHz) and gives those watts to the GPU. Every step is proven with A/B/A windows; the cap is lifted at once when real frames dip or the busiest core nears its limit.
 - **GPU clock ceiling** (CPU-bound game): when the CPU is the limit and the GPU is lightly loaded, GFG lowers the GPU clock in 100 MHz steps through SteamOS's own GPU clock control (the Quick Access Menu slider) and keeps a step only if the frame rate holds and APU draw drops.
