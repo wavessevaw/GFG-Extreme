@@ -28,7 +28,7 @@ Deck ran this code, and the engine side (strict xN) is modelled.
 
 | Objective | 90 Hz points (aim, N) | Why |
 |---|---|---|
-| Autopilot | x2 at 40, 42, 45; x3 at 27, 30 | The only mode that aims at 90 on screen, with dips to 80 tolerated |
+| Autopilot | x2 at 32, 35, 40, 42, 45; x3 at 27, 30 | Aims at 90 on screen; a game that holds about 32 or more gets x2 at its own rate (64-90 on screen, the accepted honest dip); x3 only below |
 | Balanced | x2 at 35, 40, 45; x3 at 30 | Native frames first: x3 only when the game cannot hold more than about 30 |
 | Quality | x2 at 45 only | Never x3 |
 | Battery | x3 at 30 | |
@@ -65,13 +65,13 @@ None of this runs until the engine reports `strict_multiplier: true` in its stat
 | Class | Arm | Main points | Real fps | W | Short % | Out fps | Even % |
 |---|---|---|---|---|---|---|---|
 | light | 3.3.2 | fill@45 64 %, @40 15 % | 40.42 | 9.92 | 9.7 | 87.8 | 57 |
-| light | honest | x2@45 57 %, x2@42 14 %, x2@40 12 % | 41.15 | 9.97 | 9.5 | 87.3 | 47 |
+| light | honest | x2@45 64 %, x2@35 12 %, x2@40 11 % | 42.70 | 10.32 | 10.0 | 86.7 | 46 |
 | medium | 3.3.2 | fill@35 39 %, @30 38 % | 34.10 | 12.01 | 8.7 | 87.8 | 37 |
-| medium | honest | x3@30 38 %, x3@27 32 %, x2@40 15 % | 33.15 | 11.29 | 7.9 | 86.4 | 35 |
+| medium | honest | x2@35 31 %, x3@27 26 %, x2@32 13 % | 36.30 | 12.30 | 7.0 | 81.9 | 11 |
 | heavy | 3.3.2 | fill@30 82 % | 27.56 | 13.04 | 21.4 | 78.2 | 53 |
-| heavy | honest | x3@27 65 %, x3@30 14 % | 26.99 | 12.66 | 14.8 | 77.4 | 19 |
+| heavy | honest | x3@27 68 %, x2@23 (TV) 7 %, x3@30 5 % | 27.65 | 12.76 | 14.6 | 75.1 | 8 |
 | **all** | 3.3.2 | | **33.94** | **11.79** | 12.0 | 85.5 | 45 |
-| **all** | honest | | **33.48** | **11.33** | 9.9 | 84.4 | 34 |
+| **all** | honest | | **35.65** | **11.96** | 9.6 | 81.3 | 18 |
 
 ### Balanced
 
@@ -115,13 +115,13 @@ The arms are equal to within 0.01 fps and 0.01 W.
 ## What got better, what got worse
 
 - **Autopilot.**
-  - Better: 0.46 W less (−3.9 %) and less time short (12.0 → 9.9 %).
-  - Worse: 0.46 fewer real fps overall (−1.4 %), and 0.95 fewer on medium games.
-  - Why: a game that holds 31-39 gets x3 aiming at 27-30 (81-90 on screen). 3.3.2 gave it fill
-    at 35 (90 on screen with filled frames). Honest x2 there would show only 70-78, under
-    Autopilot's tolerated dip.
-  - Even cadence is lower (45 → 34 %), because x2 at 40-42 and x3 at 27 are uneven holds by
-    design.
+  - Better: 1.71 more real fps (+5.0 %), +2.2 on medium games, and less time short
+    (12.0 -> 9.6 %).
+  - Worse: 0.17 W more (+1.4 %) and 4 fewer frames on screen (85.5 -> 81.3).
+  - Why: a game that holds about 32 or more now gets x2 at its own rate, 64-90 on screen, the
+    accepted honest dip. x3 at 27-30 only goes to games that cannot hold about 32.
+  - Even cadence falls the most of any mode (45 -> 18 %), because x2 at 32-42 is an uneven
+    hold on 90 Hz.
 - **Balanced.**
   - Better: 2.14 more real fps (+6.4 %), and +2.7 on medium games, because x3 is kept for games
     that cannot hold more than about 30.

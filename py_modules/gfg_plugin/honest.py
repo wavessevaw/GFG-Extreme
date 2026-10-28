@@ -11,8 +11,8 @@ divide the refresh (at 90 Hz x2@45 and x3@30, at 60 Hz x2@30 and x3@20). A game 
 gets N x its fps on screen, the holes filled by repeating the last frame. Per objective (user, 22:17: the 90 target is
 Autopilot's only):
 
-  autopilot  90 on screen with the tolerated dip (80-83 of 90): x2 with base 40-45, else x3
-             with base 27-30.
+  autopilot  x2 aiming at the game's sustainable rate, 32-45 (64-90 on screen); x3 aiming at
+             27-30 only for a game that cannot hold about 32.
   balanced   x2 aiming at 45, 40 or 35 (uneven 70 / 80 on screen) while the game holds it,
              else x3 at 30: x3 only for a game that cannot hold more than about 30.
   quality    x2 at 45 only; never x3.
@@ -33,6 +33,7 @@ from typing import Dict, List, Tuple
 BAND = 80.0 / 90.0   # Autopilot's tolerated output dip
 MIN_BASE = 20
 MAX_N = 3
+X2_FLOOR = 32   # Autopilot: the lowest x2 aim on 90 Hz (scaled to the refresh)
 
 Ladder = List[Tuple[int, int]]   # (base, N), ascending base
 
@@ -81,8 +82,11 @@ def ladder(objective: str, refresh: int, dock: bool = False, light: bool = False
     hz = int(refresh or 90)
     x2_only = objective == "quality" or light
     if objective == "autopilot" and not dock and not light:
+        # Native frames first (coordinator, 2026-10-28): a game that sustains about 32 or more
+        # gets x2 aiming at its own rate (64-90 on screen, the accepted honest dip); x3 only below.
         band = math.ceil(BAND * hz)
-        return _sorted([(b, 2) for b in _span(math.ceil(band / 2), hz // 2)]
+        x2 = sorted({X2_FLOOR * hz // 90, 35 * hz // 90} | set(_span(math.ceil(band / 2), hz // 2)))
+        return _sorted([(b, 2) for b in x2]
                        + [(b, 3) for b in _span(math.ceil(band / 3), hz // 3)])
     out = [(hz // n, n) for n in range(2, MAX_N + 1) if not dock or hz % n == 0]
     if objective == "balanced":

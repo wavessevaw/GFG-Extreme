@@ -50,7 +50,7 @@ class HonestTest(unittest.TestCase):
 
     def test_ladders(self):
         from gfg_plugin import honest
-        self.assertEqual(honest.ladder("autopilot", 90), [(27, 3), (30, 3), (40, 2), (42, 2), (45, 2)])
+        self.assertEqual(honest.ladder("autopilot", 90), [(27, 3), (30, 3), (32, 2), (35, 2), (40, 2), (42, 2), (45, 2)])
         self.assertEqual(honest.ladder("balanced", 90), [(30, 3), (35, 2), (40, 2), (45, 2)])
         self.assertEqual(honest.ladder("quality", 90), [(45, 2)])
         self.assertEqual(honest.ladder("battery", 90), [(30, 3)])
