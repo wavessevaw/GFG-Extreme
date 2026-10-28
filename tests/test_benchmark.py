@@ -33,7 +33,8 @@ class BenchmarkTest(unittest.TestCase):
         self.b.start(7, True)
         run(self.b, self.clock, 10, steam_ui=True)
         self.assertEqual(self.b.state, "waiting")
-        run(self.b, self.clock, benchmark.SETTLE_S + 1)
+        self.assertFalse(self.b.measuring, "the game keeps its settings while the menu is open")
+        run(self.b, self.clock, benchmark.SETTLE_S + 2)
         self.assertEqual(self.b.state, "running")
         self.assertEqual(self.b.panel(), "measuring")
         run(self.b, self.clock, benchmark.DURATION_S + 1)
@@ -45,7 +46,7 @@ class BenchmarkTest(unittest.TestCase):
     def test_steam_menu_pause_or_game_change_cancels(self):
         for kw in ({"steam_ui": True}, {"real": 0.0}, {"app": 8}):
             self.b.start(7, True)
-            run(self.b, self.clock, benchmark.SETTLE_S + 1)
+            run(self.b, self.clock, benchmark.SETTLE_S + 2)
             run(self.b, self.clock, 2, **kw)
             self.assertEqual(self.b.state, "cancelled", kw)
             self.assertEqual(self.b.panel(), "cancelled")
@@ -53,10 +54,26 @@ class BenchmarkTest(unittest.TestCase):
     def test_accept_returns_the_result_decline_drops_it(self):
         for accept in (True, False):
             self.b.start(7, True)
-            run(self.b, self.clock, benchmark.SETTLE_S + benchmark.DURATION_S + 2)
+            run(self.b, self.clock, benchmark.SETTLE_S + benchmark.DURATION_S + 3)
             res = self.b.answer(accept)
             self.assertEqual(res is not None, accept)
             self.assertEqual(self.b.state, "idle")
+
+    def test_menu_left_open_calls_it_off(self):
+        self.b.start(7, True)
+        run(self.b, self.clock, benchmark.WAIT_MAX_S + 1, steam_ui=True)
+        self.assertEqual(self.b.state, "cancelled")
+
+    def test_ceiling_never_reached_still_measures(self):
+        self.b.start(7, True)
+        run(self.b, self.clock, benchmark.SETTLE_MAX_S + 2, at_ceiling=False)
+        self.assertEqual(self.b.state, "running")
+
+    def test_no_frames_cancels(self):
+        self.b.start(7, True)
+        run(self.b, self.clock, benchmark.SETTLE_S + 2)
+        run(self.b, self.clock, benchmark.NO_FRAMES_S + 1, real=None)
+        self.assertEqual(self.b.state, "cancelled")
 
     def test_decline_cancels_a_run(self):
         self.b.start(7, True)

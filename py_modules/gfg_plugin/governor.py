@@ -16,6 +16,8 @@ long", drives the TDP (slowPPT/fastPPT, through steamos-manager or sysfs):
              (+3 W when far short). A step that failed is a floor for this point that expires
              (5 min, doubling to 30 min when the same level fails again).
   re-probe   held floors expire, so a lighter scene gets its watts back down later.
+  calm       (3.3.1) after a raise no probe down for 30 s (doubling while raises repeat); a step
+             down needs two held windows; Autopilot and Battery near a failed level go 1 W.
 
 Smoothness always wins: a window that fails is never answered with fewer watts. Quality never
 probes down. Balanced keeps one extra watt above the lowest TDP that failed. Without a cap
@@ -98,6 +100,8 @@ OBJECTIVES = ("battery", "balanced", "quality", "autopilot")
 # a failed step down came from is not a raise: that level was checked already.
 BOLD = ("autopilot", "battery", "balanced", "quality")   # every objective (user, 3.0.10): down boldly, up slowly
 BOLD_UP_W = 1.0
+# The writes that answer a shortfall (a probe that did not hold, or the game short of its cap).
+RAISES = ("fast-restore", "fast-severe", "fast-raise", "window-failed", "step-dipped")
 # Stable point (GFG principle "find, lock, guard"): a level held for six windows in a row with a
 # failed step just below it (or at the minimum) is locked: no more probing down, so no periodic
 # dips from re-probes. A failed window unlocks it (the guard), and so does a lighter scene: the
@@ -107,6 +111,19 @@ STABLE_WINDOWS = 6
 STABLE_FLOOR_W = 2.5
 LIGHTER_WINDOWS = 3
 CONFIRM_WINDOWS = 2
+# Calm (3.3.1): every TDP write is a step the game feels, and a step down that fails costs a dip
+# plus a step back up (Deck report 3.2.0: ~2 writes a minute, a third of the steps down taken
+# back). So after any raise the level is kept for CALM_S before the next probe down, twice as
+# long for each further raise within CALM_MEMORY_S (up to CALM_MAX_S); a step down needs two held
+# windows at its level, not one; a probe near a level that failed this session goes 1 W at a
+# time, and a jump down to the draw is at most JUMP_MAX_W.
+CALM_S = 30.0
+CALM_MAX_S = 240.0
+CALM_MEMORY_S = 300.0
+HELD_WINDOWS = 2
+NEAR_FAIL_W = 2.0
+DIP_TOLERANT = ("autopilot", "battery")   # the 1 W steps: modes that hold a level through a 7 % dip
+JUMP_MAX_W = 3.0
 
 
 def healthy(window: List[Dict[str, Any]], cap: int, temp_ok: bool, hold: float = 0.97,
@@ -194,6 +211,9 @@ class PowerGovernor:
         self.stable_tdp: Optional[float] = None
         self.same_windows = 0                   # held windows in a row at this TDP
         self.lighter_windows = 0                # held windows in a row with the draw far under the limit
+        self.calm_until = -1e9                  # no probe down before this (after a raise)
+        self.raises: Deque[float] = deque(maxlen=8)
+        self.failed_at: Dict[int, float] = {}   # cap -> highest TDP that failed this session
 
     @property
     def floor_fail(self) -> Dict[int, float]:
@@ -301,6 +321,7 @@ class PowerGovernor:
         n = prev[2] + 1 if prev and abs(prev[0] - tdp) < 0.55 else 1
         backoff = min(FLOOR_BACKOFF_MAX_S, FLOOR_BACKOFF_S * 2 ** (n - 1))
         self.floors[cap] = (tdp, self.clock() + backoff, n)
+        self.failed_at[cap] = max(self.failed_at.get(cap, 0.0), tdp)
         if self.model:
             self.model.record_floor_failure(self.key, f"cap{cap}", tdp, count=n)
         self._note("governor-floor", cap=cap, tdp=tdp, repeats=n, backoff_s=backoff)
@@ -321,11 +342,21 @@ class PowerGovernor:
                 self._note("governor-write-failed", watts=target, error=result.get("error"))
             return False
         self._note("governor-tdp", watts=target, was=self.tdp, why=why)
+        if self.tdp is not None and target > self.tdp + 0.05 and why.split(":")[0] in RAISES:
+            self._calm()
         self.tdp = target
         self.held_at_tdp = False
         self.changed_at = self.clock()
         self.window = []
         return True
+
+    def _calm(self) -> None:
+        """A raise: keep the level a while before the next probe down, longer when raises repeat."""
+        now = self.clock()
+        while self.raises and now - self.raises[0] > CALM_MEMORY_S:
+            self.raises.popleft()
+        self.raises.append(now)
+        self.calm_until = now + min(CALM_MAX_S, CALM_S * 2 ** (len(self.raises) - 1))
 
     def _external(self, now: float) -> bool:
         """An outside TDP change: SteamOS's own after a charger change (take over again, its
@@ -669,12 +700,17 @@ class PowerGovernor:
         draw = verdict.get("draw")
         if self._stable_check(draw):
             return
+        if now < self.calm_until or (not self.fast and self.same_windows < HELD_WINDOWS):
+            return   # calm: the level holds a while before the next probe
         floor = self._floor(self.cap) or self._limits()["low"] or MIN_TDP_W
         step = FAST_STEP_W if self.fast or self.objective in BOLD else STEP_DOWN_W
+        failed = self.failed_at.get(self.cap)
+        if failed is not None and self.objective in DIP_TOLERANT and self.tdp - step <= failed + NEAR_FAIL_W:
+            step = STEP_DOWN_W   # close to a level that failed: a watt at a time
         target = self.tdp - step
         if isinstance(draw, (int, float)) and self.tdp - draw >= DRAW_JUMP_W:
             # The game uses clearly less than the limit: the limit goes to what it draws.
-            target = min(target, draw + DRAW_MARGIN_W)
+            target = min(target, max(draw + DRAW_MARGIN_W, self.tdp - JUMP_MAX_W))
         target = max(target, floor)
         if target > self.tdp - 0.45:
             return

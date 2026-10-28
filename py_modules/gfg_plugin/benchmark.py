@@ -18,6 +18,9 @@ from .pilot import BAND_MAX_W, TRIAL_RATIO, capped, ladder, lowest_point, mult_l
 
 DURATION_S = 20.0
 SETTLE_S = 3.0          # after the Quick Access menu closes and the TDP reaches the ceiling
+SETTLE_MAX_S = 10.0     # the ceiling not reached by then (a TDP GFG does not manage): measure anyway
+WAIT_MAX_S = 60.0       # the Quick Access menu still open after this: the run is called off
+NO_FRAMES_S = 5.0       # no reading of the game's frame rate this long while measuring
 DONE_SHOW_S = 5.0       # the in-game "done" panel
 FG_COST = 0.92          # the game keeps about 92 % of its frame rate with generation on
 PAUSED_FPS = 3.0
@@ -35,7 +38,9 @@ class Benchmark:
         self.reset()
 
     def reset(self) -> None:
-        self.state = "idle"        # idle | waiting | running | done | cancelled
+        # idle | waiting (for the Quick Access menu to close; nothing changes yet) | settling
+        # (generation off, TDP to the ceiling) | running | done | cancelled
+        self.state = "idle"
         self.app: Optional[int] = None
         self.refresh = 90
         self.since = 0.0
@@ -43,6 +48,7 @@ class Benchmark:
         self.samples: List[Dict[str, Any]] = []
         self.result: Optional[Dict[str, Any]] = None
         self.reason = ""
+        self.seen = 0.0
 
     # ------------------------------------------------------------------ control
     def start(self, app: Optional[int], game: bool) -> Dict[str, Any]:
@@ -65,8 +71,13 @@ class Benchmark:
 
     @property
     def measuring(self) -> bool:
-        """The plugin holds generation off and the TDP at the ceiling."""
-        return self.state in ("waiting", "running")
+        """The plugin holds generation off and the TDP at the ceiling (not while it waits for the
+        Quick Access menu: the game keeps the player's settings until the run really starts)."""
+        return self.state in ("settling", "running")
+
+    @property
+    def busy(self) -> bool:
+        return self.state in ("waiting", "settling", "running")
 
     # ------------------------------------------------------------------ tick
     def tick(self, s: Dict[str, Any]) -> None:
@@ -75,22 +86,31 @@ class Benchmark:
         now = self.clock()
         if self.state == "cancelled" and now - self.ended > DONE_SHOW_S:
             self.reset()
-        if not self.measuring:
+        if not self.busy:
             return
         if not s.get("game") or s.get("app") != self.app:
             return self._cancel("the game was closed or changed")
-        if s.get("steam_ui"):
-            if self.state == "running":
-                return self._cancel("the Steam menu opened")
-            self.since = now   # waiting for the Quick Access menu to close
-            return
         if self.state == "waiting":
-            if s.get("at_ceiling", True) and now - self.since >= SETTLE_S:
-                self.state, self.since, self.samples = "running", now, []
+            if s.get("steam_ui"):
+                if now - self.since >= WAIT_MAX_S:
+                    return self._cancel("the Steam menu stayed open")
+                return
+            self.state, self.since = "settling", now
+            return
+        if s.get("steam_ui"):
+            return self._cancel("the Steam menu opened")
+        if self.state == "settling":
+            settled = now - self.since >= SETTLE_S and s.get("at_ceiling", True)
+            if settled or now - self.since >= SETTLE_MAX_S:
+                self.state, self.since, self.samples, self.seen = "running", now, [], now
             return
         real = s.get("real")
-        if isinstance(real, (int, float)) and real < PAUSED_FPS:
-            return self._cancel("the game was paused")
+        if isinstance(real, (int, float)):
+            if real < PAUSED_FPS:
+                return self._cancel("the game was paused")
+            self.seen = now
+        elif now - self.seen >= NO_FRAMES_S:
+            return self._cancel("no game frames were measured")
         self.samples.append(s)
         if now - self.since >= DURATION_S:
             self._finish(s)
@@ -122,7 +142,7 @@ class Benchmark:
     def panel(self, now: Optional[float] = None) -> Optional[str]:
         """What the in-game centre panel shows: measuring, done (a few seconds) or nothing."""
         now = self.clock() if now is None else now
-        if self.state == "running":
+        if self.state in ("settling", "running"):
             return "measuring"
         if self.state == "done" and now - self.ended < DONE_SHOW_S:
             return "done"

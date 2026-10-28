@@ -199,6 +199,27 @@ class PilotTest(unittest.TestCase):
         out = self.run_ctx(2, objective="battery", autopilot=True, low_battery=True, above_x3=True)
         self.assertEqual(out["point"], 24)
 
+    def test_failed_climbs_wait_longer_each_time(self):
+        # 3.3.1: a point that did not hold waits 1, 2, 4 ... min before the next climb into it.
+        p = self.p
+        p.retry_at.clear()
+        self.assertEqual(p._failed_climb(35, 100.0), 60.0)
+        self.assertEqual(p._failed_climb(35, 200.0), 120.0)
+        self.assertEqual(p.retry_at[35], 320.0)
+        for _ in range(6):
+            p._failed_climb(35, 0.0)
+        self.assertEqual(p.retry_at[35], pilot.RETRY_MAX_S)
+
+    def test_short_trial_ends_early(self):
+        self.run_ctx(15, real=31.0, engine={"auto": True, "cap_fps": 30})   # locked 30
+        p = self.p
+        self.assertEqual(p.point, 30)
+        p.trial_cap, p.trial_from = 35, 30
+        p._go("trial", "trying point 35")
+        out = self.run_ctx(int(pilot.TRIAL_EARLY_S) + 2, real=31.0, engine={"auto": True, "cap_fps": 35})
+        self.assertEqual((out["phase"], out["point"]), ("locked", 30))
+        self.assertGreater(p.retry_at.get(35, 0.0), self.clock.t)
+
     def test_battery_locks_x375(self):
         out = self.run_ctx(2, objective="battery", above_x3=True)
         self.assertEqual((out["point"], out["base_fps"], out["label"]), (24, 24, "x3.75"))
@@ -301,6 +322,39 @@ class GovernorTest(unittest.TestCase):
         self.assertEqual(self.g.floor_fail[45], probed)
         self.clock.t += 301
         self.assertNotIn(45, self.g.floor_fail, "a floor expires")
+
+    def test_calm_after_a_raise(self):
+        self.feed(10, objective="autopilot")
+        probed = self.act.tdp
+        self.feed(6, real=38.0, objective="autopilot")  # the step down does not hold: back up
+        restored = self.act.tdp
+        self.assertGreater(restored, probed)
+        self.feed(25, objective="autopilot")
+        self.assertEqual(self.act.tdp, restored, "no probe down within 30 s of a raise")
+        self.feed(30, objective="autopilot")
+        self.assertEqual(self.act.tdp, restored - 1.0, "then a watt at a time, above the failed level")
+
+    def test_calm_doubles_when_raises_repeat(self):
+        self.feed(1)
+        for _ in range(3):
+            self.g._write(10.0, "window-held")
+            self.g._write(12.0, "fast-restore")
+        self.assertEqual(self.g.calm_until - self.clock.t, 120.0)
+
+    def test_two_held_windows_per_step(self):
+        self.feed(1)
+        self.g.fast = False
+        before = len(self.act.writes)
+        self.feed(30)
+        self.assertEqual(len(self.act.writes) - before, 1, "one step per two 8 s windows")
+
+    def test_autopilot_one_watt_near_a_failed_level(self):
+        self.feed(1, objective="autopilot")
+        self.g.fast = False
+        self.g.failed_at[45] = 10.0
+        self.g._write(13.0, "test")
+        self.feed(25, objective="autopilot")
+        self.assertEqual(self.act.writes[-1], 12.0, "a watt at a time within 2 W of a failure")
 
     def test_draw_headroom_jumps_down(self):
         self.act.draw = 6.0
