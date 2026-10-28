@@ -35,6 +35,8 @@ import time
 from collections import deque
 from typing import Any, Callable, Deque, Dict, List, Optional
 
+from . import honest
+
 STABLE_S = 12.0
 MEASURE_MIN_S = 8.0
 MEASURE_MAX_S = 45.0
@@ -93,6 +95,9 @@ LIGHT_OBJECTIVES = ("balanced", "quality", "autopilot")
 POWER_WAIT_S = 60.0
 KNOWN_RECHECK_S = 30.0
 COSTLY_HOLD_S = 600.0
+
+
+ABOVE_X3_POLICY = False   # x3.75 / x4 points allowed by the Setup toggle (off: x3 is the limit)
 
 
 def div_up(a: int, b: int) -> int:
@@ -162,6 +167,7 @@ class PointPilot:
 
     def reset(self) -> None:
         self.context: Optional[tuple] = None
+        self.pairs: Optional[Dict[int, int]] = None   # honest ladder: base -> N (None: 3.3.2's points)
         self.light_failed = False   # listed as light, but x2 does not hold even at full power
         self.measured = 0           # what the last full-power measurement held (read once by the service)
         self.phase = "idle"
@@ -219,12 +225,18 @@ class PointPilot:
         managed)."""
         fg = ctx.get("fg", "auto")
         refresh = int(ctx.get("refresh") or 90)
-        above = bool(ctx.get("above_x3"))
+        # User (2026-10-28 22:21): no more than two generated frames between two real ones, x3 at
+        # most in every mode; the Setup toggle's x3.75 / x4 is not chosen by any policy for now.
+        above = bool(ctx.get("above_x3")) and ABOVE_X3_POLICY
         steps = capped(ladder(refresh), refresh, above)
         if fg == "x3.75" and not above:
             fg = "x3"
         objective = ctx.get("objective", "balanced")
-        context = (ctx.get("app"), refresh, fg, objective, int(ctx.get("base_fps") or 0), bool(ctx.get("dock")), above)
+        # Honest multipliers (honest.py): only when the engine reports that it draws strict xN; the
+        # service then passes the panel (its refresh is kept, never switched).
+        panel = ctx.get("honest_panel")
+        hkey = (panel["refresh"], bool(panel.get("dock"))) if panel else None
+        context = (ctx.get("app"), refresh, fg, objective, int(ctx.get("base_fps") or 0), bool(ctx.get("dock")), above, hkey)
         if context != self.context:
             keep = (self.context is not None and self.context[:3] == context[:3] and self.point
                     and self.context[3] != "battery")
@@ -236,6 +248,8 @@ class PointPilot:
         if fg == "off":
             self.phase, self.point = "off", 0
             return {**self._request(0, 0, 0, False), **self.snapshot(refresh)}
+        if panel and fg == "auto":
+            return {**self._honest_tick(ctx, objective, panel), **self.snapshot(refresh)}
         if fg in ("x2", "x3"):
             self.phase, self.point = "fixed", div_up(refresh, int(fg[1]))
             req = self._request(int(fg[1]), 0, 0, False)
@@ -247,6 +261,19 @@ class PointPilot:
             self._guard_fixed(ctx)
             return {**self._request(1, cap, 0, False), **self.snapshot(refresh)}
         return {**self._auto(ctx, steps, objective), **self.snapshot(refresh)}
+
+    def _honest_tick(self, ctx: Dict[str, Any], objective: str, panel: Dict[str, Any]) -> Dict[str, Any]:
+        """Generation "Auto" with honest multipliers: the same pilot on the honest ladder's bases,
+        each request carrying its N."""
+        light = ctx.get("game_class") == "light" and not self.light_failed
+        pairs = honest.ladder(objective, int(panel["refresh"]), bool(panel.get("dock")), light)
+        self.pairs = dict(pairs)
+        req = self._auto(ctx, [b for b, _ in pairs], objective)
+        b = req["base_fps"]
+        if req["multiplier"] == 1 and b:
+            n = honest.n_for(pairs, b)
+            return {**req, "multiplier": n, "base_fps": honest.cap(n, int(panel["refresh"]))}
+        return req
 
     def _guard_fixed(self, ctx: Dict[str, Any]) -> None:
         verdict = self._window(ctx, self.point, GUARD_S)
@@ -290,13 +317,13 @@ class PointPilot:
 
     def _auto(self, ctx: Dict[str, Any], steps: List[int], objective: str) -> Dict[str, Any]:
         now = self.clock()
-        floor = self._battery_point(ctx, steps)
+        floor = steps[0] if self.pairs else self._battery_point(ctx, steps)
         # Only the Battery mode chosen by hand pins its low point. A low battery under Autopilot
         # no longer locks x3 (Deck report 3.2.1: 45 fps at 7.5 W dropped to 30 at 19 %).
         low = objective == "battery"
         top = floor if low else steps[-1]
         light = ctx.get("game_class") == "light" and not self.light_failed
-        bottom = max(steps[0], lowest_point(int(ctx.get("refresh") or 90), objective, light, bool(ctx.get("dock"))))
+        bottom = steps[0] if self.pairs else max(steps[0], lowest_point(int(ctx.get("refresh") or 90), objective, light, bool(ctx.get("dock"))))
         floor_cap = steps[0]
         steps = [c for c in steps if c >= bottom]
         if not ctx.get("game"):
@@ -433,7 +460,8 @@ class PointPilot:
         lower = [c for c in steps if c < self.point]
         limit = BAND_MAX_W
         if (not ctx.get("autopilot") or ctx.get("dock") or not ctx.get("gov_settled") or not isinstance(tdp, (int, float))
-                or tdp <= limit or not lower or self.point > x3_cap(int(ctx.get("refresh") or 90))):
+                or tdp <= limit or not lower
+                or (honest.n_for(list(self.pairs.items()), self.point) < 3 if self.pairs else self.point > x3_cap(int(ctx.get("refresh") or 90)))):
             self.costly_since = None
             return False
         if self.costly_since is None:

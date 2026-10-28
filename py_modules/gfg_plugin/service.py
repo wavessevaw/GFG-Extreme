@@ -182,6 +182,9 @@ class Service:
             except OSError:
                 pass
         dock = self.dock
+        panel = self._honest_panel(game, st, refresh, dock)
+        aim = (self.last_req or {}).get("point") if self.last_req else None
+        pace = self._control_pace(live, rates, st, refresh, aim) if panel is not None else live.get("pace")
         gp = self.book.profile(self.app, refresh, dock) if game else {"class": None, "source": None}
         if game:
             self.cur = (self.app, refresh, dock)
@@ -195,7 +198,7 @@ class Service:
         req = self.last_req if boosting or benching else self.pilot.tick({
             "fg": profile["fg"], "base_fps": profile["base_fps"], "objective": objective,
             "refresh": refresh, "game": game, "app": self.app, "engine": st,
-            "real": live.get("real"), "pace": live.get("pace"), "confirmed": confirmed,
+            "real": live.get("real"), "pace": pace, "confirmed": confirmed,
             "gpu_busy": sensors.get("gpu_busy_pct"), "cpu_top": sensors.get("cpu_top_core_pct"),
             "autopilot": objective == "autopilot", "stable_point": self._stable_point(refresh) if game else None,
             "known_point": gp.get("point"), "bench_point": gp.get("bench_point"), "game_class": gp.get("class"), "dock": dock,
@@ -204,7 +207,7 @@ class Service:
             # Only a TDP the Governor manages is a power reading for the pilot: paused (the player's own
             # TDP) Autopilot must still climb when the game gets lighter (Deck report 3.0.7).
             "tdp_w": gov.tdp if gov.owned and not gov.paused else None, "gov_settled": gov.settled(), "warm": gov.warm,
-            "at_ceiling": gov.at_ceiling(), "settling": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
+            "at_ceiling": gov.at_ceiling(), "honest_panel": panel, "settling": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
         })
         self.last_req = req if game else None
         if benching:
@@ -263,7 +266,7 @@ class Service:
             "cap": req["point"] if locked else 0, "hold_ceiling": req["hold_ceiling"],
             # A CPU clock change (Power Split) restarts the TDP windows like a new policy does.
             "epoch": (coord["epoch"], self.split.changes if self.split else 0, self.gclock.changes if self.gclock else 0),
-            "real": live.get("real"), "pace": live.get("pace"),
+            "real": live.get("real"), "pace": pace,
             "probe_active": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
             "over_budget": (rates or {}).get("over_budget", 0.0), "ring_miss": 0.0, "temp_c": temp,
             "draw_w": gov.status().get("draw_w"),
@@ -341,6 +344,29 @@ class Service:
             self.idle, self.idle_rev = True, getattr(self.settings, "rev", 0)
             self.idle_sensors_at = now
         return self.snapshot
+
+    @staticmethod
+    def _control_pace(live: Dict[str, Any], rates: Optional[Dict[str, float]], st: Dict[str, Any],
+                      refresh: int, aim: Optional[int] = None) -> Optional[float]:
+        """Pace for the pilot and the Governor under honest multipliers: aiming at 40 with x2 on
+        90 Hz repeats 10 refreshes a second by design (80 on screen); only repeats beyond that
+        are the game missing its aim. The HUD keeps showing the plain pace."""
+        pace = live.get("pace")
+        mult = st.get("req_multiplier") or st.get("multiplier")
+        base = aim if isinstance(aim, int) and aim > 0 else st.get("base_fps")
+        if pace is None or not rates or not isinstance(mult, int) or mult < 2 or not isinstance(base, int) or not base:
+            return pace
+        shown = rates["real"] + rates["gen"] + rates["repeat"]
+        planned = max(0.0, refresh - mult * base) * shown / max(1.0, float(refresh))
+        return 1.0 - max(0.0, rates["repeat"] - planned) / shown if shown > 0 else pace
+
+    @staticmethod
+    def _honest_panel(game: bool, st: Dict[str, Any], refresh: int, dock: bool) -> Optional[Dict[str, Any]]:
+        """Honest multipliers (honest.py) once the engine draws strict xN; the refresh is never
+        changed (user, 22:22), so this is the refresh the points are for."""
+        if not game or not st.get("strict_multiplier"):
+            return None
+        return {"refresh": refresh, "dock": dock}
 
     def _reset_after_game(self) -> None:
         """The game is gone: nothing of it is kept in memory (the book and the model have it)."""

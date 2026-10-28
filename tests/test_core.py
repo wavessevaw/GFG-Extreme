@@ -197,7 +197,7 @@ class PilotTest(unittest.TestCase):
         self.p.reset()
         self.p.context = None
         out = self.run_ctx(2, objective="battery", autopilot=True, low_battery=True, above_x3=True)
-        self.assertEqual(out["point"], 24)
+        self.assertEqual(out["point"], 30)   # x3 at most, even on a low battery (user, 2026-10-28)
 
     def test_failed_climbs_wait_longer_each_time(self):
         # 3.3.1: a point that did not hold waits 1, 2, 4 ... min before the next climb into it.
@@ -254,9 +254,10 @@ class PilotTest(unittest.TestCase):
         self.assertEqual((out["phase"], out["point"]), ("locked", 30))
         self.assertGreater(p.retry_at.get(35, 0.0), self.clock.t)
 
-    def test_battery_locks_x375(self):
+    def test_battery_never_x375(self):
+        # User, 2026-10-28: no more than two intermediates; the toggle's x3.75 is no policy's.
         out = self.run_ctx(2, objective="battery", above_x3=True)
-        self.assertEqual((out["point"], out["base_fps"], out["label"]), (24, 24, "x3.75"))
+        self.assertEqual((out["point"], out["base_fps"], out["label"]), (30, 30, "x3"))
 
     def test_x3_is_the_limit_until_unlocked(self):
         # User, 3.1.1: "above x3 plays very badly"; x3.75 only with the setting.
@@ -284,8 +285,8 @@ class PilotTest(unittest.TestCase):
 
     def test_fixed_choices(self):
         self.assertEqual(self.run_ctx(1, fg="x3")["multiplier"], 3)
-        out = self.run_ctx(1, fg="x3.75", above_x3=True)
-        self.assertEqual((out["multiplier"], out["base_fps"]), (1, 24))
+        out = self.run_ctx(1, fg="x3.75", above_x3=True)   # x3 at most (user, 2026-10-28)
+        self.assertEqual((out["multiplier"], out["base_fps"]), (3, 0))
         out = self.run_ctx(1, fg="custom", base_fps=40)
         self.assertEqual(out["base_fps"], 40)
         self.assertEqual(self.run_ctx(1, fg="off")["multiplier"], 0)

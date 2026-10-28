@@ -73,16 +73,17 @@ class VGame:
         self.load = load or (lambda t: 1.0)
         self.noise = noise
         self.rng = random.Random(seed)
+        self.gen_factor = 0.92   # what generation leaves the game (VEngine.gen_cost sets it per second)
 
     def capability(self, tdp: float, t: float, generating: bool) -> float:
         f = self.fps15 * self.load(t) * (max(tdp - 2.5, 0.1) / 12.5) ** 0.55
         if generating:
-            f *= 0.92
+            f *= self.gen_factor
         return f * (1.0 + self.noise * (2 * self.rng.random() - 1))
 
     def watts_for(self, fps: float, t: float, generating: bool) -> float:
         """APU watts needed to render fps (plus 2.5 W for the rest of the Deck's APU)."""
-        full = self.fps15 * self.load(t) * (0.92 if generating else 1.0)
+        full = self.fps15 * self.load(t) * (self.gen_factor if generating else 1.0)
         return 2.5 + 12.5 * (max(fps, 0.0) / max(full, 1e-6)) ** (1 / 0.55)
 
 
@@ -176,6 +177,14 @@ class VEngine:
         self.gpu_backend: Any = None   # gpu_clock.MemoryBackend: SteamOSManager's manual GPU clock
         self.cpu_share = 1.0
         self.gpu_capability = 0.0
+        # Honest multipliers: the engine draws exactly N-1 intermediates per real frame for a
+        # policy (N >= 2, base) and says so in its status ("strict_multiplier").
+        self.strict = False
+        # Generation's cost to the game: None keeps the flat 8 %; a number is the share lost per
+        # 60 generated frames a second (0.08: 8 % at x3 on 90 Hz, less for fewer intermediates).
+        self.gen_cost: Optional[float] = None
+        self.gen_rate = 60.0
+        self.out_rate = 0.0
 
     # gamescopectl
     def set_var(self, name: str, value: Any) -> None:
@@ -204,6 +213,8 @@ class VEngine:
         generating = mult != 0 and self.app_id not in (0, 769)
         # CPU and GPU share the TDP: a capped CPU clock gives part of its boost back to the GPU
         # and limits how many frames the CPU can prepare.
+        if self.gen_cost is not None:
+            self.game.gen_factor = max(0.5, 1.0 - self.gen_cost * self.gen_rate / 60.0)
         share = self.cpu.share if self.cpu else 1.0
         freed = CPU_BOOST_W * (1.0 - share * share)
         cap_power = self.power.tdp + 0.6 * freed
@@ -232,6 +243,9 @@ class VEngine:
         else:
             cap = self.refresh // mult
             self.auto = None
+        strict = self.strict and mult >= 2 and generating
+        if strict and base:
+            cap = min(self.refresh // mult, max(20, base))
         rate = min(capability, cap) if cap else min(capability, self.refresh)
         self.capability, self.rate, self.cap = capability, rate, cap
         need = max(2.5, self.game.watts_for(rate, t, generating) * (0.85 + 0.15 * gshare) - 0.5 * freed)
@@ -241,13 +255,23 @@ class VEngine:
         c = self.counters
         c["flips"] += self.refresh
         c["sources"] += rate
-        if cap and generating:
+        if cap and generating and strict:
+            # Exactly N-1 intermediates per real frame; the rest of the refresh repeats.
+            gen = (mult - 1) * rate
+            c["real"] += rate
+            c["gen"] += gen
+            c["repeat"] += max(0.0, self.refresh - rate - gen)
+            self.gen_rate, self.out_rate = gen, rate + gen
+        elif cap and generating:
             repeat = max(0.0, self.refresh * (1.0 - rate / cap))
             c["real"] += rate
             c["repeat"] += repeat
-            c["gen"] += max(0.0, self.refresh - rate - repeat)
+            gen = max(0.0, self.refresh - rate - repeat)
+            c["gen"] += gen
+            self.gen_rate, self.out_rate = gen, rate + gen
         else:
             c["real"] += rate
+            self.gen_rate, self.out_rate = 0.0, rate
         c["over_budget"] += self.over_budget_per_s
 
     def status(self) -> Dict[str, Any]:
@@ -263,6 +287,7 @@ class VEngine:
             "width": 1280, "height": 800, "app_id": self.app_id, "steam_ui": self.steam_ui,
             "auto": mult == 1 and not self._int("kfg_base_fps"), "cap_fps": self.cap,
             "base_fps": self._int("kfg_base_fps"), "gpu_us_avg": self.gpu_us,
+            **({"strict_multiplier": True} if self.strict else {}),
             **{k: int(v) for k, v in self.counters.items()},
         }
         if not self.old_engine:

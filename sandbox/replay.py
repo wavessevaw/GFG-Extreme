@@ -93,7 +93,7 @@ def sessions(rows: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
     return [s for s in out if len(s) >= MIN_SESSION_S]
 
 
-def scene(session: List[Dict[str, Any]]) -> Dict[str, List[float]]:
+def scene(session: List[Dict[str, Any]], gen_cost: Optional[float] = None) -> Dict[str, List[float]]:
     """Per second: the GPU frames the scene allows at 15 W (vdeck's power law) and the frames the
     CPU can prepare at full clock. A second without readings keeps the last one."""
     gpu15: List[float] = []
@@ -110,7 +110,8 @@ def scene(session: List[Dict[str, Any]]) -> Dict[str, List[float]]:
             freed = 3.0 * (1.0 - share * share)
             g_cap = 100.0 * real / max(gpu, GPU_MIN_PCT)
             f = (max(tdp + 0.6 * freed - 2.5, 0.1) / 12.5) ** 0.55
-            g_last = min(FPS15_MAX, g_cap / f / (0.92 if generating else 1.0))
+            lost = 0.08 if gen_cost is None else gen_cost * max(0.0, (fps or 0.0) - real) / 60.0
+            g_last = min(FPS15_MAX, g_cap / f / ((1.0 - lost) if generating else 1.0))
         if real is not None and real > 1.0 and top is not None:
             c_last = min(FPS15_MAX * 2, 95.0 * real / max(top, GPU_MIN_PCT) / share)
         gpu15.append(g_last)
@@ -148,9 +149,12 @@ class ReplayGame(VGame):
 
 
 def replay(rows: List[Dict[str, Any]], split: bool = False, gpu_clock: bool = False, noise: float = 0.0,
-           seed: int = 1) -> Dict[str, Any]:
+           seed: int = 1, strict: bool = False, gen_cost: Optional[float] = None,
+           objective: Optional[str] = None) -> Dict[str, Any]:
     """noise/seed: extra +-noise per second on the scene (vdeck's own), to see how far a result
-    moves on a slightly different playthrough of the same scenes."""
+    moves on a slightly different playthrough of the same scenes. strict: the engine draws honest
+    multipliers. gen_cost: generation's cost per 60 generated frames a second (None: a flat 8 %).
+    objective: every session in this objective instead of the recorded ones."""
     ss = sessions(rows)
     if not ss:
         return {"sessions": 0}
@@ -159,11 +163,12 @@ def replay(rows: List[Dict[str, Any]], split: bool = False, gpu_clock: bool = Fa
                         user_tdp=float(_num(first[0].get("ceiling")) or 15.0), split=split, gpu_clock=gpu_clock,
                         game_list=True)
     rig.engine.app_id = 769
+    rig.engine.strict, rig.engine.gen_cost = strict, gen_cost
     acc = Acc()
     for i, s in enumerate(ss):
         if i:
             rig.clock.t += min(MAX_JUMP_S, max(0.0, s[0]["t"] - ss[i - 1][-1]["t"]))
-        _play_session(rig, s, acc, noise, seed + i)
+        _play_session(rig, s, acc, noise, seed + i, gen_cost, objective)
     out = acc.result()
     out["sessions"] = len(ss)
     # Why the TDP and the point moved (the journal), for reading the numbers.
@@ -190,9 +195,10 @@ def _idle(rig: Rig, ticks: int) -> None:
         rig.clock.t += 1.0
 
 
-def _play_session(rig: Rig, s: List[Dict[str, Any]], acc: "Acc", noise: float = 0.0, seed: int = 1) -> None:
+def _play_session(rig: Rig, s: List[Dict[str, Any]], acc: "Acc", noise: float = 0.0, seed: int = 1,
+                  gen_cost: Optional[float] = None, objective: Optional[str] = None) -> None:
     _idle(rig, IDLE_TICKS)
-    sc = scene(s)
+    sc = scene(s, gen_cost)
     hz = int(s[0]["hz"])
     ceiling = float(_num(s[0].get("ceiling")) or 15.0)
     p = rig.power
@@ -210,12 +216,16 @@ def _play_session(rig: Rig, s: List[Dict[str, Any]], acc: "Acc", noise: float = 
     t0 = rig.clock()
     game = ReplayGame(int(s[0]["app"]), sc, t0, noise, seed)
     eng.game, eng.app_id = game, game.app_id
-    mask = steady_mask([min(g, c) for g, c in zip(sc["gpu15"], sc["cpu"])])
+    load = [min(g, c) for g, c in zip(sc["gpu15"], sc["cpu"])]
+    mask = steady_mask(load)
+    # The game's class from its median frames at 15 W: light 50+, medium 35-50, heavy under 35.
+    med = statistics.median(load)
+    acc.cls = "light" if med >= 50 else ("medium" if med >= 35 else "heavy")
     prof = rig.settings.data["profiles"]["default"]
     ac = s[0].get("ac")
     rig.sensors.external_power = bool(ac)
     for k, r in enumerate(s):
-        obj = r.get("objective")
+        obj = objective or r.get("objective")
         if obj in ("autopilot", "battery", "balanced", "quality") and obj != prof["objective"]:
             prof["objective"] = obj
         if isinstance(r.get("ac"), bool) and r["ac"] != ac:
@@ -235,6 +245,26 @@ def _play_session(rig: Rig, s: List[Dict[str, Any]], acc: "Acc", noise: float = 
     acc.end_session()
 
 
+def _aim(eng: Any, point: int) -> int:
+    """What the game should hold: the cap, or under honest xN the pilot's point (the cap is
+    refresh / N there and the Governor aims at the point)."""
+    if eng.strict and eng._int("kfg_multiplier") >= 2 and point:
+        return min(eng.cap, int(point))
+    return eng.cap
+
+
+def _even(eng: Any, point: int = 0) -> bool:
+    """An even cadence this second: the game holds its aim and every frame is shown the same
+    number of refreshes (the output divides the refresh)."""
+    aim = _aim(eng, point)
+    if eng.rate < 0.98 * aim:
+        return False
+    mult = eng._int("kfg_multiplier")
+    if mult >= 2 and eng.strict:
+        return eng.refresh % (mult * aim) == 0
+    return mult >= 2 or eng.refresh % eng.cap == 0
+
+
 class Acc:
     """Counts per hour of game time, all and steady seconds, per objective."""
 
@@ -242,6 +272,7 @@ class Acc:
         self.groups: Dict[str, Dict[str, Any]] = {}
         self.prev: Optional[Dict[str, Any]] = None
         self.paces: deque = deque(maxlen=8)
+        self.cls = ""
 
     def _g(self, name: str) -> Dict[str, Any]:
         return self.groups.setdefault(name, Counter())
@@ -275,18 +306,22 @@ class Acc:
             "draw": rig.power.draw,
             "tdp": rig.power.tdp,
             "capped_s": int(eng.cap > 0),
-            "short_s": int(eng.cap > 0 and eng.rate < SHORT_RATIO * eng.cap),
-            "deep_s": int(eng.cap > 0 and eng.rate < DEEP_RATIO * eng.cap),
+            "short_s": int(eng.cap > 0 and eng.rate < SHORT_RATIO * _aim(eng, pilot["point"])),
+            "deep_s": int(eng.cap > 0 and eng.rate < DEEP_RATIO * _aim(eng, pilot["point"])),
             "pace8_s": int(len(self.paces) == 8 and statistics.fmean(self.paces) < 0.98),
             "hot_s": int(rig.sensors.temp >= 85.0),
+            "out": eng.out_rate,
+            "even_s": int(eng.cap > 0 and pilot["phase"] in ("locked", "fixed") and _even(eng, pilot["point"])),
         }
-        names = ["all", f"obj:{objective}"] + (["steady"] if steady else [])
+        names = ["all", f"obj:{objective}"] + (["steady"] if steady else []) + ([f"class:{self.cls}"] if self.cls else [])
         for name in names:
             g = self._g(name)
             for key, v in ev.items():
                 g[key] += v
             if eng.cap > 0 and pilot["phase"] in ("locked", "fixed"):
                 g[f"at:{pilot['point']}"] += 1
+                mult = eng._int("kfg_multiplier")
+                g[f"pair:{'x%d' % mult if mult >= 2 and eng.strict else ('fill' if mult == 1 else 'x%d' % mult)}@{_aim(eng, pilot['point'])}"] += 1
             for e in journal:
                 if e.get("kind") == "governor-tdp":
                     g["why:" + str(e.get("why", "")).split(":")[0]] += 1
@@ -314,6 +349,10 @@ class Acc:
                 "tdp_w": round(g["tdp"] / n, 2),
                 "energy_wh": round(g["draw"] / 3600.0, 1),
                 "hot_pct": round(100.0 * g["hot_s"] / n, 2),
+                "out_fps": round(g["out"] / n, 2),
+                "even_pct": round(100.0 * g["even_s"] / max(1, g["capped_s"]), 2),
+                "pairs_pct": {k[5:]: round(100.0 * v / locked, 1) for k, v in sorted(g.items(), key=lambda kv: -kv[1])
+                              if k.startswith("pair:")},
                 "tdp_why_h": {k[4:]: round(v / h, 1) for k, v in sorted(g.items(), key=lambda kv: -kv[1])
                               if k.startswith("why:")},
                 "points_pct": {k[3:]: round(100.0 * v / locked, 1) for k, v in sorted(g.items(), key=lambda kv: kv[0])

@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, List
 from .run import Rig, make_rig
 from .vdeck import VGame
 from gfg_plugin.pilot import lowest_point, x3_cap  # noqa: E402  (run.py puts py_modules on the path)
+from gfg_plugin import pilot as pilot_mod  # noqa: E402
 
 LADDER = (0, 20, 24, 25, 30, 35, 40, 45)
 
@@ -272,10 +273,12 @@ def autopilot_heavy() -> Dict[str, Any]:
                          "temp_max": round(max(r["temp"] for r in rows), 1)}
             if top > 15.0 + 1e-6:
                 bad.append(f"{name}: TDP {top} W above 15 W")
-            if x3_full > 120:
+            # x3 is the most since 2026-10-28 (no more than two intermediates): a game that needs
+            # 15 W for x3 stays there instead of falling to x3.75.
+            if x3_full > 120 and pilot_mod.ABOVE_X3_POLICY:
                 bad.append(f"{name}: x3 at 15 W for {x3_full} s")
-            if fps15 >= 34.0 and x375 > 120:
-                bad.append(f"{name}: x3.75 for {x375} s although x3 holds below 15 W")
+            if x375:
+                bad.append(f"{name}: x3.75 for {x375} s (x3 is the most)")
             if warm_climb:
                 bad.append(f"{name}: {warm_climb} climbs tried at 80 C or more")
     out["bad"] = bad
@@ -283,7 +286,7 @@ def autopilot_heavy() -> Dict[str, Any]:
 
 
 def paused_governor_climbs() -> Dict[str, Any]:
-    """Deck report 3.0.7: a heavy start locks x3.75, the player then moves Steam's slider (the
+    """Deck report 3.0.7: a heavy start locks the lowest point (x3 since 2026-10-28), the player then moves Steam's slider (the
     Governor pauses at their 15 W) and the game gets light (40+ fps). Autopilot must climb back
     instead of staying at x3.75 forever."""
     load = {"v": 0.45}
@@ -291,8 +294,8 @@ def paused_governor_climbs() -> Dict[str, Any]:
     bad: List[str] = []
     ev = {200: lambda r: r.power.steam_slider(14.0), 260: lambda r: load.update(v=1.0)}
     rows = drive(rig, 1200, ev, bad)
-    if rows[199]["point"] != 24:
-        bad.append(f"setup: expected x3.75 at the heavy start, got {rows[199]['point']}")
+    if rows[199]["point"] != 30:   # x3 at most (2026-10-28): the heavy start locks x3
+        bad.append(f"setup: expected x3 at the heavy start, got {rows[199]['point']}")
     if not rows[-1]["paused"]:
         bad.append("setup: the Governor did not pause")
     if rows[-1]["point"] < 35:

@@ -203,11 +203,12 @@ def objectives_medium_game() -> Dict[str, Any]:
 
 @scenario
 def heavy_game_x375() -> Dict[str, Any]:
-    """A heavy game (27 fps at 15 W) cannot hold x3 (30). With "above x3" on, Battery uses x3.75
-    steadily; by default (user, 3.1.1) it stays at x3 like Balanced. Quality stops at x2.5 (user,
-    3.0.10). All steady; the ones that cannot hold their point say so."""
+    """A heavy game (27 fps at 15 W) cannot hold x3 (30). x3 is the most in every mode (user,
+    2026-10-28: no more than two intermediates), so Battery stays at x3 even with "above x3" on,
+    like Balanced. Quality stops at x2.5 (user, 3.0.10). All steady; the ones that cannot hold
+    their point say so."""
     out: Dict[str, Any] = {"runs": {}}
-    lowest = {"quality": 40, "balanced": 30, "battery": 24, "battery-x3": 30}
+    lowest = {"quality": 40, "balanced": 30, "battery": 30, "battery-x3": 30}
     for obj in ("quality", "balanced", "battery", "battery-x3"):
         rig = _objective_run(obj.split("-")[0], 27.0, 600, above_x3=obj == "battery")
         out["runs"][obj] = metrics(rig, skip=120)
@@ -215,8 +216,8 @@ def heavy_game_x375() -> Dict[str, Any]:
         check(out, f"{obj}: point {lowest[obj]}", m["point_final"] == lowest[obj], f"point {m['point_final']}")
         check(out, f"{obj}: steady (no demote/promote loop)", m["demotions"] <= 1 and m["promotions"] <= 0,
               f"demotions {m['demotions']}, promotions {m['promotions']}")
-    check(out, "battery: holds 24", out["runs"]["battery"]["smooth_pct"] >= 97.0,
-          f"{out['runs']['battery']['smooth_pct']} %")
+    check(out, "battery with the toggle: not x3.75", out["runs"]["battery"]["point_final"] >= 30,
+          f"point {out['runs']['battery']['point_final']}")
     return out
 
 
