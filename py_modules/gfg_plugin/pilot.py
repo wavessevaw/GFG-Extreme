@@ -57,6 +57,16 @@ PROMOTE_WAIT_MAX_S = 960.0
 # whatever the back-off, so a lighter scene gets its real frames back within seconds.
 MEASURE_GAP_S = 2.5   # seconds without a confirmed Auto cap that break a measurement
 HEADROOM_WAIT_S = 10.0
+# Autopilot hysteresis (sandbox replay of Deck telemetry, 3.2-3.3.0: the point was climbed and
+# dropped about 20 times an hour, each a visible change of cadence). The other objectives keep
+# 3.3.2's rules.
+#  - the headroom must show in guard windows for HEADROOM_SUSTAIN_S in a row, not in one, before it
+#    climbs early;
+#  - a point the game fell from waits FALL_RETRY_S (doubling with each fall in this game, up to
+#    RETRY_MAX_S) before any climb back into it, the headroom path included;
+#  - Autopilot judges the median pace of a window, as it judges the median frames.
+HEADROOM_SUSTAIN_S = 10.0
+FALL_RETRY_S = 30.0
 HEADROOM_GPU_PCT = 92.0      # the GPU at the next point is estimated to stay under this
 HEADROOM_CPU_PCT = 85.0
 HOLD_RATIO = 0.95       # real fps vs cap over a guard window
@@ -165,6 +175,7 @@ class PointPilot:
         self.clean_since: Optional[float] = None
         self.promote_wait = PROMOTE_WAIT_S
         self.headroom_backoff = 0.0  # after a failed trial the headroom estimate waits this long
+        self.headroom_since: Optional[float] = None  # guard windows with headroom in a row since
         self.costly_since: Optional[float] = None
         self.costly: Dict[int, float] = {}  # point -> until: needed more than POWER_GOOD_W
         self.falls: Dict[int, int] = {}     # point -> times it fell at full power this game
@@ -194,6 +205,7 @@ class PointPilot:
         self.phase, self.reason, self.since = phase, reason, now
         self.window, self.window_start = [], now
         self.clean_since = None
+        self.headroom_since = None
 
     # ------------------------------------------------------------------ request
     @staticmethod
@@ -260,9 +272,11 @@ class PointPilot:
         reals = [s["real"] for s in self.window]
         paces = [s["pace"] for s in self.window if s["pace"] is not None]
         real = statistics.fmean(reals)
-        pace = statistics.fmean(paces) if paces else None
-        self.window, self.window_start = [], now
         auto = ctx.get("objective") == "autopilot"
+        # Autopilot judges the median pace as it judges the median frames: one hitch second (a
+        # loading stall) is not a game that got heavier.
+        pace = (statistics.median(paces) if auto else statistics.fmean(paces)) if paces else None
+        self.window, self.window_start = [], now
         hold = AUTOPILOT_HOLD_RATIO if auto else HOLD_RATIO
         # Autopilot judges the median: a short sharp drop does not move the point.
         ok = ((statistics.median(reals) if auto else real) >= hold * cap
@@ -327,9 +341,15 @@ class PointPilot:
                 nxt = [c for c in steps if c > self.point]
                 if (nxt and objective != "battery" and self._may_climb(ctx, nxt[0])
                         and self._headroom(verdict, self.point, nxt[0])):
-                    self.promote_wait = min(self.promote_wait, max(HEADROOM_WAIT_S, self.headroom_backoff))
+                    if self.headroom_since is None:
+                        self.headroom_since = now - GUARD_S
+                    if now - self.headroom_since >= (HEADROOM_SUSTAIN_S if ctx.get("autopilot") else 0.0):
+                        self.promote_wait = min(self.promote_wait, max(HEADROOM_WAIT_S, self.headroom_backoff))
+                else:
+                    self.headroom_since = None
             else:
                 self.clean_since = None
+                self.headroom_since = None
                 if verdict["at_ceiling"]:
                     # Short at full power the whole window: the game got heavier.
                     lower = [c for c in steps if c < self.point]
@@ -344,6 +364,10 @@ class PointPilot:
                         self.promote_wait = min(PROMOTE_WAIT_MAX_S, PROMOTE_WAIT_S * 2 ** (falls - 1))
                         if self.promoted_at is not None and now - self.promoted_at < PROBATION_S:
                             self._failed_climb(self.point, now)
+                        if ctx.get("autopilot"):
+                            # No climb back into the point it fell from for a while, whatever path.
+                            back = now + min(RETRY_MAX_S, FALL_RETRY_S * 2 ** (falls - 1))
+                            self.retry_at[self.point] = max(self.retry_at.get(self.point, 0.0), back)
                         self.promoted_at = None
                         self._go("locked", f"game fell to {verdict['median']:.0f} fps at full power: "
                                  f"point {self.point} -> {new}", new)

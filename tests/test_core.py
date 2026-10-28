@@ -210,6 +210,40 @@ class PilotTest(unittest.TestCase):
             p._failed_climb(35, 0.0)
         self.assertEqual(p.retry_at[35], pilot.RETRY_MAX_S)
 
+    def ap(self, n, **ctx):
+        return self.run_ctx(n, **{"objective": "autopilot", "autopilot": True, "tdp_w": 10.0, **ctx})
+
+    def test_autopilot_does_not_climb_back_at_once_after_a_fall(self):
+        # Hysteresis (replay of Deck telemetry): a point the game fell from waits before any
+        # climb back into it, the GPU headroom path included.
+        self.ap(15)                                           # measured and locked 45
+        self.assertEqual(self.p.point, 45)
+        out = self.ap(6, real=38.0)                           # short at full power: falls
+        self.assertEqual(out["point"], 35)
+        self.assertGreater(self.p.retry_at.get(45, 0.0), self.clock.t + pilot.FALL_RETRY_S / 2)
+        # Lighter at once with plenty of GPU headroom: 40 may come, 45 not before its wait.
+        seen = [self.ap(1, real=45.0, gpu_busy=50.0, engine={"auto": False, "cap_fps": 45})
+                for _ in range(int(pilot.FALL_RETRY_S) - 8)]
+        self.assertFalse(any(o.get("trial_cap") == 45 for o in seen))
+
+    def test_autopilot_headroom_must_last(self):
+        self.ap(15)
+        p = self.p
+        p._go("locked", "test", 35)
+        p.promote_wait = pilot.PROMOTE_WAIT_S
+        self.ap(int(pilot.GUARD_S), real=35.0, gpu_busy=60.0)     # one window with headroom
+        self.assertEqual(p.promote_wait, pilot.PROMOTE_WAIT_S)
+        self.ap(int(pilot.HEADROOM_SUSTAIN_S), real=35.0, gpu_busy=60.0)
+        self.assertLess(p.promote_wait, pilot.PROMOTE_WAIT_S)
+
+    def test_autopilot_judges_the_median_pace(self):
+        self.ap(15)
+        self.assertEqual(self.p.point, 45)
+        self.ap(4)
+        out = self.ap(1, pace=0.2)                            # one hitch second in the window
+        out = self.ap(6)
+        self.assertEqual(out["point"], 45)
+
     def test_short_trial_ends_early(self):
         self.run_ctx(15, real=31.0, engine={"auto": True, "cap_fps": 30})   # locked 30
         p = self.p
