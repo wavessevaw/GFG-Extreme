@@ -117,7 +117,7 @@ const ICON = {
 // starting strategy; Accept stores it per game as Autopilot's compass.
 function Bench({ live, set }) {
   const b = live.bench || {}, last = (live.game_profile || {}).bench, refresh = live.refresh || 90;
-  const busy = b.state === "waiting" || b.state === "running";
+  const busy = b.state === "waiting" || b.state === "settling" || b.state === "running";
   const start = () => set(async () => { const r = await rpc.benchStart(); notify("GFG Extreme · Benchmark", r && r.ok === false ? r.error : "Close Quick Access: the 20 s start in game. Do not touch anything."); });
   if (b.state === "done") {
     const r = b.result || {}, m = r.medians || {};
@@ -131,7 +131,7 @@ function Bench({ live, set }) {
   }
   return h(Card, { title: "BENCHMARK" },
     h(Focusable, { className: "btn" + (busy ? "" : " red"), onClick: busy ? () => set(() => rpc.benchAnswer(false)) : start },
-      busy ? (b.state === "running" ? `Measuring · ${b.seconds_left} s · tap to cancel` : "Close Quick Access to start · tap to cancel") : "Run benchmark"),
+      busy ? (b.state !== "waiting" ? `Measuring · ${b.seconds_left} s · tap to cancel` : "Close Quick Access to start · tap to cancel") : "Run benchmark"),
     b.state === "cancelled" ? h("div", { className: "note bad" }, "Benchmark cancelled: " + b.reason + ".") : null,
     h("div", { className: "sub", style: { marginTop: 6 } }, !live.game ? "Start a game first: 20 s in game at 15 W, generation off."
       : last ? `Last for this game: base ${last.point} ${multText(refresh, last.point)} · accepted` : "20 s in game at 15 W, generation off: a starting point for Autopilot."));
