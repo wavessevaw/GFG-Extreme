@@ -11,8 +11,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to publish to (e.g. v3.0.1); created at this commit when new'
-        required: true
+        description: 'Tag to publish to (e.g. v3.0.1); created at this commit when new. Empty = test build: the zip is kept as a workflow artifact, nothing is published'
+        required: false
+        default: ''
+      kedavra_sha:
+        description: 'Test build only: GSF Kedavra commit to bundle instead of the pinned one'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -20,7 +25,7 @@ permissions:
 env:
   # GSF Kedavra (KEDAVRA engine and Gamescope patch) at the commit this release was tested with.
   KEDAVRA_REPO: wavessevaw/GSF_Kedavra
-  KEDAVRA_SHA: f13e66cee6b0934d9b90a273e78253502ba64042
+  KEDAVRA_SHA: ${{ (github.event_name == 'workflow_dispatch' && inputs.tag == '' && inputs.kedavra_sha != '') && inputs.kedavra_sha || 'f13e66cee6b0934d9b90a273e78253502ba64042' }}
 
 jobs:
   test:
@@ -139,7 +144,11 @@ jobs:
       - name: Zip for Decky
         run: |
           version="$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
-          test "v$version" = "$TAG" || { echo "::error::package.json $version does not match $TAG"; exit 1; }
+          if [ -n "$TAG" ]; then
+            test "v$version" = "$TAG" || { echo "::error::package.json $version does not match $TAG"; exit 1; }
+          else
+            version="$version-test.${GITHUB_SHA::7}"  # test build: never published
+          fi
           echo "version=$version" >> "$GITHUB_ENV"
           scripts/build_release.sh "$version" gamescope-runtime out kedavra-bench
           unzip -Z1 out/*.zip | grep -Fx GFG-Extreme/runtime/bin/gamescope
@@ -147,7 +156,14 @@ jobs:
           unzip -Z1 out/*.zip | grep -Fx GFG-Extreme/bench/kfg_vktest
           unzip -Z1 out/*.zip | grep -Fx GFG-Extreme/dist/index.js
           if unzip -Z1 out/*.zip | grep -qi 'mako\|lsfg\|lossless'; then echo "::error::MAKO/LSFG files in the zip"; exit 1; fi
+      - name: Test build zip
+        if: env.TAG == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: gfg-extreme-test-build
+          path: out/*.zip
       - name: Publish
+        if: env.TAG != ''
         run: |
           notes="RELEASE_DESCRIPTION_V${version//./_}.md"
           pre=$(python3 -c 'import json; print("--prerelease" if json.load(open("package.json")).get("gfgPrerelease") else "")')
