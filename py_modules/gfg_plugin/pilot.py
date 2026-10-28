@@ -39,7 +39,17 @@ STABLE_S = 12.0
 MEASURE_MIN_S = 8.0
 MEASURE_MAX_S = 45.0
 GUARD_S = 5.0
+# A trial of the next point up lasts long enough to see a scene change (3.3.1: 6 s trials held,
+# then the point fell within a minute, and every switch is a visible change of cadence).
 TRIAL_S = 6.0
+TRIAL_EARLY_S = 4.0     # ... but one clearly short (median under 92 %) ends after 4 s
+TRIAL_EARLY_RATIO = 0.92
+# A point that falls within this long of its promotion did not really hold: it waits like a
+# failed trial before the next try.
+PROBATION_S = 180.0
+# Per point, the wait before climbing into it again after it failed: 1, 2, 4, 8, 16 min.
+RETRY_BASE_S = 60.0
+RETRY_MAX_S = 960.0
 PROMOTE_WAIT_S = 120.0
 PROMOTE_WAIT_MAX_S = 960.0
 # Headroom: the GPU (or the CPU) clearly not at its limit at the locked point means the game
@@ -158,6 +168,9 @@ class PointPilot:
         self.costly_since: Optional[float] = None
         self.costly: Dict[int, float] = {}  # point -> until: needed more than POWER_GOOD_W
         self.falls: Dict[int, int] = {}     # point -> times it fell at full power this game
+        self.tries: Dict[int, int] = {}     # point -> failed climbs into it this game
+        self.retry_at: Dict[int, float] = {}  # point -> earliest next climb into it
+        self.promoted_at: Optional[float] = None
         self.trial_cap = 0
         self.trial_from = 0
         self.holds = True
@@ -301,6 +314,10 @@ class PointPilot:
             self._go("locked", "objective lowered the point", top)
         elif self.point < bottom:
             self._go("locked", "objective raised the point to its lowest", bottom)
+        if self.promoted_at is not None and now - self.promoted_at >= PROBATION_S:
+            # The promoted point held its probation: its failed tries are forgotten.
+            self.tries.pop(self.point, None)
+            self.promoted_at = None
         verdict = self._window(ctx, self.point, GUARD_S)
         if verdict is not None:
             if verdict["ok"]:
@@ -325,6 +342,9 @@ class PointPilot:
                         # The GPU headroom check still climbs early when the scene is clearly lighter.
                         falls = self.falls[self.point] = self.falls.get(self.point, 0) + 1
                         self.promote_wait = min(PROMOTE_WAIT_MAX_S, PROMOTE_WAIT_S * 2 ** (falls - 1))
+                        if self.promoted_at is not None and now - self.promoted_at < PROBATION_S:
+                            self._failed_climb(self.point, now)
+                        self.promoted_at = None
                         self._go("locked", f"game fell to {verdict['median']:.0f} fps at full power: "
                                  f"point {self.point} -> {new}", new)
                     elif light:
@@ -344,6 +364,7 @@ class PointPilot:
             return self._request(1, self.point, 0, False)
         if (objective != "battery" and self.clean_since is not None and self.point < top
                 and now - self.clean_since >= self.promote_wait and ctx.get("at_ceiling_possible", True)
+                and now >= self.retry_at.get([c for c in steps if c > self.point][0], 0.0)
                 and self._may_climb(ctx, [c for c in steps if c > self.point][0])):
             nxt = [c for c in steps if c > self.point][0]
             self.trial_cap, self.trial_from = nxt, self.point
@@ -465,19 +486,36 @@ class PointPilot:
             return self._request(1, self.trial_from, 0, True)
         verdict = self._window(ctx, self.trial_cap, TRIAL_S)
         if verdict is None:
-            return self._request(1, self.trial_cap, 0, True)
+            # Clearly short after a few seconds: no need to show the whole trial.
+            reals = [x["real"] for x in self.window]
+            if (self.clock() - self.window_start >= TRIAL_EARLY_S and len(reals) >= 3
+                    and statistics.median(reals) < TRIAL_EARLY_RATIO * self.trial_cap):
+                verdict = {"ok": False, "real": statistics.fmean(reals)}
+                self.window, self.window_start = [], self.clock()
+            else:
+                return self._request(1, self.trial_cap, 0, True)
         if verdict["ok"] and verdict["real"] >= TRIAL_RATIO * self.trial_cap:
             self.promotions += 1
             self.promote_wait = 30.0  # keep climbing soon while it holds
             self.headroom_backoff = 0.0
             self._go("locked", f"point {self.trial_cap} holds: locked", self.trial_cap)
             self.clean_since = self.clock()
+            self.promoted_at = self.clock()
         else:
             self.promote_wait = min(PROMOTE_WAIT_MAX_S, self.promote_wait * 2)
             self.headroom_backoff = min(480.0, max(60.0, self.headroom_backoff * 2))
-            self._go("locked", f"point {self.trial_cap} did not hold; next try in {self.promote_wait:.0f} s",
+            wait = self._failed_climb(self.trial_cap, self.clock())
+            self._go("locked", f"point {self.trial_cap} did not hold; next try in {wait:.0f} s",
                      self.trial_from)
         return self._request(1, self.point, 0, False)
+
+    def _failed_climb(self, point: int, now: float) -> float:
+        """A climb into point did not hold: it waits 1, 2, 4, 8, 16 min before the next try,
+        whatever path (headroom, benchmark) would climb sooner."""
+        n = self.tries[point] = self.tries.get(point, 0) + 1
+        wait = min(RETRY_MAX_S, RETRY_BASE_S * 2 ** (n - 1))
+        self.retry_at[point] = now + wait
+        return wait
 
     def snapshot(self, refresh: int = 90) -> Dict[str, Any]:
         return {"phase": self.phase, "point": self.point, "label": mult_label(refresh, self.point),

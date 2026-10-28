@@ -199,6 +199,27 @@ class PilotTest(unittest.TestCase):
         out = self.run_ctx(2, objective="battery", autopilot=True, low_battery=True, above_x3=True)
         self.assertEqual(out["point"], 24)
 
+    def test_failed_climbs_wait_longer_each_time(self):
+        # 3.3.1: a point that did not hold waits 1, 2, 4 ... min before the next climb into it.
+        p = self.p
+        p.retry_at.clear()
+        self.assertEqual(p._failed_climb(35, 100.0), 60.0)
+        self.assertEqual(p._failed_climb(35, 200.0), 120.0)
+        self.assertEqual(p.retry_at[35], 320.0)
+        for _ in range(6):
+            p._failed_climb(35, 0.0)
+        self.assertEqual(p.retry_at[35], pilot.RETRY_MAX_S)
+
+    def test_short_trial_ends_early(self):
+        self.run_ctx(15, real=31.0, engine={"auto": True, "cap_fps": 30})   # locked 30
+        p = self.p
+        self.assertEqual(p.point, 30)
+        p.trial_cap, p.trial_from = 35, 30
+        p._go("trial", "trying point 35")
+        out = self.run_ctx(int(pilot.TRIAL_EARLY_S) + 2, real=31.0, engine={"auto": True, "cap_fps": 35})
+        self.assertEqual((out["phase"], out["point"]), ("locked", 30))
+        self.assertGreater(p.retry_at.get(35, 0.0), self.clock.t)
+
     def test_battery_locks_x375(self):
         out = self.run_ctx(2, objective="battery", above_x3=True)
         self.assertEqual((out["point"], out["base_fps"], out["label"]), (24, 24, "x3.75"))

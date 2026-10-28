@@ -519,6 +519,36 @@ def long_session_stability() -> Dict[str, Any]:
 
 
 @scenario
+def scene_churn() -> Dict[str, Any]:
+    """A game near its point with a new scene every 15-45 s (Deck report 3.3.0: Autopilot tried
+    the next point every minute, held it a few seconds, and fell again): few point changes."""
+    import random as _r
+    rng = _r.Random(2)
+    marks, t = [], 0.0
+    while t < 4000:
+        marks.append((t, rng.uniform(0.80, 1.08)))
+        t += rng.uniform(15, 45)
+
+    def load(x: float) -> float:
+        v = marks[0][1]
+        for a, l in marks:
+            if a > x:
+                break
+            v = l
+        return v
+    out: Dict[str, Any] = {"runs": {}}
+    for obj in ("autopilot", "balanced"):
+        rig = make_rig(VGame("churn", 38.0, load, noise=0.03, seed=2), objective=obj)
+        play(rig, 3600)
+        m = metrics(rig, skip=120)
+        m["cap_changes"] = sum(1 for a, b in zip(rig.timeline, rig.timeline[1:]) if a["cap"] != b["cap"] and a["cap"] and b["cap"])
+        out["runs"][obj] = m
+        check(out, f"{obj}: at most 16 point changes in an hour", m["cap_changes"] <= 16, f"{m['cap_changes']}")
+        check(out, f"{obj}: no conflict", m["conflict_s"] == 0)
+    return out
+
+
+@scenario
 def gpu_budget_overload() -> Dict[str, Any]:
     """Generation runs over its GPU budget (heavy filters + x3.75) while Balanced saves watts."""
     rig = make_rig(VGame("g", 65.0), objective="balanced")
