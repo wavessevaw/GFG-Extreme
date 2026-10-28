@@ -1,18 +1,18 @@
 # GFG Extreme 3.3.0
 
-New engine GSF Kedavra 1.4.2 with lower latency and steady speed at every multiplier, a
-Benchmark on Dash, a system profile for games installed together with the engine, and Power
-Split and the GPU clock ceiling off by default. **Update engine** and reboot after installing.
+Lower latency, steadier motion at every multiplier, a one-button Benchmark and a system profile
+tuned for games. **Update engine** and reboot after installing.
 
-## Engine: GSF Kedavra 1.4.2
-- The motion analysis runs in one refresh when it fits (under a third of the refresh period), so
-  a generated frame is ready one refresh sooner.
-- A slow-down is no longer paid back with a speed-up, and fractional caps follow their real
-  rhythm (40 FPS at 90 Hz releases 2-2-2-3). No forward jump after a stall.
+## New engine: GSF Kedavra 1.4.2
+- **Lower latency.** Motion analysis now runs in a single refresh, so every generated frame is
+  ready one refresh sooner.
+- **Steady speed at every multiplier**, including fractional ones like ×2.25: fractional bases
+  run on their real rhythm (40 FPS at 90 Hz releases 2-2-2-3).
+- **No jump after a stall**: long gaps are filled frame by frame.
 
-Simulator, stable base (1.4.1 → 1.4.2):
+Scheduler simulation, 3.2.1 → 3.3.0:
 
-| Case | Outputs at a changed speed | Latency |
+| Case | Speed changes | Latency |
 |---|---|---|
 | ×2, base 45 | 0 → 0 % | 33.3 → 22.2 ms |
 | ×2.25, base 40 | 77.8 → 0 % | 37.8 → 33.3 ms |
@@ -21,39 +21,25 @@ Simulator, stable base (1.4.1 → 1.4.2):
 | 60 Hz ×2, base 30 | 0 → 0 % | 50.0 → 33.3 ms |
 | 60 Hz ×2.4, base 25 | 83.3 → 0 % | 60.4 → 50.0 ms |
 
-Simulator, game near its cap (1.4.1 → 1.4.2):
-
-| Case | Outputs at a changed speed | Latency | Jumps per minute |
-|---|---|---|---|
-| ×2, base 45 | 43.6 → 1.6 % | 40.9 → 36.0 ms | 8.9 → 0 |
-| ×3, base 30 | 25.1 → 1.1 % | 49.9 → 46.1 ms | 0.4 → 0 |
-| 60 Hz ×2, base 30 | 42.8 → 1.4 % | 56.1 → 54.2 ms | 0 → 0 |
-
 ## Multiplier follows the game
-- Above 30 FPS Autopilot aims for the fractional ×2 family (35 / 40 / 45 at 90 Hz). ×3 only
-  when the game does not get above 30.
-- A low battery keeps the ×2 family within 12 W instead of locking ×3.
+- Above 30 FPS Autopilot uses the fractional ×2 family (35 / 40 / 45 at 90 Hz) for more real
+  frames and lower latency; ×3 is kept for games that stay at 30.
+- On a low battery Autopilot keeps the ×2 family within 12 W.
 
 ## Benchmark
-- **Dash → Benchmark**: 20 s in game at 15 W with generation off, with a centred *Do not touch
-  anything* panel. The medians of FPS, GPU and CPU load, power and APU temperature give a
-  proposed base FPS, multiplier and watts.
-- **Accept** stores it per game: the next launches start there and Autopilot uses it as its
-  compass while still adapting to the scene. **No, keep searching** keeps the normal search.
-  The Steam menu, a pause or a game change cancels the run.
+- **Dash → Benchmark**: 20 seconds in game, with a centred *Do not touch anything* panel. GFG
+  measures the game's own FPS, GPU and CPU load, power and temperature and proposes a strategy:
+  base FPS, multiplier and expected watts.
+- **Accept** saves it for the game: every next launch starts right there, and Autopilot uses it
+  as its compass while it keeps adapting to each scene.
 
-## System profile
-- Installed with the engine, in the same step and boot unit; **Remove** writes every saved
-  value back. Runtime kernel settings only: no change to the read-only image, kernel command
-  line, drivers, packages or security mitigations.
-- Memory (transparent huge pages, earlier reclaim with a larger reserve, no proactive
-  compaction, zram-tuned swap, MGLRU thrash protection), CPU (no autogroup, no lockup
-  watchdogs) and storage (kyber on NVMe, BFQ on microSD, 1 MiB read-ahead).
+## System profile for games
+- Installed together with the engine, in one step: memory tuned for games (transparent huge
+  pages, early reclaim, zram-tuned swap), a CPU scheduler without autogroup, and storage
+  schedulers tuned for asset streaming on NVMe and microSD.
+- **Remove** in Setup takes it off together with the engine.
 
-## Power Split and GPU clock ceiling off by default
-- Each CPU cap change made short pacing dips more frequent (2.6 → 4.0 % of the following
-  seconds, about one change a minute) for a median gain of 0.6 % GPU clock per watt (plugin
-  telemetry, 7 h of play). Both stay available as switches on the Engine tab.
-
-## How to check
-Play a few minutes, then **Setup → Save report to Desktop** and send the report.
+## Smoother frame pacing
+- GFG no longer changes the CPU and GPU clocks during play by default: the Governor manages
+  power through the TDP alone, for a steadier picture. Power Split and the GPU clock ceiling
+  remain available on the Engine tab.
