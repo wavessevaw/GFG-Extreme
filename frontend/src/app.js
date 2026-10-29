@@ -129,8 +129,7 @@ function Dash({ s, set }) {
     h("div", { className: "phase" }, PHASES.map((p) => h("span", { key: p, className: p === ph ? "on" : "" }, p))));
   const scope = (s.profiles.active || "").startsWith("app:") ? "game" : "default";
   const setProf = (changes) => set(() => rpc.setProfile(scope, changes));
-  const above = !!s.settings.engine.above_x3, minCap = above ? 20 : Math.ceil(refresh / 3);
-  const fgOpts = [["off", "Off"], ["auto", "Auto"], ["x2", "×2"], ["x3", "×3"], ...(above ? [["x3.75", "×3.75"]] : []), ["custom", "Custom"]];
+  const above = !!s.settings.engine.above_x3;
   const cpuGhz = split.cap_khz ? (split.cap_khz / 1e6).toFixed(1) : null;
   const pace = num((live.live || {}).pace), hdr = !!(eng.transfer && eng.transfer !== "sdr");
   const short = !!(point && real !== null && real < 0.9 * point);
@@ -154,11 +153,8 @@ function Dash({ s, set }) {
       h(Focusable, { key: k, onClick: () => setProf({ objective: k }) }, h("div", { className: "tile mode m-" + k + (prof.objective === k ? " on" : "") },
         h("div", { className: "mico" }, ICON[k]), h("div", null, h("b", null, name),
         h("span", null, k === "autopilot" && prof.objective === "autopilot" && live.objective && live.objective !== "autopilot" ? "now " + (OBJ[live.objective] || [live.objective])[0] : objSub(k, sub, above)))))))),
-    h(Card, { title: "FRAME GENERATION" }, h(Seg, { value: prof.fg === "x3.75" && !above ? "x3" : prof.fg, options: fgOpts, onChange: (v) => setProf({ fg: v }) }),
-      prof.fg === "custom" ? h("div", { className: "lrow first", style: { marginTop: 6 } }, "Base FPS cap",
-        h("div", { className: "step" }, h(Focusable, { className: "b", onClick: () => setProf({ base_fps: Math.max(minCap, Math.max(minCap, prof.base_fps) - 1) }) }, "−"),
-          h("span", { className: "val" }, Math.max(minCap, prof.base_fps)), h(Focusable, { className: "b", onClick: () => setProf({ base_fps: Math.min(90, prof.base_fps + 1) }) }, "+"))) : null,
-      h("div", { className: "note" }, prof.fg === "custom" ? `The game is capped at ${Math.max(minCap, prof.base_fps)} FPS, generation fills ${refresh} Hz.` : `Custom: the game is capped at your base FPS (${minCap}–90), generation fills the display.`)),
+    h(Card, { title: "FRAME GENERATION" }, h(Seg, { value: prof.fg === "off" ? "off" : "", options: [["off", "Off"]], onChange: () => setProf({ fg: prof.fg === "off" ? "auto" : "off" }) }),
+      h("div", { className: "note" }, prof.fg === "off" ? "Generation is off for this scope. Tap Off again to turn it back on." : "The mode picks the multiplier. Tap Off to play without generation.")),
     h(Card, { title: "SETTINGS APPLY TO" }, h(Seg, { value: scope, options: [["game", "This game"], ["default", "All games"]],
       onChange: (v) => set(() => (v === "game" ? rpc.setProfile("game", {}) : rpc.dropGame())) })));
 }

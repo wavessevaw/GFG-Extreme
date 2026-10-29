@@ -65,7 +65,8 @@ def normalize_profile(raw: Any, name: str = "Default") -> Dict[str, Any]:
     base = default_profile()
     return {
         "name": str(raw.get("name") or name)[:80],
-        "fg": raw.get("fg") if raw.get("fg") in FG_MODES else base["fg"],
+        # Dash offers only Off; every other stored choice now means the mode picks the multiplier.
+        "fg": "off" if raw.get("fg") == "off" else "auto",
         "base_fps": _int_in(raw.get("base_fps"), *BASE_FPS_RANGE, base["base_fps"]),
         "objective": raw.get("objective") if raw.get("objective") in OBJECTIVES else base["objective"],
         "filters": filters.normalize(raw.get("filters")),

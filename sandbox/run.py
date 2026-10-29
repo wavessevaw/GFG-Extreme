@@ -376,13 +376,10 @@ def docked_60hz() -> Dict[str, Any]:
 
 @scenario
 def fixed_x3_too_heavy() -> Dict[str, Any]:
-    """The player fixed x3 but the game cannot hold 30: GFG reports it and does not change it."""
-    rig = make_rig(VGame("g", 26.0), fg="x3", objective="balanced")
-    play(rig, 300)
-    snap = rig.service.snapshot
-    out = {"holds": snap["pilot"]["holds"], "mult": rig.timeline[-1]["mult"]}
-    check(out, "multiplier stays x3", out["mult"] == 3)
-    check(out, "reported as not holding", out["holds"] is False)
+    """An old profile saved with a fixed x3: the mode now picks the multiplier."""
+    out = {"fg": settings_mod.normalize_profile({"fg": "x3"})["fg"], "off": settings_mod.normalize_profile({"fg": "off"})["fg"]}
+    check(out, "fixed x3 becomes auto", out["fg"] == "auto")
+    check(out, "off stays off", out["off"] == "off")
     return out
 
 

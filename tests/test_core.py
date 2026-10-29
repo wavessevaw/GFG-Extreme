@@ -55,7 +55,7 @@ class SettingsTest(unittest.TestCase):
             self.assertFalse(s.exists)
             s.update_profile("default", {"fg": "x3.75", "base_fps": 500, "objective": "nope"})
             p = s.data["profiles"]["default"]
-            self.assertEqual((p["fg"], p["base_fps"], p["objective"]), ("x3.75", 90, "autopilot"))
+            self.assertEqual((p["fg"], p["base_fps"], p["objective"]), ("auto", 90, "autopilot"))
             key = s.make_game_profile(1245620, "Elden Ring")
             self.assertEqual(key, "app:1245620")
             self.assertEqual(s.profile_for(1245620)[0], "app:1245620")

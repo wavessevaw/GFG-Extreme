@@ -55,7 +55,7 @@ class MigrationTest(unittest.TestCase):
             self.assertTrue(m.needed(s))
             report = m.run(s)
             p = s.data["profiles"]
-            self.assertEqual((p["default"]["fg"], p["default"]["objective"]), ("x3", "battery"))
+            self.assertEqual((p["default"]["fg"], p["default"]["objective"]), ("auto", "battery"))
             self.assertEqual(p["default"]["filters"]["sharpen"], "cas")
             self.assertEqual((p["app:1245620"]["fg"], p["app:1245620"]["objective"], p["app:1245620"]["name"]),
                              ("auto", "autopilot", "Elden Ring"))
