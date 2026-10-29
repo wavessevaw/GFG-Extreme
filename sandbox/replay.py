@@ -249,6 +249,9 @@ def _aim(eng: Any, point: int) -> int:
     """What the game should hold: the cap, or under honest xN the pilot's point (the cap is
     refresh / N there and the Governor aims at the point)."""
     if eng.strict and eng._int("kfg_multiplier") >= 2 and point:
+        from gfg_plugin import honest
+        if getattr(honest, "EVEN_ONLY", False) if eng.snap is None else eng.snap:
+            return eng.cap
         return min(eng.cap, int(point))
     return eng.cap
 
@@ -321,7 +324,7 @@ class Acc:
             if eng.cap > 0 and pilot["phase"] in ("locked", "fixed"):
                 g[f"at:{pilot['point']}"] += 1
                 mult = eng._int("kfg_multiplier")
-                g[f"pair:{'x%d' % mult if mult >= 2 and eng.strict else ('fill' if mult == 1 else 'x%d' % mult)}@{_aim(eng, pilot['point'])}"] += 1
+                g[f"pair:{'x%d' % mult if mult >= 2 and eng.strict else ('fill' if mult == 1 else 'x%d' % mult)}@{_aim(eng, pilot['point']):g}"] += 1
             for e in journal:
                 if e.get("kind") == "governor-tdp":
                     g["why:" + str(e.get("why", "")).split(":")[0]] += 1

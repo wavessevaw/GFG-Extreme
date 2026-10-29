@@ -958,9 +958,11 @@ def autopilot_off_on_strict_engine() -> Dict[str, Any]:
     play(rig, 300, ev)
     out: Dict[str, Any] = {**seen, "final": (rig.engine.vars["kfg_multiplier"], rig.engine.vars["kfg_strict"],
                                              rig.timeline[-1]["policy"])}
-    check(out, "Autopilot generates in fill (multiplier 1, strict 0)", seen.get("on") == ("1", "0"), str(seen.get("on")))
+    from gfg_plugin import honest
+    gen = (lambda v: v is not None and v[0] in ("2", "3") and v[1] == "1") if honest.EVEN_ONLY else (lambda v: v is not None and tuple(v[:2]) == ("1", "0"))
+    check(out, "Autopilot generates (even caps: strict xN; else fill, strict 0)", gen(seen.get("on")), str(seen.get("on")))
     check(out, "Off: multiplier 0 confirmed, strict back to 1", seen.get("off") == ("0", "1", "confirmed"), str(seen.get("off")))
-    check(out, "On again: fill, confirmed", out["final"] == ("1", "0", "confirmed"), str(out["final"]))
+    check(out, "On again, confirmed", gen(out["final"]) and out["final"][2] == "confirmed", str(out["final"]))
     check(out, "no send error", all(r["policy"] != "error" for r in rig.timeline), "")
     return out
 

@@ -183,6 +183,7 @@ class VEngine:
         # real frame for N >= 2; in every mode at most two per real frame, and Auto and a base
         # stay at refresh / 3 or above (x3.75's (1, 24) runs as base 30).
         self.strict = False
+        self.snap: Optional[bool] = None   # None: follows honest.EVEN_ONLY. Even caps: a strict base snaps to refresh / whole vblanks (assumed engine change)
         # Generation's cost to the game: None keeps the flat 8 %; a number is the share lost per
         # 60 generated frames a second (0.08: 8 % at x3 on 90 Hz, less for fewer intermediates).
         self.gen_cost: Optional[float] = None
@@ -213,9 +214,12 @@ class VEngine:
         if self.rival:
             self.rival(self)
         mult, base, floor = self._int("kfg_multiplier"), self._int("kfg_base_fps"), self._int("kfg_auto_floor")
+        from gfg_plugin import honest as _honest
+        snapping = getattr(_honest, "EVEN_ONLY", False) if self.snap is None else self.snap
+        snap = self.strict and snapping and mult in (2, 3) and self._int("kfg_strict") >= 1
         if self.strict:
             third = -(-self.refresh // 3)
-            base = max(third, base) if base else 0
+            base = (base if snap else max(third, base)) if base else 0
             floor = max(third, floor) if floor else 0
         generating = mult != 0 and self.app_id not in (0, 769)
         # CPU and GPU share the TDP: a capped CPU clock gives part of its boost back to the GPU
@@ -253,6 +257,9 @@ class VEngine:
         strict = self.strict and self._int("kfg_strict") >= 1 and mult >= 2 and generating
         if strict and base:
             cap = min(self.refresh // mult, max(20, base))
+            if snap:
+                # The engine change the even caps need: whole vblanks per real frame.
+                cap = self.refresh / max(1, round(self.refresh / base))
         rate = min(capability, cap) if cap else min(capability, self.refresh)
         self.capability, self.rate, self.cap = capability, rate, cap
         need = max(2.5, self.game.watts_for(rate, t, generating) * (0.85 + 0.15 * gshare) - 0.5 * freed)

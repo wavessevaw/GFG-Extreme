@@ -70,7 +70,8 @@ class StrictServiceTest(unittest.TestCase):
     def test_strict_per_mode_and_x3_limit(self):
         from gfg_plugin.service import Service
         gsf15 = {"strict": 1}
-        self.assertEqual(Service._strict(gsf15, True, "autopilot"), 0)
+        from gfg_plugin import honest
+        self.assertEqual(Service._strict(gsf15, True, "autopilot"), 1 if honest.EVEN_ONLY else 0)
         for obj in ("balanced", "quality", "battery"):
             self.assertEqual(Service._strict(gsf15, True, obj), 1)
         self.assertEqual(Service._strict(gsf15, False, "autopilot"), 1, "no game or generation off: the default")
@@ -78,12 +79,13 @@ class StrictServiceTest(unittest.TestCase):
         self.assertIn("kfg_strict", Control.VARS, "the control must know every convar the coordinator sends")
         self.assertEqual(Service._strict({"strict": 0}, True, "balanced"), 1)
         self.assertEqual(Service._strict({}, True, "balanced"), -1, "an older engine gets no kfg_strict")
-        self.assertIsNone(Service._honest_panel(True, gsf15, 90, False, "autopilot"))
+        self.assertEqual(Service._honest_panel(True, gsf15, 90, False, "autopilot") is not None, honest.EVEN_ONLY)
         self.assertEqual(Service._honest_panel(True, {"strict": 0}, 90, False, "quality"), {"refresh": 90, "dock": False})
         self.assertIsNone(Service._honest_panel(True, {}, 90, False, "quality"))
         # Never x3.75 / x4 on the wire.
         self.assertEqual(Service._at_most_x3(1, 0, 24, 90), (1, 0, 30))
         self.assertEqual(Service._at_most_x3(1, 24, 0, 90), (1, 30, 0))
+        self.assertEqual(Service._at_most_x3(2, 22, 0, 90), (2, 22, 0), "x2@22.5 (even caps)")
         self.assertEqual(Service._at_most_x3(4, 0, 0, 90), (3, 0, 0))
         self.assertEqual(Service._at_most_x3(2, 45, 0, 90), (2, 45, 0))
         self.assertEqual(Service._at_most_x3(1, 0, 0, 60), (1, 0, 0))

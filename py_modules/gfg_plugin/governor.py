@@ -65,6 +65,10 @@ SUSTAIN_S = 6
 P5_RATIO = {"autopilot": 0.92, "battery": 28.0 / 30.0}   # default 0.90; 8 % at most (user, 3.1.1)
 # Balanced (user, 2026-10-29): a power target of about 10-12 W; its cap is the highest of 45 / 40 /
 # 35 / 30 the game holds there. Not on the dock (its TV and power keep the player's ceiling).
+# Even caps (user, 2026-10-29 13:06): a point is smooth only while the game holds it, p5 within
+# about 2 fps of the cap: no mode settles a TDP on a deeper dip there (sample "even").
+EVEN_GAP_FPS = 1.0
+EVEN_PACE = 0.97
 BALANCED_MAX_W = 12.0   # only with honest multipliers (sample "honest"); 3.3.2's fill keeps 15 W
 # ... but its last point (x3 at refresh / 3) is not given up for watts: there the 15 W ceiling.
 DRAW_MARGIN_W = 1.5          # limit kept above the measured draw when jumping down to it
@@ -432,6 +436,9 @@ class PowerGovernor:
         hint = sample.get("start_w")
         self.start_hint = float(hint) if isinstance(hint, (int, float)) and hint > 0 else None
         # The approved mode model (honest multipliers on a GSF 1.5 engine): Balanced's 12 W.
+        self.even = bool(sample.get("even"))
+        sc = sample.get("shown_cap")
+        self.shown_cap = float(sc) if isinstance(sc, (int, float)) and sc > 0 else 0.0
         floor_point, honest = bool(sample.get("floor_point")), bool(sample.get("honest"))
         if (floor_point, honest) != (getattr(self, "floor_point", False), getattr(self, "honest", False)):
             self.floor_point, self.honest = floor_point, honest
@@ -523,8 +530,13 @@ class PowerGovernor:
         if now - self.window_start < (FAST_WINDOW_S if self.fast else WINDOW_S):
             return self.status()
         temp_ok = temp is None or temp < HOT_C
-        verdict = healthy(self.window, self.cap, temp_ok, HOLD_RATIO.get(self.objective, 0.97),
-                          pace_min=PACE_RATIO.get(self.objective, PACE_MIN),
+        hold, pace_min = HOLD_RATIO.get(self.objective, 0.97), PACE_RATIO.get(self.objective, PACE_MIN)
+        if getattr(self, "even", False) and self.cap > 0:
+            shown = getattr(self, "shown_cap", 0.0) or float(self.cap)
+            hold = max(hold, (shown - EVEN_GAP_FPS) / self.cap)
+            pace_min = max(pace_min, EVEN_PACE)
+        verdict = healthy(self.window, self.cap, temp_ok, hold,
+                          pace_min=pace_min,
                           median=self.objective == "autopilot")
         if len(self.window) < COVERAGE * (now - self.window_start):
             verdict = {"ok": None, "reason": "no-data"}   # missed ticks: too few seconds were seen
@@ -708,7 +720,10 @@ class PowerGovernor:
             self.learned = bool(self.model.record(f"{self.key}|cap{self.cap}", "tdp", self.tdp))
         if self.objective == "quality" or experiment:
             return
-        dips = verdict.get("p5", self.cap) < P5_RATIO.get(self.objective, 0.90) * self.cap
+        low = P5_RATIO.get(self.objective, 0.90) * self.cap
+        if getattr(self, "even", False):
+            low = max(low, (getattr(self, "shown_cap", 0.0) or self.cap) - EVEN_GAP_FPS)
+        dips = verdict.get("p5", self.cap) < low
         if dips != self.dips:
             self.dips = dips
             if dips:

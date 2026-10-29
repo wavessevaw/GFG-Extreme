@@ -49,30 +49,26 @@ class HonestTest(unittest.TestCase):
     is kept and only Autopilot aims at 90 on screen."""
 
     def test_ladders(self):
+        """Even points only (user, 2026-10-29 13:06): S = refresh / cap whole vblanks, S a
+        multiple of N; x2@22.5 at 90 Hz is sent as 22."""
         from gfg_plugin import honest
-        self.assertEqual(honest.ladder("autopilot", 90), [(27, 3), (30, 3), (32, 2), (35, 2), (40, 2), (42, 2), (45, 2)])
-        self.assertEqual(honest.ladder("balanced", 90), [(30, 3), (35, 2), (40, 2), (45, 2)])
-        self.assertEqual(honest.ladder("quality", 90), [(45, 2)])
-        self.assertEqual(honest.ladder("battery", 90), [(30, 3)])
-        # The approved mode model (user, 2026-10-29): x2 / x3 / Auto in every mode.
         L = honest.ladder
-        self.assertEqual([L("battery", 90, fg=f) for f in ("x2", "x3")], [[(30, 2)], [(30, 3)]])
-        self.assertEqual([L("battery", 60, fg=f) for f in ("auto", "x2", "x3")], [[(30, 2)], [(30, 2)], [(20, 3)]])
-        self.assertEqual(L("balanced", 90, fg="x2"), [(30, 2), (35, 2), (40, 2), (45, 2)])
-        self.assertEqual(L("balanced", 90, fg="x3"), [(30, 3)])
-        self.assertEqual(L("balanced", 90, light=True), [(30, 2), (35, 2), (40, 2), (45, 2)])
-        self.assertEqual([L("quality", 90, fg=f) for f in ("auto", "x2", "x3")], [[(45, 2)], [(45, 2)], [(30, 3)]])
-        self.assertEqual(L("quality", 60), [(30, 2)])
-        self.assertEqual(honest.ladder("balanced", 60, dock=True), [(20, 3), (25, 2), (30, 2)])
-        self.assertEqual((honest.cap(2, 90), honest.cap(3, 90), honest.cap(2, 60)), (45, 30, 30))
-        bal = honest.ladder("balanced", 90)
-        self.assertEqual([honest.n_for(bal, b) for b in (24, 30, 33, 35, 45)], [3, 3, 3, 2, 2])
-        self.assertEqual(honest.n_for(honest.ladder("quality", 90), 30), 2)
+        self.assertEqual(honest.even_points(90), [(22, 2), (30, 3), (45, 2)])
+        self.assertEqual(honest.even_points(60), [(20, 3), (30, 2)])
+        self.assertEqual(honest.even_points(120), [(20, 3), (30, 2), (40, 3), (60, 2)])
+        self.assertEqual(L("balanced", 90), [(22, 2), (30, 3), (45, 2)])
+        self.assertEqual(L("autopilot", 90), [(22, 2), (30, 3), (45, 2)])
+        self.assertEqual([L("quality", 90, fg=f) for f in ("x2", "x3")], [[(22, 2), (45, 2)], [(30, 3)]])
+        self.assertEqual([L("battery", 90, fg=f) for f in ("auto", "x2", "x3")], [[(22, 2), (30, 3)], [(22, 2)], [(30, 3)]])
+        self.assertEqual([L("battery", 60, fg=f) for f in ("auto", "x2", "x3")], [[(20, 3), (30, 2)], [(30, 2)], [(20, 3)]])
+        self.assertEqual(L("balanced", 90, light=True), [(22, 2), (45, 2)])
+        self.assertEqual((honest.shown_cap(22, 90), honest.shown_cap(30, 90), honest.shown_cap(45, 90)), (22.5, 30.0, 45.0))
         for obj in ("autopilot", "balanced", "quality", "battery"):
-            for hz in (60, 75, 90):
+            for hz in (60, 90, 120):
                 for fg in ("auto", "x2", "x3"):
-                    lad = honest.ladder(obj, hz, fg=fg)
-                    self.assertTrue(lad and all(2 <= n <= 3 and b * n <= hz for b, n in lad), (obj, hz, fg, lad))
+                    for b, n in L(obj, hz, fg=fg):
+                        s_ = round(hz / b)
+                        self.assertTrue(2 <= n <= 3 and s_ % n == 0 and hz / s_ >= 20, (obj, hz, fg, b, n))
 
     @staticmethod
     def _rows(real):
@@ -86,27 +82,25 @@ class HonestTest(unittest.TestCase):
 
     def test_strict_engine_gets_pairs(self):
         rows = self._rows(42.0)
-        # GSF 1.5: Autopilot runs fill (kfg_strict 0, two intermediates at most), the rest strict xN.
-        for obj, want in (("autopilot", "fill@40"), ("balanced", "x2@35"), ("quality", "x2@45"),
+        # Even points: a 42 fps game cannot hold 45, so x3@30 in every mode (Autopilot too, strict).
+        for obj, want in (("autopilot", "x3@30"), ("balanced", "x3@30"), ("quality", "x3@30"),
                           ("battery", "x3@30")):
             res = replay.replay(rows, strict=True, gen_cost=0.08, objective=obj)
             top, pairs = self._main(res)
             self.assertEqual(top, want, (obj, pairs))
-            if obj != "autopilot":
-                self.assertFalse(any(k.startswith("fill") for k in pairs), (obj, pairs))
-        # x3 only for a game that cannot hold more than about 30, outside Autopilot too.
-        top, pairs = self._main(replay.replay(self._rows(33.0), strict=True, gen_cost=0.08, objective="balanced"))
-        self.assertEqual(top, "x3@30", pairs)
+            self.assertFalse(any(k.startswith("fill") for k in pairs), (obj, pairs))
+        # Under 30: the next even point, x2@22.5 (45 on screen), not an uneven cap.
+        top, pairs = self._main(replay.replay(self._rows(27.0), strict=True, gen_cost=0.08, objective="balanced"))
+        self.assertEqual(top, "x2@22.5", pairs)
         # Without the engine's strict status the 3.3.2 requests stand (fill to the refresh).
         top, pairs = self._main(replay.replay(rows, gen_cost=0.08, objective="balanced"))
         self.assertTrue(top.startswith("fill"), pairs)
 
     def test_fixed_choice_in_every_mode(self):
-        """Fixed x2 in Battery: the cap stays 30 and 60 frames reach the screen; fixed x3 in
-        Quality: refresh / 3."""
+        """Fixed x2 in Battery at 90 Hz: x2@22.5 (sent 22, 45 on screen); fixed x3: 30."""
         from sandbox.run import make_rig, play
         from sandbox.vdeck import VGame
-        for obj, fg, want in (("battery", "x2", ("2", "30")), ("quality", "x3", ("3", "30")),
+        for obj, fg, want in (("battery", "x2", ("2", "22")), ("quality", "x3", ("3", "30")),
                               ("balanced", "x3", ("3", "30"))):
             rig = make_rig(VGame("g", 60.0), objective=obj, fg=fg)
             rig.engine.strict = True
@@ -119,9 +113,10 @@ class HonestTest(unittest.TestCase):
         self.assertLessEqual(res["all"]["tdp_w"], 12.1)
 
     def test_clean_cadence_is_even(self):
-        res = replay.replay(self._rows(60.0), strict=True, gen_cost=0.08, objective="balanced")
-        self.assertEqual(self._main(res)[0], "x2@45")
-        self.assertGreater(res["all"]["even_pct"], 80.0)
+        for real, want in ((60.0, "x2@45"), (42.0, "x3@30"), (27.0, "x2@22.5")):
+            res = replay.replay(self._rows(real), strict=True, gen_cost=0.08, objective="balanced")
+            self.assertEqual(self._main(res)[0], want)
+            self.assertGreater(res["all"]["even_pct"], 90.0, (real, res["all"]["even_pct"]))
 
 
 if __name__ == "__main__":

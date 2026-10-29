@@ -271,7 +271,10 @@ class PointPilot:
         hz = int(panel["refresh"])
         pairs = honest.ladder(objective, hz, bool(panel.get("dock")), light, fg)
         self.pairs = dict(pairs)
-        req = self._auto(ctx, [b for b, _ in pairs], objective)
+        # Even caps: Battery takes the highest of its points the game holds (x3@30, else x2@22.5),
+        # not its lowest.
+        pick = "balanced" if objective == "battery" and honest.EVEN_ONLY else objective
+        req = self._auto(ctx, [b for b, _ in pairs], pick)
         b = req["base_fps"]
         if req["multiplier"] == 1 and b:
             n = honest.n_for(pairs, b)
@@ -464,7 +467,7 @@ class PointPilot:
         limit = BAND_MAX_W
         if (not ctx.get("autopilot") or ctx.get("dock") or not ctx.get("gov_settled") or not isinstance(tdp, (int, float))
                 or tdp <= limit or not lower
-                or (honest.n_for(list(self.pairs.items()), self.point) < 3 if self.pairs else self.point > x3_cap(int(ctx.get("refresh") or 90)))):
+                or ((honest.EVEN_ONLY or honest.n_for(list(self.pairs.items()), self.point) < 3) if self.pairs else self.point > x3_cap(int(ctx.get("refresh") or 90)))):
             self.costly_since = None
             return False
         if self.costly_since is None:
