@@ -20,7 +20,7 @@ permissions:
 env:
   # GSF Kedavra (KEDAVRA engine and Gamescope patch) at the commit this release was tested with.
   KEDAVRA_REPO: wavessevaw/GSF_Kedavra
-  KEDAVRA_SHA: 6176caf141f2c908cea12ac7f22609cbd21eed33
+  KEDAVRA_SHA: 62621c4f9b60fd3cb95edafb62a1a44a1bb2c21e
 
 jobs:
   test:
