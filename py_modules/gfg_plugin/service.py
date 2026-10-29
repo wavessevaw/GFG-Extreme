@@ -21,7 +21,6 @@ from .governor_device import external_display_connected
 from .lease import ExperimentLease
 from .kedavra import hud as hudmod
 from .benchmark import Benchmark
-from . import honest
 from .pilot import PointPilot, ladder, x3_cap
 from .policy import Policy, PolicyCoordinator
 from .session_stats import SessionStats
@@ -279,10 +278,7 @@ class Service:
             "experiment": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
             "dock": dock, "start_w": CLASS_START_W.get(gp.get("class") or ""),
             # Balanced's last point (x3 at refresh / 3) keeps the 15 W ceiling (governor.py).
-            "floor_point": bool(panel is not None and objective == "balanced"
-                                and (req["multiplier"] == 3 or 0 < req["point"] <= refresh // 3)),
-            "even": bool(panel is not None and honest.EVEN_ONLY),
-            "shown_cap": honest.shown_cap(req["point"], refresh) if panel is not None and locked else 0.0,
+            "floor_point": bool(panel is not None and objective == "balanced" and req["multiplier"] == 3),
             "honest": panel is not None,
         }
         # The counters are read every fresh tick: after a stale engine status (a hitch, the QAM) the
@@ -368,7 +364,7 @@ class Service:
         if pace is None or not rates or not isinstance(mult, int) or mult < 2 or not isinstance(base, int) or not base:
             return pace
         shown = rates["real"] + rates["gen"] + rates["repeat"]
-        planned = max(0.0, refresh - mult * honest.shown_cap(base, refresh)) * shown / max(1.0, float(refresh))
+        planned = max(0.0, refresh - mult * base) * shown / max(1.0, float(refresh))
         return 1.0 - max(0.0, rates["repeat"] - planned) / shown if shown > 0 else pace
 
     @staticmethod
@@ -383,16 +379,14 @@ class Service:
         engine without the convar. ``game`` is False with generation off: the default then."""
         if not cls._strict_engine(st):
             return -1
-        return STRICT_FILL if game and objective == "autopilot" and not honest.EVEN_ONLY else STRICT_DEFAULT
+        return STRICT_FILL if game and objective == "autopilot" else STRICT_DEFAULT
 
     @staticmethod
     def _at_most_x3(mult: int, base: int, floor: int, refresh: int) -> tuple:
         """x3 is the most in every mode (user, 2026-10-28): never x4, never a cap or an Auto floor
-        under refresh / 3 (x3.75's 24 at 90 Hz is sent as 30). Even caps (honest.EVEN_ONLY):
-        strict x2 / x3 may go lower, at whole vblanks per frame (x2@22.5: 4 vblanks, sent as 22)."""
+        under refresh / 3 (x3.75's 24 at 90 Hz is sent as 30)."""
         third = x3_cap(refresh)
-        low = min(third, int(honest.EVEN_MIN_CAP)) if honest.EVEN_ONLY and mult in (2, 3) else third
-        return (min(3, mult), max(low, base) if base else 0, max(third, floor) if floor else 0)
+        return (min(3, mult), max(third, base) if base else 0, max(third, floor) if floor else 0)
 
     @classmethod
     def _honest_panel(cls, game: bool, st: Dict[str, Any], refresh: int, dock: bool,
@@ -400,7 +394,7 @@ class Service:
         """Honest multipliers (honest.py) when the engine draws strict xN, which is every mode but
         Autopilot (kfg_strict 0: fill to the refresh). The refresh is never changed by GFG (user,
         22:22), so this is the refresh the points are for."""
-        if not game or not cls._strict_engine(st) or (objective == "autopilot" and not honest.EVEN_ONLY):
+        if not game or not cls._strict_engine(st) or objective == "autopilot":
             return None
         return {"refresh": refresh, "dock": dock}
 

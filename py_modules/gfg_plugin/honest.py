@@ -81,49 +81,6 @@ def _sorted(pairs: Ladder) -> Ladder:
 
 
 BATTERY_CAP = 30     # Battery: the game's cap is always 30 (user, 2026-10-29)
-# Even points only (coordinator's recommendation, 2026-10-29, decision pending; this commit can be
-# dropped): a turn is smooth only when every real interval is S = refresh / cap whole vblanks with
-# S a multiple of N. At 90 Hz: x2@45 (S 2), x3@30 (S 3), x2@22.5 (S 4); 60 Hz: x2@30, x3@20; 120 Hz:
-# x2@60, x3@40, x2@30, x3@20. A cap is sent as floor(refresh / S) (22 for 22.5): the engine has to
-# snap a strict base to refresh / round(refresh / base) (GSF change needed; it clamps to refresh / 3
-# today). Autopilot then runs strict on the same set.
-EVEN_ONLY = True
-EVEN_MIN_CAP = 20.0   # x3@15 at 90 Hz and x2@15 at 60 Hz are too low
-
-
-def even_points(refresh: int) -> Ladder:
-    """(cap sent, N) for every even cadence of this refresh, cap >= EVEN_MIN_CAP, x3 where S
-    allows both (more on screen)."""
-    hz = int(refresh or 90)
-    out: Dict[int, int] = {}
-    s = 2
-    while hz / s >= EVEN_MIN_CAP:
-        n = 3 if s % 3 == 0 else (2 if s % 2 == 0 else 0)
-        if n:
-            out.setdefault(hz // s, n)
-        s += 1
-    return sorted(out.items())
-
-
-def shown_cap(point: int, refresh: int) -> float:
-    """The cap the engine holds for a point under even caps: refresh / whole vblanks."""
-    if not point:
-        return 0.0
-    if not EVEN_ONLY:
-        return float(point)
-    return refresh / max(1, round(refresh / point))
-
-
-def _even_ladder(objective: str, hz: int, light: bool, fg: str) -> Ladder:
-    pts = even_points(hz)
-    if fg in ("x2", "x3"):
-        pts = [p for p in pts if p[1] == int(fg[1])] or pts[-1:]
-    elif light:
-        pts = [p for p in pts if p[1] == 2] or pts
-    if objective == "battery":
-        low = [p for p in pts if p[0] <= BATTERY_CAP]
-        pts = low or pts[:1]
-    return pts
 
 
 def ladder(objective: str, refresh: int, dock: bool = False, light: bool = False,
@@ -142,8 +99,6 @@ def ladder(objective: str, refresh: int, dock: bool = False, light: bool = False
     A light game (the game list) stays at x2 in Auto. A dock's TV and the LCD use their own
     refresh."""
     hz = int(refresh or 90)
-    if EVEN_ONLY:
-        return _even_ladder(objective, hz, light, fg)
     third, half = hz // 3, hz // 2
     want = {"x2": (2,), "x3": (3,)}.get(fg, (2, 3))
     if light and fg == "auto":
