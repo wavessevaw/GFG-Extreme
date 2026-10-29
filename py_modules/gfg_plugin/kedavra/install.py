@@ -20,6 +20,8 @@ import time
 import zipfile
 from pathlib import Path
 
+from .system_profile import LIMITS, LIMITS_NAME, restore_script, tune_script
+
 UNIT_NAME = "kedavra-gamescope.service"
 LOADER = "ld-linux-x86-64.so.2"
 SYS_NICE_BIT = 23
@@ -59,6 +61,7 @@ After=local-fs.target
 [Service]
 Type=oneshot
 ExecStart=/bin/sh {boot}
+ExecStart=-/bin/sh {tune}
 RemainAfterExit=yes
 
 [Install]
@@ -99,6 +102,12 @@ class Installer:
         self.state = self.var / "state"
         self.unit = self.root / "etc/systemd/system" / UNIT_NAME
         self.boot = self.var / "boot.sh"
+        # System profile (3.3.0): installed and removed with the engine, saved values per boot.
+        self.tune = self.var / "profile.sh"
+        self.untune = self.var / "profile-restore.sh"
+        self.profile_orig = self.root / "run/kedavra/profile-orig"
+        self.profile_done = self.root / "run/kedavra/profile-applied"
+        self.limits = self.root / "etc/security/limits.d" / LIMITS_NAME
         self.target = self.root / "usr/bin/gamescope"
         self.status_file = self.root / f"run/user/{uid}/kedavra-status.json"
         self.run = run
@@ -220,8 +229,17 @@ class Installer:
         for f in ("disabled", "trial", "healthy", "auto_rollback", "ldd_failed"):
             (self.state / f).unlink(missing_ok=True)
         self.boot.write_text(BOOT_SH.format(state=self.state, runtime=self.runtime, loader=LOADER))
+        self.tune.write_text(tune_script(self.state, self.profile_orig, self.profile_done))
+        self.untune.write_text(restore_script(self.profile_orig, self.profile_done))
         self.unit.parent.mkdir(parents=True, exist_ok=True)
-        self.unit.write_text(UNIT.format(boot=self.boot))
+        self.unit.write_text(UNIT.format(boot=self.boot, tune=self.tune))
+        try:
+            self.limits.parent.mkdir(parents=True, exist_ok=True)
+            self.limits.write_text(LIMITS)
+        except OSError:
+            pass
+        # The profile is runtime settings only: on now, and at every boot from the unit.
+        self.run(["sh", str(self.tune)])
         self.run(["systemctl", "daemon-reload"])
         rc, out = self.run(["systemctl", "enable", UNIT_NAME])
         if rc != 0:
@@ -230,6 +248,9 @@ class Installer:
                 "message": "Installed. Reboot the Deck: Gaming Mode will start with Gamescope KEDAVRA."}
 
     def uninstall(self):
+        if self.untune.exists():
+            self.run(["sh", str(self.untune)])
+        self.limits.unlink(missing_ok=True)
         self.run(["systemctl", "disable", UNIT_NAME])
         self.unit.unlink(missing_ok=True)
         self.run(["systemctl", "daemon-reload"])
@@ -302,6 +323,13 @@ class Installer:
         if (self.state / "disabled").exists():
             add("disabled", False, "KEDAVRA is disabled until reinstalled")
 
+        if inst:
+            try:
+                done = dict(kv.split("=", 1) for kv in self.profile_done.read_text().split())
+                add("profile", done.get("failed") == "0", f"System profile: {done.get('applied', '?')} kernel settings for games"
+                    + ("" if done.get("failed") == "0" else f", {done.get('failed')} refused"))
+            except (OSError, ValueError):
+                add("profile", False, "System profile not applied in this boot (reinstall and reboot)")
         mounted = self._mounted()
         add("mounted", mounted, "Gamescope KEDAVRA is mounted for this boot" if mounted
             else "The stock Gamescope is active now (reboot after installing)")
