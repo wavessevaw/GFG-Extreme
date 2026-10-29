@@ -54,7 +54,15 @@ class HonestTest(unittest.TestCase):
         self.assertEqual(honest.ladder("balanced", 90), [(30, 3), (35, 2), (40, 2), (45, 2)])
         self.assertEqual(honest.ladder("quality", 90), [(45, 2)])
         self.assertEqual(honest.ladder("battery", 90), [(30, 3)])
-        self.assertEqual(honest.ladder("autopilot", 90, light=True), [(45, 2)])
+        # The approved mode model (user, 2026-10-29): x2 / x3 / Auto in every mode.
+        L = honest.ladder
+        self.assertEqual([L("battery", 90, fg=f) for f in ("x2", "x3")], [[(30, 2)], [(30, 3)]])
+        self.assertEqual([L("battery", 60, fg=f) for f in ("auto", "x2", "x3")], [[(30, 2)], [(30, 2)], [(20, 3)]])
+        self.assertEqual(L("balanced", 90, fg="x2"), [(30, 2), (35, 2), (40, 2), (45, 2)])
+        self.assertEqual(L("balanced", 90, fg="x3"), [(30, 3)])
+        self.assertEqual(L("balanced", 90, light=True), [(30, 2), (35, 2), (40, 2), (45, 2)])
+        self.assertEqual([L("quality", 90, fg=f) for f in ("auto", "x2", "x3")], [[(45, 2)], [(45, 2)], [(30, 3)]])
+        self.assertEqual(L("quality", 60), [(30, 2)])
         self.assertEqual(honest.ladder("balanced", 60, dock=True), [(20, 3), (25, 2), (30, 2)])
         self.assertEqual((honest.cap(2, 90), honest.cap(3, 90), honest.cap(2, 60)), (45, 30, 30))
         bal = honest.ladder("balanced", 90)
@@ -62,7 +70,9 @@ class HonestTest(unittest.TestCase):
         self.assertEqual(honest.n_for(honest.ladder("quality", 90), 30), 2)
         for obj in ("autopilot", "balanced", "quality", "battery"):
             for hz in (60, 75, 90):
-                self.assertTrue(all(2 <= n <= 3 for _, n in honest.ladder(obj, hz)))
+                for fg in ("auto", "x2", "x3"):
+                    lad = honest.ladder(obj, hz, fg=fg)
+                    self.assertTrue(lad and all(2 <= n <= 3 and b * n <= hz for b, n in lad), (obj, hz, fg, lad))
 
     @staticmethod
     def _rows(real):
@@ -77,7 +87,7 @@ class HonestTest(unittest.TestCase):
     def test_strict_engine_gets_pairs(self):
         rows = self._rows(42.0)
         # GSF 1.5: Autopilot runs fill (kfg_strict 0, two intermediates at most), the rest strict xN.
-        for obj, want in (("autopilot", "fill@40"), ("balanced", "x2@40"), ("quality", "x2@45"),
+        for obj, want in (("autopilot", "fill@40"), ("balanced", "x2@35"), ("quality", "x2@45"),
                           ("battery", "x3@30")):
             res = replay.replay(rows, strict=True, gen_cost=0.08, objective=obj)
             top, pairs = self._main(res)
@@ -90,6 +100,23 @@ class HonestTest(unittest.TestCase):
         # Without the engine's strict status the 3.3.2 requests stand (fill to the refresh).
         top, pairs = self._main(replay.replay(rows, gen_cost=0.08, objective="balanced"))
         self.assertTrue(top.startswith("fill"), pairs)
+
+    def test_fixed_choice_in_every_mode(self):
+        """Fixed x2 in Battery: the cap stays 30 and 60 frames reach the screen; fixed x3 in
+        Quality: refresh / 3."""
+        from sandbox.run import make_rig, play
+        from sandbox.vdeck import VGame
+        for obj, fg, want in (("battery", "x2", ("2", "30")), ("quality", "x3", ("3", "30")),
+                              ("balanced", "x3", ("3", "30"))):
+            rig = make_rig(VGame("g", 60.0), objective=obj, fg=fg)
+            rig.engine.strict = True
+            play(rig, 200)
+            self.assertEqual((rig.engine.vars["kfg_multiplier"], rig.engine.vars["kfg_base_fps"]), want, (obj, fg))
+            self.assertEqual(rig.engine.vars["kfg_strict"], "1")
+
+    def test_balanced_power_target(self):
+        res = replay.replay(self._rows(60.0), strict=True, gen_cost=0.08, objective="balanced")
+        self.assertLessEqual(res["all"]["tdp_w"], 12.1)
 
     def test_clean_cadence_is_even(self):
         res = replay.replay(self._rows(60.0), strict=True, gen_cost=0.08, objective="balanced")

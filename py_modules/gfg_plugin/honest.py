@@ -17,6 +17,10 @@ Autopilot's only):
              else x3 at 30: x3 only for a game that cannot hold more than about 30.
   quality    x2 at 45 only; never x3.
   battery    x3 at 30.
+
+Superseded by the mode model the user approved on 2026-10-29 (see ladder()): the cap is the
+point itself (Battery 30, Balanced 45-30 at its 10-12 W, Quality refresh / N), the player's
+x2 / x3 / Auto applies in every mode, and Autopilot fills (kfg_strict 0).
   light games (the game list) stay at x2; a dock's TV gets refresh / N with integer N only.
 
 Fixed x2 / x3 keep the cap refresh / N and Custom keeps its base (a fractional multiplier
@@ -76,25 +80,48 @@ def _sorted(pairs: Ladder) -> Ladder:
     return sorted(best.items())
 
 
-def ladder(objective: str, refresh: int, dock: bool = False, light: bool = False) -> Ladder:
-    """Generation "Auto" as honest pairs. The cap is refresh / N (x2 at 45, x3 at 30 on 90 Hz) in
-    every objective but Autopilot, which alone aims at 90 on screen and also uses the bases inside
-    its tolerated dip (x2 at 40-44, x3 at 27-29 on 90 Hz; not on a dock's TV)."""
+BATTERY_CAP = 30     # Battery: the game's cap is always 30 (user, 2026-10-29)
+
+
+def ladder(objective: str, refresh: int, dock: bool = False, light: bool = False,
+           fg: str = "auto") -> Ladder:
+    """The honest points (cap, N) for an objective and the player's choice (fg: auto, x2, x3);
+    the cap is what the engine gets as kfg_base_fps (user, 2026-10-29, the approved mode model):
+
+      battery   the cap is 30; x2 shows 60, x3 90; Auto takes the largest N whose N x 30 fits the
+                refresh (x3 at 90 Hz, x2 at 60 Hz). x3 on 60 Hz: refresh / 3.
+      balanced  the highest of 45 / 40 / 35 / 30 the game holds at Balanced's power: x2 while the
+                cap is above refresh / 3, x3 only at refresh / 3 (Auto). Fixed x2: 30-45 with x2;
+                fixed x3: refresh / 3.
+      quality   no cap of its own: refresh / N (x2 at 45, x3 at 30); Auto takes x2.
+      autopilot fill (kfg_strict 0) does not use this; kept for the sandbox comparison.
+
+    A light game (the game list) stays at x2 in Auto. A dock's TV and the LCD use their own
+    refresh."""
     hz = int(refresh or 90)
-    x2_only = objective == "quality" or light
-    if objective == "autopilot" and not dock and not light:
-        # Native frames first (coordinator, 2026-10-28): a game that sustains about 32 or more
-        # gets x2 aiming at its own rate (64-90 on screen, the accepted honest dip); x3 only below.
+    third, half = hz // 3, hz // 2
+    want = {"x2": (2,), "x3": (3,)}.get(fg, (2, 3))
+    if light and fg == "auto":
+        want = (2,)
+    if objective == "battery":
+        if fg == "auto":
+            fits = [n for n in (3, 2) if n * BATTERY_CAP <= hz]
+            want = (2,) if light else (fits[0] if fits else 2,)
+        return _sorted([(min(BATTERY_CAP, hz // n), n) for n in want])
+    if objective == "quality":
+        if fg == "auto":
+            want = (2,)
+        return _sorted([(hz // n, n) for n in want])
+    if objective == "autopilot" and not dock and not light and fg == "auto":
         band = math.ceil(BAND * hz)
-        x2 = sorted({X2_FLOOR * hz // 90, 35 * hz // 90} | set(_span(math.ceil(band / 2), hz // 2)))
-        return _sorted([(b, 2) for b in x2]
-                       + [(b, 3) for b in _span(math.ceil(band / 3), hz // 3)])
-    out = [(hz // n, n) for n in range(2, MAX_N + 1) if not dock or hz % n == 0]
-    if objective == "balanced":
-        # Native frames first: x3 only for a game that cannot hold more than about refresh / 3.
-        out += [(b, 2) for b in range((hz // 3 // 5 + 1) * 5, hz // 2, 5)]
-    if x2_only:
-        out = [p for p in out if p[1] == 2] or out[:1]
-    elif objective == "battery":
-        out = [p for p in out if p[1] == MAX_N] or out[-1:]
+        x2 = sorted({X2_FLOOR * hz // 90, 35 * hz // 90} | set(_span(math.ceil(band / 2), half)))
+        return _sorted([(b, 2) for b in x2] + [(b, 3) for b in _span(math.ceil(band / 3), third)])
+    # balanced (and the rest): steps of 5 between refresh / 3 and refresh / 2.
+    steps = sorted({third, half} | set(range((third // 5 + 1) * 5, half, 5)))
+    out: Ladder = []
+    for b in steps:
+        if 2 in want and (b > third or want == (2,)):
+            out.append((b, 2))
+        elif 3 in want and b <= third:
+            out.append((b, 3))
     return _sorted(out)

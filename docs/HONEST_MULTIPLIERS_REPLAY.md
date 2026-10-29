@@ -166,3 +166,49 @@ The replay was rerun on the same 21.1 h with 3 seeds. Autopilot with fill on GSF
 real fps at 11.81 W, against 33.94 at 11.79 W for 3.3.2. That matches the branch's fill arm,
 whose difference from 3.3.2 is the control-churn hysteresis. Balanced, Quality and Battery
 are unchanged from the tables above, within ±0.1 fps.
+
+## Update: the approved mode model (user, 2026-10-29)
+
+The UI and its buttons are unchanged. On a GSF 1.5 engine, the multiplier is always honest and at
+most x3, and the player's x2 / x3 / Auto choice now applies in every mode:
+
+| Mode | Cap (kfg_base_fps) | Auto | Power |
+|---|---|---|---|
+| Battery | always 30 (x2: 60 on screen, x3: 90) | the largest N with N x 30 within the refresh: x3 at 90 Hz, x2 at 60 Hz | The Governor lowers the TDP only while the game holds 30 steadily (window p5 >= 28) and raises it otherwise |
+| Balanced | the highest of 45 / 40 / 35 / 30 the game holds at 12 W; fixed x3: 30 | x2 above 30, x3 only at 30 | ceiling 12 W; at the last point (x3 at 30) the 15 W ceiling, so 30 is not given up for watts (handheld; the dock keeps the player's ceiling) |
+| Quality | refresh / N (x2 at 45, x3 at 30) | x2 | up to the 15 W ceiling |
+| Autopilot | unchanged: fill (kfg_strict 0), at most two intermediates | | unchanged |
+
+The LCD and the dock use the same rules with their own refresh. At 60 Hz that gives Battery x2 at
+30 and x3 at 20, and Balanced 30 / 25 with x2 and 20 with x3. Balanced's 12 W ceiling applies only
+with honest multipliers; an older engine keeps 3.3.2's behaviour.
+
+The replay was rerun on the same 21.1 h, with 3 seeds, against 3.3.2 (`ddc7352`):
+
+| Mode | Real fps (3.3.2 / now) | W | Short % | Out fps | Main points now |
+|---|---|---|---|---|---|
+| Autopilot | 33.94 / 34.18 | 11.79 / 11.81 | 12.0 / 12.5 | 85.5 / 85.4 | fill@30 41 %, @45 23 %, @35 22 % |
+| Balanced | 33.25 / **31.12** | 11.70 / **10.66** | 8.5 / 8.7 | 86.1 / 82.0 | x3@30 68 %, x2@35 15 %, x2@40 6 % |
+| Quality | 36.51 / 38.50 | 12.79 / 13.14 | 33.7 / 49.4 | 81.3 / 77.3 | x2@45 95 % |
+| Battery | 28.65 / 29.01 | 10.10 / 10.26 | 9.5 / 10.9 | 85.9 / 85.2 | x3@30 93 %, x2@30 (60 Hz TV) 7 % |
+
+Balanced by class (3.3.2 / now):
+
+| Class | Real fps | W |
+|---|---|---|
+| light | 39.26 / 35.59 | 9.97 / 8.59 |
+| medium | 33.48 / 31.30 | 11.88 / 10.71 |
+| heavy | 27.14 / 26.57 | 12.95 / 12.50 |
+
+Balanced now trades 2.1 real fps (−6 %) for 1.0 W (−9 %). That follows from its 12 W target: a
+game that holds 40-45 only above 12 W gets 35 or 30. Cadence is even more often (53 -> 62 %).
+
+Battery on the docked 60 Hz TV is now x2 at 30 (60 on screen), where 3.3.2 filled at 20. That
+gives a little more real fps and 0.16 W more.
+
+Quality and Autopilot are as in the sections above.
+
+**Risks**
+- Balanced's ceiling is 12 W, and 15 W at its last point. A game that goes back and forth around
+  30 at 12 W moves between those ceilings. In the replay, churn stays inside the existing hysteresis.
+- Battery's 28-of-30 p5 rule has only been checked in the model.

@@ -248,8 +248,9 @@ class PointPilot:
         if fg == "off":
             self.phase, self.point = "off", 0
             return {**self._request(0, 0, 0, False), **self.snapshot(refresh)}
-        if panel and fg == "auto":
-            return {**self._honest_tick(ctx, objective, panel), **self.snapshot(refresh)}
+        if panel and fg in ("auto", "x2", "x3"):
+            # The approved mode model (user, 2026-10-29): x2 / x3 / Auto apply in every mode.
+            return {**self._honest_tick(ctx, objective, panel, fg), **self.snapshot(refresh)}
         if fg in ("x2", "x3"):
             self.phase, self.point = "fixed", div_up(refresh, int(fg[1]))
             req = self._request(int(fg[1]), 0, 0, False)
@@ -262,17 +263,19 @@ class PointPilot:
             return {**self._request(1, cap, 0, False), **self.snapshot(refresh)}
         return {**self._auto(ctx, steps, objective), **self.snapshot(refresh)}
 
-    def _honest_tick(self, ctx: Dict[str, Any], objective: str, panel: Dict[str, Any]) -> Dict[str, Any]:
-        """Generation "Auto" with honest multipliers: the same pilot on the honest ladder's bases,
-        each request carrying its N."""
+    def _honest_tick(self, ctx: Dict[str, Any], objective: str, panel: Dict[str, Any],
+                     fg: str = "auto") -> Dict[str, Any]:
+        """Honest multipliers: the same pilot on the honest ladder's caps, each request carrying
+        its N and the cap itself as the base (Battery 30, Balanced 45-30, Quality refresh / N)."""
         light = ctx.get("game_class") == "light" and not self.light_failed
-        pairs = honest.ladder(objective, int(panel["refresh"]), bool(panel.get("dock")), light)
+        hz = int(panel["refresh"])
+        pairs = honest.ladder(objective, hz, bool(panel.get("dock")), light, fg)
         self.pairs = dict(pairs)
         req = self._auto(ctx, [b for b, _ in pairs], objective)
         b = req["base_fps"]
         if req["multiplier"] == 1 and b:
             n = honest.n_for(pairs, b)
-            return {**req, "multiplier": n, "base_fps": honest.cap(n, int(panel["refresh"]))}
+            return {**req, "multiplier": n, "base_fps": min(b, honest.cap(n, hz))}
         return req
 
     def _guard_fixed(self, ctx: Dict[str, Any]) -> None:

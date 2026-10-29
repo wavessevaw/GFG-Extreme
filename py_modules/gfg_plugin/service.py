@@ -277,6 +277,9 @@ class Service:
             "ac": power.get("external_power"),
             "experiment": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
             "dock": dock, "start_w": CLASS_START_W.get(gp.get("class") or ""),
+            # Balanced's last point (x3 at refresh / 3) keeps the 15 W ceiling (governor.py).
+            "floor_point": bool(panel is not None and objective == "balanced" and req["multiplier"] == 3),
+            "honest": panel is not None,
         }
         # The counters are read every fresh tick: after a stale engine status (a hitch, the QAM) the
         # next delta is that one second, not everything the engine counted while it was stale.

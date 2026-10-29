@@ -60,7 +60,13 @@ DOWN_RATIO = 0.95
 SUSTAIN_S = 6
 # 2.1.6's p5 rule: a window steps down only while its low end (p5 of the 1 s readings) stays near
 # the cap. A dip that deep is no reason for watts, but no reason to take more away either.
-P5_RATIO = {"autopilot": 0.92, "battery": 0.92}   # default 0.90; 8 % at most (user, 3.1.1)
+# Battery (user, 2026-10-29): the TDP comes down only while the game holds its 30 steadily (p5 of
+# the window >= 28), and goes back up when it does not.
+P5_RATIO = {"autopilot": 0.92, "battery": 28.0 / 30.0}   # default 0.90; 8 % at most (user, 3.1.1)
+# Balanced (user, 2026-10-29): a power target of about 10-12 W; its cap is the highest of 45 / 40 /
+# 35 / 30 the game holds there. Not on the dock (its TV and power keep the player's ceiling).
+BALANCED_MAX_W = 12.0   # only with honest multipliers (sample "honest"); 3.3.2's fill keeps 15 W
+# ... but its last point (x3 at refresh / 3) is not given up for watts: there the 15 W ceiling.
 DRAW_MARGIN_W = 1.5          # limit kept above the measured draw when jumping down to it
 DRAW_JUMP_W = 3.0            # draw this far under the limit: the limit is not what holds the game
 DRAW_BINDING_W = 1.2         # draw this close to the limit: the limit is what holds the game
@@ -278,11 +284,15 @@ class PowerGovernor:
 
     def _ceiling_for(self, objective: str) -> float:
         player = self.player_ceiling or 15.0
+        floor_point = getattr(self, "floor_point", False)
+        honest = getattr(self, "honest", False)
         if self.dock:
             # Dock (user, 3.1.0): a high TDP is fine on the TV, the temperature guards it. SteamOS
             # gives 20 W on the dock's power (Deck report 3.1.2): the Governor used to pull it back
             # to 15 W and the pilot then dropped to x2.4 "at full power".
             return player
+        if objective == "balanced" and honest and not floor_point:
+            return min(player, BALANCED_MAX_W)
         return min(player, AUTOPILOT_MAX_W)
 
     def _first_level(self, cap: int) -> None:
@@ -421,6 +431,14 @@ class PowerGovernor:
         self.dock = bool(sample.get("dock"))
         hint = sample.get("start_w")
         self.start_hint = float(hint) if isinstance(hint, (int, float)) and hint > 0 else None
+        # The approved mode model (honest multipliers on a GSF 1.5 engine): Balanced's 12 W.
+        floor_point, honest = bool(sample.get("floor_point")), bool(sample.get("honest"))
+        if (floor_point, honest) != (getattr(self, "floor_point", False), getattr(self, "honest", False)):
+            self.floor_point, self.honest = floor_point, honest
+            if self.owned and objective == self.objective == "balanced" and not self.dock:
+                self.ceiling = self._ceiling_for(objective)
+                if self.tdp is not None and self.tdp > self.ceiling + 0.05:
+                    self._write(self.ceiling, "autopilot-ceiling")
         if key != self.key:
             if self.owned:
                 self.stop("context-change")
