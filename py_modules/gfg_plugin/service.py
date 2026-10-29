@@ -234,7 +234,7 @@ class Service:
             starved=bool(req["phase"] in ("locked", "fixed") and (0 < req["point"] < above_x3 or not self.pilot.holds)))
         mult, base, floor = self._at_most_x3(req["multiplier"], req["base_fps"], req["auto_floor"], refresh)
         policy = Policy(mult, base, filters.to_post(shed(profile["filters"], budget)),
-                        self.hud_path, floor, bool(data["engine"]["hdr"]), self._strict(st, game, objective))
+                        self.hud_path, floor, bool(data["engine"]["hdr"]), self._strict(st, game and mult != 0, objective))
         self.coord.want(policy)
         self.last_policy = policy
         if self.boost is not None:
@@ -373,7 +373,7 @@ class Service:
     def _strict(cls, st: Dict[str, Any], game: bool, objective: str) -> int:
         """kfg_strict to send: Autopilot fills to the refresh (0, within the engine's two
         intermediates), every other mode draws strict xN (1, the engine's default); -1 for an
-        engine without the convar."""
+        engine without the convar. ``game`` is False with generation off: the default then."""
         if not cls._strict_engine(st):
             return -1
         return STRICT_FILL if game and objective == "autopilot" else STRICT_DEFAULT

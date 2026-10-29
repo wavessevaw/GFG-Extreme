@@ -73,7 +73,9 @@ class StrictServiceTest(unittest.TestCase):
         self.assertEqual(Service._strict(gsf15, True, "autopilot"), 0)
         for obj in ("balanced", "quality", "battery"):
             self.assertEqual(Service._strict(gsf15, True, obj), 1)
-        self.assertEqual(Service._strict(gsf15, False, "autopilot"), 1, "no game: the engine's default")
+        self.assertEqual(Service._strict(gsf15, False, "autopilot"), 1, "no game or generation off: the default")
+        from gfg_plugin.kedavra.ctl import Control
+        self.assertIn("kfg_strict", Control.VARS, "the control must know every convar the coordinator sends")
         self.assertEqual(Service._strict({"strict": 0}, True, "balanced"), 1)
         self.assertEqual(Service._strict({}, True, "balanced"), -1, "an older engine gets no kfg_strict")
         self.assertIsNone(Service._honest_panel(True, gsf15, 90, False, "autopilot"))

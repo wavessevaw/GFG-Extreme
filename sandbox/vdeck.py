@@ -404,6 +404,10 @@ class VControl:
         return self.engine.status()
 
     def set_var(self, name: str, value: Any) -> None:
+        # The real Control's whitelist (a convar it does not know raises there, and must here).
+        from gfg_plugin.kedavra.ctl import Control
+        if name not in Control.VARS:
+            raise ValueError(f"unknown convar {name}")
         self.engine.set_var(name, value)
 
 

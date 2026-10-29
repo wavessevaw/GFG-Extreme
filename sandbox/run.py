@@ -939,6 +939,32 @@ def lcd_unlocked_75hz() -> Dict[str, Any]:
     return out
 
 
+@scenario
+def autopilot_off_on_strict_engine() -> Dict[str, Any]:
+    """GSF 1.5 engine (kfg_strict): Autopilot runs fill (kfg_strict 0); the player turns frame
+    generation Off. The engine must get kfg_multiplier 0, confirmed, with kfg_strict back at its
+    default 1, and then On again (Deck report on bb63ef5: Off did nothing in Autopilot, because
+    kfg_strict was not a convar the control knew, so every send failed before the multiplier)."""
+    rig = make_rig(VGame("g", 45.0), objective="autopilot")
+    rig.engine.strict = True
+    seen: Dict[str, Any] = {}
+    ev = {
+        200: lambda r: seen.update(on=(r.engine.vars["kfg_multiplier"], r.engine.vars["kfg_strict"])),
+        201: lambda r: r.settings.data["profiles"]["default"].update({"fg": "off"}),
+        240: lambda r: seen.update(off=(r.engine.vars["kfg_multiplier"], r.engine.vars["kfg_strict"],
+                                        r.timeline[-1]["policy"])),
+        241: lambda r: r.settings.data["profiles"]["default"].update({"fg": "auto"}),
+    }
+    play(rig, 300, ev)
+    out: Dict[str, Any] = {**seen, "final": (rig.engine.vars["kfg_multiplier"], rig.engine.vars["kfg_strict"],
+                                             rig.timeline[-1]["policy"])}
+    check(out, "Autopilot generates in fill (multiplier 1, strict 0)", seen.get("on") == ("1", "0"), str(seen.get("on")))
+    check(out, "Off: multiplier 0 confirmed, strict back to 1", seen.get("off") == ("0", "1", "confirmed"), str(seen.get("off")))
+    check(out, "On again: fill, confirmed", out["final"] == ("1", "0", "confirmed"), str(out["final"]))
+    check(out, "no send error", all(r["policy"] != "error" for r in rig.timeline), "")
+    return out
+
+
 def run_all(only: Optional[str] = None) -> Dict[str, Any]:
     results = {}
     for name, fn in SCENARIOS.items():
