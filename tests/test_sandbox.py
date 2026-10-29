@@ -114,6 +114,24 @@ class HonestTest(unittest.TestCase):
             self.assertEqual((rig.engine.vars["kfg_multiplier"], rig.engine.vars["kfg_base_fps"]), want, (obj, fg))
             self.assertEqual(rig.engine.vars["kfg_strict"], "1")
 
+    def test_fixed_x2_x3_at_any_fps(self):
+        """The player's x2 / x3 works at any fps in any mode (user, 2026-10-29 13:21): no mode
+        refuses it or switches away from it because of the game's frame rate, old engine or GSF 1.5."""
+        from sandbox.run import make_rig, play
+        from sandbox.vdeck import VGame
+        for strict in (False, True):
+            for obj in ("autopilot", "balanced", "quality", "battery"):
+                for fg in ("x2", "x3"):
+                    for fps in (18.0, 75.0):
+                        rig = make_rig(VGame("g", fps), objective=obj, fg=fg)
+                        rig.engine.strict = strict
+                        seen = set()
+                        for i in range(120):
+                            play(rig, 1)
+                            if i > 5:
+                                seen.add(rig.engine.vars["kfg_multiplier"])
+                        self.assertEqual(seen, {fg[1]}, (strict, obj, fg, fps))
+
     def test_balanced_power_target(self):
         res = replay.replay(self._rows(60.0), strict=True, gen_cost=0.08, objective="balanced")
         self.assertLessEqual(res["all"]["tdp_w"], 12.1)

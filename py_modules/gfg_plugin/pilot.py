@@ -273,6 +273,11 @@ class PointPilot:
         self.pairs = dict(pairs)
         req = self._auto(ctx, [b for b, _ in pairs], objective)
         b = req["base_fps"]
+        if fg in ("x2", "x3") and req["multiplier"] == 1:
+            # The player's x2 / x3 holds at any fps in every mode (user, 2026-10-29 13:21): even
+            # while measuring (the engine's Auto would pick its own N) the request carries it.
+            n = int(fg[1])
+            return {**req, "multiplier": n, "base_fps": min(b or pairs[-1][0], honest.cap(n, hz)), "auto_floor": 0}
         if req["multiplier"] == 1 and b:
             n = honest.n_for(pairs, b)
             return {**req, "multiplier": n, "base_fps": min(b, honest.cap(n, hz))}
