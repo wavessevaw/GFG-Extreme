@@ -6,6 +6,7 @@ investigation; this tool cannot prove equivalent predicates or image quality.
 """
 import argparse
 import json
+import math
 from pathlib import Path
 
 
@@ -33,6 +34,20 @@ def checks(results):
     return out
 
 
+def numeric_leaves(value, path=()):
+    """Finite scalar model outputs, excluding check metadata and booleans."""
+    found = {}
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key in ("checks", "pass", "doc"):
+                continue
+            found.update(numeric_leaves(child, path + (str(key),)))
+    elif type(value) in (int, float) and math.isfinite(value):
+        pointer = "/" + "/".join(part.replace("~", "~0").replace("/", "~1") for part in path)
+        found[pointer] = value
+    return found
+
+
 def compare(reference, target):
     ref, got = checks(reference), checks(target)
     missing_scenarios = sorted(ref.keys() - got.keys())
@@ -43,8 +58,24 @@ def compare(reference, target):
     failed = {s: sorted(name for name, ok in entries.items() if not ok)
               for s, entries in got.items() if not all(entries.values())}
     added_scenarios = sorted(got.keys() - ref.keys())
+    numeric_changes = {}
+    missing_numeric = {}
+    added_numeric = {}
+    for scenario in sorted(ref.keys() & got.keys()):
+        before = numeric_leaves(reference[scenario])
+        after = numeric_leaves(target[scenario])
+        if before.keys() - after.keys():
+            missing_numeric[scenario] = sorted(before.keys() - after.keys())
+        if after.keys() - before.keys():
+            added_numeric[scenario] = sorted(after.keys() - before.keys())
+        changed = {path: {"reference": before[path], "target": after[path],
+                          "delta": after[path] - before[path]}
+                   for path in sorted(before.keys() & after.keys()) if before[path] != after[path]}
+        if changed:
+            numeric_changes[scenario] = changed
     return {"missing_scenarios": missing_scenarios, "missing_checks": missing_checks,
             "failed_reference_checks": failed_reference, "failed_checks": failed, "added_scenarios": added_scenarios,
+            "observed_numeric_changes": numeric_changes, "missing_numeric": missing_numeric, "added_numeric": added_numeric,
             "status": "BLOCKED" if missing_scenarios or missing_checks or failed_reference or failed else "UNVERIFIED"}
 
 
@@ -61,7 +92,7 @@ def main():
         report = {"evidence_class": "simulation", "baseline_to_stable": compare(runs[0], runs[1]),
                   "baseline_to_candidate": compare(runs[0], runs[2]),
                   "stable_to_candidate": compare(runs[1], runs[2]),
-                  "limitations": "Check labels and outcomes only; predicates, thresholds, metrics, hardware, pacing and image quality require independent review."}
+                  "limitations": "Model numbers are unqualified observations, not evidence of improvement or hardware measurements. Predicates, thresholds, comparability, pacing and image quality require independent review."}
     except (OSError, ValueError, TypeError, KeyError) as exc:
         parser.exit(2, f"invalid input: {exc}\n")
     text = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
