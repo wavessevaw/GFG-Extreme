@@ -15,6 +15,7 @@ Install never modifies the read-only system image:
 import json
 import os
 import shutil
+import stat
 import subprocess
 import time
 import zipfile
@@ -198,6 +199,50 @@ class Installer:
 
     # ------------------------------------------------------------------ actions
 
+    @staticmethod
+    def _snapshot_file(path):
+        """Snapshot an installer-owned file without following symlinks."""
+        if path.is_symlink():
+            return ("symlink", os.readlink(path), Installer._snapshot_file(path.resolve(strict=False)))
+        if not path.exists():
+            return ("missing", None, None)
+        if not path.is_file():
+            raise RuntimeError(f"installer path is not a file: {path}")
+        info = path.stat()
+        return ("file", path.read_bytes(), (stat.S_IMODE(info.st_mode), info.st_uid, info.st_gid))
+
+    @staticmethod
+    def _restore_file(path, saved):
+        kind, data, extra = saved
+        if kind == "symlink":
+            if not path.is_symlink() or os.readlink(path) != data:
+                if path.is_symlink() or path.is_file():
+                    path.unlink()
+                elif path.exists():
+                    raise RuntimeError(f"cannot restore installer symlink over directory: {path}")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                os.symlink(data, path)
+            Installer._restore_file(path.resolve(strict=False), extra)
+            return
+        if kind == "missing":
+            if path.is_symlink() or path.is_file():
+                path.unlink()
+            elif path.exists():
+                raise RuntimeError(f"cannot remove installer file over directory: {path}")
+            return
+        if path.is_symlink():
+            path.unlink()
+        elif path.exists() and not path.is_file():
+            raise RuntimeError(f"cannot restore installer file over directory: {path}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        mode, uid, gid = extra
+        path.chmod(mode)
+        if hasattr(os, "chown"):
+            current = path.stat()
+            if (current.st_uid, current.st_gid) != (uid, gid):
+                os.chown(path, uid, gid)
+
     def install(self):
         if not (self.bundle / "bin/gamescope").exists():
             raise RuntimeError("the plugin zip has no runtime/bin/gamescope")
@@ -223,30 +268,98 @@ class Installer:
         if rc != 0:
             shutil.rmtree(tmp)
             raise RuntimeError("setcap: " + out.strip()[-300:])
-        # A running KEDAVRA session keeps its open (unlinked) files; the new copy is
-        # used from the next boot.
-        if self.runtime.exists():
-            shutil.rmtree(self.runtime)
-        tmp.rename(self.runtime)
-        self.state.mkdir(parents=True, exist_ok=True)
-        for f in ("disabled", "trial", "healthy", "auto_rollback", "ldd_failed"):
-            (self.state / f).unlink(missing_ok=True)
-        self.boot.write_text(BOOT_SH.format(state=self.state, runtime=self.runtime, loader=LOADER))
-        self.tune.write_text(tune_script(self.state, self.profile_orig, self.profile_done))
-        self.untune.write_text(restore_script(self.profile_orig, self.profile_done))
-        self.unit.parent.mkdir(parents=True, exist_ok=True)
-        self.unit.write_text(UNIT.format(boot=self.boot, tune=self.tune))
+        backup = self.var / "runtime.rollback"
+        if backup.exists() or backup.is_symlink():
+            shutil.rmtree(tmp)
+            raise RuntimeError(f"previous runtime rollback still exists: {backup}")
+        paths = [self.boot, self.tune, self.untune, self.unit, self.limits]
+        paths += [self.state / f for f in ("disabled", "trial", "healthy", "auto_rollback", "ldd_failed")]
         try:
-            self.limits.parent.mkdir(parents=True, exist_ok=True)
-            self.limits.write_text(LIMITS)
-        except OSError:
-            pass
-        # The profile is runtime settings only: on now, and at every boot from the unit.
+            snapshots = {path: self._snapshot_file(path) for path in paths}
+            if self.unit.exists() or self.unit.is_symlink():
+                _, prior_enabled = self.run(["systemctl", "is-enabled", UNIT_NAME])
+                prior_enabled = prior_enabled.strip()
+            else:
+                prior_enabled = "not-found"
+            if prior_enabled not in ("enabled", "enabled-runtime", "disabled", "not-found"):
+                raise RuntimeError("cannot safely establish prior service state: " + prior_enabled[-300:])
+        except Exception:
+            shutil.rmtree(tmp)
+            raise
+        old_moved = False
+        new_moved = False
+        try:
+            # Keep the old tree until every mandatory setup action has succeeded.
+            if self.runtime.exists():
+                self.runtime.rename(backup)
+                old_moved = True
+            tmp.rename(self.runtime)
+            new_moved = True
+            self.state.mkdir(parents=True, exist_ok=True)
+            for f in ("disabled", "trial", "healthy", "auto_rollback", "ldd_failed"):
+                (self.state / f).unlink(missing_ok=True)
+            self.boot.write_text(BOOT_SH.format(state=self.state, runtime=self.runtime, loader=LOADER))
+            self.tune.write_text(tune_script(self.state, self.profile_orig, self.profile_done))
+            self.untune.write_text(restore_script(self.profile_orig, self.profile_done))
+            self.unit.parent.mkdir(parents=True, exist_ok=True)
+            self.unit.write_text(UNIT.format(boot=self.boot, tune=self.tune))
+            try:
+                self.limits.parent.mkdir(parents=True, exist_ok=True)
+                self.limits.write_text(LIMITS)
+            except OSError:
+                pass
+            rc, out = self.run(["systemctl", "daemon-reload"])
+            if rc != 0:
+                raise RuntimeError("systemctl daemon-reload: " + out.strip()[-300:])
+            rc, out = self.run(["systemctl", "enable", UNIT_NAME])
+            if rc != 0:
+                raise RuntimeError("systemctl enable: " + out.strip()[-300:])
+        except Exception as exc:
+            errors = []
+            # Undo partial service enablement before restoring or removing its unit file.
+            try:
+                _, current_enabled = self.run(["systemctl", "is-enabled", UNIT_NAME])
+                current_enabled = current_enabled.strip()
+                if current_enabled != prior_enabled and not (prior_enabled == "not-found" and current_enabled == "disabled"):
+                    if prior_enabled == "enabled-runtime":
+                        commands = [["systemctl", "disable", UNIT_NAME], ["systemctl", "enable", "--runtime", UNIT_NAME]]
+                    elif prior_enabled in ("disabled", "not-found"):
+                        commands = [["systemctl", "disable", UNIT_NAME]]
+                    else:
+                        commands = [["systemctl", "enable", UNIT_NAME]]
+                    for argv in commands:
+                        rc, out = self.run(argv)
+                        if rc:
+                            errors.append("restore service state: " + out.strip()[-300:])
+            except Exception as service_error:
+                errors.append(f"restore service state: {service_error}")
+            for path, saved in snapshots.items():
+                try:
+                    self._restore_file(path, saved)
+                except (OSError, RuntimeError) as restore_error:
+                    errors.append(f"restore {path}: {restore_error}")
+            try:
+                rc, out = self.run(["systemctl", "daemon-reload"])
+                if rc:
+                    errors.append("reload restored unit: " + out.strip()[-300:])
+            except Exception as reload_error:
+                errors.append(f"reload restored unit: {reload_error}")
+            try:
+                if new_moved and self.runtime.exists():
+                    shutil.rmtree(self.runtime)
+                if old_moved:
+                    backup.rename(self.runtime)
+                if tmp.exists():
+                    shutil.rmtree(tmp)
+            except OSError as restore_error:
+                errors.append(f"restore runtime (backup {backup}): {restore_error}")
+            if errors:
+                raise RuntimeError(f"{exc}; rollback incomplete: {'; '.join(errors)}") from exc
+            raise
+        if old_moved:
+            shutil.rmtree(backup)
+        # Do not change runtime kernel settings before the service setup succeeds.
         self.run(["sh", str(self.tune)])
-        self.run(["systemctl", "daemon-reload"])
-        rc, out = self.run(["systemctl", "enable", UNIT_NAME])
-        if rc != 0:
-            raise RuntimeError("systemctl enable: " + out.strip()[-300:])
         return {"installed": self.bundled_version(), "needs_reboot": True,
                 "message": "Installed. Reboot the Deck: Gaming Mode will start with Gamescope KEDAVRA."}
 

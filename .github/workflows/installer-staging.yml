@@ -21,22 +21,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Check rejected install and upgrade on a fake root
+      - name: Check installer recovery on a fake root
         env:
           PYTHONPATH: tests:py_modules
         run: |
-          python -m unittest -v \
-            test_install_upgrade_recovery.UpgradeRecoveryTest.test_setcap_failure_keeps_previous_runtime \
-            test_install_upgrade_recovery.UpgradeRecoveryTest.test_setcap_failure_on_first_install_leaves_no_runtime \
-            test_install_upgrade_recovery.UpgradeRecoveryTest.test_success_applies_capability_to_staged_binary \
-            test_install_upgrade_recovery.UpgradeRecoveryTest.test_successful_upgrade_still_installs_candidate
+          python -m unittest -v test_install_upgrade_recovery
       - name: Check system profile watchdog and restoration on a fake root
         env:
           PYTHONPATH: tests:py_modules
         run: |
-          python -m unittest -v \
-            test_install_upgrade_recovery.UpgradeRecoveryTest.test_watchdog_rollback_does_not_apply_system_profile \
-            test_system_profile
+          python -m unittest -v test_system_profile
       - name: Verify file capability survives directory rename
         run: |
           set -euo pipefail

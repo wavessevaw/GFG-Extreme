@@ -125,6 +125,108 @@ class UpgradeRecoveryTest(unittest.TestCase):
             self.assertFalse(any(c[0] == "sh" for c in rig.sys.calls[call_count:]),
                              "a rejected upgrade must not apply system settings")
 
+    def test_enable_failure_on_first_install_leaves_no_installed_engine_or_unit(self):
+        rig = fixture.InstallerTest()
+        rig.setUp()
+        self.addCleanup(rig.tearDown)
+        original_run = rig.sys
+        def fail_enable(argv, **kwargs):
+            if len(argv) > 1 and argv[0] == "systemctl" and argv[1] == "enable":
+                return 1, "injected enable failure"
+            return original_run(argv, **kwargs)
+        rig.inst.run = fail_enable
+        with self.assertRaisesRegex(RuntimeError, "systemctl enable"):
+            rig.inst.install()
+        self.assertFalse(rig.inst.runtime.exists())
+        self.assertFalse(rig.inst.unit.exists())
+        self.assertFalse(rig.inst.boot.exists())
+        self.assertFalse(rig.inst.limits.exists())
+        self.assertFalse(rig.sys.enabled)
+        self.assertFalse(any(c[0] == "sh" for c in rig.sys.calls))
+
+    def test_successful_upgrade_does_not_leave_rollback_runtime(self):
+        rig = fixture.InstallerTest()
+        rig.setUp()
+        self.addCleanup(rig.tearDown)
+        rig.inst.install()
+        rig.inst.install()
+        self.assertFalse((rig.inst.var / "runtime.rollback").exists())
+
+    def test_daemon_reload_failure_restores_previous_runtime(self):
+        rig = fixture.InstallerTest()
+        rig.setUp()
+        self.addCleanup(rig.tearDown)
+        rig.inst.install()
+        installed = rig.inst.runtime / "bin/gamescope"
+        installed.write_text("previous-runtime")
+        (rig.inst.bundle / "bin/gamescope").write_text("candidate-runtime")
+        original_run = rig.sys
+        failed = False
+        def fail_once(argv, **kwargs):
+            nonlocal failed
+            if argv[:2] == ["systemctl", "daemon-reload"] and not failed:
+                failed = True
+                return 1, "injected daemon-reload failure"
+            return original_run(argv, **kwargs)
+        rig.inst.run = fail_once
+        with self.assertRaisesRegex(RuntimeError, "daemon-reload"):
+            rig.inst.install()
+        self.assertEqual(installed.read_text(), "previous-runtime")
+        self.assertFalse((rig.inst.var / "runtime.rollback").exists())
+        self.assertTrue(rig.sys.enabled)
+
+    def test_partially_enabled_service_is_disabled_again_on_first_install(self):
+        rig = fixture.InstallerTest()
+        rig.setUp()
+        self.addCleanup(rig.tearDown)
+        original_run = rig.sys
+        def fail_after_enable(argv, **kwargs):
+            if argv[:2] == ["systemctl", "enable"]:
+                rig.sys.enabled = True  # simulate partial side effect before error
+                return 1, "injected partial enable"
+            return original_run(argv, **kwargs)
+        rig.inst.run = fail_after_enable
+        with self.assertRaisesRegex(RuntimeError, "systemctl enable"):
+            rig.inst.install()
+        self.assertFalse(rig.sys.enabled)
+        self.assertFalse(rig.inst.runtime.exists())
+        self.assertFalse(rig.inst.unit.exists())
+
+    def test_failed_runtime_restore_retains_backup_and_reports_incomplete_rollback(self):
+        rig = fixture.InstallerTest()
+        rig.setUp()
+        self.addCleanup(rig.tearDown)
+        rig.inst.install()
+        (rig.inst.runtime / "bin/gamescope").write_text("previous-runtime")
+        original_run = rig.sys
+        backup = rig.inst.var / "runtime.rollback"
+        path_type = type(backup)
+        original_rename = path_type.rename
+        def fail_enable(argv, **kwargs):
+            if argv[:2] == ["systemctl", "enable"]:
+                return 1, "injected enable failure"
+            return original_run(argv, **kwargs)
+        def fail_restore(path, destination):
+            if path == backup:
+                raise PermissionError("injected runtime restore failure")
+            return original_rename(path, destination)
+        rig.inst.run = fail_enable
+        with patch.object(path_type, "rename", fail_restore):
+            with self.assertRaisesRegex(RuntimeError, "rollback incomplete"):
+                rig.inst.install()
+        self.assertEqual((backup / "bin/gamescope").read_text(), "previous-runtime")
+
+    def test_existing_rollback_copy_is_not_overwritten(self):
+        rig = fixture.InstallerTest()
+        rig.setUp()
+        self.addCleanup(rig.tearDown)
+        backup = rig.inst.var / "runtime.rollback/bin"
+        backup.mkdir(parents=True)
+        (backup / "gamescope").write_text("recoverable-runtime")
+        with self.assertRaisesRegex(RuntimeError, "rollback still exists"):
+            rig.inst.install()
+        self.assertEqual((backup / "gamescope").read_text(), "recoverable-runtime")
+
     def test_watchdog_rollback_does_not_apply_system_profile(self):
         # Run the actual boot and profile scripts against one temporary fake setting.
         rig = fixture.InstallerTest()
