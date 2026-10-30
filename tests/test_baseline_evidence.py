@@ -23,5 +23,13 @@ class BaselineEvidenceTest(unittest.TestCase):
             self.assertIn("92b557f678d118ae97948673c26e2498b7a28467", environment)
 
 
+    def test_original_gsf_archive_digest_and_contents(self):
+        archive_path = ARCHIVE.with_name("gsf-model-engine.zip")
+        expected = "5a6ad32dc546ac5d42d28f49a7ea476758ac45632178f1ef6c270b24077daef5"
+        self.assertEqual(hashlib.sha256(archive_path.read_bytes()).hexdigest(), expected)
+        with zipfile.ZipFile(archive_path) as archive:
+            self.assertIsNone(archive.testzip())
+            self.assertEqual(set(archive.namelist()), {"engine.json", "scenarios.json"})
+
 if __name__ == "__main__":
     unittest.main()
