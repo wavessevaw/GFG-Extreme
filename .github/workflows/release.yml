@@ -151,23 +151,8 @@ jobs:
         with:
           name: kedavra-bench
           path: kedavra-bench
-      - name: Zip for Decky
-        run: |
-          version="$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
-          test "v$version" = "$TAG" || { echo "::error::package.json $version does not match $TAG"; exit 1; }
-          echo "version=$version" >> "$GITHUB_ENV"
-          scripts/build_release.sh "$version" gamescope-runtime out kedavra-bench
-          export GFG_SHA="$(git rev-parse HEAD)"
-          test "$GFG_SHA" = "$GITHUB_SHA" || { echo "::error::source commit mismatch"; exit 1; }
-          export GAMESCOPE_SHA="$(sed -n 's/^GAMESCOPE_COMMIT=//p' kedavra-source/kedavra/gamescope/apply.sh)"
-          [[ "$GAMESCOPE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::invalid Gamescope revision"; exit 1; }
-          python3 -c 'import json, os; print(json.dumps({"gfg_sha": os.environ["GFG_SHA"], "gsf_repository": os.environ["KEDAVRA_REPO"], "gsf_sha": os.environ["KEDAVRA_SHA"], "gamescope_sha": os.environ["GAMESCOPE_SHA"], "candidate_version": os.environ["TAG"]}, indent=2))' > out/BUILD_MANIFEST.json
-          (cd out && sha256sum BUILD_MANIFEST.json >> SHA256SUMS.txt)
-          unzip -Z1 out/*.zip | grep -Fx GFG-Extreme/runtime/bin/gamescope
-          unzip -Z1 out/*.zip | grep -Fx GFG-Extreme/bin/kfg_pacing.py
-          unzip -Z1 out/*.zip | grep -Fx GFG-Extreme/bench/kfg_vktest
-          unzip -Z1 out/*.zip | grep -Fx GFG-Extreme/dist/index.js
-          if unzip -Z1 out/*.zip | grep -qi 'mako\|lsfg\|lossless'; then echo "::error::MAKO/LSFG files in the zip"; exit 1; fi
+      - name: Package candidate with pinned source manifest
+        run: bash scripts/package_candidate.sh kedavra-source gamescope-runtime kedavra-bench out
       - name: Save candidate archive, checksums and manifest
         uses: actions/upload-artifact@v4
         with:
