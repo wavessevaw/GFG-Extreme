@@ -100,6 +100,31 @@ class UpgradeRecoveryTest(unittest.TestCase):
         self.assertEqual(installed.read_text(), "previous-runtime",
                          "a rejected upgrade must retain the previously installed runtime")
 
+    def test_enable_failure_preserves_boot_state_and_does_not_apply_profile(self):
+        rig = fixture.InstallerTest()
+        rig.setUp()
+        self.addCleanup(rig.tearDown)
+        rig.inst.install()
+        for name in ("trial", "healthy"):
+            (rig.inst.state / name).write_text("previous " + name)
+        tracked = [rig.inst.boot, rig.inst.tune, rig.inst.untune, rig.inst.unit, rig.inst.limits,
+                   rig.inst.state / "trial", rig.inst.state / "healthy"]
+        before = {p: p.read_bytes() for p in tracked}
+        call_count = len(rig.sys.calls)
+        original_run = rig.sys
+        def fail_enable(argv, **kwargs):
+            if len(argv) > 1 and argv[0] == "systemctl" and argv[1] == "enable":
+                return 1, "injected enable failure"
+            return original_run(argv, **kwargs)
+        rig.inst.run = fail_enable
+        with self.assertRaisesRegex(RuntimeError, "systemctl enable"):
+            rig.inst.install()
+        with self.subTest("boot state and scripts"):
+            self.assertEqual({p: p.read_bytes() if p.exists() else None for p in tracked}, before)
+        with self.subTest("profile application"):
+            self.assertFalse(any(c[0] == "sh" for c in rig.sys.calls[call_count:]),
+                             "a rejected upgrade must not apply system settings")
+
     def test_watchdog_rollback_does_not_apply_system_profile(self):
         # Run the actual boot and profile scripts against one temporary fake setting.
         rig = fixture.InstallerTest()
