@@ -53,6 +53,69 @@ class SystemProfileTest(unittest.TestCase):
             self.assertEqual((root / "sys/block/nvme0n1/queue/scheduler").read_text().strip(), "mq-deadline")
             self.assertFalse(done.exists())
 
+    def test_restore_failure_retains_remaining_entries_in_dependency_order(self):
+        with tempfile.TemporaryDirectory(prefix="profile space ") as d:
+            root = Path(d)
+            scheduler, dependent, last = [root / n for n in ("scheduler", "missing", "last")]
+            scheduler.write_text("new")
+            last.write_text("new")
+            orig, done = root / "orig", root / "done"
+            orig.write_text(f"{scheduler}\told-scheduler\n{dependent}\told-dependent\n{last}\told-last\n")
+            done.touch()
+            script = root / "restore.sh"
+            script.write_text(sp.restore_script(orig, done))
+            result = subprocess.run(["sh", str(script)], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("journal retained", result.stderr)
+            self.assertTrue(done.exists())
+            self.assertEqual(last.read_text().strip(), "old-last")
+            self.assertEqual(scheduler.read_text(), "new")
+            self.assertEqual(orig.read_text(), f"{scheduler}\told-scheduler\n{dependent}\told-dependent\n")
+            dependent.touch()
+            subprocess.run(["sh", str(script)], check=True)
+            self.assertEqual(dependent.read_text().strip(), "old-dependent")
+            self.assertEqual(scheduler.read_text().strip(), "old-scheduler")
+            self.assertFalse(orig.exists()); self.assertFalse(done.exists())
+            subprocess.run(["sh", str(script)], check=True)
+
+    def test_write_failure_does_not_erase_journal(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); target = root / "target"
+            target.write_text("active"); target.chmod(0o444)
+            orig, done = root / "orig", root / "done"
+            saved = f"{target}\toriginal\n"
+            orig.write_text(saved); done.touch()
+            script = root / "restore.sh"; script.write_text(sp.restore_script(orig, done))
+            try:
+                import os
+                if os.geteuid() == 0:
+                    self.skipTest("permission test needs unprivileged execution")
+                result = subprocess.run(["sh", str(script)], capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(orig.read_text(), saved)
+                self.assertEqual(target.read_text(), "active")
+                self.assertTrue(done.exists())
+            finally:
+                target.chmod(0o644)
+
+    def test_readback_choice_and_mismatch(self):
+        import os
+        for actual, success in (("always [madvise] never", True), ("always madvise [never]", False)):
+            with self.subTest(actual=actual), tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                target, orig, done = root / "setting", root / "orig", root / "done"
+                target.write_text("always"); orig.write_text(f"{target}\tmadvise\n"); done.touch()
+                bindir = root / "bin"; bindir.mkdir()
+                cat = bindir / "cat"
+                cat.write_text(f"#!/bin/sh\nprintf '%s\\n' '{actual}'\n")
+                cat.chmod(0o755)
+                script = root / "restore.sh"; script.write_text(sp.restore_script(orig, done))
+                result = subprocess.run(["sh", str(script)], capture_output=True,
+                                        env={**os.environ, "PATH": str(bindir) + ":" + os.environ["PATH"]})
+                self.assertEqual(result.returncode == 0, success)
+                self.assertEqual(orig.exists(), not success)
+                self.assertEqual(done.exists(), not success)
+
     def test_swap_settings_need_zram(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

@@ -9,6 +9,7 @@ battery), so the sandbox runs this same code against a virtual Deck.
 from __future__ import annotations
 
 import time
+import threading
 from typing import Any, Callable, Dict, Optional
 
 from . import filters
@@ -46,6 +47,9 @@ class Service:
                  split: Optional[SplitControl] = None, gclock: Optional[GpuClockControl] = None,
                  book: Optional[GameBook] = None, display: Optional[Callable[[], bool]] = None,
                  boost: Optional[Boost] = None) -> None:
+        self._lifecycle_lock = threading.RLock()
+        self._stopped = False
+        self._stop_complete = False
         self.settings = settings
         self.ctl = ctl
         self.clock = clock
@@ -136,6 +140,12 @@ class Service:
 
     # ------------------------------------------------------------------ tick
     def tick(self) -> Dict[str, Any]:
+        with self._lifecycle_lock:
+            if self._stopped:
+                return self.snapshot
+            return self._tick()
+
+    def _tick(self) -> Dict[str, Any]:
         now = self.clock()
         self.ticks += 1
         st = self.ctl.status() or {}
@@ -412,19 +422,32 @@ class Service:
             self.journal("service", "session-summary", app=self.app, **summary)
 
     def stop(self) -> None:
+        with self._lifecycle_lock:
+            if self._stop_complete:
+                return
+            self._stopped = True
+            self._stop()
+            self._stop_complete = True
+
+    def _stop(self) -> None:
         """Plugin unload: TDP back to the player's, HDR output back on, HUD hidden, generation left
         as the engine runs it."""
-        self._end_session("unload")
+        actions = [lambda: self._end_session("unload")]
         if self.boost is not None:
-            self.boost.stop()
-        self._hdr_output(True, True, self.clock())
-        self.governor.stop("unload")
+            actions.append(self.boost.stop)
+        actions.extend([lambda: self._hdr_output(True, True, self.clock()),
+                        lambda: self.governor.stop("unload")])
         if self.split is not None:
-            self.split.stop()
+            actions.append(self.split.stop)
         if self.gclock is not None:
-            self.gclock.stop()
+            actions.append(self.gclock.stop)
         if self.hud is not None:
+            actions.append(lambda: self.hud.tick(False, None))
+        errors = []
+        for action in actions:
             try:
-                self.hud.tick(False, None)
-            except OSError:
-                pass
+                action()
+            except Exception as error:
+                errors.append(error)
+        if errors:
+            raise RuntimeError("Service restoration failed: " + "; ".join(map(str, errors))) from errors[0]

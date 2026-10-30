@@ -71,6 +71,24 @@ class InstallerTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp)
 
+    def test_remove_replaces_legacy_restorer_and_reports_failure(self):
+        self.inst.install()
+        self.inst.profile_orig.parent.mkdir(parents=True, exist_ok=True)
+        self.inst.profile_orig.write_text("/missing\toriginal\n")
+        self.inst.untune.write_text("legacy unsafe script")
+        original_run = self.inst.run
+        def run(argv, **kw):
+            if argv[0] == "sh":
+                self.assertIn("journal retained", self.inst.untune.read_text())
+                return 1, "restore failed"
+            return original_run(argv, **kw)
+        self.inst.run = run
+        result = self.inst.uninstall()
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "restore failed")
+        self.assertTrue(self.inst.profile_orig.exists())
+        self.assertTrue((self.inst.state / "disabled").exists())
+
     def test_install_writes_unit_and_runtime(self):
         r = self.inst.install()
         self.assertTrue(r["needs_reboot"])

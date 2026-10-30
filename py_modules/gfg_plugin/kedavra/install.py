@@ -248,8 +248,13 @@ class Installer:
                 "message": "Installed. Reboot the Deck: Gaming Mode will start with Gamescope KEDAVRA."}
 
     def uninstall(self):
-        if self.untune.exists():
-            self.run(["sh", str(self.untune)])
+        restore_error = ""
+        if self.profile_orig.exists():
+            # An installed script may predate this fix. Always use the current restorer.
+            self.untune.write_text(restore_script(self.profile_orig, self.profile_done))
+            rc, output = self.run(["sh", str(self.untune)])
+            if rc:
+                restore_error = output or "System profile restoration failed; saved settings retained for retry."
         self.limits.unlink(missing_ok=True)
         self.run(["systemctl", "disable", UNIT_NAME])
         self.unit.unlink(missing_ok=True)
@@ -257,7 +262,11 @@ class Installer:
         self.state.mkdir(parents=True, exist_ok=True)
         (self.state / "disabled").touch()
         mounted = self._mounted()
-        return {"needs_reboot": mounted,
+        if restore_error:
+            return {"ok": False, "needs_reboot": True, "error": restore_error,
+                    "message": "Engine disabled. Some system settings could not be restored; retry Remove or reboot.",
+                    "log": restore_error}
+        return {"ok": True, "needs_reboot": mounted,
                 "message": "Removed. Reboot the Deck to return to the stock Gamescope." if mounted
                 else "Removed. The stock Gamescope is active."}
 
