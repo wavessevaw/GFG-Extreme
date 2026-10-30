@@ -12,6 +12,15 @@ SHA256 = "fdaf15b068cdc110ee3b44c4b4151eef416d02d9d57852fd069727a72f1b1ab2"
 
 
 class BaselineEvidenceTest(unittest.TestCase):
+    def test_autopilot_experiment_observations_remain_intact(self):
+        path = ARCHIVE.parents[1] / "research/autopilot-floor-2026-10-30.json"
+        raw = path.read_bytes()
+        self.assertEqual(hashlib.sha256(raw).hexdigest(),
+                         "6251ca5691fce16c106c31a29ef3ae1732ca177b289a119b4d8a2dedd78e564d")
+        cases = json.loads(raw)["cases"]
+        self.assertEqual(set(cases), {f"{fps}@{limit}" for fps in (22, 26, 30, 34, 40) for limit in (15, 18)})
+        self.assertTrue(all(set(observation) == {"before", "candidate"} for observation in cases.values()))
+
     def test_original_archive_digest_and_contents(self):
         self.assertEqual(hashlib.sha256(ARCHIVE.read_bytes()).hexdigest(), SHA256)
         with zipfile.ZipFile(ARCHIVE) as archive:
