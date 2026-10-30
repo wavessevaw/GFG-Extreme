@@ -42,6 +42,9 @@ jobs:
       - name: Check baseline scenario assertions
         if: always()
         run: python3 tools/compare_sandbox.py docs/baseline-3.2.2/sandbox.json "$RUNNER_TEMP/sandbox.json" "$RUNNER_TEMP/sandbox.json" --output "$RUNNER_TEMP/comparison.json"
+      - name: Review historical sandbox source changes
+        if: always()
+        run: python3 tools/guard_sandbox_source.py docs/baseline-3.2.2/sandbox-run.py.txt sandbox/run.py --output "$RUNNER_TEMP/source-comparison.json"
       - name: Save simulation results
         if: always()
         uses: actions/upload-artifact@v4
@@ -52,6 +55,7 @@ jobs:
             ${{ runner.temp }}/sandbox.json
             ${{ runner.temp }}/stress.json
             ${{ runner.temp }}/comparison.json
+            ${{ runner.temp }}/source-comparison.json
           if-no-files-found: warn
       - if: ${{ !cancelled() }}
         run: |

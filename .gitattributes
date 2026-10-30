@@ -1,0 +1,2 @@
+# Historical blob must remain byte-identical across Windows and Linux checkouts.
+docs/baseline-3.2.2/sandbox-run.py.txt -text
