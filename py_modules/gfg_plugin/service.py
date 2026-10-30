@@ -9,7 +9,7 @@ battery), so the sandbox runs this same code against a virtual Deck.
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from . import filters
 from .autopilot import Autopilot
@@ -30,6 +30,7 @@ GAME_GRACE_S = 10.0   # the QAM or a loading screen does not end a game session
 STEAM_APP = 769
 HDR_RESEND_S = 10.0
 DOCK_CHECK_S = 5.0    # an external display (the dock) is looked up this often
+POWER_EVERY_S = 2.0   # battery and charger readings
 # No game (user, 3.1.1): after a game GFG resets everything and computes nothing. An idle tick
 # only reads the engine status (to see the next game) and keeps the idle policy confirmed; the
 # sensors shown in the panel are read this often, the full pipeline runs again only for a
@@ -52,6 +53,7 @@ class Service:
         self.telemetry = telemetry
         self.sensors = sensors
         self.battery = battery
+        self._power_cache: Optional[Tuple[float, Dict[str, Any]]] = None
         self.hud = hud
         self.hud_path = hud_path
         self.coord = PolicyCoordinator(ctl, clock=clock, journal=self._j("policy"))
@@ -116,6 +118,15 @@ class Service:
                 self.journal("service", "hdr-output-failed", error=str(exc))
             self.hdr_error = str(exc)
 
+    def _power(self, now: float) -> Dict[str, Any]:
+        """Battery and charger, read every POWER_EVERY_S (a glob and a dozen sysfs reads; the
+        battery changes slowly and a charger change is still seen within two seconds)."""
+        if not self.battery:
+            return {}
+        if self._power_cache is None or now - self._power_cache[0] >= POWER_EVERY_S or now < self._power_cache[0]:
+            self._power_cache = (now, self.battery())
+        return self._power_cache[1]
+
     def _j(self, source: str) -> Optional[Callable[..., None]]:
         if not self.journal:
             return None
@@ -152,7 +163,7 @@ class Service:
         self._hdr_output(bool(data["engine"].get("hdr_output", True)), fresh, now)
         profile_key, profile = self.settings.profile_for(self.app)
         sensors = self.sensors.sample() if self.sensors else {}
-        power = self.battery() if self.battery else {}
+        power = self._power(now)
         temp = sensors.get("temp_c")
         objective = profile["objective"]
         auto_reason = ""

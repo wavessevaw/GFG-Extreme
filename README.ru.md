@@ -28,7 +28,7 @@ Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integ
 
 <table>
 <tr>
-<td width="33%" align="center"><b>GSF KEDAVRA</b><br><sub>Своя генерация кадров внутри Gamescope. Множитель выбирает режим, выключается одной кнопкой. SDR и HDR.</sub></td>
+<td width="33%" align="center"><b>GSF KEDAVRA</b><br><sub>Своя генерация кадров внутри Gamescope. Множитель выбирает режим; повторное нажатие на выбранный режим выключает генерацию. SDR и HDR.</sub></td>
 <td width="33%" align="center"><b>AUTOPILOT</b><br><sub>Измерить, закрепить, охранять, адаптировать. Минимальный TDP, который держит FPS.</sub></td>
 <td width="33%" align="center"><b>ОДИН ZIP</b><br><sub>Ставится из Decky. Сам ставит свой Gamescope и сам откатывается.</sub></td>
 </tr>
@@ -173,7 +173,7 @@ GSF Kedavra — собственный графический движок GFG E
 | Processing | GPU Compute Shaders |
 | Motion Estimation | Multi-resolution, bidirectional, with temporal seeding |
 | Frame Reconstruction | Motion-compensated interpolation |
-| Multipliers | Chosen by the mode (fractional, up to ×3, ×3.75 with Allow above ×3); Dash has a single Off |
+| Multipliers | Chosen by the mode (fractional, up to ×3, ×3.75 with Allow above ×3); a second tap on the selected mode turns generation off |
 | Automatic Mode | Base FPS chosen from the game's measured frame rate |
 | Source FPS Control | Kedavra base FPS cap inside Gamescope (Steam's limiter is not used) |
 | Frame Scheduling | VBlank-aware |
@@ -456,6 +456,8 @@ Film Grain · Vignette · Chromatic Aberration · Deband · Noir · Sepia · Mon
 Диагностические трассы позволяют исследовать пропуски кадров, переходы между рабочими точками, перегрузку GPU и эффективность изменения TDP.
 
 Результаты аппаратных испытаний могут быть воспроизведены и сопоставлены с решениями управляющей системы.
+
+С 3.2.2 собственный цикл GFG, который работает раз в секунду, стал легче: датчики питания (ограничения TDP и потребление APU) читаются один раз в секунду (чтений sysfs в секунду 17 → 6), батарея и зарядка раз в 2 с, папки hwmon ищутся раз в минуту, посекундная телеметрия пишется пачками раз в 30 с, а проверка монтирования движка выполняется один раз за загрузку.
 
 **REAL METRICS. REPRODUCIBLE RESULTS.**
 

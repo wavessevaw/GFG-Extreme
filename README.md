@@ -28,7 +28,7 @@ Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integ
 
 <table>
 <tr>
-<td width="33%" align="center"><b>GSF KEDAVRA</b><br><sub>Own frame generation inside Gamescope. The mode picks the multiplier, one tap turns it off. SDR and HDR.</sub></td>
+<td width="33%" align="center"><b>GSF KEDAVRA</b><br><sub>Own frame generation inside Gamescope. The mode picks the multiplier; tap the selected mode again to turn it off. SDR and HDR.</sub></td>
 <td width="33%" align="center"><b>AUTOPILOT</b><br><sub>Measure, lock, guard, adapt. The lowest TDP that holds the frame rate.</sub></td>
 <td width="33%" align="center"><b>ONE ZIP</b><br><sub>Installed from Decky. Installs its own Gamescope, rolls back by itself.</sub></td>
 </tr>
@@ -173,7 +173,7 @@ Motion is analysed once per real frame, in its own GPU submission after the comp
 | Processing | GPU Compute Shaders |
 | Motion Estimation | Multi-resolution, bidirectional, with temporal seeding |
 | Frame Reconstruction | Motion-compensated interpolation |
-| Multipliers | Chosen by the mode (fractional, up to ×3, ×3.75 with Allow above ×3); Dash has a single Off |
+| Multipliers | Chosen by the mode (fractional, up to ×3, ×3.75 with Allow above ×3); a second tap on the selected mode turns generation off |
 | Automatic Mode | Base FPS chosen from the game's measured frame rate |
 | Source FPS Control | Kedavra base FPS cap inside Gamescope (Steam's limiter is not used) |
 | Frame Scheduling | VBlank-aware |
@@ -456,6 +456,8 @@ The system tells internal generation events apart from presentations confirmed b
 Diagnostic traces show missed frames, transitions between operating points, GPU overload and how well TDP changes worked.
 
 Hardware test results can be reproduced and matched against the control system's decisions.
+
+Since 3.2.2 GFG's own once-a-second loop is lighter: the power sensors (TDP caps and APU draw) are read once per second (sysfs reads per second 17 → 6), battery and charger every 2 s, hwmon folders are looked up once a minute, per-second telemetry is written in 30 s batches, and the engine mount check runs once per boot.
 
 **REAL METRICS. REPRODUCIBLE RESULTS.**
 

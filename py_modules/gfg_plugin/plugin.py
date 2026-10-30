@@ -79,6 +79,7 @@ class Plugin:
             boost=Boost(self.ctl, journal=lambda kind, **f: self.log.record("boost", kind, **f)))
         self.lock = asyncio.Lock()
         self._gate_at, self._gate_cache = -1e9, {}
+        self._mounted_seen = False
         self._host_at, self._host_cache = -1e9, {}
         self.state: Dict[str, Any] = {}
         self.stopping = False
@@ -129,6 +130,7 @@ class Plugin:
         for t in getattr(self, "tasks", []):
             t.cancel()
         await asyncio.to_thread(self.service.stop)
+        await asyncio.to_thread(self.telemetry.flush)
         self.log.record("plugin", "unload")
 
     async def _uninstall(self) -> None:
@@ -147,8 +149,10 @@ class Plugin:
         if now - self._gate_at < 5.0 and self._gate_cache:
             return self._gate_cache
         self._gate_at = now
+        # A mount holds until the next boot: once seen, findmnt is not started again (3.2.2).
+        self._mounted_seen = self._mounted_seen or self.inst._mounted()
         self._gate_cache = engine_gate.gate(self.inst.installed_version(), self.inst.bundled_version(),
-                                            self.inst._mounted(), engine_gate.boot_id(),
+                                            self._mounted_seen, engine_gate.boot_id(),
                                             engine_gate.read_record(self.data / "engine-install.json"))
         return self._gate_cache
 
