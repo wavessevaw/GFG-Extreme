@@ -150,11 +150,11 @@ function Dash({ s, set }) {
       h(Mini, { frac: split.cap_khz && split.max_khz ? split.cap_khz / split.max_khz : 1, v: cpuGhz || "MAX", u: cpuGhz ? "GHz" : "", k: "CPU CLOCK", t: cpuGhz ? 0 : 0.3 }),
       h(Mini, { frac: frac(sen.fan_rpm, FAN_MAX), v: num(sen.fan_rpm) === null ? "—" : (sen.fan_rpm / 1000).toFixed(1), u: "k rpm", k: "FAN", t: off(sen.fan_rpm, 3500, 7000) })),
     h(Card, { title: "MODE" }, h("div", { className: "grid2" }, Object.entries(OBJ).map(([k, [name, sub]]) =>
-      h(Focusable, { key: k, onClick: () => setProf({ objective: k }) }, h("div", { className: "tile mode m-" + k + (prof.objective === k ? " on" : "") },
+      // A second tap on the selected mode turns generation off; any mode tap while off turns it back on.
+      h(Focusable, { key: k, onClick: () => setProf(prof.fg !== "off" && prof.objective === k ? { fg: "off" } : { objective: k, fg: "auto" }) },
+        h("div", { className: "tile mode m-" + k + (prof.fg !== "off" && prof.objective === k ? " on" : "") },
         h("div", { className: "mico" }, ICON[k]), h("div", null, h("b", null, name),
         h("span", null, k === "autopilot" && prof.objective === "autopilot" && live.objective && live.objective !== "autopilot" ? "now " + (OBJ[live.objective] || [live.objective])[0] : objSub(k, sub, above)))))))),
-    h(Card, { title: "FRAME GENERATION" }, h(Seg, { value: prof.fg === "off" ? "off" : "", options: [["off", "Off"]], onChange: () => setProf({ fg: prof.fg === "off" ? "auto" : "off" }) }),
-      h("div", { className: "note" }, prof.fg === "off" ? "Generation is off for this scope. Tap Off again to turn it back on." : "The mode picks the multiplier. Tap Off to play without generation.")),
     h(Card, { title: "SETTINGS APPLY TO" }, h(Seg, { value: scope, options: [["game", "This game"], ["default", "All games"]],
       onChange: (v) => set(() => (v === "game" ? rpc.setProfile("game", {}) : rpc.dropGame())) })));
 }
