@@ -21,6 +21,14 @@ class BaselineEvidenceTest(unittest.TestCase):
         self.assertEqual(set(cases), {f"{fps}@{limit}" for fps in (22, 26, 30, 34, 40) for limit in (15, 18)})
         self.assertTrue(all(set(observation) == {"before", "candidate"} for observation in cases.values()))
 
+    def test_autopilot_historical_reference_remains_intact(self):
+        path = ARCHIVE.parents[1] / "research/autopilot-reference-3.2.2.json"
+        raw = path.read_bytes()
+        self.assertEqual(hashlib.sha256(raw).hexdigest(),
+                         "de47579da1e508a75c254285738f2dea629b375ffd718893671c2aad47a28187")
+        self.assertEqual(set(json.loads(raw)["cases"]),
+                         {f"{fps}@{limit}" for fps in (22, 26, 30, 34, 40) for limit in (15, 18)})
+
     def test_original_archive_digest_and_contents(self):
         self.assertEqual(hashlib.sha256(ARCHIVE.read_bytes()).hexdigest(), SHA256)
         with zipfile.ZipFile(ARCHIVE) as archive:

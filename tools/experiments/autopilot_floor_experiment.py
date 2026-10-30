@@ -7,10 +7,15 @@ strict screen is not a device acceptance threshold; it also cannot validate visu
 """
 import json
 import statistics
+import subprocess
 import sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
+source = "94739b1f462ff1bd4411d8c8514bcde4d2dcb222"
+subprocess.run(["git", "diff", "--exit-code", source, "--", "py_modules", "sandbox"], cwd=root, check=True)
+if subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=all", "--", "py_modules", "sandbox"], cwd=root, text=True).strip():
+    raise SystemExit("untracked or modified product or sandbox files are present")
 sys.path.insert(0, str(root))
 sys.path.insert(0, str(root / "py_modules"))
 from gfg_plugin.governor import PowerGovernor
