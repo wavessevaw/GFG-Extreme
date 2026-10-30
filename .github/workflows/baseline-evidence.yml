@@ -67,9 +67,7 @@ jobs:
         run: |
           set -o pipefail
           {
-            npm ci
-            npm run build
-            git diff --exit-code -- dist/index.js
+            npm ci && npm run build && git diff --exit-code -- dist/index.js
           } 2>&1 | tee "$RUNNER_TEMP/baseline-evidence/frontend-build.log"
       - name: Frontend smoke
         if: ${{ !cancelled() }}
@@ -77,8 +75,7 @@ jobs:
         run: |
           set -o pipefail
           {
-            npx playwright-core install --with-deps chromium
-            node frontend/harness/smoke.mjs
+            npx playwright-core install --with-deps chromium && node frontend/harness/smoke.mjs
           } 2>&1 | tee "$RUNNER_TEMP/baseline-evidence/frontend-smoke.log"
       - name: Save evidence
         if: ${{ always() }}
