@@ -1,0 +1,31 @@
+name: Settings upgrade stress
+
+# Software simulation only; this does not approve a release or a hardware result.
+on:
+  pull_request:
+    paths:
+      - 'py_modules/gfg_plugin/settings.py'
+      - 'tests/test_saved_settings_upgrade.py'
+      - '.github/workflows/settings-upgrade-stress.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  stress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run reproducible virtual Deck stress
+        run: python3 -m sandbox.stress --seeds 30 --json settings-upgrade-stress.json
+      - name: Save raw model output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: settings-upgrade-stress
+          path: settings-upgrade-stress.json
+          if-no-files-found: warn

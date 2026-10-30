@@ -88,13 +88,17 @@ def normalize(raw: Any) -> Dict[str, Any]:
     ap = raw.get("autopilot") if isinstance(raw.get("autopilot"), dict) else {}
     out["autopilot"] = {"preference": ap.get("preference") if ap.get("preference") in AUTOPILOT_PREFERENCES else "auto"}
     power = raw.get("power") if isinstance(raw.get("power"), dict) else {}
-    # 3.3.0: each CPU cap step made short pacing dips more frequent (2.6 -> 4.0 % of the next 8 s,
-    # about one change a minute) for a median 0.6 % GPU clock per watt; the GPU clock ceiling pins
-    # a fixed clock. Both are off from schema 4 and stay switchable on the Engine tab.
-    old = _int_in(raw.get("schema"), 0, SCHEMA, 0) < 4
-    out["power"] = {"enabled": bool(power.get("enabled", True)),
-                    "split": False if old else bool(power.get("split", False)),
-                    "gpu_clock": False if old else bool(power.get("gpu_clock", False))}
+    # Schema 3 (3.2.2) defaulted both controls on. Preserve its saved choices and its
+    # defaults for omitted keys; new schema-4 installations retain the newer off defaults.
+    # Earlier and unversioned input keeps the existing conservative migration behaviour.
+    version = _int_in(raw.get("schema"), 0, SCHEMA, 0)
+    if version == 3:
+        split, gpu_clock = bool(power.get("split", True)), bool(power.get("gpu_clock", True))
+    elif version < 4:
+        split, gpu_clock = False, False
+    else:
+        split, gpu_clock = bool(power.get("split", False)), bool(power.get("gpu_clock", False))
+    out["power"] = {"enabled": bool(power.get("enabled", True)), "split": split, "gpu_clock": gpu_clock}
     eng = raw.get("engine") if isinstance(raw.get("engine"), dict) else {}
     out["engine"] = {"hdr": bool(eng.get("hdr", True)), "hdr_output": bool(eng.get("hdr_output", True)),
                      # Above x3 (user, 3.1.1): x3.75 plays badly, so it is unlocked only here.
