@@ -34,8 +34,10 @@ jobs:
         with:
           node-version: "22"
       - run: python3 -m unittest discover -s tests -p 'test_*.py'
-      - run: python3 -m sandbox.run --report "$RUNNER_TEMP/SANDBOX_REPORT.md" --json "$RUNNER_TEMP/sandbox.json"
+      - if: ${{ !cancelled() }}
+        run: python3 -m sandbox.run --report "$RUNNER_TEMP/SANDBOX_REPORT.md" --json "$RUNNER_TEMP/sandbox.json"
       - name: Seeded virtual Deck stress
+        if: ${{ !cancelled() }}
         run: python3 -m sandbox.stress --seeds 30 --json "$RUNNER_TEMP/stress.json"
       - name: Check baseline scenario assertions
         if: always()
@@ -51,7 +53,8 @@ jobs:
             ${{ runner.temp }}/stress.json
             ${{ runner.temp }}/comparison.json
           if-no-files-found: warn
-      - run: |
+      - if: ${{ !cancelled() }}
+        run: |
           npm ci
           npm run build
           git diff --exit-code dist/index.js
