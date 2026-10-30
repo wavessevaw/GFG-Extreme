@@ -38,6 +38,7 @@ jobs:
       - name: Seeded virtual Deck stress
         run: python3 -m sandbox.stress --seeds 30 --json "$RUNNER_TEMP/stress.json"
       - name: Check baseline scenario assertions
+        if: always()
         run: python3 tools/compare_sandbox.py docs/baseline-3.2.2/sandbox.json "$RUNNER_TEMP/sandbox.json" "$RUNNER_TEMP/sandbox.json" --output "$RUNNER_TEMP/comparison.json"
       - name: Save simulation results
         if: always()
