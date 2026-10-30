@@ -17,6 +17,11 @@ class UpgradeRecoveryTest(unittest.TestCase):
         installed = rig.inst.runtime / "bin/gamescope"
         installed.write_text("previous-runtime")
         (rig.inst.bundle / "bin/gamescope").write_text("candidate-runtime")
+        (rig.inst.state / "healthy").write_text("prior state")
+        tracked = [rig.inst.boot, rig.inst.tune, rig.inst.untune, rig.inst.unit,
+                   rig.inst.limits, rig.inst.state / "healthy"]
+        before = {p: p.read_bytes() for p in tracked}
+        calls_before = len(rig.sys.calls)
         original_run = rig.sys
 
         def fail_setcap(argv, **kwargs):
@@ -29,6 +34,49 @@ class UpgradeRecoveryTest(unittest.TestCase):
             rig.inst.install()
         self.assertEqual(installed.read_text(), "previous-runtime",
                          "a rejected upgrade must retain the previously installed runtime")
+        self.assertEqual({p: p.read_bytes() for p in tracked}, before)
+        self.assertFalse((rig.inst.var / "runtime.new").exists())
+        self.assertFalse(any(c[0] in ("sh", "systemctl") for c in rig.sys.calls[calls_before:]))
+
+    def test_setcap_failure_on_first_install_leaves_no_runtime(self):
+        rig = fixture.InstallerTest()
+        rig.setUp()
+        self.addCleanup(rig.tearDown)
+        original_run = rig.sys
+        def fail_setcap(argv, **kwargs):
+            if Path(argv[0]).name == "setcap":
+                return 1, "injected setcap failure"
+            return original_run(argv, **kwargs)
+        rig.inst.run = fail_setcap
+        with self.assertRaisesRegex(RuntimeError, "setcap"):
+            rig.inst.install()
+        self.assertFalse(rig.inst.runtime.exists())
+        self.assertFalse((rig.inst.var / "runtime.new").exists())
+        self.assertFalse(rig.inst.unit.exists())
+        self.assertFalse(rig.sys.enabled)
+
+    def test_success_applies_capability_to_staged_binary(self):
+        rig = fixture.InstallerTest()
+        rig.setUp()
+        self.addCleanup(rig.tearDown)
+        rig.inst.install()
+        calls = [argv for argv in rig.sys.calls if Path(argv[0]).name == "setcap"]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(Path(calls[0][-1]), rig.inst.var / "runtime.new/bin/gamescope")
+        self.assertTrue((rig.inst.runtime / "bin/gamescope").exists())
+
+    def test_successful_upgrade_still_installs_candidate(self):
+        rig = fixture.InstallerTest()
+        rig.setUp()
+        self.addCleanup(rig.tearDown)
+        rig.inst.install()
+        installed = rig.inst.runtime / "bin/gamescope"
+        installed.write_text("previous-runtime")
+        (rig.inst.bundle / "bin/gamescope").write_text("candidate-runtime")
+        result = rig.inst.install()
+        self.assertEqual(installed.read_text(), "candidate-runtime")
+        self.assertTrue(result["needs_reboot"])
+        self.assertTrue(rig.sys.enabled)
 
 
     def test_enable_failure_keeps_previous_runtime(self):

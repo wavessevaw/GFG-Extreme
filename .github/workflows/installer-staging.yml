@@ -1,0 +1,40 @@
+name: Installer staging checks
+
+# Fake-root tests and an isolated file-capability check only; no device validation.
+on:
+  pull_request:
+    paths:
+      - 'py_modules/gfg_plugin/kedavra/install.py'
+      - 'tests/test_install_upgrade_recovery.py'
+      - '.github/workflows/installer-staging.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  staging:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check rejected install and upgrade on a fake root
+        env:
+          PYTHONPATH: tests:py_modules
+        run: |
+          python -m unittest -v \
+            test_install_upgrade_recovery.UpgradeRecoveryTest.test_setcap_failure_keeps_previous_runtime \
+            test_install_upgrade_recovery.UpgradeRecoveryTest.test_setcap_failure_on_first_install_leaves_no_runtime \
+            test_install_upgrade_recovery.UpgradeRecoveryTest.test_success_applies_capability_to_staged_binary \
+            test_install_upgrade_recovery.UpgradeRecoveryTest.test_successful_upgrade_still_installs_candidate
+      - name: Verify file capability survives directory rename
+        run: |
+          set -euo pipefail
+          root="$(mktemp -d)"
+          trap 'rm -rf "$root"' EXIT
+          mkdir -p "$root/runtime.new/bin"
+          cp /bin/true "$root/runtime.new/bin/gamescope"
+          sudo setcap cap_sys_nice=eip "$root/runtime.new/bin/gamescope"
+          mv "$root/runtime.new" "$root/runtime"
+          getcap "$root/runtime/bin/gamescope" | grep -Fx "$root/runtime/bin/gamescope cap_sys_nice=eip"

@@ -217,14 +217,17 @@ class Installer:
         if rc != 0:
             shutil.rmtree(tmp)
             raise RuntimeError("Gamescope KEDAVRA --version failed: " + out.strip()[-400:])
+        # Apply capabilities before replacing an existing runtime. File capabilities stay
+        # attached to the staged executable when its directory is renamed on the same filesystem.
+        rc, out = self.run(["setcap", "cap_sys_nice=eip", str(tmp / "bin/gamescope")])
+        if rc != 0:
+            shutil.rmtree(tmp)
+            raise RuntimeError("setcap: " + out.strip()[-300:])
         # A running KEDAVRA session keeps its open (unlinked) files; the new copy is
         # used from the next boot.
         if self.runtime.exists():
             shutil.rmtree(self.runtime)
         tmp.rename(self.runtime)
-        rc, out = self.run(["setcap", "cap_sys_nice=eip", str(self.runtime / "bin/gamescope")])
-        if rc != 0:
-            raise RuntimeError("setcap: " + out.strip()[-300:])
         self.state.mkdir(parents=True, exist_ok=True)
         for f in ("disabled", "trial", "healthy", "auto_rollback", "ldd_failed"):
             (self.state / f).unlink(missing_ok=True)
