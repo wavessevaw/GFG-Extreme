@@ -88,6 +88,9 @@ TUNE_SH = r"""#!/bin/sh
 ORIG={orig}
 DONE={done}
 [ -f "{state}/profile_off" ] && exit 0
+# The boot watchdog disables the engine before this script runs; do not apply
+# its system profile after that rollback or while the engine is disabled.
+[ -f "{state}/disabled" ] && exit 0
 mkdir -p "$(dirname "$ORIG")"
 touch "$ORIG"
 zram=0
