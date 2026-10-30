@@ -78,7 +78,7 @@ jobs:
           printf 'fixture, not a loader\n' > "$fixture/runtime/lib/ld-linux-x86-64.so.2"
           printf 'fixture, not a benchmark\n' > "$fixture/bench/kfg_vktest"
           printf 'fixture, not a shader\n' > "$fixture/bench/fixture.spv"
-          export GITHUB_SHA="$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           export TAG="v$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
           if TAG=v0.0.0 bash scripts/package_candidate.sh kedavra-source "$fixture/runtime" "$fixture/bench" "$fixture/bad-version"; then echo 'version mismatch was accepted' >&2; exit 1; fi
           if KEDAVRA_SHA=0000000000000000000000000000000000000000 bash scripts/package_candidate.sh kedavra-source "$fixture/runtime" "$fixture/bench" "$fixture/bad-engine"; then echo 'engine mismatch was accepted' >&2; exit 1; fi
