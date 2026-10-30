@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("compare_sandbox", Path(__file__).resolve().parents[1] / "tools" / "compare_sandbox.py")
 module = importlib.util.module_from_spec(spec)
@@ -43,6 +44,12 @@ class CompareSandboxTest(unittest.TestCase):
         self.assertEqual(result["added_numeric"], {"scene": ["/metrics/energy"]})
         self.assertEqual(result["observed_numeric_changes"], {})
         self.assertEqual(result["status"], "UNVERIFIED")
+
+    def test_input_hash_identifies_exact_bytes(self):
+        with patch.object(module.Path, "read_bytes", return_value=b"{}"):
+            result, digest = module.load_result("unused.json")
+        self.assertEqual(result, {})
+        self.assertEqual(digest, "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a")
 
     def test_empty_duplicate_and_inconsistent_results_rejected(self):
         for value in ({}, run(("a", True), ("a", True)),

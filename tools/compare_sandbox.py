@@ -5,6 +5,7 @@ Reports missing or failed checks. Changed check names and numerical values need 
 investigation; this tool cannot prove equivalent predicates or image quality.
 """
 import argparse
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -79,17 +80,28 @@ def compare(reference, target):
             "status": "BLOCKED" if missing_scenarios or missing_checks or failed_reference or failed else "UNVERIFIED"}
 
 
+def load_result(path):
+    raw = Path(path).read_bytes()
+    return json.loads(raw.decode("utf-8-sig")), hashlib.sha256(raw).hexdigest()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("baseline")
     parser.add_argument("stable")
     parser.add_argument("candidate")
     parser.add_argument("--output")
+    for label in ("baseline", "stable", "candidate"):
+        parser.add_argument(f"--{label}-revision", help="caller-supplied source revision, not independently verified")
     args = parser.parse_args()
     try:
-        runs = [json.loads(Path(p).read_text(encoding="utf-8"))
-                for p in (args.baseline, args.stable, args.candidate)]
-        report = {"evidence_class": "simulation", "baseline_to_stable": compare(runs[0], runs[1]),
+        paths = (args.baseline, args.stable, args.candidate)
+        loaded = [load_result(path) for path in paths]
+        runs = [entry[0] for entry in loaded]
+        inputs = [{"label": label, "path": path, "sha256": entry[1],
+                   "claimed_revision": getattr(args, label + "_revision")}
+                  for label, path, entry in zip(("baseline", "stable", "candidate"), paths, loaded)]
+        report = {"evidence_class": "simulation", "inputs": inputs, "baseline_to_stable": compare(runs[0], runs[1]),
                   "baseline_to_candidate": compare(runs[0], runs[2]),
                   "stable_to_candidate": compare(runs[1], runs[2]),
                   "limitations": "Model numbers are unqualified observations, not evidence of improvement or hardware measurements. Predicates, thresholds, comparability, pacing and image quality require independent review."}
