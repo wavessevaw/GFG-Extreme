@@ -1,5 +1,9 @@
 # GFG Extreme 3.0 Steam Deck test protocol
 
+**Historical protocol.** For Stable 3.2.2 and later comparative qualification use
+[`DECK_TEST_PROTOCOL_3_2_2.md`](DECK_TEST_PROTOCOL_3_2_2.md). The original checks below are
+retained for traceability; their Custom selector instructions do not describe the 3.2.2 Dash.
+
 Results count only from a Steam Deck run. Each item: what to do, what to send (Save report to
 Desktop + Pace capture files), pass condition.
 
