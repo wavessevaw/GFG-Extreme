@@ -1,5 +1,7 @@
 """Protect the original Linux observation archive against accidental replacement."""
 import hashlib
+import json
+import math
 from pathlib import Path
 import unittest
 import zipfile
@@ -30,6 +32,32 @@ class BaselineEvidenceTest(unittest.TestCase):
         with zipfile.ZipFile(archive_path) as archive:
             self.assertIsNone(archive.testzip())
             self.assertEqual(set(archive.namelist()), {"engine.json", "scenarios.json"})
+
+    def test_temporal_observation_archive(self):
+        path = ARCHIVE.with_name("gsf-temporal-llvmpipe.zip")
+        self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),
+                         "6f1c14bbd169a37712efa77449b71faecbfb9b3961b9b3160a33b9143d5fb1a0")
+        scenes = {"h_turn64": {3}, "h_parallax": {3}, "h_lines_slow": {2, 3}}
+        metrics = {"psnr", "psnr_worst", "errgrad", "blk", "badblk_pct", "badblk_max", "temporal", "lineflk", "sharpflk_pct"}
+        with zipfile.ZipFile(path) as archive:
+            self.assertIsNone(archive.testzip())
+            manifest = json.loads(archive.read("manifest.json"))
+            self.assertEqual(manifest["quality_status"], "UNVERIFIED")
+            self.assertEqual(manifest["gsf_commit"], "62621c4f9b60fd3cb95edafb62a1a44a1bb2c21e")
+            self.assertEqual(manifest["gamescope_commit"], "aa289ea5977d8b21b92b0f246f0e8f0c225d180f")
+            self.assertEqual(set(manifest["evidence"]), set(scenes))
+            for scene, modes in scenes.items():
+                raw = archive.read(f"{scene}.json")
+                self.assertEqual(hashlib.sha256(raw).hexdigest(), manifest["evidence"][scene]["sha256"])
+                document = json.loads(raw)
+                self.assertIn("llvmpipe", document["device"].lower())
+                self.assertEqual(document["size"], [1280, 800])
+                self.assertEqual(len(document["hard"]), len(modes))
+                self.assertEqual({row["mode"] for row in document["hard"]}, modes)
+                for row in document["hard"]:
+                    self.assertEqual(row["scene"], scene)
+                    for name in metrics:
+                        self.assertTrue(math.isfinite(row[name]), (scene, name))
 
 if __name__ == "__main__":
     unittest.main()
