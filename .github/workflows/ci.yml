@@ -21,8 +21,10 @@ jobs:
       - name: Backend tests
         run: python3 -m unittest discover -s tests -p 'test_*.py'
       - name: Sandbox scenarios
+        if: ${{ !cancelled() }}
         run: python3 -m sandbox.run --report "$RUNNER_TEMP/SANDBOX_REPORT.md" --json "$RUNNER_TEMP/sandbox.json"
       - name: Seeded virtual Deck stress
+        if: ${{ !cancelled() }}
         run: python3 -m sandbox.stress --seeds 30 --json "$RUNNER_TEMP/stress.json"
       # The current run is supplied twice: this gate checks the historical baseline against
       # this commit; the separate three-way tool supports a pinned stable run as well.
@@ -41,11 +43,13 @@ jobs:
             ${{ runner.temp }}/comparison.json
           if-no-files-found: warn
       - name: Frontend build is committed and current
+        if: ${{ !cancelled() }}
         run: |
           npm ci
           npm run build
           git diff --exit-code dist/index.js || { echo "::error::dist/index.js is stale; run npm run build and commit"; exit 1; }
       - name: Frontend smoke test
+        if: ${{ !cancelled() }}
         run: |
           npx playwright-core install --with-deps chromium
           node frontend/harness/smoke.mjs
