@@ -27,6 +27,7 @@ jobs:
       # The current run is supplied twice: this gate checks the historical baseline against
       # this commit; the separate three-way tool supports a pinned stable run as well.
       - name: Check baseline scenario assertions
+        if: always()
         run: python3 tools/compare_sandbox.py docs/baseline-3.2.2/sandbox.json "$RUNNER_TEMP/sandbox.json" "$RUNNER_TEMP/sandbox.json" --output "$RUNNER_TEMP/comparison.json"
       - name: Save simulation results
         if: always()
