@@ -42,7 +42,7 @@ The baseline release workflow responds to `v3.*` tag pushes and manual dispatch.
 
 ## Remaining audit
 
-Complete the function-by-function inventory, causal history and PR review; reproduce the GFG Linux baseline with detailed JSON and explicit skips; complete installer failure, telemetry freshness and ownership audits; establish validated differential metrics and protected output frames; and enforce branch/release safeguards. The archive hash and matching tracked files, initial GSF software tests and the updated protocol are recorded above. No performance, quality, latency or hardware regression claim is established yet.
+Complete the function-by-function inventory, causal history and PR review; complete installer failure, telemetry freshness and ownership audits; establish validated differential metrics and protected output frames; and enforce branch/release safeguards. The archive hash and matching tracked files, initial GSF software tests and the updated protocol are recorded above. No performance, quality, latency or hardware regression claim is established yet.
 
 ## Source inventory and test map
 
@@ -64,3 +64,7 @@ This map classifies evidence by subsystem. Names of tests identify coverage, not
 ## Historical fixes requiring continued regression coverage
 
 Examples tied to source history: `b5cb6d1` covers stale Auto, heat hysteresis, TDP restore and windows; `4aaf5ee` addresses charger changes pausing Governor; `3cee7a4` handles delayed CPU cap application; `d574d57` addresses stale counters and overhead; `6992a15` addresses dock ceiling and point churn; `0836f16` adds lifecycle draining and failed system restore preservation. Their relevant unit/model tests are a starting map, not a complete causal audit or proof that every old defect is protected.
+
+## Reproduced Linux baseline
+
+The isolated [Linux baseline run](https://github.com/wavessevaw/GFG-Extreme/actions/runs/41023616384) used source `92b557f678d118ae97948673c26e2498b7a28467` with only the evidence workflow added to the merge tree, as verified by the job. Ubuntu 24.04, Python 3.13.17 and Node 22.23.4: 169 unit tests passed with no reported skips; all 39 virtual Deck scenarios passed; stress seeds 1–30 and nine deterministic runs passed; npm ci, committed dist check and frontend smoke passed. The `historical-3-2-2-linux-evidence` Actions artifact contains environment details, verbose unit log, scenario JSON and report, stress JSON and logs, build and smoke logs. GitHub reports retention until 2027-01-28; it must be copied to durable storage before expiry. These are functional and simulation results, not Steam Deck measurements.
