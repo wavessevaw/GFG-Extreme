@@ -1,0 +1,86 @@
+name: Historical 3.2.2 evidence
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      BASELINE_SHA: 92b557f678d118ae97948673c26e2498b7a28467
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify historical source identity
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/baseline-evidence"
+          {
+            date -u --iso-8601=seconds
+            uname -a
+            git rev-parse HEAD
+            git rev-parse HEAD^1
+            git rev-parse "v3.2.2^{commit}"
+            git status --short
+            python3 --version
+            node --version
+            npm --version
+          } | tee "$RUNNER_TEMP/baseline-evidence/environment.txt"
+          test "$(git rev-parse "v3.2.2^{commit}")" = "$BASELINE_SHA"
+          test "$(git diff --name-only "$BASELINE_SHA" HEAD)" = ".github/workflows/baseline-evidence.yml"
+          test -z "$(git status --porcelain)"
+      - name: Unit tests
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -m unittest discover -s tests -p 'test_*.py' -v 2>&1 | tee "$RUNNER_TEMP/baseline-evidence/unit.log"
+      - name: Virtual Deck scenarios
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -m sandbox.run --json "$RUNNER_TEMP/baseline-evidence/sandbox.json" --report "$RUNNER_TEMP/baseline-evidence/SANDBOX_REPORT.md" 2>&1 | tee "$RUNNER_TEMP/baseline-evidence/sandbox.log"
+      - name: Fixed-seed stress
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -m sandbox.stress --seeds 30 --json "$RUNNER_TEMP/baseline-evidence/stress.json" 2>&1 | tee "$RUNNER_TEMP/baseline-evidence/stress.log"
+      - name: Install dependencies and verify frontend build
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            npm ci && npm run build && git diff --exit-code -- dist/index.js
+          } 2>&1 | tee "$RUNNER_TEMP/baseline-evidence/frontend-build.log"
+      - name: Frontend smoke
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            npx playwright-core install --with-deps chromium && node frontend/harness/smoke.mjs
+          } 2>&1 | tee "$RUNNER_TEMP/baseline-evidence/frontend-smoke.log"
+      - name: Save evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: historical-3-2-2-linux-evidence
+          path: ${{ runner.temp }}/baseline-evidence/
+          if-no-files-found: error
