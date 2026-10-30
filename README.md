@@ -4,7 +4,7 @@
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="144">
 
-# GFG EXTREME 3.3
+# GFG EXTREME 3.2
 
 **MOST POWERFUL DECKY PLUGIN EVER.**
 
