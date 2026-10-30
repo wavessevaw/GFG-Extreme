@@ -1,0 +1,36 @@
+# Stable 3.2.2 baseline audit (in progress)
+
+**Status: UNVERIFIED.** This is an initial source audit, not a complete feature inventory or a release approval. Hardware, image quality, latency, installation and recovery have not been verified on a Deck. Do not use the simulation as hardware evidence.
+
+## Identity and provenance
+
+* GFG tag `v3.2.2` resolves to `92b557f678d118ae97948673c26e2498b7a28467` (GitHub ref inspected 2026-10-30). The local audit branch starts at that commit.
+* The release API reports `GFG-Extreme-v3_2_2.zip` with SHA256 `2fbc562c789499ca3ef56f012a44615faeb6f72c46bb41961285697dab3b236d`. This is GitHub's reported digest, not an independent local hash.
+* `.github/workflows/release.yml` pins GSF Kedavra `62621c4f9b60fd3cb95edafb62a1a44a1bb2c21e`; that commit's `kedavra/gamescope/apply.sh` pins Valve Gamescope `aa289ea5977d8b21b92b0f246f0e8f0c225d180f`. This establishes build configuration, not binary provenance of the downloaded archive.
+* The current default branch has moved beyond this baseline; do not replace this historical reference with its HEAD.
+
+## Source observations
+
+Evidence class in this section is **source**, unless stated otherwise. Code presence is not proof of correct runtime behavior.
+
+* `plugin.py` implements Decky startup, one-second loop, unload/uninstall and RPC methods. `service.py` links fresh engine status, rates, settings, Autopilot, pilot, coordinator, Governor, controllers, HUD and telemetry. `Service.stop` stops and restores owned controllers.
+* `policy.py` sends engine policy with a revision and waits for a fresh status echo and matching values. It has offline, outdated, stale hold, applying, confirmed, conflict and error states. Its epoch changes when relevant policy inputs change. `service.py` includes policy and controller changes in the Governor's measurement epoch.
+* `service.py`, `split_control.py`, and `gpu_clock_control.py` implement interlocks: GPU clock checks whether Split owns or is settling; Split requires a settled Governor and unowned GPU clock; the Governor is informed of active probes. `lease.py` is explicitly **shadow** observation, not an enforcing lock. These interlocks and restore paths require further fault and hardware testing.
+* `settings.py`: schema 3; default profile `auto`, base FPS 45 (normalized 20–90), objective Autopilot; objectives Autopilot/Battery/Balanced/Quality; global HUD on, top-right, standard; power, split and GPU clock enabled; HDR generation and HDR output enabled; above x3 and Boost disabled; Boost defaults to 1.5, choices 1.25/1.5/1.75; telemetry standard. Profiles may be default or per Steam app. HUD positions are four corners and details minimal/standard. Autopilot preferences are auto/battery/smoothness.
+* Although `FG_MODES` lists fixed and custom values, `normalize_profile` retains only `off` or `auto`. `frontend/src/app.js` toggles Off on a second tap of the selected mode and selects Auto when a mode is tapped. Therefore a claim that 3.2.2 exposes fixed multiplier selection cannot be inferred from the constant or from an older protocol. Engine capabilities and UI accessibility must be audited separately.
+* **Known divergence in current main** `94739b1f462ff1bd4411d8c8514bcde4d2dcb222`: `frontend/src/app.js` mode cards send only an objective and highlight it even when FG is off; a separate FG card was reintroduced. The 3.2.2 second-tap Off / mode-tap Auto behavior required by the specification is absent in that source. The owner confirmed that the card's return was a mistake. This is a source finding; no new frontend runtime test has been run. Restoration needs a regression test; the specification also requires access to fixed multipliers, which must be reconciled without silently discarding functionality.
+* `filters.py` defines 19 effects, eight presets, CAS/DLS sharpening, FXAA/SMAA, sharpness and denoise normalized to 0–1. Its source describes post-processing after generation and before HUD. HDR behavior needs engine and device verification.
+* `kedavra/install.py` documents bind mounting and a boot watchdog; `migration.py`, `legacy_cleanup.py`, and `kedavra/system_profile.py` implement migration, cleanup and runtime system profile paths. The latter touches runtime kernel settings; the full set and restoration semantics still require audit.
+* Baseline source sets battery/charger cache to 2 s (`service.py`), sensor discovery to 60 s (`host_sensors.py`), telemetry flush to 30 s (`telemetry.py`), and caches a successful mount check (`plugin.py`). Six power reads per second is a release claim requiring independent measurement; a negative mount result is not cached by that expression.
+
+## Existing checks and gaps
+
+The baseline includes Python unit tests, 39 named virtual Deck scenarios in `sandbox.run`, seeded stress in `sandbox.stress`, and a frontend smoke harness. CI runs unit tests, sandbox, frontend build freshness and smoke; the release workflow additionally builds the engine and Gamescope. Stress is not in either baseline workflow. The old `docs/SANDBOX_REPORT.md` described 29 scenarios; it has been replaced in this audit branch by the 39-scenario Windows simulation report, while the original remains in Git history. The baseline unit test asserts only at least 20 scenarios; preserving names and individual checks needs a stronger guard.
+
+Historical GitHub Actions run [40984311609](https://github.com/wavessevaw/GFG-Extreme/actions/runs/40984311609) at this SHA reports 169 unit tests OK, 39 named scenarios passing, build freshness and frontend smoke success on Ubuntu 24.04, Python 3.13 and Node 22. This is a historical CI result, not a new execution or device evidence. The local Windows Python 3.12 run reports 169 tests, two failures and seven errors; Unix shell, `os.chown`, and Linux sysfs assumptions account for several errors, but each failure must be classified before drawing conclusions. The UTF-8 sandbox repeat passed 39 scenarios and saved detailed JSON. Stress with seeds 1–30 passed all 39 runs. Both are simulations. Detailed local logs are retained separately with the audit workspace.
+
+The baseline release workflow responds to `v3.*` tag pushes and manual dispatch. The latter can create a tag and publish; existing releases receive assets with `--clobber`. Its test job does not run stress. The current default-branch workflow still contains the tag/manual triggers and clobber behavior. On 2026-10-30 GitHub's branch response reports main `protected: false`, and the repository rulesets listing is empty; detailed branch protection API returned 403 to the integration. A workflow alone cannot enforce owner approval or block direct pushes. Repository protection and release controls still require action.
+
+## Remaining audit
+
+Complete the function-by-function inventory and test mapping; examine previous fixes and PRs; verify build artifact independently; establish Linux baseline with detailed JSON and explicit skips; inspect GSF pipeline and independent tests; audit installation, failure recovery, telemetry freshness and ownership; update the sandbox report and hardware protocol; establish differential measurements and protected scene assets; add CI/release safeguards on a branch based on the appropriate current development state. No performance, quality, latency or hardware regression claim is established yet.
