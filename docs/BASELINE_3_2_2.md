@@ -5,8 +5,8 @@
 ## Identity and provenance
 
 * GFG tag `v3.2.2` resolves to `92b557f678d118ae97948673c26e2498b7a28467` (GitHub ref inspected 2026-10-30). The local audit branch starts at that commit.
-* The release API reports `GFG-Extreme-v3_2_2.zip` with SHA256 `2fbc562c789499ca3ef56f012a44615faeb6f72c46bb41961285697dab3b236d`. This is GitHub's reported digest, not an independent local hash.
-* `.github/workflows/release.yml` pins GSF Kedavra `62621c4f9b60fd3cb95edafb62a1a44a1bb2c21e`; that commit's `kedavra/gamescope/apply.sh` pins Valve Gamescope `aa289ea5977d8b21b92b0f246f0e8f0c225d180f`. This establishes build configuration, not binary provenance of the downloaded archive.
+* The downloaded `GFG-Extreme-v3_2_2.zip` (24,747,760 bytes) was independently hashed on 2026-10-30: SHA256 `2fbc562c789499ca3ef56f012a44615faeb6f72c46bb41961285697dab3b236d`, matching the release API and specified digest. Its `dist/index.js` matches the exact baseline Git blob byte for byte (SHA256 `4969f6b85567c166cdccddd90ae7d28009fba730d5307050f62e3372a8b67b09`); compare to the Git blob, not a Windows checkout subject to newline conversion.
+* `.github/workflows/release.yml` pins GSF Kedavra `62621c4f9b60fd3cb95edafb62a1a44a1bb2c21e`; that commit's `kedavra/gamescope/apply.sh` pins Valve Gamescope `aa289ea5977d8b21b92b0f246f0e8f0c225d180f`. The archive's `runtime/VERSION` reads `kedavra-62621c4-gfg-92b557f`. This corroborates the labelled build configuration, but is not an independent reproducible build of the runtime binary.
 * The current default branch has moved beyond this baseline; do not replace this historical reference with its HEAD.
 
 ## Source observations
