@@ -12,6 +12,7 @@ Install never modifies the read-only system image:
     the mount and records an automatic rollback. So a Gaming Mode that does not come
     up is fixed by holding the power button and rebooting.
 """
+import base64
 import json
 import os
 import shutil
@@ -19,6 +20,7 @@ import stat
 import subprocess
 import time
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from .system_profile import LIMITS, LIMITS_NAME, restore_script, tune_script
@@ -199,6 +201,135 @@ class Installer:
 
     # ------------------------------------------------------------------ actions
 
+    @contextmanager
+    def _install_lock(self):
+        self.var.mkdir(parents=True, exist_ok=True)
+        lock = self.var / "install.lock"
+        if lock.is_symlink():
+            raise RuntimeError("installer lock is a symlink")
+        with lock.open("a") as stream:
+            if os.name == "posix":
+                import fcntl
+                try:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as exc:
+                    raise RuntimeError("another installer operation is in progress") from exc
+            yield  # closing releases the lock, including after process termination
+
+    def _install_paths(self):
+        return [self.boot, self.tune, self.untune, self.unit, self.limits] + [
+            self.state / name for name in ("disabled", "trial", "healthy", "auto_rollback", "ldd_failed")]
+
+    @staticmethod
+    def _encode_snapshot(saved):
+        kind, data, extra = saved
+        if kind == "file":
+            data = base64.b64encode(data).decode("ascii")
+        elif kind == "symlink":
+            extra = Installer._encode_snapshot(extra)
+        return [kind, data, extra]
+
+    @staticmethod
+    def _decode_snapshot(saved):
+        kind, data, extra = saved
+        if kind == "file":
+            data = base64.b64decode(data, validate=True)
+            if len(extra) != 3 or not all(type(n) is int for n in extra):
+                raise ValueError("invalid file metadata")
+        elif kind == "symlink":
+            if not isinstance(data, str):
+                raise ValueError("invalid symlink")
+            extra = Installer._decode_snapshot(extra)
+        elif kind != "missing" or data is not None or extra is not None:
+            raise ValueError("invalid snapshot")
+        return kind, data, extra
+
+    def _sync_install_dir(self):
+        if os.name == "posix":
+            fd = os.open(self.var, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+
+    def _save_install_transaction(self, transaction):
+        pending = self.var / "install-transaction.new"
+        if pending.is_symlink():
+            raise RuntimeError("installer transaction staging path is a symlink")
+        with pending.open("w", encoding="utf-8") as stream:
+            pending.chmod(0o600)
+            json.dump(transaction, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        pending.replace(self.var / "install-transaction.json")
+        self._sync_install_dir()
+
+    def _recover_install_transaction(self):
+        """Finish cleanup or roll back an interrupted attempt before starting another.
+
+        This is restart/retry recovery, not a guarantee of boot or power-loss safety.
+        Never infer ownership of a runtime.rollback tree without our journal.
+        """
+        journal = self.var / "install-transaction.json"
+        if not journal.exists() and not journal.is_symlink():
+            return
+        if journal.is_symlink():
+            raise RuntimeError("installer transaction is a symlink")
+        try:
+            tx = json.loads(journal.read_text(encoding="utf-8"))
+            paths = self._install_paths()
+            if (tx["version"] != 1 or type(tx["committed"]) is not bool
+                    or type(tx["had_runtime"]) is not bool or len(tx["snapshots"]) != len(paths)
+                    or tx["prior_enabled"] not in ("enabled", "enabled-runtime", "disabled", "not-found")):
+                raise ValueError("invalid transaction fields")
+            snapshots = [self._decode_snapshot(s) for s in tx["snapshots"]]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise RuntimeError("invalid installer transaction; recovery data retained") from exc
+        backup = self.var / "runtime.rollback"
+        staged = self.var / "runtime.new"
+        for tree in (backup, staged, self.runtime):
+            if tree.is_symlink():
+                raise RuntimeError(f"installer recovery refuses runtime symlink: {tree}")
+        if not tx["committed"]:
+            if tx["had_runtime"]:
+                if backup.exists():
+                    if self.runtime.exists():
+                        shutil.rmtree(self.runtime)
+                    backup.rename(self.runtime)
+                    self._sync_install_dir()
+                elif not self.runtime.exists():
+                    raise RuntimeError("previous runtime missing; recovery journal retained")
+                # No backup means the first rename did not happen, or rollback already did.
+            elif self.runtime.exists():
+                shutil.rmtree(self.runtime)
+            prior = tx["prior_enabled"]
+            _, current = self.run(["systemctl", "is-enabled", UNIT_NAME])
+            # Remove partial enablement while the candidate unit still exists.
+            if prior in ("disabled", "not-found", "enabled-runtime") and current.strip() not in ("disabled", "not-found"):
+                rc, out = self.run(["systemctl", "disable", UNIT_NAME])
+                if rc:
+                    raise RuntimeError("restore service state: " + out.strip()[-300:])
+            for path, saved in zip(paths, snapshots):
+                self._restore_file(path, saved)
+            rc, out = self.run(["systemctl", "daemon-reload"])
+            if rc:
+                raise RuntimeError("reload restored unit: " + out.strip()[-300:])
+            _, current = self.run(["systemctl", "is-enabled", UNIT_NAME])
+            if current.strip() != prior and not (prior == "not-found" and current.strip() == "disabled"):
+                commands = ([["systemctl", "disable", UNIT_NAME], ["systemctl", "enable", "--runtime", UNIT_NAME]]
+                            if prior == "enabled-runtime" else
+                            [["systemctl", "enable" if prior == "enabled" else "disable", UNIT_NAME]])
+                for argv in commands:
+                    rc, out = self.run(argv)
+                    if rc:
+                        raise RuntimeError("restore service state: " + out.strip()[-300:])
+        elif backup.exists():
+            shutil.rmtree(backup)
+        if staged.exists():
+            shutil.rmtree(staged)
+        journal.unlink()
+        self._sync_install_dir()
+
     @staticmethod
     def _snapshot_file(path):
         """Snapshot an installer-owned file without following symlinks."""
@@ -244,6 +375,11 @@ class Installer:
                 os.chown(path, uid, gid)
 
     def install(self):
+        with self._install_lock():
+            return self._install_locked()
+
+    def _install_locked(self):
+        self._recover_install_transaction()
         if not (self.bundle / "bin/gamescope").exists():
             raise RuntimeError("the plugin zip has no runtime/bin/gamescope")
         if not self.target.exists():
@@ -272,8 +408,7 @@ class Installer:
         if backup.exists() or backup.is_symlink():
             shutil.rmtree(tmp)
             raise RuntimeError(f"previous runtime rollback still exists: {backup}")
-        paths = [self.boot, self.tune, self.untune, self.unit, self.limits]
-        paths += [self.state / f for f in ("disabled", "trial", "healthy", "auto_rollback", "ldd_failed")]
+        paths = self._install_paths()
         try:
             snapshots = {path: self._snapshot_file(path) for path in paths}
             if self.unit.exists() or self.unit.is_symlink():
@@ -286,15 +421,15 @@ class Installer:
         except Exception:
             shutil.rmtree(tmp)
             raise
-        old_moved = False
-        new_moved = False
+        transaction = {"version": 1, "committed": False, "had_runtime": self.runtime.exists(),
+                       "prior_enabled": prior_enabled,
+                       "snapshots": [self._encode_snapshot(snapshots[p]) for p in paths]}
+        self._save_install_transaction(transaction)
         try:
             # Keep the old tree until every mandatory setup action has succeeded.
             if self.runtime.exists():
                 self.runtime.rename(backup)
-                old_moved = True
             tmp.rename(self.runtime)
-            new_moved = True
             self.state.mkdir(parents=True, exist_ok=True)
             for f in ("disabled", "trial", "healthy", "auto_rollback", "ldd_failed"):
                 (self.state / f).unlink(missing_ok=True)
@@ -315,55 +450,25 @@ class Installer:
             if rc != 0:
                 raise RuntimeError("systemctl enable: " + out.strip()[-300:])
         except Exception as exc:
-            errors = []
-            # Undo partial service enablement before restoring or removing its unit file.
             try:
-                _, current_enabled = self.run(["systemctl", "is-enabled", UNIT_NAME])
-                current_enabled = current_enabled.strip()
-                if current_enabled != prior_enabled and not (prior_enabled == "not-found" and current_enabled == "disabled"):
-                    if prior_enabled == "enabled-runtime":
-                        commands = [["systemctl", "disable", UNIT_NAME], ["systemctl", "enable", "--runtime", UNIT_NAME]]
-                    elif prior_enabled in ("disabled", "not-found"):
-                        commands = [["systemctl", "disable", UNIT_NAME]]
-                    else:
-                        commands = [["systemctl", "enable", UNIT_NAME]]
-                    for argv in commands:
-                        rc, out = self.run(argv)
-                        if rc:
-                            errors.append("restore service state: " + out.strip()[-300:])
-            except Exception as service_error:
-                errors.append(f"restore service state: {service_error}")
-            for path, saved in snapshots.items():
-                try:
-                    self._restore_file(path, saved)
-                except (OSError, RuntimeError) as restore_error:
-                    errors.append(f"restore {path}: {restore_error}")
-            try:
-                rc, out = self.run(["systemctl", "daemon-reload"])
-                if rc:
-                    errors.append("reload restored unit: " + out.strip()[-300:])
-            except Exception as reload_error:
-                errors.append(f"reload restored unit: {reload_error}")
-            try:
-                if new_moved and self.runtime.exists():
-                    shutil.rmtree(self.runtime)
-                if old_moved:
-                    backup.rename(self.runtime)
-                if tmp.exists():
-                    shutil.rmtree(tmp)
-            except OSError as restore_error:
-                errors.append(f"restore runtime (backup {backup}): {restore_error}")
-            if errors:
-                raise RuntimeError(f"{exc}; rollback incomplete: {'; '.join(errors)}") from exc
+                self._recover_install_transaction()
+            except Exception as restore_error:
+                raise RuntimeError(f"{exc}; rollback incomplete: {restore_error}") from exc
             raise
-        if old_moved:
-            shutil.rmtree(backup)
+        transaction["committed"] = True
+        self._save_install_transaction(transaction)
+        self._recover_install_transaction()  # committed: only remove obsolete backups
         # Do not change runtime kernel settings before the service setup succeeds.
         self.run(["sh", str(self.tune)])
         return {"installed": self.bundled_version(), "needs_reboot": True,
                 "message": "Installed. Reboot the Deck: Gaming Mode will start with Gamescope KEDAVRA."}
 
     def uninstall(self):
+        with self._install_lock():
+            self._recover_install_transaction()
+            return self._uninstall_locked()
+
+    def _uninstall_locked(self):
         restore_error = ""
         if self.profile_orig.exists():
             # An installed script may predate this fix. Always use the current restorer.
