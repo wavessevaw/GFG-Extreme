@@ -91,6 +91,7 @@ DONE={done}
 # The boot watchdog disables the engine before this script runs; do not apply
 # its system profile after that rollback or while the engine is disabled.
 [ -f "{state}/disabled" ] && exit 0
+[ -e "{state}/../install-transaction.json" ] && exit 0
 mkdir -p "$(dirname "$ORIG")"
 touch "$ORIG"
 zram=0

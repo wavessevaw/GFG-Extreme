@@ -152,6 +152,17 @@ class SystemProfileTest(unittest.TestCase):
         for banned in ("mitigations", "pacman", "grub", "modprobe", "readonly", "perf_event", "energy_performance"):
             self.assertNotIn(banned, text)
 
+    def test_pending_install_does_not_apply_system_profile(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            fake_tree(root, zram=True)
+            tune, _, done = scripts(root)
+            (root / "install-transaction.json").write_text("pending")
+            subprocess.run(["sh", str(tune)], check=True)
+            self.assertEqual((root / "proc/sys/vm/swappiness").read_text().strip(), "100")
+            self.assertFalse(done.exists())
+            self.assertFalse((root / "run/orig").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

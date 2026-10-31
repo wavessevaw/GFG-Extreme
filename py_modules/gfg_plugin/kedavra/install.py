@@ -18,6 +18,7 @@ import os
 import shutil
 import stat
 import subprocess
+import tempfile
 import time
 import zipfile
 from contextlib import contextmanager
@@ -38,6 +39,8 @@ BIN={runtime}/bin/gamescope
 LOADER={runtime}/lib/{loader}
 mkdir -p "$S"
 [ -f "$S/disabled" ] && exit 0
+# A terminated update must boot stock Gamescope until recovery finishes.
+[ -e "$S/../install-transaction.json" ] && exit 0
 if [ -f "$S/trial" ] && [ ! -f "$S/healthy" ]; then
 	date -u +%Y-%m-%dT%H:%M:%SZ > "$S/auto_rollback"
 	echo "previous boot with KEDAVRA never became healthy" >> "$S/auto_rollback"
@@ -323,8 +326,12 @@ class Installer:
                     rc, out = self.run(argv)
                     if rc:
                         raise RuntimeError("restore service state: " + out.strip()[-300:])
-        elif backup.exists():
-            shutil.rmtree(backup)
+        else:
+            # Service setup committed successfully. The new boot script also
+            # checks the journal, so it remains guarded throughout cleanup.
+            (self.state / "disabled").unlink(missing_ok=True)
+            if backup.exists():
+                shutil.rmtree(backup)
         if staged.exists():
             shutil.rmtree(staged)
         journal.unlink()
@@ -379,6 +386,11 @@ class Installer:
             return self._install_locked()
 
     def _install_locked(self):
+        # Recovery cannot own a symlinked runtime. Reject it before creating a
+        # journal or touching staging, including dangling symlinks.
+        for tree in (self.runtime, self.var / "runtime.new", self.var / "runtime.rollback"):
+            if tree.is_symlink():
+                raise RuntimeError(f"installer refuses runtime symlink: {tree}")
         self._recover_install_transaction()
         if not (self.bundle / "bin/gamescope").exists():
             raise RuntimeError("the plugin zip has no runtime/bin/gamescope")
@@ -426,12 +438,30 @@ class Installer:
                        "snapshots": [self._encode_snapshot(snapshots[p]) for p in paths]}
         self._save_install_transaction(transaction)
         try:
+            # Historical boot scripts already honor this marker. Persist it
+            # before the first runtime rename, including upgrades from 3.2.2.
+            self.state.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(dir=self.state, prefix="disabled-", delete=False) as stream:
+                marker = Path(stream.name)
+                stream.flush()
+                os.fsync(stream.fileno())
+            try:
+                marker.replace(self.state / "disabled")
+            finally:
+                marker.unlink(missing_ok=True)
+            if os.name == "posix":
+                fd = os.open(self.state, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+            self._sync_install_dir()
             # Keep the old tree until every mandatory setup action has succeeded.
             if self.runtime.exists():
                 self.runtime.rename(backup)
             tmp.rename(self.runtime)
             self.state.mkdir(parents=True, exist_ok=True)
-            for f in ("disabled", "trial", "healthy", "auto_rollback", "ldd_failed"):
+            for f in ("trial", "healthy", "auto_rollback", "ldd_failed"):
                 (self.state / f).unlink(missing_ok=True)
             self.boot.write_text(BOOT_SH.format(state=self.state, runtime=self.runtime, loader=LOADER))
             self.tune.write_text(tune_script(self.state, self.profile_orig, self.profile_done))

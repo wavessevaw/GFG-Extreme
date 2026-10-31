@@ -16,6 +16,24 @@ class InterruptedInstallTest(unittest.TestCase):
         self.rig.setUp()
         self.addCleanup(self.rig.tearDown)
 
+    def test_runtime_symlink_is_rejected_before_transaction_or_staging(self):
+        is_symlink = Path.is_symlink
+        for name in ("runtime", "runtime.new", "runtime.rollback"):
+            with self.subTest(name=name):
+                rig = fixture.InstallerTest()
+                rig.setUp()
+                self.addCleanup(rig.tearDown)
+                rig.inst.install()
+                original = (rig.inst.runtime / "bin/gamescope").read_bytes()
+                suspect = rig.inst.var / name
+                with patch.object(Path, "is_symlink", lambda p: p == suspect or is_symlink(p)):
+                    with self.assertRaisesRegex(RuntimeError, "runtime symlink"):
+                        rig.inst.install()
+                self.assertEqual((rig.inst.runtime / "bin/gamescope").read_bytes(), original)
+                self.assertFalse((rig.inst.var / "install-transaction.json").exists())
+                self.assertFalse((rig.inst.var / "runtime.new").exists())
+                self.assertFalse((rig.inst.var / "runtime.rollback").exists())
+
     def test_retry_after_interruption_between_runtime_renames(self):
         rig = self.rig
         rig.inst.install()
@@ -33,11 +51,13 @@ class InterruptedInstallTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 rig.inst.install()
         self.assertEqual((rig.inst.var / "runtime.rollback/bin/gamescope").read_text(), "previous-runtime")
+        self.assertTrue((rig.inst.state / "disabled").is_file(), "historical boot must skip interrupted runtime")
         # A new installer instance must recover without manual file operations.
         fresh = fixture.kedavra_install.Installer(rig.inst.plugin_dir, rig.inst.home, root=rig.root, run=rig.sys)
         fresh.install()
         self.assertEqual((fresh.runtime / "bin/gamescope").read_text(), "candidate-runtime")
         self.assertFalse((fresh.var / "runtime.rollback").exists())
+        self.assertFalse((fresh.state / "disabled").exists())
 
     def test_interrupted_enable_restores_previous_files_before_retry(self):
         rig = self.rig
@@ -170,6 +190,7 @@ with patch.object(type(staged), "rename", stop):
                                  str(rig.inst.plugin_dir), str(rig.inst.home), str(rig.root)], timeout=30)
         self.assertEqual(result.returncode, 77)
         self.assertFalse(rig.inst.runtime.exists())
+        self.assertTrue((rig.inst.state / "disabled").is_file())
         rig.inst.install()
         self.assertEqual((rig.inst.runtime / "bin/gamescope").read_text(), "candidate-runtime")
 
@@ -182,6 +203,25 @@ with patch.object(type(staged), "rename", stop):
                 rig.inst.install()
             with self.assertRaisesRegex(RuntimeError, "another installer operation"):
                 rig.inst.uninstall()
+
+    @unittest.skipUnless(os.name == "posix", "boot shell execution requires POSIX; exercised by Linux CI")
+    def test_boot_skips_pending_transaction_before_runtime_execution(self):
+        rig = self.rig
+        rig.inst.install()
+        reached = rig.tmp / "runtime-executed"
+        # If a guard fails, the fake loader records it and exits before any mount.
+        loader = rig.inst.runtime / "lib" / fixture.kedavra_install.LOADER
+        loader.write_text(f"#!/bin/sh\ntouch '{reached}'\nexit 1\n")
+        loader.chmod(0o755)
+        for guard in (rig.inst.state / "disabled", rig.inst.var / "install-transaction.json"):
+            with self.subTest(guard=guard.name):
+                guard.write_text("pending")
+                subprocess.run(["sh", str(rig.inst.boot)], check=True, timeout=5)
+                self.assertFalse(reached.exists())
+                self.assertFalse((rig.inst.state / "trial").exists())
+                guard.unlink()
+        subprocess.run(["sh", str(rig.inst.boot)], check=True, timeout=5)
+        self.assertTrue(reached.exists(), "control run must reach the fake runtime")
 
 
 if __name__ == "__main__":
