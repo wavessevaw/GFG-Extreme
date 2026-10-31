@@ -57,3 +57,35 @@ jobs:
         run: |
           npx playwright-core install --with-deps chromium
           node frontend/harness/smoke.mjs
+
+  candidate-package-fixture:
+    # Packaging/provenance only: these fixture files are not an engine build.
+    runs-on: ubuntu-24.04
+    env:
+      KEDAVRA_REPO: wavessevaw/GSF_Kedavra
+      KEDAVRA_SHA: f13e66cee6b0934d9b90a273e78253502ba64042
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.KEDAVRA_REPO }}
+          ref: ${{ env.KEDAVRA_SHA }}
+          path: kedavra-source
+      - name: Parse release workflow YAML
+        run: ruby -e 'require "yaml"; YAML.load_file(".github/workflows/release.yml"); puts "release YAML parsed"'
+      - name: Exercise candidate packaging with non-executable fixtures
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/candidate-fixture"
+          mkdir -p "$fixture/runtime/bin" "$fixture/runtime/lib" "$fixture/bench"
+          printf 'fixture, not gamescope\n' > "$fixture/runtime/bin/gamescope"
+          printf 'fixture, not a loader\n' > "$fixture/runtime/lib/ld-linux-x86-64.so.2"
+          printf 'fixture, not a benchmark\n' > "$fixture/bench/kfg_vktest"
+          printf 'fixture, not a shader\n' > "$fixture/bench/fixture.spv"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          export TAG="v$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
+          if TAG=v0.0.0 bash scripts/package_candidate.sh kedavra-source "$fixture/runtime" "$fixture/bench" "$fixture/bad-version"; then echo 'version mismatch was accepted' >&2; exit 1; fi
+          if KEDAVRA_SHA=0000000000000000000000000000000000000000 bash scripts/package_candidate.sh kedavra-source "$fixture/runtime" "$fixture/bench" "$fixture/bad-engine"; then echo 'engine mismatch was accepted' >&2; exit 1; fi
+          test ! -e "$fixture/bad-version" && test ! -e "$fixture/bad-engine"
+          bash scripts/package_candidate.sh kedavra-source "$fixture/runtime" "$fixture/bench" "$fixture/out"
+          python3 -c 'import json, os, pathlib; m=json.loads((pathlib.Path(os.environ["RUNNER_TEMP"])/"candidate-fixture/out/BUILD_MANIFEST.json").read_text()); assert m["gfg_sha"] == os.environ["GITHUB_SHA"] and m["gsf_sha"] == os.environ["KEDAVRA_SHA"] and m["gamescope_sha"] == "aa289ea5977d8b21b92b0f246f0e8f0c225d180f" and m["candidate_version"] == os.environ["TAG"]'

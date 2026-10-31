@@ -176,10 +176,11 @@ function Dash({ s, set }) {
       h(Mini, { frac: split.cap_khz && split.max_khz ? split.cap_khz / split.max_khz : 1, v: cpuGhz || "MAX", u: cpuGhz ? "GHz" : "", k: "CPU CLOCK", t: cpuGhz ? 0 : 0.3 }),
       h(Mini, { frac: frac(sen.fan_rpm, FAN_MAX), v: num(sen.fan_rpm) === null ? "—" : (sen.fan_rpm / 1000).toFixed(1), u: "k rpm", k: "FAN", t: off(sen.fan_rpm, 3500, 7000) })),
     h(Card, { title: "MODE" }, h("div", { className: "grid2" }, Object.entries(OBJ).map(([k, [name, sub]]) =>
-      h(Focusable, { key: k, onClick: () => setProf({ objective: k }) }, h("div", { className: "tile mode m-" + k + (prof.objective === k ? " on" : "") },
+      // Preserve 3.2.2: tap the active mode to disable FG; a mode selection enables Auto.
+      h(Focusable, { key: k, onClick: () => setProf(prof.fg !== "off" && prof.objective === k ? { fg: "off" } : { objective: k, fg: "auto" }) }, h("div", { className: "tile mode m-" + k + (prof.fg !== "off" && prof.objective === k ? " on" : "") },
         h("div", { className: "mico" }, ICON[k]), h("div", null, h("b", null, name),
-        h("span", null, k === "autopilot" && prof.objective === "autopilot" && live.objective && live.objective !== "autopilot" ? "now " + (OBJ[live.objective] || [live.objective])[0] : objSub(k, sub, above)))))))),
-    h(Card, { title: "FRAME GENERATION" }, h(Seg, { value: prof.fg === "x3.75" && !above ? "x3" : prof.fg, options: fgOpts, onChange: (v) => setProf({ fg: v }) }),
+        h("span", null, k === "autopilot" && prof.objective === "autopilot" && live.objective && live.objective !== "autopilot" ? "now " + (OBJ[live.objective] || [live.objective])[0] : objSub(k, sub, above))))))),
+      h("div", { className: "sec sec2" }, "MULTIPLIER"), h(Seg, { value: prof.fg === "x3.75" && !above ? "x3" : prof.fg, options: fgOpts, onChange: (v) => setProf({ fg: v }) }),
       prof.fg === "custom" ? h("div", { className: "lrow first", style: { marginTop: 6 } }, "Base FPS cap",
         h("div", { className: "step" }, h(Focusable, { className: "b", onClick: () => setProf({ base_fps: Math.max(minCap, Math.max(minCap, prof.base_fps) - 1) }) }, "−"),
           h("span", { className: "val" }, Math.max(minCap, prof.base_fps)), h(Focusable, { className: "b", onClick: () => setProf({ base_fps: Math.min(90, prof.base_fps + 1) }) }, "+"))) : null,
