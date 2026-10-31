@@ -512,6 +512,11 @@ class Installer:
         def add(key, ok, text, detail=""):
             checks.append({"key": key, "ok": ok, "text": text, "detail": detail})
 
+        transaction = self.var / "install-transaction.json"
+        if transaction.exists() or transaction.is_symlink():
+            add("install_transaction", False,
+                "Installation has not finished. Wait for the current operation; if it stopped, "
+                "the next Install or Remove will attempt recovery.")
         rc, osr = self.run(["cat", str(self.root / "etc/os-release")])
         osv = {k: v.strip('"') for k, _, v in (l.partition("=") for l in osr.splitlines()) if k}
         add("os", osv.get("ID") == "steamos", f"OS: {osv.get('PRETTY_NAME', '?')} {osv.get('VERSION_ID', '')} {osv.get('BUILD_ID', '')}")

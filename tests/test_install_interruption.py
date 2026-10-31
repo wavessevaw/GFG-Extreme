@@ -117,6 +117,10 @@ class InterruptedInstallTest(unittest.TestCase):
         self.assertTrue(journal.exists())
         self.assertTrue((backup / "bin/gamescope").exists())
         self.assertTrue((rig.inst.runtime / "bin/gamescope").exists())
+        before = journal.read_bytes()
+        checks = rig.inst.diagnose()["checks"]
+        self.assertFalse(next(c for c in checks if c["key"] == "install_transaction")["ok"])
+        self.assertEqual(journal.read_bytes(), before, "diagnostics must not consume recovery data")
 
     def test_recovery_can_resume_after_another_interruption(self):
         rig = self.rig
