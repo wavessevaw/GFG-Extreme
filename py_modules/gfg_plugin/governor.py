@@ -529,7 +529,10 @@ class PowerGovernor:
             return False
         f = self.floors.get(self.cap)
         low = self._limits()["low"] or MIN_TDP_W
-        below = (f is not None and self.tdp is not None and f[0] >= self.tdp - STABLE_FLOOR_W) or (
+        # A cooldown is not evidence that an untried intermediate watt cannot hold.
+        # Modes using 1 W probes near a failure must try that level before locking.
+        gap = STEP_DOWN_W + 0.05 if self.objective in DIP_TOLERANT else STABLE_FLOOR_W
+        below = (f is not None and self.tdp is not None and f[0] >= self.tdp - gap) or (
             self.tdp is not None and self.tdp <= low + 0.05)
         if self.same_windows >= STABLE_WINDOWS and below and not lighter:
             self.stable = True
