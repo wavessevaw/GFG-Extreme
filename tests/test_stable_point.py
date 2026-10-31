@@ -10,6 +10,28 @@ from sandbox.vdeck import VGame, VModel  # noqa: E402
 
 
 class StablePointTest(unittest.TestCase):
+    def test_cooldown_does_not_hide_an_untried_watt(self):
+        rig = make_rig(VGame("g", 34.0, seed=1), fg="x3", objective="autopilot",
+                       battery=70.0, ambient=30.0, above_x3=True)
+        try:
+            play(rig, 1200)
+            events = [e for e in rig.log if e["src"] == "governor"]
+            failed = next(e for e in events if e["kind"] == "governor-floor" and e["tdp"] == 13.0)
+            restored = next(e for e in events if e["kind"] == "governor-tdp"
+                            and e["t"] >= failed["t"] and e["watts"] == 15.0)
+            probes = [e for e in events if e["kind"] == "governor-tdp"
+                      and e["t"] > restored["t"] and e["why"] == "window-held"]
+            self.assertTrue(probes, "cooldown must not permanently hide the untried 14 W level")
+            self.assertGreaterEqual(probes[0]["t"] - restored["t"], 30.0,
+                                    "the anti-oscillation cooldown must still be observed")
+            self.assertEqual(probes[0]["watts"], 14.0)
+            self.assertTrue(rig.service.governor.stable)
+            self.assertEqual(rig.power.tdp, 14.0)
+            self.assertEqual(len(probes), 1, "the resulting stable level must not keep probing")
+        finally:
+            rig.service.stop()
+        self.assertEqual(rig.power.tdp, 15.0, "stop restores the user's limit")
+
     def test_locks_then_starts_there_next_time(self):
         rig = make_rig(VGame("g", 45.0), objective="autopilot")
         play(rig, 900)
