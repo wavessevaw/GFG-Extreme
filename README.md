@@ -50,6 +50,8 @@ Kedavra runs GPU motion estimation and reconstructs in-between frames directly i
 
 No Lossless Scaling, no MAKO, no third-party frame generation layers: the whole frame pipeline runs inside GFG's own Gamescope.
 
+**90 FPS BEYOND NATIVE GAMES.** Kedavra operates on frames presented through Gamescope, opening frame generation to emulators and remote-play clients as well as local games. Xbox Remote Play via Greenlight has been tested on Steam Deck OLED; PlayStation Remote Play, Moonlight and individual emulators still require validation. With a stable 30 FPS source, ×3 targets 90 FPS display output—not 90 native game frames.
+
 Version 3.0 is built on three technologies:
 
 **FRAME RECONSTRUCTION**
