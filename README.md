@@ -50,7 +50,7 @@ Kedavra runs GPU motion estimation and reconstructs in-between frames directly i
 
 No Lossless Scaling, no MAKO, no third-party frame generation layers: the whole frame pipeline runs inside GFG's own Gamescope.
 
-**90 FPS EVERYWHERE — IN STEAMOS GAMING MODE.** GFG Extreme generates frames at the Gamescope compositor level, across native games, emulators and streamed content—including Xbox Remote Play (Greenlight), PlayStation Remote Play (Chiaki), Moonlight and other clients running in Gaming Mode. On Steam Deck OLED, a stable 30 FPS source can reach 90 FPS display output with Kedavra ×3.
+**90 FPS EVERYWHERE — IN STEAMOS GAMING MODE.** GFG Extreme generates frames at the Gamescope compositor level, across native games, popular emulators (shadPS4, RPCS3, PCSX2, Dolphin, Cemu, PPSSPP, DuckStation and others), and streamed content—including Xbox Remote Play (Greenlight), PlayStation Remote Play (Chiaki) and Moonlight running in Gaming Mode. On Steam Deck OLED, a stable 30 FPS source can reach 90 FPS display output with Kedavra ×3.
 
 Version 3.0 is built on three technologies:
 
