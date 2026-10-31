@@ -12,6 +12,33 @@ SHA256 = "fdaf15b068cdc110ee3b44c4b4151eef416d02d9d57852fd069727a72f1b1ab2"
 
 
 class BaselineEvidenceTest(unittest.TestCase):
+    def test_matched_controller_observations(self):
+        path = ARCHIVE.parents[1] / "research/autopilot-controller-evidence.zip"
+        self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),
+                         "f76f30a4ed86b3abd93087743f28d99ba48a9c0cf640089558bf4361b1a43a7f")
+        expected = {"autopilot-controller-main.json": "94739b1f462ff1bd4411d8c8514bcde4d2dcb222",
+                    "autopilot-controller-baseline.json": "92b557f678d118ae97948673c26e2498b7a28467"}
+        with zipfile.ZipFile(path) as archive:
+            manifest = json.loads(archive.read("manifest.json"))
+            self.assertEqual(set(manifest["files"]), set(expected))
+            for name, sha in expected.items():
+                raw = archive.read(name)
+                self.assertEqual(hashlib.sha256(raw).hexdigest(), manifest["files"][name])
+                data = json.loads(raw)
+                self.assertEqual(data["source_commit"], sha)
+                cases = data["cases"]
+                self.assertEqual(len(cases), 20)
+                self.assertEqual({(c["seed"], c["limit_w"], c["mode"]) for c in cases},
+                                 {(s, w, m) for s in range(1, 6) for w in (15., 18.) for m in ("auto", "x3")})
+                for case in cases:
+                    self.assertEqual(case["observed_modes"], [case["mode"]])
+                    self.assertEqual(case["session"]["seconds"], 1200)
+                    self.assertEqual(case["tail"]["seconds"], 800)
+                    self.assertTrue(math.isfinite(case["session"]["energy_wh"]))
+                    if case["mode"] == "x3":
+                        self.assertTrue(case["controller_fixture_override"])
+                        self.assertEqual(case["tail"]["cap_30_seconds"], 800)
+
     def test_autopilot_experiment_observations_remain_intact(self):
         path = ARCHIVE.parents[1] / "research/autopilot-floor-2026-10-30.json"
         raw = path.read_bytes()
