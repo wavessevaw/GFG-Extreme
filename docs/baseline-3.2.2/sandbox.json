@@ -1,0 +1,1580 @@
+{
+ "objectives_light_game": {
+  "runs": {
+   "quality": {
+    "seconds": 780,
+    "smooth_pct": 100.0,
+    "point_final": 45,
+    "points": [
+     45
+    ],
+    "tdp_final": 15.0,
+    "tdp_avg": 15.0,
+    "draw_avg_w": 11.62,
+    "energy_wh": 2.517,
+    "temp_max": 70.2,
+    "confirmed_pct": 100.0,
+    "conflict_s": 0,
+    "sends": 0,
+    "objective_final": "quality",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 0
+   },
+   "balanced": {
+    "seconds": 780,
+    "smooth_pct": 100.0,
+    "point_final": 45,
+    "points": [
+     45
+    ],
+    "tdp_final": 10.0,
+    "tdp_avg": 10.0,
+    "draw_avg_w": 9.31,
+    "energy_wh": 2.018,
+    "temp_max": 64.4,
+    "confirmed_pct": 100.0,
+    "conflict_s": 0,
+    "sends": 0,
+    "objective_final": "balanced",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 4
+   },
+   "battery": {
+    "seconds": 780,
+    "smooth_pct": 100.0,
+    "point_final": 30,
+    "points": [
+     30
+    ],
+    "tdp_final": 6.0,
+    "tdp_avg": 6.0,
+    "draw_avg_w": 5.39,
+    "energy_wh": 1.167,
+    "temp_max": 54.4,
+    "confirmed_pct": 100.0,
+    "conflict_s": 0,
+    "sends": 0,
+    "objective_final": "battery",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 7
+   }
+  },
+  "checks": [
+   {
+    "name": "quality locks x2 (45) and keeps the player's TDP",
+    "ok": true,
+    "detail": "point 45, TDP 15.0"
+   },
+   {
+    "name": "balanced locks x2 (45) and saves watts",
+    "ok": true,
+    "detail": "point 45, TDP avg 10.0"
+   },
+   {
+    "name": "battery locks x3 (30): x3.75 is locked by default (user, 3.1.1)",
+    "ok": true,
+    "detail": "point 30"
+   },
+   {
+    "name": "energy: battery < balanced < quality",
+    "ok": true,
+    "detail": "1.167 < 2.018 < 2.517 Wh"
+   },
+   {
+    "name": "quality: the game holds its point >= 98 % of the time",
+    "ok": true,
+    "detail": "100.0 %"
+   },
+   {
+    "name": "quality: no conflict",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "balanced: the game holds its point >= 98 % of the time",
+    "ok": true,
+    "detail": "100.0 %"
+   },
+   {
+    "name": "balanced: no conflict",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "battery: the game holds its point >= 98 % of the time",
+    "ok": true,
+    "detail": "100.0 %"
+   },
+   {
+    "name": "battery: no conflict",
+    "ok": true,
+    "detail": ""
+   }
+  ],
+  "doc": "A light game (65 fps at 15 W) under each objective.",
+  "pass": true
+ },
+ "objectives_medium_game": {
+  "runs": {
+   "quality": {
+    "seconds": 780,
+    "smooth_pct": 0.0,
+    "point_final": 40,
+    "points": [
+     40
+    ],
+    "tdp_final": 15.0,
+    "tdp_avg": 15.0,
+    "draw_avg_w": 14.93,
+    "energy_wh": 3.234,
+    "temp_max": 78.9,
+    "confirmed_pct": 100.0,
+    "conflict_s": 0,
+    "sends": 0,
+    "objective_final": "quality",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 0
+   },
+   "balanced": {
+    "seconds": 780,
+    "smooth_pct": 97.8,
+    "point_final": 35,
+    "points": [
+     35
+    ],
+    "tdp_final": 15.0,
+    "tdp_avg": 14.03,
+    "draw_avg_w": 13.47,
+    "energy_wh": 2.919,
+    "temp_max": 75.7,
+    "confirmed_pct": 99.4,
+    "conflict_s": 0,
+    "sends": 10,
+    "objective_final": "balanced",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 8
+   },
+   "battery": {
+    "seconds": 780,
+    "smooth_pct": 100.0,
+    "point_final": 30,
+    "points": [
+     30
+    ],
+    "tdp_final": 11.0,
+    "tdp_avg": 11.0,
+    "draw_avg_w": 10.41,
+    "energy_wh": 2.256,
+    "temp_max": 67.2,
+    "confirmed_pct": 100.0,
+    "conflict_s": 0,
+    "sends": 0,
+    "objective_final": "battery",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 4
+   }
+  },
+  "checks": [
+   {
+    "name": "quality keeps 40 (x2.25), never x2.6",
+    "ok": true,
+    "detail": "point 40"
+   },
+   {
+    "name": "balanced keeps 35 and never trades it for watts",
+    "ok": true,
+    "detail": "point 35, smooth 97.8 %, TDP 14.03"
+   },
+   {
+    "name": "battery locks 30 (x3) with less energy",
+    "ok": true,
+    "detail": "2.256 vs 2.919 Wh"
+   }
+  ],
+  "doc": "A medium game (40 fps at 15 W, 36.8 while generating). Quality never goes below x2.5\n    (user, 3.0.10): it keeps 40 (x2.25) and reports that the game does not hold it.",
+  "pass": true
+ },
+ "heavy_game_x375": {
+  "runs": {
+   "quality": {
+    "seconds": 480,
+    "smooth_pct": 0.0,
+    "point_final": 40,
+    "points": [
+     40
+    ],
+    "tdp_final": 15.0,
+    "tdp_avg": 15.0,
+    "draw_avg_w": 14.93,
+    "energy_wh": 1.99,
+    "temp_max": 78.9,
+    "confirmed_pct": 100.0,
+    "conflict_s": 0,
+    "sends": 0,
+    "objective_final": "quality",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 0
+   },
+   "balanced": {
+    "seconds": 480,
+    "smooth_pct": 0.0,
+    "point_final": 30,
+    "points": [
+     30
+    ],
+    "tdp_final": 15.0,
+    "tdp_avg": 15.0,
+    "draw_avg_w": 14.93,
+    "energy_wh": 1.99,
+    "temp_max": 78.9,
+    "confirmed_pct": 100.0,
+    "conflict_s": 0,
+    "sends": 0,
+    "objective_final": "balanced",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 2
+   },
+   "battery": {
+    "seconds": 480,
+    "smooth_pct": 100.0,
+    "point_final": 24,
+    "points": [
+     24
+    ],
+    "tdp_final": 14.0,
+    "tdp_avg": 14.0,
+    "draw_avg_w": 13.5,
+    "energy_wh": 1.801,
+    "temp_max": 75.2,
+    "confirmed_pct": 100.0,
+    "conflict_s": 0,
+    "sends": 0,
+    "objective_final": "battery",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 5
+   },
+   "battery-x3": {
+    "seconds": 480,
+    "smooth_pct": 0.0,
+    "point_final": 30,
+    "points": [
+     30
+    ],
+    "tdp_final": 15.0,
+    "tdp_avg": 15.0,
+    "draw_avg_w": 14.93,
+    "energy_wh": 1.99,
+    "temp_max": 78.9,
+    "confirmed_pct": 100.0,
+    "conflict_s": 0,
+    "sends": 0,
+    "objective_final": "battery",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 2
+   }
+  },
+  "checks": [
+   {
+    "name": "quality: point 40",
+    "ok": true,
+    "detail": "point 40"
+   },
+   {
+    "name": "quality: steady (no demote/promote loop)",
+    "ok": true,
+    "detail": "demotions 0, promotions 0"
+   },
+   {
+    "name": "balanced: point 30",
+    "ok": true,
+    "detail": "point 30"
+   },
+   {
+    "name": "balanced: steady (no demote/promote loop)",
+    "ok": true,
+    "detail": "demotions 0, promotions 0"
+   },
+   {
+    "name": "battery: point 24",
+    "ok": true,
+    "detail": "point 24"
+   },
+   {
+    "name": "battery: steady (no demote/promote loop)",
+    "ok": true,
+    "detail": "demotions 0, promotions 0"
+   },
+   {
+    "name": "battery-x3: point 30",
+    "ok": true,
+    "detail": "point 30"
+   },
+   {
+    "name": "battery-x3: steady (no demote/promote loop)",
+    "ok": true,
+    "detail": "demotions 0, promotions 0"
+   },
+   {
+    "name": "battery: holds 24",
+    "ok": true,
+    "detail": "100.0 %"
+   }
+  ],
+  "doc": "A heavy game (27 fps at 15 W) cannot hold x3 (30). With \"above x3\" on, Battery uses x3.75\n    steadily; by default (user, 3.1.1) it stays at x3 like Balanced. Quality stops at x2.5 (user,\n    3.0.10). All steady; the ones that cannot hold their point say so.",
+  "pass": true
+ },
+ "scene_gets_heavy_then_light": {
+  "metrics": {
+   "seconds": 1080,
+   "smooth_pct": 98.7,
+   "point_final": 45,
+   "points": [
+    30,
+    35,
+    40,
+    45
+   ],
+   "tdp_final": 11.0,
+   "tdp_avg": 11.63,
+   "draw_avg_w": 10.85,
+   "energy_wh": 3.255,
+   "temp_max": 72.7,
+   "confirmed_pct": 99.6,
+   "conflict_s": 0,
+   "sends": 8,
+   "objective_final": "balanced",
+   "demotions": 1,
+   "promotions": 3,
+   "tdp_writes": 17
+  },
+  "first_point_drop_s": 9,
+  "checks": [
+   {
+    "name": "the point steps down within 20 s of the heavy scene",
+    "ok": true,
+    "detail": "after 9 s"
+   },
+   {
+    "name": "during the heavy scene the lower point holds",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "x2 (45) comes back after the scene",
+    "ok": true,
+    "detail": "final 45"
+   },
+   {
+    "name": "balanced TDP back below the ceiling at the end",
+    "ok": true,
+    "detail": "TDP 11.0"
+   }
+  ],
+  "doc": "60 fps game; from 300 s to 420 s the scene costs 1.6x as much; then light again.",
+  "pass": true
+ },
+ "hot_deck": {
+  "metrics": {
+   "seconds": 1380,
+   "smooth_pct": 98.8,
+   "point_final": 35,
+   "points": [
+    35,
+    40
+   ],
+   "tdp_final": 11.0,
+   "tdp_avg": 11.05,
+   "draw_avg_w": 10.63,
+   "energy_wh": 4.075,
+   "temp_max": 85.2,
+   "confirmed_pct": 99.9,
+   "conflict_s": 0,
+   "sends": 2,
+   "objective_final": "autopilot",
+   "demotions": 1,
+   "promotions": 0,
+   "tdp_writes": 11
+  },
+  "checks": [
+   {
+    "name": "temperature stays below 95 C",
+    "ok": true,
+    "detail": "max 85.2 C"
+   },
+   {
+    "name": "Autopilot stays one adaptive mode",
+    "ok": true,
+    "detail": "objectives ['autopilot']"
+   }
+  ],
+  "doc": "Hot room (40 C) and a demanding game in Autopilot on external power.",
+  "pass": true
+ },
+ "steam_slider_moved": {
+  "metrics": {
+   "seconds": 580,
+   "smooth_pct": 98.8,
+   "point_final": 35,
+   "points": [
+    35,
+    45
+   ],
+   "tdp_final": 8.0,
+   "tdp_avg": 8.97,
+   "draw_avg_w": 8.4,
+   "energy_wh": 1.353,
+   "temp_max": 64.4,
+   "confirmed_pct": 99.5,
+   "conflict_s": 0,
+   "sends": 6,
+   "objective_final": "balanced",
+   "demotions": 1,
+   "promotions": 0,
+   "tdp_writes": 4
+  },
+  "checks": [
+   {
+    "name": "Governor paused",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "no TDP write after the outside change",
+    "ok": true,
+    "detail": "0 writes"
+   },
+   {
+    "name": "the player's 8 W stays",
+    "ok": true,
+    "detail": "8.0 W"
+   }
+  ],
+  "doc": "The player moves Steam's TDP slider during the game: the Governor stops for this game.",
+  "pass": true
+ },
+ "gamescope_restart": {
+  "back_after_s": 1,
+  "checks": [
+   {
+    "name": "policy re-applied and confirmed within 5 s",
+    "ok": true,
+    "detail": "1 s"
+   },
+   {
+    "name": "no conflict reported for one restart",
+    "ok": true,
+    "detail": ""
+   }
+  ],
+  "doc": "Gamescope restarts mid-game (all convars back to defaults): the policy comes back.",
+  "pass": true
+ },
+ "rival_plugin": {
+  "gfg_sends_in_300s": 25,
+  "conflict_s": 273,
+  "checks": [
+   {
+    "name": "GFG reports a conflict",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "GFG backs off instead of fighting (< 1 policy send per 5 s)",
+    "ok": true,
+    "detail": "25 convar writes in 300 s"
+   },
+   {
+    "name": "after the rival stops, GFG's policy is confirmed again (within the 2 min back-off)",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "the rival never moved GFG's point",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "Take over: confirmed within 10 s",
+    "ok": true,
+    "detail": ""
+   }
+  ],
+  "doc": "The standalone GSF Kedavra plugin (or a script) keeps setting x3 every 3 s.",
+  "pass": true
+ },
+ "stale_status": {
+  "sends_while_stale": 0,
+  "checks": [
+   {
+    "name": "HOLD while stale",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "nothing sent while stale",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "confirmed again after",
+    "ok": true,
+    "detail": ""
+   }
+  ],
+  "doc": "The engine stops answering for 10 s (a hang): HOLD, nothing is sent; then it recovers.",
+  "pass": true
+ },
+ "battery_drains_autopilot": {
+  "objective_switches": 0,
+  "final": "autopilot",
+  "battery_final": 0.0,
+  "checks": [
+   {
+    "name": "stays Autopilot",
+    "ok": true,
+    "detail": "['autopilot']"
+   },
+   {
+    "name": "Battery point x3.75 (24)",
+    "ok": true,
+    "detail": "24"
+   },
+   {
+    "name": "x3.75 locked (default): stays at x3 (30)",
+    "ok": true,
+    "detail": "30"
+   }
+  ],
+  "doc": "Autopilot on battery from 23 %: below 20 % it goes to x3.75 (with \"above x3\" on), once,\n    without changing mode.",
+  "pass": true
+ },
+ "plug_in_charger": {
+  "objective": "autopilot",
+  "tdp": 10.0,
+  "checks": [
+   {
+    "name": "Autopilot on external power",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "TDP at most 12 W (target)",
+    "ok": true,
+    "detail": "10.0 W"
+   }
+  ],
+  "doc": "Autopilot on battery, then the charger: still Autopilot, still within its power target.",
+  "pass": true
+ },
+ "docked_60hz": {
+  "metrics": {
+   "seconds": 480,
+   "smooth_pct": 100.0,
+   "point_final": 30,
+   "points": [
+    30
+   ],
+   "tdp_final": 15.0,
+   "tdp_avg": 15.0,
+   "draw_avg_w": 13.76,
+   "energy_wh": 1.835,
+   "temp_max": 75.9,
+   "confirmed_pct": 100.0,
+   "conflict_s": 0,
+   "sends": 0,
+   "objective_final": "balanced",
+   "demotions": 0,
+   "promotions": 0,
+   "tdp_writes": 4
+  },
+  "checks": [
+   {
+    "name": "a 34 fps game locks 30 (x2) at 60 Hz",
+    "ok": true,
+    "detail": "30"
+   },
+   {
+    "name": "battery at 60 Hz locks 20 (x3, never below 20)",
+    "ok": true,
+    "detail": "20"
+   }
+  ],
+  "doc": "Docked at 60 Hz: the ladder is 20 (x3), 25, 30 (x2); no x3.75 below 20.",
+  "pass": true
+ },
+ "fixed_x3_too_heavy": {
+  "fg": "auto",
+  "off": "off",
+  "checks": [
+   {
+    "name": "fixed x3 becomes auto",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "off stays off",
+    "ok": true,
+    "detail": ""
+   }
+  ],
+  "doc": "An old profile saved with a fixed x3: the mode now picks the multiplier.",
+  "pass": true
+ },
+ "qam_and_menus": {
+  "tdp_before": 10.0,
+  "checks": [
+   {
+    "name": "no TDP restore",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "point unchanged",
+    "ok": true,
+    "detail": ""
+   }
+  ],
+  "doc": "The QAM (Steam UI on top) for 8 s: no session end, no TDP restore, no new measurement.",
+  "pass": true
+ },
+ "game_switch": {
+  "a": 45,
+  "b": 30,
+  "checks": [
+   {
+    "name": "game A x2 (45)",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "game B measured anew: 30 (x3)",
+    "ok": true,
+    "detail": "30"
+   }
+  ],
+  "doc": "Game A (light), then game B (heavy): each gets its own measurement and point.",
+  "pass": true
+ },
+ "old_engine": {
+  "state": "outdated",
+  "sends": 0,
+  "checks": [
+   {
+    "name": "state outdated",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "nothing sent",
+    "ok": true,
+    "detail": ""
+   }
+  ],
+  "doc": "An engine from before 3.0 (no policy echo): reported outdated, no send loop.",
+  "pass": true
+ },
+ "user_toggles_fast": {
+  "final_policy": "confirmed",
+  "final_point": 45,
+  "checks": [
+   {
+    "name": "converges: confirmed",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "no conflict from the player's own changes",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "Auto locks x2 (45) again",
+    "ok": true,
+    "detail": "45"
+   }
+  ],
+  "doc": "The player flips frame generation every 3 s for a minute, then leaves Auto.",
+  "pass": true
+ },
+ "hdr_switch": {
+  "kfg_hdr_while_off": "0",
+  "kfg_hdr_final": "1",
+  "point_before": 35,
+  "point_final": 35,
+  "checks": [
+   {
+    "name": "kfg_hdr=0 sent while off",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "kfg_hdr=1 back on",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "point kept (no re-measure)",
+    "ok": true,
+    "detail": "35 -> 35"
+   },
+   {
+    "name": "confirmed at the end, never conflict",
+    "ok": true,
+    "detail": ""
+   }
+  ],
+  "doc": "The player turns HDR generation off and on mid-game (Setup): the engine gets kfg_hdr,\n    the locked point and the TDP are kept (no new measurement, no conflict).",
+  "pass": true
+ },
+ "power_control_off": {
+  "tdp": 15.0,
+  "point": 35,
+  "writes": 0,
+  "checks": [
+   {
+    "name": "no TDP write",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "point 35 (x2.6)",
+    "ok": true,
+    "detail": "35"
+   }
+  ],
+  "doc": "TDP control off (player's choice): points still measured and guarded, TDP untouched.",
+  "pass": true
+ },
+ "long_session_stability": {
+  "metrics": {
+   "seconds": 7080,
+   "smooth_pct": 97.6,
+   "point_final": 35,
+   "points": [
+    30,
+    35,
+    40,
+    45
+   ],
+   "tdp_final": 15.0,
+   "tdp_avg": 14.48,
+   "draw_avg_w": 13.64,
+   "energy_wh": 26.817,
+   "temp_max": 78.6,
+   "confirmed_pct": 99.1,
+   "conflict_s": 0,
+   "sends": 130,
+   "objective_final": "balanced",
+   "demotions": 30,
+   "promotions": 31,
+   "tdp_writes": 120
+  },
+  "checks": [
+   {
+    "name": "smooth >= 96.5 %",
+    "ok": true,
+    "detail": "97.6 %"
+   },
+   {
+    "name": "TDP writes < 1 per 20 s on average",
+    "ok": true,
+    "detail": "120"
+   },
+   {
+    "name": "follows the load waves (points change with the scene, at most 8 per 10 min wave)",
+    "ok": true,
+    "detail": "30 down, 31 up"
+   },
+   {
+    "name": "no bounce (a promoted point never fails within 60 s)",
+    "ok": true,
+    "detail": "0"
+   },
+   {
+    "name": "no conflict",
+    "ok": true,
+    "detail": ""
+   }
+  ],
+  "bounces": 0,
+  "doc": "Two hours of a varying game (load waves of 10 min): no oscillation, bounded writes.",
+  "pass": true
+ },
+ "gpu_budget_overload": {
+  "tdp_before": 10.0,
+  "tdp_after": 12.0,
+  "checks": [
+   {
+    "name": "over budget raises the TDP",
+    "ok": true,
+    "detail": "10.0 -> 12.0 W"
+   }
+  ],
+  "doc": "Generation runs over its GPU budget (heavy filters + x3.75) while Balanced saves watts.",
+  "pass": true
+ },
+ "engine_missing": {
+  "state": "offline",
+  "writes": 0,
+  "sends": 0,
+  "checks": [
+   {
+    "name": "offline",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "no convar sends, no TDP writes",
+    "ok": true,
+    "detail": ""
+   }
+  ],
+  "doc": "Stock Gamescope (engine not installed or rolled back): offline, nothing sent, TDP untouched.",
+  "pass": true
+ },
+ "dock_mid_game": {
+  "before": 45,
+  "after": 30,
+  "checks": [
+   {
+    "name": "x2 at 90 Hz (45), x2 at 60 Hz (30)",
+    "ok": true,
+    "detail": "{'before': 45, 'after': 30}"
+   }
+  ],
+  "doc": "Docked mid-game: 90 Hz -> 60 Hz. The ladder changes and the game is measured again.",
+  "pass": true
+ },
+ "chaos_hour": {
+  "actions": 78,
+  "checks": [
+   {
+    "name": "point always on the ladder",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "TDP never above the player's 15 W or below 3 W",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "nothing sent while the status is stale",
+    "ok": true,
+    "detail": "0"
+   },
+   {
+    "name": "policy confirmed most of the hour (>= 80 %) despite the trouble",
+    "ok": true,
+    "detail": "94.8 %"
+   },
+   {
+    "name": "settles at the end: confirmed, x2 locked",
+    "ok": true,
+    "detail": "confirmed 45"
+   }
+  ],
+  "confirmed_pct": 94.8,
+  "doc": "One hour of random trouble: restarts, hangs, QAM, load spikes, objective and mode changes,\n    a rival for a minute, charger in and out. Invariants must hold at every second.",
+  "pass": true
+ },
+ "power_split_gpu_bound": {
+  "runs": {
+   "no-split": {
+    "seconds": 1080,
+    "smooth_pct": 100.0,
+    "point_final": 45,
+    "points": [
+     45
+    ],
+    "tdp_final": 15.0,
+    "tdp_avg": 15.0,
+    "draw_avg_w": 14.67,
+    "energy_wh": 4.402,
+    "temp_max": 78.1,
+    "confirmed_pct": 100.0,
+    "conflict_s": 0,
+    "sends": 0,
+    "objective_final": "balanced",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 4,
+    "cpu_share_min": 1.0,
+    "capped_s": 0,
+    "capped_in_trial_s": 0
+   },
+   "split": {
+    "seconds": 1080,
+    "smooth_pct": 100.0,
+    "point_final": 45,
+    "points": [
+     45
+    ],
+    "tdp_final": 15.0,
+    "tdp_avg": 15.0,
+    "draw_avg_w": 14.01,
+    "energy_wh": 4.202,
+    "temp_max": 76.6,
+    "confirmed_pct": 100.0,
+    "conflict_s": 0,
+    "sends": 0,
+    "objective_final": "balanced",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 4,
+    "cpu_share_min": 0.51,
+    "capped_s": 1034,
+    "capped_in_trial_s": 0
+   }
+  },
+  "checks": [
+   {
+    "name": "the split caps the CPU clock in a GPU-bound game",
+    "ok": true,
+    "detail": "min share 0.51, capped 1034 s"
+   },
+   {
+    "name": "same point with the split",
+    "ok": true,
+    "detail": "45 vs 45"
+   },
+   {
+    "name": "the point holds >= 97 % with the split",
+    "ok": true,
+    "detail": "100.0 %"
+   },
+   {
+    "name": "no more energy with the split",
+    "ok": true,
+    "detail": "4.202 vs 4.402 Wh"
+   },
+   {
+    "name": "no CPU cap while the pilot measures or tries a point",
+    "ok": true,
+    "detail": "0 s"
+   },
+   {
+    "name": "no conflict",
+    "ok": true,
+    "detail": ""
+   }
+  ],
+  "doc": "A GPU-bound game (CPU can feed 200 fps) in Balanced, with and without Power Split.",
+  "pass": true
+ },
+ "power_split_cpu_bound": {
+  "metrics": {
+   "seconds": 1080,
+   "smooth_pct": 100.0,
+   "point_final": 40,
+   "points": [
+    40
+   ],
+   "tdp_final": 8.0,
+   "tdp_avg": 8.19,
+   "draw_avg_w": 7.91,
+   "energy_wh": 2.374,
+   "temp_max": 61.5,
+   "confirmed_pct": 99.4,
+   "conflict_s": 0,
+   "sends": 12,
+   "objective_final": "balanced",
+   "demotions": 0,
+   "promotions": 0,
+   "tdp_writes": 11
+  },
+  "capped_s": 0,
+  "checks": [
+   {
+    "name": "the CPU cap never holds in a CPU-bound game (only probes, lifted at once)",
+    "ok": true,
+    "detail": "capped 0 s, min share 1.0"
+   },
+   {
+    "name": "the point holds >= 97 %",
+    "ok": true,
+    "detail": "100.0 %"
+   }
+  ],
+  "doc": "A CPU-bound game (the CPU feeds 38 fps at full clock): the split must not take its clock.",
+  "pass": true
+ },
+ "power_split_off": {
+  "checks": [
+   {
+    "name": "the CPU clock stays at 100 %",
+    "ok": true,
+    "detail": ""
+   }
+  ],
+  "doc": "Power Split switched off: the CPU clock is never touched.",
+  "pass": true
+ },
+ "gpu_clock_cpu_bound": {
+  "runs": {
+   "off": {
+    "seconds": 1080,
+    "smooth_pct": 100.0,
+    "point_final": 40,
+    "points": [
+     40
+    ],
+    "tdp_final": 15.0,
+    "tdp_avg": 15.0,
+    "draw_avg_w": 10.16,
+    "energy_wh": 3.047,
+    "temp_max": 66.5,
+    "confirmed_pct": 99.4,
+    "conflict_s": 0,
+    "sends": 12,
+    "objective_final": "quality",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 0,
+    "gpu_share_min": 1.0,
+    "kept": 0
+   },
+   "on": {
+    "seconds": 1080,
+    "smooth_pct": 100.0,
+    "point_final": 40,
+    "points": [
+     40
+    ],
+    "tdp_final": 15.0,
+    "tdp_avg": 15.0,
+    "draw_avg_w": 9.66,
+    "energy_wh": 2.899,
+    "temp_max": 65.6,
+    "confirmed_pct": 99.4,
+    "conflict_s": 0,
+    "sends": 12,
+    "objective_final": "quality",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 0,
+    "gpu_share_min": 0.875,
+    "kept": 7
+   }
+  },
+  "checks": [
+   {
+    "name": "the GPU clock is lowered and a step is kept",
+    "ok": true,
+    "detail": "min 0.875, kept 7"
+   },
+   {
+    "name": "same point",
+    "ok": true,
+    "detail": "40 vs 40"
+   },
+   {
+    "name": "the point holds >= 97 %",
+    "ok": true,
+    "detail": "100.0 %"
+   },
+   {
+    "name": "less energy",
+    "ok": true,
+    "detail": "2.899 vs 3.047 Wh"
+   }
+  ],
+  "doc": "A CPU-bound game (CPU feeds 43 fps, GPU lightly loaded): the GPU clock ceiling steps down.",
+  "pass": true
+ },
+ "gpu_clock_gpu_bound_untouched": {
+  "checks": [
+   {
+    "name": "the GPU clock stays the player's",
+    "ok": true,
+    "detail": ""
+   }
+  ],
+  "doc": "A GPU-bound game: the GPU clock is never lowered.",
+  "pass": true
+ },
+ "game_switch_no_carryover": {
+  "checks": [
+   {
+    "name": "the new game is measured from scratch",
+    "ok": true,
+    "detail": "measure 0"
+   },
+   {
+    "name": "its own Governor session",
+    "ok": true,
+    "detail": "app:222|90"
+   },
+   {
+    "name": "the light game ends at low watts",
+    "ok": true,
+    "detail": "4.0 W, point 45"
+   },
+   {
+    "name": "filters back to full",
+    "ok": true,
+    "detail": ""
+   }
+  ],
+  "doc": "A heavy game, then a light one (user, 3.1.0): nothing of the first game follows into the second.",
+  "pass": true
+ },
+ "light_game_from_list": {
+  "runs": {
+   "balanced": {
+    "seconds": 480,
+    "smooth_pct": 100.0,
+    "point_final": 45,
+    "points": [
+     45
+    ],
+    "tdp_final": 5.0,
+    "tdp_avg": 5.0,
+    "draw_avg_w": 4.42,
+    "energy_wh": 0.589,
+    "temp_max": 51.5,
+    "confirmed_pct": 100.0,
+    "conflict_s": 0,
+    "sends": 0,
+    "objective_final": "balanced",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 4
+   },
+   "autopilot": {
+    "seconds": 480,
+    "smooth_pct": 100.0,
+    "point_final": 45,
+    "points": [
+     45
+    ],
+    "tdp_final": 5.0,
+    "tdp_avg": 5.0,
+    "draw_avg_w": 4.42,
+    "energy_wh": 0.589,
+    "temp_max": 51.5,
+    "confirmed_pct": 100.0,
+    "conflict_s": 0,
+    "sends": 0,
+    "objective_final": "autopilot",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 4
+   },
+   "quality": {
+    "seconds": 480,
+    "smooth_pct": 100.0,
+    "point_final": 45,
+    "points": [
+     45
+    ],
+    "tdp_final": 15.0,
+    "tdp_avg": 15.0,
+    "draw_avg_w": 7.72,
+    "energy_wh": 1.029,
+    "temp_max": 60.1,
+    "confirmed_pct": 100.0,
+    "conflict_s": 0,
+    "sends": 0,
+    "objective_final": "quality",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 0
+   }
+  },
+  "checks": [
+   {
+    "name": "balanced: never measured at full power",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "balanced: x2 the whole time",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "balanced: 4-7 W",
+    "ok": true,
+    "detail": "5.0 W"
+   },
+   {
+    "name": "balanced: started at 7 W, not 12-15",
+    "ok": true,
+    "detail": "max 7.0 W"
+   },
+   {
+    "name": "autopilot: never measured at full power",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "autopilot: x2 the whole time",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "autopilot: 4-7 W",
+    "ok": true,
+    "detail": "5.0 W"
+   },
+   {
+    "name": "autopilot: started at 7 W, not 12-15",
+    "ok": true,
+    "detail": "max 7.0 W"
+   },
+   {
+    "name": "quality: never measured at full power",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "quality: x2 the whole time",
+    "ok": true,
+    "detail": ""
+   }
+  ],
+  "doc": "DuckTales (listed light): x2 at once, no full-power measurement, 4-7 W, never above x2.",
+  "pass": true
+ },
+ "light_listed_but_heavy": {
+  "metrics": {
+   "seconds": 600,
+   "smooth_pct": 99.3,
+   "point_final": 30,
+   "points": [
+    30
+   ],
+   "tdp_final": 13.0,
+   "tdp_avg": 13.03,
+   "draw_avg_w": 12.44,
+   "energy_wh": 2.073,
+   "temp_max": 73.2,
+   "confirmed_pct": 99.7,
+   "conflict_s": 0,
+   "sends": 4,
+   "objective_final": "balanced",
+   "demotions": 1,
+   "promotions": 0,
+   "tdp_writes": 9
+  },
+  "checks": [
+   {
+    "name": "no longer treated as light",
+    "ok": true,
+    "detail": "medium"
+   },
+   {
+    "name": "steps down below x2",
+    "ok": true,
+    "detail": "point 30"
+   },
+   {
+    "name": "the lower point holds",
+    "ok": true,
+    "detail": "99.3 %"
+   }
+  ],
+  "doc": "A listed light game that cannot hold x2 even at 15 W (a heavy mod): the Deck's numbers win.",
+  "pass": true
+ },
+ "heavy_game_from_list": {
+  "checks": [
+   {
+    "name": "the locked point starts at 15 W (unlisted: 12 W)",
+    "ok": true,
+    "detail": "[15.0, 15.0, 15.0, 15.0]"
+   }
+  ],
+  "doc": "The Witcher 3 (listed heavy) in Balanced starts at the 15 W ceiling, not at 12 W.",
+  "pass": true
+ },
+ "idle_after_game": {
+  "idle_calls_300s": {
+   "pilot": 0,
+   "gov": 0,
+   "sensors": 60
+  },
+  "checks": [
+   {
+    "name": "the player's TDP is back",
+    "ok": true,
+    "detail": "15.0 W"
+   },
+   {
+    "name": "idle: no pilot, no Governor",
+    "ok": true,
+    "detail": "{'pilot': 0, 'gov': 0, 'sensors': 60}"
+   },
+   {
+    "name": "idle: sensors only every 5 s for the panel",
+    "ok": true,
+    "detail": "{'pilot': 0, 'gov': 0, 'sensors': 60}"
+   },
+   {
+    "name": "idle: nothing of the game kept",
+    "ok": true,
+    "detail": "point 0, app 0"
+   },
+   {
+    "name": "a settings change while idle is applied",
+    "ok": true,
+    "detail": "multiplier 0"
+   },
+   {
+    "name": "the next game runs the full pipeline again",
+    "ok": true,
+    "detail": "132"
+   }
+  ],
+  "doc": "After a game (user, 3.1.1) GFG resets and computes nothing: the player's TDP is back, the\n    pilot, Governor and sensors are not run while idle, a settings change is still applied and\n    the next game starts from scratch.",
+  "pass": true
+ },
+ "boost_camera_turns": {
+  "point": 45,
+  "tdp": 15.0,
+  "flick_base": 45,
+  "boost_base": 51,
+  "back_base": 45,
+  "count": 1,
+  "checks": [
+   {
+    "name": "a flick does not boost",
+    "ok": true,
+    "detail": "45 vs 45"
+   },
+   {
+    "name": "a turn of ~1 s boosts (x1.75 or the game's headroom)",
+    "ok": true,
+    "detail": "51 vs 45"
+   },
+   {
+    "name": "the multiplier comes back within 0.3 s of the stick resting",
+    "ok": true,
+    "detail": "45"
+   },
+   {
+    "name": "the TDP is not touched during the boost",
+    "ok": true,
+    "detail": "15.0-15.0 W"
+   },
+   {
+    "name": "no drift or conflict from the boost",
+    "ok": true,
+    "detail": "0 drifts, confirmed"
+   },
+   {
+    "name": "the point holds after the boost",
+    "ok": true,
+    "detail": "45"
+   }
+  ],
+  "doc": "Boost 2.0 (user, 3.1.1): a turn of ~1 s lowers the multiplier at once and gives it back as\n    soon as the stick rests; the TDP is not touched and the pilot and Governor ignore the turn.",
+  "pass": true
+ },
+ "known_game_second_launch": {
+  "first_point": 40,
+  "checks": [
+   {
+    "name": "no full-power measurement the second time",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "starts on the known point",
+    "ok": true,
+    "detail": "40 vs 40"
+   },
+   {
+    "name": "the session medians are kept",
+    "ok": true,
+    "detail": "{'class': None, 'source': None, 'name': None, 'point': 40, 'sessions': 1, 'median_real': 40.0, 'median_tdp': 14.1, 'median_draw': 13.4}"
+   }
+  ],
+  "doc": "A game played once starts the next time on its point, without the full-power measurement.",
+  "pass": true
+ },
+ "dock_tv_60hz": {
+  "runs": {
+   "autopilot": {
+    "seconds": 780,
+    "smooth_pct": 100.0,
+    "point_final": 30,
+    "points": [
+     30
+    ],
+    "tdp_final": 11.0,
+    "tdp_avg": 11.0,
+    "draw_avg_w": 10.43,
+    "energy_wh": 2.26,
+    "temp_max": 67.2,
+    "confirmed_pct": 100.0,
+    "conflict_s": 0,
+    "sends": 0,
+    "objective_final": "autopilot",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 6
+   },
+   "battery": {
+    "seconds": 780,
+    "smooth_pct": 100.0,
+    "point_final": 20,
+    "points": [
+     20
+    ],
+    "tdp_final": 7.0,
+    "tdp_avg": 7.0,
+    "draw_avg_w": 6.09,
+    "energy_wh": 1.32,
+    "temp_max": 56.1,
+    "confirmed_pct": 100.0,
+    "conflict_s": 0,
+    "sends": 0,
+    "objective_final": "battery",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 5
+   },
+   "balanced": {
+    "seconds": 780,
+    "smooth_pct": 97.6,
+    "point_final": 20,
+    "points": [
+     20
+    ],
+    "tdp_final": 15.0,
+    "tdp_avg": 14.03,
+    "draw_avg_w": 12.85,
+    "energy_wh": 2.784,
+    "temp_max": 74.1,
+    "confirmed_pct": 99.4,
+    "conflict_s": 0,
+    "sends": 10,
+    "objective_final": "balanced",
+    "demotions": 0,
+    "promotions": 0,
+    "tdp_writes": 8
+   }
+  },
+  "checks": [
+   {
+    "name": "autopilot: never above x3 (20 at 60 Hz)",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "battery: never above x3 (20 at 60 Hz)",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "balanced: never above x3 (20 at 60 Hz)",
+    "ok": true,
+    "detail": ""
+   },
+   {
+    "name": "autopilot: x2 (30) when the game holds it",
+    "ok": true,
+    "detail": "point 30"
+   },
+   {
+    "name": "balanced in the dock holds climbs from 80 C",
+    "ok": true,
+    "detail": ""
+   }
+  ],
+  "doc": "Dock, TV at 60 Hz, external gamepad (user, 3.1.0): x3 at most in every mode, Autopilot keeps\n    no watt targets there, the temperature is watched in every mode.",
+  "pass": true
+ },
+ "dock_20w_scene_changes": {
+  "metrics": {
+   "seconds": 2280,
+   "smooth_pct": 84.8,
+   "point_final": 25,
+   "points": [
+    25,
+    30
+   ],
+   "tdp_final": 15.0,
+   "tdp_avg": 15.71,
+   "draw_avg_w": 14.43,
+   "energy_wh": 9.139,
+   "temp_max": 85.9,
+   "confirmed_pct": 99.7,
+   "conflict_s": 0,
+   "sends": 14,
+   "objective_final": "autopilot",
+   "demotions": 3,
+   "promotions": 2,
+   "tdp_writes": 52
+  },
+  "checks": [
+   {
+    "name": "the dock's 20 W is used",
+    "ok": true,
+    "detail": "max 20.0 W"
+   },
+   {
+    "name": "the point changes at most 8 times in 38 min",
+    "ok": true,
+    "detail": "5 changes"
+   }
+  ],
+  "point_changes": 5,
+  "doc": "Deck report 3.1.2 (Assassin's Creed Origins on the TV): SteamOS gives 20 W on the dock and the\n    game's heavy scenes come back every few minutes. The Governor may use the 20 W in the dock, and\n    a point that keeps falling at full power is retried later each time (no x2 <-> x2.4 every 5 min).",
+  "pass": true
+ },
+ "lcd_unlocked_75hz": {
+  "metrics": {
+   "seconds": 780,
+   "smooth_pct": 99.7,
+   "point_final": 37,
+   "points": [
+    35,
+    37
+   ],
+   "tdp_final": 15.0,
+   "tdp_avg": 14.77,
+   "draw_avg_w": 14.32,
+   "energy_wh": 3.103,
+   "temp_max": 78.0,
+   "confirmed_pct": 99.6,
+   "conflict_s": 0,
+   "sends": 6,
+   "objective_final": "balanced",
+   "demotions": 1,
+   "promotions": 2,
+   "tdp_writes": 8
+  },
+  "checks": [
+   {
+    "name": "points on the 75 Hz ladder",
+    "ok": true,
+    "detail": "[35, 37]"
+   },
+   {
+    "name": "x2 (37) when the game holds it",
+    "ok": true,
+    "detail": "point 37"
+   },
+   {
+    "name": "smooth >= 97 %",
+    "ok": true,
+    "detail": "99.7 %"
+   }
+  ],
+  "doc": "A Steam Deck LCD with its panel unlocked to 75 Hz: the ladder follows 75 Hz.",
+  "pass": true
+ }
+}

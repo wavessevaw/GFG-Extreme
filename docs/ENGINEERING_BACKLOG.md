@@ -1,0 +1,27 @@
+# Engineering backlog after the 3.2.2 baseline audit
+
+Status: proposed work, not verified improvements. Before any experiment set the repetitions, uncertainty and acceptance limits in writing. Stop an experiment when a predeclared limit is exceeded, a safety invariant fails, or the necessary evidence cannot be collected; roll it back and retain the failed results. Simulations do not establish device performance, quality or latency.
+
+## P0 — restore upgrade failure recovery
+
+**Problem:** a simulated `setcap` failure during upgrade replaces the old runtime before reporting failure. **Hypothesis:** validate the staged runtime including capability setup before committing it, and use a recoverable swap/rollback for every later failure. **Components:** `kedavra/install.py`, boot watchdog, system profile, installer tests. **Risk:** failed swap, stale mounts, partial units or loss of system settings. **Verification:** reproduce the existing failure, inject failures at every transition, check prior runtime, unit and settings on clean install and upgrade from 3.2.2; then test the consolidated candidate on Deck. **Stop:** any failed restoration, untracked partial state or unsupported recovery path. No installer change is approved by this entry.
+
+## P0 — restore Dash mode interaction
+
+**Problem:** main lacks the 3.2.2 second-tap Off and mode-tap Auto behavior; the owner confirmed the separate FG card was mistakenly returned. **Hypothesis:** restore that interaction and accurate highlighting while preserving access to required fixed/custom multiplier capabilities through an appropriate control. **Components:** Dash, profile state, backend normalization, compiled dist and frontend harness. **Risk:** accidentally remove multiplier access, send stale state or change game profile behavior. **Verification:** reproduce both taps, FG off/on, mode change, fixed modes, narrow panel and backend confirmation; run build freshness and full suite. **Stop:** lost functionality, wrong state or unreconciled requirements.
+
+## P0 — Governor stable-point false lock
+
+**Problem:** the unchanged stress test finds x3.75 for 313 s in two 34-fps scenarios on current main while 3.2.2 passes. **Hypothesis:** after a 13 W probe fails, 3.3.1 calm plus the 2.5 W stable-floor tolerance permits locking at 15 W before testing 14 W; the pilot then drops the point. An in-memory 1.5 W experiment passed that one stress function, but is not a validated fix. **Components:** Governor stable detection, probe timing and pilot power target. **Risk:** more TDP writes or dips, slower adaptation or failures at other bounds. **Verification:** add a reproducer, compare both traces and full fixed-seed stress, check TDP writes, frame stability and temperatures, then device qualification. **Stop:** loss of prior checks, unstable control or an unapproved trade-off.
+
+## P0 — enforce release and branch controls
+
+**Problem:** main is reported unprotected; publication workflow accepts tags and manual dispatch and can clobber existing assets. **Hypothesis:** required checks and owner-controlled release approval plus immutable existing artifacts prevent accidental publication. **Components:** GitHub branch/tag rules, environments and release workflow. **Risk:** a workflow-only gate cannot restrict direct pushes or administrators; a bad migration can block legitimate recovery. **Verification:** inspect effective permissions and rules, exercise a non-release test branch/tag without publishing, and show attempted bypass and rollback behavior. **Stop:** any path that can overwrite v3.2.2 or publish without the required owner authorization. Repository configuration needs the appropriate administration capability.
+
+## P1–P3 — GSF quality, pacing and compute research
+
+**Problem:** pinned analytic generator exists, but captured reference frames, temporal metrics and target-device comparisons are absent. **Hypothesis:** freeze inputs and use repeatable side-by-side references to identify local motion and temporal defects before changing reconstruction, then explore pacing or compute reductions separately. **Components:** GSF shaders, shared plan, scheduler, Gamescope and measurement tools. **Risk:** higher latency, degraded occlusion/HDR/HUD, costly analysis or incompatible API. **Verification:** version and hash scenes, define PSNR/SSIM and temporal/local metrics, collect SDR/HDR and hardware presentation traces, compare the pinned engine, accepted stable and candidate with a predeclared protocol. **Stop:** quality, pacing, latency or GPU-cost limits fail or device data is missing; do not label the experiment Stable.
+
+## P4–P6 — controller integration, overhead and observability
+
+**Problem:** source-level interlocks, performance counters and recovery paths are not complete hardware evidence; a shadow lease is not an enforcement mechanism. **Hypothesis:** trace owners, confirmation epochs and overhead separately, then improve a measured bottleneck without competing controllers. **Components:** Policy Coordinator, Power Split, GPU clock, telemetry, lifecycle and Decky UI. **Risk:** extra polling, stale data, ownership conflicts or lost settings. **Verification:** inject stale status and faults, test conflicting tools and suspend/resume, count per-component reads/writes and measure matched hardware sessions. **Stop:** any ownership/restoration failure, lost UI access, or regression beyond predeclared uncertainty.
