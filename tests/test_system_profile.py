@@ -135,6 +135,18 @@ class SystemProfileTest(unittest.TestCase):
             self.assertEqual((root / "proc/sys/vm/swappiness").read_text().strip(), "100")
             self.assertFalse(done.exists())
 
+    def test_disabled_engine_does_not_apply_system_profile(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            fake_tree(root, zram=True)
+            tune, _, done = scripts(root)
+            (root / "state/disabled").touch()
+            subprocess.run(["sh", str(tune)], check=True)
+            self.assertEqual((root / "proc/sys/vm/swappiness").read_text().strip(), "100")
+            self.assertEqual((root / "proc/sys/vm/min_free_kbytes").read_text().strip(), "67584")
+            self.assertFalse(done.exists())
+            self.assertFalse((root / "run/orig").exists())
+
     def test_no_security_or_package_changes(self):
         text = sp.tune_script(Path("/s"), Path("/o"), Path("/d"))
         for banned in ("mitigations", "pacman", "grub", "modprobe", "readonly", "perf_event", "energy_performance"):
