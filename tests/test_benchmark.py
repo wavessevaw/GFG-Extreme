@@ -102,8 +102,13 @@ class PowerDefaultsTest(unittest.TestCase):
     def test_split_and_gpu_clock_off_from_schema_4(self):
         from gfg_plugin import settings
         self.assertEqual(settings.normalize({})["power"], {"enabled": True, "split": False, "gpu_clock": False})
+        self.assertEqual(settings.normalize({"schema": 4, "power": {}})["power"],
+                         {"enabled": True, "split": False, "gpu_clock": False})
+        # Schema 3 was previously forced off; the upgrade must preserve the user's saved choices.
         old = settings.normalize({"schema": 3, "power": {"enabled": True, "split": True, "gpu_clock": True}})
-        self.assertFalse(old["power"]["split"] or old["power"]["gpu_clock"])
+        self.assertEqual(old["power"], {"enabled": True, "split": True, "gpu_clock": True})
+        earlier = settings.normalize({"schema": 2, "power": {"split": True, "gpu_clock": True}})
+        self.assertFalse(earlier["power"]["split"] or earlier["power"]["gpu_clock"])
         new = settings.normalize({"schema": 4, "power": {"enabled": True, "split": True, "gpu_clock": False}})
         self.assertTrue(new["power"]["split"])
 
