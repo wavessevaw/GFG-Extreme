@@ -3,6 +3,8 @@ name: Release candidate
 # Build a reviewable candidate only. Publication and changes to existing releases
 # are intentionally outside this workflow and require owner approval.
 on:
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       tag:
@@ -18,6 +20,7 @@ env:
 
 jobs:
   test:
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'candidate/integration-02')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -86,8 +89,22 @@ jobs:
       - name: Engine bench (kfg_vktest) and shaders
         run: |
           sudo apt-get update
-          sudo apt-get install -y libvulkan-dev glslang-tools
+          sudo apt-get install -y libvulkan-dev glslang-tools mesa-vulkan-drivers
           make -C kedavra all
+      - name: Engine functional and software Vulkan validation
+        run: |
+          export VK_ICD_FILENAMES="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$VK_ICD_FILENAMES"
+          make -C kedavra test-pacing test-sched test-engine
+      - name: Save engine validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kedavra-software-validation
+          path: kedavra/build/*.json
+          if-no-files-found: error
+      - name: Prepare Deck benchmarks
+        run: |
           mkdir -p deck-bench
           cp kedavra/build/kfg_vktest kedavra/build/kfg_posttest kedavra/build/*.spv deck-bench/
       - uses: actions/upload-artifact@v4
@@ -153,7 +170,7 @@ jobs:
     needs: [test, gamescope, bench]
     runs-on: ubuntu-latest
     env:
-      TAG: ${{ inputs.tag }}
+      TAG: ${{ inputs.tag || 'v3.3.3-candidate.1' }}
     steps:
       - uses: actions/checkout@v4
         with:

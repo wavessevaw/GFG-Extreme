@@ -10,9 +10,15 @@ class ReleaseWorkflowSafetyTest(unittest.TestCase):
     def setUp(self):
         self.workflow = WORKFLOW.read_text(encoding="utf-8")
 
-    def test_candidate_requires_manual_dispatch_and_has_no_tag_trigger(self):
+    def test_candidate_supports_manual_dispatch_and_has_no_tag_trigger(self):
         self.assertRegex(self.workflow, r"(?m)^  workflow_dispatch:\s*$")
         self.assertNotRegex(self.workflow, r"(?m)^  push:\s*$")
+
+    def test_pr_build_is_limited_to_authorized_candidate_branch(self):
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", self.workflow)
+        self.assertIn("github.head_ref == 'candidate/integration-02'", self.workflow)
+        self.assertNotIn("pull_request_target", self.workflow)
+        self.assertIn("make -C kedavra test-pacing test-sched test-engine", self.workflow)
 
     def test_workflow_does_not_request_release_write_or_call_gh_release(self):
         self.assertNotRegex(self.workflow, r"(?m)^\s+contents:\s*write\s*$")
