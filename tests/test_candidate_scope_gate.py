@@ -76,6 +76,16 @@ class CandidateScopeGateTest(unittest.TestCase):
             self.assertIn("tools/candidate_scope_gate.py", block)
             self.assertIn("--revision", block)
 
+    def test_native60_report_uses_compatible_metrics_layout(self):
+        from sandbox.run import lcd_native_60hz_output, report_md
+        result = lcd_native_60hz_output()
+        result["doc"] = lcd_native_60hz_output.__doc__
+        result["pass"] = all(c["ok"] for c in result["checks"])
+        self.assertTrue(result["pass"])
+        self.assertEqual(len(result["runs"]), 8)
+        report = report_md({"lcd_native_60hz_output": result})
+        self.assertIn("lcd_native_60hz_output", report)
+
 
 if __name__ == "__main__":
     unittest.main()

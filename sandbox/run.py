@@ -1011,7 +1011,7 @@ def lcd_native_60hz_output() -> Dict[str, Any]:
                 output = (counts["real"] + counts["gen"]) / 480
                 m = metrics(rig, skip=120)
                 key = f"{fg}/{objective}"
-                out["runs"][key] = {"metrics": m, "output_fps": output, "counters": counts}
+                out["runs"][key] = {**m, "output_fps": output, "counters": counts}
                 check(out, f"{key}: output 60 within 1%", 59.4 <= output <= 60.000001, str(output))
                 check(out, f"{key}: smooth >= 97%", m["smooth_pct"] >= 97, str(m["smooth_pct"]))
                 expected = 20 if fg == "auto" and objective == "battery" else 30
