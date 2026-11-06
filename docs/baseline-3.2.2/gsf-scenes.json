@@ -1,0 +1,15 @@
+{
+  "status": "UNVERIFIED",
+  "description": "Pinned analytic scene generator, not captured reference frames or hardware evidence",
+  "gsf_commit": "62621c4f9b60fd3cb95edafb62a1a44a1bb2c21e",
+  "gamescope_commit": "aa289ea5977d8b21b92b0f246f0e8f0c225d180f",
+  "source_sha256": {
+    "kedavra/engine/kfg_vktest.c": "00fb4c9e92a8a063eba80120f77323d6ac8f85d8354203852624fb4aaea599de",
+    "kedavra/engine/kfg_plan.h": "e697abc11d960a79ec778d0b20eb0bb87670b13c1797f85b38c174a1d9d40152",
+    "kedavra/sched/kfg_sched.h": "71abb62a214d6a7cba0af0bbe9b6c91ebde4081c8006855aeda9ea989473936a",
+    "kedavra/gamescope/apply.sh": "9be6fc21d9455d3d3f80b0710c66131673a39dcaa05ab1297b69d861e6ed6f06"
+  },
+  "standard_scenes": ["pan", "fast_pan", "objects_hud", "occlusion", "static", "scene_cut", "stairs", "dolly", "dolly_stairs", "near_object", "climb", "rotation", "thin_lines", "thin_lines_v3", "thin_lines_h12", "cut_to_flat", "cut_stairs", "grain_turn"],
+  "prescribed_variants": ["default", "--lowbase", "--hard", "--hard --lowbase"],
+  "limitations": "Reference output frames, approved metric methods, repetition and thresholds are not yet established. The generator alone is not a protected visual-quality gate."
+}

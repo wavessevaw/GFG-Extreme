@@ -1,0 +1,5 @@
+# Historical blob must remain byte-identical across Windows and Linux checkouts.
+docs/baseline-3.2.2/sandbox-run.py.txt -text
+docs/baseline-3.2.2/gsf-sdr-reference-manifest.json -text
+docs/research/autopilot-floor-2026-10-30.json -text
+docs/research/autopilot-reference-3.2.2.json -text

@@ -1,0 +1,78 @@
+{
+  "class": "software Vulkan capture; not a Deck measurement",
+  "gsf_commit": "62621c4f9b60fd3cb95edafb62a1a44a1bb2c21e",
+  "gamescope_commit": "aa289ea5977d8b21b92b0f246f0e8f0c225d180f",
+  "size": [
+    1280,
+    800
+  ],
+  "format": "PPM P6 RGB8",
+  "scenes": [
+    "pan",
+    "fast_pan",
+    "objects_hud",
+    "occlusion",
+    "thin_lines",
+    "scene_cut"
+  ],
+  "phases": {
+    "x3": [
+      "333",
+      "667"
+    ],
+    "x3_75": [
+      "267",
+      "733"
+    ]
+  },
+  "frames": {
+    "frames/x3/fast_pan_t333_gen.ppm": "4970b4c8f3947cbd05690706762e461998e57d8cbae9f2445f7883da288138fc",
+    "frames/x3/fast_pan_t333_truth.ppm": "a86189e7e263b705e78ec647c473aa4f419af4429e982141c786d8d669b7c7b6",
+    "frames/x3/fast_pan_t667_gen.ppm": "34925ee9bdcb87976aeaaa5796027f57c1bbfcc58f5726e842096fe79e7feb45",
+    "frames/x3/fast_pan_t667_truth.ppm": "57d8affc552ab484881fc1b68177047cc302052e3373e6f0853274aa001522dc",
+    "frames/x3/objects_hud_t333_gen.ppm": "63faf983992452cc7e66e8ead5a42ca6fce3687c5a5297c9a4c5190f96d8dfa8",
+    "frames/x3/objects_hud_t333_truth.ppm": "c92f837f3189929c6e78a9ae70477e0389aa4a5ef844b5f53fec22ebec2730d0",
+    "frames/x3/objects_hud_t667_gen.ppm": "33cad4077bd4632ee8de1872b78673a1a7987702348822b5ec63a358a48c8120",
+    "frames/x3/objects_hud_t667_truth.ppm": "abff762c4e91b5bebb862c0f05e1047cc5b64e95c7c10f9f3343c2e0d97fa3fa",
+    "frames/x3/occlusion_t333_gen.ppm": "ffd374718e50346b211186ccce0b2397e0fd8c8fe9f26bdfef3acabd6bbad407",
+    "frames/x3/occlusion_t333_truth.ppm": "42de07a187ca756037728650764d3588e5db2f476417820fb1987920318b644a",
+    "frames/x3/occlusion_t667_gen.ppm": "39300bd85432541d2e073e627cb345e7de0d631ce696f3111f1c2ba8c2ff9f08",
+    "frames/x3/occlusion_t667_truth.ppm": "ca4842b4288335d60c9c02ca8cbaecc2c54a3d4ba30ff793f4e956657b97223a",
+    "frames/x3/pan_t333_gen.ppm": "38b1b4e4097d6526d4eab49d73f53586f300613c451d07fc98308d1b45c7d058",
+    "frames/x3/pan_t333_truth.ppm": "d01a357cf5d7c1ba2edbf8999709ec9a75035692348801120e9f8a081ad8e4f4",
+    "frames/x3/pan_t667_gen.ppm": "32e5aaf009d286492a2051c05974406016d1f6fab4e9e895ad5f00e065ba6646",
+    "frames/x3/pan_t667_truth.ppm": "2e2276609c4b5701d0f004cee718d746c2181ef1b1bbcfbf52bcdfc8a5329e6c",
+    "frames/x3/scene_cut_t333_gen.ppm": "5a6444f9e93619ada52fda548e73e97561e2abbdffd0ce93ad9a6c0fc3a3728f",
+    "frames/x3/scene_cut_t333_truth.ppm": "5a6444f9e93619ada52fda548e73e97561e2abbdffd0ce93ad9a6c0fc3a3728f",
+    "frames/x3/scene_cut_t667_gen.ppm": "5a6444f9e93619ada52fda548e73e97561e2abbdffd0ce93ad9a6c0fc3a3728f",
+    "frames/x3/scene_cut_t667_truth.ppm": "bba3d254bb186f74e797de4b9b33d153b65a5ad5c7900fba3dc5cc8984c545e6",
+    "frames/x3/thin_lines_t333_gen.ppm": "adec3a5d56bd80143297480cc88a216591b6923449425ed2be9e6b9323855db7",
+    "frames/x3/thin_lines_t333_truth.ppm": "2790d202d1e49be548d696537864382922820f65363cbbf00118c84bbcab31a1",
+    "frames/x3/thin_lines_t667_gen.ppm": "87ef4f184265544df47ac99530443c7ddc5463501ef16fbe411e5678d26b7b03",
+    "frames/x3/thin_lines_t667_truth.ppm": "26787d8a214a678494f8208ce2fc3c30e4cbe56ea138319f9a365bb9ac35e36a",
+    "frames/x3_75/fast_pan_t267_gen.ppm": "5d2c0b0f1e6a3760be9d8bb6b22975d75e1e9c045036694835e8a45a86a24552",
+    "frames/x3_75/fast_pan_t267_truth.ppm": "a86189e7e263b705e78ec647c473aa4f419af4429e982141c786d8d669b7c7b6",
+    "frames/x3_75/fast_pan_t733_gen.ppm": "72e1bf9ffb3407b286e769ba6b9ff84bb57359b9e08debc42cd33ab182e847cc",
+    "frames/x3_75/fast_pan_t733_truth.ppm": "ffab94c913801f8e53372ddd8f987f3713f8f2036c3cb6aecbf3843ecb1482fe",
+    "frames/x3_75/objects_hud_t267_gen.ppm": "3ee539e7e85ffb24099ed43e90732c966002dae97333a991d229e71db93c0a6e",
+    "frames/x3_75/objects_hud_t267_truth.ppm": "c92f837f3189929c6e78a9ae70477e0389aa4a5ef844b5f53fec22ebec2730d0",
+    "frames/x3_75/objects_hud_t733_gen.ppm": "1019c871041175a9eb1ff9068c17715b062e755e4826409330fde446f06ed529",
+    "frames/x3_75/objects_hud_t733_truth.ppm": "116bedc8869f379b17b85d91b53e6efada70b566fc12ff3a2a29875506611534",
+    "frames/x3_75/occlusion_t267_gen.ppm": "5a1b46a4d0c244bacc4459856854f4218580e77decfda6e9f018bc6a519660f6",
+    "frames/x3_75/occlusion_t267_truth.ppm": "42de07a187ca756037728650764d3588e5db2f476417820fb1987920318b644a",
+    "frames/x3_75/occlusion_t733_gen.ppm": "f90e3e8758638014fa149d42aa52f500c12be5d7fa25137791eb8043e9011d41",
+    "frames/x3_75/occlusion_t733_truth.ppm": "3240f141dd589e5ad03fb06f014e87284d8b1bc6c087c834ae5cdeff0aa7b8c6",
+    "frames/x3_75/pan_t267_gen.ppm": "acb0c770cbdda8caa4259d196dc03724a43e84c79f9fffcf1666ed8a51ed2871",
+    "frames/x3_75/pan_t267_truth.ppm": "d01a357cf5d7c1ba2edbf8999709ec9a75035692348801120e9f8a081ad8e4f4",
+    "frames/x3_75/pan_t733_gen.ppm": "5a965531cda73880b725edb83d507f0b2d78f7b8beb1d16c1d6a171b79a170aa",
+    "frames/x3_75/pan_t733_truth.ppm": "ec0580d9e419144e6a9295cc86f3c7930fcee59009c34e35cb58e3e9e02e1384",
+    "frames/x3_75/scene_cut_t267_gen.ppm": "5a6444f9e93619ada52fda548e73e97561e2abbdffd0ce93ad9a6c0fc3a3728f",
+    "frames/x3_75/scene_cut_t267_truth.ppm": "5a6444f9e93619ada52fda548e73e97561e2abbdffd0ce93ad9a6c0fc3a3728f",
+    "frames/x3_75/scene_cut_t733_gen.ppm": "5a6444f9e93619ada52fda548e73e97561e2abbdffd0ce93ad9a6c0fc3a3728f",
+    "frames/x3_75/scene_cut_t733_truth.ppm": "bba3d254bb186f74e797de4b9b33d153b65a5ad5c7900fba3dc5cc8984c545e6",
+    "frames/x3_75/thin_lines_t267_gen.ppm": "8cc3967b0d23e9d4c1f0e309c94f3ee097c2dd46a2a2a1efab08c2910f919779",
+    "frames/x3_75/thin_lines_t267_truth.ppm": "2790d202d1e49be548d696537864382922820f65363cbbf00118c84bbcab31a1",
+    "frames/x3_75/thin_lines_t733_gen.ppm": "da332865fd514d0441a62d30a11ea0eab66d641840618861bfa927534ad66f3c",
+    "frames/x3_75/thin_lines_t733_truth.ppm": "f33c970a07ab162e72779bf660fbddac252a9f8d1ae00b8e15e0333041a72b67"
+  }
+}
