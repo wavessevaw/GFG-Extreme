@@ -8,6 +8,7 @@ name: Release
 on:
   push:
     tags: ['v3.*']
+    branches: ['release/3.3.0']
   workflow_dispatch:
     inputs:
       tag:
@@ -20,7 +21,7 @@ permissions:
 env:
   # GSF Kedavra (KEDAVRA engine and Gamescope patch) at the commit this release was tested with.
   KEDAVRA_REPO: wavessevaw/GSF_Kedavra
-  KEDAVRA_SHA: 62621c4f9b60fd3cb95edafb62a1a44a1bb2c21e
+  KEDAVRA_SHA: 00bd846a9a92629fd85e2cce3276d9a653ed90ce
 
 jobs:
   test:
@@ -122,12 +123,12 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      TAG: ${{ github.ref == 'refs/heads/release/3.3.0' && 'v3.3.0' || (github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name) }}
     steps:
       - uses: actions/checkout@v4
         with:
           # A tag push builds the tag; a manual run builds the commit it was started on.
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || env.TAG }}
+          ref: ${{ github.sha }}
       - uses: actions/download-artifact@v4
         with:
           name: gamescope-runtime
@@ -150,13 +151,14 @@ jobs:
       - name: Publish
         run: |
           notes="RELEASE_DESCRIPTION_V${version//./_}.md"
+          cp "$notes" "out/README-$version.md"
           pre=$(python3 -c 'import json; print("--prerelease" if json.load(open("package.json")).get("gfgPrerelease") else "")')
           title="GFG Extreme $version"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" out/*.zip out/SHA256SUMS.txt --clobber
+            gh release upload "$TAG" out/*.zip out/SHA256SUMS.txt "out/README-$version.md" --clobber
             gh release edit "$TAG" --title "$title" --notes-file "$notes" $pre
           else
             # A tag push or a release made on github.com: the tag exists. A manual run: the tag
             # is created at the commit that was built.
-            gh release create "$TAG" out/*.zip out/SHA256SUMS.txt --title "$title" --notes-file "$notes" $pre --target "$GITHUB_SHA"
+            gh release create "$TAG" out/*.zip out/SHA256SUMS.txt "out/README-$version.md" --title "$title" --notes-file "$notes" $pre --target "$GITHUB_SHA"
           fi
