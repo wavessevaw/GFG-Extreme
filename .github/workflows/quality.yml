@@ -1,0 +1,127 @@
+name: Quality candidate (no publication)
+on:
+  push:
+    branches: ['quality/bounded-reconstruction-20261108']
+  workflow_dispatch:
+permissions:
+  contents: read
+
+env:
+  # GSF Kedavra (KEDAVRA engine and Gamescope patch) at the commit this release was tested with.
+  KEDAVRA_REPO: wavessevaw/GSF_Kedavra
+  KEDAVRA_SHA: a79e041e8f0eea69ae147e89079162ce325b890f
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - run: python3 -m sandbox.run
+      - run: |
+          npm ci
+          npm run build
+          git diff --exit-code dist/index.js
+          npx playwright-core install --with-deps chromium
+          node frontend/harness/smoke.mjs
+
+  bench:
+    # Built on Ubuntu 24.04, whose glibc is older than SteamOS's, so the binary runs on the Deck.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.KEDAVRA_REPO }}
+          ref: ${{ env.KEDAVRA_SHA }}
+      - name: Engine bench (kfg_vktest) and shaders
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev glslang-tools
+          make -C kedavra all
+          mkdir -p deck-bench
+          cp kedavra/build/kfg_vktest kedavra/build/kfg_posttest kedavra/build/*.spv deck-bench/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kedavra-bench
+          path: deck-bench
+
+  gamescope:
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    steps:
+      - name: Toolchain and Gamescope dependencies
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git meson ninja cmake glslang vulkan-headers \
+            wayland wayland-protocols libx11 libxcomposite libxdamage libxext libxfixes libxkbcommon \
+            libxmu libxrender libxres libxtst libxxf86vm libxcursor libxi libdrm libinput seatd sdl2 \
+            libdecor luajit libavif libcap pipewire libei hwdata lcms2 glm benchmark pixman \
+            vulkan-icd-loader xcb-util-errors xcb-util-wm xorg-xwayland libdisplay-info libliftoff python patchelf
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.KEDAVRA_REPO }}
+          ref: ${{ env.KEDAVRA_SHA }}
+      - name: Gamescope at the pinned commit
+        run: |
+          pin=$(sed -n 's/^GAMESCOPE_COMMIT=//p' kedavra/gamescope/apply.sh)
+          git init -q /tmp/gamescope
+          git -C /tmp/gamescope remote add origin https://github.com/ValveSoftware/gamescope.git
+          git -C /tmp/gamescope fetch -q --depth 1 origin "$pin"
+          git -C /tmp/gamescope checkout -q FETCH_HEAD
+          git -C /tmp/gamescope submodule update --init --depth 1 --recursive
+      - name: Apply KEDAVRA and build
+        run: |
+          sh kedavra/gamescope/apply.sh /tmp/gamescope
+          cd /tmp/gamescope
+          # --prefix=/usr: Gamescope reads its display scripts from <prefix>/share/gamescope/scripts.
+          # With the default /usr/local it never finds SteamOS's Steam Deck OLED script, so the
+          # panel looks unknown and HDR is reported unsupported.
+          meson setup build --prefix=/usr --buildtype=release -Dpipewire=enabled -Denable_openvr_support=false -Denable_tests=false
+          ninja -C build
+          nm -C build/src/gamescope | grep -c 'kfg::'
+          grep -a -c '/usr/share/gamescope/scripts' build/src/gamescope
+      - name: Bundle with its libraries
+        run: |
+          # The GFG commit in the version: Setup asks for a reinstall whenever the runtime changes.
+          sh kedavra/gamescope/bundle.sh /tmp/gamescope/build gamescope-runtime "kedavra-${KEDAVRA_SHA::7}-gfg-${GITHUB_SHA::7}"
+          mkdir -p gamescope-runtime/share/licenses
+          cp kedavra/shaders/THIRD_PARTY.md gamescope-runtime/share/licenses/KEDAVRA-filters-THIRD_PARTY.md
+          cp LICENSE.md NOTICE.md gamescope-runtime/share/licenses/ 2>/dev/null || true
+      - name: Bundled runtime resolves from its install location
+        run: |
+          mkdir -p /var/lib/kedavra && cp -a gamescope-runtime /var/lib/kedavra/runtime
+          R=/var/lib/kedavra/runtime
+          $R/lib/ld-linux-x86-64.so.2 --list $R/bin/gamescope | tee /tmp/ldd.txt
+          if grep -q 'not found' /tmp/ldd.txt; then exit 1; fi
+          $R/bin/gamescope --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gamescope-runtime
+          path: gamescope-runtime
+
+  package:
+    needs: [test, gamescope, bench]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: gamescope-runtime
+          path: gamescope-runtime
+      - uses: actions/download-artifact@v4
+        with:
+          name: kedavra-bench
+          path: kedavra-bench
+      - name: Build experimental install ZIP
+        run: |
+          scripts/build_release.sh 3.2.3-quality.1 gamescope-runtime out kedavra-bench
+          unzip -t out/*.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GFG-quality-test-build
+          path: out/
