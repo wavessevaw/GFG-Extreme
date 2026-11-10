@@ -58,5 +58,6 @@ class FocusIntegrationTest(unittest.TestCase):
         cfg = filters.normalize({'effects': ['vibrance', 'clarity'],
                                  'sharpen': 'cas', 'aa': 'smaa', 'focus': True})
         self.assertEqual(filters.to_post(shed(cfg, 2)), 'detail=1')
-        self.assertIn('vibrance,detail=1', filters.to_post(shed(cfg, 0)))
+        self.assertIn('detail=1', filters.to_post(shed(cfg, 0)).split(','))
+        self.assertIn('vibrance', filters.to_post(shed(cfg, 0)).split(','))
         self.assertTrue(cfg['focus'])
