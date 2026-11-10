@@ -1,7 +1,5 @@
 <div align="center">
 
-**English** · [Русский](README.ru.md)
-
 <img src="docs/img/logo.png" alt="GFG Extreme" width="144">
 
 # GFG EXTREME 3.4
@@ -149,11 +147,7 @@ It captures the original frames, estimates motion at several resolutions, recons
 
 Since 3.2 (GSF Kedavra 1.4, "Silk") the presentation moves in eighths of a refresh: after a late game frame the picture briefly runs a little faster instead of skipping a frame, and when the next frame is late it slows down smoothly instead of stopping. Same latency, same GPU work.
 
-Since 3.3 (GSF Kedavra 1.4.2) the picture keeps an even speed after a slow-down, fractional caps follow their real rhythm (40 FPS at 90 Hz releases 2-2-2-3), and the motion analysis runs in one refresh when it fits, so a generated frame is ready one refresh sooner. Simulator, stable base: ×2 at base 45, latency 33.3 → 22.2 ms; ×2.25 at base 40, outputs at a changed speed 77.8 → 0 %, latency 37.8 → 33.3 ms.
-
-Since 3.3.2 (GSF Kedavra 1.4.4) a game running just under its base cap keeps the full frame rate it renders: the base cap passes each game frame on the next refresh as soon as it is ready, and every frame reaches the screen sooner. Scheduler simulator, x2 at 90 Hz, game at 46.5 fps: base 33.7 → 38.3 fps, median latency 49.5 → 38.5 ms.
-
-Since 3.3.1 (GSF Kedavra 1.4.3) camera turns move as one rigid image: the camera's motion is fitted as a plane projective map (the exact image motion of a turning camera), and each generated frame shows the camera turned by exactly its share of the angle for a solid, smooth turn across the whole screen. Engine test, camera turn up to 10° per frame: 25.35 → 27.56 dB, frame-to-frame error 8.70 → 5.18.
+GFG Extreme 3.3.0 uses Kedavra 1.5.0; 3.4.0 continues that official lineage with Kedavra 1.6.0 and Kedavra Focus. Cancelled Kedavra 1.4.1–1.4.4 experiments are not part of this release. Frame generation and scheduling remain unchanged by the Focus update. Use the [v3.4.0 source tag](https://github.com/wavessevaw/GFG-Extreme/tree/v3.4.0) to reproduce this release.
 
 **Processing pipeline**
 
