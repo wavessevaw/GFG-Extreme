@@ -1,10 +1,8 @@
 <div align="center">
 
-**English** · [Русский](README.ru.md)
-
 <img src="docs/img/logo.png" alt="GFG Extreme" width="144">
 
-# GFG EXTREME 3.3
+# GFG EXTREME 3.4
 
 **MOST POWERFUL DECKY PLUGIN EVER.**
 
@@ -25,6 +23,34 @@ Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integ
 
 <sub>Real GFG Extreme 3.0.0 interface rendered in a browser with illustrative sample data. Not measured game performance.</sub>
 
+
+## New in 3.4.0
+
+GFG Extreme 3.4.0 integrates **GSF Kedavra 1.6.0** while preserving the existing
+Autopilot, TDP Governor, Power Split, GPU clock controls, profiles, HUD and diagnostics.
+
+**Graphics → Kedavra Focus** is one on/off switch. It enables adaptive edge
+enhancement at a fixed **100% strength**, with no Focus slider. The effect works
+live with frame generation on or off. It replaces CAS/DLS while enabled and keeps
+their saved settings for when Focus is switched off. Focus is off by default in
+existing profiles; game profiles can store their own on/off preference.
+
+Focus is SDR-only; HDR images retain the safe bypass. The existing filter budget
+may temporarily bypass filters, including Focus, under sustained GPU pressure;
+Quality mode keeps the selected filters. No external upscaler is detected or modified.
+
+Install the full 3.4.0 ZIP, use **Setup → Reinstall Gamescope KEDAVRA**, then reboot.
+The package includes its matching 1.6.0 engine/runtime. For rollback, restore system
+Gamescope and reboot, then reinstall the previous official 3.3.0 package/runtime.
+
+The Focus candidate was user-tested and approved for this release. No new quantitative
+Steam Deck GPU-budget or P95/P99 certification is claimed. Development software-Vulkan
+measurements are not hardware measurements. Focus can expose noise or existing FG
+artifacts on difficult scenes; switch it off when the source is already too sharp.
+
+[Download 3.4.0](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.0) ·
+[Release notes](RELEASE_DESCRIPTION_V3_4_0.md) ·
+[Engine source](https://github.com/wavessevaw/GSF_Kedavra/tree/v1.6.0)
 
 <table>
 <tr>
@@ -121,11 +147,7 @@ It captures the original frames, estimates motion at several resolutions, recons
 
 Since 3.2 (GSF Kedavra 1.4, "Silk") the presentation moves in eighths of a refresh: after a late game frame the picture briefly runs a little faster instead of skipping a frame, and when the next frame is late it slows down smoothly instead of stopping. Same latency, same GPU work.
 
-Since 3.3 (GSF Kedavra 1.4.2) the picture keeps an even speed after a slow-down, fractional caps follow their real rhythm (40 FPS at 90 Hz releases 2-2-2-3), and the motion analysis runs in one refresh when it fits, so a generated frame is ready one refresh sooner. Simulator, stable base: ×2 at base 45, latency 33.3 → 22.2 ms; ×2.25 at base 40, outputs at a changed speed 77.8 → 0 %, latency 37.8 → 33.3 ms.
-
-Since 3.3.2 (GSF Kedavra 1.4.4) a game running just under its base cap keeps the full frame rate it renders: the base cap passes each game frame on the next refresh as soon as it is ready, and every frame reaches the screen sooner. Scheduler simulator, x2 at 90 Hz, game at 46.5 fps: base 33.7 → 38.3 fps, median latency 49.5 → 38.5 ms.
-
-Since 3.3.1 (GSF Kedavra 1.4.3) camera turns move as one rigid image: the camera's motion is fitted as a plane projective map (the exact image motion of a turning camera), and each generated frame shows the camera turned by exactly its share of the angle for a solid, smooth turn across the whole screen. Engine test, camera turn up to 10° per frame: 25.35 → 27.56 dB, frame-to-frame error 8.70 → 5.18.
+GFG Extreme 3.3.0 uses Kedavra 1.5.0; 3.4.0 continues that official lineage with Kedavra 1.6.0 and Kedavra Focus. Cancelled Kedavra 1.4.1–1.4.4 experiments are not part of this release. Frame generation and scheduling remain unchanged by the Focus update. Use the [v3.4.0 source tag](https://github.com/wavessevaw/GFG-Extreme/tree/v3.4.0) to reproduce this release.
 
 **Processing pipeline**
 
