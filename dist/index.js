@@ -447,8 +447,8 @@ function Graphics({ s, set, cat }) {
       Card,
       { title: "IMAGE CLARITY" },
       h(Row, { k: "Kedavra Focus", first: true }, h(Tog, { on: !!f.focus, onChange: (v) => put({ focus: v }) })),
-      h("div", { className: "sub" }, f.focus && hdr ? "Bypassed for HDR. Focus processes SDR images only." : "Adaptive edge enhancement at 100%. Works with frame generation on or off."),
-      f.focus ? h("div", { className: "note" }, "Focus replaces CAS/DLS while enabled. Their saved settings return when Focus is switched off.") : null
+      h("div", { className: "sub" }, f.focus && hdr ? "Bypassed for HDR. Focus processes SDR images only." : "Smart sharpness. Cleaner edges. More detail."),
+      f.focus ? h("div", { className: "note" }, "Focus keeps your CAS/DLS settings saved.") : null
     ),
     h(
       Card,
@@ -464,7 +464,7 @@ function Graphics({ s, set, cat }) {
     h(
       Card,
       { title: "SHARPENING" },
-      f.focus ? h("div", { className: "note" }, "Kedavra Focus is active at 100%. Switch Focus off to use CAS or DLS.") : h(Seg, { value: f.focus ? "none" : f.sharpen, options: [["none", "Off"], ["cas", "CAS"], ["dls", "DLS"]], onChange: (v) => put({ sharpen: v, focus: false }) }),
+      f.focus ? h("div", { className: "note" }, "Kedavra Focus is on. CAS/DLS available when disabled.") : h(Seg, { value: f.focus ? "none" : f.sharpen, options: [["none", "Off"], ["cas", "CAS"], ["dls", "DLS"]], onChange: (v) => put({ sharpen: v, focus: false }) }),
       !f.focus && f.sharpen !== "none" ? h("div", { className: "lrow first", style: { marginTop: 6 } }, h("div", { className: "t2" }, h("b", null, "Strength"), h("span", null, "May show grain")), stepper("sharpness")) : null,
       !f.focus && f.sharpen === "dls" ? h("div", { className: "lrow" }, h("div", { className: "t2" }, h("b", null, "Denoise"), h("span", null, "Keeps DLS off film grain")), stepper("denoise")) : null,
       h("div", { className: "sec sec2" }, "ANTI-ALIASING"),
