@@ -4,7 +4,7 @@
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="144">
 
-# GFG EXTREME 3.2
+# GFG EXTREME 3.4
 
 **MOST POWERFUL DECKY PLUGIN EVER.**
 
@@ -26,9 +26,37 @@ Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integ
 <sub>Real GFG Extreme 3.0.0 interface rendered in a browser with illustrative sample data. Not measured game performance.</sub>
 
 
+## New in 3.4.0
+
+GFG Extreme 3.4.0 integrates **GSF Kedavra 1.6.0** while preserving the existing
+Autopilot, TDP Governor, Power Split, GPU clock controls, profiles, HUD and diagnostics.
+
+**Graphics → Kedavra Focus** is one on/off switch. It enables adaptive edge
+enhancement at a fixed **100% strength**, with no Focus slider. The effect works
+live with frame generation on or off. It replaces CAS/DLS while enabled and keeps
+their saved settings for when Focus is switched off. Focus is off by default in
+existing profiles; game profiles can store their own on/off preference.
+
+Focus is SDR-only; HDR images retain the safe bypass. The existing filter budget
+may temporarily bypass filters, including Focus, under sustained GPU pressure;
+Quality mode keeps the selected filters. No external upscaler is detected or modified.
+
+Install the full 3.4.0 ZIP, use **Setup → Reinstall Gamescope KEDAVRA**, then reboot.
+The package includes its matching 1.6.0 engine/runtime. For rollback, restore system
+Gamescope and reboot, then reinstall the previous official 3.3.0 package/runtime.
+
+The Focus candidate was user-tested and approved for this release. No new quantitative
+Steam Deck GPU-budget or P95/P99 certification is claimed. Development software-Vulkan
+measurements are not hardware measurements. Focus can expose noise or existing FG
+artifacts on difficult scenes; switch it off when the source is already too sharp.
+
+[Download 3.4.0](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.0) ·
+[Release notes](RELEASE_DESCRIPTION_V3_4_0.md) ·
+[Engine source](https://github.com/wavessevaw/GSF_Kedavra/tree/v1.6.0)
+
 <table>
 <tr>
-<td width="33%" align="center"><b>GSF KEDAVRA</b><br><sub>Own frame generation inside Gamescope. The mode picks the multiplier; tap the selected mode again to turn it off. SDR and HDR.</sub></td>
+<td width="33%" align="center"><b>GSF KEDAVRA</b><br><sub>Own frame generation inside Gamescope. Auto, ×2, ×3, ×3.75, Custom. SDR and HDR.</sub></td>
 <td width="33%" align="center"><b>AUTOPILOT</b><br><sub>Measure, lock, guard, adapt. The lowest TDP that holds the frame rate.</sub></td>
 <td width="33%" align="center"><b>ONE ZIP</b><br><sub>Installed from Decky. Installs its own Gamescope, rolls back by itself.</sub></td>
 </tr>
@@ -49,6 +77,8 @@ Frame generation, frame presentation and power optimisation are now treated as c
 Kedavra runs GPU motion estimation and reconstructs in-between frames directly inside Gamescope. GFG analyses the game's performance, the compute cost of generation and the Steam Deck's available power budget.
 
 No Lossless Scaling, no MAKO, no third-party frame generation layers: the whole frame pipeline runs inside GFG's own Gamescope.
+
+**90 FPS EVERYWHERE — IN STEAMOS GAMING MODE.** GFG Extreme generates frames at the Gamescope compositor level, across native games, popular emulators (shadPS4, RPCS3, PCSX2, Dolphin, Cemu, PPSSPP, DuckStation and others), and streamed content—including Xbox Remote Play (Greenlight), PlayStation Remote Play (Chiaki) and Moonlight running in Gaming Mode. On Steam Deck OLED, a stable 30 FPS source can reach 90 FPS display output with Kedavra ×3.
 
 Version 3.0 is built on three technologies:
 
@@ -92,7 +122,7 @@ You can reach a high Output FPS with too low a Real FPS. The numbers then grow f
 
 GSF Kedavra has an architectural limit of ×4: at most three generated frames per real one.
 
-In practice the floor is stricter. By default no mode goes past ×3 (30 FPS at 90 Hz): above that the picture and the latency suffer. **Setup → Allow above ×3** unlocks ×3.75 (24 FPS at 90 Hz) for Battery and a low battery.
+In practice the floor is stricter. By default no mode goes past ×3 (30 FPS at 90 Hz): above that the picture and the latency suffer. **Setup → Allow above ×3** unlocks ×3.75 (24 FPS at 90 Hz) for Battery, a low battery and the Dash choice. Custom accepts any base frame rate from 20 FPS, but never deeper than ×4.
 
 Multipliers don't have to be whole numbers. Kedavra caps the game at a base frame rate and generation fills every display refresh, so at 90 Hz 40 FPS gives ×2.25, 35 FPS gives ×2.6 and 24 FPS gives ×3.75.
 
@@ -119,7 +149,11 @@ It captures the original frames, estimates motion at several resolutions, recons
 
 Since 3.2 (GSF Kedavra 1.4, "Silk") the presentation moves in eighths of a refresh: after a late game frame the picture briefly runs a little faster instead of skipping a frame, and when the next frame is late it slows down smoothly instead of stopping. Same latency, same GPU work.
 
-Since 3.2.1 the motion search also checks where each block's content comes from and goes to, frame edges keep their own motion on fast turns, and thin straight lines stay steady. Simulator: fast camera turns +0.5…1.0 dB, slow thin lines 21.0 → 28.4 dB with line flicker 34.8 → 12.7; after a 155 ms game hitch the presentation settles quickly: tracking error P95 7.4 → 1.2 ms.
+Since 3.3 (GSF Kedavra 1.4.2) the picture keeps an even speed after a slow-down, fractional caps follow their real rhythm (40 FPS at 90 Hz releases 2-2-2-3), and the motion analysis runs in one refresh when it fits, so a generated frame is ready one refresh sooner. Simulator, stable base: ×2 at base 45, latency 33.3 → 22.2 ms; ×2.25 at base 40, outputs at a changed speed 77.8 → 0 %, latency 37.8 → 33.3 ms.
+
+Since 3.3.2 (GSF Kedavra 1.4.4) a game running just under its base cap keeps the full frame rate it renders: the base cap passes each game frame on the next refresh as soon as it is ready, and every frame reaches the screen sooner. Scheduler simulator, x2 at 90 Hz, game at 46.5 fps: base 33.7 → 38.3 fps, median latency 49.5 → 38.5 ms.
+
+Since 3.3.1 (GSF Kedavra 1.4.3) camera turns move as one rigid image: the camera's motion is fitted as a plane projective map (the exact image motion of a turning camera), and each generated frame shows the camera turned by exactly its share of the angle for a solid, smooth turn across the whole screen. Engine test, camera turn up to 10° per frame: 25.35 → 27.56 dB, frame-to-frame error 8.70 → 5.18.
 
 **Processing pipeline**
 
@@ -173,7 +207,7 @@ Motion is analysed once per real frame, in its own GPU submission after the comp
 | Processing | GPU Compute Shaders |
 | Motion Estimation | Multi-resolution, bidirectional, with temporal seeding |
 | Frame Reconstruction | Motion-compensated interpolation |
-| Multipliers | Chosen by the mode (fractional, up to ×3, ×3.75 with Allow above ×3); a second tap on the selected mode turns generation off |
+| Multipliers | Auto / ×2 / ×3 / ×3.75 / Custom base FPS (fractional, up to ×4) |
 | Automatic Mode | Base FPS chosen from the game's measured frame rate |
 | Source FPS Control | Kedavra base FPS cap inside Gamescope (Steam's limiter is not used) |
 | Frame Scheduling | VBlank-aware |
@@ -208,6 +242,14 @@ The second generation of Boost, rebuilt for Kedavra. Generated frames smear exac
 
 ---
 
+### BENCHMARK
+
+**Dash → Benchmark** (bottom of the tab), with a game running. Close Quick Access: for 20 s GFG holds the TDP at 15 W with generation off, and a centred panel says *Do not touch anything* while it counts down. It takes the medians of the game's own FPS, GPU and CPU load, power and APU temperature, then proposes a strategy: base FPS, multiplier and expected watts. **Accept** stores it for this game: the next launches start there and Autopilot uses it as its compass, still adapting to heavier and lighter scenes. **No, keep searching** leaves Autopilot to its normal search. The Steam menu, a pause or a game change cancels the run.
+
+The proposal follows the game's base frame rate: above 30 FPS it picks the fractional ×2 family (35 / 40 / 45 at 90 Hz), ×3 only when the game does not get above 30.
+
+---
+
 ### SYSTEM PROFILE
 
 Installed with the engine, in the same step and the same boot unit, and removed with it. Runtime kernel settings only: nothing in the read-only system image, no kernel command line, no driver or package changes, no security mitigations touched. Every value is saved before it is written and written back on **Remove**.
@@ -219,7 +261,6 @@ Installed with the engine, in the same step and the same boot unit, and removed 
 The report from **Setup → Save report to Desktop** lists how many settings were applied in this boot.
 
 ---
-
 
 ## 03 / PRESENTATION-LEVEL CONTROL
 
@@ -315,6 +356,8 @@ Governor aims for the smallest power budget that keeps both the game and the gen
 **Splitting the power between CPU and GPU**
 
 GFG measures the load of the busiest CPU core, GPU utilisation and the GPU clock every second, and uses them on a locked point:
+
+Since 3.3 the Governor manages power through the TDP alone by default, for steadier frame pacing; both can be switched on in the Engine tab.
 
 - **Power Split** (GPU-bound game): CPU and GPU share one power limit, so GFG lowers the CPU's maximum clock step by step (100 / 85 / 70 / 60 / 50 %, never under 1.6 GHz) and gives those watts to the GPU. Every step is proven with A/B/A windows; the cap is lifted at once when real frames dip or the busiest core nears its limit.
 - **GPU clock ceiling** (CPU-bound game): when the CPU is the limit and the GPU is lightly loaded, GFG lowers the GPU clock in 100 MHz steps through SteamOS's own GPU clock control (the Quick Access Menu slider) and keeps a step only if the frame rate holds and APU draw drops.
@@ -457,8 +500,6 @@ Diagnostic traces show missed frames, transitions between operating points, GPU 
 
 Hardware test results can be reproduced and matched against the control system's decisions.
 
-Since 3.2.2 GFG's own once-a-second loop is lighter: the power sensors (TDP caps and APU draw) are read once per second (sysfs reads per second 17 → 6), battery and charger every 2 s, hwmon folders are looked up once a minute, per-second telemetry is written in 30 s batches, and the engine mount check runs once per boot.
-
 **REAL METRICS. REPRODUCIBLE RESULTS.**
 
 ---
@@ -486,6 +527,7 @@ Kedavra lives inside Gamescope, so in the stock Gaming Mode no game needs its ow
 * Session diagnostics and Pace capture.
 * Controlled Gamescope installation, automatic rollback and recovery.
 * System profile for games, installed and removed together with the engine.
+* Benchmark: 20 s of the game's own medians give Autopilot its starting point.
 * Settings migration from GFG Extreme 2.x (with a backup).
 
 Target platform: Steam Deck OLED / SteamOS.
@@ -569,7 +611,7 @@ Targets and real benchmarks of the 3.0.0 build (×3.75 and HDR included) are pub
 * Platform: Steam Deck / SteamOS
 * License: GPL-3.0-or-later, respecting the licences of the components used
 
-This README describes GFG Extreme 3.2. Features become part of a confirmed release only after testing on real hardware.
+This README describes GFG Extreme 3.3.
 
 ---
 
@@ -577,6 +619,6 @@ This README describes GFG Extreme 3.2. Features become part of a confirmed relea
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="56">
 
-<sub>GFG EXTREME 3.2 · POWERED BY GSF KEDAVRA · Made for Steam Deck · GPL-3.0-or-later</sub>
+<sub>GFG EXTREME 3.3 · POWERED BY GSF KEDAVRA · Made for Steam Deck · GPL-3.0-or-later</sub>
 
 </div>

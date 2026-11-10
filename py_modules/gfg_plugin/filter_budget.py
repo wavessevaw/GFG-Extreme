@@ -31,7 +31,7 @@ def shed(cfg: Dict[str, Any], level: int) -> Dict[str, Any]:
     if level <= 0:
         return cfg
     if level >= 2:
-        return {**cfg, "effects": [], "sharpen": "none", "aa": "none"}
+        return {**cfg, "effects": [], "sharpen": "none", "aa": "none", "focus": False}
     return {**cfg, "effects": [e for e in cfg.get("effects", []) if e not in HEAVY_EFFECTS], "aa": "none",
             "sharpen": "cas" if cfg.get("sharpen") == "dls" else cfg.get("sharpen", "none")}
 

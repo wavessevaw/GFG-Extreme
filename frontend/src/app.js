@@ -169,7 +169,8 @@ const SWATCH = { off: "linear-gradient(135deg,#2a2a31,#151519)", sharp: "linear-
 function lookSummary(f, names) {
   const parts = (f.effects || []).map((e) => names[e] || e);
   if (f.aa && f.aa !== "none") parts.push(f.aa.toUpperCase());
-  if (f.sharpen && f.sharpen !== "none") parts.push(f.sharpen.toUpperCase() + " " + Math.round((f.sharpness || 0) * 100) + "%");
+  if (f.focus) parts.push("Kedavra Focus");
+  else if (f.sharpen && f.sharpen !== "none") parts.push(f.sharpen.toUpperCase() + " " + Math.round((f.sharpness || 0) * 100) + "%");
   return parts.length ? parts.join(" + ") : "No effect";
 }
 function Graphics({ s, set, cat }) {
@@ -180,7 +181,7 @@ function Graphics({ s, set, cat }) {
   const presets = (cat && cat.presets) || [], effects = (cat && cat.effects) || [];
   const names = Object.fromEntries(effects.map((e) => [e.key, e.name]));
   const same = (a, b) => JSON.stringify([...(a.effects || [])].sort()) === JSON.stringify([...(b.effects || [])].sort()) && (a.sharpen || "none") === (b.sharpen || "none") && (a.aa || "none") === (b.aa || "none");
-  const active = (presets.find((p) => same(f, p.filters)) || {}).id || "custom";
+  const active = f.focus ? "custom" : (presets.find((p) => same(f, p.filters)) || {}).id || "custom";
   const hud = s.settings.hud;
   const hdr = ((s.live || {}).engine || {}).transfer && s.live.engine.transfer !== "sdr";
   const chain = f.effects || [];
@@ -188,15 +189,19 @@ function Graphics({ s, set, cat }) {
   const stepper = (k) => h("div", { className: "step" }, h(Focusable, { className: "b", onClick: () => step(k, -0.05) }, "−"),
     h("span", { className: "val" }, Math.round((f[k] || 0) * 100) + "%"), h(Focusable, { className: "b", onClick: () => step(k, 0.05) }, "+"));
   return h("div", null,
+    h(Card, { title: "IMAGE CLARITY" },
+      h(Row, { k: "Kedavra Focus", first: true }, h(Tog, { on: !!f.focus, onChange: (v) => put({ focus: v }) })),
+      h("div", { className: "sub" }, f.focus && hdr ? "Bypassed for HDR. Focus processes SDR images only." : "Adaptive edge enhancement at 100%. Works with frame generation on or off."),
+      f.focus ? h("div", { className: "note" }, "Focus replaces CAS/DLS while enabled. Their saved settings return when Focus is switched off.") : null),
     h(Card, { title: "LOOK" },
       h("div", { className: "fgrid" }, presets.map((p) =>
-        h(Focusable, { key: p.id, className: "ftile" + (active === p.id ? " on" : ""), onClick: () => set(() => rpc.setProfile(scope, { filters: p.id })) },
+        h(Focusable, { key: p.id, className: "ftile" + (active === p.id ? " on" : ""), onClick: () => set(() => rpc.setProfile(scope, { filters: { ...p.filters, focus: !!f.focus } })) },
           h("div", { className: "sw", style: { background: SWATCH[p.id] || SWATCH.off } }, p.id === "off" ? h("i", { className: "slash" }) : null),
           h("div", { className: "fl" }, p.name)))),
       h("div", { className: "fmore" }, h("span", null, active === "custom" ? "Custom · " + lookSummary(f, names) : lookSummary(f, names)))),
-    h(Card, { title: "SHARPENING" }, h(Seg, { value: f.sharpen, options: [["none", "Off"], ["cas", "CAS"], ["dls", "DLS"]], onChange: (v) => put({ sharpen: v }) }),
-      f.sharpen !== "none" ? h("div", { className: "lrow first", style: { marginTop: 6 } }, h("div", { className: "t2" }, h("b", null, "Strength"), h("span", null, "May show grain")), stepper("sharpness")) : null,
-      f.sharpen === "dls" ? h("div", { className: "lrow" }, h("div", { className: "t2" }, h("b", null, "Denoise"), h("span", null, "Keeps DLS off film grain")), stepper("denoise")) : null,
+    h(Card, { title: "SHARPENING" }, f.focus ? h("div", { className: "note" }, "Kedavra Focus is active at 100%. Switch Focus off to use CAS or DLS.") : h(Seg, { value: f.focus ? "none" : f.sharpen, options: [["none", "Off"], ["cas", "CAS"], ["dls", "DLS"]], onChange: (v) => put({ sharpen: v, focus: false }) }),
+      !f.focus && f.sharpen !== "none" ? h("div", { className: "lrow first", style: { marginTop: 6 } }, h("div", { className: "t2" }, h("b", null, "Strength"), h("span", null, "May show grain")), stepper("sharpness")) : null,
+      !f.focus && f.sharpen === "dls" ? h("div", { className: "lrow" }, h("div", { className: "t2" }, h("b", null, "Denoise"), h("span", null, "Keeps DLS off film grain")), stepper("denoise")) : null,
       h("div", { className: "sec sec2" }, "ANTI-ALIASING"), h(Seg, { value: f.aa, options: [["none", "Off"], ["fxaa", "FXAA"], ["smaa", "SMAA"]], onChange: (v) => put({ aa: v }) })),
     h(Card, { title: "EFFECTS · " + (chain.length ? chain.length + " ON" : "NONE") },
       h("div", { className: "egrid" }, effects.map((e) => {
@@ -206,7 +211,7 @@ function Graphics({ s, set, cat }) {
       })),
       chain.length ? h(Focusable, { className: "btn", style: { marginTop: 8 }, onClick: () => put({ effects: [] }) }, "Clear effects") : null,
       h("div", { className: "note" }, "Each effect costs some GPU time, the heavy ones (HDR Look, Clarity, SMAA) the most: with the Governor on, that can mean a little more power or a deeper ratio. " +
-        (hdr ? "This game runs in HDR: colour effects are skipped, sharpening and anti-aliasing still apply." : "HDR games: colour effects are skipped, sharpening and anti-aliasing still apply."))),
+        (hdr ? "This game runs in HDR: colour effects and Kedavra Focus are skipped; legacy sharpening and anti-aliasing still apply." : "HDR games: colour effects and Kedavra Focus are skipped; legacy sharpening and anti-aliasing still apply."))),
     h(Card, { title: "HDR" },
       h(Row, { k: "HDR output", first: true }, h(Tog, { on: s.settings.engine.hdr_output !== false, onChange: (v) => set(() => rpc.setSection("engine", { hdr_output: v })) })),
       h("div", { className: "sub" }, s.settings.engine.hdr_output !== false ? "On: HDR as set in Steam. Off: the screen and games get SDR." : "Off: the screen and games get SDR. A game started in HDR may need a restart.")),
