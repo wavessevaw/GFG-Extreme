@@ -42,6 +42,18 @@ class FilterBudgetTest(unittest.TestCase):
         self.assertEqual(b.level, 1)
         self.assertEqual(b.tick(app=2, active=True, gpu_busy=99.0, starved=True), 0)  # a new game
 
+    def test_focus_is_never_shed_even_under_gpu_starvation(self):
+        from gfg_plugin import filters
+        cfg = filters.normalize({"effects": ["vibrance", "clarity"],
+                                 "sharpen": "cas", "sharpness": 0.35,
+                                 "aa": "smaa", "focus": True})
+        for level in range(3):
+            with self.subTest(level=level):
+                actual = shed(cfg, level)
+                self.assertTrue(actual["focus"])
+                self.assertIn("detail=1", filters.to_post(actual))
+        self.assertEqual(filters.to_post(shed(cfg, 2)), "detail=1")
+
     def test_not_starved_keeps_filters(self):
         c = Clock()
         b = FilterBudget(clock=c)
