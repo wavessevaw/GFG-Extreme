@@ -42,6 +42,18 @@ class FilterBudgetTest(unittest.TestCase):
         self.assertEqual(b.level, 1)
         self.assertEqual(b.tick(app=2, active=True, gpu_busy=99.0, starved=True), 0)  # a new game
 
+    def test_focus_is_never_shed_even_under_gpu_starvation(self):
+        from gfg_plugin import filters
+        cfg = filters.normalize({"effects": ["vibrance", "clarity"],
+                                 "sharpen": "cas", "sharpness": 0.35,
+                                 "aa": "smaa", "focus": True})
+        for level in range(3):
+            with self.subTest(level=level):
+                actual = shed(cfg, level)
+                self.assertTrue(actual["focus"])
+                self.assertIn("detail=1", filters.to_post(actual))
+        self.assertEqual(filters.to_post(shed(cfg, 2)), "detail=1")
+
     def test_not_starved_keeps_filters(self):
         c = Clock()
         b = FilterBudget(clock=c)
@@ -49,6 +61,18 @@ class FilterBudgetTest(unittest.TestCase):
             b.tick(app=1, active=True, gpu_busy=99.0, starved=False)
             c.t += 1
         self.assertEqual(b.level, 0)
+
+    def test_focus_is_preserved_by_all_performance_modes_in_service(self):
+        from gfg_plugin import filters
+        for objective in ("autopilot", "battery", "balanced", "quality"):
+            with self.subTest(objective=objective):
+                rig = make_rig(VGame("g", 26.0), objective=objective)
+                rig.settings.data["profiles"]["default"]["filters"] = filters.normalize({
+                    "effects": ["vibrance", "clarity"],
+                    "sharpen": "cas", "sharpness": 0.35, "focus": True,
+                })
+                play(rig, 300)
+                self.assertIn("detail=1", rig.engine.vars["kfg_post"])
 
     def test_heavy_game_sheds_in_the_service(self):
         rig = make_rig(VGame("g", 26.0), objective="autopilot")

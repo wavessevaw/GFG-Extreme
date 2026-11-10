@@ -28,5 +28,36 @@ class FocusIntegrationTest(unittest.TestCase):
     def test_existing_filter_budget_can_bypass_without_rewriting_preference(self):
         cfg = filters.normalize({'focus': True})
         self.assertEqual(filters.to_post(shed(cfg, 1)), 'detail=1')
-        self.assertEqual(filters.to_post(shed(cfg, 2)), '')
+        self.assertEqual(filters.to_post(shed(cfg, 2)), 'detail=1')
+        self.assertTrue(cfg['focus'])
+
+    def test_focus_with_every_preset_and_other_effects(self):
+        # The presence of Vivid (which selects CAS), DLS, colour grading, AA and
+        # finish effects must never take ownership of the Focus switch.
+        for preset_id, _, _ in filters.PRESETS:
+            with self.subTest(preset=preset_id):
+                cfg = filters.preset(preset_id)
+                cfg['focus'] = True
+                post = filters.to_post(cfg)
+                self.assertEqual(post.split(',').count('detail=1'), 1)
+                self.assertNotIn('cas=', post)
+                self.assertNotIn('dls=', post)
+                for level in (0, 1, 2):
+                    self.assertIn('detail=1', filters.to_post(shed(cfg, level)),
+                                  (preset_id, level))
+        for effect, _, _ in filters.EFFECTS:
+            with self.subTest(effect=effect):
+                cfg = filters.normalize({'effects': [effect], 'sharpen': 'dls',
+                                         'aa': 'smaa', 'focus': True})
+                post = filters.to_post(cfg)
+                self.assertIn(effect, post.split(','))
+                self.assertEqual(post.count('detail=1'), 1)
+                self.assertIn('smaa', post.split(','))
+
+    def test_focus_persists_when_other_filters_are_stripped(self):
+        cfg = filters.normalize({'effects': ['vibrance', 'clarity'],
+                                 'sharpen': 'cas', 'aa': 'smaa', 'focus': True})
+        self.assertEqual(filters.to_post(shed(cfg, 2)), 'detail=1')
+        self.assertIn('detail=1', filters.to_post(shed(cfg, 0)).split(','))
+        self.assertIn('vibrance', filters.to_post(shed(cfg, 0)).split(','))
         self.assertTrue(cfg['focus'])
