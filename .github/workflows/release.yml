@@ -148,6 +148,21 @@ jobs:
           unzip -Z1 out/*.zip | grep -Fx GFG-Extreme/bench/kfg_vktest
           unzip -Z1 out/*.zip | grep -Fx GFG-Extreme/dist/index.js
           if unzip -Z1 out/*.zip | grep -qi 'mako\|lsfg\|lossless'; then echo "::error::MAKO/LSFG files in the zip"; exit 1; fi
+      - name: Align retained 3.4.0 tag with corrected release sources
+        if: github.ref == 'refs/heads/release/3.4.0'
+        run: |
+          # The old 3.4.0 release was deleted, but its tag survived. Make its
+          # source commit match the replacement binary before publishing.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::Release already exists; refusing to retarget a published tag."
+            exit 1
+          fi
+          old=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')
+          if [ "$old" != "$GITHUB_SHA" ]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+              -f sha="$GITHUB_SHA" -F force=true >/dev/null
+          fi
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')" = "$GITHUB_SHA"
       - name: Publish
         run: |
           notes="RELEASE_DESCRIPTION_V${version//./_}.md"
