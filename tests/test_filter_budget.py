@@ -62,6 +62,18 @@ class FilterBudgetTest(unittest.TestCase):
             c.t += 1
         self.assertEqual(b.level, 0)
 
+    def test_focus_is_preserved_by_all_performance_modes_in_service(self):
+        from gfg_plugin import filters
+        for objective in ("autopilot", "battery", "balanced", "quality"):
+            with self.subTest(objective=objective):
+                rig = make_rig(VGame("g", 26.0), objective=objective)
+                rig.settings.data["profiles"]["default"]["filters"] = filters.normalize({
+                    "effects": ["vibrance", "clarity"],
+                    "sharpen": "cas", "sharpness": 0.35, "focus": True,
+                })
+                play(rig, 300)
+                self.assertIn("detail=1", rig.engine.vars["kfg_post"])
+
     def test_heavy_game_sheds_in_the_service(self):
         rig = make_rig(VGame("g", 26.0), objective="autopilot")
         rig.settings.data["profiles"]["default"]["filters"] = dict(FULL)
