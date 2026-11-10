@@ -1,0 +1,19 @@
+name: Apply concise GFG Extreme 3.4.0 notes
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/sync-gfg-340-notes.yml']
+permissions:
+  contents: write
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update release description
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release edit v3.4.0 --notes-file RELEASE_DESCRIPTION_V3_4_0.md
+          gh release view v3.4.0 --json body --jq .body | grep -F 'Game Profiles'
