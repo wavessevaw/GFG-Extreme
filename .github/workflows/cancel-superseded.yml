@@ -1,0 +1,19 @@
+name: Cancel superseded release build
+on:
+  push:
+    branches: [distribution/cancel-superseded-34]
+    paths: [.github/workflows/cancel-superseded.yml]
+permissions:
+  actions: write
+  contents: read
+jobs:
+  cancel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cancel superseded GFG build before publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: wavessevaw/GFG-Extreme
+        run: |
+          test "$(gh api repos/$GH_REPO/actions/runs/42794339036 --jq .head_sha)" = 61103859202e7e31c7095ebd47fc6b288b0cade7
+          gh run cancel 42794339036
