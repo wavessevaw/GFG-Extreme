@@ -100,6 +100,7 @@ def normalize(raw: Any) -> Dict[str, Any]:
                      "boost_mult": eng.get("boost_mult") if eng.get("boost_mult") in (1.25, 1.5, 1.75) else 1.5}
     tel = raw.get("telemetry") if isinstance(raw.get("telemetry"), dict) else {}
     out["telemetry"] = {"level": tel.get("level") if tel.get("level") in TELEMETRY_LEVELS else "standard"}
+    out["benchmarks"] = copy.deepcopy(raw.get("benchmarks", {})) if isinstance(raw.get("benchmarks"), dict) else {}
     out["migrated_from"] = raw.get("migrated_from") if isinstance(raw.get("migrated_from"), (str, type(None))) else None
     return out
 

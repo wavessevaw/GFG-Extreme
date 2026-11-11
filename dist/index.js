@@ -431,6 +431,8 @@ function Graphics({ s, set, cat }) {
   const active = f.focus ? "custom" : (presets.find((p) => same(f, p.filters)) || {}).id || "custom";
   const hud = s.settings.hud;
   const hdr = ((s.live || {}).engine || {}).transfer && s.live.engine.transfer !== "sdr";
+  const engine = (s.live || {}).engine || {};
+  const focusMessage = !f.focus ? "Smart sharpness. Cleaner edges. More detail." : !engine.fresh ? "Waiting for a live Gamescope status." : engine.post_error ? "Focus error: " + engine.post_error : engine.focus_status === "hdr_bypass" || hdr ? "Bypassed for HDR. Focus processes SDR images only." : engine.focus_status === "processing" ? "Processing SDR frames: " + (engine.focus_frames || 0) : engine.focus_status === "steam_ui" ? "Steam UI is not filtered. Game passes: " + (engine.focus_frames || 0) : "Focus requested; processing not confirmed by Gamescope.";
   const chain = f.effects || [];
   const step = (k, dv) => put({ [k]: Math.max(0, Math.min(1, Math.round(((f[k] || 0) + dv) * 20) / 20)) });
   const stepper = (k) => h(
@@ -447,7 +449,7 @@ function Graphics({ s, set, cat }) {
       Card,
       { title: "IMAGE CLARITY" },
       h(Row, { k: "Kedavra Focus", first: true }, h(Tog, { on: !!f.focus, onChange: (v) => put({ focus: v }) })),
-      h("div", { className: "sub" }, f.focus && hdr ? "Bypassed for HDR. Focus processes SDR images only." : "Smart sharpness. Cleaner edges. More detail."),
+      h("div", { className: "sub" }, focusMessage),
       f.focus ? h("div", { className: "note" }, "Focus keeps your CAS/DLS settings saved.") : null
     ),
     h(

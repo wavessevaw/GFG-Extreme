@@ -61,3 +61,9 @@ class FocusIntegrationTest(unittest.TestCase):
         self.assertIn('detail=1', filters.to_post(shed(cfg, 0)).split(','))
         self.assertIn('vibrance', filters.to_post(shed(cfg, 0)).split(','))
         self.assertTrue(cfg['focus'])
+
+    def test_compositor_processing_evidence_reaches_ui(self):
+        from gfg_plugin.service import Service
+        for status in ('processing', 'hdr_bypass', 'steam_ui'):
+            source = {'fresh': True, 'focus_status': status, 'focus_frames': 123}
+            self.assertEqual(Service._engine_view(source), source)

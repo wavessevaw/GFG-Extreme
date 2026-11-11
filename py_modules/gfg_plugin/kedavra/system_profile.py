@@ -21,6 +21,7 @@ What it changes and why:
 from __future__ import annotations
 
 from pathlib import Path
+from shlex import quote
 
 # (path or glob, value, condition). Conditions: "zram" = a zram swap is active.
 SETTINGS = (
@@ -111,9 +112,30 @@ RESTORE_SH = r"""#!/bin/sh
 # KEDAVRA system profile: write the saved values back (Remove, or the profile switched off).
 ORIG={orig}
 [ -f "$ORIG" ] || exit 0
-tac "$ORIG" | while IFS="	" read -r f v; do
-	[ -f "$f" ] && printf '%s\n' "$v" > "$f" 2>/dev/null
-done
+# Restore dependent iosched settings before switching their scheduler back.
+# Stop at the first failure, preserving it and all earlier entries for retry.
+umask 077
+work=$(mktemp -d "${{ORIG}}.restore.XXXXXX") || exit 1
+trap 'rm -rf "$work"' EXIT
+tac "$ORIG" > "$work/reverse" || exit 1
+: > "$work/pending"
+failed=0
+while IFS="	" read -r f v; do
+	if [ "$failed" = 0 ]; then
+		if [ -f "$f" ] && (printf '%s\n' "$v" > "$f") 2>/dev/null; then
+			actual=$(cat "$f" 2>/dev/null) || actual='__read_failed__'
+			case "$actual" in *\[*\]*) actual=$(printf '%s' "$actual" | sed -n 's/.*\[\(.*\)\].*/\1/p');; esac
+			[ "$actual" = "$v" ] && continue
+		fi
+		echo "KEDAVRA: could not restore $f; journal retained for retry" >&2
+		failed=1
+	fi
+	printf '%s\t%s\n' "$f" "$v" >> "$work/pending" || exit 1
+done < "$work/reverse"
+if [ "$failed" != 0 ]; then
+	tac "$work/pending" > "$work/orig" && mv "$work/orig" "$ORIG"
+	exit 1
+fi
 rm -f "$ORIG" {done}
 """
 
@@ -127,4 +149,4 @@ def tune_script(state: Path, orig: Path, done: Path) -> str:
 
 
 def restore_script(orig: Path, done: Path) -> str:
-    return RESTORE_SH.format(orig=orig, done=done)
+    return RESTORE_SH.format(orig=quote(str(orig)), done=quote(str(done)))

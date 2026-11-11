@@ -462,9 +462,9 @@ def render(st: Dict[str, Any], rates: Optional[Dict[str, float]], scale: float =
 
 
 def publish(path: Path, w: int, h: int, pixels: bytes, *, corner: str = "top-left",
-            margin: int = 12, seq: int = 0) -> bool:
+            margin: int = 12, seq: int = 0, input_mode: int = 0) -> bool:
     """Atomic write; readable by the Gamescope user. w = 0 hides the HUD."""
-    header = HEADER.pack(MAGIC, VERSION, w, h, CORNERS.get(corner, 0), margin, seq & 0xFFFFFFFF, 0)
+    header = HEADER.pack(MAGIC, VERSION, w, h, CORNERS.get(corner, 0), margin, seq & 0xFFFFFFFF, input_mode)
     tmp = path.with_name(f".{path.name}.{os.getpid()}")
     try:
         with open(tmp, "wb") as f:
@@ -506,6 +506,15 @@ class Hud:
                 return publish(self.path, 0, 0, b"", seq=self.seq)
             return True
         scale = scale_for(int(status.get("height") or 800))
+        bench = (extra or {}).get("benchmark", {})
+        self.seq += 1
+        phase = bench.get("phase")
+        if phase in ("settle", "measure", "result", "aborted") or bench.get("restore_pending"):
+            w, h, px = render_benchmark(bench, scale)
+            mode = 3 if phase == "result" and not bench.get("validating") and not bench.get("restore_pending") else 2
+            self.last_key = None
+            self.shown = True
+            return publish(self.path,w,h,px,corner=corner,margin=round(12*scale),seq=self.seq,input_mode=mode)
         items = items_for(status, rates) if extra is None else gfg_items(status, rates, extra, detail)
         key = json.dumps([scale, corner, items], sort_keys=True, default=str)
         self.seq += 1
@@ -519,4 +528,36 @@ class Hud:
         w, h, px = render(status, rates, scale, items)
         self.last_key = key
         self.shown = True
-        return publish(self.path, w, h, px, corner=corner, margin=round(12 * scale), seq=self.seq)
+        return publish(self.path, w, h, px, corner=corner, margin=round(12 * scale), seq=self.seq, input_mode=1 if status.get("hud_input_version") == 1 else 0)
+
+
+def render_benchmark(bench, scale):
+    w,h=round(440*scale),round(220*scale)
+    cv=Canvas.plain(w,h)
+    cv.px=bytearray(_panel(w,h,12*scale))
+    result=bench.get("result") or {}
+    measured=result.get("measured") or {}
+    def num(value): return "--" if value is None else f"{value:.1f}"
+    if result:
+        lines=["GFG BENCHMARK COMPLETE", "MODE: "+str(result.get("mode","")).upper(),
+               "TARGET: "+num(result.get("target"))+" NATIVE FPS",
+               "TDP: "+num(result.get("tdp"))+" W   APU: "+num(measured.get("draw_w"))+" W",
+               "NATIVE: "+num(measured.get("fps"))+"   P95: "+num(measured.get("p95_ms"))+" MS",
+               "STABILITY: "+("PASSED" if result.get("passed") else "NOT CONFIRMED")]
+    else:
+        lines=["GFG BENCHMARK", str(bench.get("purpose") or bench.get("phase","")).upper(),
+               "TDP: "+num(bench.get("tdp"))+" W   APU: "+num(bench.get("draw_w"))+" W",
+               "TARGET: "+num(bench.get("target"))+" NATIVE FPS",
+               "NATIVE: "+num(bench.get("native_fps"))+" FPS   LOSS: "+num(bench.get("loss_pct"))+"%",
+               str(bench.get("reason") or bench.get("message") or "Hold a repeatable game scene")]
+    if bench.get("validating"): lines[1]="VERIFYING FRAME GENERATION"
+    if bench.get("restore_pending"): lines[1]="RESTORING POWER SETTINGS"
+    for i,line in enumerate(lines):
+        style=f"lab@{scale}"
+        while cv.text_width(line,style)>w-20*scale: line=line[:-1]
+        cv.text(w/2,(10+i*23)*scale,line,style,WHITE)
+    if result and not bench.get("validating") and not bench.get("restore_pending"):
+        cv.text(w*.25,h*.8,"APPLY" if result.get("passed") else "UNAVAILABLE",f"lab@{scale}",WHITE)
+        cv.text(w*.75,h*.8,"DISCARD",f"lab@{scale}",WHITE)
+    else: cv.text(w/2,h*.8,"TAP TO CANCEL",f"lab@{scale}",WHITE)
+    return w,h,bytes(cv.px)

@@ -1,0 +1,154 @@
+"""Service integration for the HUD-only benchmark; one owner of all power writes."""
+import copy
+import time
+from .benchmark import AdaptiveBenchmark, summarize
+from .policy import Policy
+from . import filters
+from .pilot import ladder
+
+class BenchmarkSession:
+    def __init__(self, service):
+        self.s = service
+        self.b = AdaptiveBenchmark()
+        self.seq = None
+        self.saved = None
+        self.validating = False
+        self.validation = []
+        self.fg_last_seq = None
+        self.restore_pending = False
+        self.message = ''
+
+    def context(self, st, profile, power, refresh, dock):
+        return dict(app=int(st.get('app_id') or 0), refresh=refresh, dock=dock,
+                    ac=power.get('external_power'), mode=profile['objective'],
+                    post=filters.to_post(profile['filters']), hdr=st.get('transfer'))
+
+    def restore(self):
+        if self.saved is None: return
+        result=self.s.governor.actuator.restore_if_owned()
+        self.restore_pending = result.get('success') is False
+        if self.restore_pending:
+            self.message='Power restoration pending; retrying'
+            return
+        self.s.coord.take_over()
+        self.s.coord.want(self.saved)
+        self.s.coord.tick(self.s.ctl.status())
+        self.s.last_policy=self.saved
+        self.saved=None
+        self.s.pilot.reset()
+        self.validating=False
+
+    def abort(self, reason):
+        self.b.abort(reason)
+        self.message=reason
+        self.restore()
+
+    def begin(self, st, profile, ctx, now):
+        if self.saved or self.b.active or self.b.phase=='result': return
+        if not st.get('fresh') or st.get('steam_ui') or not ctx['app'] or ctx['app']==769:
+            self.message='An active game is required'; return
+        if st.get('hud_input_version')!=1 or 'native_frame_ms' not in st:
+            self.message='Install matching Gamescope runtime'; return
+        self.s.boost.stop() if self.s.boost else None
+        self.s.split.stop() if self.s.split else None
+        self.s.gclock.stop() if self.s.gclock else None
+        self.s.governor.stop('benchmark')
+        if not self.s._idle_ready():
+            self.message='Power restoration must finish first'; return
+        actuator=self.s.governor.actuator
+        claimed=actuator.claim_at_ceiling_w() if hasattr(actuator,"claim_at_ceiling_w") else actuator.claim()
+        if not claimed.get('owned'):
+            self.message='Cannot acquire power control'; return
+        ceiling=claimed.get('ceiling_tdp_w') or claimed.get('initial_tdp_w')
+        floor=max(3,float(claimed.get('minimum_tdp_w') or 3))
+        self.saved=self.s.last_policy or Policy()
+        try:
+            self.b.start(context=ctx,mode=profile['objective'],ceiling=float(ceiling),floor=floor,ladder=ladder(ctx['refresh']),now=now)
+            result=actuator.set_tdp_w(self.b.watts)
+            if not result.get('success'): raise RuntimeError('TDP write failed')
+        except Exception as e:
+            self.abort(str(e));return
+        self.s.coord.take_over()
+        self.message=''
+
+    def tick(self, st, profile, sensors, power, refresh, dock, now):
+        ctx=self.context(st,profile,power,refresh,dock)
+        seq=st.get('hud_event_seq')
+        if self.seq is None: self.seq=seq
+        elif seq is not None and seq!=self.seq:
+            self.seq=seq
+            event=st.get('hud_event')
+            if event==1: self.begin(st,profile,ctx,now)
+            elif event==2:
+                if self.saved: self.abort('Cancelled from HUD')
+                else: self.b.phase='idle'
+            elif event in (3,4) and self.b.phase=='result' and not self.saved:
+                if event==3 and self.b.result and self.b.result.get('passed') and self.b.result['context']==ctx:
+                    record=copy.deepcopy(self.b.result)
+                    record['created']=time.time()
+                    key=f"{ctx['app']}:{ctx['mode']}:{refresh}:{int(dock)}:{ctx['ac']}"
+                    self.s.settings.data.setdefault('benchmarks',{})[key]=record
+                    self.s.settings.make_game_profile(ctx['app'])
+                    self.s.settings.save()
+                    self.s.governor.stop('benchmark-apply')
+                    self.s.pilot.reset()
+                    self.message='Measured result saved for this game and mode'
+                else: self.message='Result discarded'
+                self.b.phase='idle'
+        if self.restore_pending:
+            self.restore()
+            return True
+        if self.saved is None: return False
+        if ctx!=self.b.context or not st.get('fresh') or st.get('steam_ui'):
+            self.abort('Game, menu, display or source changed');return True
+        act=self.s.governor.actuator
+        owned=act.verify_ownership()
+        if not owned.get('owned'):
+            self.abort('External power change');return True
+        if (sensors.get('temp_c') or 100)>=85:
+            self.abort('Thermal protection');return True
+        want = self.saved if self.validating else Policy(0,0,ctx['post'],self.s.hud_path,0,self.saved.hdr)
+        self.s.coord.want(want)
+        self.s.coord.tick(st)
+        if not self.s.coord.engine_runs(want,st):
+            if now>self.b.deadline: self.abort('Compositor did not confirm benchmark policy')
+            return True
+        if self.validating:
+            if now > self.b.deadline:
+                self.b.result['passed']=False
+                self.b.result['reason']='Frame generation verification timed out'
+                self.restore(); return True
+            if st.get('time_ns') != self.fg_last_seq:
+                self.fg_last_seq=st.get('time_ns')
+                frames=st.get('native_frame_ms',[])
+                if frames:
+                    self.validation.append(dict(frame_ms=frames,draw_w=owned.get('draw_w') or 0,
+                                                gpu=sensors.get('gpu_busy_pct') or 0,cpu=sensors.get('cpu_top_core_pct') or 0,temp=sensors.get('temp_c')))
+            if len(self.validation)>=10:
+                measured=summarize(self.validation)
+                target=min(self.b.target, self.saved.base_fps or (refresh/max(1,self.saved.multiplier) if self.saved.multiplier>1 else self.b.target))
+                passed=measured['low_fps']>=target*.9
+                if 'detail=' in ctx['post'] and ctx.get('hdr')=='sdr':
+                    passed=passed and st.get('focus_status')=='processing'
+                self.b.result['fg_verified']=passed
+                self.b.result['fg_measurement']=measured
+                self.b.result['passed']=bool(self.b.result['passed'] and passed)
+                self.restore()
+            return True
+        sample=dict(seq=st.get('time_ns'),frame_ms=st.get('native_frame_ms',[]),
+                    draw_w=owned.get('draw_w'),tdp=owned.get('observed_tdp_w'),
+                    gpu=sensors.get('gpu_busy_pct'),cpu=sensors.get('cpu_top_core_pct'),
+                    temp=sensors.get('temp_c'),fresh=st.get('fresh'),menu=st.get('steam_ui'))
+        watts=self.b.feed(sample,context=ctx,now=now)
+        if watts is not None:
+            if not act.set_tdp_w(watts).get('success'): self.abort('TDP readback failed')
+        if self.b.phase=='aborted': self.restore()
+        elif self.b.phase=='result':
+            self.validating=True
+            self.validation=[]
+            self.b.deadline=now+30
+        return True
+
+    def status(self):
+        act=self.s.governor.actuator.status() if self.saved else {}
+        return dict(self.b.status(),message=self.message,validating=self.validating,restore_pending=self.restore_pending,draw_w=act.get('draw_w'))

@@ -8,7 +8,7 @@ name: Release
 on:
   push:
     tags: ['v3.*']
-    branches: ['release/3.4.0']
+    branches: ['fix/3.4.1-stability']
   workflow_dispatch:
     inputs:
       tag:
@@ -21,7 +21,7 @@ permissions:
 env:
   # GSF Kedavra (KEDAVRA engine and Gamescope patch) at the commit this release was tested with.
   KEDAVRA_REPO: wavessevaw/GSF_Kedavra
-  KEDAVRA_SHA: 63a9bf72d5ebde92cb51f41caf6ad77833c15a70
+  KEDAVRA_SHA: 844284e20e2b586f2497a6795f318a8b40726990
 
 jobs:
   test:
@@ -123,7 +123,7 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: ${{ github.ref == 'refs/heads/release/3.4.0' && 'v3.4.0' || (github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name) }}
+      TAG: ${{ github.ref == 'refs/heads/fix/3.4.1-stability' && 'v3.4.1' || (github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -148,32 +148,7 @@ jobs:
           unzip -Z1 out/*.zip | grep -Fx GFG-Extreme/bench/kfg_vktest
           unzip -Z1 out/*.zip | grep -Fx GFG-Extreme/dist/index.js
           if unzip -Z1 out/*.zip | grep -qi 'mako\|lsfg\|lossless'; then echo "::error::MAKO/LSFG files in the zip"; exit 1; fi
-      - name: Align retained 3.4.0 tag with corrected release sources
-        if: github.ref == 'refs/heads/release/3.4.0'
-        run: |
-          # The old 3.4.0 release was deleted, but its tag survived. Make its
-          # source commit match the replacement binary before publishing.
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "::error::Release already exists; refusing to retarget a published tag."
-            exit 1
-          fi
-          old=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')
-          if [ "$old" != "$GITHUB_SHA" ]; then
-            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
-              -f sha="$GITHUB_SHA" -F force=true >/dev/null
-          fi
-          test "$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')" = "$GITHUB_SHA"
-      - name: Publish
-        run: |
-          notes="RELEASE_DESCRIPTION_V${version//./_}.md"
-          cp "$notes" "out/README-$version.md"
-          pre=$(python3 -c 'import json; print("--prerelease" if json.load(open("package.json")).get("gfgPrerelease") else "")')
-          title="GFG Extreme $version"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release already exists; refusing to overwrite assets."
-            exit 1
-          else
-            # A tag push or a release made on github.com: the tag exists. A manual run: the tag
-            # is created at the commit that was built.
-            gh release create "$TAG" out/*.zip out/SHA256SUMS.txt "out/README-$version.md" --title "$title" --notes-file "$notes" $pre --target "$GITHUB_SHA" --latest
-          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GFG-3.4.1-install
+          path: out
