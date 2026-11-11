@@ -330,7 +330,8 @@ class Plugin:
         async with self.lock:
             if self.stopping:
                 return {"ok": False, "error": "Plugin is stopping"}
-            result = await self._worker(self.coexist.take_over)
+            active = await self._worker(self.controller_lease.active)
+            result = {"ok": active, "steps": ["Exclusive engine control acquired" if active else "Another GFG controller is active"]}
             self._host_cache = {}
             self.service.coord.take_over()
             self.log.record("coexist", "take-over", steps=result.get("steps"))

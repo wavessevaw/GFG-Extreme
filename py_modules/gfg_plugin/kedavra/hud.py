@@ -532,6 +532,7 @@ class Hud:
 
 
 def render_benchmark(bench, scale):
+    scale=1.32  # Readable touch panel; stays below the compositor 1 MiB HUD limit.
     w,h=round(440*scale),round(220*scale)
     cv=Canvas.plain(w,h)
     cv.px=bytearray(_panel(w,h,12*scale))

@@ -273,7 +273,9 @@ class PowerGovernor:
         if (self.objective == "quality" and not self.benchmark_seed) or not self.ceiling:
             return
         learned = self.model.get(f"{self.key}|cap{cap}") if self.model else None
-        if learned and learned.get("tdp_w"):
+        if self.benchmark_seed and self.start_hint is not None and (self.key, self.objective) not in self.started:
+            target, why = min(self.start_hint, self.ceiling), "benchmark-start"
+        elif learned and learned.get("tdp_w"):
             target, why = float(learned["tdp_w"]) + 1.0, "warm-start"
         elif (self.key, self.objective) not in self.started:
             # A fresh game starts low; later unknown points keep the level the session reached.
@@ -403,6 +405,8 @@ class PowerGovernor:
             self.key = key
             # The reset clears the session's dock flag: the ceiling taken at the start needs it.
             self.dock = bool(sample.get("dock"))
+            self.benchmark_seed = bool(sample.get("benchmark_seed"))
+            self.start_hint = float(hint) if isinstance(hint,(int,float)) and hint>0 else None
             if self.enabled:
                 self._start(key, objective)
             self.window_start = now

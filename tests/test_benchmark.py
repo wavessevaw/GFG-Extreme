@@ -69,3 +69,15 @@ class AdaptiveBenchmarkTest(unittest.TestCase):
         for t in range(1,64):
             b.feed(dict(seq=t,fresh=True,temp=60,tdp=12,frame_ms=[],draw_w=None),context=CTX,now=t)
         self.assertEqual(b.phase,'aborted')
+
+    def test_quality_seed_survives_new_governor_session(self):
+        from test_core import FakeActuator
+        from helpers import Clock
+        from gfg_plugin.governor import PowerGovernor
+        from test_controller_review import sample
+        act=FakeActuator(); clock=Clock(); gov=PowerGovernor(act,None,clock=clock)
+        gov.tick(sample(objective='quality',benchmark_seed=True,start_w=9,cap=45,real=45))
+        self.assertTrue(gov.benchmark_seed)
+        self.assertEqual(gov.start_hint,9)
+        self.assertEqual(act.tdp,9)
+        gov.stop()
