@@ -48,7 +48,7 @@ Frame generation, frame presentation and power optimisation are now treated as c
 
 Kedavra runs GPU motion estimation and reconstructs in-between frames directly inside Gamescope. GFG analyses the game's performance, the compute cost of generation and the Steam Deck's available power budget.
 
-No Lossless Scaling, no MAKO, no third-party frame generation layers: the whole frame pipeline runs inside GFG's own Gamescope.
+No Lossless Scaling or third-party frame generation layers are needed: the whole frame pipeline runs inside GFG's own Gamescope.
 
 **90 FPS EVERYWHERE — IN STEAMOS GAMING MODE.** GFG Extreme generates frames at the Gamescope compositor level, across native games, popular emulators (shadPS4, RPCS3, PCSX2, Dolphin, Cemu, PPSSPP, DuckStation and others), and streamed content—including Xbox Remote Play (Greenlight), PlayStation Remote Play (Chiaki) and Moonlight running in Gaming Mode. On Steam Deck OLED, a stable 30 FPS source can reach 90 FPS display output with Kedavra ×3.
 
@@ -74,7 +74,7 @@ A closed TDP control loop with feedback that verifies every decision it makes.
 3. Open GFG Extreme. On first installation choose **Install engine**, then **Reboot now**. When updating from an older version, use **Setup → Reinstall Gamescope KEDAVRA** and reboot. The tabs unlock once the matching Kedavra Gamescope runs.
 4. Start a game and choose a mode on **Dash**. Nothing else to set up: no launch options, no Desktop Mode scripts.
 
-Coming from 2.x: settings move over with a backup, and MAKO is removed and the system restored automatically.
+Coming from 2.x: settings move over with a backup.
 
 > Not every game and SteamOS build has been checked on a Deck yet; reports are welcome in [Issues](https://github.com/wavessevaw/GFG-Extreme/issues/new/choose) or the [Telegram channel](https://t.me/gfg_extreme). If Gaming Mode does not come back with the Kedavra Gamescope, the stock compositor is restored on the next boot.
 
