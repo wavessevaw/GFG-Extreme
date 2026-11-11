@@ -1,0 +1,68 @@
+name: Publish authorized GFG 3.4.1
+on:
+  push:
+    branches: [distribution/gfg-3.4.1]
+    paths: [.github/workflows/publish-341.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: wavessevaw/GFG-Extreme
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require exact successful source builds
+        run: |
+          gh run watch 42988026861 --exit-status --interval 30
+          gh run watch 42988026676 --exit-status --interval 30
+          test "$(gh api repos/$GH_REPO/actions/runs/42988026861 --jq .head_sha)" = 3995d454c04e47945a85b29df103a90b5dca65f4
+          test "$(gh api repos/wavessevaw/GSF_Kedavra/actions/runs/42986462137 --jq .conclusion)" = success
+          test "$(gh api repos/wavessevaw/GSF_Kedavra/actions/runs/42986462137 --jq .head_sha)" = c3b60e75a0344e455434c199533f4652b23b7914
+          gh run download 42988026861 --name GFG-3.4.1-install --dir out
+          gh run download 42986462137 --repo wavessevaw/GSF_Kedavra --name GSF-Kedavra-Detail-Candidate --dir companion
+      - name: Verify full archives and package provenance
+        run: |
+          (cd out && sha256sum -c SHA256SUMS.txt)
+          (cd companion && sha256sum -c GSF-Kedavra-1.6.1.zip.sha256)
+          python3 - <<'PY'
+          import json, zipfile
+          with zipfile.ZipFile("out/GFG-Extreme-v3_4_1.zip") as z:
+              assert z.testzip() is None
+              root="GFG-Extreme/"
+              assert json.loads(z.read(root+"package.json"))["version"]=="3.4.1"
+              assert z.read(root+"runtime/VERSION").decode().strip()=="kedavra-c3b60e7-gfg-3995d45"
+              for f in ("benchmark.py","benchmark_session.py","kedavra/controller.py"):
+                  assert root+"py_modules/gfg_plugin/"+f in z.namelist()
+              assert z.getinfo(root+"runtime/bin/gamescope").file_size>1000000
+              assert "focus_status" in z.read(root+"py_modules/gfg_plugin/service.py").decode()
+          with zipfile.ZipFile("companion/GSF-Kedavra-1.6.1.zip") as z:
+              assert z.testzip() is None
+              assert json.loads(z.read("KEDAVRA/package.json"))["version"]=="1.6.1"
+              assert z.read("KEDAVRA/runtime/VERSION").decode().strip()=="kedavra-c3b60e7"
+              assert "KEDAVRA/py_modules/kedavra_controller.py" in z.namelist()
+          PY
+          cp companion/GSF-Kedavra-1.6.1.zip out/
+          cat companion/GSF-Kedavra-1.6.1.zip.sha256 >> out/SHA256SUMS.txt
+          cp RELEASE_DESCRIPTION_V3_4_1.md out/README-3.4.1.md
+          cat >> out/README-3.4.1.md <<'EOF'
+
+          When using both plugins: install both plugin ZIP updates first, then run
+          Reinstall from GFG Setup and reboot once. Keep the GFG-provided runtime
+          installed; do not replace it again from standalone Setup afterward.
+          The companion is optional when standalone Kedavra is not installed.
+
+          Source builds:
+          - GFG: https://github.com/wavessevaw/GFG-Extreme/actions/runs/42988026861
+          - Kedavra: https://github.com/wavessevaw/GSF_Kedavra/actions/runs/42986462137
+          EOF
+      - name: Publish official release without replacing existing tags or assets
+        run: |
+          if gh release view v3.4.1 >/dev/null 2>&1; then
+            echo "Release exists; refusing to overwrite."; exit 1
+          fi
+          gh release create v3.4.1 out/GFG-Extreme-v3_4_1.zip out/GSF-Kedavra-1.6.1.zip out/SHA256SUMS.txt out/README-3.4.1.md \
+            --target 3995d454c04e47945a85b29df103a90b5dca65f4 --title "GFG Extreme 3.4.1" \
+            --notes-file out/README-3.4.1.md --latest
