@@ -1,0 +1,46 @@
+name: Correct GFG 3.4.1 release asset placement
+on:
+  push:
+    branches: [distribution/gfg-3.4.1]
+    paths: [.github/workflows/cleanup-341.yml]
+permissions:
+  contents: write
+jobs:
+  correct:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: wavessevaw/GFG-Extreme
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare both published standalone ZIP copies and verify checksums
+        run: |
+          mkdir gfg gsf corrected
+          gh release download v3.4.1 --repo wavessevaw/GFG-Extreme --dir gfg
+          gh release download v1.6.1 --repo wavessevaw/GSF_Kedavra --dir gsf
+          test "$(gh api repos/wavessevaw/GSF_Kedavra/releases/tags/v1.6.1 --jq .target_commitish)" = c3b60e75a0344e455434c199533f4652b23b7914
+          (cd gfg && sha256sum -c SHA256SUMS.txt)
+          (cd gsf && sha256sum -c GSF-Kedavra-1.6.1.zip.sha256)
+          cmp gfg/GSF-Kedavra-1.6.1.zip gsf/GSF-Kedavra-1.6.1.zip
+          python3 - <<'PY'
+          from pathlib import Path
+          lines=Path('gfg/SHA256SUMS.txt').read_text().splitlines()
+          assert len(lines)==2, lines
+          own=[l for l in lines if l.endswith('  GFG-Extreme-v3_4_1.zip') or l.endswith(' *GFG-Extreme-v3_4_1.zip')]
+          extra=[l for l in lines if 'GSF-Kedavra-1.6.1.zip' in l]
+          assert len(own)==1 and len(extra)==1, lines
+          Path('corrected/SHA256SUMS.txt').write_text(own[0]+'\n')
+          body=Path('gfg/README-3.4.1.md').read_text()
+          where='## Install and rollback\n'
+          assert body.count(where)==1
+          body=body.replace(where,where+'\nStandalone GSF Kedavra 1.6.1 is released separately at https://github.com/wavessevaw/GSF_Kedavra/releases/tag/v1.6.1. GFG supplies its own compatible Gamescope runtime inside its GFG ZIP.\n')
+          Path('corrected/README-3.4.1.md').write_text(body)
+          PY
+      - name: Update GFG release notes and checksums, then remove misplaced companion asset
+        run: |
+          gh release upload v3.4.1 corrected/SHA256SUMS.txt corrected/README-3.4.1.md --clobber
+          gh release edit v3.4.1 --notes-file corrected/README-3.4.1.md
+          asset_id=$(gh api repos/wavessevaw/GFG-Extreme/releases/tags/v3.4.1 --jq '.assets[] | select(.name=="GSF-Kedavra-1.6.1.zip") | .id')
+          test "$asset_id" = 734774249
+          gh api --method DELETE repos/wavessevaw/GFG-Extreme/releases/assets/$asset_id
+          echo 'GSF package is now published only in GSF_Kedavra; GFG release contains the GFG ZIP and corrected manifest.'
