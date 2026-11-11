@@ -546,7 +546,7 @@ def render_benchmark(bench, scale):
                "NATIVE: "+num(measured.get("fps"))+"   P95: "+num(measured.get("p95_ms"))+" MS",
                "STABILITY: "+("PASSED" if result.get("passed") else "NOT CONFIRMED")]
     else:
-        lines=["GFG BENCHMARK", str(bench.get("purpose") or bench.get("phase","")).upper(),
+        lines=["GFG BENCHMARK", str(bench.get("purpose") or bench.get("phase","")).upper()+" | POINTS "+str(bench.get("tested",0))+" | WINDOW "+str(bench.get("windows",0))+"/2",
                "TDP: "+num(bench.get("tdp"))+" W   APU: "+num(bench.get("draw_w"))+" W",
                "TARGET: "+num(bench.get("target"))+" NATIVE FPS",
                "NATIVE: "+num(bench.get("native_fps"))+" FPS   LOSS: "+num(bench.get("loss_pct"))+"%",

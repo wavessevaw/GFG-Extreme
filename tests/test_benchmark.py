@@ -81,3 +81,12 @@ class AdaptiveBenchmarkTest(unittest.TestCase):
         self.assertEqual(gov.start_hint,9)
         self.assertEqual(act.tdp,9)
         gov.stop()
+
+    def test_fractional_presentation_does_not_inflate_native_fps(self):
+        from gfg_plugin.benchmark import summarize
+        frames=[1000/45,1000/45,1000/45,1000/30]*10
+        samples=[dict(frame_ms=frames,draw_w=9,gpu=90,cpu=40,temp=60) for _ in range(6)]
+        result=summarize(samples)
+        self.assertAlmostEqual(result['fps'],40)
+        self.assertAlmostEqual(result['low_fps'],40)
+        self.assertAlmostEqual(result['p95_ms'],1000/30)

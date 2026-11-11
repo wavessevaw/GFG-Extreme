@@ -19,11 +19,15 @@ def summarize(samples):
     frames = [v for s in samples for v in s['frame_ms']]
     if len(frames) < 90 or len(samples) < 6:
         raise ValueError('Insufficient fresh frame samples')
-    fps = 1000 / statistics.median(frames)
-    low = 1000 / percentile(frames, .95)
+    rates = [1000 * len(s['frame_ms']) / sum(s['frame_ms']) for s in samples]
+    # Presentation intervals are quantized to refresh (e.g. 40 FPS at 90 Hz).
+    # Inverting their median would falsely report 45 FPS and a 30 FPS low.
+    fps = statistics.median(rates)
+    low = percentile(rates, .10)
     return dict(fps=fps, low_fps=low, p95_ms=percentile(frames, .95),
                 p99_ms=percentile(frames, .99), frames=len(frames),
                 draw_w=statistics.mean(s['draw_w'] for s in samples),
+                draw_error=1.96*statistics.stdev(s['draw_w'] for s in samples)/math.sqrt(len(samples)),
                 gpu=statistics.mean(s['gpu'] for s in samples),
                 cpu=statistics.mean(s['cpu'] for s in samples),
                 temp=max(s['temp'] for s in samples))
@@ -168,7 +172,7 @@ class AdaptiveBenchmark:
             return None
         if self._holds(p):
             # Avoid choosing nominal lower caps without measured power savings.
-            if p['draw_w'] < self.candidate['draw_w'] * .98 or self.mode == 'quality' and p['fps'] >= self.candidate['fps'] * .99:
+            if p['draw_w'] + p['draw_error'] < self.candidate['draw_w'] * .98 - self.candidate['draw_error']:
                 self.candidate = p
             return self._lower(now)
         if self.mode == 'autopilot':
@@ -200,6 +204,6 @@ class AdaptiveBenchmark:
                     tdp=getattr(self, 'watts', None), target=getattr(self, 'target', None),
                     purpose=getattr(self, 'purpose', ''), tested=len(self.points),
                     windows=len(getattr(self, 'windows', [])),
-                    native_fps=(1000/statistics.median(self.latest['frame_ms'])) if hasattr(self,'latest') else None,
+                    native_fps=(1000*len(self.latest['frame_ms'])/sum(self.latest['frame_ms'])) if hasattr(self,'latest') else None,
                     draw_w=getattr(self,'latest',{}).get('draw_w'),
-                    loss_pct=(100*(1-1000/statistics.median(self.latest['frame_ms'])/self.baseline['fps'])) if hasattr(self,'latest') and self.baseline else None)
+                    loss_pct=(100*(1-1000*len(self.latest['frame_ms'])/sum(self.latest['frame_ms'])/self.baseline['fps'])) if hasattr(self,'latest') and self.baseline else None)
