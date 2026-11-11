@@ -168,6 +168,7 @@ class PowerGovernor:
         self.cool_since: Optional[float] = None
         self.warm = False                             # from 80 C: no climbing to a higher point
         self.dock = False                             # an external display: warm hold in every mode
+        self.benchmark_seed = False
         self.start_hint: Optional[float] = None       # the game list's start TDP (light 7 W, heavy 15 W)
         self.warm_cool_since: Optional[float] = None
         # cap -> (TDP that failed, until, repeats): no probe at or below that TDP until then
@@ -260,7 +261,7 @@ class PowerGovernor:
 
     def _ceiling_for(self, objective: str) -> float:
         player = self.player_ceiling or 15.0
-        if self.dock:
+        if self.dock or self.benchmark_seed:
             # Dock (user, 3.1.0): a high TDP is fine on the TV, the temperature guards it. SteamOS
             # gives 20 W on the dock's power (Deck report 3.1.2): the Governor used to pull it back
             # to 15 W and the pilot then dropped to x2.4 "at full power".
@@ -269,10 +270,12 @@ class PowerGovernor:
 
     def _first_level(self, cap: int) -> None:
         """The first TDP at a point: what held last time plus a watt, else the objective's start."""
-        if self.objective == "quality" or not self.ceiling:
+        if (self.objective == "quality" and not self.benchmark_seed) or not self.ceiling:
             return
         learned = self.model.get(f"{self.key}|cap{cap}") if self.model else None
-        if learned and learned.get("tdp_w"):
+        if self.benchmark_seed and self.start_hint is not None and (self.key, self.objective) not in self.started:
+            target, why = min(self.start_hint, self.ceiling), "benchmark-start"
+        elif learned and learned.get("tdp_w"):
             target, why = float(learned["tdp_w"]) + 1.0, "warm-start"
         elif (self.key, self.objective) not in self.started:
             # A fresh game starts low; later unknown points keep the level the session reached.
@@ -390,6 +393,7 @@ class PowerGovernor:
         key = str(sample.get("key") or "")
         objective = sample.get("objective") if sample.get("objective") in OBJECTIVES else "balanced"
         self.dock = bool(sample.get("dock"))
+        self.benchmark_seed = bool(sample.get("benchmark_seed"))
         hint = sample.get("start_w")
         self.start_hint = float(hint) if isinstance(hint, (int, float)) and hint > 0 else None
         if key != self.key:
@@ -401,6 +405,8 @@ class PowerGovernor:
             self.key = key
             # The reset clears the session's dock flag: the ceiling taken at the start needs it.
             self.dock = bool(sample.get("dock"))
+            self.benchmark_seed = bool(sample.get("benchmark_seed"))
+            self.start_hint = float(hint) if isinstance(hint,(int,float)) and hint>0 else None
             if self.enabled:
                 self._start(key, objective)
             self.window_start = now

@@ -9,10 +9,12 @@ battery), so the sandbox runs this same code against a virtual Deck.
 from __future__ import annotations
 
 import time
+import threading
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from . import filters
 from .autopilot import Autopilot
+from .benchmark_session import BenchmarkSession
 from .governor import PowerGovernor
 from .filter_budget import FilterBudget, shed
 from .game_book import GameBook, START_W as CLASS_START_W
@@ -46,6 +48,9 @@ class Service:
                  split: Optional[SplitControl] = None, gclock: Optional[GpuClockControl] = None,
                  book: Optional[GameBook] = None, display: Optional[Callable[[], bool]] = None,
                  boost: Optional[Boost] = None) -> None:
+        self._lifecycle_lock = threading.RLock()
+        self._stopped = False
+        self._stop_complete = False
         self.settings = settings
         self.ctl = ctl
         self.clock = clock
@@ -86,6 +91,7 @@ class Service:
         self.last_req: Optional[Dict[str, Any]] = None
         self.idle = False          # reset after the last game and idling: the light tick runs
         self.idle_rev: Any = None  # settings revision the idle snapshot was made with
+        self.benchmark = BenchmarkSession(self)
         self.idle_sensors_at = -1e9
 
     def _stable_point(self, refresh: int) -> Optional[int]:
@@ -134,6 +140,28 @@ class Service:
 
     # ------------------------------------------------------------------ tick
     def tick(self) -> Dict[str, Any]:
+        with self._lifecycle_lock:
+            if self._stopped:
+                return self.snapshot
+            return self._tick()
+
+    def _tick(self) -> Dict[str, Any]:
+        guard = getattr(self.ctl, "control_guard", None)
+        error = guard() if guard else ""
+        if error:
+            actions = [lambda: self.benchmark.abort(error), lambda: self.governor.stop("controller-conflict")]
+            if self.split: actions.append(self.split.stop)
+            if self.gclock: actions.append(self.gclock.stop)
+            if self.hud: actions.append(lambda: self.hud.tick(False,None))
+            for action in actions:
+                try: action()
+                except Exception: pass  # Undo journals remain available for retry.
+            self.snapshot={**self.snapshot, "controller":error, "policy":{"state":"conflict","message":error},
+                           "engine":self._engine_view(self.ctl.status())}
+            return self.snapshot
+        lease = getattr(self.ctl, "controller_lease", None)
+        if lease is not None and not lease.active():
+            return {**self.snapshot, "controller": "Another GFG instance owns Gamescope"}
         now = self.clock()
         self.ticks += 1
         st = self.ctl.status() or {}
@@ -180,7 +208,25 @@ class Service:
             except OSError:
                 pass
         dock = self.dock
+        try:
+            benchmarking = self.benchmark.tick(st, profile, sensors, power, refresh, dock, now)
+        except Exception:
+            self.benchmark.abort("Benchmark operation failed; restoring settings")
+            raise
+        if benchmarking:
+            if self.hud is not None:
+                self.hud.tick(True, st, {"benchmark": self.benchmark.status()},
+                              data["hud"]["position"], data["hud"]["detail"])
+            self.snapshot = {**self.snapshot, "engine": self._engine_view(st), "benchmark": self.benchmark.status(), "live": live}
+            return self.snapshot
         gp = self.book.profile(self.app, refresh, dock) if game else {"class": None, "source": None}
+        bench_key=f"{self.app}:{objective}:{refresh}:{int(dock)}:{power.get('external_power')}"
+        seed=self.settings.data.get("benchmarks",{}).get(bench_key,{})
+        if seed.get("passed") and seed.get("fg_verified") and time.time()-seed.get("created",0)<86400:
+            if seed.get("context",{}).get("post")==filters.to_post(profile['filters']):
+                gp={**gp,"point":round(seed['target'])}
+            else: seed={}
+        else: seed={}
         if game:
             self.cur = (self.app, refresh, dock)
 
@@ -195,7 +241,7 @@ class Service:
             "real": live.get("real"), "pace": live.get("pace"), "confirmed": confirmed,
             "gpu_busy": sensors.get("gpu_busy_pct"), "cpu_top": sensors.get("cpu_top_core_pct"),
             "autopilot": objective == "autopilot", "stable_point": self._stable_point(refresh) if game else None,
-            "known_point": gp.get("point"), "game_class": gp.get("class"), "dock": dock,
+            "known_point": gp.get("point"), "benchmark_point": round(seed["target"]) if seed else None, "game_class": gp.get("class"), "dock": dock,
             "low_battery": self.autopilot.low_battery or data["autopilot"]["preference"] == "battery",
             "above_x3": data["engine"].get("above_x3", False),
             # Only a TDP the Governor manages is a power reading for the pilot: paused (the player's own
@@ -239,7 +285,7 @@ class Service:
             gs = gov.status()
             split_status = self.split.tick({
                 "enabled": bool(data["power"]["split"]), "game": game, "app": f"app:{self.app}",
-                "steady": bool(locked and not boosting and gs.get("owned") and gov.settled() and not (self.gclock and self.gclock.owned)),
+                "steady": bool(locked and not boosting and gs.get("owned") and gov.settled() and not (self.gclock and (self.gclock.owned or getattr(getattr(self.gclock, "gpu", None), "phase", "idle") == "restore-pending"))),
                 "menu": bool(st.get("steam_ui")), "point": req["point"], "real": live.get("real"),
                 "sensors": sensors, "draw_w": gs.get("draw_w"), "tdp_w": gs.get("tdp_w")})
         gclock_status: Dict[str, Any] = {}
@@ -262,7 +308,7 @@ class Service:
             "draw_w": gov.status().get("draw_w"),
             "ac": power.get("external_power"),
             "experiment": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
-            "dock": dock, "start_w": CLASS_START_W.get(gp.get("class") or ""),
+            "benchmark_seed": bool(seed), "dock": dock, "start_w": seed.get("tdp") or CLASS_START_W.get(gp.get("class") or ""),
         }
         # The counters are read every fresh tick: after a stale engine status (a hitch, the QAM) the
         # next delta is that one second, not everything the engine counted while it was stale.
@@ -285,7 +331,7 @@ class Service:
             # Not managed (paused, or Governor off): the HUD still shows the TDP the Deck runs at.
             extra = {"tdp_w": g.get("tdp_w") if g.get("owned") else g.get("observed_tdp_w"), "draw_w": g.get("draw_w"),
                      "ceiling_w": g.get("ceiling_w"), "temp_c": temp, "managing": g.get("managing"),
-                     "battery": {**power, "hours_left": hours}}
+                     "battery": {**power, "hours_left": hours}, "benchmark": self.benchmark.status()}
             try:
                 self.hud.tick(bool(hud_cfg["enabled"]) and game, st if fresh else None, extra,
                               hud_cfg["position"], hud_cfg["detail"])
@@ -339,7 +385,7 @@ class Service:
         """Everything handed back to the player: TDP, CPU and GPU clocks."""
         g = self.governor
         return (not g.owned and not g.restore_pending and not (self.split and (self.split.cpu.owned or getattr(self.split.cpu, "restore_pending", False)))
-                and not (self.gclock and self.gclock.owned))
+                and not (self.gclock and (self.gclock.owned or getattr(getattr(self.gclock, "gpu", None), "phase", "idle") == "restore-pending")))
 
     def _idle_tick(self, now: float, st: Dict[str, Any], fresh: bool, live: Dict[str, Any]) -> Dict[str, Any]:
         self._hdr_output(bool(self.settings.data["engine"].get("hdr_output", True)), fresh, now)
@@ -378,7 +424,7 @@ class Service:
     @staticmethod
     def _engine_view(st: Dict[str, Any]) -> Dict[str, Any]:
         keys = ("engine", "fresh", "state", "multiplier", "cap_fps", "base_fps", "auto", "auto_floor",
-                "post", "post_active", "post_error", "gpu_us_avg", "gpu_post_us_avg", "gpu_analysis_us_avg", "analysis_pairs", "last_problem",
+                "focus_status", "focus_frames", "post", "post_active", "post_error", "gpu_us_avg", "gpu_post_us_avg", "gpu_analysis_us_avg", "analysis_pairs", "last_problem",
                 "steam_ui", "width", "height", "message", "trace", "transfer", "hdr_enabled", "post_hdr_limited")
         return {k: st.get(k) for k in keys if k in st}
 
@@ -393,19 +439,34 @@ class Service:
             self.journal("service", "session-summary", app=self.app, **summary)
 
     def stop(self) -> None:
+        with self._lifecycle_lock:
+            if getattr(self, "_stop_complete", False):
+                return
+            self._stopped = True
+            self._stop()
+            self._stop_complete = True
+
+    def _stop(self) -> None:
         """Plugin unload: TDP back to the player's, HDR output back on, HUD hidden, generation left
         as the engine runs it."""
-        self._end_session("unload")
+        actions = [lambda: self.benchmark.abort("Plugin stopped"), lambda: self._end_session("unload")]
         if self.boost is not None:
-            self.boost.stop()
-        self._hdr_output(True, True, self.clock())
-        self.governor.stop("unload")
+            actions.append(self.boost.stop)
+        actions.extend([lambda: self._hdr_output(True, True, self.clock()),
+                        lambda: self.governor.stop("unload")])
         if self.split is not None:
-            self.split.stop()
+            actions.append(self.split.stop)
         if self.gclock is not None:
-            self.gclock.stop()
+            actions.append(self.gclock.stop)
         if self.hud is not None:
+            actions.append(lambda: self.hud.tick(False, None))
+        errors = []
+        for action in actions:
             try:
-                self.hud.tick(False, None)
-            except OSError:
-                pass
+                action()
+            except Exception as error:
+                errors.append(error)
+        if not self._idle_ready():
+            errors.append(RuntimeError("Power restoration remains pending"))
+        if errors:
+            raise RuntimeError("Service restoration failed: " + "; ".join(map(str, errors))) from errors[0]

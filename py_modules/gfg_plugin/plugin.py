@@ -24,6 +24,7 @@ from .governor_battery import read_battery
 from .governor_power import SteamDeckPowerActuator
 from .host_sensors import HostSensors, device_name
 from .kedavra.ctl import Control
+from .kedavra.controller import ControllerLease
 from .kedavra.hud import Hud
 from .kedavra.install import Installer, bench
 from .legacy_cleanup import LegacyCleanup
@@ -54,11 +55,14 @@ class Plugin:
         self.settings = Settings(self.data / "settings.json", self.owner)
         self.migration_report = read_json(self.data / "migration-report.json")
         self.legacy = LegacyCleanup(self.home, owner=self.owner)
-        await asyncio.to_thread(self._first_start)
+        await self._worker(self._first_start)
         self.telemetry.level = self.settings.data["telemetry"]["level"]
         self.ctl = Control(self.home, PLUGIN_DIR, uid=uid, data=self.runtime)
+        self.controller_lease = ControllerLease("gfg")
+        self.ctl.controller_lease = self.controller_lease
         self.inst = Installer(PLUGIN_DIR, self.home, uid=uid)
         self.coexist = Coexistence(self.home, owner=self.owner, version=paths.VERSION)
+        self.ctl.control_guard = self.coexist.control_error
         manager = SteamOSManagerTdp(home=str(self.home))
         actuator = SteamDeckPowerActuator(manager=manager, marker=self.runtime / "tdp-cap.json")
         actuator.journal = lambda kind, **f: self.log.record("power", kind, **f)
@@ -79,7 +83,6 @@ class Plugin:
             boost=Boost(self.ctl, journal=lambda kind, **f: self.log.record("boost", kind, **f)))
         self.lock = asyncio.Lock()
         self._gate_at, self._gate_cache = -1e9, {}
-        self._mounted_seen = False
         self._host_at, self._host_cache = -1e9, {}
         self.state: Dict[str, Any] = {}
         self.stopping = False
@@ -105,12 +108,32 @@ class Plugin:
             write_json_atomic(marker, {"time": time.time(), **result}, self.owner)
             self.log.record("legacy", "cleanup", ok=result["ok"], steps=len(result["steps"]))
 
+    async def _worker(self, fn, *args, **kwargs):
+        """Cancellation must not release our lock while its thread can still write."""
+        worker = asyncio.create_task(asyncio.to_thread(fn, *args, **kwargs))
+        cancelled = False
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                cancelled = True
+            except Exception:
+                break
+        if cancelled:
+            # Retrieve an exception too, so the worker never becomes unobserved.
+            if not worker.cancelled():
+                worker.exception()
+            raise asyncio.CancelledError
+        return worker.result()
+
     async def _loop(self) -> None:
         while not self.stopping:
             started = time.monotonic()
             try:
                 async with self.lock:
-                    self.state = await asyncio.to_thread(self.service.tick)
+                    if self.stopping:
+                        return
+                    self.state = await self._worker(self.service.tick)
             except Exception as error:
                 decky.logger.warning(f"tick: {error}")
             await asyncio.sleep(max(0.2, 1.0 - (time.monotonic() - started)))
@@ -120,27 +143,33 @@ class Plugin:
         # unconfirmed boot is rolled back on the next boot.
         while not self.stopping:
             try:
-                await asyncio.to_thread(self.inst.mark_healthy)
+                await self._worker(self.inst.mark_healthy)
             except Exception as error:
                 decky.logger.warning(f"health: {error}")
             await asyncio.sleep(5)
 
     async def _unload(self) -> None:
         self.stopping = True
-        for t in getattr(self, "tasks", []):
-            t.cancel()
-        await asyncio.to_thread(self.service.stop)
-        await asyncio.to_thread(self.telemetry.flush)
+        if getattr(self, "_shutdown_task", None) is None or (self._shutdown_task.done() and not self._shutdown_task.cancelled() and self._shutdown_task.exception() is not None):
+            self._shutdown_task = asyncio.create_task(self._shutdown())
+        # Keep one shutdown running even if the host cancels an unload caller.
+        await asyncio.shield(self._shutdown_task)
+
+    async def _shutdown(self) -> None:
+        tasks = getattr(self, "tasks", [])
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        async with self.lock:
+            await self._worker(self.service.stop)
+        await self._worker(self.telemetry.flush)
+        if hasattr(self, "controller_lease"):
+            await self._worker(self.controller_lease.release)
         self.log.record("plugin", "unload")
 
     async def _uninstall(self) -> None:
-        # The engine stays installed: it is reversible from Setup, and other tools may use it.
-        # Generation is switched off so stock behaviour returns at once.
-        try:
-            await asyncio.to_thread(self.ctl.set_var, "kfg_multiplier", 0)
-            await asyncio.to_thread(self.ctl.set_var, "kfg_post", "")
-        except Exception:
-            pass
+        # Drain workers and restore power before releasing shared engine ownership.
+        await self._unload()
 
     # ------------------------------------------------------------------ state
     def _gate(self) -> Dict[str, Any]:
@@ -149,10 +178,8 @@ class Plugin:
         if now - self._gate_at < 5.0 and self._gate_cache:
             return self._gate_cache
         self._gate_at = now
-        # A mount holds until the next boot: once seen, findmnt is not started again (3.2.2).
-        self._mounted_seen = self._mounted_seen or self.inst._mounted()
         self._gate_cache = engine_gate.gate(self.inst.installed_version(), self.inst.bundled_version(),
-                                            self._mounted_seen, engine_gate.boot_id(),
+                                            self.inst._mounted(), engine_gate.boot_id(),
                                             engine_gate.read_record(self.data / "engine-install.json"))
         return self._gate_cache
 
@@ -166,9 +193,9 @@ class Plugin:
         return self._host_cache
 
     async def get_state(self) -> Dict[str, Any]:
-        host = await asyncio.to_thread(self._host)
+        host = await self._worker(self._host)
         return {"version": paths.VERSION, "codename": paths.CODENAME, "live": self.state,
-                "gate": await asyncio.to_thread(self._gate),
+                "gate": await self._worker(self._gate),
                 "device": host["device"],
                 "settings": self.settings.data, "profiles": self._profiles(),
                 "migration": self.migration_report, "coexist": host["coexist"],
@@ -189,23 +216,29 @@ class Plugin:
         if "filters" in allowed and isinstance(allowed["filters"], str):
             allowed["filters"] = filters.preset(allowed["filters"])
         async with self.lock:
+            if self.stopping:
+                return {"ok": False, "error": "Plugin is stopping"}
             if scope == "game":
                 app = (self.state or {}).get("app")
                 key = self.settings.make_game_profile(app, (changes or {}).get("name", ""))
             else:
                 key = "default"
-            profile = await asyncio.to_thread(self.settings.update_profile, key, allowed)
+            profile = await self._worker(self.settings.update_profile, key, allowed)
         self.log.record("ui", "set-profile", key=key, **allowed)
         return {"key": key, "profile": profile}
 
     async def drop_game_profile(self) -> Dict[str, Any]:
         async with self.lock:
-            ok = await asyncio.to_thread(self.settings.drop_game_profile, (self.state or {}).get("app"))
+            if self.stopping:
+                return {"ok": False, "error": "Plugin is stopping"}
+            ok = await self._worker(self.settings.drop_game_profile, (self.state or {}).get("app"))
         return {"dropped": ok}
 
     async def set_section(self, section: str, changes: Dict[str, Any]) -> Dict[str, Any]:
         async with self.lock:
-            value = await asyncio.to_thread(self.settings.set_section, section, changes or {})
+            if self.stopping:
+                return {"ok": False, "error": "Plugin is stopping"}
+            value = await self._worker(self.settings.set_section, section, changes or {})
             if section == "telemetry":
                 self.telemetry.level = value["level"]
         self.log.record("ui", "set-section", section=section, **(changes or {}))
@@ -214,14 +247,16 @@ class Plugin:
     # ------------------------------------------------------------------ engine
     async def engine_install(self) -> Dict[str, Any]:
         async with self.lock:
-            result = await asyncio.to_thread(self.inst.install)
-            await asyncio.to_thread(self.coexist.mark_owner)
+            if self.stopping:
+                return {"ok": False, "error": "Plugin is stopping"}
+            result = await self._worker(self.inst.install)
+            await self._worker(self.coexist.mark_owner)
             self._host_cache = {}
             ok = result.get("ok", True) is not False
             record = {"version": self.inst.bundled_version(), "boot_id": engine_gate.boot_id() if ok else "",
                       "error": "" if ok else str(result.get("log") or result.get("error") or "install failed")}
             try:
-                await asyncio.to_thread(write_json_atomic, self.data / "engine-install.json", record, self.owner)
+                await self._worker(write_json_atomic, self.data / "engine-install.json", record, self.owner)
             except OSError:
                 pass
             self._gate_cache = {}
@@ -230,24 +265,32 @@ class Plugin:
 
     async def engine_uninstall(self) -> Dict[str, Any]:
         async with self.lock:
-            result = await asyncio.to_thread(self.inst.uninstall)
+            if self.stopping:
+                return {"ok": False, "error": "Plugin is stopping"}
+            try:
+                result = await self._worker(self.inst.uninstall)
+            finally:
+                self._gate_cache = {}
+                self._host_cache = {}
         self.log.record("engine", "uninstall", needs_reboot=result.get("needs_reboot"))
         return result
 
     async def reboot(self) -> Dict[str, Any]:
         self.log.record("engine", "reboot")
-        return await asyncio.to_thread(self.inst.reboot)
+        return await self._worker(self.inst.reboot)
 
     async def diagnose(self) -> Dict[str, Any]:
-        d = await asyncio.to_thread(self.inst.diagnose)
+        d = await self._worker(self.inst.diagnose)
         d["bundled"] = self.inst.bundled_version()
         d["installed"] = self.inst.installed_version()
-        d["legacy"] = await asyncio.to_thread(self.legacy.pending)
+        d["legacy"] = await self._worker(self.legacy.pending)
         return d
 
     async def run_bench(self) -> Dict[str, Any]:
         async with self.lock:
-            return await asyncio.to_thread(bench, PLUGIN_DIR, self.runtime)
+            if self.stopping:
+                return {"ok": False, "error": "Plugin is stopping"}
+            return await self._worker(bench, PLUGIN_DIR, self.runtime)
 
     async def save_report(self) -> Dict[str, Any]:
         extra = [(f"gfg/{p.name}", p) for p in self.telemetry.files()]
@@ -263,31 +306,42 @@ class Plugin:
             extra.append(("gfg/state.json", snap))
         except OSError:
             pass
-        return await asyncio.to_thread(self.inst.report, self.runtime, None, "GFG-Extreme-report", extra)
+        return await self._worker(self.inst.report, self.runtime, None, "GFG-Extreme-report", extra)
 
     async def start_capture(self, label: str = "run") -> Dict[str, Any]:
         async with self.lock:
-            return await asyncio.to_thread(self.ctl.start_capture, label)
+            if self.stopping:
+                return {"ok": False, "error": "Plugin is stopping"}
+            return await self._worker(self.ctl.start_capture, label)
 
     async def stop_capture(self) -> Dict[str, Any]:
         async with self.lock:
-            return await asyncio.to_thread(self.ctl.stop_capture)
+            if self.stopping:
+                return {"ok": False, "error": "Plugin is stopping"}
+            return await self._worker(self.ctl.stop_capture)
 
     async def list_captures(self):
-        return await asyncio.to_thread(self.ctl.list_captures)
+        return await self._worker(self.ctl.list_captures)
 
     async def get_logs(self) -> str:
-        return await asyncio.to_thread(self.ctl.logs)
+        return await self._worker(self.ctl.logs)
 
     # ------------------------------------------------------------------ coexistence / legacy
     async def take_over(self) -> Dict[str, Any]:
-        result = await asyncio.to_thread(self.coexist.take_over)
-        self._host_cache = {}
-        self.service.coord.take_over()
-        self.log.record("coexist", "take-over", steps=result.get("steps"))
-        return result
+        async with self.lock:
+            if self.stopping:
+                return {"ok": False, "error": "Plugin is stopping"}
+            active = await self._worker(self.controller_lease.active)
+            result = {"ok": active, "steps": ["Exclusive engine control acquired" if active else "Another GFG controller is active"]}
+            self._host_cache = {}
+            self.service.coord.take_over()
+            self.log.record("coexist", "take-over", steps=result.get("steps"))
+            return result
 
     async def legacy_cleanup(self) -> Dict[str, Any]:
-        result = await asyncio.to_thread(self.legacy.run, system_state=False)
-        self.log.record("legacy", "cleanup-manual", ok=result["ok"])
-        return result
+        async with self.lock:
+            if self.stopping:
+                return {"ok": False, "error": "Plugin is stopping"}
+            result = await self._worker(self.legacy.run, system_state=False)
+            self.log.record("legacy", "cleanup-manual", ok=result["ok"])
+            return result

@@ -36,7 +36,7 @@ from typing import Any, Dict, List, Optional, Tuple
 MAGIC = 0x4847464B  # "KFGH"
 VERSION = 1
 HEADER = struct.Struct("<8I")
-CORNERS = {"top-left": 0, "top-right": 1, "bottom-left": 2, "bottom-right": 3}
+CORNERS = {"top-left": 0, "top-right": 1, "bottom-left": 2, "bottom-right": 3, "centre": 4}
 DEFAULT_PATH = Path("/dev/shm/kedavra-hud.raw")
 
 PANEL = (6, 9, 7)
@@ -462,9 +462,9 @@ def render(st: Dict[str, Any], rates: Optional[Dict[str, float]], scale: float =
 
 
 def publish(path: Path, w: int, h: int, pixels: bytes, *, corner: str = "top-left",
-            margin: int = 12, seq: int = 0) -> bool:
+            margin: int = 12, seq: int = 0, input_mode: int = 0) -> bool:
     """Atomic write; readable by the Gamescope user. w = 0 hides the HUD."""
-    header = HEADER.pack(MAGIC, VERSION, w, h, CORNERS.get(corner, 0), margin, seq & 0xFFFFFFFF, 0)
+    header = HEADER.pack(MAGIC, VERSION, w, h, CORNERS.get(corner, 0), margin, seq & 0xFFFFFFFF, input_mode)
     tmp = path.with_name(f".{path.name}.{os.getpid()}")
     try:
         with open(tmp, "wb") as f:
@@ -506,6 +506,15 @@ class Hud:
                 return publish(self.path, 0, 0, b"", seq=self.seq)
             return True
         scale = scale_for(int(status.get("height") or 800))
+        bench = (extra or {}).get("benchmark", {})
+        self.seq += 1
+        phase = bench.get("phase")
+        if phase in ("settle", "measure", "result", "aborted") or bench.get("restore_pending"):
+            w, h, px = render_benchmark(bench, scale)
+            mode = 3 if phase == "result" and not bench.get("validating") and not bench.get("restore_pending") else 2
+            self.last_key = None
+            self.shown = True
+            return publish(self.path,w,h,px,corner="centre",margin=0,seq=self.seq,input_mode=mode)
         items = items_for(status, rates) if extra is None else gfg_items(status, rates, extra, detail)
         key = json.dumps([scale, corner, items], sort_keys=True, default=str)
         self.seq += 1
@@ -519,4 +528,59 @@ class Hud:
         w, h, px = render(status, rates, scale, items)
         self.last_key = key
         self.shown = True
-        return publish(self.path, w, h, px, corner=corner, margin=round(12 * scale), seq=self.seq)
+        return publish(self.path, w, h, px, corner=corner, margin=round(12 * scale), seq=self.seq, input_mode=1 if status.get("hud_input_version") == 1 else 0)
+
+
+def render_benchmark(bench, scale):
+    """Reuse the 3.3.3 centre panel, ring and five live telemetry cells.
+
+    The ring shows measured window progress, never an estimated completion time.
+    Keep the existing result panel; its bottom row now accepts touch in game.
+    """
+    s = 1.32  # Existing panel geometry, enlarged for finger-sized result actions.
+    w, h = math.ceil(380 * s), math.ceil(196 * s)
+    cv = Canvas(w, h, 14 * s)
+    cx = w / 2.0
+    def text(y, value, style="sub", color=LABEL, x=None):
+        value = str(value)
+        font = f"{style}@{s}"
+        while value and cv.text_width(value, font) > w - 24 * s:
+            value = value[:-1]
+        cv.text(cx if x is None else x, y * s, value, font, color)
+    def _fmt(value, digits=0):
+        return "--" if value is None else f"{value:.{digits}f}"
+    result = bench.get("result") or {}
+    measured = result.get("measured") or {}
+    text(12, "GFG BENCHMARK", "lab", ACCENT)
+    if bench.get("phase") == "aborted":
+        text(44, "BENCHMARK CANCELLED", "fps", WHITE)
+        text(96, bench.get("reason") or bench.get("message") or "")
+        text(150, "TAP TO CLOSE", "val", WHITE)
+    elif result and not bench.get("validating") and not bench.get("restore_pending"):
+        text(30, "BENCHMARK DONE", "fps", WHITE)
+        text(64, str(result.get("mode", "")).upper() + " | TARGET " + _fmt(result.get("target")) + " FPS")
+        text(84, _fmt(result.get("tdp"), 1) + " W | " + _fmt(measured.get("fps"), 1) + " NATIVE FPS", "val", ACCENT)
+        text(110, "APU " + _fmt(measured.get("draw_w"), 1) + " W | P99 " + _fmt(measured.get("p99_ms"), 1) + " MS")
+        text(128, "STABILITY: " + ("PASSED" if result.get("passed") else "NOT CONFIRMED"))
+        text(158, "APPLY" if result.get("passed") else "UNAVAILABLE", "val", WHITE, w * .25)
+        text(158, "DISCARD", "val", WHITE, w * .75)
+    else:
+        text(28, "DO NOT TOUCH ANYTHING", "fps", WHITE)
+        stage = "RESTORING" if bench.get("restore_pending") else "VERIFYING FG" if bench.get("validating") else str(bench.get("purpose") or bench.get("phase") or "MEASURING").upper()
+        text(56, stage + " | " + _fmt(bench.get("tdp"), 1) + " W | TARGET " + _fmt(bench.get("target")))
+        progress = min(1., max(0., float(bench.get("window_progress") or 0.)))
+        cy = 104 * s
+        cv.ring(cx, cy, 58 * s, 6 * s, progress, ACCENT)
+        cv.text(cx, cy - _digit_mid(f"fps@{s}"), _fmt(bench.get("native_fps")), f"fps@{s}", WHITE)
+        text(84, "POINT " + str(bench.get("tested", 0)), "lab", LABEL, w * .18)
+        text(106, "LOSS " + _fmt(bench.get("loss_pct"), 1) + "%", "lab", LABEL, w * .18)
+        text(84, "WINDOW " + str(min(2, int(bench.get("windows") or 0) + 1)) + "/2", "lab", LABEL, w * .82)
+        cells = [(_fmt(bench.get("native_fps")), "FPS"), (_fmt(bench.get("gpu")) + "%", "GPU"),
+                 (_fmt(bench.get("cpu")) + "%", "CPU"), (_fmt(bench.get("draw_w"), 1), "W"), (_fmt(bench.get("temp")), "C")]
+        step = (w - 40 * s) / len(cells)
+        for i, (value, label) in enumerate(cells):
+            x = 20 * s + step * (i + .5)
+            text(142, value, "val", WHITE, x)
+            text(164, label, "lab", LABEL, x)
+        text(182, "TAP TO CANCEL", "lab")
+    return w, h, bytes(cv.px)

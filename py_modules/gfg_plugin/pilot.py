@@ -197,6 +197,11 @@ class PointPilot:
         if fg == "x3.75" and not above:
             fg = "x3"
         objective = ctx.get("objective", "balanced")
+        benchmark_point = ctx.get("benchmark_point")
+        if (fg == "auto" and isinstance(benchmark_point, int)
+                and steps[0] <= benchmark_point <= refresh):
+            # A measured Quality point may exceed the ordinary x2 ladder.
+            steps = sorted(set(steps + [benchmark_point]))
         context = (ctx.get("app"), refresh, fg, objective, int(ctx.get("base_fps") or 0), bool(ctx.get("dock")), above)
         if context != self.context:
             keep = (self.context is not None and self.context[:3] == context[:3] and self.point
@@ -346,6 +351,9 @@ class PointPilot:
     def _battery_point(ctx: Dict[str, Any], steps: List[int]) -> int:
         """Battery's point. x3.75 shows the most artefacts: Autopilot keeps x3 (30 at 90 Hz) and
         goes to x3.75 only on a low battery; the Battery mode chosen by hand keeps x3.75."""
+        measured = ctx.get("benchmark_point")
+        if ctx.get("objective") == "battery" and measured in steps:
+            return measured
         full = ladder(int(ctx.get("refresh") or 90))
         point = full[1] if ctx.get("autopilot") and not ctx.get("low_battery") and len(full) > 1 else full[0]
         return max(point, steps[0])
