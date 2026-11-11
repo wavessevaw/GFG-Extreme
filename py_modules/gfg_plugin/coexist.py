@@ -80,8 +80,14 @@ class Coexistence:
         except (OSError, ValueError):
             pass
         owner = self.engine_owner()
-        return {"standalone": found, "standalone_hud": hud_on if found else None,
+        return {"standalone": found, "control_error": self.control_error(), "standalone_hud": hud_on if found else None,
                 "engine_owner": owner, "taken_over": bool(owner and owner.startswith("gfg-extreme"))}
+
+    def control_error(self) -> str:
+        for plugin in find_standalone(self.home):
+            if not (Path(plugin["dir"]) / "py_modules/kedavra_controller.py").is_file():
+                return "Update installed standalone Kedavra to companion 1.6.1. Its older controller cannot share Gamescope safely."
+        return ""
 
     def take_over(self) -> Dict[str, Any]:
         steps = []

@@ -49,6 +49,10 @@ class Control:
         return env
 
     def _ctl(self, *args):
+        guard = getattr(self, "control_guard", None)
+        error = guard() if guard else ""
+        if error:
+            raise RuntimeError(error)
         lease = getattr(self, "controller_lease", None)
         if lease is not None:
             with lease.command():

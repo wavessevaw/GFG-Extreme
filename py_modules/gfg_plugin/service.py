@@ -146,6 +146,19 @@ class Service:
             return self._tick()
 
     def _tick(self) -> Dict[str, Any]:
+        guard = getattr(self.ctl, "control_guard", None)
+        error = guard() if guard else ""
+        if error:
+            actions = [lambda: self.benchmark.abort(error), lambda: self.governor.stop("controller-conflict")]
+            if self.split: actions.append(self.split.stop)
+            if self.gclock: actions.append(self.gclock.stop)
+            if self.hud: actions.append(lambda: self.hud.tick(False,None))
+            for action in actions:
+                try: action()
+                except Exception: pass  # Undo journals remain available for retry.
+            self.snapshot={**self.snapshot, "controller":error, "policy":{"state":"conflict","message":error},
+                           "engine":self._engine_view(self.ctl.status())}
+            return self.snapshot
         lease = getattr(self.ctl, "controller_lease", None)
         if lease is not None and not lease.active():
             return {**self.snapshot, "controller": "Another GFG instance owns Gamescope"}

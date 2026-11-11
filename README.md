@@ -63,7 +63,7 @@ Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integ
 Install the full GFG ZIP, then **Setup → Reinstall** Gamescope and reboot. If you
 keep standalone Kedavra installed, update it to the companion 1.6.1 ZIP as well:
 its controller lease pauses standalone commands/HUD while GFG owns the engine.
-Older standalone 1.6.0 does not support that protocol and must be unloaded.
+Older standalone 1.6.0 does not support that protocol: GFG pauses control until it is updated or removed. If removing the old standalone restores system Gamescope, reinstall the GFG runtime afterward.
 
 To roll back, restore system Gamescope from Setup, reboot, install the previous
 3.4.0 plugin and runtime and reboot again. Keep the checksum files with the ZIPs.

@@ -62,6 +62,7 @@ class Plugin:
         self.ctl.controller_lease = self.controller_lease
         self.inst = Installer(PLUGIN_DIR, self.home, uid=uid)
         self.coexist = Coexistence(self.home, owner=self.owner, version=paths.VERSION)
+        self.ctl.control_guard = self.coexist.control_error
         manager = SteamOSManagerTdp(home=str(self.home))
         actuator = SteamDeckPowerActuator(manager=manager, marker=self.runtime / "tdp-cap.json")
         actuator.journal = lambda kind, **f: self.log.record("power", kind, **f)

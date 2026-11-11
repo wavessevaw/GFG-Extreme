@@ -20,3 +20,24 @@ class LeaseTest(unittest.TestCase):
             self.assertTrue(a.active())
             a.release();a.release()
             self.assertTrue(other.active())
+
+    def test_legacy_standalone_is_visible_as_incompatible(self):
+        import json
+        from gfg_plugin.coexist import Coexistence
+        with tempfile.TemporaryDirectory() as d:
+            home=Path(d); plugin=home/'homebrew/plugins/KEDAVRA'
+            plugin.mkdir(parents=True)
+            (plugin/'plugin.json').write_text(json.dumps({'name':'GSF Kedavra'}))
+            coexist=Coexistence(home,var_root=home/'var')
+            self.assertIn('1.6.1',coexist.control_error())
+            (plugin/'py_modules').mkdir()
+            (plugin/'py_modules/kedavra_controller.py').write_text('# compatible module')
+            self.assertEqual(coexist.control_error(),'')
+
+    def test_legacy_guard_blocks_actual_command_path(self):
+        from gfg_plugin.kedavra.ctl import Control
+        ctl=Control.__new__(Control)
+        ctl.control_guard=lambda:'Update companion'
+        ctl._ctl_owned=lambda *args:self.fail('Command escaped compatibility guard')
+        with self.assertRaisesRegex(RuntimeError,'Update companion'):
+            ctl._ctl('kfg_post','detail=1')
