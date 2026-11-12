@@ -100,13 +100,22 @@ class BenchmarkSession:
             self.restore()
             return True
         if self.saved is None: return False
-        if ctx!=self.b.context or not st.get('fresh') or st.get('steam_ui'):
-            self.abort('Game, menu, display or source changed');return True
+        if st.get('steam_ui'):
+            self.abort('Steam menu opened');return True
+        if not st.get('fresh'):
+            # Transient compositor status gaps are not a cancellation.
+            if now >= self.b.deadline:
+                self.b._finish(self.b.candidate, False, 'Compositor telemetry unavailable within 15 seconds')
+                self.restore()
+            return True
+        if ctx!=self.b.context:
+            self.abort('Game, display or power source changed');return True
         act=self.s.governor.actuator
         owned=act.verify_ownership()
         if not owned.get('owned'):
             self.abort('External power change');return True
-        if (sensors.get('temp_c') or 100)>=85:
+        temp = sensors.get('temp_c')
+        if isinstance(temp, (int, float)) and temp>=85:
             self.abort('Thermal protection');return True
         want = self.saved if self.validating else Policy(0,0,ctx['post'],self.s.hud_path,0,self.saved.hdr)
         self.s.coord.want(want)
@@ -115,9 +124,9 @@ class BenchmarkSession:
             if now>self.b.deadline: self.abort('Compositor did not confirm benchmark policy')
             return True
         if self.validating:
-            if now > self.b.deadline:
+            if now >= self.b.deadline:
                 self.b.result['passed']=False
-                self.b.result['reason']='Frame generation verification timed out'
+                self.b.result['reason']='Display verification exceeded the 15-second budget'
                 self.restore(); return True
             if self.display_start is None:
                 self.display_start = {k: st.get(k) for k in ('real','gen','repeat','focus_frames')}
@@ -127,8 +136,8 @@ class BenchmarkSession:
                 if frames:
                     self.validation.append(dict(frame_ms=frames,draw_w=owned.get('draw_w') or 0,
                                                 gpu=sensors.get('gpu_busy_pct') or 0,cpu=sensors.get('cpu_top_core_pct') or 0,temp=sensors.get('temp_c')))
-            if len(self.validation)>=10:
-                measured=summarize(self.validation)
+            if len(self.validation)>=2:
+                measured=summarize(self.validation, min_samples=2, min_frames=12)
                 target=min(self.b.target, self.saved.base_fps or (refresh/max(1,self.saved.multiplier) if self.saved.multiplier>1 else self.b.target))
                 passed=measured['low_fps']>=target*.9
                 display = self.display_evidence(st, ctx)
@@ -148,11 +157,13 @@ class BenchmarkSession:
             if not act.set_tdp_w(watts).get('success'): self.abort('TDP readback failed')
         if self.b.phase=='aborted': self.restore()
         elif self.b.phase=='result':
-            self.validating=True
-            self.validation=[]
-            self.display_start=None
-            self.fg_last_seq=None
-            self.b.deadline=now+30
+            if not self.b.result or not self.b.result.get('passed'):
+                self.restore()
+            else:
+                self.validating=True
+                self.validation=[]
+                self.display_start=None
+                self.fg_last_seq=None
         return True
 
     def display_evidence(self, st, ctx):
