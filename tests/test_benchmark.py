@@ -130,6 +130,17 @@ class AdaptiveBenchmarkTest(unittest.TestCase):
         self.assertAlmostEqual(result['low_fps'],40)
         self.assertAlmostEqual(result['p95_ms'],1000/30)
 
+    def test_out_of_ladder_applied_point_does_not_restart_full_power_probe(self):
+        from gfg_plugin.pilot import PointPilot
+        from helpers import Clock
+        pilot=PointPilot(clock=Clock())
+        r=pilot.tick(dict(app=42,refresh=90,fg='auto',objective='quality',
+                          game=True,benchmark_applied=True,
+                          benchmark_point=24,known_point=24))
+        self.assertEqual(r['phase'],'locked')
+        self.assertFalse(r['hold_ceiling'])
+        self.assertGreaterEqual(r['point'],40)
+
     def test_applied_quality_point_is_not_clipped_to_half_refresh(self):
         from gfg_plugin.pilot import PointPilot
         from helpers import Clock
