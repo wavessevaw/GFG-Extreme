@@ -108,12 +108,29 @@ class AdaptiveBenchmark:
                 abs(a["cpu"] - b["cpu"]) <= 25)
 
     def _finish(self, measured, passed, reason):
+        # A measured, mode-appropriate native-FPS point remains a usable *starting
+        # hint* even when the 15 s deadline prevents full FG verification.
+        # Never manufacture an Apply candidate from a power ceiling or an
+        # unmeasured point. Governor still guards and adapts the accepted hint.
+        candidate = self.candidate
+        applicable = bool(
+            candidate is not None
+            and self.floor <= candidate.get("tdp", -1) <= self.ceiling
+            and isinstance(candidate.get("fps"), (int, float))
+            and math.isfinite(candidate["fps"]) and candidate["fps"] > 0
+            and isinstance(candidate.get("draw_w"), (int, float))
+            and math.isfinite(candidate["draw_w"]) and candidate["draw_w"] > 0
+            and self._holds(candidate)
+            and any(p.get("tdp") == candidate["tdp"]
+                    for p in self.points))
         self.result = dict(
             mode=self.mode, context=self.context, target=self.target,
-            tdp=self.candidate["tdp"] if self.candidate else self.ceiling,
-            measured=measured or self.candidate or self.baseline or {},
+            tdp=candidate["tdp"] if applicable else None,
+            measured=(measured if passed else candidate) or self.baseline or {},
             points=self.points.copy(), passed=bool(passed),
-            confidence="quick-verified" if passed else "insufficient",
+            applicable=applicable,
+            confidence=("quick-verified" if passed else
+                        "provisional" if applicable else "insufficient"),
             reason=reason)
         self.phase = "result"
 
