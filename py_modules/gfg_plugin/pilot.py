@@ -279,7 +279,10 @@ class PointPilot:
         known = ctx.get("known_point") or (ctx.get("stable_point") if ctx.get("autopilot") else None)
         known = int(known) if isinstance(known, (int, float)) else None
         if self.phase in ("idle",):
-            if objective == "battery":
+            accepted_point = ctx.get("benchmark_point") if ctx.get("benchmark_applied") else None
+            if isinstance(accepted_point, int) and accepted_point in steps and bottom <= accepted_point <= top:
+                self._go("locked", "user-applied Benchmark point", accepted_point)
+            elif objective == "battery":
                 self._go("locked", "Battery: a low point, generation fills the refresh", floor)
             elif self.point:
                 self._go("locked", "kept the measured point", max(min(self.point, top), bottom))
@@ -309,7 +312,8 @@ class PointPilot:
                 if self.clean_since is None:
                     self.clean_since = now
                 nxt = [c for c in steps if c > self.point]
-                if (nxt and objective != "battery" and self._may_climb(ctx, nxt[0])
+                if (nxt and objective != "battery" and not ctx.get("benchmark_applied")
+                        and self._may_climb(ctx, nxt[0])
                         and self._headroom(verdict, self.point, nxt[0])):
                     self.promote_wait = min(self.promote_wait, max(HEADROOM_WAIT_S, self.headroom_backoff))
             else:
@@ -338,7 +342,8 @@ class PointPilot:
                                        f"the game does not hold {bottom} (this mode's lowest point) even at full power")
         if self._over_power_target(ctx, steps, now):
             return self._request(1, self.point, 0, False)
-        if (objective != "battery" and self.clean_since is not None and self.point < top
+        if (objective != "battery" and not ctx.get("benchmark_applied")
+                and self.clean_since is not None and self.point < top
                 and now - self.clean_since >= self.promote_wait and ctx.get("at_ceiling_possible", True)
                 and self._may_climb(ctx, [c for c in steps if c > self.point][0])):
             nxt = [c for c in steps if c > self.point][0]
