@@ -87,7 +87,7 @@ class AdaptiveBenchmark:
         self.ready_at = now + self.SETTLE
         self.phase = "settle"
         self.samples = []
-        self.last_seq = None
+        # Keep the last compositor sequence across watt changes; never reuse stale frames.
 
     def abort(self, reason):
         self.phase, self.reason = "aborted", reason
