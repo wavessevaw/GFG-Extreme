@@ -534,7 +534,7 @@ class Hud:
 def render_benchmark(bench, scale):
     """Reuse the 3.3.3 centre panel, ring and five live telemetry cells.
 
-    The ring shows measured window progress, never an estimated completion time.
+    The ring shows quick scan progress; the full operation has a 15-second budget.
     Keep the existing result panel; its bottom row now accepts touch in game.
     """
     s = 1.32  # Existing panel geometry, enlarged for finger-sized result actions.
@@ -574,7 +574,7 @@ def render_benchmark(bench, scale):
         cv.text(cx, cy - _digit_mid(f"fps@{s}"), _fmt(bench.get("native_fps")), f"fps@{s}", WHITE)
         text(84, "POINT " + str(bench.get("tested", 0)), "lab", LABEL, w * .18)
         text(106, "LOSS " + _fmt(bench.get("loss_pct"), 1) + "%", "lab", LABEL, w * .18)
-        text(84, "WINDOW " + str(min(2, int(bench.get("windows") or 0) + 1)) + "/2", "lab", LABEL, w * .82)
+        text(84, "FAST TDP SWEEP", "lab", LABEL, w * .82)
         cells = [(_fmt(bench.get("native_fps")), "FPS"), (_fmt(bench.get("gpu")) + "%", "GPU"),
                  (_fmt(bench.get("cpu")) + "%", "CPU"), (_fmt(bench.get("draw_w"), 1), "W"), (_fmt(bench.get("temp")), "C")]
         step = (w - 40 * s) / len(cells)
