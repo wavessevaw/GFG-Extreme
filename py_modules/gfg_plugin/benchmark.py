@@ -43,7 +43,7 @@ def summarize(samples, min_samples=6, min_frames=90):
 
 class AdaptiveBenchmark:
     MAX_SECONDS = 15.0
-    SEARCH_SECONDS = 11.0  # reserve time for final recheck and FG validation
+    SEARCH_SECONDS = 9.0   # reserve time for final recheck and FG validation
     SETTLE = .70           # next 1 Hz compositor report after a TDP write
     BASE_SAMPLES = 2
     VERIFY_SAMPLES = 2
@@ -227,8 +227,7 @@ class AdaptiveBenchmark:
         return self._verify(now)
 
     def status(self):
-        elapsed = (getattr(self, "now", None) or 0)
-        progress = len(self.points) / 10
+        progress = len(self.points) / 9
         latest = getattr(self, "latest", {})
         frames = latest.get("frame_ms") or []
         native = 1000 * len(frames) / sum(frames) if frames else None
