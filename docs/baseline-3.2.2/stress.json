@@ -1,0 +1,306 @@
+{
+ "chaos_seed_1": {
+  "bad": [],
+  "confirmed_pct": 96.1,
+  "events": 79,
+  "tdp_writes": 124
+ },
+ "chaos_seed_2": {
+  "bad": [],
+  "confirmed_pct": 96.8,
+  "events": 60,
+  "tdp_writes": 71
+ },
+ "chaos_seed_3": {
+  "bad": [],
+  "confirmed_pct": 97.6,
+  "events": 62,
+  "tdp_writes": 151
+ },
+ "chaos_seed_4": {
+  "bad": [],
+  "confirmed_pct": 96.7,
+  "events": 76,
+  "tdp_writes": 68
+ },
+ "chaos_seed_5": {
+  "bad": [],
+  "confirmed_pct": 96.0,
+  "events": 77,
+  "tdp_writes": 48
+ },
+ "chaos_seed_6": {
+  "bad": [],
+  "confirmed_pct": 86.5,
+  "events": 198,
+  "tdp_writes": 114
+ },
+ "chaos_seed_7": {
+  "bad": [],
+  "confirmed_pct": 88.3,
+  "events": 177,
+  "tdp_writes": 155
+ },
+ "chaos_seed_8": {
+  "bad": [],
+  "confirmed_pct": 94.6,
+  "events": 125,
+  "tdp_writes": 101
+ },
+ "chaos_seed_9": {
+  "bad": [],
+  "confirmed_pct": 96.2,
+  "events": 59,
+  "tdp_writes": 90
+ },
+ "chaos_seed_10": {
+  "bad": [],
+  "confirmed_pct": 92.3,
+  "events": 120,
+  "tdp_writes": 95
+ },
+ "chaos_seed_11": {
+  "bad": [],
+  "confirmed_pct": 93.2,
+  "events": 130,
+  "tdp_writes": 75
+ },
+ "chaos_seed_12": {
+  "bad": [],
+  "confirmed_pct": 93.6,
+  "events": 141,
+  "tdp_writes": 73
+ },
+ "chaos_seed_13": {
+  "bad": [],
+  "confirmed_pct": 98.2,
+  "events": 61,
+  "tdp_writes": 99
+ },
+ "chaos_seed_14": {
+  "bad": [],
+  "confirmed_pct": 94.7,
+  "events": 103,
+  "tdp_writes": 87
+ },
+ "chaos_seed_15": {
+  "bad": [],
+  "confirmed_pct": 92.0,
+  "events": 135,
+  "tdp_writes": 97
+ },
+ "chaos_seed_16": {
+  "bad": [],
+  "confirmed_pct": 94.2,
+  "events": 117,
+  "tdp_writes": 171
+ },
+ "chaos_seed_17": {
+  "bad": [],
+  "confirmed_pct": 93.8,
+  "events": 102,
+  "tdp_writes": 34
+ },
+ "chaos_seed_18": {
+  "bad": [],
+  "confirmed_pct": 94.0,
+  "events": 112,
+  "tdp_writes": 116
+ },
+ "chaos_seed_19": {
+  "bad": [],
+  "confirmed_pct": 91.0,
+  "events": 92,
+  "tdp_writes": 181
+ },
+ "chaos_seed_20": {
+  "bad": [],
+  "confirmed_pct": 93.2,
+  "events": 97,
+  "tdp_writes": 47
+ },
+ "chaos_seed_21": {
+  "bad": [],
+  "confirmed_pct": 93.4,
+  "events": 76,
+  "tdp_writes": 66
+ },
+ "chaos_seed_22": {
+  "bad": [],
+  "confirmed_pct": 93.1,
+  "events": 130,
+  "tdp_writes": 154
+ },
+ "chaos_seed_23": {
+  "bad": [],
+  "confirmed_pct": 94.8,
+  "events": 81,
+  "tdp_writes": 144
+ },
+ "chaos_seed_24": {
+  "bad": [],
+  "confirmed_pct": 92.1,
+  "events": 125,
+  "tdp_writes": 53
+ },
+ "chaos_seed_25": {
+  "bad": [],
+  "confirmed_pct": 96.8,
+  "events": 62,
+  "tdp_writes": 81
+ },
+ "chaos_seed_26": {
+  "bad": [],
+  "confirmed_pct": 90.8,
+  "events": 146,
+  "tdp_writes": 59
+ },
+ "chaos_seed_27": {
+  "bad": [],
+  "confirmed_pct": 88.1,
+  "events": 177,
+  "tdp_writes": 48
+ },
+ "chaos_seed_28": {
+  "bad": [],
+  "confirmed_pct": 93.6,
+  "events": 117,
+  "tdp_writes": 46
+ },
+ "chaos_seed_29": {
+  "bad": [],
+  "confirmed_pct": 90.9,
+  "events": 168,
+  "tdp_writes": 63
+ },
+ "chaos_seed_30": {
+  "bad": [],
+  "confirmed_pct": 93.9,
+  "events": 109,
+  "tdp_writes": 49
+ },
+ "charger_flap": {
+  "bad": [],
+  "flaps": 51,
+  "paused_s": 0,
+  "at_15w_s": 0,
+  "tdp_final": 10.0
+ },
+ "slider_then_charger": {
+  "bad": [],
+  "governor_owns_after": false,
+  "tdp_final": 8.0,
+  "note": "SteamOS re-applies the player's slider on AC change; a paused Governor should stay paused"
+ },
+ "slider_inside_grace": {
+  "bad": [],
+  "tdp_final": 6.0
+ },
+ "load_square_wave": {
+  "bad": [],
+  "point_changes": 0,
+  "tdp_writes_per_min": 0.6
+ },
+ "hot_heavy_battery_low": {
+  "bad": [],
+  "temp_max": 86.4,
+  "point_final": 30,
+  "battery_final": 0.0
+ },
+ "four_hours": {
+  "bad": [],
+  "largest": [
+   [
+    "svc.split.split.pairs",
+    53
+   ],
+   [
+    "svc.split.memory.pairs",
+    40
+   ],
+   [
+    "svc.rates.prev",
+    30
+   ],
+   [
+    "svc.snapshot",
+    25
+   ],
+   [
+    "svc.gclock.reals",
+    20
+   ]
+  ]
+ },
+ "autopilot_heavy": {
+  "22fps@15W/steamos15W": {
+   "point": 24,
+   "tdp_avg": 15.0,
+   "tdp_max": 15.0,
+   "temp_max": 83.9
+  },
+  "22fps@15W/steamos18W": {
+   "point": 24,
+   "tdp_avg": 15.0,
+   "tdp_max": 15.0,
+   "temp_max": 83.9
+  },
+  "26fps@15W/steamos15W": {
+   "point": 24,
+   "tdp_avg": 14.0,
+   "tdp_max": 15.0,
+   "temp_max": 81.3
+  },
+  "26fps@15W/steamos18W": {
+   "point": 24,
+   "tdp_avg": 14.0,
+   "tdp_max": 15.0,
+   "temp_max": 81.3
+  },
+  "30fps@15W/steamos15W": {
+   "point": 24,
+   "tdp_avg": 12.1,
+   "tdp_max": 15.0,
+   "temp_max": 76.0
+  },
+  "30fps@15W/steamos18W": {
+   "point": 24,
+   "tdp_avg": 12.1,
+   "tdp_max": 15.0,
+   "temp_max": 76.0
+  },
+  "34fps@15W/steamos15W": {
+   "point": 30,
+   "tdp_avg": 14.0,
+   "tdp_max": 15.0,
+   "temp_max": 80.5
+  },
+  "34fps@15W/steamos18W": {
+   "point": 30,
+   "tdp_avg": 14.0,
+   "tdp_max": 15.0,
+   "temp_max": 80.5
+  },
+  "40fps@15W/steamos15W": {
+   "point": 35,
+   "tdp_avg": 14.0,
+   "tdp_max": 15.0,
+   "temp_max": 80.3
+  },
+  "40fps@15W/steamos18W": {
+   "point": 35,
+   "tdp_avg": 14.0,
+   "tdp_max": 15.0,
+   "temp_max": 80.3
+  },
+  "bad": []
+ },
+ "paused_governor_climbs": {
+  "bad": [],
+  "point_final": 45
+ },
+ "steamos_restores_after_sleep": {
+  "bad": [],
+  "tdp_final": 11.0
+ }
+}
