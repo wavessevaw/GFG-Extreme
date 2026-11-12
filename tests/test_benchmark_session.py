@@ -163,6 +163,12 @@ class BenchmarkSessionTest(unittest.TestCase):
         r.engine.step();r.sensors.step();r.service.tick()
         self.assertFalse(r.service.governor.benchmark_applied,
                          'Battery point must not silently apply to Quality')
+        r.settings.update_profile(key, {'objective':'battery'})
+        r.clock.t+=1
+        r.engine.step();r.sensors.step();r.service.tick()
+        self.assertTrue(r.service.governor.benchmark_applied)
+        self.assertEqual(r.power.tdp,12,
+                         'Returning to Battery must restore its accepted 12 W')
         r.service.stop()
 
     def test_policy_echo_without_generated_frames_does_not_pass(self):
