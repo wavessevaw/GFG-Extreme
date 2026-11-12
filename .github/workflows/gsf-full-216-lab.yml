@@ -1,0 +1,82 @@
+name: Experimental full-size GSF LAB 2.1.6
+
+on:
+  push:
+    branches:
+      - experiment/gsf-full-2.1.6-lab1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gsf-lab-216-full-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-gsf-lab:
+    name: Build complete stable+GSF lab ZIP
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout the current official stable integration
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Retrieve the exact audited GSF binary from Codex source
+        uses: actions/checkout@v4
+        with:
+          repository: wavessevaw/GFG-Extreme
+          ref: e93a05e39cd49775ae308cc1f84f53f0d1e9f4eb
+          path: upstream-gsf
+          sparse-checkout: docs/fg3/artifacts/GFG-Native-FG-v0_0_0-fg3-internal_10.zip
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Download official v2.1.6 release (all full Decky payloads)
+        run: |
+          set -euo pipefail
+          mkdir -p upstream-stable
+          gh release download v2.1.6 --repo "$GITHUB_REPOSITORY" \
+             --pattern GFG-Extreme-v2_1_6.zip \
+             --pattern SHA256SUMS.txt --dir upstream-stable
+          (cd upstream-stable && sha256sum --check SHA256SUMS.txt)
+          unzip -tq upstream-stable/GFG-Extreme-v2_1_6.zip
+          test "$(stat -c %s upstream-stable/GFG-Extreme-v2_1_6.zip)" -gt 75000000
+
+      - name: Compose full-size LAB with opt-in native Vulkan GSF
+        run: |
+          set -euo pipefail
+          python3 scripts/build_gsf_216_lab_zip.py \
+            --stable upstream-stable/GFG-Extreme-v2_1_6.zip \
+            --native upstream-gsf/docs/fg3/artifacts/GFG-Native-FG-v0_0_0-fg3-internal_10.zip \
+            --out lab-artifacts
+          (cd lab-artifacts && sha256sum --check SHA256SUMS.txt)
+          python3 scripts/check_release_archive.py \
+            lab-artifacts/GFG-Extreme-2.1.6-gsf.lab1.zip 2.1.6-gsf.lab1
+
+      - name: Test the exact installed lab ZIP without a real Steam process
+        run: |
+          set -euo pipefail
+          python3 scripts/test_gsf_216_lab_zip.py \
+            lab-artifacts/GFG-Extreme-2.1.6-gsf.lab1.zip
+
+      - name: Show package comparison
+        run: |
+          set -euo pipefail
+          ls -lh upstream-stable/GFG-Extreme-v2_1_6.zip lab-artifacts/GFG-Extreme-2.1.6-gsf.lab1.zip
+          cat lab-artifacts/SHA256SUMS.txt
+
+      - name: Publish only as short-lived GitHub Actions artifact, NOT stable Release
+        uses: actions/upload-artifact@v4
+        with:
+          name: GFG-Extreme-2.1.6-GSF-LAB1-FULL
+          path: |
+            lab-artifacts/GFG-Extreme-2.1.6-gsf.lab1.zip
+            lab-artifacts/SHA256SUMS.txt
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
