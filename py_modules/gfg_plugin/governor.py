@@ -169,6 +169,7 @@ class PowerGovernor:
         self.warm = False                             # from 80 C: no climbing to a higher point
         self.dock = False                             # an external display: warm hold in every mode
         self.benchmark_seed = False
+        self.benchmark_applied = False
         self.start_hint: Optional[float] = None       # the game list's start TDP (light 7 W, heavy 15 W)
         self.warm_cool_since: Optional[float] = None
         # cap -> (TDP that failed, until, repeats): no probe at or below that TDP until then
@@ -246,6 +247,13 @@ class PowerGovernor:
         self.tdp = self.player_ceiling
         if self.ceiling < self.tdp - 0.05:
             self._write(self.ceiling, "autopilot-ceiling")
+        # Apply the accepted game/mode benchmark immediately, rather than
+        # restoring the previous player ceiling for another measurement cycle.
+        # This is an adaptive starting point, not a permanent upper limit.
+        if self.benchmark_applied and self.start_hint is not None:
+            selected = max(self._limits()["low"] or MIN_TDP_W,
+                           min(self.start_hint, self.ceiling))
+            self._write(selected, "benchmark-applied")
         now = self.clock()
         failures = self.model.floor_failures(key) if self.model else {}
         for point, (tdp, age, n) in failures.items():
@@ -289,7 +297,7 @@ class PowerGovernor:
         self.started.add((self.key, self.objective))
         floor = self._floor(cap)
         target = max(target, floor) if floor else target
-        if target < self.ceiling - 0.05:
+        if target < self.ceiling - 0.05 and (self.tdp is None or self.tdp > target + 0.05):
             self.probe_from = self.ceiling
             self._write(target, why)
 
@@ -394,6 +402,7 @@ class PowerGovernor:
         objective = sample.get("objective") if sample.get("objective") in OBJECTIVES else "balanced"
         self.dock = bool(sample.get("dock"))
         self.benchmark_seed = bool(sample.get("benchmark_seed"))
+        self.benchmark_applied = bool(sample.get("benchmark_applied"))
         hint = sample.get("start_w")
         self.start_hint = float(hint) if isinstance(hint, (int, float)) and hint > 0 else None
         if key != self.key:
@@ -406,6 +415,7 @@ class PowerGovernor:
             # The reset clears the session's dock flag: the ceiling taken at the start needs it.
             self.dock = bool(sample.get("dock"))
             self.benchmark_seed = bool(sample.get("benchmark_seed"))
+            self.benchmark_applied = bool(sample.get("benchmark_applied"))
             self.start_hint = float(hint) if isinstance(hint,(int,float)) and hint>0 else None
             if self.enabled:
                 self._start(key, objective)
@@ -420,7 +430,7 @@ class PowerGovernor:
                 self.warm, self.warm_cool_since = False, None
             self.window = []
             self.window_start = now
-            if objective == "quality":
+            if objective == "quality" and not self.benchmark_applied:
                 self._write(self.ceiling or 15.0, "quality")
             elif self.cap > 0:
                 self._first_level(self.cap)
@@ -437,9 +447,12 @@ class PowerGovernor:
         if self._thermal(now, temp):
             return self.status()
         if sample.get("hold_ceiling"):
-            # The pilot measures the game or tries a higher point: full power, no verdicts.
+            # A user-applied benchmark has already measured the native-FPS
+            # point. Do not override that TDP with a redundant full-power
+            # probe. The fast FPS guard below still raises power on a real dip.
             self.hold = True
-            self._write(self.ceiling or 15.0, "pilot-measures")
+            if not self.benchmark_applied:
+                self._write(self.ceiling or 15.0, "pilot-measures")
             self.window, self.window_start, self.healthy_since = [], now, None
             self.recent.clear()
             self.probe_from = None
