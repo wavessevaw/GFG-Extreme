@@ -4,15 +4,15 @@
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="144">
 
-# GFG EXTREME 3.4
+# GFG EXTREME 3.4.3
 
 **MOST POWERFUL DECKY PLUGIN EVER.**
 
 Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integration
 
-[**Скачать последнюю**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.0) · [Установка](#установка) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Режимы](#06--performance-modes) · [HUD](#08--observability)
+[**Скачать последнюю**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.3) · [Установка](#установка) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Режимы](#06--performance-modes) · [HUD](#08--observability)
 
-[![Release](https://img.shields.io/badge/release-3.4.0-fb0d00?style=flat-square)](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.0)
+[![Release](https://img.shields.io/badge/release-3.4.3-fb0d00?style=flat-square)](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.3)
 [![Downloads](https://img.shields.io/github/downloads/wavessevaw/GFG-Extreme/total?style=flat-square&color=20242e)](https://github.com/wavessevaw/GFG-Extreme/releases)
 [![Steam Deck](https://img.shields.io/badge/Steam%20Deck-OLED%20%7C%20LCD-20242e?style=flat-square)](#установка)
 [![Decky](https://img.shields.io/badge/Decky%20Loader-plugin-20242e?style=flat-square)](https://github.com/SteamDeckHomebrew/decky-loader)
@@ -69,7 +69,7 @@ Lossless Scaling и сторонние слои генерации не нужн
 
 ## Установка
 
-1. Скачайте **GFG-Extreme-v3_4_0.zip** со страницы [актуального релиза](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.0).
+1. Скачайте **GFG-Extreme-v3_4_3.zip** со страницы [актуального релиза](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.3).
 2. В Decky Loader: **Settings → Developer → Install Plugin from ZIP**, выберите файл.
 3. Откройте GFG Extreme. При первой установке выберите **Install engine**, затем **Reboot now**. При обновлении со старой версии выполните **Setup → Reinstall Gamescope KEDAVRA** и перезагрузку. Вкладки откроются после запуска соответствующего Gamescope Kedavra.
 4. Запустите игру и выберите режим на вкладке **Dash**. Больше ничего настраивать не нужно: ни параметров запуска, ни скриптов в Desktop Mode.
@@ -127,7 +127,7 @@ GSF Kedavra — собственный графический движок GFG E
 
 С 3.3.1 (GSF Kedavra 1.4.3) поворот камеры идёт единой картинкой: движение камеры описывается проективным преобразованием плоскости (точным движением картинки при повороте), и каждый сгенерированный кадр показывает камеру, повёрнутую ровно на свою долю угла, и поворот идёт цельно и плавно по всему экрану. Тест движка, поворот до 10° за кадр: 25,35 → 27,56 дБ, ошибка от кадра к кадру 8,70 → 5,18.
 
-**Актуальная сборка GFG Extreme 3.4.0 использует GSF Kedavra 1.6.0** с обработкой Kedavra Focus. Генерация и планирование кадров в этом обновлении сохранены. [Исходники релиза v3.4.0](https://github.com/wavessevaw/GFG-Extreme/tree/v3.4.0).
+**Актуальная сборка GFG Extreme 3.4.3 использует GSF Kedavra 1.6.2** с обработкой Kedavra Focus. Генерация и планирование кадров в этом обновлении сохранены. [Исходники релиза v3.4.3](https://github.com/wavessevaw/GFG-Extreme/tree/v3.4.3).
 
 **Processing pipeline**
 
@@ -429,7 +429,7 @@ Film Grain · Vignette · Chromatic Aberration · Deband · Noir · Sepia · Mon
 
 Пресеты: Sharp · Vivid · HDR Look · Cinema · Noir · Retro · Smooth.
 
-**Kedavra Focus (GSF Kedavra 1.6.0).** Дополнительная интеллектуальная резкость с фиксированной интенсивностью и одним переключателем во вкладке Graphics. Работает с Vivid и другими цветовыми эффектами во всех режимах производительности, включая Battery и Autopilot. При включении Focus используется вместо CAS/DLS, а прежние настройки CAS/DLS сохраняются и возвращаются после отключения Focus. Обрабатывает только SDR, в HDR отключается.
+**Kedavra Focus (GSF Kedavra 1.6.2).** Дополнительная интеллектуальная резкость с фиксированной интенсивностью и одним переключателем во вкладке Graphics. Работает с Vivid и другими цветовыми эффектами во всех режимах производительности, включая Battery и Autopilot. При включении Focus используется вместо CAS/DLS, а прежние настройки CAS/DLS сохраняются и возвращаются после отключения Focus. Обрабатывает только SDR, в HDR отключается.
 
 Порядок графических проходов фиксирован: цвет и тон → резкость → сглаживание → финальные эффекты (виньетка, зерно, хроматическая аберрация).
 
@@ -446,6 +446,8 @@ Film Grain · Vignette · Chromatic Aberration · Deband · Noir · Sepia · Mon
 <p align="center"><img src="docs/img/hud-rings-gfg3.png" alt="In-game HUD: minimal and standard" width="700"></p>
 
 Единая телеметрия GFG Extreme охватывает оригинальный рендеринг, генерацию, предъявление кадров и аппаратные ресурсы.
+
+**Быстрый Benchmark в игре.** Для запуска удерживайте HUD 0,8 с. GFG последовательно проверяет уровни TDP с общим бюджетом 15 секунд, затем повторно проверяет найденную точку. Принять или отклонить результат можно через HUD. При нехватке данных неподтверждённый результат не применяется. Во вкладке Dash Benchmark отсутствует.
 
 | Metric | Description |
 |---|---|
@@ -578,7 +580,7 @@ GFG Extreme 3 использует собственное ядро кадров�
 * Platform: Steam Deck / SteamOS
 * License: GPL-3.0-or-later, с соблюдением лицензий используемых компонентов
 
-README описывает GFG Extreme 3.4.0 с GSF Kedavra 1.6.0.
+README описывает GFG Extreme 3.4.3 с GSF Kedavra 1.6.2.
 
 ---
 
