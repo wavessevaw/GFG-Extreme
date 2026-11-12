@@ -54,12 +54,13 @@ class BenchmarkSessionTest(unittest.TestCase):
             return dict(base,hud_input_version=1,hud_event_seq=event[0],hud_event=event[1],
                         native_frame_ms=[1000/fps]*40,transfer='sdr')
         r.service.ctl.status=status
-        for t in range(500):
+        for t in range(25):
             if t==5: event[:]=[1,1]
             r.engine.step();r.sensors.step();r.service.tick();r.clock.t+=1
             b=r.service.benchmark
             if b.b.phase=='result' and b.saved is None: break
         self.assertIsNotNone(b.b.result, b.status())
+        self.assertLessEqual(t-5, 15, b.status())
         self.assertTrue(b.b.result['passed'],b.b.result)
         self.assertTrue(b.b.result['fg_verified'])
         event[:]=[2,3]
