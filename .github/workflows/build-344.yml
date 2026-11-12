@@ -18,6 +18,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      # Includes Apply 12 W -> no 16 W rebound and mode-switch round-trip tests.
       - name: Backend regressions and virtual Deck
         run: |
           python3 -m unittest discover -s tests -p 'test_*.py'
