@@ -5,6 +5,7 @@ on:
     paths: [.github/workflows/build-344.yml]
 permissions:
   contents: read
+  actions: read
 jobs:
   candidate:
     runs-on: ubuntu-24.04
@@ -30,10 +31,12 @@ jobs:
           git diff --exit-code dist/index.js
           npx playwright-core install --with-deps chromium
           node frontend/harness/smoke.mjs
-      - name: Use exactly the previously published Kedavra 1.6.2 runtime
+      - name: Reuse the verified GFG 3.4.3 candidate's unchanged Kedavra 1.6.2 runtime
         run: |
           mkdir -p prior extracted
-          gh release download v3.4.3 --repo wavessevaw/GFG-Extreme --dir prior --pattern GFG-Extreme-v3_4_3.zip --pattern SHA256SUMS.txt
+          test "$(gh api repos/wavessevaw/GFG-Extreme/actions/runs/43131758628 --jq .head_sha)" = 1fb0209346e6fa5329144bfd9e6a2df84ab9b24a
+          test "$(gh api repos/wavessevaw/GFG-Extreme/actions/runs/43131758628 --jq .conclusion)" = success
+          gh run download 43131758628 --repo wavessevaw/GFG-Extreme --name GFG-3.4.3-candidate --dir prior
           (cd prior && sha256sum -c SHA256SUMS.txt)
           unzip -q prior/GFG-Extreme-v3_4_3.zip 'GFG-Extreme/runtime/*' 'GFG-Extreme/bench/*' -d extracted
           test -s extracted/GFG-Extreme/runtime/bin/gamescope
