@@ -84,18 +84,31 @@ class BenchmarkSession:
                 if self.saved: self.abort('Cancelled from HUD')
                 else: self.b.phase='idle'
             elif event in (3,4) and self.b.phase=='result' and not self.saved:
-                if event==3 and self.b.result and self.b.result.get('passed') and self.b.result['context']==ctx:
-                    record=copy.deepcopy(self.b.result)
+                result = self.b.result or {}
+                if event==3 and result.get('applicable') and result.get('context')==ctx:
+                    record=copy.deepcopy(result)
+                    record['user_accepted']=True
                     record['created']=time.time()
                     key=f"{ctx['app']}:{ctx['mode']}:{refresh}:{int(dock)}:{ctx['ac']}"
                     self.s.settings.data.setdefault('benchmarks',{})[key]=record
                     self.s.settings.make_game_profile(ctx['app'])
                     self.s.settings.save()
+                    # Re-enter the normal mode-specific Pilot/Governor pipeline now.
+                    # The selected TDP is a starting hint, never an unguarded cap.
                     self.s.governor.stop('benchmark-apply')
                     self.s.pilot.reset()
-                    self.message='Measured result saved for this game and mode'
-                else: self.message='Result discarded'
-                self.b.phase='idle'
+                    self.message=('Applied measured point to '+ctx['mode']+
+                                  ' (Governor will adapt)')
+                    self.b.phase='idle'
+                elif event==3:
+                    # A missing sample is not a fake recommendation. Let the
+                    # left-hand HUD action retry; only a measured point can Apply.
+                    self.b.phase='idle'
+                    self.message='No valid measured point; retrying Benchmark'
+                    self.begin(st,profile,ctx,now)
+                else:
+                    self.message='Result discarded'
+                    self.b.phase='idle'
         if self.restore_pending:
             self.restore()
             return True
