@@ -1,0 +1,38 @@
+name: Correct GFG 3.4.4 release notes
+on:
+  push:
+    branches: [fix/3.4.4-benchmark-apply]
+    paths: [.github/workflows/correct-344-notes.yml]
+permissions:
+  contents: write
+jobs:
+  update_notes:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: wavessevaw/GFG-Extreme
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify target and preserve installed ZIP and checksums
+        run: |
+          test "$(gh api repos/$GH_REPO/releases/tags/v3.4.4 --jq .target_commitish)" = 4141b45b4152e77932eaf288a75ad7e65aa8ae3a
+          test "$(gh api repos/$GH_REPO/releases/tags/v3.4.4 --jq '.assets[] | select(.name=="GFG-Extreme-v3_4_4.zip") | .id')" = 737608382
+          test "$(gh api repos/$GH_REPO/releases/tags/v3.4.4 --jq '.assets[] | select(.name=="SHA256SUMS.txt") | .id')" = 737608381
+          test "$(gh api repos/$GH_REPO/releases/tags/v3.4.4 --jq .prerelease)" = true
+          grep -q "^## What's New in 3.4.4$" RELEASE_DESCRIPTION_V3_4_4.md
+          if grep -E '(^|[[:space:]])(12|16)[[:space:]]*W' RELEASE_DESCRIPTION_V3_4_4.md; then
+            echo "Example wattages must not be part of the release summary"
+            exit 1
+          fi
+      - name: Update the release description and attached README only
+        run: |
+          cp RELEASE_DESCRIPTION_V3_4_4.md README-3.4.4.md
+          gh release upload v3.4.4 README-3.4.4.md --clobber
+          gh release edit v3.4.4 --notes-file README-3.4.4.md
+      - name: Confirm release description and attachment match
+        run: |
+          gh release download v3.4.4 --pattern README-3.4.4.md --dir verified
+          cmp README-3.4.4.md verified/README-3.4.4.md
+          test "$(gh api repos/$GH_REPO/releases/tags/v3.4.4 --jq .body)" = "$(cat README-3.4.4.md)"
+          test "$(gh api repos/$GH_REPO/releases/tags/v3.4.4 --jq '.assets[] | select(.name=="GFG-Extreme-v3_4_4.zip") | .id')" = 737608382
+          test "$(gh api repos/$GH_REPO/releases/tags/v3.4.4 --jq '.assets[] | select(.name=="SHA256SUMS.txt") | .id')" = 737608381
