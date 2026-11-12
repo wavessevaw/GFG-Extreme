@@ -1,0 +1,50 @@
+name: Correct What's New for GFG 3.4.2 and 3.4.3
+on:
+  push:
+    branches: [fix/3.4.3-fast-benchmark]
+    paths: [.github/workflows/correct-whats-new-342-343.yml]
+permissions:
+  contents: write
+jobs:
+  correct:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: wavessevaw/GFG-Extreme
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require the exact existing releases and original installers
+        run: |
+          test "$(gh api repos/$GH_REPO/releases/tags/v3.4.2 --jq .id)" = 442306405
+          test "$(gh api repos/$GH_REPO/releases/tags/v3.4.3 --jq .id)" = 442366639
+          test "$(gh api repos/$GH_REPO/releases/tags/v3.4.2 --jq .target_commitish)" = 23a0c54682adadf63fead4d1bdfe225134ae810e
+          test "$(gh api repos/$GH_REPO/releases/tags/v3.4.3 --jq .target_commitish)" = 1fb0209346e6fa5329144bfd9e6a2df84ab9b24a
+          test "$(gh api repos/$GH_REPO/releases/tags/v3.4.2 --jq '.assets[] | select(.name=="GFG-Extreme-v3_4_2.zip") | .id')" = 737297343
+          test "$(gh api repos/$GH_REPO/releases/tags/v3.4.3 --jq '.assets[] | select(.name=="GFG-Extreme-v3_4_3.zip") | .id')" = 737527459
+          test "$(gh api repos/$GH_REPO/releases/tags/v3.4.2 --jq '.assets[] | select(.name=="SHA256SUMS.txt") | .id')" = 737297346
+          test "$(gh api repos/$GH_REPO/releases/tags/v3.4.3 --jq '.assets[] | select(.name=="SHA256SUMS.txt") | .id')" = 737527463
+      - name: Replace only release README attachments and release notes
+        run: |
+          mkdir -p new-notes
+          cp RELEASE_DESCRIPTION_V3_4_2.md new-notes/README-3.4.2.md
+          cp RELEASE_DESCRIPTION_V3_4_3.md new-notes/README-3.4.3.md
+          grep -q '^## What.s New in 3.4.2$' new-notes/README-3.4.2.md
+          grep -q '^## What.s New in 3.4.3$' new-notes/README-3.4.3.md
+          if grep -E '^## (Installation|Validation|Scope|Install)' new-notes/*.md; then
+            echo 'Only Whats New sections allowed'; exit 1
+          fi
+          gh release upload v3.4.2 new-notes/README-3.4.2.md --clobber
+          gh release edit v3.4.2 --notes-file new-notes/README-3.4.2.md
+          gh release upload v3.4.3 new-notes/README-3.4.3.md --clobber
+          gh release edit v3.4.3 --notes-file new-notes/README-3.4.3.md
+      - name: Confirm descriptions match assets and both installer assets remain untouched
+        run: |
+          for version in 3.4.2 3.4.3; do
+            gh release download "v$version" --pattern "README-$version.md" --dir "downloaded-$version"
+            cmp "new-notes/README-$version.md" "downloaded-$version/README-$version.md"
+            actual=$(gh api "repos/$GH_REPO/releases/tags/v$version" --jq .body)
+            expected=$(cat "new-notes/README-$version.md")
+            test "$actual" = "$expected"
+          done
+          test "$(gh api repos/$GH_REPO/releases/tags/v3.4.2 --jq '.assets[] | select(.name=="GFG-Extreme-v3_4_2.zip") | .id')" = 737297343
+          test "$(gh api repos/$GH_REPO/releases/tags/v3.4.3 --jq '.assets[] | select(.name=="GFG-Extreme-v3_4_3.zip") | .id')" = 737527459
