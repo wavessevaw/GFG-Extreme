@@ -121,7 +121,9 @@ class BenchmarkSession:
         self.s.coord.want(want)
         self.s.coord.tick(st)
         if not self.s.coord.engine_runs(want,st):
-            if now>self.b.deadline: self.abort('Compositor did not confirm benchmark policy')
+            if now >= self.b.deadline:
+                self.b._finish(self.b.candidate, False, 'Compositor did not confirm native measurement mode within 15 seconds')
+                self.restore()
             return True
         if self.validating:
             if now >= self.b.deadline:
