@@ -1,0 +1,50 @@
+name: Publish verified GFG 3.4.3 preview
+on:
+  push:
+    branches: [fix/3.4.3-fast-benchmark]
+    paths: [.github/workflows/publish-343.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: wavessevaw/GFG-Extreme
+      SOURCE_SHA: 1fb0209346e6fa5329144bfd9e6a2df84ab9b24a
+      CANDIDATE_RUN: '43131758628'
+      CI_RUN: '43131758379'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require the exact successful test and package source
+        run: |
+          test "$(gh api repos/$GH_REPO/actions/runs/$CANDIDATE_RUN --jq .conclusion)" = success
+          test "$(gh api repos/$GH_REPO/actions/runs/$CANDIDATE_RUN --jq .head_sha)" = "$SOURCE_SHA"
+          test "$(gh api repos/$GH_REPO/actions/runs/$CI_RUN --jq .conclusion)" = success
+          test "$(gh api repos/$GH_REPO/actions/runs/$CI_RUN --jq .head_sha)" = "$SOURCE_SHA"
+          if gh release view v3.4.3 --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo 'GFG 3.4.3 already exists; refuse overwrite.'
+            exit 1
+          fi
+          gh run download "$CANDIDATE_RUN" --repo "$GH_REPO" --name GFG-3.4.3-candidate --dir out
+      - name: Verify the installer belongs only to GFG and recheck its digest
+        run: |
+          (cd out && sha256sum -c SHA256SUMS.txt)
+          test -s out/GFG-Extreme-v3_4_3.zip
+          test -s out/README-3.4.3.md
+          python3 - <<'PY'
+          import zipfile,json
+          with zipfile.ZipFile('out/GFG-Extreme-v3_4_3.zip') as z:
+              assert z.testzip() is None
+              assert json.loads(z.read('GFG-Extreme/package.json'))['version']=='3.4.3'
+              assert z.read('GFG-Extreme/runtime/VERSION').decode().strip().startswith('kedavra-b063186')
+              assert not any(p.startswith('KEDAVRA/') for p in z.namelist())
+          PY
+      - name: Publish GFG 3.4.3 as a preview pending physical Deck validation
+        run: |
+          gh release create v3.4.3 \
+            out/GFG-Extreme-v3_4_3.zip out/README-3.4.3.md out/SHA256SUMS.txt \
+            --repo "$GH_REPO" --target "$SOURCE_SHA" \
+            --title "GFG Extreme 3.4.3 — Quick Benchmark (Preview)" \
+            --notes-file out/README-3.4.3.md --prerelease
