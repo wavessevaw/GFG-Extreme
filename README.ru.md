@@ -4,15 +4,15 @@
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="144">
 
-# GFG EXTREME 3.4.3
+# GFG EXTREME 3.4.4
 
 **MOST POWERFUL DECKY PLUGIN EVER.**
 
 Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integration
 
-[**Скачать последнюю**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.3) · [Установка](#установка) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Режимы](#06--performance-modes) · [HUD](#08--observability)
+[**Скачать последнюю**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.4) · [Установка](#установка) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Режимы](#06--performance-modes) · [HUD](#08--observability)
 
-[![Release](https://img.shields.io/badge/release-3.4.3-fb0d00?style=flat-square)](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.3)
+[![Release](https://img.shields.io/badge/release-3.4.4-fb0d00?style=flat-square)](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.4)
 [![Downloads](https://img.shields.io/github/downloads/wavessevaw/GFG-Extreme/total?style=flat-square&color=20242e)](https://github.com/wavessevaw/GFG-Extreme/releases)
 [![Steam Deck](https://img.shields.io/badge/Steam%20Deck-OLED%20%7C%20LCD-20242e?style=flat-square)](#установка)
 [![Decky](https://img.shields.io/badge/Decky%20Loader-plugin-20242e?style=flat-square)](https://github.com/SteamDeckHomebrew/decky-loader)
@@ -69,7 +69,7 @@ Lossless Scaling и сторонние слои генерации не нужн
 
 ## Установка
 
-1. Скачайте **GFG-Extreme-v3_4_3.zip** со страницы [актуального релиза](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.3).
+1. Скачайте **GFG-Extreme-v3_4_4.zip** со страницы [актуального релиза](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.4).
 2. В Decky Loader: **Settings → Developer → Install Plugin from ZIP**, выберите файл.
 3. Откройте GFG Extreme. При первой установке выберите **Install engine**, затем **Reboot now**. При обновлении со старой версии выполните **Setup → Reinstall Gamescope KEDAVRA** и перезагрузку. Вкладки откроются после запуска соответствующего Gamescope Kedavra.
 4. Запустите игру и выберите режим на вкладке **Dash**. Больше ничего настраивать не нужно: ни параметров запуска, ни скриптов в Desktop Mode.
@@ -127,7 +127,7 @@ GSF Kedavra — собственный графический движок GFG E
 
 С 3.3.1 (GSF Kedavra 1.4.3) поворот камеры идёт единой картинкой: движение камеры описывается проективным преобразованием плоскости (точным движением картинки при повороте), и каждый сгенерированный кадр показывает камеру, повёрнутую ровно на свою долю угла, и поворот идёт цельно и плавно по всему экрану. Тест движка, поворот до 10° за кадр: 25,35 → 27,56 дБ, ошибка от кадра к кадру 8,70 → 5,18.
 
-**Актуальная сборка GFG Extreme 3.4.3 использует GSF Kedavra 1.6.2** с обработкой Kedavra Focus. Генерация и планирование кадров в этом обновлении сохранены. [Исходники релиза v3.4.3](https://github.com/wavessevaw/GFG-Extreme/tree/v3.4.3).
+**Актуальная сборка GFG Extreme 3.4.4 использует GSF Kedavra 1.6.2** с обработкой Kedavra Focus. Генерация и планирование кадров в этом обновлении сохранены. [Исходники релиза v3.4.4](https://github.com/wavessevaw/GFG-Extreme/tree/v3.4.4).
 
 **Processing pipeline**
 
@@ -580,7 +580,7 @@ GFG Extreme 3 использует собственное ядро кадров�
 * Platform: Steam Deck / SteamOS
 * License: GPL-3.0-or-later, с соблюдением лицензий используемых компонентов
 
-README описывает GFG Extreme 3.4.3 с GSF Kedavra 1.6.2.
+README описывает GFG Extreme 3.4.4 с GSF Kedavra 1.6.2.
 
 ---
 
