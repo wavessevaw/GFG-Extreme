@@ -21,7 +21,7 @@ permissions:
 env:
   # GSF Kedavra (KEDAVRA engine and Gamescope patch) at the commit this release was tested with.
   KEDAVRA_REPO: wavessevaw/GSF_Kedavra
-  KEDAVRA_SHA: b063186c0218ec457a15433055df1c6268e25922
+  KEDAVRA_SHA: 4c4e95b8c9aca7c43ed2311eaed3d647b113e7b9
 
 jobs:
   test:
@@ -123,7 +123,7 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: ${{ github.ref == 'refs/heads/rework/3.4.1' && 'v3.4.2' || (github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name) }}
+      TAG: ${{ github.ref == 'refs/heads/rework/3.4.1' && 'v3.4.1' || (github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -150,5 +150,5 @@ jobs:
           if unzip -Z1 out/*.zip | grep -qi 'mako\|lsfg\|lossless'; then echo "::error::MAKO/LSFG files in the zip"; exit 1; fi
       - uses: actions/upload-artifact@v4
         with:
-          name: GFG-3.4.2-install
+          name: GFG-3.4.1-install
           path: out

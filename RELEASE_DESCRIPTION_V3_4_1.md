@@ -1,4 +1,4 @@
-# GFG Extreme 3.4.2
+# GFG Extreme 3.4.1
 
 - Focus remains independent of performance modes and GPU budget. Graphics shows
   compositor processing status and processed-frame counts, including HDR bypass.
@@ -21,14 +21,14 @@
   Accepted records are scoped to game, mode, refresh, dock and power source.
   They seed existing adaptive controllers and expire after 24 hours; they are not
   permanent TDP locks. Software cannot identify every scene change or game update.
-- The compatible Kedavra 1.6.2 runtime adds HUD touch handling and frame telemetry;
+- The compatible Kedavra 1.6.1 runtime adds HUD touch handling and frame telemetry;
   the accepted Focus shader, optical flow, warp and Silk scheduler are unchanged.
 
 ## Install and rollback
 
 Install the full GFG ZIP, then **Setup → Reinstall** Gamescope and reboot. If you
-keep standalone Kedavra installed, update it to the companion 1.6.2 ZIP as well:
-Download Kedavra only from https://github.com/wavessevaw/GSF_Kedavra/releases/tag/v1.6.2;
+keep standalone Kedavra installed, update it to the companion 1.6.1 ZIP as well:
+Download Kedavra only from https://github.com/wavessevaw/GSF_Kedavra/releases/tag/v1.6.1;
 GFG packages belong to https://github.com/wavessevaw/GFG-Extreme/releases.
 The controller lease pauses standalone commands/HUD while GFG owns the engine.
 Older standalone 1.6.0 does not support that protocol: GFG pauses control until it is updated or removed. If removing the old standalone restores system Gamescope, reinstall the GFG runtime afterward.

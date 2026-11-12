@@ -10,11 +10,11 @@
 
 Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integration
 
-**3.4.2:** restores the established centred Benchmark panel, adds measured mode-aware TDP sweeps and in-game Apply/Discard, and verifies displayed FG/Focus counters. Shutdown and shared engine control retain recovery state on errors. [Technical release notes and validation limits](RELEASE_DESCRIPTION_V3_4_2.md). Kedavra releases are maintained separately in [GSF_Kedavra](https://github.com/wavessevaw/GSF_Kedavra/releases).
+**3.4.1:** restores the established centred Benchmark panel, adds measured mode-aware TDP sweeps and in-game Apply/Discard, and verifies displayed FG/Focus counters. Shutdown and shared engine control retain recovery state on errors. [Technical release notes and validation limits](RELEASE_DESCRIPTION_V3_4_2.md). Kedavra releases are maintained separately in [GSF_Kedavra](https://github.com/wavessevaw/GSF_Kedavra/releases).
 
-[**Download latest**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.2) · [Install](#installation) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Modes](#06--performance-modes) · [HUD](#08--observability)
+[**Download latest**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.1) · [Install](#installation) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Modes](#06--performance-modes) · [HUD](#08--observability)
 
-[![Release](https://img.shields.io/badge/release-3.4.2-fb0d00?style=flat-square)](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.2)
+[![Release](https://img.shields.io/badge/release-3.4.1-fb0d00?style=flat-square)](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.1)
 [![Downloads](https://img.shields.io/github/downloads/wavessevaw/GFG-Extreme/total?style=flat-square&color=20242e)](https://github.com/wavessevaw/GFG-Extreme/releases)
 [![Steam Deck](https://img.shields.io/badge/Steam%20Deck-OLED%20%7C%20LCD-20242e?style=flat-square)](#installation)
 [![Decky](https://img.shields.io/badge/Decky%20Loader-plugin-20242e?style=flat-square)](https://github.com/SteamDeckHomebrew/decky-loader)
@@ -71,7 +71,7 @@ A closed TDP control loop with feedback that verifies every decision it makes.
 
 ## Installation
 
-1. Download **GFG-Extreme-v3_4_2.zip** from the [latest release](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.2).
+1. Download **GFG-Extreme-v3_4_1.zip** from the [latest release](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.1).
 2. In Decky Loader: **Settings → Developer → Install Plugin from ZIP**, pick the file.
 3. Open GFG Extreme. On first installation choose **Install engine**, then **Reboot now**. When updating from an older version, use **Setup → Reinstall Gamescope KEDAVRA** and reboot. The tabs unlock once the matching Kedavra Gamescope runs.
 4. Start a game and choose a mode on **Dash**. Nothing else to set up: no launch options, no Desktop Mode scripts.
@@ -123,7 +123,7 @@ It captures the original frames, estimates motion at several resolutions, recons
 
 Since 3.2 (GSF Kedavra 1.4, "Silk") the presentation moves in eighths of a refresh: after a late game frame the picture briefly runs a little faster instead of skipping a frame, and when the next frame is late it slows down smoothly instead of stopping. Same latency, same GPU work.
 
-GFG Extreme 3.4.2 integrates **GSF Kedavra 1.6.2**, with Kedavra Focus image sharpening. The frame generation and scheduling pipeline is preserved. The release source is available at [v3.4.2](https://github.com/wavessevaw/GFG-Extreme/tree/v3.4.2).
+GFG Extreme 3.4.1 integrates **GSF Kedavra 1.6.1**, with Kedavra Focus image sharpening. The frame generation and scheduling pipeline is preserved. The release source is available at [v3.4.1](https://github.com/wavessevaw/GFG-Extreme/tree/v3.4.1).
 
 **Processing pipeline**
 
@@ -425,7 +425,7 @@ Film Grain · Vignette · Chromatic Aberration · Deband · Noir · Sepia · Mon
 
 Presets: Sharp · Vivid · HDR Look · Cinema · Noir · Retro · Smooth.
 
-**Kedavra Focus (GSF Kedavra 1.6.2).** An optional, fixed-strength smart sharpening pass, enabled with one switch in Graphics. It works with the Vivid look and other colour effects in every performance mode, including Battery and Autopilot. While Focus is enabled it takes the sharpening slot instead of CAS/DLS; the previous CAS/DLS settings are preserved for when Focus is switched off. Focus processes SDR frames only and is bypassed for HDR.
+**Kedavra Focus (GSF Kedavra 1.6.1).** An optional, fixed-strength smart sharpening pass, enabled with one switch in Graphics. It works with the Vivid look and other colour effects in every performance mode, including Battery and Autopilot. While Focus is enabled it takes the sharpening slot instead of CAS/DLS; the previous CAS/DLS settings are preserved for when Focus is switched off. Focus processes SDR frames only and is bypassed for HDR.
 
 The order of passes is fixed: colour and tone → sharpening → antialiasing → finish (vignette, grain, chromatic aberration).
 
@@ -574,7 +574,7 @@ Targets and real benchmarks of the 3.0.0 build (×3.75 and HDR included) are pub
 * Platform: Steam Deck / SteamOS
 * License: GPL-3.0-or-later, respecting the licences of the components used
 
-This README describes GFG Extreme 3.4.2 with GSF Kedavra 1.6.2.
+This README describes GFG Extreme 3.4.1 with GSF Kedavra 1.6.1.
 
 ---
 
@@ -585,4 +585,3 @@ This README describes GFG Extreme 3.4.2 with GSF Kedavra 1.6.2.
 <sub>GFG EXTREME 3.4 · POWERED BY GSF KEDAVRA · Made for Steam Deck · GPL-3.0-or-later</sub>
 
 </div>
-
