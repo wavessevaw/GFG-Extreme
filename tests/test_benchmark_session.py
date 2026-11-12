@@ -71,6 +71,100 @@ class BenchmarkSessionTest(unittest.TestCase):
         self.assertEqual(b.b.phase,'idle')
         r.service.stop()
 
+    def test_apply_selected_tdp_immediately_and_no_ceiling_jump(self):
+        # Regression: 3.4.3 showed APPLY at 12 W then restored the original
+        # user 16 W ceiling. Tested for every objective, including Quality.
+        for objective, target in [('quality', 45), ('balanced', 40),
+                                  ('battery', 30), ('autopilot', 40)]:
+            with self.subTest(objective=objective):
+                r=make_rig(VGame('steady',120,noise=0),
+                           objective=objective, user_tdp=16,
+                           split=False, gpu_clock=False)
+                event=[0,0]
+                original=r.service.ctl.status
+                def status():
+                    return dict(original(), hud_input_version=1,
+                                hud_event_seq=event[0], hud_event=event[1],
+                                transfer='sdr')
+                r.service.ctl.status=status
+                for _ in range(5):
+                    r.engine.step();r.sensors.step();r.service.tick();r.clock.t+=1
+                b=r.service.benchmark
+                st=status()
+                _,profile=r.settings.profile_for(r.service.app)
+                ctx=b.context(st,profile,r.service._power(r.clock.t),90,False)
+                b.b.phase='result'
+                b.b.result=dict(
+                    applicable=True, passed=False, fg_verified=False,
+                    tdp=12, target=target, mode=objective, context=ctx,
+                    measured={'fps':target,'draw_w':9}, points=[{'tdp':12}])
+                event[:]=[1,3]
+                r.engine.step();r.sensors.step();r.service.tick()
+                self.assertEqual(r.power.tdp,12,
+                                 'APPLY must set the measured TDP right away')
+                self.assertTrue(r.service.governor.benchmark_applied)
+                key=f"{ctx['app']}:{objective}:90:0:{ctx['ac']}"
+                self.assertEqual(r.settings.data['benchmarks'][key]['tdp'],12)
+                for _ in range(3):
+                    r.clock.t+=1
+                    r.engine.step();r.sensors.step();r.service.tick()
+                    self.assertLessEqual(r.power.tdp,12,
+                                         'No unsolicited jump back to 16 W')
+                r.service.stop()
+                self.assertEqual(r.power.tdp,16,
+                                 'User ceiling is restored only on actual stop')
+
+    def test_discard_does_not_apply_benchmark_seed(self):
+        r=make_rig(VGame('steady',120,noise=0), objective='quality',
+                   user_tdp=16,split=False,gpu_clock=False)
+        event=[0,0]
+        original=r.service.ctl.status
+        def status():
+            return dict(original(), hud_event_seq=event[0],hud_event=event[1],
+                        transfer='sdr')
+        r.service.ctl.status=status
+        for _ in range(3):
+            r.engine.step();r.sensors.step();r.service.tick();r.clock.t+=1
+        b=r.service.benchmark
+        _,p=r.settings.profile_for(r.service.app)
+        ctx=b.context(status(),p,r.service._power(r.clock.t),90,False)
+        b.b.phase='result'
+        b.b.result=dict(applicable=True,passed=True,fg_verified=True,
+                        context=ctx,mode='quality',tdp=12,target=45)
+        event[:]=[1,4]
+        r.engine.step();r.sensors.step();r.service.tick()
+        self.assertEqual(r.settings.data.get('benchmarks',{}),{})
+        self.assertFalse(r.service.governor.benchmark_applied)
+        r.service.stop()
+
+    def test_apply_is_scoped_to_selected_mode(self):
+        r=make_rig(VGame('steady',120,noise=0),objective='battery',
+                   user_tdp=16,split=False,gpu_clock=False)
+        event=[0,0]
+        original=r.service.ctl.status
+        def status():
+            return dict(original(),hud_event_seq=event[0],hud_event=event[1],
+                        transfer='sdr')
+        r.service.ctl.status=status
+        for _ in range(3):
+            r.engine.step();r.sensors.step();r.service.tick();r.clock.t+=1
+        b=r.service.benchmark
+        _,p=r.settings.profile_for(r.service.app)
+        ctx=b.context(status(),p,r.service._power(r.clock.t),90,False)
+        b.b.phase='result'
+        b.b.result=dict(applicable=True,passed=True,fg_verified=True,
+                        context=ctx,mode='battery',tdp=12,target=30)
+        event[:]=[1,3]
+        r.engine.step();r.sensors.step();r.service.tick()
+        self.assertEqual(r.power.tdp,12)
+        key=r.settings.profile_for(r.service.app)[0]
+        r.settings.update_profile(key,{'objective':'quality'})
+        r.clock.t+=1
+        r.engine.step();r.sensors.step();r.service.tick()
+        self.assertFalse(r.service.governor.benchmark_applied,
+                         'Battery point must not silently apply to Quality')
+        r.service.stop()
+
     def test_policy_echo_without_generated_frames_does_not_pass(self):
         from gfg_plugin.policy import Policy
         from gfg_plugin.benchmark_session import BenchmarkSession
