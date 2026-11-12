@@ -9,11 +9,15 @@ class AdaptiveBenchmarkTest(unittest.TestCase):
         ctx = context or CTX
         b = AdaptiveBenchmark()
         b.start(context=ctx, mode=mode, ceiling=12, floor=5, ladder=[30, 36, 40, 45], now=0)
-        for t in range(1, 800):
+        history = [b.watts]
+        for t in range(1, 40):
             fps = fps_for_watts(b.watts)
             b.feed(dict(seq=t, frame_ms=[1000/fps]*40, draw_w=b.watts*.8,
                         gpu=95, cpu=50, temp=65, tdp=b.watts, fresh=True), context=ctx, now=t)
-            if not b.active: return b
+            if b.watts != history[-1]: history.append(b.watts)
+            if not b.active:
+                b.completed_at, b.watt_trace = t, history
+                return b
         self.fail('Sweep did not terminate')
 
     def test_modes_choose_different_measured_points(self):
@@ -25,7 +29,9 @@ class AdaptiveBenchmarkTest(unittest.TestCase):
         self.assertGreater(quality.result['tdp'], balanced.result['tdp'])
         self.assertGreater(balanced.result['tdp'], battery.result['tdp'])
         self.assertEqual(battery.result['tdp'], 6)
-        self.assertTrue(any(p['purpose']=='control' for p in battery.points))
+        self.assertFalse(any(p['purpose']=='control' for p in battery.points))
+        self.assertLessEqual(battery.completed_at, 15)
+        self.assertEqual(battery.watt_trace.count(12), 1)
         self.assertEqual(battery.points[-1]['purpose'], 'verify')
 
     def test_unachievable_target_is_not_success(self):
@@ -43,7 +49,7 @@ class AdaptiveBenchmarkTest(unittest.TestCase):
         self.assertEqual(b.result['target'],30)
 
     def test_external_changes_and_menu_abort(self):
-        for change in ({'tdp':10},{'menu':True},{'temp':90},{'fresh':False}):
+        for change in ({'tdp':10},{'menu':True},{'temp':90}):
             b=AdaptiveBenchmark();b.start(context=CTX,mode='balanced',ceiling=12,floor=5,ladder=[30,40],now=0)
             s=dict(seq=1,frame_ms=[25]*40,draw_w=9,gpu=90,cpu=50,temp=65,tdp=12,fresh=True)
             b.feed(dict(s,**change),context=CTX,now=4)
@@ -62,13 +68,46 @@ class AdaptiveBenchmarkTest(unittest.TestCase):
             fps=50 if ((t-4)//6)%2==0 else 25
             b.feed(dict(seq=t,frame_ms=[1000/fps]*40,draw_w=9,gpu=90,cpu=50,temp=65,tdp=12,fresh=True),context=CTX,now=t)
             if not b.active: break
-        self.assertEqual(b.phase,'aborted')
+        self.assertEqual(b.phase,'result')
+        self.assertFalse(b.result['passed'])
 
     def test_missing_power_or_frames_never_produces_recommendation(self):
         b=AdaptiveBenchmark();b.start(context=CTX,mode='quality',ceiling=12,floor=5,ladder=[30],now=0)
         for t in range(1,64):
             b.feed(dict(seq=t,fresh=True,temp=60,tdp=12,frame_ms=[],draw_w=None),context=CTX,now=t)
-        self.assertEqual(b.phase,'aborted')
+        self.assertEqual(b.phase,'result')
+        self.assertFalse(b.result['passed'])
+
+
+    def test_quick_sweep_is_bounded_and_does_not_return_to_ceiling(self):
+        for mode in ('quality','balanced','battery','autopilot'):
+            b = self.run_sweep(mode, lambda w: min(50, w * 5))
+            self.assertLessEqual(b.completed_at, 15, (mode, b.status()))
+            self.assertTrue(b.result is not None)
+            self.assertEqual(b.watt_trace.count(12), 1, b.watt_trace)
+            steps = b.watt_trace
+            # One upward jump is allowed solely to confirm the selected point.
+            rises = sum(y > x for x, y in zip(steps, steps[1:]))
+            self.assertLessEqual(rises, 1, steps)
+
+    def test_one_stale_compositor_read_is_not_a_cancellation(self):
+        b = AdaptiveBenchmark()
+        b.start(context=CTX, mode='battery', ceiling=12, floor=5,
+                ladder=[30, 40], now=0)
+        b.feed(dict(seq=1, fresh=False), context=CTX, now=1)
+        self.assertTrue(b.active)
+        self.assertNotEqual(b.phase, 'aborted')
+
+    def test_15_second_deadline_never_fabricates_measurements(self):
+        b = AdaptiveBenchmark()
+        b.start(context=CTX, mode='battery', ceiling=12, floor=5,
+                ladder=[30, 40], now=0)
+        for t in range(1, 17):
+            b.feed(dict(seq=t, fresh=True, frame_ms=[], draw_w=None, tdp=12),
+                   context=CTX, now=t)
+        self.assertEqual(b.phase, 'result')
+        self.assertFalse(b.result['passed'])
+        self.assertEqual(b.result['confidence'], 'insufficient')
 
     def test_quality_seed_survives_new_governor_session(self):
         from test_core import FakeActuator
