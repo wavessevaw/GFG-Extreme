@@ -430,7 +430,13 @@ class PowerGovernor:
                 self.warm, self.warm_cool_since = False, None
             self.window = []
             self.window_start = now
-            if objective == "quality" and not self.benchmark_applied:
+            self.recent.clear()
+            self.probe_from = None
+            if self.benchmark_applied and self.start_hint is not None:
+                # Returning to a mode with an accepted point must reapply that
+                # mode's TDP, even if the mode was already visited this session.
+                self._write(min(self.start_hint, self.ceiling), "benchmark-mode-restored")
+            elif objective == "quality":
                 self._write(self.ceiling or 15.0, "quality")
             elif self.cap > 0:
                 self._first_level(self.cap)
