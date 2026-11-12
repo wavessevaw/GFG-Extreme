@@ -253,7 +253,8 @@ class Service:
             "real": live.get("real"), "pace": live.get("pace"), "confirmed": confirmed,
             "gpu_busy": sensors.get("gpu_busy_pct"), "cpu_top": sensors.get("cpu_top_core_pct"),
             "autopilot": objective == "autopilot", "stable_point": self._stable_point(refresh) if game else None,
-            "known_point": gp.get("point"), "benchmark_point": round(seed["target"]) if seed else None, "game_class": gp.get("class"), "dock": dock,
+            "known_point": gp.get("point"), "benchmark_point": round(seed["target"]) if seed else None,
+            "benchmark_applied": bool(seed.get("user_accepted")), "game_class": gp.get("class"), "dock": dock,
             "low_battery": self.autopilot.low_battery or data["autopilot"]["preference"] == "battery",
             "above_x3": data["engine"].get("above_x3", False),
             # Only a TDP the Governor manages is a power reading for the pilot: paused (the player's own
@@ -320,7 +321,8 @@ class Service:
             "draw_w": gov.status().get("draw_w"),
             "ac": power.get("external_power"),
             "experiment": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
-            "benchmark_seed": bool(seed), "dock": dock, "start_w": seed.get("tdp") or CLASS_START_W.get(gp.get("class") or ""),
+            "benchmark_seed": bool(seed), "benchmark_applied": bool(seed.get("user_accepted")),
+            "dock": dock, "start_w": seed.get("tdp") or CLASS_START_W.get(gp.get("class") or ""),
         }
         # The counters are read every fresh tick: after a stale engine status (a hitch, the QAM) the
         # next delta is that one second, not everything the engine counted while it was stale.
