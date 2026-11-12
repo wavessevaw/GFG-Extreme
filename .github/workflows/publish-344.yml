@@ -1,0 +1,57 @@
+name: Publish GFG 3.4.4 Pre-release
+on:
+  push:
+    branches: [fix/3.4.4-benchmark-apply]
+    paths: [.github/workflows/publish-344.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: wavessevaw/GFG-Extreme
+      SOURCE_SHA: 4141b45b4152e77932eaf288a75ad7e65aa8ae3a
+      CANDIDATE_RUN: '43134408666'
+      CI_RUN: '43134408540'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm the verified source and successful checks
+        run: |
+          test "$(gh api repos/$GH_REPO/actions/runs/$CANDIDATE_RUN --jq .conclusion)" = success
+          test "$(gh api repos/$GH_REPO/actions/runs/$CANDIDATE_RUN --jq .head_sha)" = "$SOURCE_SHA"
+          test "$(gh api repos/$GH_REPO/actions/runs/$CI_RUN --jq .conclusion)" = success
+          test "$(gh api repos/$GH_REPO/actions/runs/$CI_RUN --jq .head_sha)" = "$SOURCE_SHA"
+          if gh release view v3.4.4 --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "Release v3.4.4 already exists, refusing to replace it."
+            exit 1
+          fi
+          mkdir -p out
+          gh run download "$CANDIDATE_RUN" --repo "$GH_REPO" --name GFG-3.4.4-candidate --dir out
+      - name: Validate installer, checksum, engine identity, and short notes
+        run: |
+          (cd out && sha256sum -c SHA256SUMS.txt)
+          test -s out/README-3.4.4.md
+          grep -q "^## What's New in 3.4.4$" out/README-3.4.4.md
+          python3 - <<'PY'
+          import json, zipfile
+          with zipfile.ZipFile('out/GFG-Extreme-v3_4_4.zip') as z:
+              assert z.testzip() is None
+              r='GFG-Extreme/'
+              assert json.loads(z.read(r+'package.json'))['version']=='3.4.4'
+              assert 'VERSION = "3.4.4"' in z.read(r+'py_modules/gfg_plugin/paths.py').decode()
+              assert z.read(r+'runtime/VERSION').decode().strip().startswith('kedavra-b063186')
+              assert 'benchmark_applied' in z.read(r+'py_modules/gfg_plugin/governor.py').decode()
+              assert 'user_accepted' in z.read(r+'py_modules/gfg_plugin/benchmark_session.py').decode()
+              assert not any(x.startswith('KEDAVRA/') for x in z.namelist())
+          PY
+      - name: Publish only GFG 3.4.4 as Pre-release
+        run: |
+          gh release create v3.4.4 \
+            out/GFG-Extreme-v3_4_4.zip out/README-3.4.4.md out/SHA256SUMS.txt \
+            --repo "$GH_REPO" \
+            --target "$SOURCE_SHA" \
+            --title "GFG Extreme 3.4.4 — Benchmark Apply Fix (Pre-release)" \
+            --notes-file out/README-3.4.4.md \
+            --prerelease
