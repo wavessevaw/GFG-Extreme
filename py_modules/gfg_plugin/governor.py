@@ -16,8 +16,6 @@ long", drives the TDP (slowPPT/fastPPT, through steamos-manager or sysfs):
              (+3 W when far short). A step that failed is a floor for this point that expires
              (5 min, doubling to 30 min when the same level fails again).
   re-probe   held floors expire, so a lighter scene gets its watts back down later.
-  calm       (3.3.1) after a raise no probe down for 30 s (doubling while raises repeat); a step
-             down needs two held windows; Autopilot and Battery near a failed level go 1 W.
 
 Smoothness always wins: a window that fails is never answered with fewer watts. Quality never
 probes down. Balanced keeps one extra watt above the lowest TDP that failed. Without a cap
@@ -41,6 +39,7 @@ from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 WINDOW_S = 8.0
 FAST_WINDOW_S = 5.0
 SETTLE_S = 2.0
+ACT_CACHE_S = 0.5          # actuator readings reused within one service tick
 LEARN_AFTER_S = 60.0
 STEP_DOWN_W = 1.0
 FAST_STEP_W = 2.0
@@ -100,8 +99,6 @@ OBJECTIVES = ("battery", "balanced", "quality", "autopilot")
 # a failed step down came from is not a raise: that level was checked already.
 BOLD = ("autopilot", "battery", "balanced", "quality")   # every objective (user, 3.0.10): down boldly, up slowly
 BOLD_UP_W = 1.0
-# The writes that answer a shortfall (a probe that did not hold, or the game short of its cap).
-RAISES = ("fast-restore", "fast-severe", "fast-raise", "window-failed", "step-dipped")
 # Stable point (GFG principle "find, lock, guard"): a level held for six windows in a row with a
 # failed step just below it (or at the minimum) is locked: no more probing down, so no periodic
 # dips from re-probes. A failed window unlocks it (the guard), and so does a lighter scene: the
@@ -111,19 +108,6 @@ STABLE_WINDOWS = 6
 STABLE_FLOOR_W = 2.5
 LIGHTER_WINDOWS = 3
 CONFIRM_WINDOWS = 2
-# Calm (3.3.1): every TDP write is a step the game feels, and a step down that fails costs a dip
-# plus a step back up (Deck report 3.2.0: ~2 writes a minute, a third of the steps down taken
-# back). So after any raise the level is kept for CALM_S before the next probe down, twice as
-# long for each further raise within CALM_MEMORY_S (up to CALM_MAX_S); a step down needs two held
-# windows at its level, not one; a probe near a level that failed this session goes 1 W at a
-# time, and a jump down to the draw is at most JUMP_MAX_W.
-CALM_S = 30.0
-CALM_MAX_S = 240.0
-CALM_MEMORY_S = 300.0
-HELD_WINDOWS = 2
-NEAR_FAIL_W = 2.0
-DIP_TOLERANT = ("autopilot", "battery")   # the 1 W steps: modes that hold a level through a 7 % dip
-JUMP_MAX_W = 3.0
 
 
 def healthy(window: List[Dict[str, Any]], cap: int, temp_ok: bool, hold: float = 0.97,
@@ -165,6 +149,7 @@ class PowerGovernor:
         self.clock = clock
         self.journal = journal
         self.enabled = True
+        self._act_cache: Optional[Tuple[float, Dict[str, Any]]] = None
         self.restore_pending = False
         self.ac: Optional[bool] = None
         self.ac_changed_at = -1e9
@@ -183,6 +168,7 @@ class PowerGovernor:
         self.cool_since: Optional[float] = None
         self.warm = False                             # from 80 C: no climbing to a higher point
         self.dock = False                             # an external display: warm hold in every mode
+        self.benchmark_seed = False
         self.start_hint: Optional[float] = None       # the game list's start TDP (light 7 W, heavy 15 W)
         self.warm_cool_since: Optional[float] = None
         # cap -> (TDP that failed, until, repeats): no probe at or below that TDP until then
@@ -211,9 +197,6 @@ class PowerGovernor:
         self.stable_tdp: Optional[float] = None
         self.same_windows = 0                   # held windows in a row at this TDP
         self.lighter_windows = 0                # held windows in a row with the draw far under the limit
-        self.calm_until = -1e9                  # no probe down before this (after a raise)
-        self.raises: Deque[float] = deque(maxlen=8)
-        self.failed_at: Dict[int, float] = {}   # cap -> highest TDP that failed this session
 
     @property
     def floor_fail(self) -> Dict[int, float]:
@@ -232,7 +215,7 @@ class PowerGovernor:
     def stop(self, reason: str = "session-end") -> Dict[str, Any]:
         result: Dict[str, Any] = {"restored": False}
         if self.owned:
-            result = self.actuator.restore_if_owned()
+            result = self._wrote(self.actuator.restore_if_owned())
             self._note("governor-restore", reason=reason, restored=result.get("restored"), error=result.get("error"))
         if result.get("success") is False or result.get("error"):
             # The player's TDP is still owed: retried every tick, no new claim until it is back.
@@ -244,12 +227,12 @@ class PowerGovernor:
         return result
 
     def _limits(self) -> Dict[str, Optional[float]]:
-        st = self.actuator.status()
+        st = self._act()
         low = max(MIN_TDP_W, float(st.get("minimum_tdp_w") or 0.0))
         return {"low": low, "ceiling": st.get("initial_tdp_w") or st.get("ceiling_tdp_w"), "draw": st.get("draw_w")}
 
     def _start(self, key: str, objective: str) -> None:
-        claim = self.actuator.claim()
+        claim = self._wrote(self.actuator.claim())
         if not claim.get("owned"):
             self.paused = claim.get("error") or "TDP control is not available"
             self._note("governor-unavailable", error=self.paused)
@@ -278,7 +261,7 @@ class PowerGovernor:
 
     def _ceiling_for(self, objective: str) -> float:
         player = self.player_ceiling or 15.0
-        if self.dock:
+        if self.dock or self.benchmark_seed:
             # Dock (user, 3.1.0): a high TDP is fine on the TV, the temperature guards it. SteamOS
             # gives 20 W on the dock's power (Deck report 3.1.2): the Governor used to pull it back
             # to 15 W and the pilot then dropped to x2.4 "at full power".
@@ -287,10 +270,12 @@ class PowerGovernor:
 
     def _first_level(self, cap: int) -> None:
         """The first TDP at a point: what held last time plus a watt, else the objective's start."""
-        if self.objective == "quality" or not self.ceiling:
+        if (self.objective == "quality" and not self.benchmark_seed) or not self.ceiling:
             return
         learned = self.model.get(f"{self.key}|cap{cap}") if self.model else None
-        if learned and learned.get("tdp_w"):
+        if self.benchmark_seed and self.start_hint is not None and (self.key, self.objective) not in self.started:
+            target, why = min(self.start_hint, self.ceiling), "benchmark-start"
+        elif learned and learned.get("tdp_w"):
             target, why = float(learned["tdp_w"]) + 1.0, "warm-start"
         elif (self.key, self.objective) not in self.started:
             # A fresh game starts low; later unknown points keep the level the session reached.
@@ -321,7 +306,6 @@ class PowerGovernor:
         n = prev[2] + 1 if prev and abs(prev[0] - tdp) < 0.55 else 1
         backoff = min(FLOOR_BACKOFF_MAX_S, FLOOR_BACKOFF_S * 2 ** (n - 1))
         self.floors[cap] = (tdp, self.clock() + backoff, n)
-        self.failed_at[cap] = max(self.failed_at.get(cap, 0.0), tdp)
         if self.model:
             self.model.record_floor_failure(self.key, f"cap{cap}", tdp, count=n)
         self._note("governor-floor", cap=cap, tdp=tdp, repeats=n, backoff_s=backoff)
@@ -332,7 +316,7 @@ class PowerGovernor:
         target = round(max(lim["low"] or MIN_TDP_W, min(ceiling, watts)), 1)
         if self.tdp is not None and abs(target - self.tdp) < 0.05:
             return False
-        result = self.actuator.set_tdp_w(target)
+        result = self._wrote(self.actuator.set_tdp_w(target))
         if not result.get("success"):
             state = result.get("state") or {}
             if state.get("external_change"):
@@ -342,26 +326,16 @@ class PowerGovernor:
                 self._note("governor-write-failed", watts=target, error=result.get("error"))
             return False
         self._note("governor-tdp", watts=target, was=self.tdp, why=why)
-        if self.tdp is not None and target > self.tdp + 0.05 and why.split(":")[0] in RAISES:
-            self._calm()
         self.tdp = target
         self.held_at_tdp = False
         self.changed_at = self.clock()
         self.window = []
         return True
 
-    def _calm(self) -> None:
-        """A raise: keep the level a while before the next probe down, longer when raises repeat."""
-        now = self.clock()
-        while self.raises and now - self.raises[0] > CALM_MEMORY_S:
-            self.raises.popleft()
-        self.raises.append(now)
-        self.calm_until = now + min(CALM_MAX_S, CALM_S * 2 ** (len(self.raises) - 1))
-
     def _external(self, now: float) -> bool:
         """An outside TDP change: SteamOS's own after a charger change (take over again, its
         value is the new ceiling), else the player's (pause for this game). True while waiting."""
-        observed = self.actuator.status().get("observed_tdp_w")
+        observed = self._act().get("observed_tdp_w")
         steamos = (isinstance(observed, (int, float)) and self.player_ceiling is not None
                    and abs(observed - self.player_ceiling) < 0.55)
         if now - self.ac_changed_at <= AC_GRACE_S or steamos:
@@ -369,7 +343,7 @@ class PowerGovernor:
             # the very value it had when the Governor took over), not the player's slider.
             was = self.tdp
             self.external_at = None
-            claim = self.actuator.claim()
+            claim = self._wrote(self.actuator.claim())
             if not claim.get("owned"):
                 self._pause(claim.get("error") or "TDP control is not available")
                 return True
@@ -419,6 +393,7 @@ class PowerGovernor:
         key = str(sample.get("key") or "")
         objective = sample.get("objective") if sample.get("objective") in OBJECTIVES else "balanced"
         self.dock = bool(sample.get("dock"))
+        self.benchmark_seed = bool(sample.get("benchmark_seed"))
         hint = sample.get("start_w")
         self.start_hint = float(hint) if isinstance(hint, (int, float)) and hint > 0 else None
         if key != self.key:
@@ -430,6 +405,8 @@ class PowerGovernor:
             self.key = key
             # The reset clears the session's dock flag: the ceiling taken at the start needs it.
             self.dock = bool(sample.get("dock"))
+            self.benchmark_seed = bool(sample.get("benchmark_seed"))
+            self.start_hint = float(hint) if isinstance(hint,(int,float)) and hint>0 else None
             if self.enabled:
                 self._start(key, objective)
             self.window_start = now
@@ -447,7 +424,7 @@ class PowerGovernor:
                 self._write(self.ceiling or 15.0, "quality")
             elif self.cap > 0:
                 self._first_level(self.cap)
-        if self.external_at is None and self.owned and self.actuator.verify_ownership().get("external_change"):
+        if self.external_at is None and self.owned and self._verified().get("external_change"):
             self.owned = False
             self.external_at = now
         if self.external_at is not None and not self.paused:
@@ -700,17 +677,12 @@ class PowerGovernor:
         draw = verdict.get("draw")
         if self._stable_check(draw):
             return
-        if now < self.calm_until or (not self.fast and self.same_windows < HELD_WINDOWS):
-            return   # calm: the level holds a while before the next probe
         floor = self._floor(self.cap) or self._limits()["low"] or MIN_TDP_W
         step = FAST_STEP_W if self.fast or self.objective in BOLD else STEP_DOWN_W
-        failed = self.failed_at.get(self.cap)
-        if failed is not None and self.objective in DIP_TOLERANT and self.tdp - step <= failed + NEAR_FAIL_W:
-            step = STEP_DOWN_W   # close to a level that failed: a watt at a time
         target = self.tdp - step
         if isinstance(draw, (int, float)) and self.tdp - draw >= DRAW_JUMP_W:
             # The game uses clearly less than the limit: the limit goes to what it draws.
-            target = min(target, max(draw + DRAW_MARGIN_W, self.tdp - JUMP_MAX_W))
+            target = min(target, draw + DRAW_MARGIN_W)
         target = max(target, floor)
         if target > self.tdp - 0.45:
             return
@@ -733,8 +705,30 @@ class PowerGovernor:
         ceiling = self._top()
         return self.tdp >= ceiling - 0.05
 
+    def _wrote(self, result: Any) -> Any:
+        self._act_cache = None
+        return result
+
+    def _verified(self) -> Dict[str, Any]:
+        """The ownership check returns the actuator's readings too: they serve the rest of the tick."""
+        value = self.actuator.verify_ownership()
+        self._act_cache = (self.clock(), value)
+        return value
+
+    def _act(self) -> Dict[str, Any]:
+        """The actuator's readings (three sysfs files, the draw one an SMU query) once per tick:
+        the service asks for the Governor's status four or five times a second (3.2.2)."""
+        if not self.actuator:
+            return {}
+        now = self.clock()
+        if self._act_cache is not None and 0.0 <= now - self._act_cache[0] < ACT_CACHE_S:
+            return self._act_cache[1]
+        value = self.actuator.status()
+        self._act_cache = (now, value)
+        return value
+
     def status(self) -> Dict[str, Any]:
-        act = self.actuator.status() if self.actuator else {}
+        act = self._act()
         return {
             "enabled": self.enabled,
             "owned": self.owned,

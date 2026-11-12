@@ -36,7 +36,7 @@ from typing import Any, Dict, List, Optional, Tuple
 MAGIC = 0x4847464B  # "KFGH"
 VERSION = 1
 HEADER = struct.Struct("<8I")
-CORNERS = {"top-left": 0, "top-right": 1, "bottom-left": 2, "bottom-right": 3, "centre": 4}  # centre: GSF 1.4.2
+CORNERS = {"top-left": 0, "top-right": 1, "bottom-left": 2, "bottom-right": 3}
 DEFAULT_PATH = Path("/dev/shm/kedavra-hud.raw")
 
 PANEL = (6, 9, 7)
@@ -461,54 +461,10 @@ def render(st: Dict[str, Any], rates: Optional[Dict[str, float]], scale: float =
     return w, h, bytes(cv.px)
 
 
-def _fmt(v: Any, digits: int = 0) -> str:
-    n = _num(v)
-    return "—" if n is None else (f"{n:.{digits}f}" if digits else str(round(n)))
-
-
-def render_message(panel: str, view: Dict[str, Any], scale: float = SCALES[0]) -> Tuple[int, int, bytes]:
-    """The benchmark's centre panel (GFG 3.3.0): measuring with the seconds left and the live
-    medians, then done or cancelled. The HUD atlas has capitals, digits and a few signs only."""
-    s = scale
-    w, h = math.ceil(380 * s), math.ceil(196 * s)
-    cv = Canvas(w, h, 14 * s)
-    cx = w / 2.0
-    cv.text(cx, 12 * s, "GFG BENCHMARK", f"lab@{s}", ACCENT)
-    if panel == "measuring":
-        cv.text(cx, 28 * s, "DO NOT TOUCH ANYTHING", f"fps@{s}", WHITE)
-        cv.text(cx, 56 * s, "MEASURING AT 15 W · GENERATION OFF", f"sub@{s}", LABEL)
-        left = int(view.get("seconds_left") or 0)
-        cy = 104 * s
-        cv.ring(cx, cy, 58 * s, 6 * s, left / 20.0, ACCENT)
-        cv.text(cx, cy - _digit_mid(f"fps@{s}"), str(left), f"fps@{s}", WHITE)
-        live = view.get("live") or {}
-        cells = [(_fmt(live.get("real")), "FPS"), (_fmt(live.get("gpu")) + "%", "GPU"), (_fmt(live.get("cpu")) + "%", "CPU"),
-                 (_fmt(live.get("draw_w"), 1), "W"), (_fmt(live.get("temp_c")), "C")]
-        step = (w - 40 * s) / len(cells)
-        for i, (v, lab) in enumerate(cells):
-            x = 20 * s + step * (i + 0.5)
-            cv.text(x, 142 * s, v, f"val@{s}", WHITE)
-            cv.text(x, 164 * s, lab, f"lab@{s}", LABEL)
-    elif panel == "done":
-        res = view.get("result") or {}
-        cv.text(cx, 30 * s, "BENCHMARK DONE", f"fps@{s}", WHITE)
-        line = f"BASE {res.get('point', '—')} · {res.get('multiplier', '')}"
-        if res.get("watts"):
-            line += f" · {res['watts']} W"
-        cv.text(cx, 78 * s, line, f"val@{s}", ACCENT)
-        cv.text(cx, 122 * s, "OPEN QUICK ACCESS TO ACCEPT", f"val@{s}", WHITE)
-        cv.text(cx, 150 * s, "OR KEEP AUTOPILOT SEARCHING", f"sub@{s}", LABEL)
-    else:
-        cv.text(cx, 44 * s, "BENCHMARK CANCELLED", f"fps@{s}", WHITE)
-        cv.text(cx, 96 * s, str(view.get("reason") or "").upper(), f"sub@{s}", LABEL)
-        cv.text(cx, 130 * s, "START IT AGAIN FROM DASH", f"sub@{s}", LABEL)
-    return w, h, bytes(cv.px)
-
-
 def publish(path: Path, w: int, h: int, pixels: bytes, *, corner: str = "top-left",
-            margin: int = 12, seq: int = 0) -> bool:
+            margin: int = 12, seq: int = 0, input_mode: int = 0) -> bool:
     """Atomic write; readable by the Gamescope user. w = 0 hides the HUD."""
-    header = HEADER.pack(MAGIC, VERSION, w, h, CORNERS.get(corner, 0), margin, seq & 0xFFFFFFFF, 0)
+    header = HEADER.pack(MAGIC, VERSION, w, h, CORNERS.get(corner, 0), margin, seq & 0xFFFFFFFF, input_mode)
     tmp = path.with_name(f".{path.name}.{os.getpid()}")
     try:
         with open(tmp, "wb") as f:
@@ -536,23 +492,6 @@ class Hud:
         self.shown = False
         self.live: Dict[str, Any] = live_for({}, None)
 
-    def message(self, status: Optional[Dict[str, Any]], panel: str, view: Dict[str, Any]) -> bool:
-        """A centre panel in place of the rings (needs GSF 1.4.2's centred HUD)."""
-        scale = scale_for(int((status or {}).get("height") or 800))
-        key = json.dumps(["msg", scale, panel, view.get("seconds_left"), view.get("live"), view.get("reason"),
-                          (view.get("result") or {}).get("point")], sort_keys=True, default=str)
-        self.seq += 1
-        if key == self.last_key:
-            try:
-                os.utime(self.path)
-                return True
-            except OSError:
-                pass
-        w, h, px = render_message(panel, view, scale)
-        self.last_key = key
-        self.shown = True
-        return publish(self.path, w, h, px, corner="centre", margin=0, seq=self.seq)
-
     def tick(self, enabled: bool, status: Optional[Dict[str, Any]], extra: Optional[Dict[str, Any]] = None,
              corner: str = "top-left", detail: str = "standard") -> bool:
         fresh = bool(status) and status.get("engine") == "running"
@@ -567,6 +506,15 @@ class Hud:
                 return publish(self.path, 0, 0, b"", seq=self.seq)
             return True
         scale = scale_for(int(status.get("height") or 800))
+        bench = (extra or {}).get("benchmark", {})
+        self.seq += 1
+        phase = bench.get("phase")
+        if phase in ("settle", "measure", "result", "aborted") or bench.get("restore_pending"):
+            w, h, px = render_benchmark(bench, scale)
+            mode = 3 if phase == "result" and not bench.get("validating") and not bench.get("restore_pending") else 2
+            self.last_key = None
+            self.shown = True
+            return publish(self.path,w,h,px,corner=corner,margin=round(12*scale),seq=self.seq,input_mode=mode)
         items = items_for(status, rates) if extra is None else gfg_items(status, rates, extra, detail)
         key = json.dumps([scale, corner, items], sort_keys=True, default=str)
         self.seq += 1
@@ -580,4 +528,37 @@ class Hud:
         w, h, px = render(status, rates, scale, items)
         self.last_key = key
         self.shown = True
-        return publish(self.path, w, h, px, corner=corner, margin=round(12 * scale), seq=self.seq)
+        return publish(self.path, w, h, px, corner=corner, margin=round(12 * scale), seq=self.seq, input_mode=1 if status.get("hud_input_version") == 1 else 0)
+
+
+def render_benchmark(bench, scale):
+    scale=1.32  # Readable touch panel; stays below the compositor 1 MiB HUD limit.
+    w,h=round(440*scale),round(220*scale)
+    cv=Canvas.plain(w,h)
+    cv.px=bytearray(_panel(w,h,12*scale))
+    result=bench.get("result") or {}
+    measured=result.get("measured") or {}
+    def num(value): return "--" if value is None else f"{value:.1f}"
+    if result:
+        lines=["GFG BENCHMARK COMPLETE", "MODE: "+str(result.get("mode","")).upper(),
+               "TARGET: "+num(result.get("target"))+" NATIVE FPS",
+               "TDP: "+num(result.get("tdp"))+" W   APU: "+num(measured.get("draw_w"))+" W",
+               "NATIVE: "+num(measured.get("fps"))+"   P95: "+num(measured.get("p95_ms"))+" MS",
+               "STABILITY: "+("PASSED" if result.get("passed") else "NOT CONFIRMED")]
+    else:
+        lines=["GFG BENCHMARK", str(bench.get("purpose") or bench.get("phase","")).upper()+" | POINTS "+str(bench.get("tested",0))+" | WINDOW "+str(bench.get("windows",0))+"/2",
+               "TDP: "+num(bench.get("tdp"))+" W   APU: "+num(bench.get("draw_w"))+" W",
+               "TARGET: "+num(bench.get("target"))+" NATIVE FPS",
+               "NATIVE: "+num(bench.get("native_fps"))+" FPS   LOSS: "+num(bench.get("loss_pct"))+"%",
+               str(bench.get("reason") or bench.get("message") or "Hold a repeatable game scene")]
+    if bench.get("validating"): lines[1]="VERIFYING FRAME GENERATION"
+    if bench.get("restore_pending"): lines[1]="RESTORING POWER SETTINGS"
+    for i,line in enumerate(lines):
+        style=f"lab@{scale}"
+        while cv.text_width(line,style)>w-20*scale: line=line[:-1]
+        cv.text(w/2,(10+i*23)*scale,line,style,WHITE)
+    if result and not bench.get("validating") and not bench.get("restore_pending"):
+        cv.text(w*.25,h*.8,"APPLY" if result.get("passed") else "UNAVAILABLE",f"lab@{scale}",WHITE)
+        cv.text(w*.75,h*.8,"DISCARD",f"lab@{scale}",WHITE)
+    else: cv.text(w/2,h*.8,"TAP TO CANCEL",f"lab@{scale}",WHITE)
+    return w,h,bytes(cv.px)

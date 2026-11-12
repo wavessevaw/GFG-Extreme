@@ -42,7 +42,7 @@ DEFAULT_SHARPNESS = 0.4
 DEFAULT_DENOISE = 0.17
 
 OFF: Dict[str, Any] = {"effects": [], "sharpen": "none", "sharpness": DEFAULT_SHARPNESS,
-                       "denoise": DEFAULT_DENOISE, "aa": "none"}
+                       "denoise": DEFAULT_DENOISE, "aa": "none", "focus": False}
 
 PRESETS: Tuple[Tuple[str, str, Dict[str, Any]], ...] = (
     ("off", "Off", {}),
@@ -77,7 +77,7 @@ def normalize(raw: Any) -> Dict[str, Any]:
     sharpen = raw.get("sharpen") if raw.get("sharpen") in SHARPEN else "none"
     aa = raw.get("aa") if raw.get("aa") in AA else "none"
     return {"effects": effects, "sharpen": sharpen, "sharpness": _unit(raw.get("sharpness"), DEFAULT_SHARPNESS),
-            "denoise": _unit(raw.get("denoise"), DEFAULT_DENOISE), "aa": aa}
+            "denoise": _unit(raw.get("denoise"), DEFAULT_DENOISE), "aa": aa, "focus": raw.get("focus") is True}
 
 
 def preset(preset_id: str) -> Dict[str, Any]:
@@ -90,6 +90,8 @@ def preset(preset_id: str) -> Dict[str, Any]:
 def preset_of(cfg: Dict[str, Any]) -> str:
     """The preset this setting equals, or "custom"."""
     cfg = normalize(cfg)
+    if cfg["focus"]:
+        return "custom"
     for pid, _, _ in PRESETS:
         p = preset(pid)
         same = (sorted(p["effects"]) == sorted(cfg["effects"]) and p["sharpen"] == cfg["sharpen"] and p["aa"] == cfg["aa"]
@@ -101,7 +103,7 @@ def preset_of(cfg: Dict[str, Any]) -> str:
 
 def is_active(cfg: Dict[str, Any]) -> bool:
     cfg = normalize(cfg)
-    return bool(cfg["effects"]) or cfg["sharpen"] != "none" or cfg["aa"] != "none"
+    return cfg["focus"] or bool(cfg["effects"]) or cfg["sharpen"] != "none" or cfg["aa"] != "none"
 
 
 def to_post(cfg: Dict[str, Any]) -> str:
@@ -109,7 +111,9 @@ def to_post(cfg: Dict[str, Any]) -> str:
     any order here: kfg_post_parse only sets bits."""
     cfg = normalize(cfg)
     parts = list(cfg["effects"])
-    if cfg["sharpen"] == "cas":
+    if cfg["focus"]:
+        parts.append("detail=1")
+    elif cfg["sharpen"] == "cas":
         parts.append(f"cas={cfg['sharpness']:g}")
     elif cfg["sharpen"] == "dls":
         parts.append(f"dls={cfg['sharpness']:g}:{cfg['denoise']:g}")
@@ -122,7 +126,9 @@ def summary(cfg: Dict[str, Any]) -> str:
     cfg = normalize(cfg)
     names = dict((k, n) for k, n, _ in EFFECTS)
     parts = [names[e] for e in cfg["effects"]]
-    if cfg["sharpen"] != "none":
+    if cfg["focus"]:
+        parts.append("Kedavra Focus")
+    elif cfg["sharpen"] != "none":
         parts.append(f"{cfg['sharpen'].upper()} {round(cfg['sharpness'] * 100)}%")
     if cfg["aa"] != "none":
         parts.append(cfg["aa"].upper())

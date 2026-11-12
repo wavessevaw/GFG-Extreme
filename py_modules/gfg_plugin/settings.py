@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from . import filters
 from .user_files import read_json, write_json_atomic
 
-SCHEMA = 4   # 4 (3.3.0): Power Split and the GPU clock ceiling off by default
+SCHEMA = 3
 FG_MODES = ("off", "auto", "x2", "x3", "x3.75", "custom")
 TELEMETRY_LEVELS = ("minimal", "standard", "debug")
 OBJECTIVES = ("autopilot", "battery", "balanced", "quality")
@@ -37,7 +37,7 @@ def defaults() -> Dict[str, Any]:
         "profiles": {DEFAULT_PROFILE: default_profile()},
         "hud": {"enabled": True, "position": "top-right", "detail": "standard"},
         "autopilot": {"preference": "auto"},
-        "power": {"enabled": True, "split": False, "gpu_clock": False},
+        "power": {"enabled": True, "split": True, "gpu_clock": True},
         "engine": {"hdr": True, "hdr_output": True, "above_x3": False, "boost": False, "boost_mult": 1.5},
         "telemetry": {"level": "standard"},
         "migrated_from": None,
@@ -65,7 +65,8 @@ def normalize_profile(raw: Any, name: str = "Default") -> Dict[str, Any]:
     base = default_profile()
     return {
         "name": str(raw.get("name") or name)[:80],
-        "fg": raw.get("fg") if raw.get("fg") in FG_MODES else base["fg"],
+        # Dash offers only Off; every other stored choice now means the mode picks the multiplier.
+        "fg": "off" if raw.get("fg") == "off" else "auto",
         "base_fps": _int_in(raw.get("base_fps"), *BASE_FPS_RANGE, base["base_fps"]),
         "objective": raw.get("objective") if raw.get("objective") in OBJECTIVES else base["objective"],
         "filters": filters.normalize(raw.get("filters")),
@@ -88,13 +89,8 @@ def normalize(raw: Any) -> Dict[str, Any]:
     ap = raw.get("autopilot") if isinstance(raw.get("autopilot"), dict) else {}
     out["autopilot"] = {"preference": ap.get("preference") if ap.get("preference") in AUTOPILOT_PREFERENCES else "auto"}
     power = raw.get("power") if isinstance(raw.get("power"), dict) else {}
-    # 3.3.0: each CPU cap step made short pacing dips more frequent (2.6 -> 4.0 % of the next 8 s,
-    # about one change a minute) for a median 0.6 % GPU clock per watt; the GPU clock ceiling pins
-    # a fixed clock. Both are off from schema 4 and stay switchable on the Engine tab.
-    old = _int_in(raw.get("schema"), 0, SCHEMA, 0) < 4
-    out["power"] = {"enabled": bool(power.get("enabled", True)),
-                    "split": False if old else bool(power.get("split", False)),
-                    "gpu_clock": False if old else bool(power.get("gpu_clock", False))}
+    out["power"] = {"enabled": bool(power.get("enabled", True)), "split": bool(power.get("split", True)),
+                    "gpu_clock": bool(power.get("gpu_clock", True))}
     eng = raw.get("engine") if isinstance(raw.get("engine"), dict) else {}
     out["engine"] = {"hdr": bool(eng.get("hdr", True)), "hdr_output": bool(eng.get("hdr_output", True)),
                      # Above x3 (user, 3.1.1): x3.75 plays badly, so it is unlocked only here.
@@ -104,6 +100,7 @@ def normalize(raw: Any) -> Dict[str, Any]:
                      "boost_mult": eng.get("boost_mult") if eng.get("boost_mult") in (1.25, 1.5, 1.75) else 1.5}
     tel = raw.get("telemetry") if isinstance(raw.get("telemetry"), dict) else {}
     out["telemetry"] = {"level": tel.get("level") if tel.get("level") in TELEMETRY_LEVELS else "standard"}
+    out["benchmarks"] = copy.deepcopy(raw.get("benchmarks", {})) if isinstance(raw.get("benchmarks"), dict) else {}
     out["migrated_from"] = raw.get("migrated_from") if isinstance(raw.get("migrated_from"), (str, type(None))) else None
     return out
 

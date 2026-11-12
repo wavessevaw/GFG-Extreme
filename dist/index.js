@@ -194,9 +194,7 @@ var rpc = {
   stopCapture: call("stop_capture"),
   captures: call("list_captures"),
   logs: call("get_logs"),
-  takeOver: call("take_over"),
-  benchStart: call("bench_start"),
-  benchAnswer: call("bench_answer")
+  takeOver: call("take_over")
 };
 var TABS = ["Dash", "Graphics", "Engine", "Setup"];
 var num = (v) => typeof v === "number" && isFinite(v) ? v : null;
@@ -332,42 +330,6 @@ var ICON = {
   balanced: svg(h("path", { d: "M12 4v16M7 20h10M5 7h14" }), h("path", { d: "M5 7l-2.5 6a2.5 2.5 0 0 0 5 0z M19 7l-2.5 6a2.5 2.5 0 0 0 5 0z" })),
   quality: svg(h("path", { d: "M6 3h12l3 6-9 12L3 9z" }), h("path", { d: "M3 9h18M9.5 3L12 21M14.5 3L12 21" }))
 };
-function Bench({ live, set }) {
-  const b = live.bench || {}, last = (live.game_profile || {}).bench, refresh = live.refresh || 90;
-  const busy = b.state === "waiting" || b.state === "settling" || b.state === "running";
-  const start = () => set(async () => {
-    const r = await rpc.benchStart();
-    notify("GFG Extreme \xB7 Benchmark", r && r.ok === false ? r.error : "Close Quick Access: the 20 s start in game. Do not touch anything.");
-  });
-  if (b.state === "done") {
-    const r = b.result || {}, m = r.medians || {};
-    return h(
-      Card,
-      { title: "BENCHMARK DONE" },
-      h(Row, { k: "Base FPS", v: `${r.point || "\u2014"} \xB7 ${multText(refresh, r.point)}`, first: true }),
-      h(Row, { k: "Expected power", v: r.watts ? `~${r.watts} W` : "\u2014" }),
-      h(Row, { k: "Medians at 15 W", v: `${fmt(m.real)} FPS \xB7 GPU ${fmt(m.gpu, 0, "%")} \xB7 ${fmt(m.temp_c, 0, " \xB0C")}` }),
-      h("div", { className: "sub" }, "Autopilot starts here and still adapts to heavier and lighter scenes."),
-      h(
-        "div",
-        { className: "btns" },
-        h(Focusable, { className: "btn red", onClick: () => set(() => rpc.benchAnswer(true)) }, "Accept"),
-        h(Focusable, { className: "btn", onClick: () => set(() => rpc.benchAnswer(false)) }, "No, keep searching")
-      )
-    );
-  }
-  return h(
-    Card,
-    { title: "BENCHMARK" },
-    h(
-      Focusable,
-      { className: "btn" + (busy ? "" : " red"), onClick: busy ? () => set(() => rpc.benchAnswer(false)) : start },
-      busy ? b.state !== "waiting" ? `Measuring \xB7 ${b.seconds_left} s \xB7 tap to cancel` : "Close Quick Access to start \xB7 tap to cancel" : "Run benchmark"
-    ),
-    b.state === "cancelled" ? h("div", { className: "note bad" }, "Benchmark cancelled: " + b.reason + ".") : null,
-    h("div", { className: "sub", style: { marginTop: 6 } }, !live.game ? "Start a game first: 20 s in game at 15 W, generation off." : last ? `Last for this game: base ${last.point} ${multText(refresh, last.point)} \xB7 accepted` : "20 s in game at 15 W, generation off: a starting point for Autopilot.")
-  );
-}
 function Dash({ s, set }) {
   const [layout, next] = useLayout();
   const live = s.live || {}, eng = live.engine || {}, gov = live.governor || {}, sen = live.sensors || {}, split = live.split || {};
@@ -386,8 +348,7 @@ function Dash({ s, set }) {
   );
   const scope = (s.profiles.active || "").startsWith("app:") ? "game" : "default";
   const setProf = (changes) => set(() => rpc.setProfile(scope, changes));
-  const above = !!s.settings.engine.above_x3, minCap = above ? 20 : Math.ceil(refresh / 3);
-  const fgOpts = [["off", "Off"], ["auto", "Auto"], ["x2", "\xD72"], ["x3", "\xD73"], ...above ? [["x3.75", "\xD73.75"]] : [], ["custom", "Custom"]];
+  const above = !!s.settings.engine.above_x3;
   const cpuGhz = split.cap_khz ? (split.cap_khz / 1e6).toFixed(1) : null;
   const pace = num((live.live || {}).pace), hdr = !!(eng.transfer && eng.transfer !== "sdr");
   const short = !!(point && real !== null && real < 0.9 * point);
@@ -417,41 +378,29 @@ function Dash({ s, set }) {
       h(Mini, { frac: split.cap_khz && split.max_khz ? split.cap_khz / split.max_khz : 1, v: cpuGhz || "MAX", u: cpuGhz ? "GHz" : "", k: "CPU CLOCK", t: cpuGhz ? 0 : 0.3 }),
       h(Mini, { frac: frac(sen.fan_rpm, FAN_MAX), v: num(sen.fan_rpm) === null ? "\u2014" : (sen.fan_rpm / 1e3).toFixed(1), u: "k rpm", k: "FAN", t: off(sen.fan_rpm, 3500, 7e3) })
     ),
-    h(Card, { title: "MODE" }, h("div", { className: "grid2" }, Object.entries(OBJ).map(([k, [name, sub]]) => h(Focusable, { key: k, onClick: () => setProf({ objective: k }) }, h(
-      "div",
-      { className: "tile mode m-" + k + (prof.objective === k ? " on" : "") },
-      h("div", { className: "mico" }, ICON[k]),
+    h(Card, { title: "MODE" }, h("div", { className: "grid2" }, Object.entries(OBJ).map(([k, [name, sub]]) => (
+      // A second tap on the selected mode turns generation off; any mode tap while off turns it back on.
       h(
-        "div",
-        null,
-        h("b", null, name),
-        h("span", null, k === "autopilot" && prof.objective === "autopilot" && live.objective && live.objective !== "autopilot" ? "now " + (OBJ[live.objective] || [live.objective])[0] : objSub(k, sub, above))
-      )
-    ))))),
-    h(
-      Card,
-      { title: "FRAME GENERATION" },
-      h(Seg, { value: prof.fg === "x3.75" && !above ? "x3" : prof.fg, options: fgOpts, onChange: (v) => setProf({ fg: v }) }),
-      prof.fg === "custom" ? h(
-        "div",
-        { className: "lrow first", style: { marginTop: 6 } },
-        "Base FPS cap",
+        Focusable,
+        { key: k, onClick: () => setProf(prof.fg !== "off" && prof.objective === k ? { fg: "off" } : { objective: k, fg: "auto" }) },
         h(
           "div",
-          { className: "step" },
-          h(Focusable, { className: "b", onClick: () => setProf({ base_fps: Math.max(minCap, Math.max(minCap, prof.base_fps) - 1) }) }, "\u2212"),
-          h("span", { className: "val" }, Math.max(minCap, prof.base_fps)),
-          h(Focusable, { className: "b", onClick: () => setProf({ base_fps: Math.min(90, prof.base_fps + 1) }) }, "+")
+          { className: "tile mode m-" + k + (prof.fg !== "off" && prof.objective === k ? " on" : "") },
+          h("div", { className: "mico" }, ICON[k]),
+          h(
+            "div",
+            null,
+            h("b", null, name),
+            h("span", null, k === "autopilot" && prof.objective === "autopilot" && live.objective && live.objective !== "autopilot" ? "now " + (OBJ[live.objective] || [live.objective])[0] : objSub(k, sub, above))
+          )
         )
-      ) : null,
-      h("div", { className: "note" }, prof.fg === "custom" ? `The game is capped at ${Math.max(minCap, prof.base_fps)} FPS, generation fills ${refresh} Hz.` : `Custom: the game is capped at your base FPS (${minCap}\u201390), generation fills the display.`)
-    ),
+      )
+    )))),
     h(Card, { title: "SETTINGS APPLY TO" }, h(Seg, {
       value: scope,
       options: [["game", "This game"], ["default", "All games"]],
       onChange: (v) => set(() => v === "game" ? rpc.setProfile("game", {}) : rpc.dropGame())
-    })),
-    h(Bench, { live, set })
+    }))
   );
 }
 var SWATCH = {
@@ -467,7 +416,8 @@ var SWATCH = {
 function lookSummary(f, names) {
   const parts = (f.effects || []).map((e) => names[e] || e);
   if (f.aa && f.aa !== "none") parts.push(f.aa.toUpperCase());
-  if (f.sharpen && f.sharpen !== "none") parts.push(f.sharpen.toUpperCase() + " " + Math.round((f.sharpness || 0) * 100) + "%");
+  if (f.focus) parts.push("Kedavra Focus");
+  else if (f.sharpen && f.sharpen !== "none") parts.push(f.sharpen.toUpperCase() + " " + Math.round((f.sharpness || 0) * 100) + "%");
   return parts.length ? parts.join(" + ") : "No effect";
 }
 function Graphics({ s, set, cat }) {
@@ -478,9 +428,11 @@ function Graphics({ s, set, cat }) {
   const presets = cat && cat.presets || [], effects = cat && cat.effects || [];
   const names = Object.fromEntries(effects.map((e) => [e.key, e.name]));
   const same = (a, b) => JSON.stringify([...a.effects || []].sort()) === JSON.stringify([...b.effects || []].sort()) && (a.sharpen || "none") === (b.sharpen || "none") && (a.aa || "none") === (b.aa || "none");
-  const active = (presets.find((p) => same(f, p.filters)) || {}).id || "custom";
+  const active = f.focus ? "custom" : (presets.find((p) => same(f, p.filters)) || {}).id || "custom";
   const hud = s.settings.hud;
   const hdr = ((s.live || {}).engine || {}).transfer && s.live.engine.transfer !== "sdr";
+  const engine = (s.live || {}).engine || {};
+  const focusMessage = (s.live || {}).controller || (s.coexist || {}).control_error || (!f.focus ? "Smart sharpness. Cleaner edges. More detail." : !engine.fresh ? "Waiting for a live Gamescope status." : engine.post_error ? "Focus error: " + engine.post_error : engine.focus_status === "hdr_bypass" || hdr ? "Bypassed for HDR. Focus processes SDR images only." : engine.focus_status === "processing" ? "Processing SDR frames: " + (engine.focus_frames || 0) : engine.focus_status === "steam_ui" ? "Steam UI is not filtered. Game passes: " + (engine.focus_frames || 0) : "Focus requested; processing not confirmed by Gamescope.");
   const chain = f.effects || [];
   const step = (k, dv) => put({ [k]: Math.max(0, Math.min(1, Math.round(((f[k] || 0) + dv) * 20) / 20)) });
   const stepper = (k) => h(
@@ -495,10 +447,17 @@ function Graphics({ s, set, cat }) {
     null,
     h(
       Card,
+      { title: "IMAGE CLARITY" },
+      h(Row, { k: "Kedavra Focus", first: true }, h(Tog, { on: !!f.focus, onChange: (v) => put({ focus: v }) })),
+      h("div", { className: "sub" }, focusMessage),
+      f.focus ? h("div", { className: "note" }, "Focus keeps your CAS/DLS settings saved.") : null
+    ),
+    h(
+      Card,
       { title: "LOOK" },
       h("div", { className: "fgrid" }, presets.map((p) => h(
         Focusable,
-        { key: p.id, className: "ftile" + (active === p.id ? " on" : ""), onClick: () => set(() => rpc.setProfile(scope, { filters: p.id })) },
+        { key: p.id, className: "ftile" + (active === p.id ? " on" : ""), onClick: () => set(() => rpc.setProfile(scope, { filters: { ...p.filters, focus: !!f.focus } })) },
         h("div", { className: "sw", style: { background: SWATCH[p.id] || SWATCH.off } }, p.id === "off" ? h("i", { className: "slash" }) : null),
         h("div", { className: "fl" }, p.name)
       ))),
@@ -507,9 +466,9 @@ function Graphics({ s, set, cat }) {
     h(
       Card,
       { title: "SHARPENING" },
-      h(Seg, { value: f.sharpen, options: [["none", "Off"], ["cas", "CAS"], ["dls", "DLS"]], onChange: (v) => put({ sharpen: v }) }),
-      f.sharpen !== "none" ? h("div", { className: "lrow first", style: { marginTop: 6 } }, h("div", { className: "t2" }, h("b", null, "Strength"), h("span", null, "May show grain")), stepper("sharpness")) : null,
-      f.sharpen === "dls" ? h("div", { className: "lrow" }, h("div", { className: "t2" }, h("b", null, "Denoise"), h("span", null, "Keeps DLS off film grain")), stepper("denoise")) : null,
+      f.focus ? h("div", { className: "note" }, "Kedavra Focus is on. CAS/DLS available when disabled.") : h(Seg, { value: f.focus ? "none" : f.sharpen, options: [["none", "Off"], ["cas", "CAS"], ["dls", "DLS"]], onChange: (v) => put({ sharpen: v, focus: false }) }),
+      !f.focus && f.sharpen !== "none" ? h("div", { className: "lrow first", style: { marginTop: 6 } }, h("div", { className: "t2" }, h("b", null, "Strength"), h("span", null, "May show grain")), stepper("sharpness")) : null,
+      !f.focus && f.sharpen === "dls" ? h("div", { className: "lrow" }, h("div", { className: "t2" }, h("b", null, "Denoise"), h("span", null, "Keeps DLS off film grain")), stepper("denoise")) : null,
       h("div", { className: "sec sec2" }, "ANTI-ALIASING"),
       h(Seg, { value: f.aa, options: [["none", "Off"], ["fxaa", "FXAA"], ["smaa", "SMAA"]], onChange: (v) => put({ aa: v }) })
     ),
@@ -526,7 +485,7 @@ function Graphics({ s, set, cat }) {
         );
       })),
       chain.length ? h(Focusable, { className: "btn", style: { marginTop: 8 }, onClick: () => put({ effects: [] }) }, "Clear effects") : null,
-      h("div", { className: "note" }, "Each effect costs some GPU time, the heavy ones (HDR Look, Clarity, SMAA) the most: with the Governor on, that can mean a little more power or a deeper ratio. " + (hdr ? "This game runs in HDR: colour effects are skipped, sharpening and anti-aliasing still apply." : "HDR games: colour effects are skipped, sharpening and anti-aliasing still apply."))
+      h("div", { className: "note" }, "Each effect costs some GPU time, the heavy ones (HDR Look, Clarity, SMAA) the most: with the Governor on, that can mean a little more power or a deeper ratio. " + (hdr ? "This game runs in HDR: colour effects and Kedavra Focus are skipped; legacy sharpening and anti-aliasing still apply." : "HDR games: colour effects and Kedavra Focus are skipped; legacy sharpening and anti-aliasing still apply."))
     ),
     h(
       Card,

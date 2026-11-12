@@ -39,17 +39,7 @@ STABLE_S = 12.0
 MEASURE_MIN_S = 8.0
 MEASURE_MAX_S = 45.0
 GUARD_S = 5.0
-# A trial of the next point up lasts long enough to see a scene change (3.3.1: 6 s trials held,
-# then the point fell within a minute, and every switch is a visible change of cadence).
 TRIAL_S = 6.0
-TRIAL_EARLY_S = 4.0     # ... but one clearly short (median under 92 %) ends after 4 s
-TRIAL_EARLY_RATIO = 0.92
-# A point that falls within this long of its promotion did not really hold: it waits like a
-# failed trial before the next try.
-PROBATION_S = 180.0
-# Per point, the wait before climbing into it again after it failed: 1, 2, 4, 8, 16 min.
-RETRY_BASE_S = 60.0
-RETRY_MAX_S = 960.0
 PROMOTE_WAIT_S = 120.0
 PROMOTE_WAIT_MAX_S = 960.0
 # Headroom: the GPU (or the CPU) clearly not at its limit at the locked point means the game
@@ -69,11 +59,9 @@ PACE_MIN = 0.99
 # lower one, and Autopilot climbs only while the TDP is at the ideal.
 POWER_GOOD_W = 12.0
 POWER_IDEAL_W = 10.0
-# Autopilot (user, 3.3.0): the multiplier follows the game's base FPS, not the other way round.
-# Whenever the game holds more than 30, the x2 family (35, 40, 45 at 90 Hz) is the aim; x3 stays
-# only where the game really does not get above 30. Every point is climbed into and kept below
-# the whole 15 W; x3.75 only when x3 needs it. A low battery keeps following the game, it only
-# climbs within the good 12 W.
+# Autopilot (user, 3.0.8): below 15 W keep the highest point up to 40 the game holds ("if it
+# does 40, keep base 35-40"), x3 at least; x3.75 only when x3 needs the whole 15 W. x2 (45) is a
+# bonus: climbed into from the ideal 10 W, kept within the good 12 W.
 BAND_MAX_W = 14.5
 # The highest multiplier per objective (user, 3.0.10): Balanced works down to x3, Quality to x2.5.
 MAX_MULT = {"balanced": 3.0, "quality": 2.5}
@@ -168,9 +156,6 @@ class PointPilot:
         self.costly_since: Optional[float] = None
         self.costly: Dict[int, float] = {}  # point -> until: needed more than POWER_GOOD_W
         self.falls: Dict[int, int] = {}     # point -> times it fell at full power this game
-        self.tries: Dict[int, int] = {}     # point -> failed climbs into it this game
-        self.retry_at: Dict[int, float] = {}  # point -> earliest next climb into it
-        self.promoted_at: Optional[float] = None
         self.trial_cap = 0
         self.trial_from = 0
         self.holds = True
@@ -277,9 +262,7 @@ class PointPilot:
     def _auto(self, ctx: Dict[str, Any], steps: List[int], objective: str) -> Dict[str, Any]:
         now = self.clock()
         floor = self._battery_point(ctx, steps)
-        # Only the Battery mode chosen by hand pins its low point. A low battery under Autopilot
-        # no longer locks x3 (Deck report 3.2.1: 45 fps at 7.5 W dropped to 30 at 19 %).
-        low = objective == "battery"
+        low = objective == "battery" or bool(ctx.get("autopilot") and ctx.get("low_battery"))
         top = floor if low else steps[-1]
         light = ctx.get("game_class") == "light" and not self.light_failed
         bottom = max(steps[0], lowest_point(int(ctx.get("refresh") or 90), objective, light, bool(ctx.get("dock"))))
@@ -314,10 +297,6 @@ class PointPilot:
             self._go("locked", "objective lowered the point", top)
         elif self.point < bottom:
             self._go("locked", "objective raised the point to its lowest", bottom)
-        if self.promoted_at is not None and now - self.promoted_at >= PROBATION_S:
-            # The promoted point held its probation: its failed tries are forgotten.
-            self.tries.pop(self.point, None)
-            self.promoted_at = None
         verdict = self._window(ctx, self.point, GUARD_S)
         if verdict is not None:
             if verdict["ok"]:
@@ -342,9 +321,6 @@ class PointPilot:
                         # The GPU headroom check still climbs early when the scene is clearly lighter.
                         falls = self.falls[self.point] = self.falls.get(self.point, 0) + 1
                         self.promote_wait = min(PROMOTE_WAIT_MAX_S, PROMOTE_WAIT_S * 2 ** (falls - 1))
-                        if self.promoted_at is not None and now - self.promoted_at < PROBATION_S:
-                            self._failed_climb(self.point, now)
-                        self.promoted_at = None
                         self._go("locked", f"game fell to {verdict['median']:.0f} fps at full power: "
                                  f"point {self.point} -> {new}", new)
                     elif light:
@@ -355,16 +331,10 @@ class PointPilot:
                         self.reason = ("the game does not hold the lowest point even at full power"
                                        if bottom == floor_cap else
                                        f"the game does not hold {bottom} (this mode's lowest point) even at full power")
-        compass = ctx.get("bench_point")
-        if isinstance(compass, (int, float)) and self.point < compass and compass in steps:
-            # Below the benchmark's point (a heavier scene): back up there soon once it is calm,
-            # later after each try that did not hold.
-            self.promote_wait = min(self.promote_wait, max(KNOWN_RECHECK_S, self.headroom_backoff))
         if self._over_power_target(ctx, steps, now):
             return self._request(1, self.point, 0, False)
         if (objective != "battery" and self.clean_since is not None and self.point < top
                 and now - self.clean_since >= self.promote_wait and ctx.get("at_ceiling_possible", True)
-                and now >= self.retry_at.get([c for c in steps if c > self.point][0], 0.0)
                 and self._may_climb(ctx, [c for c in steps if c > self.point][0])):
             nxt = [c for c in steps if c > self.point][0]
             self.trial_cap, self.trial_from = nxt, self.point
@@ -380,16 +350,8 @@ class PointPilot:
         point = full[1] if ctx.get("autopilot") and not ctx.get("low_battery") and len(full) > 1 else full[0]
         return max(point, steps[0])
 
-    def adopt(self, point: int, reason: str) -> None:
-        """A point chosen outside the pilot (an accepted benchmark): locked now, guarded as usual."""
-        self.caps.clear()
-        self.clean_since = None
-        self._go("locked", reason, int(point))
-        self.promote_wait = KNOWN_RECHECK_S
-
     def _may_climb(self, ctx: Dict[str, Any], nxt: int) -> bool:
-        """Autopilot climbs while the TDP is below the whole 15 W (12 W on a low battery) and never
-        into a point that cost too much."""
+        """Autopilot climbs only from the ideal power and never into a point that cost too much."""
         if ctx.get("warm"):
             return False   # 80 C and up, every mode (Deck health, user 3.1.0): no higher point
         if ctx.get("dock") or not ctx.get("autopilot"):
@@ -398,18 +360,23 @@ class PointPilot:
         if self.costly.get(nxt, 0.0) > self.clock():
             return False
         tdp = ctx.get("tdp_w")
-        limit = POWER_GOOD_W if ctx.get("low_battery") else BAND_MAX_W
+        limit = BAND_MAX_W if nxt <= self._band_top(ctx) else POWER_IDEAL_W
         return not isinstance(tdp, (int, float)) or tdp <= limit
 
+    @staticmethod
+    def _band_top(ctx: Dict[str, Any]) -> int:
+        """Autopilot's band: every point below x2 (40 at 90 Hz, 25 at 60 Hz)."""
+        steps = ladder(int(ctx.get("refresh") or 90))
+        return steps[-2] if len(steps) > 2 else steps[-1]
+
     def _over_power_target(self, ctx: Dict[str, Any], steps: List[int], now: float) -> bool:
-        """Autopilot: x3 that the settled Governor holds only near the whole 15 W for a minute steps
-        down to x3.75. Above x3 the multiplier follows the game (3.3.0): a point the game holds
-        within the 15 W ceiling is kept, and the guard steps down one it does not hold."""
+        """Autopilot: a point the settled Governor holds only near the whole 15 W (x2: above 12 W)
+        for a minute steps down one point; x3.75 is where x3 needs the whole 15 W."""
         tdp = ctx.get("tdp_w")
         lower = [c for c in steps if c < self.point]
-        limit = BAND_MAX_W
+        limit = BAND_MAX_W if self.point <= self._band_top(ctx) else POWER_GOOD_W
         if (not ctx.get("autopilot") or ctx.get("dock") or not ctx.get("gov_settled") or not isinstance(tdp, (int, float))
-                or tdp <= limit or not lower or self.point > x3_cap(int(ctx.get("refresh") or 90))):
+                or tdp <= limit or not lower):
             self.costly_since = None
             return False
         if self.costly_since is None:
@@ -486,36 +453,19 @@ class PointPilot:
             return self._request(1, self.trial_from, 0, True)
         verdict = self._window(ctx, self.trial_cap, TRIAL_S)
         if verdict is None:
-            # Clearly short after a few seconds: no need to show the whole trial.
-            reals = [x["real"] for x in self.window]
-            if (self.clock() - self.window_start >= TRIAL_EARLY_S and len(reals) >= 3
-                    and statistics.median(reals) < TRIAL_EARLY_RATIO * self.trial_cap):
-                verdict = {"ok": False, "real": statistics.fmean(reals)}
-                self.window, self.window_start = [], self.clock()
-            else:
-                return self._request(1, self.trial_cap, 0, True)
+            return self._request(1, self.trial_cap, 0, True)
         if verdict["ok"] and verdict["real"] >= TRIAL_RATIO * self.trial_cap:
             self.promotions += 1
             self.promote_wait = 30.0  # keep climbing soon while it holds
             self.headroom_backoff = 0.0
             self._go("locked", f"point {self.trial_cap} holds: locked", self.trial_cap)
             self.clean_since = self.clock()
-            self.promoted_at = self.clock()
         else:
             self.promote_wait = min(PROMOTE_WAIT_MAX_S, self.promote_wait * 2)
             self.headroom_backoff = min(480.0, max(60.0, self.headroom_backoff * 2))
-            wait = self._failed_climb(self.trial_cap, self.clock())
-            self._go("locked", f"point {self.trial_cap} did not hold; next try in {wait:.0f} s",
+            self._go("locked", f"point {self.trial_cap} did not hold; next try in {self.promote_wait:.0f} s",
                      self.trial_from)
         return self._request(1, self.point, 0, False)
-
-    def _failed_climb(self, point: int, now: float) -> float:
-        """A climb into point did not hold: it waits 1, 2, 4, 8, 16 min before the next try,
-        whatever path (headroom, benchmark) would climb sooner."""
-        n = self.tries[point] = self.tries.get(point, 0) + 1
-        wait = min(RETRY_MAX_S, RETRY_BASE_S * 2 ** (n - 1))
-        self.retry_at[point] = now + wait
-        return wait
 
     def snapshot(self, refresh: int = 90) -> Dict[str, Any]:
         return {"phase": self.phase, "point": self.point, "label": mult_label(refresh, self.point),

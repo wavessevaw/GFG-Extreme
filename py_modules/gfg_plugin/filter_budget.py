@@ -7,7 +7,7 @@ the filters may be lightened, even switched off.
   starved  frame generation runs, the GPU is busy (>= 90 %) and the game is below x3 or does not
            hold its point. 20 s of that sheds one level:
              1 light: no anti-aliasing, no HDR Look or Clarity, DLS becomes CAS
-             2 off:   no filters
+             2 off:   optional filters off; explicitly enabled Kedavra Focus remains
   back     a level comes back after 90 s with the GPU under 75 % (the game got lighter), and
            every level comes back with a new game.
 
@@ -31,7 +31,9 @@ def shed(cfg: Dict[str, Any], level: int) -> Dict[str, Any]:
     if level <= 0:
         return cfg
     if level >= 2:
-        return {**cfg, "effects": [], "sharpen": "none", "aa": "none"}
+        # Focus is an explicit display setting, not an optional GPU-budget effect.
+        # It must remain enabled in Battery/Balanced/Autopilot even at maximum shedding.
+        return {**cfg, "effects": [], "sharpen": "none", "aa": "none", "focus": bool(cfg.get("focus"))}
     return {**cfg, "effects": [e for e in cfg.get("effects", []) if e not in HEAVY_EFFECTS], "aa": "none",
             "sharpen": "cas" if cfg.get("sharpen") == "dls" else cfg.get("sharpen", "none")}
 

@@ -14,7 +14,7 @@ from sandbox.vdeck import VGame
 
 class LifecycleTest(unittest.IsolatedAsyncioTestCase):
     async def test_worker_preserves_keywords_and_errors(self):
-        p = Plugin()
+        p = Plugin(); p.telemetry = Mock()
         self.assertEqual(await p._worker(lambda *, value: value, value=42), 42)
         def fail():
             raise ValueError("worker failure")
@@ -36,7 +36,7 @@ class LifecycleTest(unittest.IsolatedAsyncioTestCase):
                     health_entered.set()
                     if not health_release.wait(5): raise RuntimeError('test timed out')
                     events.append('health')
-                p = Plugin()
+                p = Plugin(); p.telemetry = Mock()
                 p.lock = asyncio.Lock(); p.stopping = False
                 p.service = types.SimpleNamespace(tick=tick, stop=lambda: events.append('stop'))
                 p.inst = types.SimpleNamespace(mark_healthy=health)
@@ -62,7 +62,7 @@ class LifecycleTest(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(all(t.done() for t in p.tasks))
 
     async def test_cancelled_unload_caller_does_not_cancel_shutdown(self):
-        p = Plugin(); p.lock = asyncio.Lock(); p.stopping = False; p.tasks = []; p.log = Mock()
+        p = Plugin(); p.telemetry = Mock(); p.lock = asyncio.Lock(); p.stopping = False; p.tasks = []; p.log = Mock()
         entered, release = threading.Event(), threading.Event()
         def stop():
             entered.set()
@@ -77,7 +77,7 @@ class LifecycleTest(unittest.IsolatedAsyncioTestCase):
         p.log.record.assert_called_once_with('plugin', 'unload')
 
     async def test_uninstall_invalidates_caches_and_rejects_after_stop(self):
-        p = Plugin(); p.lock = asyncio.Lock(); p.stopping = False; p.log = Mock()
+        p = Plugin(); p.telemetry = Mock(); p.lock = asyncio.Lock(); p.stopping = False; p.log = Mock()
         p._gate_cache = {'old': True}; p._host_cache = {'old': True}
         p.inst = types.SimpleNamespace(uninstall=Mock(return_value={'needs_reboot': True}))
         await p.engine_uninstall()
@@ -103,7 +103,7 @@ class ServiceLifecycleTest(unittest.TestCase):
     def test_failed_restorer_does_not_skip_other_restorers_or_restart_tick(self):
         rig = make_rig(VGame('g', 55.0)); s = rig.service
         s.boost = types.SimpleNamespace(stop=Mock(side_effect=OSError('boost failed')))
-        s.gclock = types.SimpleNamespace(stop=Mock())
+        s.gclock = types.SimpleNamespace(stop=Mock(), owned=False)
         with self.assertRaisesRegex(RuntimeError, 'boost failed'):
             s.stop()
         s.gclock.stop.assert_called_once()

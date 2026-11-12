@@ -110,6 +110,7 @@ class SteamDeckPowerActuator:
         self.journal: Optional[Callable[..., None]] = None
         self.state = PowerControlState()
         self._fast_path: Optional[Path] = None
+        self._seen_caps: Optional[tuple] = None
         self._slow_path: Optional[Path] = None
         self._draw_path: Optional[Path] = None
         self._keep_initial = False
@@ -332,6 +333,7 @@ class SteamDeckPowerActuator:
             return False
         fast = _read_int(self._fast_path)
         slow = _read_int(self._slow_path)
+        self._seen_caps = (fast, slow)
         if fast != self.state.expected_fast_uw or slow != self.state.expected_slow_uw:
             self.state.external_change = True
             self.state.owned = False
@@ -628,11 +630,14 @@ class SteamDeckPowerActuator:
     def verify_ownership(self) -> Dict[str, Any]:
         """Check that external Steam/QAM tooling has not changed our caps."""
         with self._lock:
+            seen = None
             if self.state.owned:
                 self._verify_ownership()
-            return self.status()
+                seen = self._seen_caps
+            return self.status(seen)
 
-    def status(self) -> Dict[str, Any]:
+    def status(self, seen: Optional[tuple] = None) -> Dict[str, Any]:
+        """seen: the (fast, slow) caps the ownership check has just read, not read again."""
         value = self.state.to_dict()
         # Cached SteamOSManager TdpLimitMax is the upper bound of Steam's
         # Gamescope/QAM slider, independent of Governor's current 15 W ceiling.
@@ -645,8 +650,7 @@ class SteamDeckPowerActuator:
             value["gamescope_max_tdp_w"] = None
             value["energy_reference_source"] = "hwmon-maximum"
         if self._fast_path is not None and self._slow_path is not None:
-            current_fast = _read_int(self._fast_path)
-            current_slow = _read_int(self._slow_path)
+            current_fast, current_slow = seen if seen else (_read_int(self._fast_path), _read_int(self._slow_path))
             value["observed_fast_uw"] = current_fast
             value["observed_slow_uw"] = current_slow
             value["observed_tdp_w"] = round(current_slow / 1_000_000.0, 3) if current_slow else None

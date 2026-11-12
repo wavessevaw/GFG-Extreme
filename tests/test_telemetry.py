@@ -16,6 +16,7 @@ class TelemetrySampleTest(unittest.TestCase):
             rig = run.make_rig(VGame("game", 40.0), objective="balanced")
             rig.service.telemetry = Telemetry(Path(d))
             run.play(rig, 30)
+            rig.service.telemetry.flush()  # samples are written in batches
             lines = (Path(d) / "samples.jsonl").read_text().splitlines()
             self.assertGreaterEqual(len(lines), 20)
             row = json.loads(lines[-1])
@@ -28,3 +29,17 @@ class TelemetrySampleTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TelemetryBatchTest(unittest.TestCase):
+    def test_samples_are_batched_and_flushed(self):
+        with tempfile.TemporaryDirectory() as d:
+            t = Telemetry(Path(d))
+            for i in range(5):
+                t.sample({"i": i})
+            self.assertFalse((Path(d) / "samples.jsonl").exists())
+            t.session({"end": 1})  # a session line writes the queued samples first
+            self.assertEqual(len((Path(d) / "samples.jsonl").read_text().splitlines()), 5)
+            t.sample({"i": 5})
+            self.assertEqual(len(t.files()), 2)  # listing for the report flushes too
+            self.assertEqual(len((Path(d) / "samples.jsonl").read_text().splitlines()), 6)

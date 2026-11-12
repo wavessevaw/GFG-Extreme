@@ -32,6 +32,7 @@ def _num(path: Path) -> Optional[float]:
 
 class HostSensors:
     MIN_INTERVAL = 2.0
+    DISCOVER_S = 60.0
     SLOPE_WINDOW_S = 120.0
     THROTTLE_C = 90.0
 
@@ -51,6 +52,7 @@ class HostSensors:
         self._last_at = -1e9
         self._cpu_prev: Optional[Tuple[int, int, Dict[str, Tuple[int, int]]]] = None
         self._temps: Deque[Tuple[float, float]] = deque(maxlen=120)
+        self._hw: Optional[Tuple[float, list]] = None
 
     # ------------------------------------------------------------------ public
     def sample(self, force: bool = False) -> Dict[str, Any]:
@@ -73,16 +75,21 @@ class HostSensors:
 
     # ------------------------------------------------------------- temperature
     def _hwmons(self):
-        try:
-            return sorted(self.hwmon_root.glob("hwmon*"))
-        except OSError:
-            return []
+        """The hwmon folders, globbed again every DISCOVER_S (3.2.2): a sample used to glob them
+        twice and read every name file."""
+        now = self.clock()
+        if self._hw is None or now - self._hw[0] >= self.DISCOVER_S or now < self._hw[0]:
+            try:
+                found = sorted(self.hwmon_root.glob("hwmon*"))
+            except OSError:
+                found = []
+            self._hw = (now, [(h, _read(h / "name")) for h in found])
+        return self._hw[1]
 
     def _temperature(self) -> Optional[float]:
         """APU/GPU edge temperature in °C: the amdgpu hwmon, else k10temp."""
         best: Optional[float] = None
-        for hwmon in self._hwmons():
-            name = _read(hwmon / "name")
+        for hwmon, name in self._hwmons():
             if name not in ("amdgpu", "k10temp"):
                 continue
             raw = _num(hwmon / "temp1_input")
@@ -106,7 +113,7 @@ class HostSensors:
         return round((temp - first[1]) / ((now - first[0]) / 60.0), 2)
 
     def _fan(self) -> Optional[float]:
-        for hwmon in self._hwmons():
+        for hwmon, _name in self._hwmons():
             rpm = _num(hwmon / "fan1_input")
             if rpm is not None:
                 return rpm

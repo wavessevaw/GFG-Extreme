@@ -24,6 +24,7 @@ from .governor_battery import read_battery
 from .governor_power import SteamDeckPowerActuator
 from .host_sensors import HostSensors, device_name
 from .kedavra.ctl import Control
+from .kedavra.controller import ControllerLease
 from .kedavra.hud import Hud
 from .kedavra.install import Installer, bench
 from .legacy_cleanup import LegacyCleanup
@@ -57,8 +58,11 @@ class Plugin:
         await self._worker(self._first_start)
         self.telemetry.level = self.settings.data["telemetry"]["level"]
         self.ctl = Control(self.home, PLUGIN_DIR, uid=uid, data=self.runtime)
+        self.controller_lease = ControllerLease("gfg")
+        self.ctl.controller_lease = self.controller_lease
         self.inst = Installer(PLUGIN_DIR, self.home, uid=uid)
         self.coexist = Coexistence(self.home, owner=self.owner, version=paths.VERSION)
+        self.ctl.control_guard = self.coexist.control_error
         manager = SteamOSManagerTdp(home=str(self.home))
         actuator = SteamDeckPowerActuator(manager=manager, marker=self.runtime / "tdp-cap.json")
         actuator.journal = lambda kind, **f: self.log.record("power", kind, **f)
@@ -146,7 +150,7 @@ class Plugin:
 
     async def _unload(self) -> None:
         self.stopping = True
-        if getattr(self, "_shutdown_task", None) is None:
+        if getattr(self, "_shutdown_task", None) is None or (self._shutdown_task.done() and not self._shutdown_task.cancelled() and self._shutdown_task.exception() is not None):
             self._shutdown_task = asyncio.create_task(self._shutdown())
         # Keep one shutdown running even if the host cancels an unload caller.
         await asyncio.shield(self._shutdown_task)
@@ -158,16 +162,14 @@ class Plugin:
         await asyncio.gather(*tasks, return_exceptions=True)
         async with self.lock:
             await self._worker(self.service.stop)
+        await self._worker(self.telemetry.flush)
+        if hasattr(self, "controller_lease"):
+            await self._worker(self.controller_lease.release)
         self.log.record("plugin", "unload")
 
     async def _uninstall(self) -> None:
-        # The engine stays installed: it is reversible from Setup, and other tools may use it.
-        # Generation is switched off so stock behaviour returns at once.
-        try:
-            await self._worker(self.ctl.set_var, "kfg_multiplier", 0)
-            await self._worker(self.ctl.set_var, "kfg_post", "")
-        except Exception:
-            pass
+        # Drain workers and restore power before releasing shared engine ownership.
+        await self._unload()
 
     # ------------------------------------------------------------------ state
     def _gate(self) -> Dict[str, Any]:
@@ -290,23 +292,6 @@ class Plugin:
                 return {"ok": False, "error": "Plugin is stopping"}
             return await self._worker(bench, PLUGIN_DIR, self.runtime)
 
-    # Game benchmark (3.3.0): 20 s in game at 15 W, generation off; answered on Dash.
-    async def bench_start(self) -> Dict[str, Any]:
-        async with self.lock:
-            if self.stopping:
-                return {"ok": False, "error": "Plugin is stopping"}
-            r = self.service.bench_start()
-            self.log.record("bench", "start", ok=r.get("ok"))
-            return r
-
-    async def bench_answer(self, accept: bool) -> Dict[str, Any]:
-        async with self.lock:
-            if self.stopping:
-                return {"ok": False, "error": "Plugin is stopping"}
-            r = self.service.bench_answer(bool(accept))
-            self.log.record("bench", "accept" if accept else "decline")
-            return r
-
     async def save_report(self) -> Dict[str, Any]:
         extra = [(f"gfg/{p.name}", p) for p in self.telemetry.files()]
         for name in ("activity.jsonl",):
@@ -346,7 +331,8 @@ class Plugin:
         async with self.lock:
             if self.stopping:
                 return {"ok": False, "error": "Plugin is stopping"}
-            result = await self._worker(self.coexist.take_over)
+            active = await self._worker(self.controller_lease.active)
+            result = {"ok": active, "steps": ["Exclusive engine control acquired" if active else "Another GFG controller is active"]}
             self._host_cache = {}
             self.service.coord.take_over()
             self.log.record("coexist", "take-over", steps=result.get("steps"))

@@ -35,9 +35,14 @@ for (const [i, t] of ["Dash", "Graphics", "Engine", "Setup"].entries()) {
   await page.locator(".tab", { hasText: t }).first().click(); await page.waitForTimeout(300);
   if (outDir) await page.locator("#r").screenshot({ path: path.join(outDir, `ui-${i + 1}-${t.toLowerCase()}.png`) });
   const text = await page.locator("#r").innerText();
-  for (const want of { Dash: ["Steam Deck OLED", "CPU TOP", "FAN", "k rpm"], Graphics: ["LOOK", "SHARPENING", "ANTI-ALIASING", "Top right", "Bottom right", "Standard"], Engine: ["POWER SPLIT", "GPU clock ceiling", "1.8 GHz"], Setup: ["Take over", "Frame generation in HDR games"] }[t])
+  for (const want of { Dash: ["Steam Deck OLED", "CPU TOP", "FAN", "k rpm"], Graphics: ["Kedavra Focus", "LOOK", "SHARPENING", "ANTI-ALIASING", "Top right", "Bottom right", "Standard"], Engine: ["POWER SPLIT", "GPU clock ceiling", "1.8 GHz"], Setup: ["Take over", "Frame generation in HDR games"] }[t])
     if (!text.includes(want) && !(t === "Setup" && want === "Take over")) errors.push(`${t}: missing "${want}"`);
 }
+await page.locator(".tab", { hasText: "Graphics" }).first().click(); await page.waitForTimeout(200);
+await page.locator(".lrow", { hasText: "Kedavra Focus" }).locator(".tog").click();
+await page.waitForTimeout(150);
+const focusCall = await page.evaluate(() => window.__calls.find(c => c[0] === "set_profile" && c[1]?.[1]?.filters?.focus === true));
+if (!focusCall || focusCall[1][1].filters.sharpen !== "cas" || focusCall[1][1].filters.sharpness !== 0.5) errors.push("Focus must preserve saved CAS configuration");
 await page.locator(".tab", { hasText: "Dash" }).first().click(); await page.waitForTimeout(200);
 await page.locator(".herotap").first().click(); await page.waitForTimeout(200);
 const classic = await page.locator(".ring").first().evaluate((e) => e.style.width);

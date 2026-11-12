@@ -94,7 +94,7 @@ class ControllerReviewTest(unittest.TestCase):
             cpu = type('Cpu', (), {'owned': True})()
             def settling(self): return True
             def tick(self, ctx): return {'phase': 'probe'}
-            def stop(self): pass
+            def stop(self): self.cpu.owned = False
         try:
             for _ in range(40):
                 r.engine.step(); r.sensors.step(); r.service.tick(); r.clock.t += 1
