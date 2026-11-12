@@ -280,8 +280,13 @@ class PointPilot:
         known = int(known) if isinstance(known, (int, float)) else None
         if self.phase in ("idle",):
             accepted_point = ctx.get("benchmark_point") if ctx.get("benchmark_applied") else None
-            if isinstance(accepted_point, int) and accepted_point in steps and bottom <= accepted_point <= top:
-                self._go("locked", "user-applied Benchmark point", accepted_point)
+            supported = [v for v in steps if bottom <= v <= top]
+            if isinstance(accepted_point, int) and accepted_point > 0 and supported:
+                # Even an out-of-ladder measured FPS must not fall back to
+                # Pilot's full-power "measure" phase after the user chose APPLY.
+                # Keep the closest mode-compatible point; Governor guards it.
+                chosen = min(supported, key=lambda v: abs(v - accepted_point))
+                self._go("locked", "user-applied Benchmark point", chosen)
             elif objective == "battery":
                 self._go("locked", "Battery: a low point, generation fills the refresh", floor)
             elif self.point:
