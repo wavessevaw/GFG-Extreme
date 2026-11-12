@@ -1,0 +1,67 @@
+name: GFG 3.4.3 Candidate (no publication)
+on:
+  push:
+    branches: [fix/3.4.3-fast-benchmark]
+    paths: [.github/workflows/build-343.yml]
+permissions:
+  contents: read
+jobs:
+  candidate:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run backend and virtual Deck tests
+        run: |
+          python3 -m unittest discover -s tests -p 'test_*.py'
+          python3 -m sandbox.run --report "$RUNNER_TEMP/SANDBOX_REPORT.md"
+      - name: Verify frontend and smoke UI
+        run: |
+          npm ci
+          npm run build
+          git diff --exit-code dist/index.js
+          npx playwright-core install --with-deps chromium
+          node frontend/harness/smoke.mjs
+      - name: Obtain exactly the previously published Kedavra 1.6.2 runtime
+        run: |
+          mkdir -p prior extracted
+          gh release download v3.4.2 --repo wavessevaw/GFG-Extreme --dir prior --pattern GFG-Extreme-v3_4_2.zip --pattern SHA256SUMS.txt
+          (cd prior && sha256sum -c SHA256SUMS.txt)
+          unzip -q prior/GFG-Extreme-v3_4_2.zip 'GFG-Extreme/runtime/*' 'GFG-Extreme/bench/*' -d extracted
+          test -s extracted/GFG-Extreme/runtime/bin/gamescope
+          test -s extracted/GFG-Extreme/bench/kfg_vktest
+          mv extracted/GFG-Extreme/runtime gamescope-runtime
+          mv extracted/GFG-Extreme/bench kedavra-bench
+          cat gamescope-runtime/VERSION
+      - name: Package GFG only and validate exact identity
+        run: |
+          scripts/build_release.sh 3.4.3 gamescope-runtime out kedavra-bench
+          (cd out && sha256sum -c SHA256SUMS.txt)
+          cp RELEASE_DESCRIPTION_V3_4_3.md out/README-3.4.3.md
+          python3 - <<'PY'
+          import zipfile, json
+          z='out/GFG-Extreme-v3_4_3.zip'
+          with zipfile.ZipFile(z) as f:
+              assert f.testzip() is None
+              r='GFG-Extreme/'
+              assert json.loads(f.read(r+'package.json'))['version']=='3.4.3'
+              assert 'VERSION = "3.4.3"' in f.read(r+'py_modules/gfg_plugin/paths.py').decode()
+              assert f.read(r+'runtime/VERSION')==open('gamescope-runtime/VERSION','rb').read()
+              for name in ('benchmark.py','benchmark_session.py','kedavra/hud.py'):
+                  assert r+'py_modules/gfg_plugin/'+name in f.namelist()
+              assert not any(x.startswith('KEDAVRA/') for x in f.namelist())
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GFG-3.4.3-candidate
+          path: |
+            out/GFG-Extreme-v3_4_3.zip
+            out/SHA256SUMS.txt
+            out/README-3.4.3.md
