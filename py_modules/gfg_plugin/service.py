@@ -222,11 +222,23 @@ class Service:
         gp = self.book.profile(self.app, refresh, dock) if game else {"class": None, "source": None}
         bench_key=f"{self.app}:{objective}:{refresh}:{int(dock)}:{power.get('external_power')}"
         seed=self.settings.data.get("benchmarks",{}).get(bench_key,{})
-        if seed.get("passed") and seed.get("fg_verified") and time.time()-seed.get("created",0)<86400:
-            if seed.get("context",{}).get("post")==filters.to_post(profile['filters']):
-                gp={**gp,"point":round(seed['target'])}
-            else: seed={}
-        else: seed={}
+        seed_ctx = seed.get("context") or {}
+        accepted = bool(seed.get("user_accepted") and seed.get("applicable"))
+        verified = bool(seed.get("passed") and seed.get("fg_verified"))
+        current = accepted or (verified and time.time()-seed.get("created",0)<86400)
+        same_game_mode = (seed_ctx.get("app")==self.app and seed_ctx.get("mode")==objective
+                          and seed_ctx.get("refresh")==refresh and seed_ctx.get("dock")==dock
+                          and seed_ctx.get("ac")==power.get("external_power"))
+        same_image = (seed_ctx.get("post")==filters.to_post(profile['filters'])
+                      and seed_ctx.get("hdr")==st.get("transfer"))
+        point=seed.get("target")
+        tdp=seed.get("tdp")
+        if (current and same_game_mode and same_image
+                and isinstance(point,(int,float)) and point>0
+                and isinstance(tdp,(int,float)) and tdp>0):
+            gp={**gp,"point":round(point)}
+        else:
+            seed={}
         if game:
             self.cur = (self.app, refresh, dock)
 
