@@ -557,12 +557,18 @@ def render_benchmark(bench, scale):
         text(96, bench.get("reason") or bench.get("message") or "")
         text(150, "TAP TO CLOSE", "val", WHITE)
     elif result and not bench.get("validating") and not bench.get("restore_pending"):
-        text(30, "BENCHMARK DONE", "fps", WHITE)
-        text(64, str(result.get("mode", "")).upper() + " | TARGET " + _fmt(result.get("target")) + " FPS")
-        text(84, _fmt(result.get("tdp"), 1) + " W | " + _fmt(measured.get("fps"), 1) + " NATIVE FPS", "val", ACCENT)
-        text(110, "APU " + _fmt(measured.get("draw_w"), 1) + " W | P99 " + _fmt(measured.get("p99_ms"), 1) + " MS")
-        text(128, "STABILITY: " + ("PASSED" if result.get("passed") else "NOT CONFIRMED"))
-        text(158, "APPLY" if result.get("passed") else "UNAVAILABLE", "val", WHITE, w * .25)
+        if result.get("applicable"):
+            text(30, "BENCHMARK DONE", "fps", WHITE)
+            text(64, str(result.get("mode", "")).upper() + " | TARGET " + _fmt(result.get("target")) + " FPS")
+            text(84, _fmt(result.get("tdp"), 1) + " W | " + _fmt(measured.get("fps"), 1) + " NATIVE FPS", "val", ACCENT)
+            text(110, "APU " + _fmt(measured.get("draw_w"), 1) + " W | P99 " + _fmt(measured.get("p99_ms"), 1) + " MS")
+            text(128, "STABILITY: " + ("PASSED" if result.get("passed") else "PROVISIONAL"))
+            text(158, "APPLY", "val", WHITE, w * .25)
+        else:
+            text(30, "NO MEASURED POINT", "fps", WHITE)
+            text(84, str(result.get("reason") or "NOT ENOUGH DATA"))
+            text(128, "TRY AGAIN IN A STEADY SCENE")
+            text(158, "RETRY", "val", WHITE, w * .25)
         text(158, "DISCARD", "val", WHITE, w * .75)
     else:
         text(28, "DO NOT TOUCH ANYTHING", "fps", WHITE)
