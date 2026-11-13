@@ -28,6 +28,8 @@ We are not preparing another routine update. We are working toward a fundamental
 
 **Our ambition for 5.0 is to make today's expectations of frame generation look outdated. Not just on Steam Deck, but across the industry.**
 
+**We aim to set a technological bar that cannot be reached simply by borrowing someone else's ideas.** And if similar breakthroughs appear elsewhere later, our published research, code and release history will make the sequence of innovation clear. Real progress starts with an original direction, not just a familiar feature under a new name.
+
 We have a direction to pursue, a great deal to prove, and no interest in simply following the next trend.
 
 **Some follow the roadmap. We intend to draw the next one.**
