@@ -20,19 +20,19 @@ We support open source, independent implementations and real competition. But th
 
 **Open source is meant to inspire new work, not erase the path that inspired it.** If your next “breakthrough” begins in someone else's repository, acknowledging where the idea came from is the least you can do. We spend our time imagining, testing and building what we wish existed. **Features can be reproduced. Independent imagination cannot be downloaded.**
 
-And while others explore directions we've already pursued, our attention is on what comes next.
+Our focus is what Steam Deck players will need next.
 
-### GFG Extreme 5.0 is coming.
+### GFG Extreme 5.0 — A New Chapter for Steam Deck
 
-We are not preparing another routine update. We are working toward a fundamental leap in how frames are generated, reconstructed and presented.
+GFG Extreme is already a stable way to manage frame generation, performance and power. Version 5.0 does not need to reinvent what already works.
 
-**Our ambition for 5.0 is to make today's expectations of frame generation look outdated. Not just on Steam Deck, but across the industry.**
+**The real research challenge is GSF Kedavra.** How much further can we push frame generation on Steam Deck's existing hardware, while improving motion clarity, reducing artifacts, controlling latency and using GPU time and battery power responsibly?
 
-**We aim to set a technological bar that cannot be reached simply by borrowing someone else's ideas.** And if similar breakthroughs appear elsewhere later, our published research, code and release history will make the sequence of innovation clear. Real progress starts with an original direction, not just a familiar feature under a new name.
+We will revisit our earlier experimental models, including unconventional approaches that may offer better efficiency than the methods we use today. We are prepared to rethink the frame-generation pipeline from the ground up, and even replace parts of its architecture, **if testing shows a genuinely better path**.
 
-We have a direction to pursue, a great deal to prove, and no interest in simply following the next trend.
+Our goal is not a louder FPS counter or a promised industry revolution. It is to give Steam Deck more headroom for demanding games, including the ones players will launch tomorrow.
 
-**Some follow the roadmap. We intend to draw the next one.**
+**A real breakthrough has to be measured, built and felt in gameplay. Until then, 5.0 is our ambition, not a claim of success.**
 
 ---
 
@@ -103,7 +103,7 @@ We are aiming to raise **$3,000 in community support** for the research and deve
 
 **Steam Deck still has a future worth building for. We intend to prove it.**
 
-**And Steam Deck is only where this journey began. The next breakthrough we are pursuing could reach far beyond a single device.**
+**Our next challenge is to keep Steam Deck capable, enjoyable and ready for the games still to come.**
 
 **GFG Extreme 5.0 is coming.**
 
