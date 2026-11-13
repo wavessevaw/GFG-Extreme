@@ -1,16 +1,30 @@
 # GFG Extreme 3.4.4 — Official Release
 
-It's always fascinating to watch familiar ideas suddenly appear in other projects, occasionally presented as technological breakthroughs.
+## Competition Is Welcome. Following Isn't Pioneering.
 
-Even more fascinating is the confidence with which certain developers introduce these concepts as something entirely new.
+GFG Extreme began with technologies such as MAKO and Lossless Scaling. We have never hidden that, nor have we underestimated the work that came before us.
 
-**We introduced our own independent frame-generation engine, GSF Kedavra, on October 21. Adaptive TDP management has been part of GFG Extreme since October 6.**
+But at some point, we chose to build our own way forward.
 
-Twenty releases later, we're still refining technologies that others are only beginning to introduce to their audiences.
+**October 6, 2026:** GFG Extreme publicly introduced automatic, adaptive TDP management.
 
-**We certainly appreciate such close attention to our work.**
+**October 21, 2026:** We released **GSF Kedavra**, our own independent frame-generation engine integrated directly into Gamescope, with no dependence on MAKO or Lossless Scaling.
 
-Our release history is public. We believe it speaks for itself.
+Our releases, source code and dates are public.
+
+It is interesting to watch familiar approaches resurface elsewhere and be introduced to wider audiences as groundbreaking new ideas.
+
+We support open source, independent implementations and real competition. But there is a difference between **walking a path someone has already opened** and **finding a new one**.
+
+**A bigger audience doesn't rewrite the timeline.**
+
+And while others explore directions we've already pursued, our attention is on what comes next.
+
+### GFG Extreme 5.0 is coming.
+
+Our ambition is not simply to add more generated frames. We are working toward a new generation of GFG Extreme that challenges what players expect from frame generation, presentation and performance control.
+
+**Some follow the roadmap. We intend to draw the next one.**
 
 ---
 
@@ -36,17 +50,37 @@ No third-party frame-generation engine required.
 - **Independent Profiles** — Separate Benchmark results for Quality, Balanced, Battery and Autopilot.
 - **GSF Kedavra 1.6.2** — Independent frame-generation engine. Reconstruction algorithms remain unchanged.
 
+---
+
 ## How to Run the In-Game Benchmark
 
 1. **Launch a game** in SteamOS Gaming Mode and make sure the GFG Extreme HUD is visible.
 2. **Touch and hold the HUD on the screen for at least 0.8 seconds.** The Benchmark starts directly in the running game; there is no need to open the Decky menu.
-3. **Let the measurement finish** (up to 15 seconds). Keep playing in the same scene without touching the benchmark panel or opening the Steam menu. GFG measures native FPS and TDP and displays the recommended point.
-4. **Tap APPLY** on the left side of the result panel to accept the measured point for the current game and selected performance mode. The Governor starts from that TDP and can continue adapting when needed.
+3. **Let the measurement finish** (up to 15 seconds). Stay in a stable gameplay scene without touching the Benchmark panel or opening the Steam menu. GFG measures native FPS and TDP and displays the recommended point.
+4. **Tap APPLY** on the left side of the result panel to accept the measured point for the current game and selected performance mode. The Governor starts from that TDP and continues adapting when necessary.
 
 Tap **DISCARD** on the right to ignore the result. If the Benchmark cannot find a valid point, tap **RETRY** to measure again.
 
 ---
 
-**Some present familiar ideas as the future. We continue turning them into working technology.**
+## Built by Players. For Players.
 
-**GFG Extreme.**
+We use Steam Deck ourselves, every day. That is where our ideas come from.
+
+We develop the features we actually want to use: smoother gameplay, smarter power management, less time adjusting settings and more time playing.
+
+We aren't here merely to argue over benchmarks or prove a point. **We want to demonstrate what Steam Deck is truly capable of, and keep pushing its possibilities further.**
+
+If GFG Extreme has improved your experience, please **star the repository**, share the project and tell us what works and what needs improving. Every report and every bit of support helps an independent project move forward.
+
+[**Support GFG Extreme on GitHub**](https://github.com/wavessevaw/GFG-Extreme) · [Feedback & Issues](https://github.com/wavessevaw/GFG-Extreme/issues)
+
+---
+
+## THIS IS NOT THE END. NOT EVEN CLOSE.
+
+**Steam Deck still has a future worth building for. We intend to prove it.**
+
+**GFG Extreme 5.0 is coming.**
+
+**GFG Extreme. Built by a player. For players.**
