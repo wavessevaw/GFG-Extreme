@@ -87,6 +87,16 @@ If GFG Extreme improves your experience, please **star the repository**, share t
 
 ---
 
+## Help Build GFG Extreme 5.0 — $3,000 Funding Goal
+
+We are aiming to raise **$3,000 in community support** for the research and development of GFG Extreme 5.0 and the next generation of GSF Kedavra. Your contributions help fund the time, testing and engineering needed to explore new approaches to frame generation, improve visual quality and make better use of Steam Deck's hardware.
+
+**GFG Extreme remains free and open source.** Donations support independent development, not a paid upgrade or a guaranteed breakthrough. We will share real progress and verified results as the work advances.
+
+**[Support GFG Extreme 5.0 via Tribute](https://web.tribute.tg/d/RSU)**
+
+---
+
 ## THIS IS NOT THE END. NOT EVEN CLOSE.
 
 **Steam Deck still has a future worth building for. We intend to prove it.**
