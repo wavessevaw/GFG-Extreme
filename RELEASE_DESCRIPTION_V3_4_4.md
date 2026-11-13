@@ -28,12 +28,18 @@ Some consider it impossible.
 
 We consider it a technical objective.
 
-Powered by our independent GSF Kedavra engine, GFG Extreme targets 90 output FPS from 30 native FPS through ×3 frame generation.
+**GTA VI on Steam Deck is a console Remote Play scenario, not a native Steam Deck port.** The game runs on a **PlayStation 5** or **Xbox Series X|S**, while its video is streamed to Steam Deck in SteamOS Gaming Mode through applications such as:
 
-**30 native FPS × 3 = 90 output FPS.**
+- **Xbox Series X|S:** [Greenlight](https://github.com/unknownskl/greenlight) — Xbox Remote Play.
+- **PlayStation 5:** [chiaki-ng (Chiaki4deck)](https://github.com/chiaki-ng/chiaki-ng) — PlayStation Remote Play.
+
+With our independent GSF Kedavra engine running in Gamescope, the target is to turn a stable 30 FPS streamed source into **up to 90 output FPS** on Steam Deck OLED through ×3 frame generation.
+
+**30 streamed source FPS × 3 = up to 90 displayed FPS.**
+
+The game still renders on the console. Actual results depend on the streaming client, source frame cadence, decoding and network conditions; GTA VI-specific performance has not yet been verified.
 
 No third-party frame-generation engine required.
-
 
 ---
 
