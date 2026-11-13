@@ -4,19 +4,19 @@
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="144">
 
-# GFG EXTREME 3.4.4
+# GFG EXTREME 3.4
 
 **MOST POWERFUL DECKY PLUGIN EVER.**
 
 Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integration
 
-[**Download v3.4.4 ZIP**](https://github.com/wavessevaw/GFG-Extreme/releases/download/v3.4.4/GFG-Extreme-v3_4_4.zip) · [Release notes](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.4) · [Install](#installation) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Modes](#06--performance-modes) · [HUD](#08--observability)
+[**Download latest**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.4) · [Install](#installation) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Modes](#06--performance-modes) · [HUD](#08--observability)
 
 [![Release](https://img.shields.io/badge/release-3.4.4-fb0d00?style=flat-square)](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.4)
 [![Downloads](https://img.shields.io/github/downloads/wavessevaw/GFG-Extreme/total?style=flat-square&color=20242e)](https://github.com/wavessevaw/GFG-Extreme/releases)
 [![Steam Deck](https://img.shields.io/badge/Steam%20Deck-OLED%20%7C%20LCD-20242e?style=flat-square)](#installation)
 [![Decky](https://img.shields.io/badge/Decky%20Loader-plugin-20242e?style=flat-square)](https://github.com/SteamDeckHomebrew/decky-loader)
-[![Engine](https://img.shields.io/badge/engine-GSF%20Kedavra%201.6.2-fb0d00?style=flat-square)](https://github.com/wavessevaw/GSF_Kedavra/releases/tag/v1.6.2)
+[![Engine](https://img.shields.io/badge/engine-GSF%20Kedavra-fb0d00?style=flat-square)](https://github.com/wavessevaw/GSF_Kedavra)
 [![No Lossless Scaling](https://img.shields.io/badge/Lossless%20Scaling-not%20needed-20242e?style=flat-square)](#02--gsf-kedavra)
 [![License](https://img.shields.io/badge/license-GPL--3.0-20242e?style=flat-square)](LICENSE.md)
 [![Telegram](https://img.shields.io/badge/Telegram-gfg__extreme-26a5e4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/gfg_extreme)
@@ -35,22 +35,6 @@ Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integ
 </table>
 
 </div>
-
----
-
-## LATEST RELEASE / 3.4.4
-
-**Official release · GSF Kedavra 1.6.2 · Benchmark Apply Fix**
-
-- **Benchmark Apply:** Apply a measured native-FPS and TDP point to the active game and selected performance mode.
-- **Governor:** Start from the applied power point instead of immediately restoring the previous TDP; adaptive control stays active.
-- **HUD:** APPLY / DISCARD for a valid measurement, RETRY / DISCARD when no valid point is available.
-- **Per-mode results:** Store Benchmark choices independently for Quality, Balanced, Battery and Autopilot.
-- **GSF Kedavra 1.6.2:** The frame-generation and reconstruction algorithms are unchanged.
-
-**GTA VI / 90 FPS on Steam Deck OLED** is a future technical objective: a 30 native FPS source with Kedavra ×3 targets 90 output FPS.
-
-[**Download the v3.4.4 ZIP**](https://github.com/wavessevaw/GFG-Extreme/releases/download/v3.4.4/GFG-Extreme-v3_4_4.zip) · [Full release notes](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.4)
 
 ---
 
@@ -85,7 +69,7 @@ A closed TDP control loop with feedback that verifies every decision it makes.
 
 ## Installation
 
-1. Download [**GFG-Extreme-v3_4_4.zip**](https://github.com/wavessevaw/GFG-Extreme/releases/download/v3.4.4/GFG-Extreme-v3_4_4.zip) from the [official v3.4.4 release](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.4).
+1. Download **GFG-Extreme-v3_4_4.zip** from the [latest release](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.4).
 2. In Decky Loader: **Settings → Developer → Install Plugin from ZIP**, pick the file.
 3. Open GFG Extreme. On first installation choose **Install engine**, then **Reboot now**. When updating from an older version, use **Setup → Reinstall Gamescope KEDAVRA** and reboot. The tabs unlock once the matching Kedavra Gamescope runs.
 4. Start a game and choose a mode on **Dash**. Nothing else to set up: no launch options, no Desktop Mode scripts.
@@ -596,6 +580,6 @@ This README describes the official GFG Extreme 3.4.4 release with GSF Kedavra 1.
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="56">
 
-<sub>GFG EXTREME 3.4.4 · POWERED BY GSF KEDAVRA · Made for Steam Deck · GPL-3.0-or-later</sub>
+<sub>GFG EXTREME 3.4 · POWERED BY GSF KEDAVRA · Made for Steam Deck · GPL-3.0-or-later</sub>
 
 </div>
