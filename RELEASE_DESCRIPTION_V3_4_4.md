@@ -1,52 +1,33 @@
 # GFG Extreme 3.4.4 — Official Release
 
-## Innovation Has a History. Players Have a Future.
+## About GFG Extreme
 
-GFG Extreme did not emerge in isolation. We began by building on earlier projects and the open-source technologies that helped shape this ecosystem. We respect that work and the people behind it.
+GFG Extreme is a free, open-source project designed to make gaming on Steam Deck more comfortable. It combines game-aware performance and power management with independent frame generation, aiming to reduce manual setup and make better use of the hardware players already own.
 
-Then we chose to move beyond existing solutions and build our own way forward.
+The project has benefited from earlier open-source work and community research. It has since developed its own components and direction, including **GSF Kedavra**, an independent frame-generation engine integrated into Gamescope.
 
-**October 6, 2026:** GFG Extreme publicly introduced automatic, adaptive TDP management.
+- **October 6, 2026:** GFG Extreme introduced automatic, adaptive TDP management.
+- **October 21, 2026:** GSF Kedavra was publicly introduced as an independent frame-generation engine.
 
-**October 21, 2026:** We released **GSF Kedavra**, our own independent frame-generation engine integrated directly into Gamescope, without relying on third-party frame-generation engines.
+We appreciate the contributions of other developers in this space. Open development, shared research and clear attribution benefit the whole community.
 
-Our releases, source code and dates are public.
+### Looking Ahead: GFG Extreme 5.0
 
-It is interesting to watch familiar approaches resurface elsewhere and be introduced to wider audiences as groundbreaking new ideas.
+We are exploring possibilities for a future generation of GFG Extreme, particularly in the area of visual smoothness and efficiency on Steam Deck.
 
-We support open source, independent implementations and real competition. But there is a difference between **walking a path someone has already opened** and **finding a new one**.
+That research may involve improving existing frame-generation methods, reconsidering parts of the current pipeline or investigating fundamentally different approaches to the gaming experience. **It is a research direction, not a finished technology or a promised release date.**
 
-**A bigger audience doesn't rewrite the timeline.**
+Our focus is on improvements players can actually feel: more consistent motion, fewer visual artifacts, responsive controls and sensible use of power.
 
-**Open source is meant to inspire new work, not erase the path that inspired it.** If your next “breakthrough” begins in someone else's repository, acknowledging where the idea came from is the least you can do. We spend our time imagining, testing and building what we wish existed. **Features can be reproduced. Independent imagination cannot be downloaded.**
-
-And while others explore directions we've already pursued, our attention is on what comes next.
-
-### GFG Extreme 5.0 is coming.
-
-We are not preparing another routine update. We are working toward a fundamental leap in how frames are generated, reconstructed and presented.
-
-**Our ambition for 5.0 is to make today's expectations of frame generation look outdated. Not just on Steam Deck, but across the industry.**
-
-**We aim to set a technological bar that cannot be reached simply by borrowing someone else's ideas.** And if similar breakthroughs appear elsewhere later, our published research, code and release history will make the sequence of innovation clear. Real progress starts with an original direction, not just a familiar feature under a new name.
-
-We have a direction to pursue, a great deal to prove, and no interest in simply following the next trend.
-
-**Some follow the roadmap. We intend to draw the next one.**
 
 ---
 
-## GTA VI. 90 FPS. Steam Deck OLED.
+## Frame Generation on Steam Deck OLED
 
-Some consider it impossible.
+In suitable games, ×3 frame generation can turn **30 native FPS into up to 90 output FPS**. These additional frames can improve perceived smoothness, but they do not represent 90 native game updates.
 
-We consider it a technical objective.
+Results depend on the game, frame pacing, image quality and available performance. This is an illustration of the technology, not a promise for any specific title.
 
-Powered by our independent GSF Kedavra engine, GFG Extreme targets 90 output FPS from 30 native FPS through ×3 frame generation.
-
-**30 native FPS × 3 = 90 output FPS.**
-
-No third-party frame-generation engine required.
 
 ---
 
@@ -79,9 +60,9 @@ You bought a Steam Deck to enjoy games, not to spend every session juggling tool
 
 For suitable games, **30 native FPS ×3 can produce 90 output FPS** through frame generation. These are not 90 native game updates, and results depend on the game and workload. That's why we keep refining frame pacing, visual reconstruction, artifacts and power efficiency together. The number on the counter matters less than how the game actually feels.
 
-**Our goal is simple: install GFG Extreme once, launch your games and have no reason to hunt for another plugin to make the experience right.** Less tweaking. Less battery wasted. More time playing.
+**Our goal is to make GFG Extreme useful with as little setup as possible.** Less tweaking. More time playing.
 
-This is not about commercial competition or winning benchmark arguments. It's about helping people enjoy the Steam Deck they already own, and demonstrating just how much more it can still deliver.
+Development is guided by the practical experience of players, game testing and feedback from the community.
 
 If GFG Extreme improves your experience, please **star the repository**, share the project and tell us what works and what needs improving. Every report and every bit of support helps us keep building for players.
 
@@ -89,22 +70,14 @@ If GFG Extreme improves your experience, please **star the repository**, share t
 
 ---
 
-## Help Build GFG Extreme 5.0 — $3,000 Funding Goal
-
-We are aiming to raise **$3,000 in community support** for the research and development of GFG Extreme 5.0 and the next generation of GSF Kedavra. Your contributions help fund the time, testing and engineering needed to explore new approaches to frame generation, improve visual quality and make better use of Steam Deck's hardware.
-
-**GFG Extreme remains free and open source.** Donations support independent development, not a paid upgrade or a guaranteed breakthrough. We will share real progress and verified results as the work advances.
-
-**[Support GFG Extreme 5.0 via Tribute](https://web.tribute.tg/d/RSU)**
+Optional support: [Tribute](https://web.tribute.tg/d/RSU)
 
 ---
 
-## THIS IS NOT THE END. NOT EVEN CLOSE.
+## What's Next
 
-**Steam Deck still has a future worth building for. We intend to prove it.**
+Version 3.4.4 is available now. We will keep refining the current experience and exploring longer-term ideas at a measured pace.
 
-**And Steam Deck is only where this journey began. The next breakthrough we are pursuing could reach far beyond a single device.**
-
-**GFG Extreme 5.0 is coming.**
+Thanks to everyone who tries the project, reports issues and supports independent development.
 
 **GFG Extreme. Built by a player. For players.**
