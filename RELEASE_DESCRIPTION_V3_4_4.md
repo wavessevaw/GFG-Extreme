@@ -18,6 +18,8 @@ We support open source, independent implementations and real competition. But th
 
 **A bigger audience doesn't rewrite the timeline.**
 
+**Open source is meant to inspire new work, not erase the path that inspired it.** If your next “breakthrough” begins in someone else's repository, acknowledging where the idea came from is the least you can do. We spend our time imagining, testing and building what we wish existed. **Features can be reproduced. Independent imagination cannot be downloaded.**
+
 And while others explore directions we've already pursued, our attention is on what comes next.
 
 ### GFG Extreme 5.0 is coming.
