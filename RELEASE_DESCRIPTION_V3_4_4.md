@@ -1,6 +1,6 @@
 # GFG Extreme 3.4.4 — Official Release
 
-## Competition Is Welcome. Following Isn't Pioneering.
+## Innovation Has a History. Players Have a Future.
 
 GFG Extreme did not emerge in isolation. We began by building on earlier projects and the open-source technologies that helped shape this ecosystem. We respect that work and the people behind it.
 
@@ -69,15 +69,19 @@ Tap **DISCARD** on the right to ignore the result. If the Benchmark cannot find 
 
 ---
 
-## Built by Players. For Players.
+## One Plugin. More Time to Play.
 
-We use Steam Deck ourselves, every day. That is where our ideas come from.
+You bought a Steam Deck to enjoy games, not to spend every session juggling tools, power limits and performance settings.
 
-We develop the features we actually want to use: smoother gameplay, smarter power management, less time adjusting settings and more time playing.
+**That's who GFG Extreme is built for: the player.** It identifies the running game, works with game-specific settings and adapts performance and power management to the situation. When more performance is needed, it can respond. When it isn't, it aims to reduce unnecessary power use and help your battery last longer.
 
-We aren't here merely to argue over benchmarks or prove a point. **We want to demonstrate what Steam Deck is truly capable of, and keep pushing its possibilities further.**
+For suitable games, **30 native FPS ×3 can produce 90 output FPS** through frame generation. These are not 90 native game updates, and results depend on the game and workload. That's why we keep refining frame pacing, visual reconstruction, artifacts and power efficiency together. The number on the counter matters less than how the game actually feels.
 
-If GFG Extreme has improved your experience, please **star the repository**, share the project and tell us what works and what needs improving. Every report and every bit of support helps an independent project move forward.
+**Our goal is simple: install GFG Extreme once, launch your games and have no reason to hunt for another plugin to make the experience right.** Less tweaking. Less battery wasted. More time playing.
+
+This is not about commercial competition or winning benchmark arguments. It's about helping people enjoy the Steam Deck they already own, and demonstrating just how much more it can still deliver.
+
+If GFG Extreme improves your experience, please **star the repository**, share the project and tell us what works and what needs improving. Every report and every bit of support helps us keep building for players.
 
 [**Support GFG Extreme on GitHub**](https://github.com/wavessevaw/GFG-Extreme) · [Feedback & Issues](https://github.com/wavessevaw/GFG-Extreme/issues)
 
