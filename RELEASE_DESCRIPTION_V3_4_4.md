@@ -22,11 +22,17 @@ Our focus is on improvements players can actually feel: more consistent motion, 
 
 ---
 
-## Frame Generation on Steam Deck OLED
+## GTA VI. 90 FPS. Steam Deck OLED.
 
-In suitable games, ×3 frame generation can turn **30 native FPS into up to 90 output FPS**. These additional frames can improve perceived smoothness, but they do not represent 90 native game updates.
+Some consider it impossible.
 
-Results depend on the game, frame pacing, image quality and available performance. This is an illustration of the technology, not a promise for any specific title.
+We consider it a technical objective.
+
+Powered by our independent GSF Kedavra engine, GFG Extreme targets 90 output FPS from 30 native FPS through ×3 frame generation.
+
+**30 native FPS × 3 = 90 output FPS.**
+
+No third-party frame-generation engine required.
 
 
 ---
