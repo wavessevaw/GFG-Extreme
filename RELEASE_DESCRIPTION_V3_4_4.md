@@ -2,13 +2,13 @@
 
 ## Competition Is Welcome. Following Isn't Pioneering.
 
-GFG Extreme began with technologies such as MAKO and Lossless Scaling. We have never hidden that, nor have we underestimated the work that came before us.
+GFG Extreme did not emerge in isolation. We began by building on earlier projects and the open-source technologies that helped shape this ecosystem. We respect that work and the people behind it.
 
-But at some point, we chose to build our own way forward.
+Then we chose to move beyond existing solutions and build our own way forward.
 
 **October 6, 2026:** GFG Extreme publicly introduced automatic, adaptive TDP management.
 
-**October 21, 2026:** We released **GSF Kedavra**, our own independent frame-generation engine integrated directly into Gamescope, with no dependence on MAKO or Lossless Scaling.
+**October 21, 2026:** We released **GSF Kedavra**, our own independent frame-generation engine integrated directly into Gamescope, without relying on third-party frame-generation engines.
 
 Our releases, source code and dates are public.
 
@@ -22,7 +22,11 @@ And while others explore directions we've already pursued, our attention is on w
 
 ### GFG Extreme 5.0 is coming.
 
-Our ambition is not simply to add more generated frames. We are working toward a new generation of GFG Extreme that challenges what players expect from frame generation, presentation and performance control.
+We are not preparing another routine update. We are working toward a fundamental leap in how frames are generated, reconstructed and presented.
+
+**Our ambition for 5.0 is to make today's expectations of frame generation look outdated. Not just on Steam Deck, but across the industry.**
+
+We have a direction to pursue, a great deal to prove, and no interest in simply following the next trend.
 
 **Some follow the roadmap. We intend to draw the next one.**
 
@@ -80,6 +84,8 @@ If GFG Extreme has improved your experience, please **star the repository**, sha
 ## THIS IS NOT THE END. NOT EVEN CLOSE.
 
 **Steam Deck still has a future worth building for. We intend to prove it.**
+
+**And Steam Deck is only where this journey began. The next breakthrough we are pursuing could reach far beyond a single device.**
 
 **GFG Extreme 5.0 is coming.**
 
