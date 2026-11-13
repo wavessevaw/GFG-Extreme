@@ -1,0 +1,21 @@
+name: Publish v3.4.4 player-first release notes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - RELEASE_DESCRIPTION_V3_4_4.md
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update existing release description
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit v3.4.4 --notes-file RELEASE_DESCRIPTION_V3_4_4.md
