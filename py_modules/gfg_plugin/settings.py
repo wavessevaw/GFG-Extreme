@@ -37,7 +37,7 @@ def defaults() -> Dict[str, Any]:
         "profiles": {DEFAULT_PROFILE: default_profile()},
         "hud": {"enabled": True, "position": "top-right", "detail": "standard"},
         "autopilot": {"preference": "auto"},
-        "power": {"enabled": True, "split": True, "gpu_clock": True},
+        "power": {"optimizer": True, "enabled": True, "split": True, "gpu_clock": True},
         "engine": {"hdr": True, "hdr_output": True, "above_x3": False, "boost": False, "boost_mult": 1.5},
         "telemetry": {"level": "standard"},
         "migrated_from": None,
@@ -89,7 +89,7 @@ def normalize(raw: Any) -> Dict[str, Any]:
     ap = raw.get("autopilot") if isinstance(raw.get("autopilot"), dict) else {}
     out["autopilot"] = {"preference": ap.get("preference") if ap.get("preference") in AUTOPILOT_PREFERENCES else "auto"}
     power = raw.get("power") if isinstance(raw.get("power"), dict) else {}
-    out["power"] = {"enabled": bool(power.get("enabled", True)), "split": bool(power.get("split", True)),
+    out["power"] = {"optimizer": bool(power.get("optimizer", True)), "enabled": bool(power.get("enabled", True)), "split": bool(power.get("split", True)),
                     "gpu_clock": bool(power.get("gpu_clock", True))}
     eng = raw.get("engine") if isinstance(raw.get("engine"), dict) else {}
     out["engine"] = {"hdr": bool(eng.get("hdr", True)), "hdr_output": bool(eng.get("hdr_output", True)),

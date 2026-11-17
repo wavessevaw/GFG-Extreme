@@ -1,0 +1,24 @@
+name: Resource Optimizer candidate
+on:
+  push:
+    branches: [feature/resource-optimizer]
+permissions:
+  contents: read
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci && npm run build && git diff --exit-code dist/index.js
+      - run: python3 -m unittest discover -s tests
+      - run: python3 -m sandbox.run
+      - run: python3 scripts/package_resource.py && sha256sum *.zip > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Resource-Optimizer-Decky
+          path: |
+            *.zip
+            SHA256SUMS.txt

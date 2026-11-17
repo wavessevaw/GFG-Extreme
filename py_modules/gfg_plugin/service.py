@@ -72,6 +72,7 @@ class Service:
         self.rates = hudmod.Rates()
         self.stats = SessionStats()
         self.last_game_at = -1e9
+        self.optimizer = None
         self.app = 0
         self.last_policy: Optional[Policy] = None
         self.snapshot: Dict[str, Any] = {}
@@ -143,12 +144,17 @@ class Service:
         with self._lifecycle_lock:
             if self._stopped:
                 return self.snapshot
-            return self._tick()
+            try:
+                return self._tick()
+            except Exception:
+                if self.optimizer: self.optimizer.stop()
+                raise
 
     def _tick(self) -> Dict[str, Any]:
         guard = getattr(self.ctl, "control_guard", None)
         error = guard() if guard else ""
         if error:
+            if self.optimizer: self.optimizer.stop()
             actions = [lambda: self.benchmark.abort(error), lambda: self.governor.stop("controller-conflict")]
             if self.split: actions.append(self.split.stop)
             if self.gclock: actions.append(self.gclock.stop)
@@ -179,6 +185,7 @@ class Service:
             self.last_game_at = now
         game = bool(self.app) and now - self.last_game_at <= GAME_GRACE_S
         if not game and self.app:
+            if self.optimizer: self.optimizer.stop()
             self._end_session("game-exit")
             self.app = 0
             self._reset_after_game()
@@ -213,6 +220,11 @@ class Service:
         except Exception:
             self.benchmark.abort("Benchmark operation failed; restoring settings")
             raise
+        if self.optimizer:
+            enabled = data["power"].get("optimizer", True) and game and not benchmarking
+            if not enabled or (fresh and not st.get("steam_ui") and app == self.app):
+                self.optimizer.tick(self.app if enabled else 0, now, st.get("native_frame_ms") or [],
+                                    st.get("cap_fps") or profile.get("base_fps") or 0)
         if benchmarking:
             if self.hud is not None:
                 self.hud.tick(True, st, {"benchmark": self.benchmark.status()},
@@ -320,7 +332,7 @@ class Service:
             "over_budget": (rates or {}).get("over_budget", 0.0), "ring_miss": 0.0, "temp_c": temp,
             "draw_w": gov.status().get("draw_w"),
             "ac": power.get("external_power"),
-            "experiment": bool((self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
+            "experiment": bool((self.optimizer and now < self.optimizer.settle) or (self.split and self.split.settling()) or (self.gclock and self.gclock.settling())),
             "benchmark_seed": bool(seed), "benchmark_applied": bool(seed),
             "dock": dock, "start_w": seed.get("tdp") or CLASS_START_W.get(gp.get("class") or ""),
         }
@@ -360,7 +372,7 @@ class Service:
             "time": now, "game": game, "app": self.app, "profile": profile_key, "profile_name": profile["name"],
             "fg": profile["fg"], "objective": objective, "objective_setting": profile["objective"],
             "autopilot_reason": auto_reason, "refresh": refresh, "engine": self._engine_view(st),
-            "live": live, "pilot": req, "policy": coord, "governor": g, "split": split_status, "gpu_clock": gclock_status,
+            "optimizer": self.optimizer.status if self.optimizer else {}, "live": live, "pilot": req, "policy": coord, "governor": g, "split": split_status, "gpu_clock": gclock_status,
             "lease": lease, "filter_budget": self.fbudget.status(), "game_profile": gp, "dock": dock,
             "boost": self.boost.status() if self.boost is not None else None,
             "sensors": sensors, "power": power,
@@ -407,7 +419,7 @@ class Service:
             self.coord.want(self.last_policy)
         coord = self.coord.tick(st)
         snap = dict(self.snapshot)
-        snap.update({"time": now, "engine": self._engine_view(st), "live": live, "policy": coord, "idle": True})
+        snap.update({"optimizer": {"state":"Inactive","tasks":0}, "time": now, "engine": self._engine_view(st), "live": live, "policy": coord, "idle": True})
         if now - self.idle_sensors_at >= IDLE_SENSORS_S:
             self.idle_sensors_at = now
             snap["sensors"] = self.sensors.sample() if self.sensors else {}
@@ -464,6 +476,7 @@ class Service:
         """Plugin unload: TDP back to the player's, HDR output back on, HUD hidden, generation left
         as the engine runs it."""
         actions = [lambda: self.benchmark.abort("Plugin stopped"), lambda: self._end_session("unload")]
+        if self.optimizer: actions.append(self.optimizer.stop)
         if self.boost is not None:
             actions.append(self.boost.stop)
         actions.extend([lambda: self._hdr_output(True, True, self.clock()),

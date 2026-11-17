@@ -81,6 +81,9 @@ class Plugin:
             journal=lambda src, kind, **f: self.log.record(src, kind, **f), telemetry=self.telemetry,
             split=split, gclock=gclock,
             boost=Boost(self.ctl, journal=lambda kind, **f: self.log.record("boost", kind, **f)))
+        if self.owner and self.owner[0] >= 1000:
+            from .resource_optimizer import Optimizer
+            self.service.optimizer = Optimizer(self.owner[0])
         self.lock = asyncio.Lock()
         self._gate_at, self._gate_cache = -1e9, {}
         self._host_at, self._host_cache = -1e9, {}
