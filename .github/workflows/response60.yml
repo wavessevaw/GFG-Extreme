@@ -1,0 +1,119 @@
+name: 60 Hz response candidate
+on:
+  push:
+    branches: [research/60hz-resource]
+permissions:
+  contents: read
+env:
+  KEDAVRA_REPO: wavessevaw/GSF_Kedavra
+  KEDAVRA_SHA: a6f1c6d54358d867618eeeaf25f1222e3ef4a3cc
+jobs:
+  bench:
+    # Built on Ubuntu 24.04, whose glibc is older than SteamOS's, so the binary runs on the Deck.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.KEDAVRA_REPO }}
+          ref: ${{ env.KEDAVRA_SHA }}
+      - name: Engine bench (kfg_vktest) and shaders
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev glslang-tools
+          make -C kedavra all test-sched test-pacing
+          mkdir -p deck-bench
+          cp kedavra/build/kfg_vktest kedavra/build/kfg_posttest kedavra/build/*.spv deck-bench/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kedavra-bench
+          path: deck-bench
+
+  gamescope:
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    steps:
+      - name: Toolchain and Gamescope dependencies
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git meson ninja cmake glslang vulkan-headers \
+            wayland wayland-protocols libx11 libxcomposite libxdamage libxext libxfixes libxkbcommon \
+            libxmu libxrender libxres libxtst libxxf86vm libxcursor libxi libdrm libinput seatd sdl2 \
+            libdecor luajit libavif libcap pipewire libei hwdata lcms2 glm benchmark pixman \
+            vulkan-icd-loader xcb-util-errors xcb-util-wm xorg-xwayland libdisplay-info libliftoff python patchelf
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.KEDAVRA_REPO }}
+          ref: ${{ env.KEDAVRA_SHA }}
+      - name: Gamescope at the pinned commit
+        run: |
+          pin=$(sed -n 's/^GAMESCOPE_COMMIT=//p' kedavra/gamescope/apply.sh)
+          git init -q /tmp/gamescope
+          git -C /tmp/gamescope remote add origin https://github.com/ValveSoftware/gamescope.git
+          git -C /tmp/gamescope fetch -q --depth 1 origin "$pin"
+          git -C /tmp/gamescope checkout -q FETCH_HEAD
+          git -C /tmp/gamescope submodule update --init --depth 1 --recursive
+      - name: Apply KEDAVRA and build
+        run: |
+          sh kedavra/gamescope/apply.sh /tmp/gamescope
+          cd /tmp/gamescope
+          # --prefix=/usr: Gamescope reads its display scripts from <prefix>/share/gamescope/scripts.
+          # With the default /usr/local it never finds SteamOS's Steam Deck OLED script, so the
+          # panel looks unknown and HDR is reported unsupported.
+          meson setup build --prefix=/usr --buildtype=release -Dpipewire=enabled -Denable_openvr_support=false -Denable_tests=false
+          ninja -C build
+          nm -C build/src/gamescope | grep -c 'kfg::'
+          grep -a -c '/usr/share/gamescope/scripts' build/src/gamescope
+      - name: Bundle with its libraries
+        run: |
+          # The GFG commit in the version: Setup asks for a reinstall whenever the runtime changes.
+          sh kedavra/gamescope/bundle.sh /tmp/gamescope/build gamescope-runtime "kedavra-${KEDAVRA_SHA::7}-gfg-${GITHUB_SHA::7}"
+          mkdir -p gamescope-runtime/share/licenses
+          cp kedavra/shaders/THIRD_PARTY.md gamescope-runtime/share/licenses/KEDAVRA-filters-THIRD_PARTY.md
+          cp LICENSE.md NOTICE.md gamescope-runtime/share/licenses/ 2>/dev/null || true
+      - name: Bundled runtime resolves from its install location
+        run: |
+          mkdir -p /var/lib/kedavra && cp -a gamescope-runtime /var/lib/kedavra/runtime
+          R=/var/lib/kedavra/runtime
+          $R/lib/ld-linux-x86-64.so.2 --list $R/bin/gamescope | tee /tmp/ldd.txt
+          if grep -q 'not found' /tmp/ldd.txt; then exit 1; fi
+          $R/bin/gamescope --version
+          tar -cf gamescope-runtime.tar gamescope-runtime
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gamescope-runtime
+          path: gamescope-runtime.tar
+
+  package:
+    needs: [gamescope, bench]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: gamescope-runtime
+      - uses: actions/download-artifact@v4
+        with:
+          name: kedavra-bench
+          path: kedavra-bench
+      - name: Verify resource manager recovery with user systemd
+        run: |
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          sudo systemctl start "user@$(id -u).service"
+          python3 tests/systemd_resource_timer.py
+      - name: Package and compare installed payload
+        run: |
+          tar -xf gamescope-runtime.tar
+          scripts/build_release.sh 3.4.4-response.2 gamescope-runtime out kedavra-bench
+          archive=$(ls out/*.zip)
+          unzip -tq "$archive"
+          cmp <(unzip -p "$archive" GFG-Extreme/runtime/bin/gamescope) gamescope-runtime/bin/gamescope
+          unzip -p "$archive" GFG-Extreme/runtime/VERSION | grep -F "kedavra-${KEDAVRA_SHA::7}-gfg-${GITHUB_SHA::7}"
+          for module in resource_backup resource_usage resource_optimizer; do
+            cmp <(unzip -p "$archive" "GFG-Extreme/py_modules/gfg_plugin/$module.py") "py_modules/gfg_plugin/$module.py"
+          done
+          cp TEST-60HZ.md out/
+          (cd out && sha256sum -c SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GFG-60Hz-Decky
+          path: out/

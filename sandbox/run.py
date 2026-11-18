@@ -362,7 +362,7 @@ def plug_in_charger() -> Dict[str, Any]:
 
 @scenario
 def docked_60hz() -> Dict[str, Any]:
-    """Docked at 60 Hz: the ladder is 20 (x3), 25, 30 (x2); no x3.75 below 20."""
+    """At 60 Hz Auto targets 30 FPS in both Balanced and Battery."""
     rig = make_rig(VGame("g", 34.0), objective="balanced", refresh=60)
     play(rig, 600)
     m = metrics(rig, skip=120)
@@ -370,7 +370,7 @@ def docked_60hz() -> Dict[str, Any]:
     check(out, "a 34 fps game locks 30 (x2) at 60 Hz", m["point_final"] == 30, f"{m['point_final']}")
     rig = make_rig(VGame("g", 34.0), objective="battery", refresh=60)
     play(rig, 300)
-    check(out, "battery at 60 Hz locks 20 (x3, never below 20)", rig.timeline[-1]["point"] == 20, f"{rig.timeline[-1]['point']}")
+    check(out, "battery at 60 Hz locks 30 (x2)", rig.timeline[-1]["point"] == 30, f"{rig.timeline[-1]['point']}")
     return out
 
 
@@ -852,7 +852,7 @@ def dock_tv_60hz() -> Dict[str, Any]:
         play(rig, 900)
         tl = rig.timeline
         out["runs"][obj] = metrics(rig, skip=120)
-        check(out, f"{obj}: never above x3 (20 at 60 Hz)", all(r["point"] == 0 or r["point"] >= 20 for r in tl))
+        check(out, f"{obj}: selects x2 at 60 Hz", all(r["point"] in (0, 30) for r in tl))
     check(out, "autopilot: x2 (30) when the game holds it", out["runs"]["autopilot"]["point_final"] == 30,
           f"point {out['runs']['autopilot']['point_final']}")
     hot = make_rig(VGame("tv", 40.0), objective="balanced", refresh=60, dock=True, external_power=True, ambient=40.0)

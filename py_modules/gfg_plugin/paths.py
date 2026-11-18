@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-VERSION = "3.4.4-resource.6"
+VERSION = "3.4.4-response.2"
 CODENAME = ""
 
 # 3.0 data (settings, learned power points, sessions, logs). Owned by the desktop user.

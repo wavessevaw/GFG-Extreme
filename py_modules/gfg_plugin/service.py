@@ -207,7 +207,12 @@ class Service:
             # and Quality); this only tracks the battery and the reason shown in the panel.
             ap = self.autopilot.decide(data["autopilot"]["preference"], power, temp)
             auto_reason = ap["reason"]
-        refresh = round(1e9 / st["refresh_ns"]) if fresh and st.get("refresh_ns") else 90
+        # Keep the last measured output rate across brief telemetry gaps in this game.
+        refresh = self.cur[1] if self.cur[0] == self.app else 90
+        if fresh and st.get("refresh_ns", 0):
+            refresh = round(1e9 / st["refresh_ns"])
+        response60 = game and refresh == 60 and profile["fg"] in ("auto", "x2")
+        effective_fg = "x2" if response60 else profile["fg"]
         if now - self.dock_at >= DOCK_CHECK_S:
             self.dock_at = now
             try:
@@ -260,9 +265,9 @@ class Service:
         gov = self.governor
         # A camera-turn boost (3.1.1) and the 2 s after it are not the point's readings: the pilot
         # and the Governor keep what they had.
-        boosting = bool(game and self.boost is not None and self.boost.busy(now) and self.last_req is not None)
+        boosting = bool(game and not response60 and self.boost is not None and self.boost.busy(now) and self.last_req is not None)
         req = self.last_req if boosting else self.pilot.tick({
-            "fg": profile["fg"], "base_fps": profile["base_fps"], "objective": objective,
+            "fg": effective_fg, "base_fps": profile["base_fps"], "objective": objective,
             "refresh": refresh, "game": game, "app": self.app, "engine": st,
             "real": live.get("real"), "pace": live.get("pace"), "confirmed": confirmed,
             "gpu_busy": sensors.get("gpu_busy_pct"), "cpu_top": sensors.get("cpu_top_core_pct"),
@@ -299,7 +304,7 @@ class Service:
         if self.boost is not None:
             eng = data["engine"]
             self.boost.configure(
-                enabled=bool(game and eng.get("boost") and req["phase"] in ("locked", "fixed")),
+                enabled=bool(game and not response60 and eng.get("boost") and req["phase"] in ("locked", "fixed")),
                 mult=eng.get("boost_mult", 1.5), refresh=refresh, wanted=policy,
                 headroom=Boost.estimate_headroom(refresh, live.get("real"), sensors.get("gpu_busy_pct"),
                                                  st.get("gpu_us_avg"), st.get("gpu_analysis_us_avg")))
