@@ -225,7 +225,8 @@ class Service:
             reason = "Disabled" if not enabled else "Paused for benchmark" if benchmarking else "Waiting for game"
             self.optimizer.tick(self.app if game and enabled and not benchmarking else 0, now,
                                 st.get("native_frame_ms") or [], st.get("cap_fps") or profile.get("base_fps") or 0,
-                                sample=fresh and not st.get("steam_ui") and app == self.app, inactive_reason=reason)
+                                sample=fresh and not st.get("steam_ui") and app == self.app, inactive_reason=reason,
+                                on_battery=power.get("external_power") is False and power.get("discharging") is True)
         if benchmarking:
             if self.hud is not None:
                 self.hud.tick(True, st, {"benchmark": self.benchmark.status()},

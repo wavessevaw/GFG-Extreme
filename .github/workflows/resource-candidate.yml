@@ -14,6 +14,12 @@ jobs:
           node-version: 22
       - run: npm ci && npm run build && git diff --exit-code dist/index.js
       - run: python3 -m unittest discover -s tests
+      - name: Check queued backup and release with a real systemd user manager
+        run: |
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          sudo systemctl start "user@$(id -u).service"
+          python3 tests/systemd_resource_timer.py
       - run: python3 -m sandbox.run
       - run: python3 scripts/package_resource.py && sha256sum *.zip > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4

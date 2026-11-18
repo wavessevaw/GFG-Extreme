@@ -143,17 +143,17 @@ class ResourceTest(unittest.TestCase):
             self.assertEqual(opt.status["result"], "Disabled")
 
     def test_user_services_attribute_cpu_without_regulating_unknowns(self):
-        from gfg_plugin.resource_optimizer import service_usage
+        from gfg_plugin.resource_usage import sample_groups, busiest
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             group = root / "app.slice/custom.service"
             group.mkdir(parents=True)
             stat = group / "cpu.stat"
             stat.write_text("usage_usec 0")
-            first, _ = service_usage(root, {}, 1)
+            first, _ = sample_groups([root / "app.slice"], {}, 1)
             stat.write_text("usage_usec 2500000")
-            _, top = service_usage(root, first, 6)
-            self.assertEqual(top, "custom.service: 50.0%")
+            _, rows = sample_groups([root / "app.slice"], first, 6)
+            self.assertEqual([(r["unit"], r["cpu"]) for r in busiest(rows)], [("custom.service", 50)])
 
     def test_heavy_indexing_before_frames_are_late(self):
         import os
@@ -188,3 +188,37 @@ class ResourceTest(unittest.TestCase):
                 lease("restore", 1000, group, receipt)
                 self.assertEqual(quota.read_text(), "40000 100000" if external else "max 100000")
                 self.assertFalse(receipt.exists())
+
+    def test_sustained_indexing_with_cpu_headroom_on_battery(self):
+        import os
+        for battery in (False, True):
+            opt = Optimizer(os.getuid())
+            with self.subTest(battery=battery), tempfile.TemporaryDirectory() as path, patch("gfg_plugin.resource_optimizer.eligible", return_value=True), patch("gfg_plugin.resource_optimizer.pressures", return_value={"cpu": 0}), patch("gfg_plugin.resource_optimizer.subprocess.run") as run:
+                group = Path(path)
+                opt.groups = {"baloo": group}
+                (group/"cpu.weight").write_text("100")
+                (group/"cpu.max").write_text("max 100000")
+                for t in range(0, 20, 5):
+                    (group/"cpu.stat").write_text(f"usage_usec {t*700000}")
+                    opt.tick(42, t, [32]*30, 30, on_battery=battery)
+                self.assertEqual(run.called, battery)
+                if battery:
+                    self.assertEqual(run.call_args.args[0][-2:], ["limit", "baloo"])
+                    opt.tick(42, 17, [], 0, on_battery=False)
+                    self.assertIsNone(opt.active)
+
+    def test_io_bound_nested_scope_no_double_count(self):
+        from gfg_plugin.resource_usage import sample_groups, busiest
+        with tempfile.TemporaryDirectory() as path:
+            root = Path(path)
+            scope = root / "apps.slice" / "demo.scope"
+            child = scope / "private.service"
+            child.mkdir(parents=True)
+            for group in (scope, child):
+                (group / "cpu.stat").write_text("usage_usec 100")
+                (group / "io.stat").write_text("179:0 rbytes=0 wbytes=0")
+            first, _ = sample_groups([root], {}, 0)
+            for group in (scope, child):
+                (group / "io.stat").write_text("179:0 rbytes=10485760 wbytes=20971520")
+            _, rows = sample_groups([root], first, 10)
+            self.assertEqual(busiest(rows), [dict(unit="demo.scope", cpu=0, device="179:0", read_mib=1, write_mib=2)])

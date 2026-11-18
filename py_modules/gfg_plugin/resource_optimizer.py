@@ -1,5 +1,4 @@
 """Bounded CPU-weight trials for isolated desktop background services on cgroup v2."""
-from itertools import islice
 import json
 import os
 import pwd
@@ -100,39 +99,14 @@ def pressures(root=Path("/proc/pressure")):
     return result
 
 
-def service_usage(root, previous, now):
-    """Read-only attribution for direct user services. Never use these paths for writes."""
-    current, loads = {}, []
-    for name in ("app.slice", "background.slice"):
-        try:
-            with os.scandir(root / name) as entries:
-                for entry in islice(entries, 64):
-                    if not entry.name.endswith(".service") or not entry.is_dir(follow_symlinks=False):
-                        continue
-                    try:
-                        group = Path(entry.path)
-                        stats = dict(line.split() for line in (group / "cpu.stat").read_text().splitlines())
-                        key = (entry.path, entry.inode())
-                        used = int(stats["usage_usec"])
-                    except (ValueError, OSError, KeyError):
-                        continue
-                    current[key] = (now, used)
-                    if key in previous:
-                        then, before = previous[key]
-                        if 0 < now - then <= 10 and used > before:
-                            pct = (used - before) / ((now - then) * 10000)
-                            loads.append((pct, entry.name))
-        except OSError:
-            continue
-    top = sorted(loads, reverse=True)[:3]
-    return current, ", ".join(f"{name}: {pct:.1f}%" for pct, name in top if pct >= 1)
-
-
 class Optimizer:
     def __init__(self, uid):
+        from .resource_backup import BackupWindow
         self.uid = uid
         self.service_root = group_path(uid).parent.parent
         self.observed = {}
+        self.next_inventory = 0
+        self.battery_trial = False
         self.control = "cpu.weight"
         self.groups = {role: group_path(uid, role) for role in SERVICES}
         self.active = None
@@ -143,7 +117,11 @@ class Optimizer:
         self.status = dict(state="Inactive", tasks=0, result="Waiting for game")
         self.manager = ["--user", "--machine=" + pwd.getpwuid(uid).pw_name + "@.host"]
 
+        self.backup = BackupWindow(self.manager)
+
     def stop(self):
+        self.backup.stop()
+        self.next_inventory = 0
         if self.until:
             subprocess.run(["/usr/bin/systemctl", *self.manager, "stop", UNIT + ".service"],
                            timeout=4, check=False, capture_output=True)
@@ -154,7 +132,7 @@ class Optimizer:
         self.observed.clear()
         self.status = dict(state="Inactive", tasks=0, result="Waiting for game")
 
-    def tick(self, app, now, frames, target, *, sample=True, inactive_reason="Waiting for game"):
+    def tick(self, app, now, frames, target, *, sample=True, on_battery=False, inactive_reason="Waiting for game"):
         if app != self.app:
             self.stop()
             self.app = app
@@ -164,8 +142,11 @@ class Optimizer:
         if not app:
             self.status.update(state="Inactive", tasks=0, result=inactive_reason)
             return
+        self.status["backup"] = self.backup.tick(now)
+        if self.battery_trial and self.active and not on_battery:
+            self.stop()
+            return
         if not sample:
-            self.observed.clear()
             self.previous.clear()
             self.hits.clear()
             if not self.active or now >= self.until:
@@ -176,8 +157,13 @@ class Optimizer:
         self.next_sample = now + 5
         pressure = pressures()
         self.status.update(state="Auto", tasks=0, pressure=pressure, result="Game active. Monitoring background services")
-        self.observed, top = service_usage(self.service_root, self.observed, now)
-        self.status["services"] = f"User services (% of one CPU): {top}" if top else "No measured user service above 1% of one CPU"
+        if now >= self.next_inventory:
+            from .resource_usage import busiest, sample_groups
+            roots = [self.service_root / name for name in ("app.slice", "background.slice", "session.slice")]
+            roots.append(Path("/sys/fs/cgroup/system.slice"))
+            self.observed, rows = sample_groups(roots, self.observed, now)
+            self.status["consumers"] = busiest(rows)
+            self.next_inventory = now + (10 if (pressure["cpu"] or 0) >= 5 or (pressure.get("io") or 0) >= 2 else 25)
         samples = sorted(x for x in frames if isinstance(x, (float, int)) and 0 < x < 2000)
         budget = 1000 / target if target and target > 0 else (statistics.median(samples) if samples else 0)
         p95 = samples[int(.95 * (len(samples) - 1))] if len(samples) >= 10 else 0
@@ -221,7 +207,7 @@ class Optimizer:
                 load = (cpu - old[2]) / (1000000 * (now - old[1]))
             competing = late and load >= .25 and (pressure["cpu"] or 0) >= 5
             # The standalone file indexer can defer heavy indexing before frame times suffer.
-            heavy_indexing = role == "baloo" and load >= .5 and (pressure["cpu"] or 0) >= 5
+            heavy_indexing = role == "baloo" and load >= .5 and (on_battery or (pressure["cpu"] or 0) >= 5)
             quota_available = False
             if heavy_indexing:
                 try:
@@ -238,6 +224,7 @@ class Optimizer:
             return
         _, role = max(candidates)
         action = "limit" if self.hits.get(role + ":quota", 0) >= 3 else "apply"
+        self.battery_trial = action == "limit" and (pressure["cpu"] or 0) < 5
         self.control = "cpu.max" if action == "limit" else "cpu.weight"
         self.cooldown = now + 120
         self.hits.clear()

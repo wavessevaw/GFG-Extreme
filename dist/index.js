@@ -539,7 +539,12 @@ function Engine({ s, set }) {
       h(Row, { k: (live.optimizer || {}).state || "Inactive", first: true }, h(Tog, { on: cfg.power.optimizer !== false, onChange: (v) => set(() => rpc.setSection("power", { optimizer: v })) })),
       h(Row, { k: "Regulated tasks", v: String((live.optimizer || {}).tasks || 0) }),
       h(Row, { k: "System CPU wait (10 s)", v: fmt((live.optimizer || {}).pressure?.cpu, 1, "%") }),
-      h("div", { className: "sub" }, (live.optimizer || {}).services || ""),
+      ...((live.optimizer || {}).consumers || []).map((c) => h(
+        "div",
+        { className: "sub", key: c.unit + (c.device || ""), style: { overflowWrap: "anywhere" } },
+        c.unit + " \xB7 " + c.cpu + "% of one CPU" + (c.device && (c.read_mib || c.write_mib) ? " \xB7 " + c.device + " R " + c.read_mib + " / W " + c.write_mib + " MiB/s" : "")
+      )),
+      (live.optimizer || {}).backup && h("div", { className: "sub" }, live.optimizer.backup),
       h("div", { className: "sub" }, (live.optimizer || {}).result || "")
     ),
     h(
