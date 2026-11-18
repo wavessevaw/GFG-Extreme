@@ -221,15 +221,16 @@ class Service:
             self.benchmark.abort("Benchmark operation failed; restoring settings")
             raise
         if self.optimizer:
-            enabled = data["power"].get("optimizer", True) and game and not benchmarking
-            if not enabled or (fresh and not st.get("steam_ui") and app == self.app):
-                self.optimizer.tick(self.app if enabled else 0, now, st.get("native_frame_ms") or [],
-                                    st.get("cap_fps") or profile.get("base_fps") or 0)
+            enabled = data["power"].get("optimizer", True)
+            reason = "Disabled" if not enabled else "Paused for benchmark" if benchmarking else "Waiting for game"
+            self.optimizer.tick(self.app if game and enabled and not benchmarking else 0, now,
+                                st.get("native_frame_ms") or [], st.get("cap_fps") or profile.get("base_fps") or 0,
+                                sample=fresh and not st.get("steam_ui") and app == self.app, inactive_reason=reason)
         if benchmarking:
             if self.hud is not None:
                 self.hud.tick(True, st, {"benchmark": self.benchmark.status()},
                               data["hud"]["position"], data["hud"]["detail"])
-            self.snapshot = {**self.snapshot, "engine": self._engine_view(st), "benchmark": self.benchmark.status(), "live": live}
+            self.snapshot = {**self.snapshot, "optimizer": self.optimizer.status if self.optimizer else {}, "engine": self._engine_view(st), "benchmark": self.benchmark.status(), "live": live}
             return self.snapshot
         gp = self.book.profile(self.app, refresh, dock) if game else {"class": None, "source": None}
         bench_key=f"{self.app}:{objective}:{refresh}:{int(dock)}:{power.get('external_power')}"
@@ -419,7 +420,7 @@ class Service:
             self.coord.want(self.last_policy)
         coord = self.coord.tick(st)
         snap = dict(self.snapshot)
-        snap.update({"optimizer": {"state":"Inactive","tasks":0}, "time": now, "engine": self._engine_view(st), "live": live, "policy": coord, "idle": True})
+        snap.update({"optimizer": self.optimizer.status if self.optimizer else {}, "time": now, "engine": self._engine_view(st), "live": live, "policy": coord, "idle": True})
         if now - self.idle_sensors_at >= IDLE_SENSORS_S:
             self.idle_sensors_at = now
             snap["sensors"] = self.sensors.sample() if self.sensors else {}

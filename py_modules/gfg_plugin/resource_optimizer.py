@@ -105,18 +105,29 @@ class Optimizer:
         self.active = None
         self.hits.clear()
         self.previous = {}
-        self.status.update(state="Inactive", tasks=0)
+        self.status = dict(state="Inactive", tasks=0, result="Waiting for game")
 
-    def tick(self, app, now, frames, target):
+    def tick(self, app, now, frames, target, *, sample=True, inactive_reason="Waiting for game"):
         if app != self.app:
             self.stop()
             self.app = app
             self.next_sample = 0
-        if not app or now < self.next_sample:
+            if app:
+                self.status.update(state="Auto", result="Game active. Monitoring background services")
+        if not app:
+            self.status.update(state="Inactive", tasks=0, result=inactive_reason)
+            return
+        if not sample:
+            self.previous.clear()
+            self.hits.clear()
+            if not self.active or now >= self.until:
+                self.status.update(state="Auto", tasks=0, result="Game active. Waiting for gameplay telemetry")
+            return
+        if now < self.next_sample:
             return
         self.next_sample = now + 5
         pressure = pressures()
-        self.status.update(state="Auto", tasks=0, pressure=pressure)
+        self.status.update(state="Auto", tasks=0, pressure=pressure, result="Game active. Monitoring background services")
         samples = sorted(x for x in frames if isinstance(x, (float, int)) and 0 < x < 2000)
         budget = 1000 / target if target and target > 0 else (statistics.median(samples) if samples else 0)
         p95 = samples[int(.95 * (len(samples) - 1))] if len(samples) >= 10 else 0

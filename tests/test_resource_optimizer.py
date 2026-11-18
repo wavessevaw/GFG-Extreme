@@ -120,3 +120,24 @@ class ResourceTest(unittest.TestCase):
             opt.tick(42, 25, [80]*30, 30)
             self.assertEqual(run.call_count, 2)
             self.assertIsNone(opt.active)
+
+    def test_game_open_in_engine_menu_without_eligible_tasks(self):
+        import os
+        opt = Optimizer(os.getuid())
+        opt.groups = {}
+        with patch("gfg_plugin.resource_optimizer.pressures", return_value={"cpu": 0}) as psi:
+            opt.tick(42, 0, [], 30, sample=False)
+            self.assertEqual(opt.status["state"], "Auto")
+            self.assertIn("gameplay telemetry", opt.status["result"])
+            psi.assert_not_called()
+            opt.tick(42, 1, [], 30)
+            self.assertIn("Monitoring", opt.status["result"])
+            self.assertEqual(opt.status["tasks"], 0)
+            opt.tick(42, 2, [], 30, sample=False)
+            self.assertEqual(opt.app, 42)
+            self.assertEqual(psi.call_count, 1)
+            opt.tick(0, 3, [], 0)
+            self.assertEqual(opt.status["result"], "Waiting for game")
+            self.assertNotIn("pressure", opt.status)
+            opt.tick(0, 4, [], 0, inactive_reason="Disabled")
+            self.assertEqual(opt.status["result"], "Disabled")
