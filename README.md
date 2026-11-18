@@ -4,15 +4,15 @@
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="144">
 
-# GFG EXTREME 3.4
+# GFG EXTREME 3.5.0
 
 **MOST POWERFUL DECKY PLUGIN EVER.**
 
 Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integration
 
-[**Download latest**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.4) · [Install](#installation) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Modes](#06--performance-modes) · [HUD](#08--observability)
+[**Download latest**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.5.0) · [Install](#installation) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Modes](#06--performance-modes) · [HUD](#08--observability)
 
-[![Release](https://img.shields.io/badge/release-3.4.4-fb0d00?style=flat-square)](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.4)
+[![Release](https://img.shields.io/badge/release-3.5.0-fb0d00?style=flat-square)](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.5.0)
 [![Downloads](https://img.shields.io/github/downloads/wavessevaw/GFG-Extreme/total?style=flat-square&color=20242e)](https://github.com/wavessevaw/GFG-Extreme/releases)
 [![Steam Deck](https://img.shields.io/badge/Steam%20Deck-OLED%20%7C%20LCD-20242e?style=flat-square)](#installation)
 [![Decky](https://img.shields.io/badge/Decky%20Loader-plugin-20242e?style=flat-square)](https://github.com/SteamDeckHomebrew/decky-loader)
@@ -37,6 +37,12 @@ Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integ
 </div>
 
 ---
+
+## What’s new in 3.5.0
+
+- At 60 or 59.94 Hz, enabled frame generation automatically targets 30 FPS ×2 on LCD, OLED and external displays. Camera Boost yields and Benchmark measures the same target.
+- GSF Kedavra 1.7.0 can present a ready real frame earlier during consecutive interpolation slots.
+- Resource Manager shows per-service CPU and disk activity, regulates eligible Baloo and Syncthing workloads and can defer supported scheduled backups during play.
 
 ## FRAME GENERATION HAS MOVED INTO THE COMPOSITOR.
 
@@ -69,7 +75,7 @@ A closed TDP control loop with feedback that verifies every decision it makes.
 
 ## Installation
 
-1. Download **GFG-Extreme-v3_4_4.zip** from the [latest release](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.4.4).
+1. Download **GFG-Extreme-v3_5_0.zip** from the [latest release](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.5.0).
 2. In Decky Loader: **Settings → Developer → Install Plugin from ZIP**, pick the file.
 3. Open GFG Extreme. On first installation choose **Install engine**, then **Reboot now**. When updating from an older version, use **Setup → Reinstall Gamescope KEDAVRA** and reboot. The tabs unlock once the matching Kedavra Gamescope runs.
 4. Start a game and choose a mode on **Dash**. Nothing else to set up: no launch options, no Desktop Mode scripts.
@@ -121,7 +127,7 @@ It captures the original frames, estimates motion at several resolutions, recons
 
 Since 3.2 (GSF Kedavra 1.4, "Silk") the presentation moves in eighths of a refresh: after a late game frame the picture briefly runs a little faster instead of skipping a frame, and when the next frame is late it slows down smoothly instead of stopping. Same latency, same GPU work.
 
-GFG Extreme 3.4.4 integrates **[GSF Kedavra 1.6.2](https://github.com/wavessevaw/GSF_Kedavra/releases/tag/v1.6.2)**. Kedavra Focus (introduced in 1.6.0) remains available; frame reconstruction and scheduling algorithms are unchanged. Version 3.4.4 improves Benchmark-to-Governor control and per-mode application. [Release source](https://github.com/wavessevaw/GFG-Extreme/tree/v3.4.4).
+GFG Extreme 3.5.0 bundles [GSF Kedavra 1.7.0](https://github.com/wavessevaw/GSF_Kedavra/releases/tag/v1.7.0). At fixed 60 Hz with generation enabled, the native target is 30 FPS across performance modes. Battery and docked sessions follow the same policy.
 
 **Processing pipeline**
 
@@ -193,8 +199,6 @@ Motion is analysed once per real frame, in its own GPU submission after the comp
 | 90 Hz | 30 | ×3 | 90 FPS |
 | 90 Hz | 24 | ×3.75 | 90 FPS |
 | 60 Hz | 30 | ×2 | 60 FPS |
-| 60 Hz | 25 | ×2.4 | 60 FPS |
-| 60 Hz | 20 | ×3 | 60 FPS |
 
 With a whole multiplier (×2, ×3) every pair of real frames gets the same number of in-between frames: one at ×2, two at ×3 (at 1/3 and 2/3 of the interval). With a fractional multiplier real frames arrive every 2 and 3 (or 3 and 4) refreshes, and generation fills every refresh in between.
 
@@ -372,7 +376,7 @@ GFG Extreme offers four performance strategies.
 | Mode | Optimization objective |
 |---|---|
 | Autopilot | One adaptive mode: never above 15 W, keeps base 35-40 when the game holds it, ×3 at least, ×3.75 only when ×3 needs all 15 W or the battery is low |
-| Battery | Efficiency first: ×3.75 at 90 Hz (×3 at 60 Hz) and the lowest TDP that holds it |
+| Battery | Efficiency first: ×3.75 at 90 Hz (×2 at 60 Hz) and the lowest TDP that holds it |
 | Balanced | The highest base frame rate the game holds, without needless changes; never below x3 |
 | Quality | Real frames and motion quality first; never below x2.5 |
 
@@ -423,7 +427,7 @@ Film Grain · Vignette · Chromatic Aberration · Deband · Noir · Sepia · Mon
 
 Presets: Sharp · Vivid · HDR Look · Cinema · Noir · Retro · Smooth.
 
-**Kedavra Focus (introduced in GSF Kedavra 1.6.0; retained in 1.6.2).** An optional, fixed-strength smart sharpening pass, enabled with one switch in Graphics. It works with the Vivid look and other colour effects in every performance mode, including Battery and Autopilot. While Focus is enabled it takes the sharpening slot instead of CAS/DLS; the previous CAS/DLS settings are preserved for when Focus is switched off. Focus processes SDR frames only and is bypassed for HDR.
+**Kedavra Focus (introduced in GSF Kedavra 1.6.0; retained in 1.7.0).** An optional, fixed-strength smart sharpening pass, enabled with one switch in Graphics. It works with the Vivid look and other colour effects in every performance mode, including Battery and Autopilot. While Focus is enabled it takes the sharpening slot instead of CAS/DLS; the previous CAS/DLS settings are preserved for when Focus is switched off. Focus processes SDR frames only and is bypassed for HDR.
 
 The order of passes is fixed: colour and tone → sharpening → antialiasing → finish (vignette, grain, chromatic aberration).
 
@@ -572,7 +576,7 @@ Targets and real benchmarks of the 3.0.0 build (×3.75 and HDR included) are pub
 * Platform: Steam Deck / SteamOS
 * License: GPL-3.0-or-later, respecting the licences of the components used
 
-This README describes the official GFG Extreme 3.4.4 release with GSF Kedavra 1.6.2.
+This README describes the official GFG Extreme 3.5.0 release with GSF Kedavra 1.7.0.
 
 ---
 
@@ -580,6 +584,6 @@ This README describes the official GFG Extreme 3.4.4 release with GSF Kedavra 1.
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="56">
 
-<sub>GFG EXTREME 3.4 · POWERED BY GSF KEDAVRA · Made for Steam Deck · GPL-3.0-or-later</sub>
+<sub>GFG EXTREME 3.5.0 · POWERED BY GSF KEDAVRA · Made for Steam Deck · GPL-3.0-or-later</sub>
 
 </div>
