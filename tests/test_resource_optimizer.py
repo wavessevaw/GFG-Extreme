@@ -231,3 +231,11 @@ class ResourceTest(unittest.TestCase):
         self.assertEqual(display_role(Path("system.slice/demo.service"), 42, ()), "System unit")
         self.assertEqual(display_role(Path("app.slice/syncthing.service"), 42, ()), "Unclassified")
         self.assertEqual(display_role(p, 42, {p}), "Verified background service")
+
+    def test_deck_game_and_launcher_roles(self):
+        from gfg_plugin.resource_usage import display_role
+        scope = Path("app.slice/app-steam-app3629430-21139.scope")
+        self.assertEqual(display_role(scope, 3629430, ()), "Active Steam app scope")
+        self.assertEqual(display_role(scope, 362943, ()), "Unclassified")
+        self.assertEqual(display_role(scope, 0, ()), "Unclassified")
+        self.assertEqual(display_role(Path("app.slice/steam-launcher.service"), 3629430, ()), "Session infrastructure")

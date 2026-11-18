@@ -58,9 +58,9 @@ def display_role(path, app, verified):
     if "system.slice" in path.parts:
         return "System unit"
     if path.name in {"pipewire.service", "pipewire-pulse.service", "wireplumber.service",
-                     "gamescope-session.service", "plasma-kwin_wayland.service"}:
+                     "steam-launcher.service", "gamescope-session.service", "plasma-kwin_wayland.service"}:
         return "Session infrastructure"
-    steam = re.fullmatch(r"app-steam-(\d+)(?:-\d+)?\.scope", path.name)
+    steam = re.fullmatch(r"app-steam-(?:app)?(\d+)(?:-\d+)?\.scope", path.name)
     if steam and app and steam[1] == str(app):
         return "Active Steam app scope"
     return "Unclassified"
