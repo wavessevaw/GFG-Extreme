@@ -1,6 +1,6 @@
-# Resource Manager test candidate
+# Resource Manager
 
-Install the inner Decky ZIP from the CI artifact, then open Engine during a game. The existing Resource Optimizer switch controls all policies. Reinstall GFG Extreme 3.4.4 to roll back.
+Install the GFG Extreme 3.5.0 Decky ZIP from the release page, then open Engine during a game. The existing Resource Optimizer switch controls all policies. Reinstall GFG Extreme 3.4.4 to roll back.
 
 The session manager samples system PSI and the eligible Baloo and Syncthing cgroups every five seconds of gameplay. For three successive windows, CPU PSI of 5% or more, a service using at least 0.25 core and late native frame intervals can trigger a 30-second CPU-weight trial. Only the desktop user's verified executable set in the expected leaf cgroup qualifies. With sustained Baloo indexing above half a core, GFG can instead limit indexing to 25 ms per 100 ms. This bandwidth trial also works during smooth, low-pressure gameplay on a confirmed discharging battery. Loss of that power condition releases a headroom-only trial. A two-minute cooldown limits repeated trials. The desktop user manager independently restores the journalled value on helper exit. Existing limits, replacement cgroups and external overrides receive protection.
 

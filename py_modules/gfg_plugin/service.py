@@ -253,6 +253,8 @@ class Service:
         point=seed.get("target")
         tdp=seed.get("tdp")
         if (current and same_game_mode and same_image
+                and (not response60 or point == 30)
+                and (not seed_ctx.get("response60") or response60)
                 and isinstance(point,(int,float)) and point>0
                 and isinstance(tdp,(int,float)) and tdp>0):
             gp={**gp,"point":round(point)}

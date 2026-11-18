@@ -7,7 +7,7 @@ name: Release
 # to that tag's release; a tag that does not exist yet is created at that commit.
 on:
   push:
-    tags: ['v3.*']
+    tags: ['v3.*', '!v3.5.0']
     branches: ['rework/3.4.1']
   workflow_dispatch:
     inputs:
@@ -21,7 +21,7 @@ permissions:
 env:
   # GSF Kedavra (KEDAVRA engine and Gamescope patch) at the commit this release was tested with.
   KEDAVRA_REPO: wavessevaw/GSF_Kedavra
-  KEDAVRA_SHA: b063186c0218ec457a15433055df1c6268e25922
+  KEDAVRA_SHA: e99adf8f214889c4519b4bcc9f5c952ed4861e91
 
 jobs:
   test:

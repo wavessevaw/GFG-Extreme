@@ -215,7 +215,9 @@ class AdaptiveBenchmark:
         if self.purpose == "baseline":
             self.baseline = p
             hz = self.context["refresh"]
-            if self.mode == "quality":
+            if self.context.get("response60"):
+                self.target = 30.0
+            elif self.mode == "quality":
                 self.target = p["fps"] * .97
             elif self.mode == "battery":
                 self.target = hz / (3 if hz >= 85 else 2)

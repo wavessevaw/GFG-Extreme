@@ -1,0 +1,17 @@
+name: Verify GFG 3.5.0 release
+on:
+  push:
+    branches: [release/3.5.0]
+permissions:
+  contents: read
+jobs:
+  integration:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check scheduled backup and recovery in a user manager
+        run: |
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          sudo systemctl start "user@$(id -u).service"
+          python3 tests/systemd_resource_timer.py

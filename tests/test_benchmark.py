@@ -48,6 +48,13 @@ class AdaptiveBenchmarkTest(unittest.TestCase):
         b = self.run_sweep('battery', lambda w: min(60,w*5), dict(CTX,refresh=60))
         self.assertEqual(b.result['target'],30)
 
+    def test_60hz_response_benchmark_matches_active_base(self):
+        for mode in ("quality", "balanced", "battery", "autopilot"):
+            with self.subTest(mode=mode):
+                b = self.run_sweep(mode, lambda w: min(65, w*7), dict(CTX, refresh=60, response60=True))
+                self.assertEqual(b.result["target"], 30)
+                self.assertTrue(b.result["passed"])
+
     def test_external_changes_and_menu_abort(self):
         for change in ({'tdp':10},{'menu':True},{'temp':90}):
             b=AdaptiveBenchmark();b.start(context=CTX,mode='balanced',ceiling=12,floor=5,ladder=[30,40],now=0)

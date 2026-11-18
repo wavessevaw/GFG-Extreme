@@ -22,7 +22,8 @@ class BenchmarkSession:
     def context(self, st, profile, power, refresh, dock):
         return dict(app=int(st.get('app_id') or 0), refresh=refresh, dock=dock,
                     ac=power.get('external_power'), mode=profile['objective'],
-                    post=filters.to_post(profile['filters']), hdr=st.get('transfer'))
+                    post=filters.to_post(profile['filters']), hdr=st.get('transfer'),
+                    response60=refresh == 60 and profile.get('fg', 'auto') in ('auto', 'x2'))
 
     def restore(self):
         if self.saved is None: return
