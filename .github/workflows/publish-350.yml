@@ -1,0 +1,43 @@
+name: Package and publish GFG Extreme 3.5.0
+on:
+  push:
+    branches: [publish/3.5.0]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: wavessevaw/GFG-Extreme
+      SOURCE: 4f6e19fb03d83828c4a2c03097608a96dd0e4c93
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE }}
+      - name: Verify release commit and both CI runs
+        run: |
+          for id in 44331456059 44331455972; do
+            test "$(gh api repos/$GH_REPO/actions/runs/$id --jq .head_sha)" = "$SOURCE"
+            gh run watch "$id" --interval 15 --exit-status
+          done
+      - name: Use the identical published standalone Gamescope runtime
+        shell: bash
+        run: |
+          gh release download v1.7.0 -R wavessevaw/GSF_Kedavra -p GSF-Kedavra-1.7.0.zip -p '*.sha256' -D upstream
+          (cd upstream && sha256sum -c GSF-Kedavra-1.7.0.zip.sha256)
+          unzip -q upstream/GSF-Kedavra-1.7.0.zip 'KEDAVRA/runtime/*' 'KEDAVRA/bench/*' -d extracted
+          upstream=extracted/KEDAVRA
+          test "$(cat "$upstream/runtime/VERSION")" = kedavra-1.7.0-e99adf8
+          scripts/build_release.sh 3.5.0 "$upstream/runtime" out "$upstream/bench"
+          archive=out/GFG-Extreme-v3_5_0.zip
+          unzip -tq "$archive"
+          (cd out && sha256sum -c SHA256SUMS.txt)
+          test "$(unzip -p "$archive" GFG-Extreme/package.json | jq -r .version)" = 3.5.0
+          cmp <(unzip -p "$archive" GFG-Extreme/runtime/bin/gamescope) "$upstream/runtime/bin/gamescope"
+          cmp <(unzip -p "$archive" GFG-Extreme/runtime/VERSION) "$upstream/runtime/VERSION"
+          for mod in resource_backup resource_usage resource_optimizer benchmark benchmark_session; do
+            cmp <(unzip -p "$archive" "GFG-Extreme/py_modules/gfg_plugin/$mod.py") "py_modules/gfg_plugin/$mod.py"
+          done
+          gh release create v3.5.0 "$archive" out/SHA256SUMS.txt README-3.5.0.md --target "$SOURCE" --title 'GFG Extreme 3.5.0' --notes-file README-3.5.0.md --latest
