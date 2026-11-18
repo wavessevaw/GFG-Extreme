@@ -221,4 +221,13 @@ class ResourceTest(unittest.TestCase):
             for group in (scope, child):
                 (group / "io.stat").write_text("179:0 rbytes=10485760 wbytes=20971520")
             _, rows = sample_groups([root], first, 10)
-            self.assertEqual(busiest(rows), [dict(unit="demo.scope", cpu=0, device="179:0", read_mib=1, write_mib=2)])
+            self.assertEqual(busiest(rows), [dict(unit="demo.scope", group=str(scope), role="Unclassified", cpu=0, device="179:0", read_mib=1, write_mib=2)])
+
+    def test_role_labels_use_session_and_verified_paths(self):
+        from gfg_plugin.resource_usage import display_role
+        p = Path("app.slice/app-steam-42-123.scope")
+        self.assertEqual(display_role(p, 42, ()), "Active Steam app scope")
+        self.assertEqual(display_role(p, 420, ()), "Unclassified")
+        self.assertEqual(display_role(Path("system.slice/demo.service"), 42, ()), "System unit")
+        self.assertEqual(display_role(Path("app.slice/syncthing.service"), 42, ()), "Unclassified")
+        self.assertEqual(display_role(p, 42, {p}), "Verified background service")

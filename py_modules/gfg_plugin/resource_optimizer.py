@@ -162,7 +162,14 @@ class Optimizer:
             roots = [self.service_root / name for name in ("app.slice", "background.slice", "session.slice")]
             roots.append(Path("/sys/fs/cgroup/system.slice"))
             self.observed, rows = sample_groups(roots, self.observed, now)
-            self.status["consumers"] = busiest(rows)
+            verified = set()
+            for role, group in self.groups.items():
+                try:
+                    if eligible(group, self.uid, role=role):
+                        verified.add(group)
+                except OSError:
+                    continue
+            self.status["consumers"] = busiest(rows, app, verified)
             self.next_inventory = now + (10 if (pressure["cpu"] or 0) >= 5 or (pressure.get("io") or 0) >= 2 else 25)
         samples = sorted(x for x in frames if isinstance(x, (float, int)) and 0 < x < 2000)
         budget = 1000 / target if target and target > 0 else (statistics.median(samples) if samples else 0)
