@@ -28,13 +28,15 @@ class ResourceTest(unittest.TestCase):
         import os
         o = Optimizer(os.getuid())
         with tempfile.TemporaryDirectory() as path, patch("gfg_plugin.resource_optimizer.eligible",return_value=True), patch("gfg_plugin.resource_optimizer.pressures",return_value={"cpu":12}), patch("gfg_plugin.resource_optimizer.subprocess.run") as run:
-            o.group=Path(path)
+            group=Path(path)
+            o.groups={"baloo":group}
+            (group/"cpu.weight").write_text("100")
             for t in range(0,20,5):
-                (o.group/"cpu.stat").write_text(f"usage_usec {t*500000}")
+                (group/"cpu.stat").write_text(f"usage_usec {t*500000}")
                 o.tick(42,t,[50]*30,30)
                 if t<15: run.assert_not_called()
             self.assertEqual(run.call_count,1)
-            (o.group/"cpu.weight").write_text("50")
+            (group/"cpu.weight").write_text("50")
             o.tick(42,20,[50]*30,30)
             self.assertEqual(o.status["tasks"],1)
             o.tick(0,21,[],0)
@@ -75,3 +77,46 @@ class ResourceTest(unittest.TestCase):
                 self.assertFalse(receipt.exists())
                 if mode!="gone":
                     self.assertEqual(weight.read_text(),{"crash":"100","external":"75"}.get(mode,"50"))
+
+    def test_syncthing_requires_matching_executable_and_uid(self):
+        import os
+        with tempfile.TemporaryDirectory() as path:
+            root = Path(path)
+            group = root / "syncthing.service"
+            group.mkdir()
+            (group / "cgroup.procs").write_text("1")
+            pid = root / "1"
+            pid.mkdir()
+            exe = pid / "exe"
+            exe.symlink_to("/usr/bin/syncthing")
+            self.assertTrue(eligible(group, os.getuid(), root, "syncthing"))
+            self.assertFalse(eligible(group, os.getuid()+1, root, "syncthing"))
+            self.assertFalse(eligible(group, os.getuid(), root, "baloo"))
+            exe.unlink()
+            exe.symlink_to("/usr/bin/steam")
+            self.assertFalse(eligible(group, os.getuid(), root, "syncthing"))
+
+    def test_busiest_eligible_service_and_single_trial(self):
+        import os
+        opt = Optimizer(os.getuid())
+        with tempfile.TemporaryDirectory() as directory, patch("gfg_plugin.resource_optimizer.eligible", return_value=True), patch("gfg_plugin.resource_optimizer.pressures", return_value={"cpu":12}), patch("gfg_plugin.resource_optimizer.subprocess.run") as run:
+            opt.groups = {}
+            for role in ("baloo", "syncthing"):
+                group = Path(directory) / role
+                group.mkdir()
+                (group / "cpu.weight").write_text("100")
+                opt.groups[role] = group
+            for t in range(0, 20, 5):
+                for role, rate in (("baloo", 300000), ("syncthing", 800000)):
+                    (opt.groups[role] / "cpu.stat").write_text(f"usage_usec {rate*t}")
+                opt.tick(42, t, [50]*30, 30)
+            cmd = run.call_args.args[0]
+            self.assertEqual(cmd[-2:], ["apply", "syncthing"])
+            self.assertTrue(any(x.endswith(" restore syncthing") for x in cmd))
+            self.assertEqual(run.call_count, 1)
+            (opt.groups["syncthing"] / "cpu.weight").write_text("50")
+            opt.tick(42, 20, [50]*30, 30)
+            self.assertEqual(opt.status["tasks"], 1)
+            opt.tick(42, 25, [80]*30, 30)
+            self.assertEqual(run.call_count, 2)
+            self.assertIsNone(opt.active)

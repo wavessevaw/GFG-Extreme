@@ -1,4 +1,4 @@
-"""Bounded CPU-weight trials for the KDE file indexer on cgroup v2."""
+"""Bounded CPU-weight trials for isolated desktop background services on cgroup v2."""
 import json
 import os
 import pwd
@@ -9,15 +9,19 @@ import time
 from pathlib import Path
 
 UNIT = "gfg-baloo-weight"
-GROUP = "kde-baloo.service"
-BINARIES = {"/usr/lib/baloo_file", "/usr/lib/baloo_file_extractor"}
+# Fixed paths beneath the desktop user's manager. Never accept a path from the UI.
+SERVICES = {
+    "baloo": ("background.slice/kde-baloo.service", {"/usr/lib/baloo_file", "/usr/lib/baloo_file_extractor"}),
+    "syncthing": ("app.slice/syncthing.service", {"/usr/bin/syncthing"}),
+    "syncthing-background": ("background.slice/syncthing.service", {"/usr/bin/syncthing"}),
+}
 
 
-def group_path(uid):
-    return Path(f"/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service/background.slice") / GROUP
+def group_path(uid, role="baloo"):
+    return Path(f"/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service") / SERVICES[role][0]
 
 
-def eligible(group, uid, proc=Path("/proc")):
+def eligible(group, uid, proc=Path("/proc"), role="baloo"):
     # Never affect descendants or mixed services. Recheck inside the helper.
     if any(entry.is_dir() for entry in group.iterdir()):
         return False
@@ -25,15 +29,15 @@ def eligible(group, uid, proc=Path("/proc")):
     if not 0 < len(pids) <= 8:
         return False
     return all((proc / pid).stat().st_uid == uid and
-               os.readlink(proc / pid / "exe") in BINARIES for pid in pids)
+               os.readlink(proc / pid / "exe") in SERVICES[role][1] for pid in pids)
 
 
-def lease(action, uid=None, group=None, receipt=None):
+def lease(action, uid=None, group=None, receipt=None, role="baloo"):
     uid = os.getuid() if uid is None else uid
     if uid < 1000:
         raise ValueError("A desktop user is required")
-    group = group or group_path(uid)
-    receipt = receipt or Path(f"/run/user/{uid}/gfg-baloo-weight.json")
+    group = group or group_path(uid, role)
+    receipt = receipt or Path(f"/run/user/{uid}/gfg-{role}-weight.json")
     if action == "restore" and not receipt.exists():
         return
     try:
@@ -55,8 +59,8 @@ def lease(action, uid=None, group=None, receipt=None):
             receipt.unlink()
             return
         if receipt.exists():
-            lease("restore", uid, group, receipt)
-        if not eligible(Path(f"/proc/self/fd/{fd}"), uid) or weight.read_text().strip() != "100":
+            lease("restore", uid, group, receipt, role)
+        if not eligible(Path(f"/proc/self/fd/{fd}"), uid, role=role) or weight.read_text().strip() != "100":
             raise ValueError("Service changed or already managed")
         with receipt.open("x") as f:
             json.dump(dict(identity=identity, original=100, trial=50), f)
@@ -84,10 +88,11 @@ def pressures(root=Path("/proc/pressure")):
 class Optimizer:
     def __init__(self, uid):
         self.uid = uid
-        self.group = group_path(uid)
+        self.groups = {role: group_path(uid, role) for role in SERVICES}
+        self.active = None
         self.app = 0
-        self.previous = None
-        self.hits = 0
+        self.previous = {}
+        self.hits = {}
         self.next_sample = self.cooldown = self.until = self.settle = 0
         self.status = dict(state="Inactive", tasks=0, result="Waiting for game")
         self.manager = ["--user", "--machine=" + pwd.getpwuid(uid).pw_name + "@.host"]
@@ -96,8 +101,10 @@ class Optimizer:
         if self.until:
             subprocess.run(["/usr/bin/systemctl", *self.manager, "stop", UNIT + ".service"],
                            timeout=4, check=False, capture_output=True)
-        self.until = self.hits = self.app = 0
-        self.previous = None
+        self.until = self.app = 0
+        self.active = None
+        self.hits.clear()
+        self.previous = {}
         self.status.update(state="Inactive", tasks=0)
 
     def tick(self, app, now, frames, target):
@@ -110,44 +117,76 @@ class Optimizer:
         self.next_sample = now + 5
         pressure = pressures()
         self.status.update(state="Auto", tasks=0, pressure=pressure)
+        samples = sorted(x for x in frames if isinstance(x, (float, int)) and 0 < x < 2000)
+        budget = 1000 / target if target and target > 0 else (statistics.median(samples) if samples else 0)
+        p95 = samples[int(.95 * (len(samples) - 1))] if len(samples) >= 10 else 0
+        late = p95 > 1.25 * budget
+        if self.active and now < self.until:
+            role = self.active
+            group = self.groups[role]
+            try:
+                confirmed = eligible(group, self.uid, role=role) and (group / "cpu.weight").read_text().strip() == "50"
+            except OSError:
+                confirmed = False
+            if confirmed and not (late and p95 > self.before * 1.25):
+                self.status.update(state="Optimizing", tasks=1, result=f"{group.name}: CPU weight 50 confirmed")
+            else:
+                self.stop()
+                self.status["result"] = "Trial ended after service or frame times changed"
+            return
+
+        self.active = None
+        self.until = 0
+        candidates = []
+        for role, group in self.groups.items():
+            try:
+                if not eligible(group, self.uid, role=role):
+                    raise ValueError("Ineligible service")
+                ident = group.stat().st_ino
+                stats = dict(row.split() for row in (group / "cpu.stat").read_text().splitlines())
+                cpu = int(stats["usage_usec"])
+                if group.stat().st_ino != ident or (group / "cpu.weight").read_text().strip() != "100":
+                    raise ValueError("Service changed or already managed")
+            except (OSError, ValueError, KeyError):
+                self.previous.pop(role, None)
+                self.hits.pop(role, None)
+                continue
+            old = self.previous.get(role)
+            self.previous[role] = (ident, now, cpu)
+            load = 0
+            if old and ident == old[0] and 0 < now - old[1] <= 10:
+                load = (cpu - old[2]) / (1000000 * (now - old[1]))
+            competing = late and load >= .25 and (pressure["cpu"] or 0) >= 5
+            self.hits[role] = self.hits.get(role, 0) + 1 if competing else 0
+            if self.hits[role] >= 3:
+                candidates.append((load, role))
+        if not candidates or now < self.cooldown:
+            return
+        _, role = max(candidates)
+        self.cooldown = now + 120
+        self.hits.clear()
+        script = str(Path(__file__).resolve())
+        cmd = ["/usr/bin/systemd-run", *self.manager, "--collect", "--unit="+UNIT,
+               "--property=Type=exec", "--property=RuntimeMaxSec=35",
+               "--property=ExecStopPost=/usr/bin/python3 -I "+script+" restore "+role,
+               "/usr/bin/python3", "-I", script, "apply", role]
         try:
-            if not eligible(self.group, self.uid):
-                raise ValueError("No eligible indexing service")
-            cpu = int(dict(row.split() for row in (self.group / "cpu.stat").read_text().splitlines())["usage_usec"])
-            ident = self.group.stat().st_ino
-            old, self.previous = self.previous, (ident, now, cpu)
-            busy = old and old[0] == ident and (cpu-old[2]) >= 250000*(now-old[1])
-            samples = sorted(x for x in frames if isinstance(x,(float,int)) and 0 < x < 2000)
-            budget = 1000 / target if target and target > 0 else (statistics.median(samples) if samples else 0)
-            late = len(samples)>=10 and samples[int(.95*(len(samples)-1))] > 1.25 * budget
-            if self.until and now < self.until:
-                if (self.group / "cpu.weight").read_text().strip()=="50":
-                    self.status.update(state="Optimizing",tasks=1,result="CPU weight 50 confirmed")
-                if late and samples[int(.95*(len(samples)-1))] > self.before*1.25:
-                    self.stop()
-                    self.status["result"]="Trial ended after frame times worsened"
-                return
-            self.until = 0
-            self.hits = self.hits+1 if busy and late and (pressure["cpu"] or 0)>=5 else 0
-            if self.hits < 3 or now < self.cooldown:
-                return
-            self.cooldown = now+120
-            self.hits = 0
-            script = str(Path(__file__).resolve())
-            cmd = ["/usr/bin/systemd-run", *self.manager, "--collect", "--unit="+UNIT,
-                   "--property=Type=exec", "--property=RuntimeMaxSec=35",
-                   "--property=ExecStopPost=/usr/bin/python3 -I "+script+" restore",
-                   "/usr/bin/python3","-I",script,"apply"]
-            subprocess.run(cmd,check=True,timeout=4,capture_output=True)
-            self.before=samples[int(.95*(len(samples)-1))]
-            self.until=now+35
-            self.settle=now+10
-            self.status["result"]="Started bounded CPU-weight trial"
-        except (OSError, ValueError, KeyError, subprocess.SubprocessError):
-            self.hits=0
-            self.previous=None
-            self.status["result"]="Observation only"
+            subprocess.run(cmd, check=True, timeout=4, capture_output=True)
+        except (OSError, subprocess.SubprocessError):
+            self.status["result"] = "Desktop manager could not start the trial"
+            return
+        self.before = p95
+        self.active = role
+        self.until = now + 35
+        self.settle = now + 10
+        self.status["result"] = f"Started CPU-weight trial for {self.groups[role].name}"
 
 
-if __name__ == "__main__" and sys.argv[1:] in (["apply"], ["restore"]):
-    lease(sys.argv[1])
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    # Retain the old helper invocation for an outstanding Baloo cleanup.
+    if len(args) == 1:
+        args.append("baloo")
+    if len(args) != 2 or args[0] not in ("apply", "restore") or args[1] not in SERVICES:
+        sys.exit(2)
+    lease(args[0], role=args[1])
