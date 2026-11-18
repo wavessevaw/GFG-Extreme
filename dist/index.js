@@ -538,7 +538,8 @@ function Engine({ s, set }) {
       { title: "RESOURCE OPTIMIZER" },
       h(Row, { k: (live.optimizer || {}).state || "Inactive", first: true }, h(Tog, { on: cfg.power.optimizer !== false, onChange: (v) => set(() => rpc.setSection("power", { optimizer: v })) })),
       h(Row, { k: "Regulated tasks", v: String((live.optimizer || {}).tasks || 0) }),
-      h(Row, { k: "CPU pressure", v: fmt((live.optimizer || {}).pressure?.cpu, 1, "%") }),
+      h(Row, { k: "System CPU wait (10 s)", v: fmt((live.optimizer || {}).pressure?.cpu, 1, "%") }),
+      h("div", { className: "sub" }, (live.optimizer || {}).services || ""),
       h("div", { className: "sub" }, (live.optimizer || {}).result || "")
     ),
     h(

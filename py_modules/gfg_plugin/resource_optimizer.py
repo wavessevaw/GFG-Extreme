@@ -1,4 +1,5 @@
 """Bounded CPU-weight trials for isolated desktop background services on cgroup v2."""
+from itertools import islice
 import json
 import os
 import pwd
@@ -50,8 +51,16 @@ def lease(action, uid=None, group=None, receipt=None, role="baloo"):
     try:
         identity = [Path("/proc/sys/kernel/random/boot_id").read_text().strip(), os.fstat(fd).st_ino]
         weight = Path(f"/proc/self/fd/{fd}/cpu.weight")
+        quota = Path(f"/proc/self/fd/{fd}/cpu.max")
         if action == "restore":
             record = json.loads(receipt.read_text())
+            if record.get("action") == "limit":
+                if record["identity"] == identity and quota.read_text().strip() == "25000 100000":
+                    quota.write_text("max 100000")
+                    if quota.read_text().strip() != "max 100000":
+                        raise OSError("Quota restore readback failed")
+                receipt.unlink()
+                return
             if record["identity"] == identity and weight.read_text().strip() == "50":
                 weight.write_text("100")
                 if weight.read_text().strip() != "100":
@@ -62,12 +71,18 @@ def lease(action, uid=None, group=None, receipt=None, role="baloo"):
             lease("restore", uid, group, receipt, role)
         if not eligible(Path(f"/proc/self/fd/{fd}"), uid, role=role) or weight.read_text().strip() != "100":
             raise ValueError("Service changed or already managed")
+        if action == "limit":
+            if role != "baloo" or quota.read_text().strip() != "max 100000":
+                raise ValueError("CPU quota already managed or service unsuitable")
+            control, original, trial = quota, "max 100000", "25000 100000"
+        else:
+            control, original, trial = weight, "100", "50"
         with receipt.open("x") as f:
-            json.dump(dict(identity=identity, original=100, trial=50), f)
+            json.dump(dict(identity=identity, action=action, original=original, trial=trial), f)
             f.flush()
             os.fsync(f.fileno())
-        weight.write_text("50")
-        if weight.read_text().strip() != "50":
+        control.write_text(trial)
+        if control.read_text().strip() != trial:
             raise OSError("Weight readback failed")
         time.sleep(30)
     finally:
@@ -85,9 +100,40 @@ def pressures(root=Path("/proc/pressure")):
     return result
 
 
+def service_usage(root, previous, now):
+    """Read-only attribution for direct user services. Never use these paths for writes."""
+    current, loads = {}, []
+    for name in ("app.slice", "background.slice"):
+        try:
+            with os.scandir(root / name) as entries:
+                for entry in islice(entries, 64):
+                    if not entry.name.endswith(".service") or not entry.is_dir(follow_symlinks=False):
+                        continue
+                    try:
+                        group = Path(entry.path)
+                        stats = dict(line.split() for line in (group / "cpu.stat").read_text().splitlines())
+                        key = (entry.path, entry.inode())
+                        used = int(stats["usage_usec"])
+                    except (ValueError, OSError, KeyError):
+                        continue
+                    current[key] = (now, used)
+                    if key in previous:
+                        then, before = previous[key]
+                        if 0 < now - then <= 10 and used > before:
+                            pct = (used - before) / ((now - then) * 10000)
+                            loads.append((pct, entry.name))
+        except OSError:
+            continue
+    top = sorted(loads, reverse=True)[:3]
+    return current, ", ".join(f"{name}: {pct:.1f}%" for pct, name in top if pct >= 1)
+
+
 class Optimizer:
     def __init__(self, uid):
         self.uid = uid
+        self.service_root = group_path(uid).parent.parent
+        self.observed = {}
+        self.control = "cpu.weight"
         self.groups = {role: group_path(uid, role) for role in SERVICES}
         self.active = None
         self.app = 0
@@ -105,6 +151,7 @@ class Optimizer:
         self.active = None
         self.hits.clear()
         self.previous = {}
+        self.observed.clear()
         self.status = dict(state="Inactive", tasks=0, result="Waiting for game")
 
     def tick(self, app, now, frames, target, *, sample=True, inactive_reason="Waiting for game"):
@@ -118,6 +165,7 @@ class Optimizer:
             self.status.update(state="Inactive", tasks=0, result=inactive_reason)
             return
         if not sample:
+            self.observed.clear()
             self.previous.clear()
             self.hits.clear()
             if not self.active or now >= self.until:
@@ -128,6 +176,8 @@ class Optimizer:
         self.next_sample = now + 5
         pressure = pressures()
         self.status.update(state="Auto", tasks=0, pressure=pressure, result="Game active. Monitoring background services")
+        self.observed, top = service_usage(self.service_root, self.observed, now)
+        self.status["services"] = f"User services (% of one CPU): {top}" if top else "No measured user service above 1% of one CPU"
         samples = sorted(x for x in frames if isinstance(x, (float, int)) and 0 < x < 2000)
         budget = 1000 / target if target and target > 0 else (statistics.median(samples) if samples else 0)
         p95 = samples[int(.95 * (len(samples) - 1))] if len(samples) >= 10 else 0
@@ -136,11 +186,12 @@ class Optimizer:
             role = self.active
             group = self.groups[role]
             try:
-                confirmed = eligible(group, self.uid, role=role) and (group / "cpu.weight").read_text().strip() == "50"
+                expected = "25000 100000" if self.control == "cpu.max" else "50"
+                confirmed = eligible(group, self.uid, role=role) and (group / self.control).read_text().strip() == expected
             except OSError:
                 confirmed = False
-            if confirmed and not (late and p95 > self.before * 1.25):
-                self.status.update(state="Optimizing", tasks=1, result=f"{group.name}: CPU weight 50 confirmed")
+            if confirmed and not (late and (not self.before or p95 > self.before * 1.25)):
+                self.status.update(state="Optimizing", tasks=1, result=f"{group.name}: {self.control} = {expected} confirmed")
             else:
                 self.stop()
                 self.status["result"] = "Trial ended after service or frame times changed"
@@ -161,6 +212,7 @@ class Optimizer:
             except (OSError, ValueError, KeyError):
                 self.previous.pop(role, None)
                 self.hits.pop(role, None)
+                self.hits.pop(role + ":quota", None)
                 continue
             old = self.previous.get(role)
             self.previous[role] = (ident, now, cpu)
@@ -168,19 +220,32 @@ class Optimizer:
             if old and ident == old[0] and 0 < now - old[1] <= 10:
                 load = (cpu - old[2]) / (1000000 * (now - old[1]))
             competing = late and load >= .25 and (pressure["cpu"] or 0) >= 5
-            self.hits[role] = self.hits.get(role, 0) + 1 if competing else 0
+            # The standalone file indexer can defer heavy indexing before frame times suffer.
+            heavy_indexing = role == "baloo" and load >= .5 and (pressure["cpu"] or 0) >= 5
+            quota_available = False
+            if heavy_indexing:
+                try:
+                    quota_available = (group / "cpu.max").read_text().strip() == "max 100000"
+                except OSError:
+                    pass
+            self.hits[role] = self.hits.get(role, 0) + 1 if competing or quota_available else 0
+            quota_key = role + ":quota"
+            self.hits[quota_key] = self.hits.get(quota_key, 0) + 1 if quota_available else 0
             if self.hits[role] >= 3:
-                candidates.append((load, role))
+                if competing or self.hits[quota_key] >= 3:
+                    candidates.append((load, role))
         if not candidates or now < self.cooldown:
             return
         _, role = max(candidates)
+        action = "limit" if self.hits.get(role + ":quota", 0) >= 3 else "apply"
+        self.control = "cpu.max" if action == "limit" else "cpu.weight"
         self.cooldown = now + 120
         self.hits.clear()
         script = str(Path(__file__).resolve())
         cmd = ["/usr/bin/systemd-run", *self.manager, "--collect", "--unit="+UNIT,
                "--property=Type=exec", "--property=RuntimeMaxSec=35",
                "--property=ExecStopPost=/usr/bin/python3 -I "+script+" restore "+role,
-               "/usr/bin/python3", "-I", script, "apply", role]
+               "/usr/bin/python3", "-I", script, action, role]
         try:
             subprocess.run(cmd, check=True, timeout=4, capture_output=True)
         except (OSError, subprocess.SubprocessError):
@@ -190,7 +255,7 @@ class Optimizer:
         self.active = role
         self.until = now + 35
         self.settle = now + 10
-        self.status["result"] = f"Started CPU-weight trial for {self.groups[role].name}"
+        self.status["result"] = f"Started CPU trial for {self.groups[role].name}"
 
 
 if __name__ == "__main__":
@@ -198,6 +263,6 @@ if __name__ == "__main__":
     # Retain the old helper invocation for an outstanding Baloo cleanup.
     if len(args) == 1:
         args.append("baloo")
-    if len(args) != 2 or args[0] not in ("apply", "restore") or args[1] not in SERVICES:
+    if len(args) != 2 or args[0] not in ("apply", "limit", "restore") or args[1] not in SERVICES:
         sys.exit(2)
     lease(args[0], role=args[1])

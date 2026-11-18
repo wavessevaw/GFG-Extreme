@@ -141,3 +141,50 @@ class ResourceTest(unittest.TestCase):
             self.assertNotIn("pressure", opt.status)
             opt.tick(0, 4, [], 0, inactive_reason="Disabled")
             self.assertEqual(opt.status["result"], "Disabled")
+
+    def test_user_services_attribute_cpu_without_regulating_unknowns(self):
+        from gfg_plugin.resource_optimizer import service_usage
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            group = root / "app.slice/custom.service"
+            group.mkdir(parents=True)
+            stat = group / "cpu.stat"
+            stat.write_text("usage_usec 0")
+            first, _ = service_usage(root, {}, 1)
+            stat.write_text("usage_usec 2500000")
+            _, top = service_usage(root, first, 6)
+            self.assertEqual(top, "custom.service: 50.0%")
+
+    def test_heavy_indexing_before_frames_are_late(self):
+        import os
+        opt = Optimizer(os.getuid())
+        with tempfile.TemporaryDirectory() as path, patch("gfg_plugin.resource_optimizer.eligible", return_value=True), patch("gfg_plugin.resource_optimizer.pressures", return_value={"cpu": 15}), patch("gfg_plugin.resource_optimizer.subprocess.run") as run:
+            group = Path(path)
+            opt.groups = {"baloo": group}
+            (group / "cpu.weight").write_text("100")
+            (group / "cpu.max").write_text("max 100000")
+            for t in range(0, 20, 5):
+                (group / "cpu.stat").write_text(f"usage_usec {t*700000}")
+                opt.tick(42, t, [32]*30, 30)
+                if t < 15:
+                    run.assert_not_called()
+            self.assertEqual(run.call_args.args[0][-2:], ["limit", "baloo"])
+
+    def test_quota_cleanup_and_external_override(self):
+        from gfg_plugin.resource_optimizer import lease
+        for external in (False, True):
+            with self.subTest(external=external), tempfile.TemporaryDirectory() as directory:
+                group = Path(directory)
+                receipt = group / "journal"
+                (group / "cpu.weight").write_text("100")
+                quota = group / "cpu.max"
+                quota.write_text("max 100000")
+                with patch("gfg_plugin.resource_optimizer.eligible", return_value=True), patch("gfg_plugin.resource_optimizer.time.sleep", side_effect=RuntimeError):
+                    with self.assertRaises(RuntimeError):
+                        lease("limit", 1000, group, receipt)
+                self.assertEqual(quota.read_text(), "25000 100000")
+                if external:
+                    quota.write_text("40000 100000")
+                lease("restore", 1000, group, receipt)
+                self.assertEqual(quota.read_text(), "40000 100000" if external else "max 100000")
+                self.assertFalse(receipt.exists())
