@@ -1,0 +1,4200 @@
+{
+  "base": {
+    "SNAP": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 26.469,
+            "psnr_worst": 23.984,
+            "errgrad": 9.3592,
+            "blk": -0.03079,
+            "severe4_pct": 0.14762,
+            "severe4_max": 1.11111,
+            "badblk_pct": 4.1126,
+            "badblk_max": 6.6017,
+            "temporal": 6.3198,
+            "lineflk": 11.7314,
+            "sharpflk_pct": 10.188
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 26.29,
+            "psnr_worst": 24.168,
+            "errgrad": 9.1407,
+            "blk": -0.03376,
+            "severe4_pct": 0.20794,
+            "severe4_max": 1.28889,
+            "badblk_pct": 3.8575,
+            "badblk_max": 4.6537,
+            "temporal": 5.3872,
+            "lineflk": 9.7868,
+            "sharpflk_pct": 15.703
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 6.952410778628628,
+            "pixels": 49493
+          },
+          "1/2 covered": {
+            "mae": 10.705638034641217,
+            "pixels": 3772
+          },
+          "1/3 revealed": {
+            "mae": 9.278596392904126,
+            "pixels": 42823
+          },
+          "1/3 covered": {
+            "mae": 13.12861429350791,
+            "pixels": 2444
+          },
+          "2/3 revealed": {
+            "mae": 6.157101004738591,
+            "pixels": 50859
+          },
+          "2/3 covered": {
+            "mae": 6.90910512652091,
+            "pixels": 10657
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 26.32,
+            "psnr_worst": 24.14,
+            "errgrad": 9.5163,
+            "blk": -0.03215,
+            "severe4_pct": 0.15952,
+            "severe4_max": 0.96667,
+            "badblk_pct": 4.1551,
+            "badblk_max": 7.0346,
+            "temporal": 6.4052,
+            "lineflk": 11.8604,
+            "sharpflk_pct": 9.978
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 26.164,
+            "psnr_worst": 24.008,
+            "errgrad": 9.2621,
+            "blk": -0.03207,
+            "severe4_pct": 0.23651,
+            "severe4_max": 1.37778,
+            "badblk_pct": 4.0584,
+            "badblk_max": 5.5195,
+            "temporal": 5.433,
+            "lineflk": 9.8133,
+            "sharpflk_pct": 15.308
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 7.103579194187132,
+            "pixels": 48903
+          },
+          "1/2 covered": {
+            "mae": 8.146489602635372,
+            "pixels": 3238
+          },
+          "1/3 revealed": {
+            "mae": 9.794278642486553,
+            "pixels": 42018
+          },
+          "1/3 covered": {
+            "mae": 12.163639601139602,
+            "pixels": 1872
+          },
+          "2/3 revealed": {
+            "mae": 6.031049882874453,
+            "pixels": 50231
+          },
+          "2/3 covered": {
+            "mae": 6.0478064863410035,
+            "pixels": 9908
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "STOP": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 36.67,
+            "psnr_worst": 27.217,
+            "errgrad": 3.5877,
+            "blk": -0.00734,
+            "severe4_pct": 0.01746,
+            "severe4_max": 0.12222,
+            "badblk_pct": 1.8089,
+            "badblk_max": 5.5195,
+            "temporal": 2.3979,
+            "lineflk": 4.5399,
+            "sharpflk_pct": 5.107
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 36.271,
+            "psnr_worst": 27.27,
+            "errgrad": 3.7317,
+            "blk": -0.01297,
+            "severe4_pct": 0.01587,
+            "severe4_max": 0.07778,
+            "badblk_pct": 1.7471,
+            "badblk_max": 3.6797,
+            "temporal": 2.2148,
+            "lineflk": 4.1726,
+            "sharpflk_pct": 8.453
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.682959652973764,
+            "pixels": 25512
+          },
+          "1/2 covered": {
+            "mae": 5.028974678289747,
+            "pixels": 8030
+          },
+          "1/3 revealed": {
+            "mae": 7.4197367411159725,
+            "pixels": 17372
+          },
+          "1/3 covered": {
+            "mae": 3.7579718205413424,
+            "pixels": 3596
+          },
+          "2/3 revealed": {
+            "mae": 4.907249925548459,
+            "pixels": 30221
+          },
+          "2/3 covered": {
+            "mae": 4.377190801740212,
+            "pixels": 16090
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 36.731,
+            "psnr_worst": 26.681,
+            "errgrad": 3.6135,
+            "blk": -0.00813,
+            "severe4_pct": 0.02698,
+            "severe4_max": 0.32222,
+            "badblk_pct": 1.7355,
+            "badblk_max": 5.4113,
+            "temporal": 2.1918,
+            "lineflk": 4.1268,
+            "sharpflk_pct": 4.273
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 36.282,
+            "psnr_worst": 27.117,
+            "errgrad": 3.7544,
+            "blk": -0.01279,
+            "severe4_pct": 0.02063,
+            "severe4_max": 0.08889,
+            "badblk_pct": 1.7625,
+            "badblk_max": 3.842,
+            "temporal": 1.86,
+            "lineflk": 3.5052,
+            "sharpflk_pct": 6.913
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.919942114375791,
+            "pixels": 25798
+          },
+          "1/2 covered": {
+            "mae": 4.773333333333333,
+            "pixels": 7925
+          },
+          "1/3 revealed": {
+            "mae": 6.312662081407148,
+            "pixels": 17738
+          },
+          "1/3 covered": {
+            "mae": 2.421849087893864,
+            "pixels": 3216
+          },
+          "2/3 revealed": {
+            "mae": 4.902696921584194,
+            "pixels": 30232
+          },
+          "2/3 covered": {
+            "mae": 2.187758066189439,
+            "pixels": 16065
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard-regular": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 25.325,
+            "psnr_worst": 23.24,
+            "errgrad": 10.5126,
+            "blk": -0.03092,
+            "severe4_pct": 0.45397,
+            "severe4_max": 1.73333,
+            "badblk_pct": 4.244,
+            "badblk_max": 6.0065,
+            "temporal": 7.5019,
+            "lineflk": 12.9031,
+            "sharpflk_pct": 13.685
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 25.424,
+            "psnr_worst": 24.036,
+            "errgrad": 10.1147,
+            "blk": -0.01188,
+            "severe4_pct": 0.36667,
+            "severe4_max": 1.21111,
+            "badblk_pct": 4.043,
+            "badblk_max": 5.1948,
+            "temporal": 6.1206,
+            "lineflk": 10.1159,
+            "sharpflk_pct": 20.455
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 6.052152819890843,
+            "pixels": 80801
+          },
+          "1/2 covered": {
+            "mae": 11.253306205493388,
+            "pixels": 983
+          },
+          "1/3 revealed": {
+            "mae": 8.451965119745603,
+            "pixels": 80504
+          },
+          "1/3 covered": {
+            "mae": 12.296803652968036,
+            "pixels": 730
+          },
+          "2/3 revealed": {
+            "mae": 5.687180625614083,
+            "pixels": 81083
+          },
+          "2/3 covered": {
+            "mae": 9.580207501995211,
+            "pixels": 1253
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 25.402,
+            "psnr_worst": 23.288,
+            "errgrad": 10.4937,
+            "blk": -0.03046,
+            "severe4_pct": 0.41984,
+            "severe4_max": 1.66667,
+            "badblk_pct": 4.1357,
+            "badblk_max": 5.1407,
+            "temporal": 7.4363,
+            "lineflk": 12.8319,
+            "sharpflk_pct": 13.458
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 25.305,
+            "psnr_worst": 24.042,
+            "errgrad": 10.1305,
+            "blk": -0.01219,
+            "severe4_pct": 0.46349,
+            "severe4_max": 1.07778,
+            "badblk_pct": 4.2517,
+            "badblk_max": 4.7619,
+            "temporal": 6.1438,
+            "lineflk": 10.1322,
+            "sharpflk_pct": 20.212
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.4625009909334805,
+            "pixels": 79891
+          },
+          "1/2 covered": {
+            "mae": 10.825704225352112,
+            "pixels": 1136
+          },
+          "1/3 revealed": {
+            "mae": 7.349731854661458,
+            "pixels": 79621
+          },
+          "1/3 covered": {
+            "mae": 13.126073380171741,
+            "pixels": 854
+          },
+          "2/3 revealed": {
+            "mae": 5.252794969055699,
+            "pixels": 80144
+          },
+          "2/3 covered": {
+            "mae": 8.923470574552221,
+            "pixels": 1433
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard-variable": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 24.79,
+            "psnr_worst": 22.362,
+            "errgrad": 11.1687,
+            "blk": -0.02381,
+            "severe4_pct": 0.63333,
+            "severe4_max": 1.77778,
+            "badblk_pct": 4.3174,
+            "badblk_max": 6.0065,
+            "temporal": 8.1617,
+            "lineflk": 13.5312,
+            "sharpflk_pct": 14.359
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 24.722,
+            "psnr_worst": 22.693,
+            "errgrad": 10.8108,
+            "blk": -0.02312,
+            "severe4_pct": 0.70159,
+            "severe4_max": 1.48889,
+            "badblk_pct": 4.2053,
+            "badblk_max": 5.6818,
+            "temporal": 6.752,
+            "lineflk": 10.7615,
+            "sharpflk_pct": 20.399
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.856621452307022,
+            "pixels": 79547
+          },
+          "1/2 covered": {
+            "mae": 9.33039129155634,
+            "pixels": 1133
+          },
+          "1/3 revealed": {
+            "mae": 7.837054999831599,
+            "pixels": 79176
+          },
+          "1/3 covered": {
+            "mae": 11.080321285140561,
+            "pixels": 830
+          },
+          "2/3 revealed": {
+            "mae": 5.364959939909864,
+            "pixels": 79880
+          },
+          "2/3 covered": {
+            "mae": 10.995253164556962,
+            "pixels": 1896
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 24.757,
+            "psnr_worst": 22.18,
+            "errgrad": 11.1343,
+            "blk": -0.02479,
+            "severe4_pct": 0.71667,
+            "severe4_max": 2.16667,
+            "badblk_pct": 4.0546,
+            "badblk_max": 6.2229,
+            "temporal": 8.2166,
+            "lineflk": 13.5351,
+            "sharpflk_pct": 14.314
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 24.747,
+            "psnr_worst": 22.745,
+            "errgrad": 10.7445,
+            "blk": -0.02679,
+            "severe4_pct": 0.70794,
+            "severe4_max": 1.57778,
+            "badblk_pct": 4.1589,
+            "badblk_max": 5.5736,
+            "temporal": 6.8162,
+            "lineflk": 10.81,
+            "sharpflk_pct": 20.644
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.545733895471521,
+            "pixels": 77561
+          },
+          "1/2 covered": {
+            "mae": 8.227738376674546,
+            "pixels": 1269
+          },
+          "1/3 revealed": {
+            "mae": 7.318068178858825,
+            "pixels": 76798
+          },
+          "1/3 covered": {
+            "mae": 11.357905982905983,
+            "pixels": 936
+          },
+          "2/3 revealed": {
+            "mae": 4.767033973766225,
+            "pixels": 77864
+          },
+          "2/3 covered": {
+            "mae": 7.70020325203252,
+            "pixels": 1640
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard_reversal-regular": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 22.564,
+            "psnr_worst": 20.948,
+            "errgrad": 14.3587,
+            "blk": -0.03065,
+            "severe4_pct": 0.39603,
+            "severe4_max": 1.28889,
+            "badblk_pct": 3.0883,
+            "badblk_max": 4.0043,
+            "temporal": 11.912,
+            "lineflk": 19.4282,
+            "sharpflk_pct": 13.549
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 22.079,
+            "psnr_worst": 20.473,
+            "errgrad": 14.7122,
+            "blk": -0.01764,
+            "severe4_pct": 0.61429,
+            "severe4_max": 1.02222,
+            "badblk_pct": 3.7801,
+            "badblk_max": 4.816,
+            "temporal": 10.747,
+            "lineflk": 16.3655,
+            "sharpflk_pct": 20.606
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 11.921171268906793,
+            "pixels": 69133
+          },
+          "1/2 covered": {
+            "mae": 23.12524106215695,
+            "pixels": 8988
+          },
+          "1/3 revealed": {
+            "mae": 14.619978907449605,
+            "pixels": 61001
+          },
+          "1/3 covered": {
+            "mae": 28.191442346323825,
+            "pixels": 4978
+          },
+          "2/3 revealed": {
+            "mae": 10.115547456004713,
+            "pixels": 72432
+          },
+          "2/3 covered": {
+            "mae": 13.243489205150548,
+            "pixels": 17215
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 22.618,
+            "psnr_worst": 21.039,
+            "errgrad": 14.3066,
+            "blk": -0.02962,
+            "severe4_pct": 0.38095,
+            "severe4_max": 1.13333,
+            "badblk_pct": 3.0458,
+            "badblk_max": 4.0043,
+            "temporal": 11.8643,
+            "lineflk": 19.3984,
+            "sharpflk_pct": 13.637
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 22.191,
+            "psnr_worst": 20.684,
+            "errgrad": 14.6439,
+            "blk": -0.01324,
+            "severe4_pct": 0.54921,
+            "severe4_max": 0.88889,
+            "badblk_pct": 3.5792,
+            "badblk_max": 3.9502,
+            "temporal": 10.6676,
+            "lineflk": 16.2558,
+            "sharpflk_pct": 20.49
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 11.845012890317342,
+            "pixels": 68139
+          },
+          "1/2 covered": {
+            "mae": 20.420887223498127,
+            "pixels": 8273
+          },
+          "1/3 revealed": {
+            "mae": 11.979853785552143,
+            "pixels": 59912
+          },
+          "1/3 covered": {
+            "mae": 33.31409998659697,
+            "pixels": 4974
+          },
+          "2/3 revealed": {
+            "mae": 9.456527463998116,
+            "pixels": 72149
+          },
+          "2/3 covered": {
+            "mae": 15.961434521995326,
+            "pixels": 16405
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard_reversal-variable": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 20.624,
+            "psnr_worst": 13.548,
+            "errgrad": 17.1638,
+            "blk": -0.02953,
+            "severe4_pct": 4.55317,
+            "severe4_max": 23.56667,
+            "badblk_pct": 3.5096,
+            "badblk_max": 4.816,
+            "temporal": 17.2136,
+            "lineflk": 23.3885,
+            "sharpflk_pct": 11.641
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 20.23,
+            "psnr_worst": 13.721,
+            "errgrad": 17.6464,
+            "blk": -0.0471,
+            "severe4_pct": 4.98889,
+            "severe4_max": 23.26667,
+            "badblk_pct": 3.1385,
+            "badblk_max": 4.3831,
+            "temporal": 16.7843,
+            "lineflk": 21.6343,
+            "sharpflk_pct": 17.072
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 20.167551904883023,
+            "pixels": 66837
+          },
+          "1/2 covered": {
+            "mae": 21.273926914153133,
+            "pixels": 6896
+          },
+          "1/3 revealed": {
+            "mae": 22.86700041718815,
+            "pixels": 59925
+          },
+          "1/3 covered": {
+            "mae": 29.773039334464098,
+            "pixels": 4127
+          },
+          "2/3 revealed": {
+            "mae": 18.026930265995688,
+            "pixels": 69550
+          },
+          "2/3 covered": {
+            "mae": 16.37066454858353,
+            "pixels": 11331
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 21.514,
+            "psnr_worst": 17.585,
+            "errgrad": 15.6313,
+            "blk": -0.03336,
+            "severe4_pct": 1.85079,
+            "severe4_max": 7.23333,
+            "badblk_pct": 3.525,
+            "badblk_max": 4.7619,
+            "temporal": 13.7539,
+            "lineflk": 20.5803,
+            "sharpflk_pct": 13.444
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 21.115,
+            "psnr_worst": 17.156,
+            "errgrad": 16.0716,
+            "blk": -0.05443,
+            "severe4_pct": 2.09048,
+            "severe4_max": 9.06667,
+            "badblk_pct": 3.1617,
+            "badblk_max": 4.4372,
+            "temporal": 12.6876,
+            "lineflk": 18.1562,
+            "sharpflk_pct": 19.494
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 12.1169190958216,
+            "pixels": 65695
+          },
+          "1/2 covered": {
+            "mae": 16.98606474858263,
+            "pixels": 6291
+          },
+          "1/3 revealed": {
+            "mae": 15.606709108716943,
+            "pixels": 61260
+          },
+          "1/3 covered": {
+            "mae": 26.57788336128191,
+            "pixels": 3578
+          },
+          "2/3 revealed": {
+            "mae": 10.687529212432812,
+            "pixels": 68464
+          },
+          "2/3 covered": {
+            "mae": 13.756040293872605,
+            "pixels": 13203
+          }
+        }
+      },
+      "matching_images": 29
+    }
+  },
+  "neutral": {
+    "h_courtyard-regular": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 25.324,
+            "psnr_worst": 23.235,
+            "errgrad": 10.5128,
+            "blk": -0.03094,
+            "severe4_pct": 0.45476,
+            "severe4_max": 1.73333,
+            "badblk_pct": 4.244,
+            "badblk_max": 6.0065,
+            "temporal": 7.5023,
+            "lineflk": 12.9029,
+            "sharpflk_pct": 13.685
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 25.423,
+            "psnr_worst": 24.034,
+            "errgrad": 10.1148,
+            "blk": -0.01187,
+            "severe4_pct": 0.36667,
+            "severe4_max": 1.21111,
+            "badblk_pct": 4.043,
+            "badblk_max": 5.1948,
+            "temporal": 6.121,
+            "lineflk": 10.116,
+            "sharpflk_pct": 20.454
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 6.0553128467882,
+            "pixels": 80801
+          },
+          "1/2 covered": {
+            "mae": 11.253306205493388,
+            "pixels": 983
+          },
+          "1/3 revealed": {
+            "mae": 8.455294146874689,
+            "pixels": 80504
+          },
+          "1/3 covered": {
+            "mae": 12.296803652968036,
+            "pixels": 730
+          },
+          "2/3 revealed": {
+            "mae": 5.689778786346501,
+            "pixels": 81083
+          },
+          "2/3 covered": {
+            "mae": 9.580207501995211,
+            "pixels": 1253
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 25.401,
+            "psnr_worst": 23.285,
+            "errgrad": 10.4938,
+            "blk": -0.03046,
+            "severe4_pct": 0.42063,
+            "severe4_max": 1.66667,
+            "badblk_pct": 4.1357,
+            "badblk_max": 5.1407,
+            "temporal": 7.4377,
+            "lineflk": 12.832,
+            "sharpflk_pct": 13.457
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 25.304,
+            "psnr_worst": 24.042,
+            "errgrad": 10.1304,
+            "blk": -0.01219,
+            "severe4_pct": 0.46349,
+            "severe4_max": 1.07778,
+            "badblk_pct": 4.2517,
+            "badblk_max": 4.7619,
+            "temporal": 6.1438,
+            "lineflk": 10.1322,
+            "sharpflk_pct": 20.212
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.462684574399286,
+            "pixels": 79891
+          },
+          "1/2 covered": {
+            "mae": 10.825704225352112,
+            "pixels": 1136
+          },
+          "1/3 revealed": {
+            "mae": 7.349857449667801,
+            "pixels": 79621
+          },
+          "1/3 covered": {
+            "mae": 13.126073380171741,
+            "pixels": 854
+          },
+          "2/3 revealed": {
+            "mae": 5.263658747587676,
+            "pixels": 80144
+          },
+          "2/3 covered": {
+            "mae": 8.923470574552221,
+            "pixels": 1433
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard-variable": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 24.789,
+            "psnr_worst": 22.362,
+            "errgrad": 11.1689,
+            "blk": -0.02381,
+            "severe4_pct": 0.63333,
+            "severe4_max": 1.77778,
+            "badblk_pct": 4.3174,
+            "badblk_max": 6.0065,
+            "temporal": 8.1619,
+            "lineflk": 13.5312,
+            "sharpflk_pct": 14.358
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 24.722,
+            "psnr_worst": 22.693,
+            "errgrad": 10.8108,
+            "blk": -0.02312,
+            "severe4_pct": 0.70159,
+            "severe4_max": 1.48889,
+            "badblk_pct": 4.2053,
+            "badblk_max": 5.6818,
+            "temporal": 6.752,
+            "lineflk": 10.7615,
+            "sharpflk_pct": 20.399
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.857270963497471,
+            "pixels": 79547
+          },
+          "1/2 covered": {
+            "mae": 9.33039129155634,
+            "pixels": 1133
+          },
+          "1/3 revealed": {
+            "mae": 7.837446532619312,
+            "pixels": 79176
+          },
+          "1/3 covered": {
+            "mae": 11.080321285140561,
+            "pixels": 830
+          },
+          "2/3 revealed": {
+            "mae": 5.365873810716074,
+            "pixels": 79880
+          },
+          "2/3 covered": {
+            "mae": 10.995253164556962,
+            "pixels": 1896
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 24.758,
+            "psnr_worst": 22.182,
+            "errgrad": 11.1343,
+            "blk": -0.02479,
+            "severe4_pct": 0.71667,
+            "severe4_max": 2.16667,
+            "badblk_pct": 4.0546,
+            "badblk_max": 6.2229,
+            "temporal": 8.2165,
+            "lineflk": 13.5352,
+            "sharpflk_pct": 14.314
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 24.748,
+            "psnr_worst": 22.744,
+            "errgrad": 10.7445,
+            "blk": -0.02679,
+            "severe4_pct": 0.70635,
+            "severe4_max": 1.57778,
+            "badblk_pct": 4.1589,
+            "badblk_max": 5.5736,
+            "temporal": 6.816,
+            "lineflk": 10.81,
+            "sharpflk_pct": 20.644
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.545733895471521,
+            "pixels": 77561
+          },
+          "1/2 covered": {
+            "mae": 8.227738376674546,
+            "pixels": 1269
+          },
+          "1/3 revealed": {
+            "mae": 7.318068178858825,
+            "pixels": 76798
+          },
+          "1/3 covered": {
+            "mae": 11.357905982905983,
+            "pixels": 936
+          },
+          "2/3 revealed": {
+            "mae": 4.767025411829172,
+            "pixels": 77864
+          },
+          "2/3 covered": {
+            "mae": 7.70020325203252,
+            "pixels": 1640
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard_reversal-regular": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 22.563,
+            "psnr_worst": 20.948,
+            "errgrad": 14.3587,
+            "blk": -0.03065,
+            "severe4_pct": 0.39603,
+            "severe4_max": 1.28889,
+            "badblk_pct": 3.0883,
+            "badblk_max": 4.0043,
+            "temporal": 11.9123,
+            "lineflk": 19.4283,
+            "sharpflk_pct": 13.549
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 22.079,
+            "psnr_worst": 20.472,
+            "errgrad": 14.7123,
+            "blk": -0.01765,
+            "severe4_pct": 0.61587,
+            "severe4_max": 1.02222,
+            "badblk_pct": 3.7801,
+            "badblk_max": 4.816,
+            "temporal": 10.7472,
+            "lineflk": 16.3655,
+            "sharpflk_pct": 20.606
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 11.921884869261664,
+            "pixels": 69133
+          },
+          "1/2 covered": {
+            "mae": 23.125278148642636,
+            "pixels": 8988
+          },
+          "1/3 revealed": {
+            "mae": 14.620164696753605,
+            "pixels": 61001
+          },
+          "1/3 covered": {
+            "mae": 28.191442346323825,
+            "pixels": 4978
+          },
+          "2/3 revealed": {
+            "mae": 10.115547456004713,
+            "pixels": 72432
+          },
+          "2/3 covered": {
+            "mae": 13.245909574983058,
+            "pixels": 17215
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 22.618,
+            "psnr_worst": 21.039,
+            "errgrad": 14.3066,
+            "blk": -0.02962,
+            "severe4_pct": 0.38095,
+            "severe4_max": 1.13333,
+            "badblk_pct": 3.0458,
+            "badblk_max": 4.0043,
+            "temporal": 11.8643,
+            "lineflk": 19.3984,
+            "sharpflk_pct": 13.637
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 22.191,
+            "psnr_worst": 20.684,
+            "errgrad": 14.6439,
+            "blk": -0.01324,
+            "severe4_pct": 0.54921,
+            "severe4_max": 0.88889,
+            "badblk_pct": 3.5792,
+            "badblk_max": 3.9502,
+            "temporal": 10.6676,
+            "lineflk": 16.2558,
+            "sharpflk_pct": 20.49
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 11.845071593849827,
+            "pixels": 68139
+          },
+          "1/2 covered": {
+            "mae": 20.420887223498127,
+            "pixels": 8273
+          },
+          "1/3 revealed": {
+            "mae": 11.979770329817065,
+            "pixels": 59912
+          },
+          "1/3 covered": {
+            "mae": 33.31409998659697,
+            "pixels": 4974
+          },
+          "2/3 revealed": {
+            "mae": 9.456490503448881,
+            "pixels": 72149
+          },
+          "2/3 covered": {
+            "mae": 15.961434521995326,
+            "pixels": 16405
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard_reversal-variable": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 20.624,
+            "psnr_worst": 13.548,
+            "errgrad": 17.1638,
+            "blk": -0.02954,
+            "severe4_pct": 4.55317,
+            "severe4_max": 23.56667,
+            "badblk_pct": 3.5096,
+            "badblk_max": 4.816,
+            "temporal": 17.2136,
+            "lineflk": 23.3885,
+            "sharpflk_pct": 11.641
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 20.23,
+            "psnr_worst": 13.721,
+            "errgrad": 17.6464,
+            "blk": -0.0471,
+            "severe4_pct": 4.98889,
+            "severe4_max": 23.26667,
+            "badblk_pct": 3.1385,
+            "badblk_max": 4.3831,
+            "temporal": 16.7843,
+            "lineflk": 21.6343,
+            "sharpflk_pct": 17.073
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 20.167551904883023,
+            "pixels": 66837
+          },
+          "1/2 covered": {
+            "mae": 21.273926914153133,
+            "pixels": 6896
+          },
+          "1/3 revealed": {
+            "mae": 22.867128354888056,
+            "pixels": 59925
+          },
+          "1/3 covered": {
+            "mae": 29.773039334464098,
+            "pixels": 4127
+          },
+          "2/3 revealed": {
+            "mae": 18.026930265995688,
+            "pixels": 69550
+          },
+          "2/3 covered": {
+            "mae": 16.37066454858353,
+            "pixels": 11331
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 21.514,
+            "psnr_worst": 17.585,
+            "errgrad": 15.6313,
+            "blk": -0.03336,
+            "severe4_pct": 1.85079,
+            "severe4_max": 7.23333,
+            "badblk_pct": 3.525,
+            "badblk_max": 4.7619,
+            "temporal": 13.754,
+            "lineflk": 20.5803,
+            "sharpflk_pct": 13.443
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 21.115,
+            "psnr_worst": 17.156,
+            "errgrad": 16.0717,
+            "blk": -0.05443,
+            "severe4_pct": 2.09048,
+            "severe4_max": 9.06667,
+            "badblk_pct": 3.1617,
+            "badblk_max": 4.4372,
+            "temporal": 12.6878,
+            "lineflk": 18.1563,
+            "sharpflk_pct": 19.494
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 12.118512317020574,
+            "pixels": 65695
+          },
+          "1/2 covered": {
+            "mae": 16.98606474858263,
+            "pixels": 6291
+          },
+          "1/3 revealed": {
+            "mae": 15.608412232016542,
+            "pixels": 61260
+          },
+          "1/3 covered": {
+            "mae": 26.57788336128191,
+            "pixels": 3578
+          },
+          "2/3 revealed": {
+            "mae": 10.689126158759835,
+            "pixels": 68464
+          },
+          "2/3 covered": {
+            "mae": 13.756040293872605,
+            "pixels": 13203
+          }
+        }
+      },
+      "matching_images": 29
+    }
+  },
+  "kinematic": {
+    "h_courtyard-regular": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 25.392,
+            "psnr_worst": 23.299,
+            "errgrad": 10.5524,
+            "blk": -0.03126,
+            "severe4_pct": 0.41587,
+            "severe4_max": 1.64444,
+            "badblk_pct": 4.1667,
+            "badblk_max": 5.7359,
+            "temporal": 7.4595,
+            "lineflk": 12.8731,
+            "sharpflk_pct": 13.542
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 25.443,
+            "psnr_worst": 24.061,
+            "errgrad": 10.1642,
+            "blk": -0.01254,
+            "severe4_pct": 0.36032,
+            "severe4_max": 1.22222,
+            "badblk_pct": 3.9502,
+            "badblk_max": 5.1948,
+            "temporal": 6.1047,
+            "lineflk": 10.1209,
+            "sharpflk_pct": 20.106
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 6.052198198867176,
+            "pixels": 80801
+          },
+          "1/2 covered": {
+            "mae": 11.204136995591726,
+            "pixels": 983
+          },
+          "1/3 revealed": {
+            "mae": 8.404547186061148,
+            "pixels": 80504
+          },
+          "1/3 covered": {
+            "mae": 12.093150684931507,
+            "pixels": 730
+          },
+          "2/3 revealed": {
+            "mae": 5.652915325448409,
+            "pixels": 81083
+          },
+          "2/3 covered": {
+            "mae": 9.32242617717478,
+            "pixels": 1253
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 25.477,
+            "psnr_worst": 23.326,
+            "errgrad": 10.5291,
+            "blk": -0.03044,
+            "severe4_pct": 0.3746,
+            "severe4_max": 1.55556,
+            "badblk_pct": 4.1087,
+            "badblk_max": 5.1407,
+            "temporal": 7.393,
+            "lineflk": 12.8035,
+            "sharpflk_pct": 13.253
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 25.336,
+            "psnr_worst": 24.094,
+            "errgrad": 10.1796,
+            "blk": -0.01192,
+            "severe4_pct": 0.43333,
+            "severe4_max": 1.06667,
+            "badblk_pct": 4.1512,
+            "badblk_max": 4.7619,
+            "temporal": 6.1267,
+            "lineflk": 10.1254,
+            "sharpflk_pct": 19.828
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.485177721311954,
+            "pixels": 79891
+          },
+          "1/2 covered": {
+            "mae": 10.780516431924882,
+            "pixels": 1136
+          },
+          "1/3 revealed": {
+            "mae": 7.372853895329122,
+            "pixels": 79621
+          },
+          "1/3 covered": {
+            "mae": 12.898516783762686,
+            "pixels": 854
+          },
+          "2/3 revealed": {
+            "mae": 5.213066480335396,
+            "pixels": 80144
+          },
+          "2/3 covered": {
+            "mae": 8.903465922307513,
+            "pixels": 1433
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard-variable": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 24.803,
+            "psnr_worst": 22.362,
+            "errgrad": 11.1707,
+            "blk": -0.02395,
+            "severe4_pct": 0.6254,
+            "severe4_max": 1.77778,
+            "badblk_pct": 4.2981,
+            "badblk_max": 5.7359,
+            "temporal": 8.1547,
+            "lineflk": 13.521,
+            "sharpflk_pct": 14.327
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 24.722,
+            "psnr_worst": 22.693,
+            "errgrad": 10.8167,
+            "blk": -0.0232,
+            "severe4_pct": 0.7,
+            "severe4_max": 1.48889,
+            "badblk_pct": 4.2053,
+            "badblk_max": 5.6818,
+            "temporal": 6.7513,
+            "lineflk": 10.7604,
+            "sharpflk_pct": 20.345
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.865329092653819,
+            "pixels": 79547
+          },
+          "1/2 covered": {
+            "mae": 9.33039129155634,
+            "pixels": 1133
+          },
+          "1/3 revealed": {
+            "mae": 7.832684988717119,
+            "pixels": 79176
+          },
+          "1/3 covered": {
+            "mae": 11.080321285140561,
+            "pixels": 830
+          },
+          "2/3 revealed": {
+            "mae": 5.36671256885328,
+            "pixels": 79880
+          },
+          "2/3 covered": {
+            "mae": 10.995253164556962,
+            "pixels": 1896
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 24.761,
+            "psnr_worst": 22.182,
+            "errgrad": 11.1509,
+            "blk": -0.02459,
+            "severe4_pct": 0.70952,
+            "severe4_max": 2.16667,
+            "badblk_pct": 4.043,
+            "badblk_max": 6.2229,
+            "temporal": 8.2143,
+            "lineflk": 13.5317,
+            "sharpflk_pct": 14.243
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 24.751,
+            "psnr_worst": 22.744,
+            "errgrad": 10.7588,
+            "blk": -0.02672,
+            "severe4_pct": 0.69841,
+            "severe4_max": 1.57778,
+            "badblk_pct": 4.1512,
+            "badblk_max": 5.5736,
+            "temporal": 6.8134,
+            "lineflk": 10.8098,
+            "sharpflk_pct": 20.5
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.546490289363641,
+            "pixels": 77561
+          },
+          "1/2 covered": {
+            "mae": 8.227738376674546,
+            "pixels": 1269
+          },
+          "1/3 revealed": {
+            "mae": 7.329110133076382,
+            "pixels": 76798
+          },
+          "1/3 covered": {
+            "mae": 11.357905982905983,
+            "pixels": 936
+          },
+          "2/3 revealed": {
+            "mae": 4.77063426829686,
+            "pixels": 77864
+          },
+          "2/3 covered": {
+            "mae": 7.70020325203252,
+            "pixels": 1640
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard_reversal-regular": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 22.58,
+            "psnr_worst": 20.951,
+            "errgrad": 14.3824,
+            "blk": -0.0304,
+            "severe4_pct": 0.3881,
+            "severe4_max": 1.25556,
+            "badblk_pct": 3.0612,
+            "badblk_max": 4.0043,
+            "temporal": 11.8975,
+            "lineflk": 19.4242,
+            "sharpflk_pct": 13.425
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 22.084,
+            "psnr_worst": 20.461,
+            "errgrad": 14.7408,
+            "blk": -0.01693,
+            "severe4_pct": 0.62222,
+            "severe4_max": 1.02222,
+            "badblk_pct": 3.7956,
+            "badblk_max": 4.8701,
+            "temporal": 10.7407,
+            "lineflk": 16.3705,
+            "sharpflk_pct": 20.368
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 11.92886658084176,
+            "pixels": 69133
+          },
+          "1/2 covered": {
+            "mae": 23.110332294911736,
+            "pixels": 8988
+          },
+          "1/3 revealed": {
+            "mae": 14.63054157582116,
+            "pixels": 61001
+          },
+          "1/3 covered": {
+            "mae": 28.156890317396545,
+            "pixels": 4978
+          },
+          "2/3 revealed": {
+            "mae": 10.092325675576173,
+            "pixels": 72432
+          },
+          "2/3 covered": {
+            "mae": 13.234040081324427,
+            "pixels": 17215
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 22.637,
+            "psnr_worst": 21.046,
+            "errgrad": 14.332,
+            "blk": -0.02988,
+            "severe4_pct": 0.36508,
+            "severe4_max": 1.1,
+            "badblk_pct": 3.0071,
+            "badblk_max": 4.0043,
+            "temporal": 11.848,
+            "lineflk": 19.3858,
+            "sharpflk_pct": 13.515
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 22.204,
+            "psnr_worst": 20.666,
+            "errgrad": 14.6853,
+            "blk": -0.01279,
+            "severe4_pct": 0.54286,
+            "severe4_max": 0.87778,
+            "badblk_pct": 3.5714,
+            "badblk_max": 4.0043,
+            "temporal": 10.6561,
+            "lineflk": 16.2517,
+            "sharpflk_pct": 20.18
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 11.839719788471605,
+            "pixels": 68139
+          },
+          "1/2 covered": {
+            "mae": 20.40932350215561,
+            "pixels": 8273
+          },
+          "1/3 revealed": {
+            "mae": 11.947940312458272,
+            "pixels": 59912
+          },
+          "1/3 covered": {
+            "mae": 33.25619890095162,
+            "pixels": 4974
+          },
+          "2/3 revealed": {
+            "mae": 9.463452946910792,
+            "pixels": 72149
+          },
+          "2/3 covered": {
+            "mae": 15.966595550137153,
+            "pixels": 16405
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard_reversal-variable": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 20.631,
+            "psnr_worst": 13.548,
+            "errgrad": 17.1706,
+            "blk": -0.02931,
+            "severe4_pct": 4.54444,
+            "severe4_max": 23.56667,
+            "badblk_pct": 3.5057,
+            "badblk_max": 4.816,
+            "temporal": 17.2042,
+            "lineflk": 23.3853,
+            "sharpflk_pct": 11.593
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 20.231,
+            "psnr_worst": 13.721,
+            "errgrad": 17.6567,
+            "blk": -0.04696,
+            "severe4_pct": 4.98889,
+            "severe4_max": 23.26667,
+            "badblk_pct": 3.1385,
+            "badblk_max": 4.3831,
+            "temporal": 16.7795,
+            "lineflk": 21.6353,
+            "sharpflk_pct": 17.0
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 20.168265082713667,
+            "pixels": 66837
+          },
+          "1/2 covered": {
+            "mae": 21.26740139211137,
+            "pixels": 6896
+          },
+          "1/3 revealed": {
+            "mae": 22.85637602558754,
+            "pixels": 59925
+          },
+          "1/3 covered": {
+            "mae": 29.773039334464098,
+            "pixels": 4127
+          },
+          "2/3 revealed": {
+            "mae": 18.027045291157442,
+            "pixels": 69550
+          },
+          "2/3 covered": {
+            "mae": 16.36884064366193,
+            "pixels": 11331
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 21.526,
+            "psnr_worst": 17.585,
+            "errgrad": 15.6389,
+            "blk": -0.03347,
+            "severe4_pct": 1.8381,
+            "severe4_max": 7.23333,
+            "badblk_pct": 3.5212,
+            "badblk_max": 4.7619,
+            "temporal": 13.7447,
+            "lineflk": 20.5727,
+            "sharpflk_pct": 13.424
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 21.116,
+            "psnr_worst": 17.156,
+            "errgrad": 16.0765,
+            "blk": -0.05419,
+            "severe4_pct": 2.09206,
+            "severe4_max": 9.06667,
+            "badblk_pct": 3.1617,
+            "badblk_max": 4.4372,
+            "temporal": 12.6862,
+            "lineflk": 18.1527,
+            "sharpflk_pct": 19.44
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 12.117578709693786,
+            "pixels": 65695
+          },
+          "1/2 covered": {
+            "mae": 16.985693848354792,
+            "pixels": 6291
+          },
+          "1/3 revealed": {
+            "mae": 15.607481771683535,
+            "pixels": 61260
+          },
+          "1/3 covered": {
+            "mae": 26.57788336128191,
+            "pixels": 3578
+          },
+          "2/3 revealed": {
+            "mae": 10.689126158759835,
+            "pixels": 68464
+          },
+          "2/3 covered": {
+            "mae": 13.756040293872605,
+            "pixels": 13203
+          }
+        }
+      },
+      "matching_images": 29
+    }
+  },
+  "visibility": {
+    "h_courtyard-regular": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 25.312,
+            "psnr_worst": 23.25,
+            "errgrad": 10.5132,
+            "blk": -0.03094,
+            "severe4_pct": 0.46111,
+            "severe4_max": 1.72222,
+            "badblk_pct": 4.244,
+            "badblk_max": 6.0065,
+            "temporal": 7.5027,
+            "lineflk": 12.9027,
+            "sharpflk_pct": 13.684
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 25.402,
+            "psnr_worst": 23.919,
+            "errgrad": 10.115,
+            "blk": -0.01187,
+            "severe4_pct": 0.38571,
+            "severe4_max": 1.31111,
+            "badblk_pct": 4.043,
+            "badblk_max": 5.1948,
+            "temporal": 6.1308,
+            "lineflk": 10.116,
+            "sharpflk_pct": 20.453
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 6.171544906622443,
+            "pixels": 80801
+          },
+          "1/2 covered": {
+            "mae": 11.253306205493388,
+            "pixels": 983
+          },
+          "1/3 revealed": {
+            "mae": 8.44053711616814,
+            "pixels": 80504
+          },
+          "1/3 covered": {
+            "mae": 12.296803652968036,
+            "pixels": 730
+          },
+          "2/3 revealed": {
+            "mae": 5.802983773828464,
+            "pixels": 81083
+          },
+          "2/3 covered": {
+            "mae": 9.580207501995211,
+            "pixels": 1253
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 25.399,
+            "psnr_worst": 23.302,
+            "errgrad": 10.4937,
+            "blk": -0.03046,
+            "severe4_pct": 0.42063,
+            "severe4_max": 1.63333,
+            "badblk_pct": 4.1357,
+            "badblk_max": 5.1407,
+            "temporal": 7.4374,
+            "lineflk": 12.832,
+            "sharpflk_pct": 13.457
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 25.304,
+            "psnr_worst": 24.069,
+            "errgrad": 10.1305,
+            "blk": -0.0122,
+            "severe4_pct": 0.46349,
+            "severe4_max": 1.06667,
+            "badblk_pct": 4.2517,
+            "badblk_max": 4.7619,
+            "temporal": 6.1442,
+            "lineflk": 10.1323,
+            "sharpflk_pct": 20.212
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.482941340910323,
+            "pixels": 79891
+          },
+          "1/2 covered": {
+            "mae": 10.825704225352112,
+            "pixels": 1136
+          },
+          "1/3 revealed": {
+            "mae": 7.349874195668647,
+            "pixels": 79621
+          },
+          "1/3 covered": {
+            "mae": 13.126073380171741,
+            "pixels": 854
+          },
+          "2/3 revealed": {
+            "mae": 5.287436780461835,
+            "pixels": 80144
+          },
+          "2/3 covered": {
+            "mae": 8.923470574552221,
+            "pixels": 1433
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard-variable": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 24.788,
+            "psnr_worst": 22.36,
+            "errgrad": 11.1695,
+            "blk": -0.02377,
+            "severe4_pct": 0.63413,
+            "severe4_max": 1.77778,
+            "badblk_pct": 4.3174,
+            "badblk_max": 6.0065,
+            "temporal": 8.1625,
+            "lineflk": 13.5318,
+            "sharpflk_pct": 14.353
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 24.72,
+            "psnr_worst": 22.692,
+            "errgrad": 10.811,
+            "blk": -0.02308,
+            "severe4_pct": 0.70317,
+            "severe4_max": 1.48889,
+            "badblk_pct": 4.1976,
+            "badblk_max": 5.6818,
+            "temporal": 6.7534,
+            "lineflk": 10.7616,
+            "sharpflk_pct": 20.396
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.870826890601363,
+            "pixels": 79547
+          },
+          "1/2 covered": {
+            "mae": 9.33039129155634,
+            "pixels": 1133
+          },
+          "1/3 revealed": {
+            "mae": 7.8383222188541986,
+            "pixels": 79176
+          },
+          "1/3 covered": {
+            "mae": 11.080321285140561,
+            "pixels": 830
+          },
+          "2/3 revealed": {
+            "mae": 5.3793773994324825,
+            "pixels": 79880
+          },
+          "2/3 covered": {
+            "mae": 10.995253164556962,
+            "pixels": 1896
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 24.756,
+            "psnr_worst": 22.17,
+            "errgrad": 11.1351,
+            "blk": -0.02483,
+            "severe4_pct": 0.71667,
+            "severe4_max": 2.16667,
+            "badblk_pct": 4.0546,
+            "badblk_max": 6.2229,
+            "temporal": 8.2181,
+            "lineflk": 13.5367,
+            "sharpflk_pct": 14.316
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 24.747,
+            "psnr_worst": 22.737,
+            "errgrad": 10.7448,
+            "blk": -0.0268,
+            "severe4_pct": 0.70794,
+            "severe4_max": 1.57778,
+            "badblk_pct": 4.1589,
+            "badblk_max": 5.4654,
+            "temporal": 6.8165,
+            "lineflk": 10.8098,
+            "sharpflk_pct": 20.637
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.545016180812522,
+            "pixels": 77561
+          },
+          "1/2 covered": {
+            "mae": 8.227738376674546,
+            "pixels": 1269
+          },
+          "1/3 revealed": {
+            "mae": 7.319235743986389,
+            "pixels": 76798
+          },
+          "1/3 covered": {
+            "mae": 11.357905982905983,
+            "pixels": 936
+          },
+          "2/3 revealed": {
+            "mae": 4.765908079043803,
+            "pixels": 77864
+          },
+          "2/3 covered": {
+            "mae": 7.70020325203252,
+            "pixels": 1640
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard_reversal-regular": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 22.563,
+            "psnr_worst": 20.948,
+            "errgrad": 14.3587,
+            "blk": -0.03065,
+            "severe4_pct": 0.39603,
+            "severe4_max": 1.28889,
+            "badblk_pct": 3.0883,
+            "badblk_max": 4.0043,
+            "temporal": 11.9125,
+            "lineflk": 19.4283,
+            "sharpflk_pct": 13.549
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 22.078,
+            "psnr_worst": 20.472,
+            "errgrad": 14.7124,
+            "blk": -0.01766,
+            "severe4_pct": 0.61746,
+            "severe4_max": 1.03333,
+            "badblk_pct": 3.7801,
+            "badblk_max": 4.816,
+            "temporal": 10.7474,
+            "lineflk": 16.3655,
+            "sharpflk_pct": 20.605
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 11.922111485590577,
+            "pixels": 69133
+          },
+          "1/2 covered": {
+            "mae": 23.125278148642636,
+            "pixels": 8988
+          },
+          "1/3 revealed": {
+            "mae": 14.620164696753605,
+            "pixels": 61001
+          },
+          "1/3 covered": {
+            "mae": 28.191442346323825,
+            "pixels": 4978
+          },
+          "2/3 revealed": {
+            "mae": 10.115547456004713,
+            "pixels": 72432
+          },
+          "2/3 covered": {
+            "mae": 13.247264982089263,
+            "pixels": 17215
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 22.617,
+            "psnr_worst": 21.039,
+            "errgrad": 14.3066,
+            "blk": -0.02962,
+            "severe4_pct": 0.38175,
+            "severe4_max": 1.13333,
+            "badblk_pct": 3.0458,
+            "badblk_max": 4.0043,
+            "temporal": 11.8645,
+            "lineflk": 19.3984,
+            "sharpflk_pct": 13.637
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 22.191,
+            "psnr_worst": 20.684,
+            "errgrad": 14.644,
+            "blk": -0.01324,
+            "severe4_pct": 0.54921,
+            "severe4_max": 0.88889,
+            "badblk_pct": 3.5792,
+            "badblk_max": 3.9502,
+            "temporal": 10.6676,
+            "lineflk": 16.2558,
+            "sharpflk_pct": 20.49
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 11.845218352681039,
+            "pixels": 68139
+          },
+          "1/2 covered": {
+            "mae": 20.420887223498127,
+            "pixels": 8273
+          },
+          "1/3 revealed": {
+            "mae": 11.979770329817065,
+            "pixels": 59912
+          },
+          "1/3 covered": {
+            "mae": 33.31409998659697,
+            "pixels": 4974
+          },
+          "2/3 revealed": {
+            "mae": 9.456490503448881,
+            "pixels": 72149
+          },
+          "2/3 covered": {
+            "mae": 15.961434521995326,
+            "pixels": 16405
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard_reversal-variable": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 20.623,
+            "psnr_worst": 13.548,
+            "errgrad": 17.1643,
+            "blk": -0.02953,
+            "severe4_pct": 4.55238,
+            "severe4_max": 23.56667,
+            "badblk_pct": 3.5019,
+            "badblk_max": 4.816,
+            "temporal": 17.2138,
+            "lineflk": 23.3887,
+            "sharpflk_pct": 11.641
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 20.23,
+            "psnr_worst": 13.721,
+            "errgrad": 17.6462,
+            "blk": -0.0471,
+            "severe4_pct": 4.98889,
+            "severe4_max": 23.26667,
+            "badblk_pct": 3.1385,
+            "badblk_max": 4.3831,
+            "temporal": 16.7847,
+            "lineflk": 21.6339,
+            "sharpflk_pct": 17.072
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 20.16757684117081,
+            "pixels": 66837
+          },
+          "1/2 covered": {
+            "mae": 21.272186774941996,
+            "pixels": 6896
+          },
+          "1/3 revealed": {
+            "mae": 22.86721735502712,
+            "pixels": 59925
+          },
+          "1/3 covered": {
+            "mae": 29.773200872304336,
+            "pixels": 4127
+          },
+          "2/3 revealed": {
+            "mae": 18.02623532231009,
+            "pixels": 69550
+          },
+          "2/3 covered": {
+            "mae": 16.37066454858353,
+            "pixels": 11331
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 21.514,
+            "psnr_worst": 17.586,
+            "errgrad": 15.6323,
+            "blk": -0.03334,
+            "severe4_pct": 1.85159,
+            "severe4_max": 7.23333,
+            "badblk_pct": 3.5289,
+            "badblk_max": 4.7619,
+            "temporal": 13.7545,
+            "lineflk": 20.5809,
+            "sharpflk_pct": 13.442
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 21.115,
+            "psnr_worst": 17.156,
+            "errgrad": 16.0704,
+            "blk": -0.05439,
+            "severe4_pct": 2.09048,
+            "severe4_max": 9.06667,
+            "badblk_pct": 3.154,
+            "badblk_max": 4.4372,
+            "temporal": 12.6877,
+            "lineflk": 18.1561,
+            "sharpflk_pct": 19.499
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 12.122084379836112,
+            "pixels": 65695
+          },
+          "1/2 covered": {
+            "mae": 16.98627669156997,
+            "pixels": 6291
+          },
+          "1/3 revealed": {
+            "mae": 15.607438241375558,
+            "pixels": 61260
+          },
+          "1/3 covered": {
+            "mae": 26.577976523197318,
+            "pixels": 3578
+          },
+          "2/3 revealed": {
+            "mae": 10.697700007789981,
+            "pixels": 68464
+          },
+          "2/3 covered": {
+            "mae": 13.758463985457851,
+            "pixels": 13203
+          }
+        }
+      },
+      "matching_images": 29
+    }
+  },
+  "both": {
+    "h_courtyard-regular": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 25.381,
+            "psnr_worst": 23.313,
+            "errgrad": 10.5532,
+            "blk": -0.03126,
+            "severe4_pct": 0.42143,
+            "severe4_max": 1.63333,
+            "badblk_pct": 4.1744,
+            "badblk_max": 5.79,
+            "temporal": 7.4602,
+            "lineflk": 12.874,
+            "sharpflk_pct": 13.543
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 25.426,
+            "psnr_worst": 23.971,
+            "errgrad": 10.1648,
+            "blk": -0.01254,
+            "severe4_pct": 0.37143,
+            "severe4_max": 1.27778,
+            "badblk_pct": 3.9502,
+            "badblk_max": 5.1948,
+            "temporal": 6.1126,
+            "lineflk": 10.1211,
+            "sharpflk_pct": 20.101
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 6.145018832275178,
+            "pixels": 80801
+          },
+          "1/2 covered": {
+            "mae": 11.204136995591726,
+            "pixels": 983
+          },
+          "1/3 revealed": {
+            "mae": 8.393698863824572,
+            "pixels": 80504
+          },
+          "1/3 covered": {
+            "mae": 12.093150684931507,
+            "pixels": 730
+          },
+          "2/3 revealed": {
+            "mae": 5.7449239256893145,
+            "pixels": 81083
+          },
+          "2/3 covered": {
+            "mae": 9.32242617717478,
+            "pixels": 1253
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 25.475,
+            "psnr_worst": 23.343,
+            "errgrad": 10.5291,
+            "blk": -0.03044,
+            "severe4_pct": 0.3746,
+            "severe4_max": 1.53333,
+            "badblk_pct": 4.1164,
+            "badblk_max": 5.1407,
+            "temporal": 7.3925,
+            "lineflk": 12.8036,
+            "sharpflk_pct": 13.252
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 25.335,
+            "psnr_worst": 24.115,
+            "errgrad": 10.1807,
+            "blk": -0.01193,
+            "severe4_pct": 0.43492,
+            "severe4_max": 1.05556,
+            "badblk_pct": 4.1512,
+            "badblk_max": 4.7619,
+            "temporal": 6.1277,
+            "lineflk": 10.1263,
+            "sharpflk_pct": 19.822
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.505463694283462,
+            "pixels": 79891
+          },
+          "1/2 covered": {
+            "mae": 10.780516431924882,
+            "pixels": 1136
+          },
+          "1/3 revealed": {
+            "mae": 7.372615264817071,
+            "pixels": 79621
+          },
+          "1/3 covered": {
+            "mae": 12.898516783762686,
+            "pixels": 854
+          },
+          "2/3 revealed": {
+            "mae": 5.234544486590803,
+            "pixels": 80144
+          },
+          "2/3 covered": {
+            "mae": 8.903465922307513,
+            "pixels": 1433
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard-variable": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 24.802,
+            "psnr_worst": 22.36,
+            "errgrad": 11.1713,
+            "blk": -0.02391,
+            "severe4_pct": 0.62619,
+            "severe4_max": 1.77778,
+            "badblk_pct": 4.3019,
+            "badblk_max": 5.79,
+            "temporal": 8.1552,
+            "lineflk": 13.5215,
+            "sharpflk_pct": 14.323
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 24.72,
+            "psnr_worst": 22.692,
+            "errgrad": 10.817,
+            "blk": -0.02316,
+            "severe4_pct": 0.70159,
+            "severe4_max": 1.48889,
+            "badblk_pct": 4.1976,
+            "badblk_max": 5.6818,
+            "temporal": 6.7526,
+            "lineflk": 10.7605,
+            "sharpflk_pct": 20.34
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.878880829362934,
+            "pixels": 79547
+          },
+          "1/2 covered": {
+            "mae": 9.33039129155634,
+            "pixels": 1133
+          },
+          "1/3 revealed": {
+            "mae": 7.8333543834832104,
+            "pixels": 79176
+          },
+          "1/3 covered": {
+            "mae": 11.080321285140561,
+            "pixels": 830
+          },
+          "2/3 revealed": {
+            "mae": 5.380207811717576,
+            "pixels": 79880
+          },
+          "2/3 covered": {
+            "mae": 10.995253164556962,
+            "pixels": 1896
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 24.759,
+            "psnr_worst": 22.17,
+            "errgrad": 11.1519,
+            "blk": -0.02462,
+            "severe4_pct": 0.70952,
+            "severe4_max": 2.16667,
+            "badblk_pct": 4.0391,
+            "badblk_max": 6.2229,
+            "temporal": 8.216,
+            "lineflk": 13.5331,
+            "sharpflk_pct": 14.243
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 24.75,
+            "psnr_worst": 22.737,
+            "errgrad": 10.759,
+            "blk": -0.02672,
+            "severe4_pct": 0.7,
+            "severe4_max": 1.57778,
+            "badblk_pct": 4.1512,
+            "badblk_max": 5.4654,
+            "temporal": 6.814,
+            "lineflk": 10.8096,
+            "sharpflk_pct": 20.494
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.545772574704641,
+            "pixels": 77561
+          },
+          "1/2 covered": {
+            "mae": 8.227738376674546,
+            "pixels": 1269
+          },
+          "1/3 revealed": {
+            "mae": 7.330169188433727,
+            "pixels": 76798
+          },
+          "1/3 covered": {
+            "mae": 11.357905982905983,
+            "pixels": 936
+          },
+          "2/3 revealed": {
+            "mae": 4.769521216480016,
+            "pixels": 77864
+          },
+          "2/3 covered": {
+            "mae": 7.70020325203252,
+            "pixels": 1640
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard_reversal-regular": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 22.58,
+            "psnr_worst": 20.951,
+            "errgrad": 14.3827,
+            "blk": -0.03043,
+            "severe4_pct": 0.3881,
+            "severe4_max": 1.25556,
+            "badblk_pct": 3.0612,
+            "badblk_max": 4.0043,
+            "temporal": 11.8979,
+            "lineflk": 19.4246,
+            "sharpflk_pct": 13.425
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 22.083,
+            "psnr_worst": 20.46,
+            "errgrad": 14.741,
+            "blk": -0.01689,
+            "severe4_pct": 0.62222,
+            "severe4_max": 1.02222,
+            "badblk_pct": 3.7956,
+            "badblk_max": 4.8701,
+            "temporal": 10.7411,
+            "lineflk": 16.3706,
+            "sharpflk_pct": 20.367
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 11.929175164779,
+            "pixels": 69133
+          },
+          "1/2 covered": {
+            "mae": 23.110332294911736,
+            "pixels": 8988
+          },
+          "1/3 revealed": {
+            "mae": 14.632268323470107,
+            "pixels": 61001
+          },
+          "1/3 covered": {
+            "mae": 28.156890317396545,
+            "pixels": 4978
+          },
+          "2/3 revealed": {
+            "mae": 10.092790479346146,
+            "pixels": 72432
+          },
+          "2/3 covered": {
+            "mae": 13.234485429373608,
+            "pixels": 17215
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 22.636,
+            "psnr_worst": 21.046,
+            "errgrad": 14.3325,
+            "blk": -0.02991,
+            "severe4_pct": 0.36508,
+            "severe4_max": 1.1,
+            "badblk_pct": 3.0071,
+            "badblk_max": 4.0043,
+            "temporal": 11.8485,
+            "lineflk": 19.3865,
+            "sharpflk_pct": 13.514
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 22.204,
+            "psnr_worst": 20.666,
+            "errgrad": 14.6856,
+            "blk": -0.01282,
+            "severe4_pct": 0.54286,
+            "severe4_max": 0.87778,
+            "badblk_pct": 3.5869,
+            "badblk_max": 4.0043,
+            "temporal": 10.6565,
+            "lineflk": 16.2522,
+            "sharpflk_pct": 20.18
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 11.840072009666516,
+            "pixels": 68139
+          },
+          "1/2 covered": {
+            "mae": 20.409404085579595,
+            "pixels": 8273
+          },
+          "1/3 revealed": {
+            "mae": 11.951284105577068,
+            "pixels": 59912
+          },
+          "1/3 covered": {
+            "mae": 33.25619890095162,
+            "pixels": 4974
+          },
+          "2/3 revealed": {
+            "mae": 9.46342984656752,
+            "pixels": 72149
+          },
+          "2/3 covered": {
+            "mae": 15.966595550137153,
+            "pixels": 16405
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard_reversal-variable": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 20.631,
+            "psnr_worst": 13.548,
+            "errgrad": 17.1711,
+            "blk": -0.02931,
+            "severe4_pct": 4.54365,
+            "severe4_max": 23.56667,
+            "badblk_pct": 3.498,
+            "badblk_max": 4.816,
+            "temporal": 17.2047,
+            "lineflk": 23.3853,
+            "sharpflk_pct": 11.594
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 20.231,
+            "psnr_worst": 13.721,
+            "errgrad": 17.6566,
+            "blk": -0.04693,
+            "severe4_pct": 4.98889,
+            "severe4_max": 23.26667,
+            "badblk_pct": 3.1385,
+            "badblk_max": 4.3831,
+            "temporal": 16.7799,
+            "lineflk": 21.635,
+            "sharpflk_pct": 16.997
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 20.167980809032922,
+            "pixels": 66837
+          },
+          "1/2 covered": {
+            "mae": 21.265661252900234,
+            "pixels": 6896
+          },
+          "1/3 revealed": {
+            "mae": 22.856626338478655,
+            "pixels": 59925
+          },
+          "1/3 covered": {
+            "mae": 29.773200872304336,
+            "pixels": 4127
+          },
+          "2/3 revealed": {
+            "mae": 18.026350347471844,
+            "pixels": 69550
+          },
+          "2/3 covered": {
+            "mae": 16.368811225840613,
+            "pixels": 11331
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 21.526,
+            "psnr_worst": 17.586,
+            "errgrad": 15.6399,
+            "blk": -0.03344,
+            "severe4_pct": 1.83889,
+            "severe4_max": 7.23333,
+            "badblk_pct": 3.525,
+            "badblk_max": 4.7619,
+            "temporal": 13.7452,
+            "lineflk": 20.5733,
+            "sharpflk_pct": 13.423
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 21.116,
+            "psnr_worst": 17.156,
+            "errgrad": 16.0751,
+            "blk": -0.05413,
+            "severe4_pct": 2.09206,
+            "severe4_max": 9.06667,
+            "badblk_pct": 3.154,
+            "badblk_max": 4.4372,
+            "temporal": 12.6862,
+            "lineflk": 18.1526,
+            "sharpflk_pct": 19.447
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 12.121150772509324,
+            "pixels": 65695
+          },
+          "1/2 covered": {
+            "mae": 16.98590579134213,
+            "pixels": 6291
+          },
+          "1/3 revealed": {
+            "mae": 15.606513222331047,
+            "pixels": 61260
+          },
+          "1/3 covered": {
+            "mae": 26.577976523197318,
+            "pixels": 3578
+          },
+          "2/3 revealed": {
+            "mae": 10.697700007789981,
+            "pixels": 68464
+          },
+          "2/3 covered": {
+            "mae": 13.758463985457851,
+            "pixels": 13203
+          }
+        }
+      },
+      "matching_images": 29
+    }
+  },
+  "curved": {
+    "h_courtyard-regular": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 25.152,
+            "psnr_worst": 22.239,
+            "errgrad": 10.8393,
+            "blk": -0.03167,
+            "severe4_pct": 0.45159,
+            "severe4_max": 1.68889,
+            "badblk_pct": 4.2208,
+            "badblk_max": 6.0065,
+            "temporal": 7.8512,
+            "lineflk": 13.3885,
+            "sharpflk_pct": 13.553
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 25.219,
+            "psnr_worst": 22.635,
+            "errgrad": 10.564,
+            "blk": -0.01476,
+            "severe4_pct": 0.36667,
+            "severe4_max": 1.21111,
+            "badblk_pct": 3.8343,
+            "badblk_max": 4.9242,
+            "temporal": 6.5046,
+            "lineflk": 10.5972,
+            "sharpflk_pct": 20.377
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 6.331481046026658,
+            "pixels": 80801
+          },
+          "1/2 covered": {
+            "mae": 11.239742285520515,
+            "pixels": 983
+          },
+          "1/3 revealed": {
+            "mae": 8.50619844976647,
+            "pixels": 80504
+          },
+          "1/3 covered": {
+            "mae": 12.26027397260274,
+            "pixels": 730
+          },
+          "2/3 revealed": {
+            "mae": 5.9055453465379095,
+            "pixels": 81083
+          },
+          "2/3 covered": {
+            "mae": 9.55759510508114,
+            "pixels": 1253
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 25.365,
+            "psnr_worst": 23.285,
+            "errgrad": 10.5391,
+            "blk": -0.03225,
+            "severe4_pct": 0.41984,
+            "severe4_max": 1.66667,
+            "badblk_pct": 4.2015,
+            "badblk_max": 5.1407,
+            "temporal": 7.4999,
+            "lineflk": 12.9129,
+            "sharpflk_pct": 13.317
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 25.26,
+            "psnr_worst": 24.042,
+            "errgrad": 10.2089,
+            "blk": -0.01316,
+            "severe4_pct": 0.46349,
+            "severe4_max": 1.07778,
+            "badblk_pct": 4.043,
+            "badblk_max": 4.6537,
+            "temporal": 6.2119,
+            "lineflk": 10.2231,
+            "sharpflk_pct": 20.277
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.495888147601106,
+            "pixels": 79891
+          },
+          "1/2 covered": {
+            "mae": 10.865023474178404,
+            "pixels": 1136
+          },
+          "1/3 revealed": {
+            "mae": 7.441943708318157,
+            "pixels": 79621
+          },
+          "1/3 covered": {
+            "mae": 13.149882903981265,
+            "pixels": 854
+          },
+          "2/3 revealed": {
+            "mae": 5.303162640580289,
+            "pixels": 80144
+          },
+          "2/3 covered": {
+            "mae": 8.948127471505002,
+            "pixels": 1433
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard-variable": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 24.683,
+            "psnr_worst": 22.371,
+            "errgrad": 11.4101,
+            "blk": -0.02824,
+            "severe4_pct": 0.62619,
+            "severe4_max": 1.75556,
+            "badblk_pct": 4.2826,
+            "badblk_max": 6.0065,
+            "temporal": 8.3382,
+            "lineflk": 13.7482,
+            "sharpflk_pct": 14.249
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 24.604,
+            "psnr_worst": 22.65,
+            "errgrad": 11.1449,
+            "blk": -0.02368,
+            "severe4_pct": 0.7,
+            "severe4_max": 1.5,
+            "badblk_pct": 3.8497,
+            "badblk_max": 5.2489,
+            "temporal": 6.8797,
+            "lineflk": 10.9178,
+            "sharpflk_pct": 20.378
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 6.079919209188698,
+            "pixels": 79547
+          },
+          "1/2 covered": {
+            "mae": 9.313621653427479,
+            "pixels": 1133
+          },
+          "1/3 revealed": {
+            "mae": 7.948309251961874,
+            "pixels": 79176
+          },
+          "1/3 covered": {
+            "mae": 11.053815261044177,
+            "pixels": 830
+          },
+          "2/3 revealed": {
+            "mae": 5.5544191286930396,
+            "pixels": 79880
+          },
+          "2/3 covered": {
+            "mae": 10.279184247538678,
+            "pixels": 1896
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 24.749,
+            "psnr_worst": 22.176,
+            "errgrad": 11.1514,
+            "blk": -0.02575,
+            "severe4_pct": 0.71429,
+            "severe4_max": 2.16667,
+            "badblk_pct": 4.0855,
+            "badblk_max": 6.0606,
+            "temporal": 8.2376,
+            "lineflk": 13.5634,
+            "sharpflk_pct": 14.281
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 24.746,
+            "psnr_worst": 22.737,
+            "errgrad": 10.757,
+            "blk": -0.0257,
+            "severe4_pct": 0.70317,
+            "severe4_max": 1.55556,
+            "badblk_pct": 4.1589,
+            "badblk_max": 5.5736,
+            "temporal": 6.8294,
+            "lineflk": 10.8187,
+            "sharpflk_pct": 20.591
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.563156741145679,
+            "pixels": 77561
+          },
+          "1/2 covered": {
+            "mae": 8.228789072760703,
+            "pixels": 1269
+          },
+          "1/3 revealed": {
+            "mae": 7.339514049845048,
+            "pixels": 76798
+          },
+          "1/3 covered": {
+            "mae": 11.35576923076923,
+            "pixels": 936
+          },
+          "2/3 revealed": {
+            "mae": 4.786118531456557,
+            "pixels": 77864
+          },
+          "2/3 covered": {
+            "mae": 7.710569105691057,
+            "pixels": 1640
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard_reversal-regular": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 24.468,
+            "psnr_worst": 22.435,
+            "errgrad": 11.767,
+            "blk": -0.03314,
+            "severe4_pct": 0.33651,
+            "severe4_max": 1.28889,
+            "badblk_pct": 3.5792,
+            "badblk_max": 4.4913,
+            "temporal": 8.8462,
+            "lineflk": 14.9967,
+            "sharpflk_pct": 13.178
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 23.935,
+            "psnr_worst": 22.188,
+            "errgrad": 12.1106,
+            "blk": -0.01642,
+            "severe4_pct": 0.45079,
+            "severe4_max": 0.97778,
+            "badblk_pct": 4.0121,
+            "badblk_max": 4.3831,
+            "temporal": 7.8337,
+            "lineflk": 12.7143,
+            "sharpflk_pct": 19.232
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 8.745235030062826,
+            "pixels": 69133
+          },
+          "1/2 covered": {
+            "mae": 5.993472778519507,
+            "pixels": 8988
+          },
+          "1/3 revealed": {
+            "mae": 11.02986289842243,
+            "pixels": 61001
+          },
+          "1/3 covered": {
+            "mae": 3.3977501004419444,
+            "pixels": 4978
+          },
+          "2/3 revealed": {
+            "mae": 7.473552205286798,
+            "pixels": 72432
+          },
+          "2/3 covered": {
+            "mae": 7.430651563558912,
+            "pixels": 17215
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 24.572,
+            "psnr_worst": 22.358,
+            "errgrad": 11.692,
+            "blk": -0.03177,
+            "severe4_pct": 0.32143,
+            "severe4_max": 1.02222,
+            "badblk_pct": 3.7028,
+            "badblk_max": 5.3571,
+            "temporal": 8.7983,
+            "lineflk": 14.9126,
+            "sharpflk_pct": 12.783
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 24.159,
+            "psnr_worst": 21.689,
+            "errgrad": 11.9842,
+            "blk": -0.02359,
+            "severe4_pct": 0.36825,
+            "severe4_max": 0.86667,
+            "badblk_pct": 3.7106,
+            "badblk_max": 4.6537,
+            "temporal": 7.752,
+            "lineflk": 12.497,
+            "sharpflk_pct": 18.988
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 9.787635079274228,
+            "pixels": 68139
+          },
+          "1/2 covered": {
+            "mae": 5.596236754099682,
+            "pixels": 8273
+          },
+          "1/3 revealed": {
+            "mae": 10.15902212133351,
+            "pixels": 59912
+          },
+          "1/3 covered": {
+            "mae": 11.086181477013804,
+            "pixels": 4974
+          },
+          "2/3 revealed": {
+            "mae": 7.64412997177138,
+            "pixels": 72149
+          },
+          "2/3 covered": {
+            "mae": 7.742558163161638,
+            "pixels": 16405
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard_reversal-variable": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 22.362,
+            "psnr_worst": 13.548,
+            "errgrad": 14.811,
+            "blk": -0.031,
+            "severe4_pct": 3.75556,
+            "severe4_max": 23.56667,
+            "badblk_pct": 3.9657,
+            "badblk_max": 6.5476,
+            "temporal": 13.9135,
+            "lineflk": 19.34,
+            "sharpflk_pct": 10.581
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 22.082,
+            "psnr_worst": 13.721,
+            "errgrad": 15.1067,
+            "blk": -0.04606,
+            "severe4_pct": 3.94127,
+            "severe4_max": 23.26667,
+            "badblk_pct": 3.7338,
+            "badblk_max": 4.816,
+            "temporal": 13.3105,
+            "lineflk": 17.4998,
+            "sharpflk_pct": 15.135
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 18.11930018801961,
+            "pixels": 66837
+          },
+          "1/2 covered": {
+            "mae": 10.41864849187935,
+            "pixels": 6896
+          },
+          "1/3 revealed": {
+            "mae": 20.49321095814212,
+            "pixels": 59925
+          },
+          "1/3 covered": {
+            "mae": 13.269606655359018,
+            "pixels": 4127
+          },
+          "2/3 revealed": {
+            "mae": 16.317244188832973,
+            "pixels": 69550
+          },
+          "2/3 covered": {
+            "mae": 11.385991233489248,
+            "pixels": 11331
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 22.793,
+            "psnr_worst": 19.621,
+            "errgrad": 14.0181,
+            "blk": -0.03674,
+            "severe4_pct": 1.07857,
+            "severe4_max": 4.25556,
+            "badblk_pct": 3.8033,
+            "badblk_max": 6.4394,
+            "temporal": 11.2844,
+            "lineflk": 17.5971,
+            "sharpflk_pct": 12.455
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 22.539,
+            "psnr_worst": 19.696,
+            "errgrad": 14.3021,
+            "blk": -0.04059,
+            "severe4_pct": 1.0873,
+            "severe4_max": 3.37778,
+            "badblk_pct": 3.6024,
+            "badblk_max": 4.816,
+            "temporal": 10.0058,
+            "lineflk": 14.9489,
+            "sharpflk_pct": 17.521
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 10.407834183220437,
+            "pixels": 65695
+          },
+          "1/2 covered": {
+            "mae": 8.196206220526678,
+            "pixels": 6291
+          },
+          "1/3 revealed": {
+            "mae": 12.301148111872891,
+            "pixels": 61260
+          },
+          "1/3 covered": {
+            "mae": 7.526923793553196,
+            "pixels": 3578
+          },
+          "2/3 revealed": {
+            "mae": 9.018919918984187,
+            "pixels": 68464
+          },
+          "2/3 covered": {
+            "mae": 5.177535408619253,
+            "pixels": 13203
+          }
+        }
+      },
+      "matching_images": 29
+    }
+  },
+  "production": {
+    "SNAP": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 25.611,
+            "psnr_worst": 21.057,
+            "errgrad": 10.4178,
+            "blk": -0.03453,
+            "severe4_pct": 0.20794,
+            "severe4_max": 1.12222,
+            "badblk_pct": 4.0121,
+            "badblk_max": 6.6017,
+            "temporal": 7.5561,
+            "lineflk": 13.434,
+            "sharpflk_pct": 10.007
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 25.333,
+            "psnr_worst": 20.345,
+            "errgrad": 10.4863,
+            "blk": -0.03714,
+            "severe4_pct": 0.30952,
+            "severe4_max": 1.28889,
+            "badblk_pct": 3.6797,
+            "badblk_max": 4.6537,
+            "temporal": 6.6557,
+            "lineflk": 11.5323,
+            "sharpflk_pct": 15.671
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 10.077115282295813,
+            "pixels": 49493
+          },
+          "1/2 covered": {
+            "mae": 10.714475079533404,
+            "pixels": 3772
+          },
+          "1/3 revealed": {
+            "mae": 13.773657458219493,
+            "pixels": 42823
+          },
+          "1/3 covered": {
+            "mae": 13.177168576104746,
+            "pixels": 2444
+          },
+          "2/3 revealed": {
+            "mae": 7.323659529286852,
+            "pixels": 50859
+          },
+          "2/3 covered": {
+            "mae": 19.958900253354603,
+            "pixels": 10657
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 25.039,
+            "psnr_worst": 19.797,
+            "errgrad": 11.3136,
+            "blk": -0.03354,
+            "severe4_pct": 0.56984,
+            "severe4_max": 2.76667,
+            "badblk_pct": 4.0623,
+            "badblk_max": 6.9805,
+            "temporal": 8.4044,
+            "lineflk": 14.398,
+            "sharpflk_pct": 8.977
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 24.773,
+            "psnr_worst": 19.307,
+            "errgrad": 11.3719,
+            "blk": -0.04338,
+            "severe4_pct": 0.81587,
+            "severe4_max": 3.94444,
+            "badblk_pct": 3.8884,
+            "badblk_max": 4.9784,
+            "temporal": 7.6271,
+            "lineflk": 12.4963,
+            "sharpflk_pct": 13.796
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 9.325808232623766,
+            "pixels": 48903
+          },
+          "1/2 covered": {
+            "mae": 33.42680667078444,
+            "pixels": 3238
+          },
+          "1/3 revealed": {
+            "mae": 11.793993050597363,
+            "pixels": 42018
+          },
+          "1/3 covered": {
+            "mae": 28.491274928774928,
+            "pixels": 1872
+          },
+          "2/3 revealed": {
+            "mae": 8.278957881255268,
+            "pixels": 50231
+          },
+          "2/3 covered": {
+            "mae": 14.181368591037545,
+            "pixels": 9908
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "STOP": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 36.152,
+            "psnr_worst": 27.217,
+            "errgrad": 3.6074,
+            "blk": -0.00776,
+            "severe4_pct": 0.01746,
+            "severe4_max": 0.12222,
+            "badblk_pct": 1.8746,
+            "badblk_max": 5.5195,
+            "temporal": 2.4103,
+            "lineflk": 4.563,
+            "sharpflk_pct": 5.097
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 35.717,
+            "psnr_worst": 27.27,
+            "errgrad": 3.7569,
+            "blk": -0.01337,
+            "severe4_pct": 0.01587,
+            "severe4_max": 0.07778,
+            "badblk_pct": 1.8244,
+            "badblk_max": 3.842,
+            "temporal": 2.2326,
+            "lineflk": 4.2013,
+            "sharpflk_pct": 8.429
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.699579282951814,
+            "pixels": 25512
+          },
+          "1/2 covered": {
+            "mae": 5.1080531340805315,
+            "pixels": 8030
+          },
+          "1/3 revealed": {
+            "mae": 7.432151354670351,
+            "pixels": 17372
+          },
+          "1/3 covered": {
+            "mae": 3.8578976640711904,
+            "pixels": 3596
+          },
+          "2/3 revealed": {
+            "mae": 4.911750107541113,
+            "pixels": 30221
+          },
+          "2/3 covered": {
+            "mae": 4.400435052827843,
+            "pixels": 16090
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 36.229,
+            "psnr_worst": 23.507,
+            "errgrad": 4.2051,
+            "blk": -0.00746,
+            "severe4_pct": 0.02778,
+            "severe4_max": 0.31111,
+            "badblk_pct": 1.6195,
+            "badblk_max": 5.4113,
+            "temporal": 2.8334,
+            "lineflk": 4.9526,
+            "sharpflk_pct": 4.178
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 35.68,
+            "psnr_worst": 22.906,
+            "errgrad": 4.5106,
+            "blk": -0.01342,
+            "severe4_pct": 0.01905,
+            "severe4_max": 0.07778,
+            "badblk_pct": 1.9326,
+            "badblk_max": 4.4913,
+            "temporal": 2.5207,
+            "lineflk": 4.4266,
+            "sharpflk_pct": 6.907
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 9.373775744889786,
+            "pixels": 25798
+          },
+          "1/2 covered": {
+            "mae": 9.286603575184017,
+            "pixels": 7925
+          },
+          "1/3 revealed": {
+            "mae": 10.860844890442365,
+            "pixels": 17738
+          },
+          "1/3 covered": {
+            "mae": 2.4479684908789388,
+            "pixels": 3216
+          },
+          "2/3 revealed": {
+            "mae": 6.029747728676017,
+            "pixels": 30232
+          },
+          "2/3 covered": {
+            "mae": 5.550887021475257,
+            "pixels": 16065
+          }
+        }
+      },
+      "matching_images": 29
+    }
+  },
+  "consistent": {
+    "SNAP": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 26.469,
+            "psnr_worst": 23.984,
+            "errgrad": 9.3592,
+            "blk": -0.03079,
+            "severe4_pct": 0.14762,
+            "severe4_max": 1.11111,
+            "badblk_pct": 4.1126,
+            "badblk_max": 6.6017,
+            "temporal": 6.3198,
+            "lineflk": 11.7314,
+            "sharpflk_pct": 10.188
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 26.29,
+            "psnr_worst": 24.169,
+            "errgrad": 9.1407,
+            "blk": -0.03376,
+            "severe4_pct": 0.20794,
+            "severe4_max": 1.28889,
+            "badblk_pct": 3.8575,
+            "badblk_max": 4.6537,
+            "temporal": 5.3872,
+            "lineflk": 9.7868,
+            "sharpflk_pct": 15.704
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 6.952410778628628,
+            "pixels": 49493
+          },
+          "1/2 covered": {
+            "mae": 10.705638034641217,
+            "pixels": 3772
+          },
+          "1/3 revealed": {
+            "mae": 9.278596392904126,
+            "pixels": 42823
+          },
+          "1/3 covered": {
+            "mae": 13.12861429350791,
+            "pixels": 2444
+          },
+          "2/3 revealed": {
+            "mae": 6.157101004738591,
+            "pixels": 50859
+          },
+          "2/3 covered": {
+            "mae": 6.90910512652091,
+            "pixels": 10657
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 26.319,
+            "psnr_worst": 24.133,
+            "errgrad": 9.5163,
+            "blk": -0.03215,
+            "severe4_pct": 0.16032,
+            "severe4_max": 0.97778,
+            "badblk_pct": 4.1551,
+            "badblk_max": 7.0346,
+            "temporal": 6.4054,
+            "lineflk": 11.8604,
+            "sharpflk_pct": 9.978
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 26.164,
+            "psnr_worst": 24.005,
+            "errgrad": 9.2621,
+            "blk": -0.03207,
+            "severe4_pct": 0.23651,
+            "severe4_max": 1.37778,
+            "badblk_pct": 4.0584,
+            "badblk_max": 5.5195,
+            "temporal": 5.4335,
+            "lineflk": 9.8133,
+            "sharpflk_pct": 15.307
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 7.11093388953643,
+            "pixels": 48903
+          },
+          "1/2 covered": {
+            "mae": 8.146489602635372,
+            "pixels": 3238
+          },
+          "1/3 revealed": {
+            "mae": 9.802505275516841,
+            "pixels": 42018
+          },
+          "1/3 covered": {
+            "mae": 12.163639601139602,
+            "pixels": 1872
+          },
+          "2/3 revealed": {
+            "mae": 6.039822685858002,
+            "pixels": 50231
+          },
+          "2/3 covered": {
+            "mae": 6.0478064863410035,
+            "pixels": 9908
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "STOP": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 36.67,
+            "psnr_worst": 27.217,
+            "errgrad": 3.5877,
+            "blk": -0.00734,
+            "severe4_pct": 0.01746,
+            "severe4_max": 0.12222,
+            "badblk_pct": 1.8089,
+            "badblk_max": 5.5195,
+            "temporal": 2.3979,
+            "lineflk": 4.5399,
+            "sharpflk_pct": 5.107
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 36.271,
+            "psnr_worst": 27.27,
+            "errgrad": 3.7317,
+            "blk": -0.01297,
+            "severe4_pct": 0.01587,
+            "severe4_max": 0.07778,
+            "badblk_pct": 1.7471,
+            "badblk_max": 3.6797,
+            "temporal": 2.2148,
+            "lineflk": 4.1726,
+            "sharpflk_pct": 8.453
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.682959652973764,
+            "pixels": 25512
+          },
+          "1/2 covered": {
+            "mae": 5.028974678289747,
+            "pixels": 8030
+          },
+          "1/3 revealed": {
+            "mae": 7.4197367411159725,
+            "pixels": 17372
+          },
+          "1/3 covered": {
+            "mae": 3.7579718205413424,
+            "pixels": 3596
+          },
+          "2/3 revealed": {
+            "mae": 4.907249925548459,
+            "pixels": 30221
+          },
+          "2/3 covered": {
+            "mae": 4.377190801740212,
+            "pixels": 16090
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 36.731,
+            "psnr_worst": 26.681,
+            "errgrad": 3.6135,
+            "blk": -0.00813,
+            "severe4_pct": 0.02698,
+            "severe4_max": 0.32222,
+            "badblk_pct": 1.7355,
+            "badblk_max": 5.4113,
+            "temporal": 2.1918,
+            "lineflk": 4.1268,
+            "sharpflk_pct": 4.273
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 36.282,
+            "psnr_worst": 27.117,
+            "errgrad": 3.7544,
+            "blk": -0.01279,
+            "severe4_pct": 0.02063,
+            "severe4_max": 0.08889,
+            "badblk_pct": 1.7625,
+            "badblk_max": 3.842,
+            "temporal": 1.86,
+            "lineflk": 3.5052,
+            "sharpflk_pct": 6.913
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.919942114375791,
+            "pixels": 25798
+          },
+          "1/2 covered": {
+            "mae": 4.773333333333333,
+            "pixels": 7925
+          },
+          "1/3 revealed": {
+            "mae": 6.312662081407148,
+            "pixels": 17738
+          },
+          "1/3 covered": {
+            "mae": 2.421849087893864,
+            "pixels": 3216
+          },
+          "2/3 revealed": {
+            "mae": 4.902696921584194,
+            "pixels": 30232
+          },
+          "2/3 covered": {
+            "mae": 2.187758066189439,
+            "pixels": 16065
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard-regular": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 25.324,
+            "psnr_worst": 23.235,
+            "errgrad": 10.5128,
+            "blk": -0.03094,
+            "severe4_pct": 0.45476,
+            "severe4_max": 1.73333,
+            "badblk_pct": 4.244,
+            "badblk_max": 6.0065,
+            "temporal": 7.5023,
+            "lineflk": 12.9029,
+            "sharpflk_pct": 13.685
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 25.423,
+            "psnr_worst": 24.034,
+            "errgrad": 10.1148,
+            "blk": -0.01187,
+            "severe4_pct": 0.36667,
+            "severe4_max": 1.21111,
+            "badblk_pct": 4.043,
+            "badblk_max": 5.1948,
+            "temporal": 6.121,
+            "lineflk": 10.116,
+            "sharpflk_pct": 20.454
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 6.0553128467882,
+            "pixels": 80801
+          },
+          "1/2 covered": {
+            "mae": 11.253306205493388,
+            "pixels": 983
+          },
+          "1/3 revealed": {
+            "mae": 8.455294146874689,
+            "pixels": 80504
+          },
+          "1/3 covered": {
+            "mae": 12.296803652968036,
+            "pixels": 730
+          },
+          "2/3 revealed": {
+            "mae": 5.689778786346501,
+            "pixels": 81083
+          },
+          "2/3 covered": {
+            "mae": 9.580207501995211,
+            "pixels": 1253
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 25.401,
+            "psnr_worst": 23.285,
+            "errgrad": 10.4938,
+            "blk": -0.03046,
+            "severe4_pct": 0.42063,
+            "severe4_max": 1.66667,
+            "badblk_pct": 4.1357,
+            "badblk_max": 5.1407,
+            "temporal": 7.4377,
+            "lineflk": 12.832,
+            "sharpflk_pct": 13.457
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 25.304,
+            "psnr_worst": 24.042,
+            "errgrad": 10.1304,
+            "blk": -0.01219,
+            "severe4_pct": 0.46349,
+            "severe4_max": 1.07778,
+            "badblk_pct": 4.2517,
+            "badblk_max": 4.7619,
+            "temporal": 6.1438,
+            "lineflk": 10.1322,
+            "sharpflk_pct": 20.212
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.462684574399286,
+            "pixels": 79891
+          },
+          "1/2 covered": {
+            "mae": 10.825704225352112,
+            "pixels": 1136
+          },
+          "1/3 revealed": {
+            "mae": 7.349857449667801,
+            "pixels": 79621
+          },
+          "1/3 covered": {
+            "mae": 13.126073380171741,
+            "pixels": 854
+          },
+          "2/3 revealed": {
+            "mae": 5.263658747587676,
+            "pixels": 80144
+          },
+          "2/3 covered": {
+            "mae": 8.923470574552221,
+            "pixels": 1433
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard-variable": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 24.789,
+            "psnr_worst": 22.362,
+            "errgrad": 11.1689,
+            "blk": -0.02381,
+            "severe4_pct": 0.63333,
+            "severe4_max": 1.77778,
+            "badblk_pct": 4.3174,
+            "badblk_max": 6.0065,
+            "temporal": 8.1619,
+            "lineflk": 13.5312,
+            "sharpflk_pct": 14.358
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 24.722,
+            "psnr_worst": 22.693,
+            "errgrad": 10.8108,
+            "blk": -0.02312,
+            "severe4_pct": 0.70159,
+            "severe4_max": 1.48889,
+            "badblk_pct": 4.2053,
+            "badblk_max": 5.6818,
+            "temporal": 6.752,
+            "lineflk": 10.7615,
+            "sharpflk_pct": 20.399
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.857270963497471,
+            "pixels": 79547
+          },
+          "1/2 covered": {
+            "mae": 9.33039129155634,
+            "pixels": 1133
+          },
+          "1/3 revealed": {
+            "mae": 7.837446532619312,
+            "pixels": 79176
+          },
+          "1/3 covered": {
+            "mae": 11.080321285140561,
+            "pixels": 830
+          },
+          "2/3 revealed": {
+            "mae": 5.365873810716074,
+            "pixels": 79880
+          },
+          "2/3 covered": {
+            "mae": 10.995253164556962,
+            "pixels": 1896
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard",
+            "mode": 3,
+            "psnr": 24.758,
+            "psnr_worst": 22.182,
+            "errgrad": 11.1343,
+            "blk": -0.02479,
+            "severe4_pct": 0.71667,
+            "severe4_max": 2.16667,
+            "badblk_pct": 4.0546,
+            "badblk_max": 6.2229,
+            "temporal": 8.2165,
+            "lineflk": 13.5352,
+            "sharpflk_pct": 14.314
+          },
+          {
+            "scene": "h_courtyard",
+            "mode": 2,
+            "psnr": 24.748,
+            "psnr_worst": 22.744,
+            "errgrad": 10.7445,
+            "blk": -0.02679,
+            "severe4_pct": 0.70635,
+            "severe4_max": 1.57778,
+            "badblk_pct": 4.1589,
+            "badblk_max": 5.5736,
+            "temporal": 6.816,
+            "lineflk": 10.81,
+            "sharpflk_pct": 20.644
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 5.545733895471521,
+            "pixels": 77561
+          },
+          "1/2 covered": {
+            "mae": 8.227738376674546,
+            "pixels": 1269
+          },
+          "1/3 revealed": {
+            "mae": 7.318068178858825,
+            "pixels": 76798
+          },
+          "1/3 covered": {
+            "mae": 11.357905982905983,
+            "pixels": 936
+          },
+          "2/3 revealed": {
+            "mae": 4.767025411829172,
+            "pixels": 77864
+          },
+          "2/3 covered": {
+            "mae": 7.70020325203252,
+            "pixels": 1640
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard_reversal-regular": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 23.731,
+            "psnr_worst": 21.31,
+            "errgrad": 12.6805,
+            "blk": -0.03484,
+            "severe4_pct": 0.35794,
+            "severe4_max": 1.28889,
+            "badblk_pct": 3.4014,
+            "badblk_max": 4.4913,
+            "temporal": 9.9086,
+            "lineflk": 16.5762,
+            "sharpflk_pct": 13.392
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 23.195,
+            "psnr_worst": 20.991,
+            "errgrad": 13.0502,
+            "blk": -0.01995,
+            "severe4_pct": 0.51111,
+            "severe4_max": 1.02222,
+            "badblk_pct": 4.0971,
+            "badblk_max": 4.816,
+            "temporal": 8.8695,
+            "lineflk": 14.1042,
+            "sharpflk_pct": 19.487
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 11.16041543112551,
+            "pixels": 69133
+          },
+          "1/2 covered": {
+            "mae": 22.66499777481086,
+            "pixels": 8988
+          },
+          "1/3 revealed": {
+            "mae": 14.083594258017628,
+            "pixels": 61001
+          },
+          "1/3 covered": {
+            "mae": 27.012722646310433,
+            "pixels": 4978
+          },
+          "2/3 revealed": {
+            "mae": 9.260280907149694,
+            "pixels": 72432
+          },
+          "2/3 covered": {
+            "mae": 13.103359473327524,
+            "pixels": 17215
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 24.264,
+            "psnr_worst": 22.358,
+            "errgrad": 12.1042,
+            "blk": -0.03166,
+            "severe4_pct": 0.3246,
+            "severe4_max": 1.02222,
+            "badblk_pct": 3.6062,
+            "badblk_max": 5.3571,
+            "temporal": 9.2792,
+            "lineflk": 15.5223,
+            "sharpflk_pct": 12.937
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 23.828,
+            "psnr_worst": 21.688,
+            "errgrad": 12.4601,
+            "blk": -0.02205,
+            "severe4_pct": 0.36825,
+            "severe4_max": 0.86667,
+            "badblk_pct": 3.7183,
+            "badblk_max": 4.6537,
+            "temporal": 8.219,
+            "lineflk": 13.058,
+            "sharpflk_pct": 19.223
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 10.153578224903017,
+            "pixels": 68139
+          },
+          "1/2 covered": {
+            "mae": 5.614247149361376,
+            "pixels": 8273
+          },
+          "1/3 revealed": {
+            "mae": 10.431449459206837,
+            "pixels": 59912
+          },
+          "1/3 covered": {
+            "mae": 11.126122503685833,
+            "pixels": 4974
+          },
+          "2/3 revealed": {
+            "mae": 7.905186951078093,
+            "pixels": 72149
+          },
+          "2/3 covered": {
+            "mae": 7.7176470588235295,
+            "pixels": 16405
+          }
+        }
+      },
+      "matching_images": 29
+    },
+    "h_courtyard_reversal-variable": {
+      "forward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 22.004,
+            "psnr_worst": 13.548,
+            "errgrad": 15.2732,
+            "blk": -0.03025,
+            "severe4_pct": 3.76429,
+            "severe4_max": 23.56667,
+            "badblk_pct": 3.9464,
+            "badblk_max": 6.5476,
+            "temporal": 14.4461,
+            "lineflk": 20.0095,
+            "sharpflk_pct": 10.743
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 21.661,
+            "psnr_worst": 13.721,
+            "errgrad": 15.6867,
+            "blk": -0.04683,
+            "severe4_pct": 3.94762,
+            "severe4_max": 23.26667,
+            "badblk_pct": 3.5482,
+            "badblk_max": 4.816,
+            "temporal": 13.8525,
+            "lineflk": 18.2208,
+            "sharpflk_pct": 15.372
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 19.128337098712787,
+            "pixels": 66837
+          },
+          "1/2 covered": {
+            "mae": 16.73317865429234,
+            "pixels": 6896
+          },
+          "1/3 revealed": {
+            "mae": 21.29344458350716,
+            "pixels": 59925
+          },
+          "1/3 covered": {
+            "mae": 19.03497294241176,
+            "pixels": 4127
+          },
+          "2/3 revealed": {
+            "mae": 16.93883537023724,
+            "pixels": 69550
+          },
+          "2/3 covered": {
+            "mae": 15.157032330185626,
+            "pixels": 11331
+          }
+        }
+      },
+      "backward": {
+        "hard": [
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 3,
+            "psnr": 22.249,
+            "psnr_worst": 19.622,
+            "errgrad": 14.7536,
+            "blk": -0.03185,
+            "severe4_pct": 1.12222,
+            "severe4_max": 4.25556,
+            "badblk_pct": 3.8381,
+            "badblk_max": 6.4394,
+            "temporal": 12.2257,
+            "lineflk": 18.8599,
+            "sharpflk_pct": 12.529
+          },
+          {
+            "scene": "h_courtyard_reversal",
+            "mode": 2,
+            "psnr": 21.927,
+            "psnr_worst": 19.697,
+            "errgrad": 15.1855,
+            "blk": -0.04093,
+            "severe4_pct": 1.14286,
+            "severe4_max": 3.37778,
+            "badblk_pct": 3.4864,
+            "badblk_max": 4.816,
+            "temporal": 10.9294,
+            "lineflk": 16.2301,
+            "sharpflk_pct": 17.663
+          }
+        ],
+        "sides": {
+          "1/2 revealed": {
+            "mae": 10.96876982012837,
+            "pixels": 65695
+          },
+          "1/2 covered": {
+            "mae": 12.388173581306628,
+            "pixels": 6291
+          },
+          "1/3 revealed": {
+            "mae": 14.2347154206116,
+            "pixels": 61260
+          },
+          "1/3 covered": {
+            "mae": 7.563722750139743,
+            "pixels": 3578
+          },
+          "2/3 revealed": {
+            "mae": 9.557689686063721,
+            "pixels": 68464
+          },
+          "2/3 covered": {
+            "mae": 11.884596935040015,
+            "pixels": 13203
+          }
+        }
+      },
+      "matching_images": 29
+    }
+  }
+}

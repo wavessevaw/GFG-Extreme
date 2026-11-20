@@ -1,7 +1,7 @@
-name: Package Courtyard 3 for Decky
+name: Package Courtyard 4 for Decky
 on:
   push:
-    branches: [test/courtyard-3]
+    branches: [test/courtyard-4]
 permissions:
   contents: read
   actions: read
@@ -14,30 +14,32 @@ jobs:
         with:
           github-token: ${{ github.token }}
           repository: wavessevaw/GSF_Kedavra
-          run-id: 44642685697
+          run-id: 44684332061
           name: gamescope-runtime
           path: runtime-build
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
           repository: wavessevaw/GSF_Kedavra
-          run-id: 44642685697
+          run-id: 44684332061
           name: kedavra-deck-bench
           path: bench-build
       - name: Build and verify the installation ZIP
         run: |
-          test "$(cat runtime-build/VERSION)" = kedavra-1.7.0-a253ec0
-          bash scripts/build_release.sh 3.5.0-courtyard.3 "$PWD/runtime-build" "$PWD/out" "$PWD/bench-build"
+          test "$(cat runtime-build/VERSION)" = kedavra-1.7.0-8c4e86c
+          bash scripts/build_release.sh 3.5.0-courtyard.4 "$PWD/runtime-build" "$PWD/out" "$PWD/bench-build"
           cd out
           sha256sum -c SHA256SUMS.txt
           unzip -tq *.zip
           cmp <(unzip -p *.zip GFG-Extreme/runtime/bin/gamescope) ../runtime-build/bin/gamescope
-          cmp <(unzip -p *.zip GFG-Extreme/bench/kfg_warp.spv) ../bench-build/kfg_warp.spv
+          for asset in kfg_warp.spv kfg_select.spv kfg_stats.spv kfg_vktest; do
+            cmp <(unzip -p *.zip "GFG-Extreme/bench/$asset") "../bench-build/$asset"
+          done
           cmp <(unzip -p *.zip GFG-Extreme/bin/kfg_pacing.py) ../tools/kfg_pacing.py
           cmp <(unzip -p *.zip GFG-Extreme/py_modules/gfg_plugin/filter_budget.py) ../py_modules/gfg_plugin/filter_budget.py
           unzip -Z1 *.zip > "$RUNNER_TEMP/manifest.txt"
           if grep -E '(^|/)(__pycache__|tests|sandbox|node_modules|\.git|audit-v3\.0\.0)(/|$)|\.pyc$' "$RUNNER_TEMP/manifest.txt"; then exit 1; fi
       - uses: actions/upload-artifact@v4
         with:
-          name: GFG-Extreme-Courtyard-3
+          name: GFG-Extreme-Courtyard-4
           path: out/
