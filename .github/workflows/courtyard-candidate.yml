@@ -1,7 +1,7 @@
-name: Package Courtyard 4 for Decky
+name: Package the dark-detail Focus test build
 on:
   push:
-    branches: [test/courtyard-4]
+    branches: [test/focus-dark-detail]
 permissions:
   contents: read
   actions: read
@@ -14,32 +14,34 @@ jobs:
         with:
           github-token: ${{ github.token }}
           repository: wavessevaw/GSF_Kedavra
-          run-id: 44684332061
+          run-id: 44756758865
           name: gamescope-runtime
           path: runtime-build
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
           repository: wavessevaw/GSF_Kedavra
-          run-id: 44684332061
+          run-id: 44756758865
           name: kedavra-deck-bench
           path: bench-build
       - name: Build and verify the installation ZIP
         run: |
-          test "$(cat runtime-build/VERSION)" = kedavra-1.7.0-8c4e86c
-          bash scripts/build_release.sh 3.5.0-courtyard.4 "$PWD/runtime-build" "$PWD/out" "$PWD/bench-build"
+          test "$(cat runtime-build/VERSION)" = kedavra-1.7.0-4c496fa
+          bash scripts/build_release.sh 3.5.0-focus.dark.1 "$PWD/runtime-build" "$PWD/out" "$PWD/bench-build"
           cd out
           sha256sum -c SHA256SUMS.txt
           unzip -tq *.zip
           cmp <(unzip -p *.zip GFG-Extreme/runtime/bin/gamescope) ../runtime-build/bin/gamescope
-          for asset in kfg_warp.spv kfg_select.spv kfg_stats.spv kfg_vktest; do
+          for asset in kfg_post.spv kfg_warp.spv kfg_select.spv kfg_stats.spv kfg_vktest; do
             cmp <(unzip -p *.zip "GFG-Extreme/bench/$asset") "../bench-build/$asset"
           done
           cmp <(unzip -p *.zip GFG-Extreme/bin/kfg_pacing.py) ../tools/kfg_pacing.py
           cmp <(unzip -p *.zip GFG-Extreme/py_modules/gfg_plugin/filter_budget.py) ../py_modules/gfg_plugin/filter_budget.py
           unzip -Z1 *.zip > "$RUNNER_TEMP/manifest.txt"
           if grep -E '(^|/)(__pycache__|tests|sandbox|node_modules|\.git|audit-v3\.0\.0)(/|$)|\.pyc$' "$RUNNER_TEMP/manifest.txt"; then exit 1; fi
+      - name: Include offline comparisons beside the installable ZIP
+        run: cp -r docs/focus-dark-detail out/Examples
       - uses: actions/upload-artifact@v4
         with:
-          name: GFG-Extreme-Courtyard-4
+          name: GFG-Extreme-Focus-Dark-Detail
           path: out/
