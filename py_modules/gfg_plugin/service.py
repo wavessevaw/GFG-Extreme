@@ -290,16 +290,16 @@ class Service:
         if game and self.pilot.light_failed and gp.get("class") == "light" and not self.light_dropped:
             self.book.not_light(self.app, refresh, dock)
             self.light_dropped = True
-        # Real frames and watts come before the look (user, 3.0.9): a GPU that cannot carry the
-        # game above x3 sheds the filters, light first, then off.
+        # Reduce optional GPU passes only when they are in use. Keep the selected look.
+        cfg = profile["filters"]
         steps = ladder(refresh)
         above_x3 = steps[2] if len(steps) > 2 else steps[-1]
         budget = self.fbudget.tick(
             app=self.app, active=bool(game and req["multiplier"] and objective != "quality"
-                                      and filters.is_active(profile["filters"])),
+                                      and (cfg["aa"] != "none" or (not cfg["focus"] and cfg["sharpen"] != "none"))),
             gpu_busy=sensors.get("gpu_busy_pct"),
             starved=bool(req["phase"] in ("locked", "fixed") and (0 < req["point"] < above_x3 or not self.pilot.holds)))
-        policy = Policy(req["multiplier"], req["base_fps"], filters.to_post(shed(profile["filters"], budget)),
+        policy = Policy(req["multiplier"], req["base_fps"], filters.to_post(shed(cfg, budget)),
                         self.hud_path, req["auto_floor"], bool(data["engine"]["hdr"]))
         self.coord.want(policy)
         self.last_policy = policy

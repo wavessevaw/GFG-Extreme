@@ -24,9 +24,9 @@ class FilterBudgetTest(unittest.TestCase):
     def test_levels(self):
         self.assertEqual(shed(FULL, 0), FULL)
         light = shed(FULL, 1)
-        self.assertEqual((light["effects"], light["sharpen"], light["aa"]), (["vibrance"], "cas", "none"))
+        self.assertEqual((light["effects"], light["sharpen"], light["aa"]), (FULL["effects"], "cas", "none"))
         off = shed(FULL, 2)
-        self.assertEqual((off["effects"], off["sharpen"], off["aa"]), ([], "none", "none"))
+        self.assertEqual((off["effects"], off["sharpen"], off["aa"]), (FULL["effects"], "none", "none"))
 
     def test_sheds_while_starved_and_comes_back(self):
         c = Clock()
@@ -52,7 +52,7 @@ class FilterBudgetTest(unittest.TestCase):
                 actual = shed(cfg, level)
                 self.assertTrue(actual["focus"])
                 self.assertIn("detail=1", filters.to_post(actual))
-        self.assertEqual(filters.to_post(shed(cfg, 2)), "detail=1")
+        self.assertEqual(filters.to_post(shed(cfg, 2)), "vibrance,clarity,detail=1")
 
     def test_not_starved_keeps_filters(self):
         c = Clock()
@@ -62,23 +62,25 @@ class FilterBudgetTest(unittest.TestCase):
             c.t += 1
         self.assertEqual(b.level, 0)
 
-    def test_focus_is_preserved_by_all_performance_modes_in_service(self):
+    def test_look_reaches_engine_in_all_performance_modes(self):
         from gfg_plugin import filters
         for objective in ("autopilot", "battery", "balanced", "quality"):
             with self.subTest(objective=objective):
                 rig = make_rig(VGame("g", 26.0), objective=objective)
                 rig.settings.data["profiles"]["default"]["filters"] = filters.normalize({
-                    "effects": ["vibrance", "clarity"],
+                    "effects": ["vibrance", "levels_plus", "clarity"], "aa": "smaa",
                     "sharpen": "cas", "sharpness": 0.35, "focus": True,
                 })
                 play(rig, 300)
-                self.assertIn("detail=1", rig.engine.vars["kfg_post"])
+                post = rig.engine.vars["kfg_post"].split(",")
+                for effect in ("vibrance", "levels_plus", "clarity", "detail=1"):
+                    self.assertIn(effect, post)
 
     def test_heavy_game_sheds_in_the_service(self):
         rig = make_rig(VGame("g", 26.0), objective="autopilot")
         rig.settings.data["profiles"]["default"]["filters"] = dict(FULL)
         play(rig, 300)
-        self.assertEqual(rig.engine.vars["kfg_post"], "")
+        self.assertEqual(rig.engine.vars["kfg_post"], "vibrance,clarity")
         quality = make_rig(VGame("g", 26.0), objective="quality")
         quality.settings.data["profiles"]["default"]["filters"] = dict(FULL)
         play(quality, 300)

@@ -1,17 +1,6 @@
-"""Filter budget: in a game the GPU cannot carry, the filters give their GPU time back.
-
-Deck report (3.0.6, Witcher 3): vibrance + DLS + SMAA cost 1.33 ms on each of 90 output frames
-a second, on a GPU already at 99 %, and the game fell to x3.75. The user (3.0.9): in such games
-the filters may be lightened, even switched off.
-
-  starved  frame generation runs, the GPU is busy (>= 90 %) and the game is below x3 or does not
-           hold its point. 20 s of that sheds one level:
-             1 light: no anti-aliasing, no HDR Look or Clarity, DLS becomes CAS
-             2 off:   optional filters off; explicitly enabled Kedavra Focus remains
-  back     a level comes back after 90 s with the GPU under 75 % (the game got lighter), and
-           every level comes back with a new game.
-
-Quality keeps the player's filters: its objective is the picture.
+"""Under sustained GPU pressure, reduce anti-aliasing and optional sharpening.
+Colour and style effects are explicit profile choices in every performance mode.
+Quality always keeps the complete profile.
 """
 from __future__ import annotations
 
@@ -22,20 +11,19 @@ SHED_S = 20.0
 BACK_S = 90.0
 BUSY_PCT = 90.0
 IDLE_PCT = 75.0
-HEAVY_EFFECTS = ("hdr_look", "clarity")
-LEVELS = ("full", "light", "off")
+LEVELS = ("full", "light", "effects")
 
 
 def shed(cfg: Dict[str, Any], level: int) -> Dict[str, Any]:
     """The filter setting for a budget level (0 = the player's own)."""
     if level <= 0:
         return cfg
+    sharpen = cfg.get("sharpen", "none")
     if level >= 2:
-        # Focus is an explicit display setting, not an optional GPU-budget effect.
-        # It must remain enabled in Battery/Balanced/Autopilot even at maximum shedding.
-        return {**cfg, "effects": [], "sharpen": "none", "aa": "none", "focus": bool(cfg.get("focus"))}
-    return {**cfg, "effects": [e for e in cfg.get("effects", []) if e not in HEAVY_EFFECTS], "aa": "none",
-            "sharpen": "cas" if cfg.get("sharpen") == "dls" else cfg.get("sharpen", "none")}
+        sharpen = "none"
+    elif sharpen == "dls":
+        sharpen = "cas"
+    return {**cfg, "sharpen": sharpen, "aa": "none"}
 
 
 class FilterBudget:
@@ -54,6 +42,8 @@ class FilterBudget:
         if app != self.app:
             self.app, self.level = app, 0
             self.starved_since = self.idle_since = None
+        if not active:
+            self.level = 0
         if not active or not isinstance(gpu_busy, (int, float)):
             self.starved_since = self.idle_since = None
             return self.level if active else 0

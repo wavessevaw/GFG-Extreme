@@ -54,10 +54,10 @@ class FocusIntegrationTest(unittest.TestCase):
                 self.assertEqual(post.count('detail=1'), 1)
                 self.assertIn('smaa', post.split(','))
 
-    def test_focus_persists_when_other_filters_are_stripped(self):
+    def test_focus_and_colour_persist_when_optional_passes_are_shed(self):
         cfg = filters.normalize({'effects': ['vibrance', 'clarity'],
                                  'sharpen': 'cas', 'aa': 'smaa', 'focus': True})
-        self.assertEqual(filters.to_post(shed(cfg, 2)), 'detail=1')
+        self.assertEqual(filters.to_post(shed(cfg, 2)), 'vibrance,clarity,detail=1')
         self.assertIn('detail=1', filters.to_post(shed(cfg, 0)).split(','))
         self.assertIn('vibrance', filters.to_post(shed(cfg, 0)).split(','))
         self.assertTrue(cfg['focus'])
