@@ -31,3 +31,50 @@ jobs:
         run: |
           npx playwright-core install --with-deps chromium
           node frontend/harness/smoke.mjs
+
+  release-360:
+    if: github.ref == 'refs/heads/release/3.6.0'
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ENGINE_SHA: 1f683aa5473f92ddecdfc438b49876d10b28e990
+      ENGINE_REPO: wavessevaw/GSF_Kedavra
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify scheduled backup and recovery
+        run: |
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          sudo systemctl start "user@$(id -u).service"
+          python3 tests/systemd_resource_timer.py
+      - name: Download the published engine and verify its identity
+        run: |
+          test "$(gh api repos/$ENGINE_REPO/actions/runs/44771014432 --jq .head_sha)" = "$ENGINE_SHA"
+          gh run watch 44771014432 -R "$ENGINE_REPO" --interval 25 --exit-status
+          test "$(gh api repos/$ENGINE_REPO/git/ref/tags/v1.8.0 --jq .object.sha)" = "$ENGINE_SHA"
+          gh release download v1.8.0 -R "$ENGINE_REPO" -p GSF-Kedavra-1.8.0.zip -p '*.sha256' -D upstream
+          (cd upstream && sha256sum -c GSF-Kedavra-1.8.0.zip.sha256)
+          unzip -q upstream/GSF-Kedavra-1.8.0.zip 'KEDAVRA/runtime/*' 'KEDAVRA/bench/*' -d upstream/
+          test "$(cat upstream/KEDAVRA/runtime/VERSION)" = "kedavra-1.8.0-${ENGINE_SHA::7}"
+      - name: Package, verify and publish GFG Extreme 3.6.0
+        run: |
+          src=upstream/KEDAVRA
+          bash scripts/build_release.sh 3.6.0 "$src/runtime" out "$src/bench"
+          file=out/GFG-Extreme-v3_6_0.zip
+          unzip -tq "$file"
+          (cd out && sha256sum -c SHA256SUMS.txt)
+          test "$(unzip -p "$file" GFG-Extreme/package.json | jq -r .version)" = 3.6.0
+          unzip -p "$file" GFG-Extreme/py_modules/gfg_plugin/paths.py | grep -Fx 'VERSION = "3.6.0"'
+          cmp <(unzip -p "$file" GFG-Extreme/runtime/bin/gamescope) "$src/runtime/bin/gamescope"
+          for f in "$src"/bench/*.spv; do
+            cmp <(unzip -p "$file" "GFG-Extreme/bench/$(basename "$f")") "$f"
+          done
+          mkdir -p out/Examples
+          cp docs/focus-dark-detail/{examples.png,same-position.webp,courtyard.mp4,results.json,software-timing.json} out/Examples/
+          cp README-3.6.0.md out/Examples/README.md
+          (cd out && zip -qr -X Kedavra-Focus-Examples.zip Examples && sha256sum Kedavra-Focus-Examples.zip >> SHA256SUMS.txt && sha256sum -c SHA256SUMS.txt)
+          gh release create v3.6.0 "$file" out/Kedavra-Focus-Examples.zip out/SHA256SUMS.txt README-3.6.0.md --target "$GITHUB_SHA" --title 'GFG Extreme 3.6.0' --notes-file README-3.6.0.md --latest
