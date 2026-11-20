@@ -4,15 +4,15 @@
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="144">
 
-# GFG EXTREME 3.5.0
+# GFG EXTREME 3.6.0
 
 **MOST POWERFUL DECKY PLUGIN EVER.**
 
 Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integration
 
-[**Скачать последнюю**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.5.0) · [Установка](#установка) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Режимы](#06--performance-modes) · [HUD](#08--observability)
+[**Скачать последнюю**](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.6.0) · [Установка](#установка) · [Kedavra](#02--gsf-kedavra) · [Autopilot](#04--gfg-autopilot) · [Режимы](#06--performance-modes) · [HUD](#08--observability)
 
-[![Release](https://img.shields.io/badge/release-3.5.0-fb0d00?style=flat-square)](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.5.0)
+[![Release](https://img.shields.io/badge/release-3.6.0-fb0d00?style=flat-square)](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.6.0)
 [![Downloads](https://img.shields.io/github/downloads/wavessevaw/GFG-Extreme/total?style=flat-square&color=20242e)](https://github.com/wavessevaw/GFG-Extreme/releases)
 [![Steam Deck](https://img.shields.io/badge/Steam%20Deck-OLED%20%7C%20LCD-20242e?style=flat-square)](#установка)
 [![Decky](https://img.shields.io/badge/Decky%20Loader-plugin-20242e?style=flat-square)](https://github.com/SteamDeckHomebrew/decky-loader)
@@ -38,11 +38,12 @@ Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integ
 
 ---
 
-## Что нового в 3.5.0
+## Что нового в 3.6.0
 
-- Автоматический 30→60 ×2 для LCD, OLED и телевизора. Benchmark и Camera Boost согласованы с режимом 60 Гц.
-- Kedavra 1.7.0 может раньше показать готовый исходный кадр.
-- Resource Manager показывает нагрузку служб на CPU и диск и регулирует поддерживаемые фоновые задачи.
+- При развороте камеры движок учитывает изменения скорости и реальные интервалы между кадрами. Это уменьшает квадратные искажения при нестабильном исходном FPS.
+- Kedavra Focus в SDR подчёркивает мягкие тёмные штрихи, швы и пряди. Работает при включённой и выключенной генерации. [Сравнительные изображения и видео](https://github.com/wavessevaw/GFG-Extreme/tree/53c40ff8bb422b1671d8dcce1ec0a116beeeb381/docs/focus-dark-detail)
+- Усилена защита неподвижных элементов HUD. На 90 Гц планировщик учитывает сбои исходного ритма кадров. Сохранён автоматический режим 30→60 ×2 на 60 Гц.
+- Vibrance, Levels Plus и другие выбранные цветовые эффекты сохраняются в Quality, Balanced, Battery и Autopilot.
 
 ## FRAME GENERATION HAS MOVED INTO THE COMPOSITOR.
 
@@ -75,7 +76,7 @@ Lossless Scaling и сторонние слои генерации не нужн
 
 ## Установка
 
-1. Скачайте **GFG-Extreme-v3_5_0.zip** со страницы [актуального релиза](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.5.0).
+1. Скачайте **GFG-Extreme-v3_6_0.zip** со страницы [актуального релиза](https://github.com/wavessevaw/GFG-Extreme/releases/tag/v3.6.0).
 2. В Decky Loader: **Settings → Developer → Install Plugin from ZIP**, выберите файл.
 3. Откройте GFG Extreme. При первой установке выберите **Install engine**, затем **Reboot now**. При обновлении со старой версии выполните **Setup → Reinstall Gamescope KEDAVRA** и перезагрузку. Вкладки откроются после запуска соответствующего Gamescope Kedavra.
 4. Запустите игру и выберите режим на вкладке **Dash**. Больше ничего настраивать не нужно: ни параметров запуска, ни скриптов в Desktop Mode.
@@ -133,7 +134,7 @@ GSF Kedavra — собственный графический движок GFG E
 
 С 3.3.1 (GSF Kedavra 1.4.3) поворот камеры идёт единой картинкой: движение камеры описывается проективным преобразованием плоскости (точным движением картинки при повороте), и каждый сгенерированный кадр показывает камеру, повёрнутую ровно на свою долю угла, и поворот идёт цельно и плавно по всему экрану. Тест движка, поворот до 10° за кадр: 25,35 → 27,56 дБ, ошибка от кадра к кадру 8,70 → 5,18.
 
-GFG Extreme 3.5.0 включает [GSF Kedavra 1.7.0](https://github.com/wavessevaw/GSF_Kedavra/releases/tag/v1.7.0). При 60 Гц и включённой генерации все режимы целятся в 30 исходных FPS, включая Battery и работу с доком.
+GFG Extreme 3.6.0 включает [GSF Kedavra 1.8.0](https://github.com/wavessevaw/GSF_Kedavra/releases/tag/v1.8.0). При 60 Гц и включённой генерации все режимы целятся в 30 исходных FPS, включая Battery и работу с доком.
 
 **Processing pipeline**
 
@@ -433,7 +434,7 @@ Film Grain · Vignette · Chromatic Aberration · Deband · Noir · Sepia · Mon
 
 Пресеты: Sharp · Vivid · HDR Look · Cinema · Noir · Retro · Smooth.
 
-**Kedavra Focus (появился в GSF Kedavra 1.6.0; сохранён в 1.7.0).** Дополнительная интеллектуальная резкость с фиксированной интенсивностью и одним переключателем во вкладке Graphics. Работает с Vivid и другими цветовыми эффектами во всех режимах производительности, включая Battery и Autopilot. При включении Focus используется вместо CAS/DLS, а прежние настройки CAS/DLS сохраняются и возвращаются после отключения Focus. Обрабатывает только SDR, в HDR отключается.
+**Kedavra Focus (появился в GSF Kedavra 1.6.0; сохранён в 1.8.0).** Дополнительная интеллектуальная резкость с фиксированной интенсивностью и одним переключателем во вкладке Graphics. Работает с Vivid и другими цветовыми эффектами во всех режимах производительности, включая Battery и Autopilot. При включении Focus используется вместо CAS/DLS, а прежние настройки CAS/DLS сохраняются и возвращаются после отключения Focus. Обрабатывает только SDR, в HDR отключается.
 
 Порядок графических проходов фиксирован: цвет и тон → резкость → сглаживание → финальные эффекты (виньетка, зерно, хроматическая аберрация).
 
@@ -582,7 +583,7 @@ GFG Extreme 3 использует собственное ядро кадров�
 * Platform: Steam Deck / SteamOS
 * License: GPL-3.0-or-later, с соблюдением лицензий используемых компонентов
 
-README описывает официальный релиз GFG Extreme 3.5.0 с GSF Kedavra 1.7.0.
+README описывает официальный релиз GFG Extreme 3.6.0 с GSF Kedavra 1.8.0.
 
 ---
 
@@ -590,6 +591,6 @@ README описывает официальный релиз GFG Extreme 3.5.0 с
 
 <img src="docs/img/logo.png" alt="GFG Extreme" width="56">
 
-<sub>GFG EXTREME 3.5.0 · POWERED BY GSF KEDAVRA · Сделано для Steam Deck · GPL-3.0-or-later</sub>
+<sub>GFG EXTREME 3.6.0 · POWERED BY GSF KEDAVRA · Сделано для Steam Deck · GPL-3.0-or-later</sub>
 
 </div>
