@@ -9,12 +9,14 @@ version="$1"; runtime="$2"; out="$3"; bench="${4:-}"
 root="$(git rev-parse --show-toplevel)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-git -C "$root" archive --prefix=GFG-Extreme/ HEAD | tar -x -C "$work"
+# Export only files used on Deck, including the recovery helper, runtime notices and UI.
+git -C "$root" archive --prefix=GFG-Extreme/ HEAD -- \
+  main.py plugin.json package.json dist py_modules third_party_licenses \
+  LICENSE.md THIRD_PARTY_NOTICES.md ASSET_PROVENANCE.md README.md README.ru.md \
+  docs/img RESOURCE_OPTIMIZER.md TEST-60HZ.md | tar -x -C "$work"
 p="$work/GFG-Extreme"
-# The pacing recorder analyses its traces with bin/kfg_pacing.py.
 mkdir -p "$p/bin"
-cp "$p/tools/kfg_pacing.py" "$p/bin/"
-rm -rf "$p/.github" "$p/tests" "$p/sandbox" "$p/frontend" "$p/branding" "$p/tools" "$p/node_modules"
+git -C "$root" show HEAD:tools/kfg_pacing.py > "$p/bin/kfg_pacing.py"
 test -f "$runtime/bin/gamescope" || { echo "no gamescope in $runtime" >&2; exit 1; }
 cp -a "$runtime" "$p/runtime"
 # Workflow artifacts drop the executable bit: set it back on the binaries and the bundled loader.

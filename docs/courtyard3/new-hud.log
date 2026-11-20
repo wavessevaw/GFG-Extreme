@@ -1,0 +1,6 @@
+h_courtyard 1/2: mean 5.093, worst 6.265 / 255
+h_courtyard 1/3: mean 4.950, worst 6.957 / 255
+h_courtyard 2/3: mean 4.443, worst 6.849 / 255
+h_courtyard_reversal 1/2: mean 4.104, worst 8.265 / 255
+h_courtyard_reversal 1/3: mean 4.468, worst 8.350 / 255
+h_courtyard_reversal 2/3: mean 4.429, worst 7.057 / 255

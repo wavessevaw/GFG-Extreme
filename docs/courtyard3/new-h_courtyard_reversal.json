@@ -1,0 +1,11 @@
+{
+ "device": "llvmpipe (LLVM 19.1.7, 256 bits)",
+ "driver": "llvmpipe Mesa 25.0.7-2+deb13u1 (LLVM 19.1.7)",
+ "size": [1280, 800],
+ "scenes": [
+ ],
+ "hard": [
+  {"scene": "h_courtyard_reversal", "mode": 3, "psnr": 20.543, "psnr_worst": 16.898, "errgrad": 9.8180, "blk": -0.00565, "severe4_pct": 4.46362, "severe4_max": 10.58750, "badblk_pct": 13.2378, "badblk_max": 16.7668, "temporal": 14.3580, "lineflk": 26.2009, "sharpflk_pct": 7.367},
+  {"scene": "h_courtyard_reversal", "mode": 2, "psnr": 20.219, "psnr_worst": 16.467, "errgrad": 9.7458, "blk": 0.01844, "severe4_pct": 4.73996, "severe4_max": 11.91719, "badblk_pct": 13.0008, "badblk_max": 17.4079, "temporal": 13.1125, "lineflk": 21.8050, "sharpflk_pct": 10.516}
+ ]
+}
