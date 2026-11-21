@@ -56,3 +56,20 @@ To roll back, install [GFG Extreme 3.6.0](https://github.com/wavessevaw/GFG-Extr
 Matching the colour of the endpoints over a larger patch improved column edges while misplacing parts of the character. Extending luma selection with chroma helped one direction but increased revealed-character error in the forward ×3 early phase. Looking only at global camera motion left 1,002 opaque pixels on the character in that phase at native resolution. The selected warp brackets the material boundary in each endpoint and can search the opposite direction when the camera estimate points the wrong way. A stricter donor-agreement variant reduced some reverse-playback errors but recovered less of the character during forward motion.
 
 GPU cost depends on how often endpoint colours disagree and match the generated result. An ambiguous pixel can inspect two directions, with a bounded search up to 127 pixels per endpoint. Re-run the linked scenario with Vulkan timestamps on the target device and compare gameplay input-to-display latency before considering promotion.
+
+## Software Vulkan dispatch timing
+
+Four measured runs per engine followed one warm-up each. Order alternated AB, BA, AB, BA. Each run measured 21 warp dispatches across ×2 and ×3 on the forward irregular 1280×800 crossing. Vulkan timestamps on llvmpipe (LLVM 19.1.7, Mesa 25.0.7, four threads) capture CPU execution of the shader. Deck GPU cost and vblank deadlines require RADV measurements.
+
+| Warp time in ms | Mean | Median | P95 | P99 |
+|---|---:|---:|---:|---:|
+| 1.8.0 | 46.00 | 45.42 | 52.91 | 57.15 |
+| Pillar test | 56.43 | 56.48 | 67.86 | 76.08 |
+
+## Checked install packages
+
+Download the artifact for the plugin already installed, extract it once and select the inner ZIP in Decky. SHA256 values below are for the inner ZIPs. The packages contain byte-identical Gamescope, gamescopectl, warp shader and test harness.
+
+- [GFG-Extreme-v3_6_1-pillar_1.zip](https://github.com/wavessevaw/GFG-Extreme/actions/runs/44879122838/artifacts/14696717941) — `3ece15afb81c587b9f71552a46d70cc28fb6548daace7d7e14daed227fff560a`
+
+- [GSF-Kedavra-1.8.1-pillar.1.zip](https://github.com/wavessevaw/GSF_Kedavra/actions/runs/44878453214/artifacts/14697322139) — `c86aefa9a411d20390cb85904c8c454885c38abf2c444788bc38df40b7272e6a`
