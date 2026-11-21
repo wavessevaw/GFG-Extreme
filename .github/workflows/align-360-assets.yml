@@ -1,0 +1,39 @@
+name: Align 3.6.0 release attachments
+on:
+  push:
+    branches: [maintenance/align-360-assets]
+permissions:
+  contents: write
+jobs:
+  align:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: wavessevaw/GFG-Extreme
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v3.6.0
+      - name: Match the three attachments of 3.5.0
+        run: |
+          set -euo pipefail
+          tag=v3.6.0
+          pkg=GFG-Extreme-v3_6_0.zip
+          gh release view v3.5.0 --json assets --jq '.assets[].name' | sed 's/3_5_0/3_6_0/g;s/3\.5\.0/3.6.0/g' | sort > "$RUNNER_TEMP/expected"
+          gh release download "$tag" -p "$pkg"
+          echo "79befa0041f8ffcf23861aba2ffcf4cc037801df3d9e03a2453d628af607e290  $pkg" > SHA256SUMS.txt
+          sha256sum -c SHA256SUMS.txt
+          gh release view "$tag" --json body --jq .body > "$RUNNER_TEMP/body"
+          grep -Fq '**Fix. Colour filters follow your profile.**' "$RUNNER_TEMP/body"
+          sed -i 's/\*\*Colour filters follow your profile\.\*\*/**Fix. Colour filters follow your profile.**/' README-3.6.0.md
+          grep -Fq '**Fix. Colour filters follow your profile.**' README-3.6.0.md
+          gh release upload "$tag" SHA256SUMS.txt README-3.6.0.md --clobber
+          if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fxq Kedavra-Focus-Examples.zip; then
+            gh release delete-asset "$tag" Kedavra-Focus-Examples.zip --yes
+          fi
+          gh release view "$tag" --json assets --jq '.assets[].name' | sort > "$RUNNER_TEMP/actual"
+          diff -u "$RUNNER_TEMP/expected" "$RUNNER_TEMP/actual"
+          mkdir readback
+          gh release download "$tag" -p SHA256SUMS.txt -p README-3.6.0.md -D readback
+          cmp SHA256SUMS.txt readback/SHA256SUMS.txt
+          cmp README-3.6.0.md readback/README-3.6.0.md
