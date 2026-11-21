@@ -43,7 +43,23 @@ Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integ
 - При развороте камеры движок учитывает изменения скорости и реальные интервалы между кадрами. Это уменьшает квадратные искажения при нестабильном исходном FPS.
 - Kedavra Focus в SDR подчёркивает мягкие тёмные штрихи, швы и пряди. Работает при включённой и выключенной генерации. [Сравнительные изображения и видео](https://github.com/wavessevaw/GFG-Extreme/tree/53c40ff8bb422b1671d8dcce1ec0a116beeeb381/docs/focus-dark-detail)
 - Усилена защита неподвижных элементов HUD. На 90 Гц планировщик учитывает сбои исходного ритма кадров. Сохранён автоматический режим 30→60 ×2 на 60 Гц.
-- Vibrance, Levels Plus и другие выбранные цветовые эффекты сохраняются в Quality, Balanced, Battery и Autopilot.
+- **Исправление.** Vibrance, Levels Plus и другие выбранные цветовые эффекты сохраняются в Quality, Balanced, Battery и Autopilot.
+
+### Результаты и примеры
+
+| Проверка | База сравнения | Результат |
+| --- | --- | --- |
+| Разворот камеры при неравномерных интервалах, ×3, 1280×800 | Courtyard 3: 4,46% блоков 4×4 с крупной ошибкой | Courtyard 4: 3,44% |
+| Мягкий тёмный штрих, четыре угла и 16 положений | Focus из Courtyard 4 | Контраст штриха с фоном выше на 14–17%. Ширина на половине глубины меньше на 0,14–0,18 пикселя |
+| Изменение ошибки между кадрами, фрагмент той же сцены ×3 | Предыдущий Focus: 18,44 по шкале 0–255 | Новый Focus: 18,66 |
+
+Сравнения выполнены на программном Vulkan. Время GPU и задержка этого релиза на Steam Deck остаются непроверенными.
+
+![Исходный кадр, предыдущий Focus и новый Focus: глаза, шерсть, шов и текст](https://raw.githubusercontent.com/wavessevaw/GFG-Extreme/v3.6.0/docs/focus-dark-detail/examples.png)
+
+[Переключение двух версий на одном месте](https://github.com/wavessevaw/GFG-Extreme/blob/v3.6.0/docs/focus-dark-detail/same-position.webp) · [Сравнение в движении](https://github.com/wavessevaw/GFG-Extreme/blob/v3.6.0/docs/focus-dark-detail/courtyard.mp4)
+
+SHA256 (GFG-Extreme-v3_6_0.zip) — `79befa0041f8ffcf23861aba2ffcf4cc037801df3d9e03a2453d628af607e290`.
 
 ## FRAME GENERATION HAS MOVED INTO THE COMPOSITOR.
 

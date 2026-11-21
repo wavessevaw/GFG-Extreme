@@ -43,7 +43,23 @@ Compositor-Native Frame Generation · Intelligent APU Control · Gamescope Integ
 - **Cleaner camera reversals.** The generator tracks changes in camera speed across real frames and uses their actual timestamps. In the 1280×800 Courtyard reversal test at ×3, blocks with large errors fell from 4.46% in Courtyard 3 to 3.44% in Courtyard 4. [Scene and measurements](https://github.com/wavessevaw/GFG-Extreme/tree/95398f2f795bbf08b8e8f1533af2e54d2c415e03/docs/courtyard4)
 - **More definition in dark detail.** Kedavra Focus deepens softened stitches, fur and fine dark lettering in SDR. Use **Graphics → Kedavra Focus**, with frame generation on or off. [Images and motion comparisons](https://github.com/wavessevaw/GFG-Extreme/tree/53c40ff8bb422b1671d8dcce1ec0a116beeeb381/docs/focus-dark-detail)
 - **Steadier HUD and pacing.** The engine protects stationary HUD strokes on every SDR pair. At 90 Hz the scheduler checks the source cadence before advancing a ready real frame after a hitch. Automatic 30→60 ×2 continues to work at 60 Hz.
-- **Colour filters follow your profile.** Vibrance, Levels Plus and other selected colour effects stay active in Quality, Balanced, Battery and Autopilot. The GFG overlay yields to the Steam interface.
+- **Fix. Colour filters follow your profile.** Vibrance, Levels Plus and other selected colour effects stay active in Quality, Balanced, Battery and Autopilot. The GFG overlay yields to the Steam interface.
+
+### Results and examples
+
+| Test | Baseline | Result |
+| --- | --- | --- |
+| Camera reversal with uneven source timing, ×3 at 1280×800 | Courtyard 3: 4.46% of 4×4 blocks with large errors | Courtyard 4: 3.44% |
+| Soft dark stroke at four angles and 16 subpixel positions | Courtyard 4 Focus | 14–17% more stroke-to-background contrast. Width at half depth decreased by 0.14–0.18 px |
+| Frame-to-frame error change, ×3 Courtyard crop | Previous Focus: 18.44 on a 0–255 scale | New Focus: 18.66 |
+
+Comparisons use software Vulkan. Steam Deck GPU time and latency for this release remain unmeasured.
+
+![Soft input, previous Focus and new Focus on eyes, fur, stitching and text](https://raw.githubusercontent.com/wavessevaw/GFG-Extreme/v3.6.0/docs/focus-dark-detail/examples.png)
+
+[Alternate the two versions in place](https://github.com/wavessevaw/GFG-Extreme/blob/v3.6.0/docs/focus-dark-detail/same-position.webp) · [Watch the motion comparison](https://github.com/wavessevaw/GFG-Extreme/blob/v3.6.0/docs/focus-dark-detail/courtyard.mp4)
+
+SHA256 (GFG-Extreme-v3_6_0.zip) — `79befa0041f8ffcf23861aba2ffcf4cc037801df3d9e03a2453d628af607e290`.
 
 ## FRAME GENERATION HAS MOVED INTO THE COMPOSITOR.
 
