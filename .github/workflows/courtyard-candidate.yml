@@ -1,7 +1,7 @@
-name: Package the dark-detail Focus test build
+name: Package the pillar-crossing test build
 on:
   push:
-    branches: [test/focus-dark-detail]
+    branches: [test/pillar-crossing]
 permissions:
   contents: read
   actions: read
@@ -14,20 +14,20 @@ jobs:
         with:
           github-token: ${{ github.token }}
           repository: wavessevaw/GSF_Kedavra
-          run-id: 44756758865
+          run-id: 44878453214
           name: gamescope-runtime
           path: runtime-build
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
           repository: wavessevaw/GSF_Kedavra
-          run-id: 44756758865
+          run-id: 44878453214
           name: kedavra-deck-bench
           path: bench-build
       - name: Build and verify the installation ZIP
         run: |
-          test "$(cat runtime-build/VERSION)" = kedavra-1.7.0-4c496fa
-          bash scripts/build_release.sh 3.5.0-focus.dark.1 "$PWD/runtime-build" "$PWD/out" "$PWD/bench-build"
+          test "$(cat runtime-build/VERSION)" = kedavra-1.8.1-pillar.1-14c3888
+          bash scripts/build_release.sh 3.6.1-pillar.1 "$PWD/runtime-build" "$PWD/out" "$PWD/bench-build"
           cd out
           sha256sum -c SHA256SUMS.txt
           unzip -tq *.zip
@@ -39,9 +39,7 @@ jobs:
           cmp <(unzip -p *.zip GFG-Extreme/py_modules/gfg_plugin/filter_budget.py) ../py_modules/gfg_plugin/filter_budget.py
           unzip -Z1 *.zip > "$RUNNER_TEMP/manifest.txt"
           if grep -E '(^|/)(__pycache__|tests|sandbox|node_modules|\.git|audit-v3\.0\.0)(/|$)|\.pyc$' "$RUNNER_TEMP/manifest.txt"; then exit 1; fi
-      - name: Include offline comparisons beside the installable ZIP
-        run: cp -r docs/focus-dark-detail out/Examples
       - uses: actions/upload-artifact@v4
         with:
-          name: GFG-Extreme-Focus-Dark-Detail
+          name: GFG-Extreme-Pillar-Candidate
           path: out/
