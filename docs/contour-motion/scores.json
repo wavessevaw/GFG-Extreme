@@ -1,0 +1,468 @@
+{
+  "pillar-480x300": {
+    "measurements": {
+      "device": "llvmpipe (LLVM 19.1.7, 256 bits)",
+      "driver": "llvmpipe Mesa 25.0.7-2+deb13u1 (LLVM 19.1.7)",
+      "size": [
+        480,
+        300
+      ],
+      "scenes": [],
+      "hard": [
+        {
+          "scene": "h_parallax",
+          "mode": 3,
+          "psnr": 14.658,
+          "psnr_worst": 14.017,
+          "errgrad": 24.4309,
+          "blk": -0.01533,
+          "severe4_pct": 19.78492,
+          "severe4_max": 21.57778,
+          "badblk_pct": 6.8878,
+          "badblk_max": 12.5,
+          "temporal": 27.0399,
+          "lineflk": 48.18,
+          "sharpflk_pct": 21.253
+        },
+        {
+          "scene": "h_parallax",
+          "mode": 2,
+          "psnr": 14.462,
+          "psnr_worst": 14.087,
+          "errgrad": 25.7063,
+          "blk": 0.00792,
+          "severe4_pct": 19.43333,
+          "severe4_max": 21.27778,
+          "badblk_pct": 9.3769,
+          "badblk_max": 12.6623,
+          "temporal": 28.9716,
+          "lineflk": 45.1682,
+          "sharpflk_pct": 6.283
+        }
+      ]
+    },
+    "counts": {
+      "1/3": [
+        44350,
+        960797,
+        28296,
+        28868
+      ],
+      "2/3": [
+        44378,
+        961097,
+        28268,
+        28830
+      ],
+      "1/2": [
+        44399,
+        962212,
+        44630,
+        45755
+      ]
+    }
+  },
+  "cut-only-480x300": {
+    "measurements": {
+      "device": "llvmpipe (LLVM 19.1.7, 256 bits)",
+      "driver": "llvmpipe Mesa 25.0.7-2+deb13u1 (LLVM 19.1.7)",
+      "size": [
+        480,
+        300
+      ],
+      "scenes": [],
+      "hard": [
+        {
+          "scene": "h_parallax",
+          "mode": 3,
+          "psnr": 20.144,
+          "psnr_worst": 19.617,
+          "errgrad": 11.2877,
+          "blk": -0.04903,
+          "severe4_pct": 4.76905,
+          "severe4_max": 5.85556,
+          "badblk_pct": 14.3012,
+          "badblk_max": 20.184,
+          "temporal": 11.4124,
+          "lineflk": 25.9597,
+          "sharpflk_pct": 12.176
+        },
+        {
+          "scene": "h_parallax",
+          "mode": 2,
+          "psnr": 19.718,
+          "psnr_worst": 19.119,
+          "errgrad": 11.3269,
+          "blk": 0.03586,
+          "severe4_pct": 5.13968,
+          "severe4_max": 6.88889,
+          "badblk_pct": 14.5331,
+          "badblk_max": 19.3182,
+          "temporal": 9.3302,
+          "lineflk": 19.394,
+          "sharpflk_pct": 24.839
+        }
+      ]
+    },
+    "counts": {
+      "1/3": [
+        804,
+        960797,
+        27608,
+        28868
+      ],
+      "2/3": [
+        915,
+        961097,
+        27580,
+        28830
+      ],
+      "1/2": [
+        746,
+        962212,
+        31718,
+        45755
+      ]
+    }
+  },
+  "contour-480x300": {
+    "measurements": {
+      "device": "llvmpipe (LLVM 19.1.7, 256 bits)",
+      "driver": "llvmpipe Mesa 25.0.7-2+deb13u1 (LLVM 19.1.7)",
+      "size": [
+        480,
+        300
+      ],
+      "scenes": [],
+      "hard": [
+        {
+          "scene": "h_parallax",
+          "mode": 3,
+          "psnr": 23.347,
+          "psnr_worst": 22.434,
+          "errgrad": 8.1027,
+          "blk": -0.0475,
+          "severe4_pct": 1.64127,
+          "severe4_max": 2.42222,
+          "badblk_pct": 10.9423,
+          "badblk_max": 16.6667,
+          "temporal": 7.8487,
+          "lineflk": 12.3585,
+          "sharpflk_pct": 11.227
+        },
+        {
+          "scene": "h_parallax",
+          "mode": 2,
+          "psnr": 23.234,
+          "psnr_worst": 22.08,
+          "errgrad": 7.4926,
+          "blk": -0.00286,
+          "severe4_pct": 1.66667,
+          "severe4_max": 2.7,
+          "badblk_pct": 11.8816,
+          "badblk_max": 18.1277,
+          "temporal": 6.3059,
+          "lineflk": 8.4459,
+          "sharpflk_pct": 4.705
+        }
+      ]
+    },
+    "counts": {
+      "1/3": [
+        430,
+        960797,
+        3859,
+        28868
+      ],
+      "2/3": [
+        514,
+        961097,
+        3822,
+        28830
+      ],
+      "1/2": [
+        371,
+        962212,
+        5836,
+        45755
+      ]
+    }
+  },
+  "pillar-1280x800": {
+    "measurements": {
+      "device": "llvmpipe (LLVM 19.1.7, 256 bits)",
+      "driver": "llvmpipe Mesa 25.0.7-2+deb13u1 (LLVM 19.1.7)",
+      "size": [
+        1280,
+        800
+      ],
+      "scenes": [],
+      "hard": [
+        {
+          "scene": "h_parallax",
+          "mode": 3,
+          "psnr": 14.898,
+          "psnr_worst": 14.166,
+          "errgrad": 22.9998,
+          "blk": -0.00405,
+          "severe4_pct": 17.1923,
+          "severe4_max": 18.82031,
+          "badblk_pct": 4.6846,
+          "badblk_max": 7.058,
+          "temporal": 26.3972,
+          "lineflk": 47.9318,
+          "sharpflk_pct": 15.687
+        },
+        {
+          "scene": "h_parallax",
+          "mode": 2,
+          "psnr": 14.704,
+          "psnr_worst": 14.588,
+          "errgrad": 23.9427,
+          "blk": 0.00832,
+          "severe4_pct": 16.99911,
+          "severe4_max": 17.94531,
+          "badblk_pct": 6.291,
+          "badblk_max": 7.0312,
+          "temporal": 28.2673,
+          "lineflk": 45.5395,
+          "sharpflk_pct": 6.728
+        }
+      ]
+    },
+    "counts": {
+      "1/3": [
+        236679,
+        6916514,
+        152883,
+        155716
+      ],
+      "2/3": [
+        236989,
+        6916030,
+        153218,
+        155890
+      ],
+      "1/2": [
+        237081,
+        6924086,
+        238023,
+        243492
+      ]
+    }
+  },
+  "cut-only-1280x800": {
+    "measurements": {
+      "device": "llvmpipe (LLVM 19.1.7, 256 bits)",
+      "driver": "llvmpipe Mesa 25.0.7-2+deb13u1 (LLVM 19.1.7)",
+      "size": [
+        1280,
+        800
+      ],
+      "scenes": [],
+      "hard": [
+        {
+          "scene": "h_parallax",
+          "mode": 3,
+          "psnr": 20.897,
+          "psnr_worst": 20.373,
+          "errgrad": 10.4993,
+          "blk": -0.06152,
+          "severe4_pct": 3.82489,
+          "severe4_max": 4.325,
+          "badblk_pct": 11.5614,
+          "badblk_max": 13.8689,
+          "temporal": 10.1293,
+          "lineflk": 26.6026,
+          "sharpflk_pct": 10.812
+        },
+        {
+          "scene": "h_parallax",
+          "mode": 2,
+          "psnr": 20.643,
+          "psnr_worst": 20.331,
+          "errgrad": 10.339,
+          "blk": 0.00473,
+          "severe4_pct": 4.03571,
+          "severe4_max": 4.47031,
+          "badblk_pct": 12.1547,
+          "badblk_max": 14.3229,
+          "temporal": 8.1943,
+          "lineflk": 19.8876,
+          "sharpflk_pct": 23.258
+        }
+      ]
+    },
+    "counts": {
+      "1/3": [
+        5468,
+        6916514,
+        148305,
+        155716
+      ],
+      "2/3": [
+        5472,
+        6916030,
+        148617,
+        155890
+      ],
+      "1/2": [
+        4569,
+        6924086,
+        172634,
+        243492
+      ]
+    }
+  },
+  "contour-1280x800": {
+    "measurements": {
+      "device": "llvmpipe (LLVM 19.1.7, 256 bits)",
+      "driver": "llvmpipe Mesa 25.0.7-2+deb13u1 (LLVM 19.1.7)",
+      "size": [
+        1280,
+        800
+      ],
+      "scenes": [],
+      "hard": [
+        {
+          "scene": "h_parallax",
+          "mode": 3,
+          "psnr": 23.41,
+          "psnr_worst": 20.754,
+          "errgrad": 8.4192,
+          "blk": -0.06519,
+          "severe4_pct": 1.78047,
+          "severe4_max": 4.18281,
+          "badblk_pct": 10.0609,
+          "badblk_max": 13.3814,
+          "temporal": 7.7377,
+          "lineflk": 15.4793,
+          "sharpflk_pct": 9.149
+        },
+        {
+          "scene": "h_parallax",
+          "mode": 2,
+          "psnr": 23.466,
+          "psnr_worst": 20.936,
+          "errgrad": 7.6941,
+          "blk": -0.02709,
+          "severe4_pct": 1.61317,
+          "severe4_max": 3.6,
+          "badblk_pct": 10.6046,
+          "badblk_max": 14.2161,
+          "temporal": 6.1241,
+          "lineflk": 10.9023,
+          "sharpflk_pct": 5.225
+        }
+      ]
+    },
+    "counts": {
+      "1/3": [
+        2879,
+        6916514,
+        34410,
+        155716
+      ],
+      "2/3": [
+        2968,
+        6916030,
+        34710,
+        155890
+      ],
+      "1/2": [
+        1987,
+        6924086,
+        41848,
+        243492
+      ]
+    }
+  },
+  "software-warp-ms-cut-only": [
+    54.1377,
+    50.9908,
+    45.0253,
+    43.1853,
+    44.9938,
+    39.7203,
+    41.5954,
+    42.7726,
+    44.0609,
+    39.2803,
+    44.7585,
+    45.3274,
+    45.2812,
+    38.7457,
+    40.0236,
+    50.6996,
+    47.9142,
+    40.0912,
+    39.3821,
+    39.7246,
+    39.8039,
+    43.1579,
+    42.1763,
+    50.7893,
+    49.5152,
+    39.3306,
+    39.0123,
+    41.41,
+    38.7253,
+    45.2119,
+    46.544,
+    42.0031,
+    46.7217,
+    42.0719,
+    45.8701,
+    40.6192,
+    40.3997,
+    48.265,
+    40.1372,
+    47.1006,
+    40.6599,
+    39.1755
+  ],
+  "software-warp-ms-contour": [
+    52.6088,
+    51.2522,
+    51.3791,
+    52.2045,
+    51.8462,
+    51.1169,
+    62.7651,
+    47.4145,
+    52.2122,
+    61.7455,
+    61.637,
+    52.0292,
+    58.1864,
+    51.7782,
+    60.3704,
+    47.6882,
+    56.137,
+    49.6872,
+    57.3129,
+    54.3879,
+    50.2627,
+    51.6049,
+    54.5624,
+    51.5685,
+    52.2843,
+    57.7004,
+    53.0611,
+    52.8701,
+    51.5373,
+    50.4549,
+    59.956,
+    51.85,
+    51.2196,
+    56.8558,
+    51.6939,
+    50.2221,
+    50.1519,
+    59.9814,
+    48.0122,
+    50.6787,
+    54.0928,
+    53.669
+  ]
+}
