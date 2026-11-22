@@ -1,7 +1,7 @@
-name: Package the pillar-crossing test build
+name: Package the contour motion test build
 on:
   push:
-    branches: [test/pillar-crossing]
+    branches: [test/contour-motion]
 permissions:
   contents: read
   actions: read
@@ -14,20 +14,24 @@ jobs:
         with:
           github-token: ${{ github.token }}
           repository: wavessevaw/GSF_Kedavra
-          run-id: 44878453214
+          run-id: 44918541213
           name: gamescope-runtime
           path: runtime-build
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
           repository: wavessevaw/GSF_Kedavra
-          run-id: 44878453214
+          run-id: 44918541213
           name: kedavra-deck-bench
           path: bench-build
+      - name: Backend regression tests and virtual Steam Deck scenarios
+        run: |
+          python3 -m unittest discover -s tests
+          python3 -m sandbox.run
       - name: Build and verify the installation ZIP
         run: |
-          test "$(cat runtime-build/VERSION)" = kedavra-1.8.1-pillar.1-14c3888
-          bash scripts/build_release.sh 3.6.1-pillar.1 "$PWD/runtime-build" "$PWD/out" "$PWD/bench-build"
+          test "$(cat runtime-build/VERSION)" = kedavra-1.8.1-contour.1-38376ad
+          bash scripts/build_release.sh 3.6.1-contour.1 "$PWD/runtime-build" "$PWD/out" "$PWD/bench-build"
           cd out
           sha256sum -c SHA256SUMS.txt
           unzip -tq *.zip
@@ -41,5 +45,5 @@ jobs:
           if grep -E '(^|/)(__pycache__|tests|sandbox|node_modules|\.git|audit-v3\.0\.0)(/|$)|\.pyc$' "$RUNNER_TEMP/manifest.txt"; then exit 1; fi
       - uses: actions/upload-artifact@v4
         with:
-          name: GFG-Extreme-Pillar-Candidate
+          name: GFG-Extreme-Contour-Candidate
           path: out/
