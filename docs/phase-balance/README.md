@@ -61,3 +61,14 @@ python "$GFG_PATH/docs/phase-balance/contours.py" pixels-old pixels-new
 python "$GFG_PATH/docs/phase-balance/time_phase.py"
 KFG_HARD_X2=1 KFG_COURTYARD_TIMING=1 ./timed --hard --size 1280x800 --scene h_courtyard_reversal --spv src/kedavra/build
 ```
+
+## Verified installers
+
+Download the Actions archive and unpack it once. Select the inner installation ZIP in Decky. Checksums below apply to those inner files. Both archives passed integrity and checksum verification; their 72 shared engine runtime and bench files matched byte for byte.
+
+| Installer | SHA256 |
+|---|---|
+| [GFG Extreme 3.6.1-phase.1](https://github.com/wavessevaw/GFG-Extreme/actions/runs/45992489259/artifacts/15194336963) | `9004de1b08f11c28809363cd08785ff0a573ae2c734056587cd69de57ff0a37d` |
+| [GSF Kedavra 1.8.1-phase.1 standalone](https://github.com/wavessevaw/GSF_Kedavra/actions/runs/45924000381/artifacts/15165724379) | `c8515ddf6e39416ee39b6f77578bad9074a4837a686481a38857854f7881c3b5` |
+
+[GFG backend, sandbox and UI checks](https://github.com/wavessevaw/GFG-Extreme/actions/runs/45992489331)
