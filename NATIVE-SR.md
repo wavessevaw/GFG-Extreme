@@ -1,14 +1,17 @@
 # GFG Extreme 4.0.0-sr.2 · Native Super Resolution test candidate
 
-Install the inner GFG-Extreme ZIP through Decky's plugin installer. In Setup, install or reinstall Gamescope Kedavra and reboot. Enable **Graphics → Super Resolution → Auto** once. Launch a game from the library. The first request is 1024 × 640 on a 1280 × 800 display. Graphics reports the sampled surface and output. A selected filter and a matching managed output are separate confirmations. The compositor has no visibility into an engine's internal TAA or dynamic resolution.
+Install the inner ZIP through Decky Loader, reinstall Gamescope Kedavra in Setup and reboot.
+Enable Graphics → Super Resolution → Auto. The frontend requests per-app Steam Properties
+resolution 1024x640 and the internal-display override before RunGame on a 1280x800 display.
+The API is verified by reading the values back; launch surfaces bypassing the hook may only
+apply on a subsequent launch. No temporary virtual display resize is requested by GFG;
+Gamescope receives an app-scoped passive SR lease with launch token zero. Actual game surface
+size is reported, and a game may ignore its advertised display mode. Focus and frame generation
+remain unchanged. Turning Auto off attempts to restore recorded Steam settings; if the Steam
+API is unavailable, restore Properties manually. User changes to a different resolution are
+not overwritten by rollback. Previous setting receipts are stored per Steam account when the
+account is available; otherwise they survive only for the frontend session.
 
-The controller subscribes to Steam's launch notification and leases a secondary XWayland display to the game. Only the ordinary two-server layout with an empty game display and a matching original mode is eligible for pre-launch resizing. Late notifications and other configurations use an existing compatible low-resolution surface. Other display sizes keep their original aspect ratio and physical output mode. User changes to Steam's virtual display take precedence. The controller samples the native rate, the current GFG target, GPU load, busiest CPU core and temperature under a consistent power limit and multiplier. Size changes learned from two 30-sample windows take effect on a subsequent launch. An unsupported surface releases the lease. In menus, existing GFG game-session tracking supplies the grace interval.
-
-Kedavra performs motion analysis and warp at the game's source size. Its final Gamescope composite reconstructs the selected SDR layer with four cell samples and up to eight additional neighbours. Directional triangle interpolation, cubic slopes and bounded compensation for the source-pixel footprint share those reads. The normal Focus and FG paths remain available. The spatial reconstructor allocates no history or output-sized intermediate and adds no queued frame. At equal resolution it is bypassed. HDR and YCbCr retain their existing scaler. Independent live dynamic resizing, game-engine jitter and temporal super-resolution are outside this candidate.
-
-**Rollback.** Turn Auto off. GFG releases the temporary display. If the controller dies, the lease expires after 20 seconds in the compositor. A compositor restart discards the virtual output itself. To return to the stable plugin, install GFG Extreme v3.6.0, reinstall its matching Gamescope in Setup and reboot. Steam Properties, launch options, save files and physical display modes are never written by the SR controller.
-
-The Linux benchmark and reproduction instructions are in tools/native_sr. Switch Auto off for a baseline. On Deck, test three identical traversals per configuration at fixed refresh, TDP and Focus settings. Alternate test order, allow temperatures to settle, record the game surface, native frame times, displayed-frame pacing and power. Compare against Gamescope FSR 1 at the same actual input and output sizes. Inspect GUI overlays, dock changes, suspend, an unsupported HDR title and restoration after exit. Input-to-photon latency requires external instrumentation. Steam Deck GPU time, power savings, supported game coverage and launch timing still require hardware testing.
-
-
-SR.2 experimental candidate: starts a separate learning profile at 640p, retains adaptive resolution steps and the existing Focus pipeline. Coefficients are analytical defaults, not trained or hardware-validated. Compare with SR.1 and native 800p before adoption.
+The experimental phase-dependent 12-tap reconstruction is enabled only at 5:4. Other ratios
+retain the original SR. Hardware performance and live launch ordering are unverified.
+Do not install the older candidate from the engine build run: it lacks this Steam Properties fix.

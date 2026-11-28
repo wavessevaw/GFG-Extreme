@@ -67,59 +67,20 @@ class ResolutionTests(unittest.TestCase):
             self.st["time_ns"]=self.st.get("time_ns",0)+1
             self.r.observe(self.st,{"real":fps},{"gpu_busy_pct":gpu,"cpu_top_core_pct":cpu},target,10,False)
 
-    def test_gpu_and_repeat_profile(self):
+    def test_fixed_steam_owned_resolution(self):
         self.session()
+        self.assertEqual(self.r.token, 0)
         self.samples(60)
-        self.assertEqual(self.settings.data["sr_profiles"][self.r.key]["next"],600)
+        self.assertEqual(self.r.height, 640)
+        self.assertEqual(self.r.message, "640p confirmed; Native SR active")
         self.r.stop()
-        self.r.launch(33)
-        self.assertEqual(self.r.height,600)
-
-    def test_cpu_limit(self):
-        self.session()
-        self.samples(60,24,54,98)
-        self.assertEqual(self.settings.data["sr_profiles"][self.r.key]["next"],720)
-
-    def test_supply_or_target_transition_invalidates_window(self):
-        self.session()
-        self.samples(46,target=30)
-        self.samples(32,target=45)
-        self.assertFalse(self.r.done)
-
-    def test_failing_surface_releases_without_rearming(self):
-        self.session()
-        self.st.update(sr_selected=False,sr_width=1280,sr_height=800)
-        self.samples(12)
-        self.r.tick(33,self.st)
-        self.ctl.set_var.assert_called_with("kfg_sr","0")
-        self.assertEqual(self.r.app,0)
-        self.assertEqual(self.r.blocked,33)
-        self.r.tick(0,self.st)
         self.assertTrue(self.r.launch(33))
-        self.assertEqual(self.r.height,720)
+        self.ctl.set_var.assert_called_with("kfg_sr", "33:640:0")
 
-    def test_duplicate_status_is_not_new_evidence(self):
+    def test_no_virtual_display_resize_or_learning(self):
         self.session()
-        self.st["time_ns"]=1
-        for _ in range(64):
-            self.r.observe(self.st,{"real":24},{"gpu_busy_pct":98},30)
-        self.assertEqual(len(self.r.samples),1)
-
-    def test_first_refresh_after_scheduler_start(self):
-        self.st["refresh_ns"] = 0
-        self.session()
-        self.st["refresh_ns"] = 16666667
+        self.st.update(sr_selected=False, sr_width=1280, sr_height=800)
         self.samples(60)
-        self.assertTrue(self.r.key.endswith(":60"))
-        self.r.stop()
-        self.st["refresh_ns"] = 0
-        self.assertTrue(self.r.launch(33))
-        self.assertEqual(self.r.height,600)
-
-    def test_hdr_after_learning(self):
-        self.session()
-        self.samples(60)
-        self.st.update(transfer="pq",sr_selected=False)
-        self.samples(12)
-        self.assertEqual(self.r.blocked,33)
-        self.ctl.set_var.assert_called_with("kfg_sr","0")
+        self.assertEqual(self.r.height, 640)
+        self.assertEqual(self.r.message, "Steam 640p not confirmed or surface unsupported")
+        self.assertFalse(self.settings.data.get("sr_profiles"))

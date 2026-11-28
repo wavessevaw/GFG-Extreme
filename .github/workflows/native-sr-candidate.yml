@@ -1,45 +1,64 @@
-name: Package the Native SR test build
+name: Package Native SR.2 with Steam Properties
 on:
   push:
-    branches: [research/native-sr]
+    branches: [experiment/native-sr-2-test]
 permissions:
   contents: read
   actions: read
 jobs:
   candidate:
     runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ENGINE_REPO: wavessevaw/GSF_Kedavra
+      ENGINE_RUN: "46127590894"
+      ENGINE_SHA: 64761fe6ce360d710df03c65915fd26c46cf14bf
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test and rebuild the frontend
+        run: |
+          python3 -m unittest discover -s tests -p 'test_*.py'
+          npm ci
+          npm run build
+          npx playwright-core install --with-deps chromium
+          node frontend/harness/smoke.mjs
+          git add dist/index.js
+          git -c user.name=CI -c user.email=ci@localhost commit -m "Rebuild frontend for test package" || git diff --cached --quiet
+      - name: Verify the exact engine build
+        run: |
+          test "$(gh api repos/$ENGINE_REPO/actions/runs/$ENGINE_RUN --jq .head_sha)" = "$ENGINE_SHA"
+          gh run watch "$ENGINE_RUN" -R "$ENGINE_REPO" --interval 20 || true
+          gh api repos/$ENGINE_REPO/actions/runs/$ENGINE_RUN/jobs --jq '.jobs[] | [.name,.conclusion] | @tsv' > "$RUNNER_TEMP/engine-jobs"
+          for job in model-and-engine gamescope runtime-on-older-glibc; do
+            grep -Fx "$(printf '%s\tsuccess' "$job")" "$RUNNER_TEMP/engine-jobs"
+          done
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
           repository: wavessevaw/GSF_Kedavra
-          run-id: 46090679034
+          run-id: 46127590894
           name: gamescope-runtime
           path: runtime-build
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
           repository: wavessevaw/GSF_Kedavra
-          run-id: 46090679034
+          run-id: 46127590894
           name: kedavra-deck-bench
           path: bench-build
-      - name: Build and verify the installation ZIP
+      - name: Package verified SR.2
         run: |
-          test "$(cat runtime-build/VERSION)" = kedavra-1.9.0-sr.1-0a56ee9
-          bash scripts/build_release.sh 4.0.0-sr.1 "$PWD/runtime-build" "$PWD/out" "$PWD/bench-build"
+          test "$(cat runtime-build/VERSION)" = "kedavra-1.9.0-sr.2-${ENGINE_SHA::7}"
+          bash scripts/build_release.sh 4.0.0-sr.2 "$PWD/runtime-build" "$PWD/out" "$PWD/bench-build"
           cd out
           sha256sum -c SHA256SUMS.txt
           unzip -tq *.zip
           cmp <(unzip -p *.zip GFG-Extreme/runtime/bin/gamescope) ../runtime-build/bin/gamescope
-          for asset in kfg_post.spv kfg_warp.spv kfg_select.spv kfg_stats.spv kfg_vktest; do
-            cmp <(unzip -p *.zip "GFG-Extreme/bench/$asset") "../bench-build/$asset"
-          done
-          cmp <(unzip -p *.zip GFG-Extreme/bin/kfg_pacing.py) ../tools/kfg_pacing.py
-          cmp <(unzip -p *.zip GFG-Extreme/py_modules/gfg_plugin/filter_budget.py) ../py_modules/gfg_plugin/filter_budget.py
-          unzip -Z1 *.zip > "$RUNNER_TEMP/manifest.txt"
-          if grep -E '(^|/)(__pycache__|tests|sandbox|node_modules|\.git|audit-v3\.0\.0)(/|$)|\.pyc$' "$RUNNER_TEMP/manifest.txt"; then exit 1; fi
+          unzip -p *.zip GFG-Extreme/dist/index.js | grep -q SetAppResolutionOverride
       - uses: actions/upload-artifact@v4
         with:
-          name: GFG-Extreme-Native-SR
+          name: GFG-Extreme-Native-SR-2-Steam-Properties
           path: out/

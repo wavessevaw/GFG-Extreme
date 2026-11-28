@@ -414,24 +414,174 @@ function Content() {
 }
 
 const Icon = () => h("img", { src: LOGO, width: 20, height: 20 });
-export default definePlugin(() => {
-  const sub = window.SteamClient?.Apps?.RegisterForGameActionStart?.((_id, app, action) => {
-    if (action !== "LaunchApp" || !/^\d{1,20}$/.test(String(app))) return;
-    let id = BigInt(app);
-    // Steam shortcuts carry their 32-bit application ID in the upper word.
-    if (id > 0xffffffffn) {
-      if (id > 0xffffffffffffffffn || (id & 0xffffffffn) !== 0x02000000n) return;
-      id >>= 32n;
-      if (id < 0x80000000n) return;
-    }
-    if (id > 1n && id !== 769n) rpc.srLaunch(Number(id)).catch(() => {});
+// Steam Properties is the owner of the launch resolution. Gamescope only reconstructs.
+function installSteamResolution() {
+  const apps = window.SteamClient?.Apps;
+  const target = "1024x640";
+  const journal = new Map();
+  const inflight = new Map();
+  let disposed = false;
+  let account = "";
+  let restoring = false;
+  const report = (error) => { errs.last = { name: "Steam resolution", message: String(error?.message || error) }; errs.subs.forEach(g => g()); };
+  const key = () => account ? "gfg.sr2.resolution." + account : "";
+  const save = () => { if (key()) window.localStorage.setItem(key(), JSON.stringify(Array.from(journal.entries()))); };
+  const accountSub = window.SteamClient?.User?.RegisterForCurrentUserChanges?.(user => {
+    const next = String(user?.strSteamID || "");
+    if (next === account || !/^\\d+$/.test(next)) return;
+    if (account) journal.clear();
+    account = next;
+    try {
+      for (const [id, old] of JSON.parse(window.localStorage.getItem(key()) || "[]")) {
+        if (Number.isInteger(id) && typeof old.resolution === "string" && typeof old.internal === "boolean") journal.set(id, old);
+      }
+      save();
+    } catch (e) { report(e); }
   });
+  const appId = (app) => {
+    if (!/^\\d{1,20}$/.test(String(app))) return 0;
+    let id = BigInt(app);
+    if (id > 0xffffffffn) {
+      if (id > 0xffffffffffffffffn || (id & 0xffffffffn) !== 0x02000000n) return 0;
+      id >>= 32n;
+      if (id < 0x80000000n) return 0;
+    }
+    return id > 1n && id !== 769n ? Number(id) : 0;
+  };
+  const deadline = (p, ms = 1000) => new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("Steam API timeout")), ms);
+    Promise.resolve(p).then(x => { clearTimeout(t); resolve(x); }, e => { clearTimeout(t); reject(e); });
+  });
+  const details = id => new Promise((resolve, reject) => {
+    let sub;
+    let settled = false;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      sub?.unregister?.();
+      error ? reject(error) : resolve(value);
+    };
+    const timer = setTimeout(() => finish(new Error("Steam app details unavailable")), 1000);
+    try {
+      sub = apps.RegisterForAppDetails(id, value => {
+        if (typeof value?.bOverrideInternalResolution === "boolean") finish(null, value.bOverrideInternalResolution);
+      });
+      if (settled) sub?.unregister?.();
+    } catch (e) { finish(e); }
+  });
+  const read = async id => {
+    const [resolution, internal] = await Promise.all([deadline(apps.GetResolutionOverrideForApp(id)), details(id)]);
+    if (typeof resolution !== "string") throw new Error("Steam resolution unavailable");
+    return { resolution, internal };
+  };
+  const wait = async (id, predicate) => {
+    for (let n = 0; n < 4; n++) {
+      const current = await read(id);
+      if (predicate(current)) return current;
+      if (n < 3) await new Promise(resolve => setTimeout(resolve, 120));
+    }
+    throw new Error("Steam did not confirm the requested game resolution");
+  };
+  const restoreOne = async id => {
+    const old = journal.get(id);
+    if (!old) return;
+    const now = await read(id);
+    // Compare before restoring; never overwrite a later manual resolution change.
+    if (now.resolution === target) {
+      if (now.internal && !old.internal) apps.ToggleOverrideResolutionForInternalDisplay(id);
+      if (old.resolution !== target) apps.SetAppResolutionOverride(id, old.resolution);
+      await wait(id, x => x.resolution === old.resolution && x.internal === old.internal);
+    }
+    journal.delete(id);
+    save();
+  };
+  const prepare = id => {
+    if (!id || disposed || restoring) return Promise.resolve(false);
+    if (inflight.has(id)) return inflight.get(id);
+    const task = (async () => {
+      const s = await deadline(rpc.state(), 1500);
+      const e = s?.live?.engine;
+      if (!s?.settings?.engine?.super_resolution || s?.gate?.state && s.gate.state !== "ready" ||
+          !e?.fresh || !e?.sr_capable || e.sr_output_width !== 1280 || e.sr_output_height !== 800 ||
+          s.live.game && s.live.app === id) return false;
+      if (!apps?.SetAppResolutionOverride || !apps?.GetResolutionOverrideForApp || !apps?.ToggleOverrideResolutionForInternalDisplay || !apps?.RegisterForAppDetails)
+        throw new Error("Steam game resolution API unavailable");
+      const before = await read(id);
+      if (before.resolution === target && before.internal) return true;
+      if (!journal.has(id)) { journal.set(id, before); save(); }
+      if (disposed) { await restoreOne(id); return false; }
+      try {
+        if (before.resolution !== target) {
+          apps.SetAppResolutionOverride(id, target);
+          await wait(id, x => x.resolution === target);
+        }
+        const current = await read(id);
+        if (!current.internal) apps.ToggleOverrideResolutionForInternalDisplay(id);
+        await wait(id, x => x.resolution === target && x.internal);
+        return true;
+      } catch (error) {
+        try { await restoreOne(id); } catch (rollback) { report(rollback); }
+        throw error;
+      }
+    })().catch(error => { report(error); return false; }).finally(() => inflight.delete(id));
+    inflight.set(id, task);
+    return task;
+  };
+  const original = apps?.RunGame;
+  const wrapped = function(...args) {
+    const id = appId(args[0]);
+    if (!id || disposed) return original.apply(this, args);
+    if (inflight.has(id)) return;
+    // RunGame is a void API. Release the original call only after the setting is confirmed.
+    prepare(id).then(() => original.apply(this, args)).catch(report);
+  };
+  let hooked = false;
+  if (typeof original === "function") {
+    try { apps.RunGame = wrapped; hooked = apps.RunGame === wrapped; } catch (e) { report(e); }
+  }
+  const sub = apps?.RegisterForGameActionStart?.((_id, app, action) => {
+    const id = appId(app);
+    if (action !== "LaunchApp" || !id) return;
+    rpc.srLaunch(id).catch(() => {});
+    // Other launch surfaces can bypass RunGame. Best effort only, no forced restart.
+    if (!hooked) prepare(id);
+  });
+  const restore = async () => {
+    if (restoring) return;
+    restoring = true;
+    try {
+      await Promise.allSettled(Array.from(inflight.values()));
+      for (const id of journal.keys()) {
+        try { await restoreOne(id); } catch (e) { report(e); }
+      }
+    } finally { restoring = false; }
+  };
+  const timer = setInterval(async () => {
+    if (disposed || restoring || !journal.size) return;
+    try {
+      const s = await deadline(rpc.state(), 1500);
+      if (s?.settings?.engine?.super_resolution === false) await restore();
+    } catch (e) { report(e); }
+  }, 2000);
+  return () => {
+    disposed = true;
+    clearInterval(timer);
+    sub?.unregister?.();
+    accountSub?.unregister?.();
+    if (hooked && apps.RunGame === wrapped) apps.RunGame = original;
+    restore().catch(report);
+  };
+}
+
+export default definePlugin(() => {
+  const disposeSteamResolution = installSteamResolution();
   return {
   name: "GFG Extreme",
   titleView: h("div", { className: window.DFL.staticClasses.Title }, "GFG · EXTREME"),
   alwaysRender: true,
   content: h(Content, null),
   icon: h(Icon, null),
-  onDismount() { sub?.unregister?.(); },
+  onDismount() { disposeSteamResolution(); },
   };
 });
