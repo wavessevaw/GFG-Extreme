@@ -29,7 +29,7 @@ window.SteamClient = { Apps: {
   ToggleOverrideResolutionForInternalDisplay: id => { window.__steamCalls.push(["toggle", id]); window.__internal = !window.__internal; },
   RegisterForGameActionStart: cb => { window.__launch = cb; return {unregister: () => { window.__launch = null; }}; } } };
 window.__calls = []; window.__state = ${JSON.stringify(state)}; const __cat = ${JSON.stringify(catalog)};
-var callable = (n) => async (...a) => { window.__calls.push([n, a]); return ({ get_state: () => window.__state, get_catalog: () => __cat, diagnose: () => ({ checks: [{ key: "a", ok: true, text: "Gamescope KEDAVRA 3.0.0 installed" }, { key: "b", ok: true, text: "Running after reboot (confirmed)" }, { key: "c", ok: true, text: "Libraries found on this SteamOS" }] }) }[n] || (() => ({})))(...a); };
+var callable = (n) => async (...a) => { window.__calls.push([n, a]); return ({ get_state: () => structuredClone(window.__state), get_catalog: () => __cat, diagnose: () => ({ checks: [{ key: "a", ok: true, text: "Gamescope KEDAVRA 3.0.0 installed" }, { key: "b", ok: true, text: "Running after reboot (confirmed)" }, { key: "c", ok: true, text: "Libraries found on this SteamOS" }] }) }[n] || (() => ({})))(...a); };
 var definePlugin = (f) => f; window.__toasts = []; var toaster = { toast: (t) => window.__toasts.push(t) };`;
 const b = await chromium.launch({ args: ["--no-sandbox"], ...(process.env.GFG_CHROMIUM ? { executablePath: process.env.GFG_CHROMIUM } : {}) });
 const page = await b.newPage({ viewport: { width: 330, height: 1400 }, deviceScaleFactor: 2 });
