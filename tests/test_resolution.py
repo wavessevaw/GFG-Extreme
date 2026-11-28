@@ -104,3 +104,22 @@ class ResolutionTests(unittest.TestCase):
         for _ in range(64):
             self.r.observe(self.st,{"real":24},{"gpu_busy_pct":98},30)
         self.assertEqual(len(self.r.samples),1)
+
+    def test_first_refresh_after_scheduler_start(self):
+        self.st["refresh_ns"] = 0
+        self.session()
+        self.st["refresh_ns"] = 16666667
+        self.samples(60)
+        self.assertTrue(self.r.key.endswith(":60"))
+        self.r.stop()
+        self.st["refresh_ns"] = 0
+        self.assertTrue(self.r.launch(33))
+        self.assertEqual(self.r.height,480)
+
+    def test_hdr_after_learning(self):
+        self.session()
+        self.samples(60)
+        self.st.update(transfer="pq",sr_selected=False)
+        self.samples(12)
+        self.assertEqual(self.r.blocked,33)
+        self.ctl.set_var.assert_called_with("kfg_sr","0")

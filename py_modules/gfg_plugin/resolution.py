@@ -28,7 +28,16 @@ class ResolutionController:
 
     def start(self, app, st, launch):
         key = self.context(app, st)
-        record = self.settings.data.get("sr_profiles", {}).get(key, {})
+        records = self.settings.data.get("sr_profiles", {})
+        record = records.get(key, {})
+        if not record and key.endswith(":0"):
+            # Before the FG scheduler starts its refresh period may be unknown.
+            # Reuse prior evidence only when the known outputs agree on a size.
+            prefix = key.rsplit(":", 1)[0] + ":"
+            heights = {v.get("next") for k, v in records.items() if isinstance(k, str)
+                       and k.startswith(prefix) and isinstance(v, dict) and v.get("next") in HEIGHTS}
+            if len(heights) == 1:
+                record = {"next": heights.pop()}
         size = record.get("next") if isinstance(record, dict) else None
         height = size if size in HEIGHTS else 500
         token = time.monotonic_ns() % 4294967294 + 1 if launch else 0
@@ -87,9 +96,13 @@ class ResolutionController:
             self.sent = now
 
     def observe(self, st, live, sensors, target, budget=None, external=None):
-        if (not self.app or self.done or st.get("app_id") != self.app or st.get("steam_ui")
-                or not st.get("fresh") or self.key != self.context(self.app, st)):
+        if (not self.app or st.get("app_id") != self.app or st.get("steam_ui")
+                or not st.get("fresh")):
             return
+        key = self.context(self.app, st)
+        if self.key != key:
+            self.key, self.done, self.misses = key, False, 0
+            self.samples.clear()
         managed = st.get("sr_managed_app") == self.app
         if not managed and self.height != 800:
             self.message = "Reconstructing existing surface" if st.get("sr_selected") else "Game controls its surface"
@@ -115,6 +128,8 @@ class ResolutionController:
                 self.message = "Unsupported surface; original display restored or lease expiring"
             return
         self.misses = 0
+        if self.done:
+            return
         context = (target, budget, external, st.get("multiplier"))
         if context != self.series:
             self.samples.clear()
