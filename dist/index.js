@@ -825,7 +825,7 @@ function installSteamResolution() {
   const save = () => { if (key()) window.localStorage.setItem(key(), JSON.stringify(Array.from(journal.entries()))); };
   const accountSub = window.SteamClient?.User?.RegisterForCurrentUserChanges?.(user => {
     const next = String(user?.strSteamID || "");
-    if (next === account || !/^\\d+$/.test(next)) return;
+    if (next === account || !/^\d+$/.test(next)) return;
     if (account) journal.clear();
     account = next;
     try {
@@ -836,7 +836,7 @@ function installSteamResolution() {
     } catch (e) { report(e); }
   });
   const appId = (app) => {
-    if (!/^\\d{1,20}$/.test(String(app))) return 0;
+    if (!/^\d{1,20}$/.test(String(app))) return 0;
     let id = BigInt(app);
     if (id > 0xffffffffn) {
       if (id > 0xffffffffffffffffn || (id & 0xffffffffn) !== 0x02000000n) return 0;

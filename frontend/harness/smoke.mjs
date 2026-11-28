@@ -63,7 +63,7 @@ const setupText = await page.locator("#r").innerText();
 if (!setupText.includes("Reinstall: done")) errors.push("Setup: Reinstall left no note");
 const toasts = await page.evaluate(() => window.__toasts.length);
 if (toasts < 2) errors.push(`Setup: ${toasts} toasts for Reinstall, want 2`);
-console.log(JSON.stringify({ errors, classic, calls }));
+
 const launchCalls = await page.evaluate(async () => {
   window.__launch(1, "42", "LaunchApp");
   window.__launch(1, "42", "UpdateApp");
@@ -83,5 +83,6 @@ const launchCalls = await page.evaluate(async () => {
 const steamCalls = await page.evaluate(() => [window.__steamCalls, window.__resolution, window.__internal]);
 if (!steamCalls[0].some(c => c[0] === 'run' && c[1] === '1024x640' && c[2] === true) || steamCalls[1] !== 'Default' || steamCalls[2] !== false) errors.push('Steam resolution prelaunch/readback/restore');
 if (JSON.stringify(launchCalls) !== JSON.stringify([[42, 0x81234567], null])) errors.push("Steam launch subscription");
+console.log(JSON.stringify({ errors, classic, calls, launchCalls, steamCalls }));
 await b.close();
 if (errors.length || classic !== "176px" || !calls.length) process.exit(1);
