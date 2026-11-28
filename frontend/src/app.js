@@ -420,6 +420,8 @@ function installSteamResolution() {
   const target = "1024x640";
   const journal = new Map();
   const inflight = new Map();
+  const pendingLaunch = new Set();
+  const prepared = new Map();
   let disposed = false;
   let account = "";
   let restoring = false;
@@ -494,6 +496,7 @@ function installSteamResolution() {
       await wait(id, x => x.resolution === old.resolution && x.internal === old.internal);
     }
     journal.delete(id);
+    prepared.delete(id);
     save();
   };
   const prepare = id => {
@@ -508,7 +511,7 @@ function installSteamResolution() {
       if (!apps?.SetAppResolutionOverride || !apps?.GetResolutionOverrideForApp || !apps?.ToggleOverrideResolutionForInternalDisplay || !apps?.RegisterForAppDetails)
         throw new Error("Steam game resolution API unavailable");
       const before = await read(id);
-      if (before.resolution === target && before.internal) return true;
+      if (before.resolution === target && before.internal) { prepared.set(id, Date.now()); return true; }
       if (!journal.has(id)) { journal.set(id, before); save(); }
       if (disposed) { await restoreOne(id); return false; }
       try {
@@ -519,6 +522,7 @@ function installSteamResolution() {
         const current = await read(id);
         if (!current.internal) apps.ToggleOverrideResolutionForInternalDisplay(id);
         await wait(id, x => x.resolution === target && x.internal);
+        prepared.set(id, Date.now());
         return true;
       } catch (error) {
         try { await restoreOne(id); } catch (rollback) { report(rollback); }
@@ -532,9 +536,10 @@ function installSteamResolution() {
   const wrapped = function(...args) {
     const id = appId(args[0]);
     if (!id || disposed) return original.apply(this, args);
-    if (inflight.has(id)) return;
+    if (pendingLaunch.has(id)) return;
+    pendingLaunch.add(id);
     // RunGame is a void API. Release the original call only after the setting is confirmed.
-    prepare(id).then(() => original.apply(this, args)).catch(report);
+    prepare(id).then(() => original.apply(this, args)).catch(report).finally(() => pendingLaunch.delete(id));
   };
   let hooked = false;
   if (typeof original === "function") {
@@ -545,7 +550,7 @@ function installSteamResolution() {
     if (action !== "LaunchApp" || !id) return;
     rpc.srLaunch(id).catch(() => {});
     // Other launch surfaces can bypass RunGame. Best effort only, no forced restart.
-    if (!hooked) prepare(id);
+    if (!pendingLaunch.has(id) && Date.now() - (prepared.get(id) || 0) > 5000) prepare(id);
   });
   const restore = async () => {
     if (restoring) return;

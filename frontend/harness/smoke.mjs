@@ -20,7 +20,14 @@ const state = { version: "3.0.0", codename: "Independence", device: "Steam Deck 
 const catalog = { presets: [["off","Off"],["sharp","Sharp"],["vivid","Vivid"],["hdr","HDR look"],["cinema","Cinema"],["noir","Noir"],["retro","Retro"],["smooth","Smooth"]].map(([id,name]) => ({ id, name, filters: id === "vivid" ? { effects: ["vibrance"], sharpen: "cas", aa: "none" } : {} })),
   effects: ["HDR Look","Clarity","Levels+","Curves","Vibrance","Colourfulness","Technicolor","DPX","Noir","Sepia","Film grain","Vignette","Deband"].map((n) => ({ key: n === "Vibrance" ? "vibrance" : n, name: n })) };
 const mock = `window.SP_REACT = React; window.DFL = { staticClasses: { Title: "t" } }; window.appStore = { GetAppOverviewByAppID: () => ({ display_name: "Elden Ring" }) };
-window.SteamClient = { Apps: { RegisterForGameActionStart: cb => { window.__launch = cb; return {unregister: () => { window.__launch = null; }}; } } };
+window.__resolution = "Default"; window.__internal = false; window.__steamCalls = [];
+window.SteamClient = { Apps: {
+  RunGame: (...a) => window.__steamCalls.push(["run", window.__resolution, window.__internal, ...a]),
+  GetResolutionOverrideForApp: async () => window.__resolution,
+  SetAppResolutionOverride: (id, value) => { window.__steamCalls.push(["set", id, value]); window.__resolution = value; },
+  RegisterForAppDetails: (id, cb) => { cb({ bOverrideInternalResolution: window.__internal }); return {unregister: () => {}}; },
+  ToggleOverrideResolutionForInternalDisplay: id => { window.__steamCalls.push(["toggle", id]); window.__internal = !window.__internal; },
+  RegisterForGameActionStart: cb => { window.__launch = cb; return {unregister: () => { window.__launch = null; }}; } } };
 window.__calls = []; window.__state = ${JSON.stringify(state)}; const __cat = ${JSON.stringify(catalog)};
 var callable = (n) => async (...a) => { window.__calls.push([n, a]); return ({ get_state: () => window.__state, get_catalog: () => __cat, diagnose: () => ({ checks: [{ key: "a", ok: true, text: "Gamescope KEDAVRA 3.0.0 installed" }, { key: "b", ok: true, text: "Running after reboot (confirmed)" }, { key: "c", ok: true, text: "Libraries found on this SteamOS" }] }) }[n] || (() => ({})))(...a); };
 var definePlugin = (f) => f; window.__toasts = []; var toaster = { toast: (t) => window.__toasts.push(t) };`;
@@ -62,10 +69,19 @@ const launchCalls = await page.evaluate(async () => {
   window.__launch(1, "42", "UpdateApp");
   window.__launch(1, "769", "LaunchApp");
   window.__launch(2, ((0x81234567n << 32n) | 0x02000000n).toString(), "LaunchApp");
-  await Promise.resolve();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  window.__state.settings.engine.super_resolution = true;
+  window.__state.live.game = false;
+  Object.assign(window.__state.live.engine, { fresh: true, sr_capable: true, sr_output_width: 1280, sr_output_height: 800 });
+  window.SteamClient.Apps.RunGame('42', '', 0, 0);
+  await new Promise(resolve => setTimeout(resolve, 150));
+  window.__state.settings.engine.super_resolution = false;
+  await new Promise(resolve => setTimeout(resolve, 2200));
   window.__plugin.onDismount();
   return [window.__calls.filter(c => c[0] === "sr_launch").map(c => c[1][0]), window.__launch];
 });
+const steamCalls = await page.evaluate(() => [window.__steamCalls, window.__resolution, window.__internal]);
+if (!steamCalls[0].some(c => c[0] === 'run' && c[1] === '1024x640' && c[2] === true) || steamCalls[1] !== 'Default' || steamCalls[2] !== false) errors.push('Steam resolution prelaunch/readback/restore');
 if (JSON.stringify(launchCalls) !== JSON.stringify([[42, 0x81234567], null])) errors.push("Steam launch subscription");
 await b.close();
 if (errors.length || classic !== "176px" || !calls.length) process.exit(1);

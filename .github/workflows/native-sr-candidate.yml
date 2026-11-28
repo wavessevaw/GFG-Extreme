@@ -57,7 +57,8 @@ jobs:
           sha256sum -c SHA256SUMS.txt
           unzip -tq *.zip
           cmp <(unzip -p *.zip GFG-Extreme/runtime/bin/gamescope) ../runtime-build/bin/gamescope
-          unzip -p *.zip GFG-Extreme/dist/index.js | grep -q SetAppResolutionOverride
+          unzip -p *.zip GFG-Extreme/dist/index.js > "$RUNNER_TEMP/packed-frontend.js"
+          grep -F SetAppResolutionOverride "$RUNNER_TEMP/packed-frontend.js" >/dev/null
       - uses: actions/upload-artifact@v4
         with:
           name: GFG-Extreme-Native-SR-2-Steam-Properties
