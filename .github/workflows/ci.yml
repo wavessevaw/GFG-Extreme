@@ -26,7 +26,7 @@ jobs:
         run: |
           npm ci
           npm run build
-          if [ "$GITHUB_REF" != refs/heads/experiment/native-sr-2-test ] && [ "$GITHUB_REF" != refs/heads/experiment/native-sr-3-test ] && [ "$GITHUB_REF" != refs/heads/experiment/native-sr-4-inverse ] && [ "$GITHUB_REF" != refs/heads/experiment/native-sr-5-four ]; then git diff --exit-code dist/index.js || { echo "::error::dist/index.js is stale; run npm run build and commit"; exit 1; }; fi
+          if [ "$GITHUB_REF" != refs/heads/experiment/native-sr-2-test ] && [ "$GITHUB_REF" != refs/heads/experiment/native-sr-3-test ] && [ "$GITHUB_REF" != refs/heads/experiment/native-sr-4-inverse ] && [ "$GITHUB_REF" != refs/heads/experiment/native-sr-5-four ] && [ "$GITHUB_REF" != refs/heads/experiment/native-sr-6-cached ]; then git diff --exit-code dist/index.js || { echo "::error::dist/index.js is stale; run npm run build and commit"; exit 1; }; fi
       - name: Frontend smoke test
         run: |
           npx playwright-core install --with-deps chromium

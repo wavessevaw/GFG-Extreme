@@ -1,23 +1,20 @@
-# GFG Extreme 4.0.0-sr.5 — four-real-frame inverse candidate
+# GFG Extreme 4.0.0-sr.6 — cached four-frame inverse candidate
 
-Install the inner ZIP through Decky Loader, reinstall Gamescope Kedavra in Setup and reboot.
-Enable Graphics → Super Resolution → Auto. The frontend sets Steam Properties maximum game
-resolution to 1024x640 and the internal-display override before RunGame on a 1280x800 display.
-Focus is forced in the effective pipeline; disabling SR restores the saved preference.
-Actual source/output dimensions are checked by the engine; only 1024x640 to 1280x800 SDR is eligible.
+Install the inner Decky ZIP. Install the bundled Gamescope from Setup and reboot.
+Super Resolution automatically sets Steam Properties maximum game resolution to 1024x640
+on a 1280x800 display and forces Focus without overwriting the user's saved preference.
+Only 1024x640 → 1280x800 SDR with Focus and no other post effects runs temporal reconstruction.
 
-The four-frame inverse uses four distinct actual source textures from Kedavra's six-frame ring,
-not synthetic FG output as an observation. Motion fields and local subpixel registration map
-the observations to the displayed real or generated phase. A regularized local inverse solves
-64 observations for 25 output unknowns with a Focus-derived spatial prior. Low confidence,
-cuts, insufficient distinct sampling phases, invalid alpha, or missing history fall back to
-spatial SR.3. The displayed-frame label "4-frame Inverse SR" confirms the dispatch, not that
-every tile passed confidence gating. One extra high-resolution dispatch, 8 local PCG iterations.
-The existing ring is also captured/analyzed with FG off when SR is selected (extra GPU cost).
-Other post effects/AA currently select the spatial fallback to preserve their semantics.
-For testing use Look Off and AA Off; Focus is automatic.
+SR.5 ran a 25-variable, eight-iteration inverse solve on each displayed phase, starving FG
+on a Deck. SR.6 separates the normal Focus, four-real-frame inverse, and inexpensive
+cache reprojection pipelines. The solver runs once per real anchor, with four PCG
+iterations and a bilinear halo. Its signed luma residual is cached with the real ring slot.
+Generated phases reproject the two real-anchor residuals using the already calculated
+pair selection; no generated frame is an inverse observation. GPU timestamp guard
+suspends temporal processing after a composite exceeds its existing GPU budget.
+Graphics distinguishes active cached reconstruction and GPU-limited spatial fallback.
 
-CPU-model results are from five photographs, synthetic shifted observations, approximate Focus,
-and known alignment. They are not native game or Deck GPU measurements. The device must be
-tested for motion artifacts, 5-pixel tile boundaries, confidence coverage and GPU timing.
-SR.2, SR.3 and single-frame SR.4 remain separate rollback packages.
+CPU synthetic known-shift comparison on the same five images and two degradation models:
+SR.3 32.47 dB, SR.5 eight steps 37.21 dB, SR.6 four steps + bilinear halo 35.47 dB.
+This evaluates the local solver, NOT cache reprojection, game accuracy or Deck GPU time.
+The 90-Hz/FG frame budget and coverage must be verified on device.

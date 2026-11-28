@@ -470,7 +470,7 @@ class Service:
 
     @staticmethod
     def _engine_view(st: Dict[str, Any]) -> Dict[str, Any]:
-        keys = ("sr_capable", "sr_selected", "sr_inverse_active", "sr_inverse_frames", "sr_history_frames", "sr_width", "sr_height", "sr_output_width", "sr_output_height",
+        keys = ("sr_capable", "sr_selected", "sr_inverse_active", "sr_inverse_frames", "sr_history_frames", "sr_gpu_limited", "sr_cache_builds", "sr_width", "sr_height", "sr_output_width", "sr_output_height",
                 "sr_managed_app", "sr_virtual_width", "sr_virtual_height", "engine", "fresh", "state", "multiplier", "cap_fps", "base_fps", "auto", "auto_floor",
                 "focus_status", "focus_frames", "post", "post_active", "post_error", "gpu_us_avg", "gpu_post_us_avg", "gpu_analysis_us_avg", "analysis_pairs", "last_problem",
                 "steam_ui", "width", "height", "message", "trace", "transfer", "hdr_enabled", "post_hdr_limited")

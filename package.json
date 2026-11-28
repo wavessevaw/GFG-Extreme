@@ -1,7 +1,7 @@
 {
   "name": "gfg-extreme-plugin",
-  "version": "4.0.0-sr.5",
-  "description": "GFG Extreme 4.0.0-sr.5: frame generation on its own engine (GSF Kedavra in Gamescope), Autopilot, TDP Governor, Power Split and GPU clock ceiling for Steam Deck",
+  "version": "4.0.0-sr.6",
+  "description": "GFG Extreme 4.0.0-sr.6: frame generation on its own engine (GSF Kedavra in Gamescope), Autopilot, TDP Governor, Power Split and GPU clock ceiling for Steam Deck",
   "type": "module",
   "scripts": {
     "build": "node frontend/build.mjs",

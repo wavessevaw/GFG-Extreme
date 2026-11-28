@@ -204,7 +204,7 @@ function Graphics({ s, set, cat }) {
         onChange: v => set(() => rpc.setSection("engine", { super_resolution: v })) })),
       s.settings.engine.super_resolution ? h("div", { className: "sub" },
         !engine.fresh || !engine.sr_capable ? "Waiting for compatible Gamescope" :
-        (engine.sr_selected ? (engine.sr_inverse_active ? "4-frame Inverse SR" : "Spatial SR") : "Bypass") + " · " +
+        (engine.sr_selected ? (engine.sr_inverse_active ? "4-frame Cached SR" : engine.sr_gpu_limited ? "Spatial SR (GPU limit)" : "Spatial SR") : "Bypass") + " · " +
         (engine.sr_width || "–") + " × " + (engine.sr_height || "–") + " → " +
         (engine.sr_output_width || "–") + " × " + (engine.sr_output_height || "–") +
         (s.live.sr_message ? " · " + s.live.sr_message : "")) : null),
