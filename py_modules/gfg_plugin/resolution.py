@@ -2,14 +2,14 @@
 import statistics
 import time
 
-HEIGHTS = (480, 500, 540, 600, 720, 800)
+HEIGHTS = (480, 500, 540, 600, 640, 720, 800)
 
 
 class ResolutionController:
     def __init__(self, settings, ctl, clock):
         self.settings, self.ctl, self.clock = settings, ctl, clock
         self.app = self.token = self.sent = self.pending_until = 0
-        self.height = 500
+        self.height = 640
         self.key = ""
         self.samples = []
         self.series = self.last_stamp = None
@@ -24,7 +24,7 @@ class ResolutionController:
     def context(self, app, st):
         mode = self.settings.profile_for(app)[1]["objective"]
         hz = round(1e9 / st["refresh_ns"]) if st.get("refresh_ns", 0) > 0 else 0
-        return f"{app}:{mode}:{st.get('sr_output_width',0)}x{st.get('sr_output_height',0)}:{hz}"
+        return f"sr2:{app}:{mode}:{st.get('sr_output_width',0)}x{st.get('sr_output_height',0)}:{hz}"
 
     def start(self, app, st, launch):
         key = self.context(app, st)
@@ -39,7 +39,7 @@ class ResolutionController:
             if len(heights) == 1:
                 record = {"next": heights.pop()}
         size = record.get("next") if isinstance(record, dict) else None
-        height = size if size in HEIGHTS else 500
+        height = size if size in HEIGHTS else 640
         token = time.monotonic_ns() % 4294967294 + 1 if launch else 0
         self.ctl.set_var("kfg_sr", f"{app}:{height}:{token}")
         self.app, self.height, self.token, self.key = app, height, token, key

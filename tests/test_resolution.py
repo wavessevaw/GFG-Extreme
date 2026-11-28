@@ -37,7 +37,7 @@ class ResolutionTests(unittest.TestCase):
         self.assertFalse(self.r.launch(33))
         self.clock.t += 8
         self.r.tick(0, self.st)
-        self.ctl.set_var.assert_called_with("kfg_sr", f"33:500:{token}")
+        self.ctl.set_var.assert_called_with("kfg_sr", f"33:640:{token}")
         self.st["app_id"] = 33
         self.r.tick(33, self.st)
         self.st["app_id"] = 769
@@ -46,7 +46,7 @@ class ResolutionTests(unittest.TestCase):
         self.r.tick(0,self.st)
         self.ctl.set_var.assert_called_with("kfg_sr","0")
         self.r.tick(44,self.st)
-        self.ctl.set_var.assert_called_with("kfg_sr","44:500:0")
+        self.ctl.set_var.assert_called_with("kfg_sr","44:640:0")
         self.settings.set_section("engine", {"super_resolution": False})
         self.r.tick(44,self.st)
         self.ctl.set_var.assert_called_with("kfg_sr","0")
@@ -59,8 +59,8 @@ class ResolutionTests(unittest.TestCase):
 
     def session(self):
         self.arm()
-        self.st.update(app_id=33, sr_managed_app=33, sr_virtual_width=800, sr_virtual_height=500,
-                       sr_selected=True, sr_width=800, sr_height=500)
+        self.st.update(app_id=33, sr_managed_app=33, sr_virtual_width=1024, sr_virtual_height=640,
+                       sr_selected=True, sr_width=1024, sr_height=640)
 
     def samples(self, count, fps=24, gpu=98, cpu=65, target=30):
         for _ in range(count):
@@ -70,15 +70,15 @@ class ResolutionTests(unittest.TestCase):
     def test_gpu_and_repeat_profile(self):
         self.session()
         self.samples(60)
-        self.assertEqual(self.settings.data["sr_profiles"][self.r.key]["next"],480)
+        self.assertEqual(self.settings.data["sr_profiles"][self.r.key]["next"],600)
         self.r.stop()
         self.r.launch(33)
-        self.assertEqual(self.r.height,480)
+        self.assertEqual(self.r.height,600)
 
     def test_cpu_limit(self):
         self.session()
         self.samples(60,24,54,98)
-        self.assertEqual(self.settings.data["sr_profiles"][self.r.key]["next"],540)
+        self.assertEqual(self.settings.data["sr_profiles"][self.r.key]["next"],720)
 
     def test_supply_or_target_transition_invalidates_window(self):
         self.session()
@@ -96,7 +96,7 @@ class ResolutionTests(unittest.TestCase):
         self.assertEqual(self.r.blocked,33)
         self.r.tick(0,self.st)
         self.assertTrue(self.r.launch(33))
-        self.assertEqual(self.r.height,540)
+        self.assertEqual(self.r.height,720)
 
     def test_duplicate_status_is_not_new_evidence(self):
         self.session()
@@ -114,7 +114,7 @@ class ResolutionTests(unittest.TestCase):
         self.r.stop()
         self.st["refresh_ns"] = 0
         self.assertTrue(self.r.launch(33))
-        self.assertEqual(self.r.height,480)
+        self.assertEqual(self.r.height,600)
 
     def test_hdr_after_learning(self):
         self.session()
