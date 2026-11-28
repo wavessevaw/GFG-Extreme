@@ -1,0 +1,20 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "kfg_common.glsl"
+#include "nis_sdr.glsl"
+#define NIS_GLSL 1
+#define NIS_SCALER 1
+#define kScaleX (float(u_srcSize.x)/float(u_dstSize.x))
+#define kScaleY (float(u_srcSize.y)/float(u_dstSize.y))
+#define kSrcNormX (1./float(u_srcSize.x))
+#define kSrcNormY (1./float(u_srcSize.y))
+#define kDstNormX (1./float(u_dstSize.x))
+#define kDstNormY (1./float(u_dstSize.y))
+#define in_texture s_samplers[0]
+#define out_texture dst
+#define coef_scaler s_samplers[1]
+#define coef_usm s_samplers[2]
+#define sampler2D(x,s) (x)
+#include "NVIDIAImageScaling/NIS/NIS_Scaler.h"
+layout(local_size_x=NIS_THREAD_GROUP_SIZE) in;
+void main(){NVScaler(gl_WorkGroupID.xy,gl_LocalInvocationID.x);}

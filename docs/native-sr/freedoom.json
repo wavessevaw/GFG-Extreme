@@ -1,0 +1,186 @@
+{
+  "480": {
+    "1": {
+      "Bilinear": {
+        "frames": 8,
+        "psnr_db": 25.78866410255432,
+        "ssim": 0.8598258346319199,
+        "temporal_delta_mae": 3.5518896920340404
+      },
+      "Kedavra SR": {
+        "frames": 8,
+        "psnr_db": 24.929168224334717,
+        "ssim": 0.8486601859331131,
+        "temporal_delta_mae": 3.5906224931989397
+      },
+      "FSR 1": {
+        "frames": 8,
+        "psnr_db": 24.908252477645874,
+        "ssim": 0.8212130516767502,
+        "temporal_delta_mae": 4.359901632581439
+      },
+      "NIS": {
+        "frames": 8,
+        "psnr_db": 22.72086000442505,
+        "ssim": 0.7624847069382668,
+        "temporal_delta_mae": 6.247472558702741
+      }
+    },
+    "2": {
+      "Bilinear": {
+        "frames": 14,
+        "psnr_db": 24.598666463579452,
+        "ssim": 0.7789693474769592,
+        "temporal_delta_mae": 7.478238399212177
+      },
+      "Kedavra SR": {
+        "frames": 14,
+        "psnr_db": 23.934456961495535,
+        "ssim": 0.7664632499217987,
+        "temporal_delta_mae": 7.654016678149883
+      },
+      "FSR 1": {
+        "frames": 14,
+        "psnr_db": 23.873029027666366,
+        "ssim": 0.7397853689534324,
+        "temporal_delta_mae": 8.015560150146484
+      },
+      "NIS": {
+        "frames": 14,
+        "psnr_db": 22.04426302228655,
+        "ssim": 0.6898919429097857,
+        "temporal_delta_mae": 9.170992777897762
+      },
+      "SR before FG": {
+        "frames": 14,
+        "psnr_db": 23.520965712411062,
+        "ssim": 0.7474508881568909,
+        "temporal_delta_mae": 9.56921779192411
+      }
+    },
+    "3": {
+      "Bilinear": {
+        "frames": 21,
+        "psnr_db": 22.48663248334612,
+        "ssim": 0.6923021447090876,
+        "temporal_delta_mae": 14.144408249855042
+      },
+      "Kedavra SR": {
+        "frames": 21,
+        "psnr_db": 21.97072764805385,
+        "ssim": 0.6790000299612681,
+        "temporal_delta_mae": 14.33424208164215
+      },
+      "FSR 1": {
+        "frames": 21,
+        "psnr_db": 21.929371879214333,
+        "ssim": 0.6549503576187861,
+        "temporal_delta_mae": 14.563138556480407
+      },
+      "NIS": {
+        "frames": 21,
+        "psnr_db": 20.538623628162203,
+        "ssim": 0.6082033557551247,
+        "temporal_delta_mae": 15.443115997314454
+      },
+      "SR before FG": {
+        "frames": 21,
+        "psnr_db": 21.919926507132395,
+        "ssim": 0.6728660535244715,
+        "temporal_delta_mae": 14.564194273948669
+      }
+    }
+  },
+  "500": {
+    "1": {
+      "Bilinear": {
+        "frames": 8,
+        "psnr_db": 26.050816297531128,
+        "ssim": 0.9057440459728241,
+        "temporal_delta_mae": 2.6317949635641917
+      },
+      "Kedavra SR": {
+        "frames": 8,
+        "psnr_db": 25.538517236709595,
+        "ssim": 0.9020610079169273,
+        "temporal_delta_mae": 2.4987333161490306
+      },
+      "FSR 1": {
+        "frames": 8,
+        "psnr_db": 25.46741271018982,
+        "ssim": 0.8822594210505486,
+        "temporal_delta_mae": 3.3020429951804027
+      },
+      "NIS": {
+        "frames": 8,
+        "psnr_db": 23.59834885597229,
+        "ssim": 0.8230096027255058,
+        "temporal_delta_mae": 5.113293102809361
+      }
+    },
+    "2": {
+      "Bilinear": {
+        "frames": 14,
+        "psnr_db": 24.67422812325614,
+        "ssim": 0.8030102295534951,
+        "temporal_delta_mae": 7.267370994274433
+      },
+      "Kedavra SR": {
+        "frames": 14,
+        "psnr_db": 24.256875038146973,
+        "ssim": 0.7949804578508649,
+        "temporal_delta_mae": 7.40133916414701
+      },
+      "FSR 1": {
+        "frames": 14,
+        "psnr_db": 24.14070783342634,
+        "ssim": 0.7710820053304944,
+        "temporal_delta_mae": 7.755151822016789
+      },
+      "NIS": {
+        "frames": 14,
+        "psnr_db": 22.62430613381522,
+        "ssim": 0.7217320033482143,
+        "temporal_delta_mae": 8.830045700073242
+      },
+      "SR before FG": {
+        "frames": 14,
+        "psnr_db": 24.240806579589844,
+        "ssim": 0.7922496540205819,
+        "temporal_delta_mae": 7.406226414900559
+      }
+    },
+    "3": {
+      "Bilinear": {
+        "frames": 21,
+        "psnr_db": 22.411014375232515,
+        "ssim": 0.7026055299100422,
+        "temporal_delta_mae": 13.318092846870423
+      },
+      "Kedavra SR": {
+        "frames": 21,
+        "psnr_db": 22.08501388913109,
+        "ssim": 0.691602865854899,
+        "temporal_delta_mae": 13.53917853832245
+      },
+      "FSR 1": {
+        "frames": 21,
+        "psnr_db": 22.000395366123744,
+        "ssim": 0.6685545501254854,
+        "temporal_delta_mae": 13.83607075214386
+      },
+      "NIS": {
+        "frames": 21,
+        "psnr_db": 20.904334295363654,
+        "ssim": 0.622970054546992,
+        "temporal_delta_mae": 14.903424620628357
+      },
+      "SR before FG": {
+        "frames": 21,
+        "psnr_db": 22.05258051554362,
+        "ssim": 0.6858189035029638,
+        "temporal_delta_mae": 13.654187631607055
+      }
+    }
+  }
+}

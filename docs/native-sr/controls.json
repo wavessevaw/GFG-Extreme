@@ -1,0 +1,358 @@
+{
+  "work": {
+    "480-photo": {
+      "Bilinear": {
+        "lpips": 0.103151,
+        "psnr_db": 28.91281,
+        "ssim": 0.92849
+      },
+      "Kedavra SR": {
+        "lpips": 0.085638,
+        "psnr_db": 29.84256,
+        "ssim": 0.94252
+      },
+      "FSR 1": {
+        "lpips": 0.057443,
+        "psnr_db": 28.04652,
+        "ssim": 0.92283
+      },
+      "NIS": {
+        "lpips": 0.100443,
+        "psnr_db": 22.38938,
+        "ssim": 0.84404
+      }
+    },
+    "480-real": {
+      "Bilinear": {
+        "lpips": 0.061464,
+        "psnr_db": 28.2618,
+        "ssim": 0.93142
+      },
+      "Kedavra SR": {
+        "lpips": 0.04808,
+        "psnr_db": 28.80743,
+        "ssim": 0.94007
+      },
+      "FSR 1": {
+        "lpips": 0.047886,
+        "psnr_db": 28.00127,
+        "ssim": 0.92797
+      },
+      "NIS": {
+        "lpips": 0.054509,
+        "psnr_db": 24.60515,
+        "ssim": 0.90053
+      }
+    },
+    "480-x2": {
+      "Bilinear": {
+        "lpips": 0.123568,
+        "psnr_db": 22.79202,
+        "ssim": 0.82772
+      },
+      "Kedavra SR": {
+        "lpips": 0.110266,
+        "psnr_db": 22.76652,
+        "ssim": 0.83339
+      },
+      "FSR 1": {
+        "lpips": 0.099502,
+        "psnr_db": 22.25393,
+        "ssim": 0.82033
+      },
+      "NIS": {
+        "lpips": 0.107545,
+        "psnr_db": 20.34814,
+        "ssim": 0.77923
+      }
+    },
+    "480-x3": {
+      "Bilinear": {
+        "lpips": 0.1221,
+        "psnr_db": 23.03955,
+        "ssim": 0.83162
+      },
+      "Kedavra SR": {
+        "lpips": 0.108147,
+        "psnr_db": 23.04038,
+        "ssim": 0.83826
+      },
+      "FSR 1": {
+        "lpips": 0.096486,
+        "psnr_db": 22.50641,
+        "ssim": 0.8264
+      },
+      "NIS": {
+        "lpips": 0.102887,
+        "psnr_db": 20.4674,
+        "ssim": 0.78497
+      }
+    },
+    "500-photo": {
+      "Bilinear": {
+        "lpips": 0.09657,
+        "psnr_db": 29.25281,
+        "ssim": 0.934
+      },
+      "Kedavra SR": {
+        "lpips": 0.077615,
+        "psnr_db": 30.27754,
+        "ssim": 0.94911
+      },
+      "FSR 1": {
+        "lpips": 0.054804,
+        "psnr_db": 28.29144,
+        "ssim": 0.92944
+      },
+      "NIS": {
+        "lpips": 0.097246,
+        "psnr_db": 22.64961,
+        "ssim": 0.85569
+      }
+    },
+    "500-real": {
+      "Bilinear": {
+        "lpips": 0.054282,
+        "psnr_db": 28.49583,
+        "ssim": 0.93361
+      },
+      "Kedavra SR": {
+        "lpips": 0.040815,
+        "psnr_db": 29.02981,
+        "ssim": 0.9434
+      },
+      "FSR 1": {
+        "lpips": 0.045238,
+        "psnr_db": 28.08049,
+        "ssim": 0.93409
+      },
+      "NIS": {
+        "lpips": 0.049984,
+        "psnr_db": 24.75285,
+        "ssim": 0.90732
+      }
+    },
+    "500-x2": {
+      "Bilinear": {
+        "lpips": 0.120434,
+        "psnr_db": 23.52164,
+        "ssim": 0.83692
+      },
+      "Kedavra SR": {
+        "lpips": 0.107018,
+        "psnr_db": 23.48212,
+        "ssim": 0.84296
+      },
+      "FSR 1": {
+        "lpips": 0.098348,
+        "psnr_db": 22.86101,
+        "ssim": 0.83051
+      },
+      "NIS": {
+        "lpips": 0.104952,
+        "psnr_db": 20.67611,
+        "ssim": 0.79507
+      }
+    },
+    "500-x3": {
+      "Bilinear": {
+        "lpips": 0.120309,
+        "psnr_db": 23.88209,
+        "ssim": 0.84623
+      },
+      "Kedavra SR": {
+        "lpips": 0.105331,
+        "psnr_db": 23.88173,
+        "ssim": 0.85299
+      },
+      "FSR 1": {
+        "lpips": 0.094415,
+        "psnr_db": 23.27823,
+        "ssim": 0.84233
+      },
+      "NIS": {
+        "lpips": 0.100827,
+        "psnr_db": 21.03103,
+        "ssim": 0.80591
+      }
+    }
+  },
+  "softer": {
+    "480-photo": {
+      "Bilinear": {
+        "lpips": 0.103151,
+        "psnr_db": 28.91281,
+        "ssim": 0.92849
+      },
+      "Kedavra SR": {
+        "lpips": 0.085638,
+        "psnr_db": 29.84256,
+        "ssim": 0.94252
+      },
+      "FSR 1": {
+        "lpips": 0.070841,
+        "psnr_db": 29.77267,
+        "ssim": 0.94295
+      },
+      "NIS": {
+        "lpips": 0.083091,
+        "psnr_db": 29.94135,
+        "ssim": 0.94335
+      }
+    },
+    "480-real": {
+      "Bilinear": {
+        "lpips": 0.061464,
+        "psnr_db": 28.2618,
+        "ssim": 0.93142
+      },
+      "Kedavra SR": {
+        "lpips": 0.04808,
+        "psnr_db": 28.80743,
+        "ssim": 0.94007
+      },
+      "FSR 1": {
+        "lpips": 0.038498,
+        "psnr_db": 28.82175,
+        "ssim": 0.94238
+      },
+      "NIS": {
+        "lpips": 0.049823,
+        "psnr_db": 28.89165,
+        "ssim": 0.93887
+      }
+    },
+    "480-x2": {
+      "Bilinear": {
+        "lpips": 0.123568,
+        "psnr_db": 22.79202,
+        "ssim": 0.82772
+      },
+      "Kedavra SR": {
+        "lpips": 0.110266,
+        "psnr_db": 22.76652,
+        "ssim": 0.83339
+      },
+      "FSR 1": {
+        "lpips": 0.096234,
+        "psnr_db": 22.67509,
+        "ssim": 0.83405
+      },
+      "NIS": {
+        "lpips": 0.108781,
+        "psnr_db": 22.75084,
+        "ssim": 0.83386
+      }
+    },
+    "480-x3": {
+      "Bilinear": {
+        "lpips": 0.1221,
+        "psnr_db": 23.03955,
+        "ssim": 0.83162
+      },
+      "Kedavra SR": {
+        "lpips": 0.108147,
+        "psnr_db": 23.04038,
+        "ssim": 0.83826
+      },
+      "FSR 1": {
+        "lpips": 0.09472,
+        "psnr_db": 22.95282,
+        "ssim": 0.83961
+      },
+      "NIS": {
+        "lpips": 0.107019,
+        "psnr_db": 23.02794,
+        "ssim": 0.83912
+      }
+    },
+    "500-photo": {
+      "Bilinear": {
+        "lpips": 0.09657,
+        "psnr_db": 29.25281,
+        "ssim": 0.934
+      },
+      "Kedavra SR": {
+        "lpips": 0.077615,
+        "psnr_db": 30.27754,
+        "ssim": 0.94911
+      },
+      "FSR 1": {
+        "lpips": 0.063643,
+        "psnr_db": 30.22429,
+        "ssim": 0.95079
+      },
+      "NIS": {
+        "lpips": 0.0763,
+        "psnr_db": 30.38,
+        "ssim": 0.94928
+      }
+    },
+    "500-real": {
+      "Bilinear": {
+        "lpips": 0.054282,
+        "psnr_db": 28.49583,
+        "ssim": 0.93361
+      },
+      "Kedavra SR": {
+        "lpips": 0.040815,
+        "psnr_db": 29.02981,
+        "ssim": 0.9434
+      },
+      "FSR 1": {
+        "lpips": 0.032496,
+        "psnr_db": 28.99588,
+        "ssim": 0.94766
+      },
+      "NIS": {
+        "lpips": 0.04264,
+        "psnr_db": 29.12662,
+        "ssim": 0.9415
+      }
+    },
+    "500-x2": {
+      "Bilinear": {
+        "lpips": 0.120434,
+        "psnr_db": 23.52164,
+        "ssim": 0.83692
+      },
+      "Kedavra SR": {
+        "lpips": 0.107018,
+        "psnr_db": 23.48212,
+        "ssim": 0.84296
+      },
+      "FSR 1": {
+        "lpips": 0.093296,
+        "psnr_db": 23.4048,
+        "ssim": 0.84538
+      },
+      "NIS": {
+        "lpips": 0.104448,
+        "psnr_db": 23.47944,
+        "ssim": 0.84327
+      }
+    },
+    "500-x3": {
+      "Bilinear": {
+        "lpips": 0.120309,
+        "psnr_db": 23.88209,
+        "ssim": 0.84623
+      },
+      "Kedavra SR": {
+        "lpips": 0.105331,
+        "psnr_db": 23.88173,
+        "ssim": 0.85299
+      },
+      "FSR 1": {
+        "lpips": 0.090899,
+        "psnr_db": 23.81729,
+        "ssim": 0.85607
+      },
+      "NIS": {
+        "lpips": 0.103053,
+        "psnr_db": 23.89997,
+        "ssim": 0.85384
+      }
+    }
+  }
+}

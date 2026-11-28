@@ -1,0 +1,42 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "kfg_common.glsl"
+#if defined(METHOD_SR)
+#include "kfg_sr.glsl"
+#elif defined(METHOD_EASU) || defined(METHOD_RCAS)
+#define A_GPU 1
+#define A_GLSL 1
+#include "ffx_a.h"
+#ifdef METHOD_EASU
+#define FSR_EASU_F 1
+vec4 FsrEasuRF(vec2 p){return textureGather(s_samplers[0],p,0);}
+vec4 FsrEasuGF(vec2 p){return textureGather(s_samplers[0],p,1);}
+vec4 FsrEasuBF(vec2 p){return textureGather(s_samplers[0],p,2);}
+#else
+#define FSR_RCAS_F 1
+vec4 FsrRcasLoadF(ivec2 p){return texelFetch(s_samplers[0],clamp(p,ivec2(0),u_srcSize-1),0);}
+void FsrRcasInputF(inout float r,inout float g,inout float b){}
+#endif
+#include "ffx_fsr1.h"
+#endif
+layout(local_size_x=8,local_size_y=8) in;
+void main(){
+    ivec2 p=ivec2(gl_GlobalInvocationID.xy);
+    if(any(greaterThanEqual(p,u_dstSize))) return;
+    vec2 uv=(vec2(p)+0.5)/vec2(u_dstSize);
+    vec3 rgb;
+#ifdef METHOD_EASU
+    uvec4 a,b,c,d;
+    FsrEasuCon(a,b,c,d,u_srcSize.x,u_srcSize.y,u_srcSize.x,u_srcSize.y,u_dstSize.x,u_dstSize.y);
+    FsrEasuF(rgb,uvec2(p),a,b,c,d);
+#elif defined(METHOD_RCAS)
+    uvec4 a;
+    FsrRcasCon(a,RCAS_STOPS);
+    FsrRcasF(rgb.r,rgb.g,rgb.b,uvec2(p),a);
+#elif defined(METHOD_SR)
+    rgb=kfgReconstruct(s_samplers[0],uv*vec2(u_srcSize),u_srcSize).rgb;
+#else
+    rgb=textureLod(s_samplers[0],uv,0).rgb;
+#endif
+    imageStore(dst,p,vec4(rgb,1));
+}
