@@ -15,3 +15,5 @@ The experimental 16-tap, 25-phase learned residual reconstruction is enabled onl
 The previous SR.2 package remains a rollback option. Coefficients were fitted using synthetic photographic downsampling and an approximate CPU Focus implementation; actual game fidelity and GPU performance are unverified.
 
 SR.4 inverse candidate: reconstructs a Focus-based spatial prior, projects raw pre-Focus SDR luma through a regularized 5:4 area + mild low-pass inverse and corrects the prior. One additional compute dispatch at 1280x800, no temporal history. The inverse path is limited to fullscreen, exact-size opaque SDR game content with Focus only; other active post effects use spatial SR.3. GPU performance and real-game quality remain unverified. Disable other look/AA effects to test the inverse candidate.
+
+Graphics reports `Inverse SR` when the high-resolution projection dispatch is active; `Spatial SR` means fallback. The inverse uses a fixed mild-blur forward operator (0.05, 0.90, 0.05) and a bounded 0.75 correction. Timing includes the added dispatch. Exact matched-degradation oracle scores are not package performance claims.
