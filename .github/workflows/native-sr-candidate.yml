@@ -14,19 +14,19 @@ jobs:
         with:
           github-token: ${{ github.token }}
           repository: wavessevaw/GSF_Kedavra
-          run-id: 45993998300
+          run-id: 46090679034
           name: gamescope-runtime
           path: runtime-build
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
           repository: wavessevaw/GSF_Kedavra
-          run-id: 45993998300
+          run-id: 46090679034
           name: kedavra-deck-bench
           path: bench-build
       - name: Build and verify the installation ZIP
         run: |
-          test "$(cat runtime-build/VERSION)" = kedavra-1.9.0-sr.1-6f969fb
+          test "$(cat runtime-build/VERSION)" = kedavra-1.9.0-sr.1-0a56ee9
           bash scripts/build_release.sh 4.0.0-sr.1 "$PWD/runtime-build" "$PWD/out" "$PWD/bench-build"
           cd out
           sha256sum -c SHA256SUMS.txt

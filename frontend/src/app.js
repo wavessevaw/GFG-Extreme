@@ -416,7 +416,15 @@ function Content() {
 const Icon = () => h("img", { src: LOGO, width: 20, height: 20 });
 export default definePlugin(() => {
   const sub = window.SteamClient?.Apps?.RegisterForGameActionStart?.((_id, app, action) => {
-    if (action === "LaunchApp" && /^\d{1,10}$/.test(String(app))) rpc.srLaunch(Number(app)).catch(() => {});
+    if (action !== "LaunchApp" || !/^\d{1,20}$/.test(String(app))) return;
+    let id = BigInt(app);
+    // Steam shortcuts carry their 32-bit application ID in the upper word.
+    if (id > 0xffffffffn) {
+      if (id > 0xffffffffffffffffn || (id & 0xffffffffn) !== 0x02000000n) return;
+      id >>= 32n;
+      if (id < 0x80000000n) return;
+    }
+    if (id > 1n && id !== 769n) rpc.srLaunch(Number(id)).catch(() => {});
   });
   return {
   name: "GFG Extreme",

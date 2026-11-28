@@ -13,7 +13,7 @@ trap 'rm -rf "$work"' EXIT
 git -C "$root" archive --prefix=GFG-Extreme/ HEAD -- \
   main.py plugin.json package.json dist py_modules third_party_licenses \
   LICENSE.md THIRD_PARTY_NOTICES.md ASSET_PROVENANCE.md README.md README.ru.md \
-  docs/img RESOURCE_OPTIMIZER.md TEST-60HZ.md | tar -x -C "$work"
+  docs/img RESOURCE_OPTIMIZER.md TEST-60HZ.md NATIVE-SR.md | tar -x -C "$work"
 p="$work/GFG-Extreme"
 mkdir -p "$p/bin"
 git -C "$root" show HEAD:tools/kfg_pacing.py > "$p/bin/kfg_pacing.py"

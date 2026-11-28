@@ -20,6 +20,7 @@ const state = { version: "3.0.0", codename: "Independence", device: "Steam Deck 
 const catalog = { presets: [["off","Off"],["sharp","Sharp"],["vivid","Vivid"],["hdr","HDR look"],["cinema","Cinema"],["noir","Noir"],["retro","Retro"],["smooth","Smooth"]].map(([id,name]) => ({ id, name, filters: id === "vivid" ? { effects: ["vibrance"], sharpen: "cas", aa: "none" } : {} })),
   effects: ["HDR Look","Clarity","Levels+","Curves","Vibrance","Colourfulness","Technicolor","DPX","Noir","Sepia","Film grain","Vignette","Deband"].map((n) => ({ key: n === "Vibrance" ? "vibrance" : n, name: n })) };
 const mock = `window.SP_REACT = React; window.DFL = { staticClasses: { Title: "t" } }; window.appStore = { GetAppOverviewByAppID: () => ({ display_name: "Elden Ring" }) };
+window.SteamClient = { Apps: { RegisterForGameActionStart: cb => { window.__launch = cb; return {unregister: () => { window.__launch = null; }}; } } };
 window.__calls = []; window.__state = ${JSON.stringify(state)}; const __cat = ${JSON.stringify(catalog)};
 var callable = (n) => async (...a) => { window.__calls.push([n, a]); return ({ get_state: () => window.__state, get_catalog: () => __cat, diagnose: () => ({ checks: [{ key: "a", ok: true, text: "Gamescope KEDAVRA 3.0.0 installed" }, { key: "b", ok: true, text: "Running after reboot (confirmed)" }, { key: "c", ok: true, text: "Libraries found on this SteamOS" }] }) }[n] || (() => ({})))(...a); };
 var definePlugin = (f) => f; window.__toasts = []; var toaster = { toast: (t) => window.__toasts.push(t) };`;
@@ -29,13 +30,13 @@ const errors = []; page.on("pageerror", (e) => errors.push(String(e)));
 await page.setContent(`<html><body style="margin:0;background:#000"><div id=r style="width:330px"></div></body></html>`);
 await page.addScriptTag({ content: rb.outputFiles[0].text });
 await page.addScriptTag({ content: mock + "\n" + app.outputFiles[0].text.replace(/^var GFGPlugin = /, "window.__P = ") });
-await page.evaluate(() => { const p = window.__P.default(); window.__createRoot(document.getElementById("r")).render(p.content); });
+await page.evaluate(() => { const p = window.__P.default(); window.__plugin = p; window.__createRoot(document.getElementById("r")).render(p.content); });
 await page.waitForTimeout(500);
 for (const [i, t] of ["Dash", "Graphics", "Engine", "Setup"].entries()) {
   await page.locator(".tab", { hasText: t }).first().click(); await page.waitForTimeout(300);
   if (outDir) await page.locator("#r").screenshot({ path: path.join(outDir, `ui-${i + 1}-${t.toLowerCase()}.png`) });
   const text = await page.locator("#r").innerText();
-  for (const want of { Dash: ["Steam Deck OLED", "CPU TOP", "FAN", "k rpm"], Graphics: ["Kedavra Focus", "LOOK", "SHARPENING", "ANTI-ALIASING", "Top right", "Bottom right", "Standard"], Engine: ["POWER SPLIT", "GPU clock ceiling", "1.8 GHz"], Setup: ["Take over", "Frame generation in HDR games"] }[t])
+  for (const want of { Dash: ["Steam Deck OLED", "CPU TOP", "FAN", "k rpm"], Graphics: ["SUPER RESOLUTION", "Kedavra Focus", "LOOK", "SHARPENING", "ANTI-ALIASING", "Top right", "Bottom right", "Standard"], Engine: ["POWER SPLIT", "GPU clock ceiling", "1.8 GHz"], Setup: ["Take over", "Frame generation in HDR games"] }[t])
     if (!text.includes(want) && !(t === "Setup" && want === "Take over")) errors.push(`${t}: missing "${want}"`);
 }
 await page.locator(".tab", { hasText: "Graphics" }).first().click(); await page.waitForTimeout(200);
@@ -56,5 +57,15 @@ if (!setupText.includes("Reinstall: done")) errors.push("Setup: Reinstall left n
 const toasts = await page.evaluate(() => window.__toasts.length);
 if (toasts < 2) errors.push(`Setup: ${toasts} toasts for Reinstall, want 2`);
 console.log(JSON.stringify({ errors, classic, calls }));
+const launchCalls = await page.evaluate(async () => {
+  window.__launch(1, "42", "LaunchApp");
+  window.__launch(1, "42", "UpdateApp");
+  window.__launch(1, "769", "LaunchApp");
+  window.__launch(2, ((0x81234567n << 32n) | 0x02000000n).toString(), "LaunchApp");
+  await Promise.resolve();
+  window.__plugin.onDismount();
+  return [window.__calls.filter(c => c[0] === "sr_launch").map(c => c[1][0]), window.__launch];
+});
+if (JSON.stringify(launchCalls) !== JSON.stringify([[42, 0x81234567], null])) errors.push("Steam launch subscription");
 await b.close();
 if (errors.length || classic !== "176px" || !calls.length) process.exit(1);

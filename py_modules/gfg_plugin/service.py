@@ -381,7 +381,8 @@ class Service:
             except OSError:
                 pass
         if game:
-            self.resolution.observe(st, live, sensors, req.get("point") or st.get("cap_fps") or refresh)
+            self.resolution.observe(st, live, sensors, req.get("point") or st.get("cap_fps") or refresh,
+                                    budget=g.get("tdp_w"), external=power.get("external_power"))
             self.stats.add(now, output=live.get("fps"), real=live.get("real"), tdp=g.get("tdp_w"),
                            draw=g.get("draw_w"), reference_w=g.get("ceiling_w"), temp_c=temp,
                            stuttering=(live.get("pace") is not None and live["pace"] < 0.97), hot=(temp or 0) >= 85,
