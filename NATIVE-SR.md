@@ -1,19 +1,23 @@
-# GFG Extreme 4.0.0-sr.4 · Native Super Resolution test candidate
+# GFG Extreme 4.0.0-sr.5 — four-real-frame inverse candidate
 
 Install the inner ZIP through Decky Loader, reinstall Gamescope Kedavra in Setup and reboot.
-Enable Graphics → Super Resolution → Auto. The frontend requests per-app Steam Properties
-resolution 1024x640 and the internal-display override before RunGame on a 1280x800 display.
-The API is verified by reading the values back; launch surfaces bypassing the hook may only
-apply on a subsequent launch. No temporary virtual display resize is requested by GFG;
-Gamescope receives an app-scoped passive SR lease with launch token zero. Actual game surface
-size is reported, and a game may ignore its advertised display mode. Focus is automatically forced while SR is enabled without modifying the saved profile; frame generation remains unchanged. Turning Auto off attempts to restore recorded Steam settings; if the Steam
-API is unavailable, restore Properties manually. User changes to a different resolution are
-not overwritten by rollback. Previous setting receipts are stored per Steam account when the
-account is available; otherwise they survive only for the frontend session.
+Enable Graphics → Super Resolution → Auto. The frontend sets Steam Properties maximum game
+resolution to 1024x640 and the internal-display override before RunGame on a 1280x800 display.
+Focus is forced in the effective pipeline; disabling SR restores the saved preference.
+Actual source/output dimensions are checked by the engine; only 1024x640 to 1280x800 SDR is eligible.
 
-The experimental 16-tap, 25-phase learned residual reconstruction is enabled only at 5:4. Other input/output resolutions bypass Kedavra SR. Hardware performance and live launch ordering are unverified.
-The previous SR.2 package remains a rollback option. Coefficients were fitted using synthetic photographic downsampling and an approximate CPU Focus implementation; actual game fidelity and GPU performance are unverified.
+The four-frame inverse uses four distinct actual source textures from Kedavra's six-frame ring,
+not synthetic FG output as an observation. Motion fields and local subpixel registration map
+the observations to the displayed real or generated phase. A regularized local inverse solves
+64 observations for 25 output unknowns with a Focus-derived spatial prior. Low confidence,
+cuts, insufficient distinct sampling phases, invalid alpha, or missing history fall back to
+spatial SR.3. The displayed-frame label "4-frame Inverse SR" confirms the dispatch, not that
+every tile passed confidence gating. One extra high-resolution dispatch, 8 local PCG iterations.
+The existing ring is also captured/analyzed with FG off when SR is selected (extra GPU cost).
+Other post effects/AA currently select the spatial fallback to preserve their semantics.
+For testing use Look Off and AA Off; Focus is automatic.
 
-SR.4 inverse candidate: reconstructs a Focus-based spatial prior, projects raw pre-Focus SDR luma through a regularized 5:4 area + mild low-pass inverse and corrects the prior. One additional compute dispatch at 1280x800, no temporal history. The inverse path is limited to fullscreen, exact-size opaque SDR game content with Focus only; other active post effects use spatial SR.3. GPU performance and real-game quality remain unverified. Disable other look/AA effects to test the inverse candidate.
-
-Graphics reports `Inverse SR` when the high-resolution projection dispatch is active; `Spatial SR` means fallback. The inverse uses a fixed mild-blur forward operator (0.05, 0.90, 0.05) and a bounded 0.75 correction. Timing includes the added dispatch. Exact matched-degradation oracle scores are not package performance claims.
+CPU-model results are from five photographs, synthetic shifted observations, approximate Focus,
+and known alignment. They are not native game or Deck GPU measurements. The device must be
+tested for motion artifacts, 5-pixel tile boundaries, confidence coverage and GPU timing.
+SR.2, SR.3 and single-frame SR.4 remain separate rollback packages.
