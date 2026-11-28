@@ -183,6 +183,7 @@ var rpc = {
   catalog: call("get_catalog"),
   setProfile: call("set_profile"),
   dropGame: call("drop_game_profile"),
+  srLaunch: call("sr_launch"),
   setSection: call("set_section"),
   install: call("engine_install"),
   uninstall: call("engine_uninstall"),
@@ -445,6 +446,19 @@ function Graphics({ s, set, cat }) {
   return h(
     "div",
     null,
+    h(
+      Card,
+      { title: "SUPER RESOLUTION" },
+      h(Row, { k: "Auto", first: true }, h(Tog, {
+        on: !!s.settings.engine.super_resolution,
+        onChange: (v) => set(() => rpc.setSection("engine", { super_resolution: v }))
+      })),
+      s.settings.engine.super_resolution ? h(
+        "div",
+        { className: "sub" },
+        !engine.fresh || !engine.sr_capable ? "Waiting for compatible Gamescope" : (engine.sr_selected ? "Reconstructing" : "Bypass") + " \xB7 " + (engine.sr_width || "\u2013") + " \xD7 " + (engine.sr_height || "\u2013") + " \u2192 " + (engine.sr_output_width || "\u2013") + " \xD7 " + (engine.sr_output_height || "\u2013") + (s.live.sr_message ? " \xB7 " + s.live.sr_message : "")
+      ) : null
+    ),
     h(
       Card,
       { title: "IMAGE CLARITY" },
@@ -795,15 +809,22 @@ function Content() {
   );
 }
 var Icon = () => h("img", { src: LOGO, width: 20, height: 20 });
-var app_default = definePlugin(() => ({
-  name: "GFG Extreme",
-  titleView: h("div", { className: window.DFL.staticClasses.Title }, "GFG \xB7 EXTREME"),
-  alwaysRender: true,
-  content: h(Content, null),
-  icon: h(Icon, null),
-  onDismount() {
-  }
-}));
+var app_default = definePlugin(() => {
+  const sub = window.SteamClient?.Apps?.RegisterForGameActionStart?.((_id, app, action) => {
+    if (action === "LaunchApp" && /^\d{1,10}$/.test(String(app))) rpc.srLaunch(Number(app)).catch(() => {
+    });
+  });
+  return {
+    name: "GFG Extreme",
+    titleView: h("div", { className: window.DFL.staticClasses.Title }, "GFG \xB7 EXTREME"),
+    alwaysRender: true,
+    content: h(Content, null),
+    icon: h(Icon, null),
+    onDismount() {
+      sub?.unregister?.();
+    }
+  };
+});
 export {
   app_default as default
 };

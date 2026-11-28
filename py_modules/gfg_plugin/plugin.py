@@ -237,6 +237,12 @@ class Plugin:
             ok = await self._worker(self.settings.drop_game_profile, (self.state or {}).get("app"))
         return {"dropped": ok}
 
+    async def sr_launch(self, app: int) -> bool:
+        async with self.lock:
+            if self.stopping:
+                return False
+            return await self._worker(self.service.resolution.launch, app)
+
     async def set_section(self, section: str, changes: Dict[str, Any]) -> Dict[str, Any]:
         async with self.lock:
             if self.stopping:

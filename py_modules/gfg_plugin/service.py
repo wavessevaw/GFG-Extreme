@@ -40,6 +40,9 @@ POWER_EVERY_S = 2.0   # battery and charger readings
 IDLE_SENSORS_S = 5.0
 
 
+from .resolution import ResolutionController
+
+
 class Service:
     def __init__(self, *, settings: Any, ctl: Any, actuator: Any, model: Any, sensors: Any,
                  battery: Callable[[], Dict[str, Any]], hud: Optional[Any] = None,
@@ -54,6 +57,7 @@ class Service:
         self.settings = settings
         self.ctl = ctl
         self.clock = clock
+        self.resolution = ResolutionController(settings, ctl, clock)
         self.journal = journal
         self.telemetry = telemetry
         self.sensors = sensors
@@ -189,6 +193,10 @@ class Service:
             self._end_session("game-exit")
             self.app = 0
             self._reset_after_game()
+        try:
+            self.resolution.tick(self.app if game else 0, st)
+        except (OSError, RuntimeError) as error:
+            self.resolution.message = str(error)
         if game:
             self.idle = False
         elif self.idle and self.idle_rev == getattr(self.settings, "rev", 0):
@@ -373,6 +381,7 @@ class Service:
             except OSError:
                 pass
         if game:
+            self.resolution.observe(st, live, sensors, req.get("point") or st.get("cap_fps") or refresh)
             self.stats.add(now, output=live.get("fps"), real=live.get("real"), tdp=g.get("tdp_w"),
                            draw=g.get("draw_w"), reference_w=g.get("ceiling_w"), temp_c=temp,
                            stuttering=(live.get("pace") is not None and live["pace"] < 0.97), hot=(temp or 0) >= 85,
@@ -380,7 +389,7 @@ class Service:
         self.snapshot = {
             "time": now, "game": game, "app": self.app, "profile": profile_key, "profile_name": profile["name"],
             "fg": profile["fg"], "objective": objective, "objective_setting": profile["objective"],
-            "autopilot_reason": auto_reason, "refresh": refresh, "engine": self._engine_view(st),
+            "sr_message": self.resolution.message, "autopilot_reason": auto_reason, "refresh": refresh, "engine": self._engine_view(st),
             "optimizer": self.optimizer.status if self.optimizer else {}, "live": live, "pilot": req, "policy": coord, "governor": g, "split": split_status, "gpu_clock": gclock_status,
             "lease": lease, "filter_budget": self.fbudget.status(), "game_profile": gp, "dock": dock,
             "boost": self.boost.status() if self.boost is not None else None,
@@ -458,7 +467,8 @@ class Service:
 
     @staticmethod
     def _engine_view(st: Dict[str, Any]) -> Dict[str, Any]:
-        keys = ("engine", "fresh", "state", "multiplier", "cap_fps", "base_fps", "auto", "auto_floor",
+        keys = ("sr_capable", "sr_selected", "sr_width", "sr_height", "sr_output_width", "sr_output_height",
+                "sr_managed_app", "sr_virtual_width", "sr_virtual_height", "engine", "fresh", "state", "multiplier", "cap_fps", "base_fps", "auto", "auto_floor",
                 "focus_status", "focus_frames", "post", "post_active", "post_error", "gpu_us_avg", "gpu_post_us_avg", "gpu_analysis_us_avg", "analysis_pairs", "last_problem",
                 "steam_ui", "width", "height", "message", "trace", "transfer", "hdr_enabled", "post_hdr_limited")
         return {k: st.get(k) for k in keys if k in st}
@@ -484,7 +494,7 @@ class Service:
     def _stop(self) -> None:
         """Plugin unload: TDP back to the player's, HDR output back on, HUD hidden, generation left
         as the engine runs it."""
-        actions = [lambda: self.benchmark.abort("Plugin stopped"), lambda: self._end_session("unload")]
+        actions = [self.resolution.stop, lambda: self.benchmark.abort("Plugin stopped"), lambda: self._end_session("unload")]
         if self.optimizer: actions.append(self.optimizer.stop)
         if self.boost is not None:
             actions.append(self.boost.stop)

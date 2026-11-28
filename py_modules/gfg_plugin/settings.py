@@ -38,7 +38,7 @@ def defaults() -> Dict[str, Any]:
         "hud": {"enabled": True, "position": "top-right", "detail": "standard"},
         "autopilot": {"preference": "auto"},
         "power": {"optimizer": True, "enabled": True, "split": True, "gpu_clock": True},
-        "engine": {"hdr": True, "hdr_output": True, "above_x3": False, "boost": False, "boost_mult": 1.5},
+        "engine": {"super_resolution": False, "hdr": True, "hdr_output": True, "above_x3": False, "boost": False, "boost_mult": 1.5},
         "telemetry": {"level": "standard"},
         "migrated_from": None,
     }
@@ -92,7 +92,8 @@ def normalize(raw: Any) -> Dict[str, Any]:
     out["power"] = {"optimizer": bool(power.get("optimizer", True)), "enabled": bool(power.get("enabled", True)), "split": bool(power.get("split", True)),
                     "gpu_clock": bool(power.get("gpu_clock", True))}
     eng = raw.get("engine") if isinstance(raw.get("engine"), dict) else {}
-    out["engine"] = {"hdr": bool(eng.get("hdr", True)), "hdr_output": bool(eng.get("hdr_output", True)),
+    out["sr_profiles"] = copy.deepcopy(raw["sr_profiles"]) if isinstance(raw.get("sr_profiles"), dict) else {}
+    out["engine"] = {"super_resolution": eng.get("super_resolution") is True, "hdr": bool(eng.get("hdr", True)), "hdr_output": bool(eng.get("hdr_output", True)),
                      # Above x3 (user, 3.1.1): x3.75 plays badly, so it is unlocked only here.
                      "above_x3": bool(eng.get("above_x3", False)),
                      # Boost (user, 3.1.1): a camera turn of ~1 s gets x1.25-x1.75 until the stick rests.

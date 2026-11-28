@@ -14,7 +14,7 @@ const call = (name) => { const f = callable(name); return async (...a) => {
   catch (e) { errs.last = { name, message: String((e && e.message) || e) }; errs.subs.forEach((g) => g()); throw e; } }; };
 const rpc = {
   state: call("get_state"), catalog: call("get_catalog"), setProfile: call("set_profile"), dropGame: call("drop_game_profile"),
-  setSection: call("set_section"), install: call("engine_install"), uninstall: call("engine_uninstall"), reboot: call("reboot"),
+  srLaunch: call("sr_launch"), setSection: call("set_section"), install: call("engine_install"), uninstall: call("engine_uninstall"), reboot: call("reboot"),
   diagnose: call("diagnose"), bench: call("run_bench"), report: call("save_report"), startCapture: call("start_capture"),
   stopCapture: call("stop_capture"), captures: call("list_captures"), logs: call("get_logs"), takeOver: call("take_over"),
 };
@@ -197,6 +197,15 @@ function Graphics({ s, set, cat }) {
   const stepper = (k) => h("div", { className: "step" }, h(Focusable, { className: "b", onClick: () => step(k, -0.05) }, "−"),
     h("span", { className: "val" }, Math.round((f[k] || 0) * 100) + "%"), h(Focusable, { className: "b", onClick: () => step(k, 0.05) }, "+"));
   return h("div", null,
+    h(Card, { title: "SUPER RESOLUTION" },
+      h(Row, { k: "Auto", first: true }, h(Tog, { on: !!s.settings.engine.super_resolution,
+        onChange: v => set(() => rpc.setSection("engine", { super_resolution: v })) })),
+      s.settings.engine.super_resolution ? h("div", { className: "sub" },
+        !engine.fresh || !engine.sr_capable ? "Waiting for compatible Gamescope" :
+        (engine.sr_selected ? "Reconstructing" : "Bypass") + " · " +
+        (engine.sr_width || "–") + " × " + (engine.sr_height || "–") + " → " +
+        (engine.sr_output_width || "–") + " × " + (engine.sr_output_height || "–") +
+        (s.live.sr_message ? " · " + s.live.sr_message : "")) : null),
     h(Card, { title: "IMAGE CLARITY" },
       h(Row, { k: "Kedavra Focus", first: true }, h(Tog, { on: !!f.focus, onChange: (v) => put({ focus: v }) })),
       h("div", { className: "sub" }, focusMessage),
@@ -405,11 +414,16 @@ function Content() {
 }
 
 const Icon = () => h("img", { src: LOGO, width: 20, height: 20 });
-export default definePlugin(() => ({
+export default definePlugin(() => {
+  const sub = window.SteamClient?.Apps?.RegisterForGameActionStart?.((_id, app, action) => {
+    if (action === "LaunchApp" && /^\d{1,10}$/.test(String(app))) rpc.srLaunch(Number(app)).catch(() => {});
+  });
+  return {
   name: "GFG Extreme",
   titleView: h("div", { className: window.DFL.staticClasses.Title }, "GFG · EXTREME"),
   alwaysRender: true,
   content: h(Content, null),
   icon: h(Icon, null),
-  onDismount() {},
-}));
+  onDismount() { sub?.unregister?.(); },
+  };
+});
