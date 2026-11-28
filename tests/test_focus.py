@@ -67,3 +67,11 @@ class FocusIntegrationTest(unittest.TestCase):
         for status in ('processing', 'hdr_bypass', 'steam_ui'):
             source = {'fresh': True, 'focus_status': status, 'focus_frames': 123}
             self.assertEqual(Service._engine_view(source), source)
+
+    def test_sr_forces_focus_without_overwriting_saved_profile(self):
+        saved = filters.normalize({"focus": False, "sharpen": "dls", "sharpness": 0.35})
+        effective = filters.for_sr(saved, True)
+        self.assertEqual(filters.to_post(effective), "detail=1")
+        self.assertEqual(filters.to_post(shed(effective, 2)), "detail=1")
+        self.assertFalse(saved["focus"])
+        self.assertEqual(filters.to_post(filters.for_sr(saved, False)), "dls=0.35:0.17")

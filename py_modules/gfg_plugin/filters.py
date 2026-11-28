@@ -106,6 +106,11 @@ def is_active(cfg: Dict[str, Any]) -> bool:
     return cfg["focus"] or bool(cfg["effects"]) or cfg["sharpen"] != "none" or cfg["aa"] != "none"
 
 
+def for_sr(cfg: Dict[str, Any], enabled: bool) -> Dict[str, Any]:
+    """SR forces fixed-strength Focus; disabling SR restores the saved filter preference."""
+    return {**cfg, "focus": True} if enabled else cfg
+
+
 def to_post(cfg: Dict[str, Any]) -> str:
     """The engine's kfg_post string ("" = off). Effects in the engine's fixed order are fine in
     any order here: kfg_post_parse only sets bits."""

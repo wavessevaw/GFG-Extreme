@@ -51,6 +51,11 @@ await page.locator(".lrow", { hasText: "Kedavra Focus" }).locator(".tog").click(
 await page.waitForTimeout(150);
 const focusCall = await page.evaluate(() => window.__calls.find(c => c[0] === "set_profile" && c[1]?.[1]?.filters?.focus === true));
 if (!focusCall || focusCall[1][1].filters.sharpen !== "cas" || focusCall[1][1].filters.sharpness !== 0.5) errors.push("Focus must preserve saved CAS configuration");
+await page.evaluate(() => { window.__state.settings.engine.super_resolution = true; });
+await page.waitForTimeout(1200);
+if (await page.locator(".lrow", { hasText: "Kedavra Focus" }).innerText().then(x => !x.includes("Auto · SR"))) errors.push("SR must force Focus in UI");
+await page.evaluate(() => { window.__state.settings.engine.super_resolution = false; });
+await page.waitForTimeout(1200);
 await page.locator(".tab", { hasText: "Dash" }).first().click(); await page.waitForTimeout(200);
 await page.locator(".herotap").first().click(); await page.waitForTimeout(200);
 const classic = await page.locator(".ring").first().evaluate((e) => e.style.width);

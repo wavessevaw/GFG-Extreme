@@ -175,9 +175,11 @@ function lookSummary(f, names) {
 }
 function Graphics({ s, set, cat }) {
   const prof = s.settings.profiles[s.profiles.active] || s.settings.profiles.default;
-  const f = prof.filters || { effects: [], sharpen: "none", sharpness: 0.4, denoise: 0.17, aa: "none" };
+  const savedFilters = prof.filters || { effects: [], sharpen: "none", sharpness: 0.4, denoise: 0.17, aa: "none" };
+  const srFocus = !!s.settings.engine.super_resolution;
+  const f = srFocus ? { ...savedFilters, focus: true } : savedFilters;
   const scope = (s.profiles.active || "").startsWith("app:") ? "game" : "default";
-  const put = (changes) => set(() => rpc.setProfile(scope, { filters: { ...f, ...changes } }));
+  const put = (changes) => set(() => rpc.setProfile(scope, { filters: { ...savedFilters, ...changes } }));
   const presets = (cat && cat.presets) || [], effects = (cat && cat.effects) || [];
   const names = Object.fromEntries(effects.map((e) => [e.key, e.name]));
   const same = (a, b) => JSON.stringify([...(a.effects || [])].sort()) === JSON.stringify([...(b.effects || [])].sort()) && (a.sharpen || "none") === (b.sharpen || "none") && (a.aa || "none") === (b.aa || "none");
@@ -207,12 +209,12 @@ function Graphics({ s, set, cat }) {
         (engine.sr_output_width || "–") + " × " + (engine.sr_output_height || "–") +
         (s.live.sr_message ? " · " + s.live.sr_message : "")) : null),
     h(Card, { title: "IMAGE CLARITY" },
-      h(Row, { k: "Kedavra Focus", first: true }, h(Tog, { on: !!f.focus, onChange: (v) => put({ focus: v }) })),
+      h(Row, { k: "Kedavra Focus", first: true }, srFocus ? h("span", { className: "v" }, "Auto · SR") : h(Tog, { on: !!f.focus, onChange: (v) => put({ focus: v }) })),
       h("div", { className: "sub" }, focusMessage),
       f.focus ? h("div", { className: "note" }, "Focus keeps your CAS/DLS settings saved.") : null),
     h(Card, { title: "LOOK" },
       h("div", { className: "fgrid" }, presets.map((p) =>
-        h(Focusable, { key: p.id, className: "ftile" + (active === p.id ? " on" : ""), onClick: () => set(() => rpc.setProfile(scope, { filters: { ...p.filters, focus: !!f.focus } })) },
+        h(Focusable, { key: p.id, className: "ftile" + (active === p.id ? " on" : ""), onClick: () => set(() => rpc.setProfile(scope, { filters: { ...p.filters, focus: !!savedFilters.focus } })) },
           h("div", { className: "sw", style: { background: SWATCH[p.id] || SWATCH.off } }, p.id === "off" ? h("i", { className: "slash" }) : null),
           h("div", { className: "fl" }, p.name)))),
       h("div", { className: "fmore" }, h("span", null, active === "custom" ? "Custom · " + lookSummary(f, names) : lookSummary(f, names)))),

@@ -205,6 +205,8 @@ class Service:
         data = self.settings.data
         self._hdr_output(bool(data["engine"].get("hdr_output", True)), fresh, now)
         profile_key, profile = self.settings.profile_for(self.app)
+        # SR.3 forces Focus for the effective pipeline, without changing saved profiles.
+        profile = {**profile, "filters": filters.for_sr(profile["filters"], data["engine"].get("super_resolution", False))}
         sensors = self.sensors.sample() if self.sensors else {}
         power = self._power(now)
         temp = sensors.get("temp_c")
