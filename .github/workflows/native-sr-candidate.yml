@@ -1,7 +1,7 @@
-name: Package Native SR.2 with Steam Properties
+name: Package Native SR.5 with Steam Properties
 on:
   push:
-    branches: [experiment/native-sr-2-test]
+    branches: [experiment/native-sr-5-four]
 permissions:
   contents: read
   actions: read
@@ -11,8 +11,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       ENGINE_REPO: wavessevaw/GSF_Kedavra
-      ENGINE_RUN: "46127590894"
-      ENGINE_SHA: 64761fe6ce360d710df03c65915fd26c46cf14bf
+      ENGINE_RUN: "46135135430"
+      ENGINE_SHA: 15a9ed27bf6a8e4cb383c2fce1e164c45dd124c7
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,7 +30,6 @@ jobs:
       - name: Verify the exact engine build
         run: |
           test "$(gh api repos/$ENGINE_REPO/actions/runs/$ENGINE_RUN --jq .head_sha)" = "$ENGINE_SHA"
-          gh run watch "$ENGINE_RUN" -R "$ENGINE_REPO" --interval 20 || true
           gh api repos/$ENGINE_REPO/actions/runs/$ENGINE_RUN/jobs --jq '.jobs[] | [.name,.conclusion] | @tsv' > "$RUNNER_TEMP/engine-jobs"
           for job in model-and-engine gamescope runtime-on-older-glibc; do
             grep -Fx "$(printf '%s\tsuccess' "$job")" "$RUNNER_TEMP/engine-jobs"
@@ -39,27 +38,29 @@ jobs:
         with:
           github-token: ${{ github.token }}
           repository: wavessevaw/GSF_Kedavra
-          run-id: 46127590894
+          run-id: 46135135430
           name: gamescope-runtime
           path: runtime-build
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
           repository: wavessevaw/GSF_Kedavra
-          run-id: 46127590894
+          run-id: 46135135430
           name: kedavra-deck-bench
           path: bench-build
-      - name: Package verified SR.2
+      - name: Package verified SR.5
         run: |
-          test "$(cat runtime-build/VERSION)" = "kedavra-1.9.0-sr.2-${ENGINE_SHA::7}"
-          bash scripts/build_release.sh 4.0.0-sr.2 "$PWD/runtime-build" "$PWD/out" "$PWD/bench-build"
+          test "$(cat runtime-build/VERSION)" = "kedavra-1.9.0-sr.5-${ENGINE_SHA::7}"
+          bash scripts/build_release.sh 4.0.0-sr.5 "$PWD/runtime-build" "$PWD/out" "$PWD/bench-build"
           cd out
           sha256sum -c SHA256SUMS.txt
           unzip -tq *.zip
           cmp <(unzip -p *.zip GFG-Extreme/runtime/bin/gamescope) ../runtime-build/bin/gamescope
           unzip -p *.zip GFG-Extreme/dist/index.js > "$RUNNER_TEMP/packed-frontend.js"
+          cmp "$RUNNER_TEMP/packed-frontend.js" ../dist/index.js
           grep -F SetAppResolutionOverride "$RUNNER_TEMP/packed-frontend.js" >/dev/null
+          grep -F "4-frame Inverse SR" "$RUNNER_TEMP/packed-frontend.js" >/dev/null
       - uses: actions/upload-artifact@v4
         with:
-          name: GFG-Extreme-Native-SR-2-Steam-Properties
+          name: GFG-Extreme-Native-SR-5-Four
           path: out/
